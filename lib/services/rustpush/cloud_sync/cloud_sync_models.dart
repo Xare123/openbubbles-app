@@ -1,5 +1,12 @@
 import 'dart:collection';
 
+/// Current durable/protected schema for create-only Messages outbox payloads.
+///
+/// Version 1 used an unqualified random CloudKit record name. Version 2 binds
+/// the record name to Apple's deterministic container-user-ID/GUID HMAC and is
+/// the only version eligible for remote submission.
+const int cloudSyncOutboundPayloadVersion = 2;
+
 final RegExp _canonicalAppleUuidPattern = RegExp(
   r'^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$',
 );
@@ -1187,12 +1194,11 @@ class CloudInboxApplyResult {
   /// and must not create, update, or delete canonical message state.
   const CloudInboxApplyResult.outOfScopeService({
     required this.outOfScopeService,
-  })
-    : disposition = CloudInboxApplyDisposition.outOfScopeService,
-      failureCategory = CloudFailureCategory.outOfScopeService,
-      _safeCode = null,
-      retryAfter = null,
-      inboxStatusPersisted = false;
+  }) : disposition = CloudInboxApplyDisposition.outOfScopeService,
+       failureCategory = CloudFailureCategory.outOfScopeService,
+       _safeCode = null,
+       retryAfter = null,
+       inboxStatusPersisted = false;
 
   const CloudInboxApplyResult.deferred({
     this.failureCategory = CloudFailureCategory.dependency,

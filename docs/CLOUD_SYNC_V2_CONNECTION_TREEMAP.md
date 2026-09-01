@@ -4,7 +4,7 @@ title: Cloud Sync V2 Connection Treemap and Recovery State Machine
 description: Source-linked end-to-end model for safely authenticating, fetching, decoding, journaling, projecting, recovering, and validating Messages in iCloud data.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-08-31
+timestamp: 2026-09-01
 ---
 
 # Cloud Sync V2 connection treemap and recovery state machine
@@ -56,6 +56,9 @@ listed falsification test before its status advances.
 | Drain termination and launcher identity | The 16-pass outcome is now distinct resumable non-success. Every status is bound to a cryptographic launch ID and exact Dart PID, launchers are profile-serialized, and timeout or identity mismatch leaves the active exact process running. A later invocation rejects that retained harness before touching build artifacts and rechecks immediately before launch. The focused Dart and PowerShell behavioral suites pass; independent audit found no P0-P3 issue. | `TEST-PROVEN`; live pending | Exercise exact status identity and either terminal-empty or resumable-cap behavior in the signed Windows harness. |
 | Remote-ingestion head | Engine evidence now distinguishes a durably journaled terminal empty server page from a duplicate nonempty page that inserts zero rows. No schema-v5 live drain report exists yet. | `REPAIRED; LIVE PROOF PENDING` | Run one guarded Windows drain until all exact zones prove terminal-empty or the hard cap returns resumable. |
 | Exact local projection | Earlier signed replays restored many chats/messages, but the durable backlog still includes unsupported-service and malformed decoder evidence. Thirty-one observed iMessage records used unresolved bare `chatID` syntax. | `LIVE-PROVEN` partial | After remote catch-up, run the content-free direct-CID cardinality diagnostic; promote no route until a unique style-45 interpretation and disagreement rules are proven. |
+| Outbound authority and exclusion | The manual writer now requires two single-use confirmations and holds the cross-process `v2ReadWrite` interlock from the second preflight through native quiescence. Every native writer boundary independently requires that active interlock. A changed account, exact Dart transport client, protected-store identity, authority epoch, or exact cached writer-container instance revokes the permit; an ambiguous postcondition durably marks authority `mutationUnknown`. The guard rechecks timeout poisoning after asynchronous identity capture and before it can arm mutation state. Each native prepared handle has a random SHA-256 binding recorded in the durable capability fence, so a capability for one handle cannot consume another. The native consume boundary accepts that one digest-bound capability and revalidates the retained container on both sides of submission. | `TEST-PROVEN`; no live write yet | Qualify the exact source in CI, then prove one bounded Canary create while legacy/read-only owners cannot overlap it. |
+| Deterministic Messages record identity | Apple derives a missing message record name as full lowercase hexadecimal HMAC-SHA256 with `ckAppInit.cloudKitUserId` as the UTF-8 key and the unchanged message GUID as UTF-8 data. A signed ARM64 Windows debug DLL from CI run `33484931375` compared that derivation with 142 Apple-created message records in the isolated profile: 142 matched and zero differed. No content or identity input was logged. The diagnostic oracle has been removed from the candidate. | `LIVE-PROVEN`; 142/142 exact matches | Keep the synthetic fixture in CI and reject any staged, prepared, or reconciled mapping that disagrees with the deterministic derivation. |
+| Exact first-create reconciliation | V2 now initializes the exact general Messages container, resolves only the existing `messageManateeZone` PCS configuration, and keeps its container-scoped user ID native-only. It derives the stable name before staging, then recomputes the derivation at prepare and reconcile. A non-forgeable native binding retains the exact container `Arc`; same-user replacement fails before proof or submission and a post-submit replacement becomes mutation-unknown. Exact absence may admit create-only; an exact matching digest is a local confirmed no-op; divergent state is quarantined; unresolved state stays pre-submit. A post-submit create conflict is ambiguous until exact reconciliation proves same, divergent, or unresolved state. | `REPAIRED`; live write pending | Run one exact remote-absence/create/no-op replay pair and prove one remote record, one durable terminal outcome, and no automatic replay. |
 | Candidate qualification | GCE run `33407697832` tested source `8d30f9610`: bindings, full Dart, Rust, rustpush, protector, native APK verification, and runner/VM cleanup all passed in about 24.5 minutes. It remains baseline toolchain/performance evidence only because the audit invalidated that source after dispatch. The replacement has passed focused host tests and a no-findings post-fix audit. | `TEST-PROVEN`; GCE pending | Freeze the corrected SHA, then rerun the same full T2D-32 gate. |
 
 ### Investigation checkpoint: session and launcher safety
@@ -87,6 +90,37 @@ one exact commit. The broad local suite is not treated as evidence because this
 shell lacks `objectbox.dll`; the pinned GCE image is the full-suite authority.
 The bounded post-fix audit found no remaining P0-P3 issue in the session,
 interlock, harness, or launcher diff.
+
+### Investigation checkpoint: deterministic Messages record identity
+
+Apple's current and iOS 18.2 implementations agree on the complete first-create
+record-name function:
+
+```text
+lowercase_hex(HMAC-SHA256(
+  key  = UTF8(container_scoped_cloudkit_user_id),
+  data = UTF8(message_guid)
+))
+```
+
+There is no input normalization, case folding, delimiter, prefix, Base64
+encoding, or truncation. `CKRecordUtilities.recordNameUsingSalt:guid:` calls
+the exported `IMSharedHelperHMACSHA256`; its CommonCrypto implementation passes
+the salt as the HMAC key and GUID as data. Independently, CloudKit's private
+container initialization returns JSON field `cloudKitUserId`, and rustpush
+already stores that exact value as `CloudKitOpenContainer.user_id`. Apple's
+container implementation exposes the same container-scoped value as the
+current user's `CKRecordID.recordName`, which is the salt consumed by Messages.
+
+This invalidates V2's former `allocate_or_reuse_record_name(None)` UUIDv4 path.
+The content-free local oracle passed on 2026-09-01: a CI-built, SHA-256-checked,
+ARM64-verified, locally signed debug DLL compared 142 already-fetched Apple
+message records and emitted 142 `match=true` observations with zero mismatches.
+No GUID, salt, record name, message body, credential, or derived digest was
+logged or crossed FFI. The temporary oracle was then removed. V2 staging now
+derives the record name inside Rust from the validated general Messages
+container, and prepare plus reconcile independently recompute the same binding
+before remote I/O.
 
 ## End-to-end treemap
 
@@ -142,6 +176,43 @@ flowchart TD
 The important cut is between `D4` and `E`: remote progress first becomes a
 durable local journal. Projection may then retry without refetching or losing
 the exact remote evidence.
+
+### Outbound create state machine
+
+```mermaid
+flowchart TD
+  A[Read setup and projection gates pass] --> B[Two explicit single-use confirmations]
+  B --> C[Acquire cross-process v2ReadWrite interlock]
+  C --> D[Revalidate account, client, store, epoch, and exact one-row outbox]
+  D --> D1[Bind exact cached Messages container instance]
+  D1 --> D1A[Read its container-scoped user ID]
+  D1A --> D2[Derive stable record name from GUID and salt]
+  D2 --> D2A[Derive payload-V2 operation ID identically in Dart and Rust]
+  D2A --> D3{Read-learned mapping exists?}
+  D3 -- yes and exact derivation agrees --> E[Stage and commit native outbound lease]
+  D3 -- no --> E
+  D3 -- disagreement --> I[Quarantine conflict; no update merge]
+  E --> F[Exact deterministic remote record lookup]
+  F -- exact digest already present --> G[Confirm local no-op; perform no save]
+  F -- exact NotFound --> H[Prepare create-only submission]
+  F -- divergent --> I[Quarantine conflict; no update merge]
+  F -- unresolved --> J[Pause pre-submit; retain retryable work]
+  H --> H1[Bind the exact prepared handle to a random SHA-256 digest]
+  H1 --> K[Persist ambiguity boundary and exact-handle capability fence]
+  K --> K1[Recheck timeout poison after identity capture]
+  K1 --> L[Consume once and correlate every operation]
+  L --> M[Revalidate postconditions and quiesce]
+  M --> N[Acknowledge exact durable terminal outcome]
+  L -. timeout or unknown result .-> U[Mark mutationUnknown; reconcile only]
+  M -. identity or authority changed .-> U
+  H -. create race conflict .-> U
+```
+
+This writer is deliberately create-only. Exact absence is proven before the
+first save, but the ambiguity boundary is still durable before consumption
+because absence and create are not atomic. Once consumption may have happened,
+no automatic replay is legal. A later exact lookup may confirm the same digest;
+otherwise the operation remains unknown or is quarantined for review.
 
 ### Candidate qualification feedback loop
 
@@ -276,6 +347,12 @@ show fetched, retained, and projected counts separately.
 | Honest Canary completion | [`CloudRetainedUnprojectedBacklogStore`](../lib/services/rustpush/cloud_sync/cloud_sync_store.dart#L290), [`ObjectBoxCloudSyncStore.readRetainedUnprojectedInboxCount`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L752), [`CloudSyncManualSemanticPullSampler`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart#L285), [`cloudSyncV2SemanticCanaryPresentation`](../lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart#L46) | Read the current-generation durable retained backlog after repair attempts, then sum it across all zones. A zero per-run transition count is insufficient. Report `Complete` only when the original three-zone/status/quarantine/retry/write-tripwire gates pass and durable retained count is zero; a completed read with retained evidence is degraded/`Partial`, while a blocking failure is `Stopped Safely`. | `TEST-PROVEN; LIVE-PROVEN` |
 | Token-expiry reset | [`CloudSyncStore.rebootstrapAfterReset`](../lib/services/rustpush/cloud_sync/cloud_sync_store.dart#L150), [`ObjectBoxCloudSyncStore.rebootstrapAfterReset`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L1312) | Obtain an account-bound remote-reset proof, quiesce the coordinator, atomically fence old evidence, increment generation, and restart from no token. The coordinator must also prove how unresolved old-generation saves and tombstones remain repairable or are reconciled by the full refetch. | `GAP / POLICY DECISION`: durable primitive exists, but production orchestration has no caller and current-generation reprojection cannot consume generation-zero evidence |
 | No-write exit tripwire | [`CloudSyncManualSemanticPullSampler._runConfirmedUnderInterlock`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart#L194) | Remote confirmations remain zero, outbox count is unchanged, active identity is revalidated, native operations quiesce, and writers resume. | `LIVE-PROVEN` |
+| Manual writer admission | [`CloudSyncManualOutboundCanary.runDoubleConfirmed`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart), [`CloudKitOperationInterlock`](../lib/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart) | Consume two single-use confirmations, then hold one durable `v2ReadWrite` exclusion across the second preflight, admission, fetch/apply, one-row flush, terminal checks, and native quiescence. | `TEST-PROVEN`; live write pending |
+| Revocable write authority | [`CloudKitWriterMutationGuard`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart), [`NativeProtectedCloudSyncTransport`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart), [`CloudMessagesWriterPreparationBinding`](../rustpush/src/imessage/cloud_messages.rs) | Every native writer boundary requires `v2ReadWrite`. Account, exact Dart transport client object, store, epoch, and exact cached writer-container instance must remain exact before and after action. Timeout poisoning is rechecked after asynchronous identity capture and before mutation state can be armed. Any ambiguous postcondition durably changes stable authority to `mutationUnknown`, so no new permit can be issued. | `TEST-PROVEN`; live write pending |
+| Exact prepared-handle capability | [`CloudKitWriterMutationGuard`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart), [`cloud_sync_consume_prepared_message_create`](../rust/src/api/api.rs) | Every native prepared handle owns a content-free random SHA-256 binding. The durable fence must contain that exact binding plus the capability digest, account, store, owner, and scope. A capability/fence for one prepared handle cannot consume another, and a rejected attempt does not consume either handle. | `TEST-PROVEN`; live write pending |
+| Cross-language operation identity | [`CloudOperationIdentity.forInitialCreate`](../lib/services/rustpush/cloud_sync/cloud_operation_identity.dart), [`initial_message_create_operation_id`](../rust/src/cloud_sync_outbound.rs) | Dart and Rust must hash the same semantic persistence lane and payload schema version. The semantic/payload-V2 synthetic fixture is pinned on both sides; a legacy-lane or V1 operation ID cannot enter a V2 prepared envelope. | `TEST-PROVEN`; live write pending |
+| Exact first-create proof | [`NativeProtectedCloudSyncTransport.prepareSubmission`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart) | Use the native exact record lookup before prepare. Only exact NotFound may create; exact digest match is a no-save confirmation; divergence conflicts; unresolved proof stays pre-submit. Mixed batches must partition exactly into remote and preconfirmed operation IDs. | `TEST-PROVEN`; live write pending |
+| Create-only race handling | [`NativeProtectedCloudSyncTransport.consumePreparedSubmission`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart) | Persist the ambiguity boundary before consume, correlate the complete operation set, and quarantine a native create conflict. Never route a create race into update merge or automatic replay. | `TEST-PROVEN`; live write pending |
 
 ## Recovery policy
 
@@ -443,11 +520,24 @@ enabling writes.
     Canary databases have been retried, or remains covered by a source-contract
     test proving it cannot touch a newer row, tombstone, preflight failure,
     checkpoint, token, protected reference, or payload digest.
+11. Every writer bridge boundary rejects calls without the exact active
+    `v2ReadWrite` interlock or digest-bound mutation capability. The retained
+    native preparation binding must still match the exact cached container
+    instance immediately before and after submission; collision and same-user
+    replacement tests fail before admitting a normal retry.
+12. First-create tests cover exact absence, exact existing digest, divergence,
+    indeterminate proof, swapped proof references, create races, and restart
+    reconciliation after a persisted ambiguity boundary.
+13. The first live write is one plain-text Canary message to the explicit test
+    recipient. A second identical run must perform no save, and content-free
+    evidence must prove one remote record, one local terminal operation, no
+    delete, no update merge, and no automatic replay.
 
 ## Current critical path
 
-Do not broaden scope to FaceTime, Find My, Windows ARM, SMS/RCS, or outbound
-CloudKit while this sequence is active:
+Do not broaden scope to FaceTime, Find My, Windows ARM, or SMS/RCS while this
+sequence is active. Outbound CloudKit is now the next bounded phase after the
+read gates:
 
 1. classify the remaining non-projectable iMessage records without weakening
    exact ownership; keep the separately identified SMS/MMS backlog out of this
@@ -459,9 +549,13 @@ CloudKit while this sequence is active:
    replay/idempotency and unchanged no-write tripwires after every pass; a
    16-pass exit is resumable rather than complete, and Windows rebuilds only
    when the mapped Dart/Rust boundary changes;
-4. freeze one candidate SHA and qualify an in-place Android Canary;
-5. design token-expiry reset and attachment-body materialization as separate
-   reviewed changes after text/history projection is stable.
+4. freeze one candidate SHA and qualify read plus create-only writer safety in
+   CI before any live mutation;
+5. send one double-confirmed plain-text Canary, then repeat the exact operation
+   as a no-save idempotency proof;
+6. qualify an in-place Android Canary only after that writer proof; and
+7. design token-expiry reset and broader attachment-body materialization as
+   separate reviewed changes after text/history projection is stable.
 
 ### Latest bounded live proof
 

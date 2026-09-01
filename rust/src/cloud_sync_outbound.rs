@@ -7,13 +7,11 @@
 use std::{path::PathBuf, time::UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use hmac::{Hmac, Mac};
 use prost::Message;
-use rustpush::{
-    cloud_messages::{
-        cloudmessagesp::{MessageProto, MessageProto2, MessageProto3, MessageProto4},
-        CloudMessage, GZipWrapper, MessageFlags,
-    },
-    cloudkit::allocate_or_reuse_record_name,
+use rustpush::cloud_messages::{
+    cloudmessagesp::{MessageProto, MessageProto2, MessageProto3, MessageProto4},
+    CloudMessage, GZipWrapper, MessageFlags,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -31,7 +29,11 @@ mod wire {
 
 use wire::CloudSyncOutboundMessageV1;
 
-const OUTBOUND_SCHEMA_VERSION: u32 = 1;
+// Version 1 staged random UUID record names and is permanently ineligible for
+// replay. Version 2 binds the protected envelope to Apple's deterministic
+// container-user-ID/GUID HMAC record identity.
+const OUTBOUND_SCHEMA_VERSION: u32 = 2;
+const OUTBOUND_PERSISTENCE_LANE: &str = "semantic";
 const MAX_OUTBOUND_ENVELOPE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_IDENTIFIER_BYTES: usize = 4 * 1024;
 const MAX_PROTO_BYTES: usize = 1024 * 1024;
@@ -48,6 +50,8 @@ const ORDINARY_OUTBOUND_FLAG_BITS: i64 = MessageFlags::IS_FINISHED.bits()
     | MessageFlags::IS_FORWARD.bits()
     | MessageFlags::WAS_DATA_DETECTED.bits();
 const CLOUD_SYNC_SCOPE_SEPARATOR: char = '\u{001f}';
+
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub(crate) enum CloudSyncOutboundFailure {
@@ -75,15 +79,50 @@ pub(crate) struct NativeProtectedOutboundStage {
     pub(crate) lease_reference: String,
 }
 
+/// Reproduces Apple's `CKRecordUtilities.recordNameUsingSalt:guid:`.
+///
+/// The GUID is the HMAC data, the Messages container-scoped CloudKit user ID
+/// is the key, and the complete SHA-256 result is lowercase hexadecimal. The
+/// inputs are consumed exactly as UTF-8; no case folding, normalization,
+/// delimiter, prefix, or truncation is applied.
+pub(crate) fn deterministic_message_record_name(
+    guid: &str,
+    container_scoped_user_id: &str,
+) -> Result<String, CloudSyncOutboundFailure> {
+    validate_identifier(guid)?;
+    validate_identifier(container_scoped_user_id)?;
+    let mut mac = HmacSha256::new_from_slice(container_scoped_user_id.as_bytes())
+        .map_err(|_| CloudSyncOutboundFailure::MalformedMessage)?;
+    mac.update(guid.as_bytes());
+    Ok(mac
+        .finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+pub(crate) fn verify_deterministic_message_record_name(
+    guid: &str,
+    container_scoped_user_id: &str,
+    server_record_name: &str,
+) -> Result<(), CloudSyncOutboundFailure> {
+    let expected = deterministic_message_record_name(guid, container_scoped_user_id)?;
+    if expected != server_record_name {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    Ok(())
+}
+
 pub(crate) fn stage_outbound_message(
     storage_directory: PathBuf,
     account_fingerprint: String,
+    container_scoped_user_id: String,
     message: CloudMessage,
 ) -> Result<NativeProtectedOutboundStage, CloudSyncOutboundFailure> {
     let logical_message_guid = message.guid.clone();
-    let allocation = allocate_or_reuse_record_name(None)
-        .map_err(|_| CloudSyncOutboundFailure::MalformedMessage)?;
-    let record_name = allocation.record_name().to_owned();
+    let record_name =
+        deterministic_message_record_name(&logical_message_guid, &container_scoped_user_id)?;
     let encoded = encode_outbound_message(message, &record_name)?;
     let payload_sha256 = sha256_hex(&encoded);
     let payload_length =
@@ -207,14 +246,16 @@ pub(crate) fn initial_message_create_operation_id(
         "messageManateeZone",
         "messages",
         "2",
+        OUTBOUND_PERSISTENCE_LANE,
     ]
     .join(&CLOUD_SYNC_SCOPE_SEPARATOR.to_string());
+    let payload_version = OUTBOUND_SCHEMA_VERSION.to_string();
     let canonical = [
         "cloud-sync-initial-create-v1",
         storage_key.as_str(),
         logical_entity_key_hash,
         "save",
-        "1",
+        payload_version.as_str(),
     ]
     .join(&CLOUD_SYNC_SCOPE_SEPARATOR.to_string());
     Ok(format!("op1:{}", sha256_hex(canonical.as_bytes())))
@@ -506,6 +547,121 @@ mod tests {
     }
 
     #[test]
+    fn deterministic_message_record_name_matches_apple_hmac_fixture() {
+        assert_eq!(
+            deterministic_message_record_name("g", "s").unwrap(),
+            "87b9a0ff78dc9814142bc0cac043d115d5d33f400a09096c6b347f94cba58073"
+        );
+        assert_eq!(
+            deterministic_message_record_name("G", "s").unwrap(),
+            "e6aa3d01b90420f8b0e7a70604239ed1a5c7a92ee1461a36622314df8f63283c"
+        );
+        assert_eq!(
+            deterministic_message_record_name("g", "S").unwrap(),
+            "da032b0e5ccac56cd97518b25698239a875843c9f0a1885c140f8929f23ee661"
+        );
+    }
+
+    #[test]
+    fn deterministic_message_record_name_rejects_missing_inputs() {
+        assert_eq!(
+            deterministic_message_record_name("", "salt"),
+            Err(CloudSyncOutboundFailure::MalformedMessage)
+        );
+        assert_eq!(
+            deterministic_message_record_name("guid", ""),
+            Err(CloudSyncOutboundFailure::MalformedMessage)
+        );
+    }
+
+    #[test]
+    fn deterministic_message_record_binding_requires_exact_guid_salt_and_name() {
+        let expected = deterministic_message_record_name("g", "s").unwrap();
+        assert_eq!(
+            verify_deterministic_message_record_name("g", "s", &expected),
+            Ok(())
+        );
+        for (guid, salt, record_name) in [
+            ("G", "s", expected.as_str()),
+            ("g", "S", expected.as_str()),
+            ("g", "s", "different-record-name"),
+        ] {
+            assert_eq!(
+                verify_deterministic_message_record_name(guid, salt, record_name),
+                Err(CloudSyncOutboundFailure::BindingMismatch)
+            );
+        }
+    }
+
+    #[test]
+    fn schema_version_one_cannot_be_decoded_or_reconstructed() {
+        let record_name =
+            deterministic_message_record_name("fixture-guid", "container-user-fixture").unwrap();
+        let encoded = encode_outbound_message(fixture(), &record_name).expect("version two encode");
+        let mut legacy = CloudSyncOutboundMessageV1::decode(encoded.as_slice()).unwrap();
+        assert_eq!(legacy.schema_version, OUTBOUND_SCHEMA_VERSION);
+
+        legacy.schema_version = 1;
+        assert_eq!(
+            decode_outbound_envelope(&legacy.encode_to_vec()).unwrap_err(),
+            CloudSyncOutboundFailure::MalformedMessage
+        );
+    }
+
+    #[test]
+    fn schema_version_two_reconstructs_deterministic_identity_control() {
+        let container_scoped_user_id = "container-user-fixture";
+        let expected_record_name =
+            deterministic_message_record_name("fixture-guid", container_scoped_user_id).unwrap();
+        let encoded =
+            encode_outbound_message(fixture(), &expected_record_name).expect("version two encode");
+        let envelope = CloudSyncOutboundMessageV1::decode(encoded.as_slice()).unwrap();
+        assert_eq!(envelope.schema_version, 2);
+
+        let (reconstructed, record_name) =
+            decode_outbound_envelope(&encoded).expect("version two reconstruction");
+        assert_eq!(reconstructed.guid, "fixture-guid");
+        assert_eq!(record_name, expected_record_name);
+        assert_eq!(
+            verify_deterministic_message_record_name(
+                &reconstructed.guid,
+                container_scoped_user_id,
+                &record_name,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn outbound_production_source_has_no_content_or_credential_logging_surface() {
+        let source = include_str!("cloud_sync_outbound.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        for forbidden in [
+            "log::",
+            "tracing::",
+            "slog::",
+            "trace!(",
+            "debug!(",
+            "info!(",
+            "warn!(",
+            "error!(",
+            "print!(",
+            "println!(",
+            "eprint!(",
+            "eprintln!(",
+            "dbg!(",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "outbound production source must not contain logging surface {forbidden}"
+            );
+        }
+    }
+
+    #[test]
     fn outbound_envelope_round_trips_without_losing_presence_or_flags() {
         let original = fixture();
         let encoded = encode_outbound_message(original, "SERVER-RECORD").expect("encode");
@@ -542,7 +698,7 @@ mod tests {
     fn initial_create_operation_identity_matches_the_dart_cross_language_fixture() {
         assert_eq!(
             initial_message_create_operation_id(&"A".repeat(43), &"L".repeat(43)).unwrap(),
-            "op1:516a95310adb6de12787de0e51d654e05f40f2289991f76dcd8e1dac2bd865cb"
+            "op1:8751798749a671ef818533ff539e4aa2467dcde96d85831453ff06e651ba4d02"
         );
         assert_ne!(
             initial_message_create_operation_id(&"B".repeat(43), &"L".repeat(43)).unwrap(),

@@ -972,6 +972,7 @@ pub enum CloudSyncOutboundSafeCode {
     NativePrepareFailed,
     AlreadyConsumed,
     CorrelationMismatch,
+    MutationCapabilityInvalid,
 }
 
 #[derive(Clone, Debug)]
@@ -1005,11 +1006,71 @@ pub struct CloudSyncPreparedMessageCreateInput {
 
 #[frb(opaque)]
 pub struct CloudSyncPreparedMessageCreateHandle {
-    prepared: tokio::sync::Mutex<
-        Option<
+    prepared: tokio::sync::Mutex<Option<CloudSyncPreparedMessageCreateOwner>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    expected_handle_binding_sha256: String,
+}
+
+enum CloudSyncPreparedMessageCreateOwner {
+    Native {
+        prepared:
             rustpush::cloud_messages::CloudMessagesPreparedSaveSubmission<DefaultAnisetteProvider>,
+        native_writer_permit: rustpush::cloudkit_operation_gate::CloudKitWriterOperationPermit,
+        cloud_messages_client: Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+        writer_binding: rustpush::cloud_messages::CloudMessagesWriterPreparationBinding<
+            DefaultAnisetteProvider,
         >,
-    >,
+    },
+    #[cfg(test)]
+    Test {
+        remote_call_count: Arc<std::sync::atomic::AtomicUsize>,
+        after_remote_call: Option<Box<dyn FnOnce() + Send>>,
+        outcomes: Vec<rustpush::cloud_messages::CloudMessagesSaveOutcome>,
+    },
+}
+
+impl CloudSyncPreparedMessageCreateOwner {
+    async fn consume_once(
+        self,
+    ) -> Result<Vec<rustpush::cloud_messages::CloudMessagesSaveOutcome>, CloudSyncOutboundSafeCode>
+    {
+        match self {
+            Self::Native {
+                prepared,
+                native_writer_permit,
+                cloud_messages_client,
+                writer_binding,
+            } => {
+                cloud_messages_client
+                    .validate_writer_preparation_binding(&writer_binding)
+                    .await
+                    .map_err(|_| CloudSyncOutboundSafeCode::InvalidScope)?;
+                let outcomes = native_writer_permit
+                    .run(prepared.consume_once())
+                    .await
+                    .map_err(|_| CloudSyncOutboundSafeCode::CorrelationMismatch)?;
+                cloud_messages_client
+                    .validate_writer_preparation_binding(&writer_binding)
+                    .await
+                    .map_err(|_| CloudSyncOutboundSafeCode::InvalidScope)?;
+                Ok(outcomes)
+            }
+            #[cfg(test)]
+            Self::Test {
+                remote_call_count,
+                after_remote_call,
+                outcomes,
+            } => {
+                remote_call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if let Some(after_remote_call) = after_remote_call {
+                    after_remote_call();
+                }
+                Ok(outcomes)
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for CloudSyncPreparedMessageCreateHandle {
@@ -1018,9 +1079,82 @@ impl std::fmt::Debug for CloudSyncPreparedMessageCreateHandle {
     }
 }
 
+const CLOUD_SYNC_WRITER_MUTATION_FENCE_FILE: &str =
+    ".openbubbles-cloudkit-writer-mutation-v1.fence";
+const CLOUD_SYNC_WRITER_MUTATION_FENCE_MAX_BYTES: u64 = 4096;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CloudSyncWriterMutationFence {
+    account_fingerprint: String,
+    capability_sha256: String,
+    container: String,
+    database: String,
+    epoch: u64,
+    owner: String,
+    prepared_handle_binding_sha256: String,
+    protected_store_identity: String,
+    version: u32,
+}
+
+fn cloud_sync_new_prepared_handle_binding_sha256() -> String {
+    Sha256::digest(Uuid::new_v4().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn cloud_sync_writer_mutation_capability_is_valid(
+    handle: &CloudSyncPreparedMessageCreateHandle,
+    capability_token: &str,
+) -> bool {
+    if capability_token.len() != 64
+        || !capability_token
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return false;
+    }
+    let fence_path =
+        PathBuf::from(&handle.storage_directory).join(CLOUD_SYNC_WRITER_MUTATION_FENCE_FILE);
+    let metadata = match fs::symlink_metadata(&fence_path) {
+        Ok(metadata) => metadata,
+        Err(_) => return false,
+    };
+    if !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() == 0
+        || metadata.len() > CLOUD_SYNC_WRITER_MUTATION_FENCE_MAX_BYTES
+    {
+        return false;
+    }
+    let encoded = match fs::read_to_string(fence_path) {
+        Ok(encoded) => encoded,
+        Err(_) => return false,
+    };
+    let fence: CloudSyncWriterMutationFence = match serde_json::from_str(&encoded) {
+        Ok(fence) => fence,
+        Err(_) => return false,
+    };
+    let capability_sha256 = Sha256::digest(capability_token.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    fence.version == 2
+        && fence.epoch > 0
+        && fence.owner == "v2"
+        && fence.container == "com.apple.messages.cloud"
+        && fence.database == "private"
+        && fence.account_fingerprint == handle.expected_account_fingerprint
+        && fence.protected_store_identity == handle.expected_protected_store_identity
+        && fence.prepared_handle_binding_sha256 == handle.expected_handle_binding_sha256
+        && fence.capability_sha256 == capability_sha256
+}
+
 #[derive(Debug)]
 pub struct CloudSyncPreparedMessageCreateResult {
     pub handle: Option<CloudSyncPreparedMessageCreateHandle>,
+    pub handle_binding_sha256: Option<String>,
     pub failure: Option<CloudSyncOutboundSafeCode>,
 }
 
@@ -1486,6 +1620,19 @@ fn map_cloud_sync_outbound_failure_class(
     }
 }
 
+fn cloud_sync_auth_identity_remains_exact(
+    before: &CloudSyncNativeAuthMetadata,
+    after: &CloudSyncNativeAuthMetadata,
+    expected_account_fingerprint: &str,
+    expected_protected_store_identity: &str,
+) -> bool {
+    before.native_session_id == after.native_session_id
+        && before.account_fingerprint == after.account_fingerprint
+        && before.protected_store_identity == after.protected_store_identity
+        && after.account_fingerprint == expected_account_fingerprint
+        && after.protected_store_identity == expected_protected_store_identity
+}
+
 fn cloud_sync_outbound_failure_result(
     failure: CloudSyncOutboundSafeCode,
 ) -> CloudSyncProtectedOutboundStageResult {
@@ -1521,9 +1668,47 @@ pub async fn cloud_sync_stage_outbound_message(
     {
         return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::InvalidScope);
     }
+    let writer_binding = match cloud_messages_client
+        .warm_message_writer_preparation_lookup_only()
+        .await
+    {
+        Ok(binding) => binding,
+        Err(_) => {
+            return cloud_sync_outbound_failure_result(
+                CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+            )
+        }
+    };
+    let auth_after_preparation =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_outbound_failure_result(
+                    CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                )
+            }
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth,
+        &auth_after_preparation,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) {
+        return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    if cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::InvalidScope);
+    }
     match crate::cloud_sync_outbound::stage_outbound_message(
         PathBuf::from(storage_directory),
-        auth.account_fingerprint,
+        auth_after_preparation.account_fingerprint,
+        writer_binding.container_scoped_user_id().to_owned(),
         message,
     ) {
         Ok(stage) => CloudSyncProtectedOutboundStageResult {
@@ -1549,6 +1734,7 @@ fn cloud_sync_prepare_failure(
 ) -> CloudSyncPreparedMessageCreateResult {
     CloudSyncPreparedMessageCreateResult {
         handle: None,
+        handle_binding_sha256: None,
         failure: Some(failure),
     }
 }
@@ -1621,6 +1807,40 @@ pub async fn cloud_sync_prepare_message_create(
     {
         return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
     }
+    let writer_binding = match cloud_messages_client
+        .warm_message_writer_preparation_lookup_only()
+        .await
+    {
+        Ok(binding) => binding,
+        Err(_) => {
+            return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+        }
+    };
+    let auth_after_preparation =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+            }
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth,
+        &auth_after_preparation,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    if cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let container_scoped_user_id = writer_binding.container_scoped_user_id().to_owned();
 
     let mut local_ids = HashSet::with_capacity(inputs.len());
     let mut lease_references = HashSet::with_capacity(inputs.len());
@@ -1685,7 +1905,7 @@ pub async fn cloud_sync_prepare_message_create(
         }
         let message = match crate::cloud_sync_outbound::open_staged_outbound_message(
             storage_path.clone(),
-            auth.account_fingerprint.clone(),
+            auth_after_preparation.account_fingerprint.clone(),
             &input.protected_payload_reference,
             &input.payload_sha256,
         ) {
@@ -1708,7 +1928,7 @@ pub async fn cloud_sync_prepare_message_create(
         }
         let server_record_name = match crate::cloud_sync_outbound::open_staged_server_record_name(
             storage_path.clone(),
-            auth.account_fingerprint.clone(),
+            auth_after_preparation.account_fingerprint.clone(),
             &input.protected_server_record_reference,
             &input.server_record_id_hash,
         ) {
@@ -1717,6 +1937,13 @@ pub async fn cloud_sync_prepare_message_create(
                 return cloud_sync_prepare_failure(map_cloud_sync_outbound_failure(failure))
             }
         };
+        if let Err(failure) = crate::cloud_sync_outbound::verify_deterministic_message_record_name(
+            &message.guid,
+            &container_scoped_user_id,
+            &server_record_name,
+        ) {
+            return cloud_sync_prepare_failure(map_cloud_sync_outbound_failure(failure));
+        }
         messages.push(rustpush::cloud_messages::CloudMessageSaveInput {
             local_operation_id: input.local_operation_id,
             server_record_name,
@@ -1725,46 +1952,110 @@ pub async fn cloud_sync_prepare_message_create(
         });
     }
 
-    match cloud_messages_client
-        .prepare_message_save_submission(
+    let native_writer_permit =
+        match rustpush::cloudkit_operation_gate::acquire_cloudkit_writer_operation().await {
+            Ok(permit) => permit,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativePrepareFailed)
+            }
+        };
+    let prepared_result = native_writer_permit
+        .run(cloud_messages_client.prepare_message_save_submission(
+            &writer_binding,
             messages,
             request_identity,
             Duration::from_secs(request_timeout_seconds),
-        )
-        .await
-    {
-        Ok(prepared) => CloudSyncPreparedMessageCreateResult {
-            handle: Some(CloudSyncPreparedMessageCreateHandle {
-                prepared: tokio::sync::Mutex::new(Some(prepared)),
-            }),
-            failure: None,
-        },
+        ))
+        .await;
+    match prepared_result {
+        Ok(prepared) => {
+            let auth_after_native_prepare = match cloud_sync_capture_auth_snapshot(
+                cloud_messages_client,
+                storage_directory.clone(),
+            )
+            .await
+            {
+                Ok(auth) => auth,
+                Err(_) => {
+                    return cloud_sync_prepare_failure(
+                        CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                    )
+                }
+            };
+            if !cloud_sync_auth_identity_remains_exact(
+                &auth_after_preparation,
+                &auth_after_native_prepare,
+                &expected_account_fingerprint,
+                &expected_protected_store_identity,
+            ) {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+            }
+            if cloud_messages_client
+                .validate_writer_preparation_binding(&writer_binding)
+                .await
+                .is_err()
+            {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+            }
+            let handle_binding_sha256 = cloud_sync_new_prepared_handle_binding_sha256();
+            CloudSyncPreparedMessageCreateResult {
+                handle: Some(CloudSyncPreparedMessageCreateHandle {
+                    prepared: tokio::sync::Mutex::new(Some(
+                        CloudSyncPreparedMessageCreateOwner::Native {
+                            prepared,
+                            native_writer_permit,
+                            cloud_messages_client: cloud_messages_client.clone(),
+                            writer_binding,
+                        },
+                    )),
+                    storage_directory,
+                    expected_account_fingerprint,
+                    expected_protected_store_identity,
+                    expected_handle_binding_sha256: handle_binding_sha256.clone(),
+                }),
+                handle_binding_sha256: Some(handle_binding_sha256),
+                failure: None,
+            }
+        }
         Err(_) => cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativePrepareFailed),
     }
 }
 
 pub async fn cloud_sync_consume_prepared_message_create(
     handle: &CloudSyncPreparedMessageCreateHandle,
+    mutation_capability_token: String,
 ) -> CloudSyncOutboundConsumeResult {
+    if !cloud_sync_writer_mutation_capability_is_valid(handle, &mutation_capability_token) {
+        return CloudSyncOutboundConsumeResult {
+            outcomes: vec![],
+            failure: Some(CloudSyncOutboundSafeCode::MutationCapabilityInvalid),
+        };
+    }
     let prepared = {
         let mut guard = handle.prepared.lock().await;
         guard.take()
     };
-    let Some(prepared) = prepared else {
+    let Some(owner) = prepared else {
         return CloudSyncOutboundConsumeResult {
             outcomes: vec![],
             failure: Some(CloudSyncOutboundSafeCode::AlreadyConsumed),
         };
     };
-    let outcomes = match prepared.consume_once().await {
+    let outcomes = match owner.consume_once().await {
         Ok(outcomes) => outcomes,
-        Err(_) => {
+        Err(failure) => {
             return CloudSyncOutboundConsumeResult {
                 outcomes: vec![],
-                failure: Some(CloudSyncOutboundSafeCode::CorrelationMismatch),
+                failure: Some(failure),
             }
         }
     };
+    if !cloud_sync_writer_mutation_capability_is_valid(handle, &mutation_capability_token) {
+        return CloudSyncOutboundConsumeResult {
+            outcomes: vec![],
+            failure: Some(CloudSyncOutboundSafeCode::MutationCapabilityInvalid),
+        };
+    }
     CloudSyncOutboundConsumeResult {
         outcomes: outcomes
             .into_iter()
@@ -1802,6 +2093,215 @@ pub async fn cloud_sync_consume_prepared_message_create(
             })
             .collect(),
         failure: None,
+    }
+}
+
+#[cfg(test)]
+mod cloud_sync_writer_mutation_capability_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const LOCAL_OPERATION_ID: &str = "obcs2.op.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const APPLE_OPERATION_UUID: &str = "AAAAAAAA-BBBB-4CCC-8DDD-000000000001";
+
+    #[test]
+    fn native_owner_revalidates_exact_container_around_submission() {
+        let source = include_str!("api.rs");
+        let start = source
+            .find("impl CloudSyncPreparedMessageCreateOwner")
+            .expect("prepared-owner implementation");
+        let end = source[start..]
+            .find("impl std::fmt::Debug for CloudSyncPreparedMessageCreateHandle")
+            .expect("following prepared-handle implementation");
+        let owner = &source[start..start + end];
+        let first_validation = owner
+            .find("validate_writer_preparation_binding")
+            .expect("pre-submission container validation");
+        let submission = owner
+            .find(".run(prepared.consume_once())")
+            .expect("native submission");
+        let second_validation = owner[submission..]
+            .find("validate_writer_preparation_binding")
+            .map(|offset| submission + offset)
+            .expect("post-submission container validation");
+
+        assert!(first_validation < submission);
+        assert!(submission < second_validation);
+        assert_eq!(
+            owner.matches("validate_writer_preparation_binding").count(),
+            2
+        );
+    }
+
+    fn capability_sha256(token: &str) -> String {
+        Sha256::digest(token.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    fn write_valid_fence(
+        directory: &std::path::Path,
+        token: &str,
+        account_fingerprint: &str,
+        protected_store_identity: &str,
+        prepared_handle_binding_sha256: &str,
+    ) -> PathBuf {
+        let path = directory.join(CLOUD_SYNC_WRITER_MUTATION_FENCE_FILE);
+        let encoded = serde_json::json!({
+            "accountFingerprint": account_fingerprint,
+            "capabilitySha256": capability_sha256(token),
+            "container": "com.apple.messages.cloud",
+            "database": "private",
+            "epoch": 1,
+            "owner": "v2",
+            "preparedHandleBindingSha256": prepared_handle_binding_sha256,
+            "protectedStoreIdentity": protected_store_identity,
+            "version": 2,
+        });
+        fs::write(&path, serde_json::to_vec(&encoded).unwrap()).unwrap();
+        path
+    }
+
+    fn test_handle(
+        directory: &std::path::Path,
+        remote_call_count: Arc<AtomicUsize>,
+        after_remote_call: Option<Box<dyn FnOnce() + Send>>,
+        handle_binding_sha256: &str,
+    ) -> CloudSyncPreparedMessageCreateHandle {
+        CloudSyncPreparedMessageCreateHandle {
+            prepared: tokio::sync::Mutex::new(Some(CloudSyncPreparedMessageCreateOwner::Test {
+                remote_call_count,
+                after_remote_call,
+                outcomes: vec![rustpush::cloud_messages::CloudMessagesSaveOutcome {
+                    local_operation_id: LOCAL_OPERATION_ID.to_owned(),
+                    apple_operation_uuid: APPLE_OPERATION_UUID.to_owned(),
+                    result: rustpush::cloud_messages::CloudMessagesSaveResult::Succeeded,
+                }],
+            })),
+            storage_directory: directory.to_string_lossy().into_owned(),
+            expected_account_fingerprint: "account-fingerprint".to_owned(),
+            expected_protected_store_identity: "protected-store".to_owned(),
+            expected_handle_binding_sha256: handle_binding_sha256.to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn random_capability_cannot_consume_handle_or_reach_remote_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let valid_token = "a".repeat(64);
+        let random_token = "b".repeat(64);
+        let handle_binding_sha256 = "d".repeat(64);
+        write_valid_fence(
+            directory.path(),
+            &valid_token,
+            "account-fingerprint",
+            "protected-store",
+            &handle_binding_sha256,
+        );
+        let remote_call_count = Arc::new(AtomicUsize::new(0));
+        let handle = test_handle(
+            directory.path(),
+            remote_call_count.clone(),
+            None,
+            &handle_binding_sha256,
+        );
+
+        let rejected = cloud_sync_consume_prepared_message_create(&handle, random_token).await;
+
+        assert_eq!(
+            rejected.failure,
+            Some(CloudSyncOutboundSafeCode::MutationCapabilityInvalid)
+        );
+        assert!(rejected.outcomes.is_empty());
+        assert_eq!(remote_call_count.load(Ordering::SeqCst), 0);
+        assert!(handle.prepared.lock().await.is_some());
+
+        let accepted = cloud_sync_consume_prepared_message_create(&handle, valid_token).await;
+
+        assert_eq!(accepted.failure, None);
+        assert_eq!(accepted.outcomes.len(), 1);
+        assert_eq!(
+            accepted.outcomes[0].disposition,
+            CloudSyncOutboundSaveDisposition::Succeeded
+        );
+        assert_eq!(remote_call_count.load(Ordering::SeqCst), 1);
+        assert!(handle.prepared.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn capability_loss_after_remote_call_never_reports_success() {
+        let directory = tempfile::tempdir().unwrap();
+        let valid_token = "c".repeat(64);
+        let handle_binding_sha256 = "e".repeat(64);
+        let fence_path = write_valid_fence(
+            directory.path(),
+            &valid_token,
+            "account-fingerprint",
+            "protected-store",
+            &handle_binding_sha256,
+        );
+        let remote_call_count = Arc::new(AtomicUsize::new(0));
+        let handle = test_handle(
+            directory.path(),
+            remote_call_count.clone(),
+            Some(Box::new(move || fs::remove_file(fence_path).unwrap())),
+            &handle_binding_sha256,
+        );
+
+        let result = cloud_sync_consume_prepared_message_create(&handle, valid_token).await;
+
+        assert_eq!(remote_call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            result.failure,
+            Some(CloudSyncOutboundSafeCode::MutationCapabilityInvalid)
+        );
+        assert!(result.outcomes.is_empty());
+        assert!(handle.prepared.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn capability_for_one_prepared_handle_cannot_consume_another() {
+        let directory = tempfile::tempdir().unwrap();
+        let valid_token = "f".repeat(64);
+        let binding_a = "1".repeat(64);
+        let binding_b = "2".repeat(64);
+        write_valid_fence(
+            directory.path(),
+            &valid_token,
+            "account-fingerprint",
+            "protected-store",
+            &binding_a,
+        );
+        let remote_call_count = Arc::new(AtomicUsize::new(0));
+        let handle_b = test_handle(
+            directory.path(),
+            remote_call_count.clone(),
+            None,
+            &binding_b,
+        );
+
+        let rejected =
+            cloud_sync_consume_prepared_message_create(&handle_b, valid_token.clone()).await;
+
+        assert_eq!(
+            rejected.failure,
+            Some(CloudSyncOutboundSafeCode::MutationCapabilityInvalid)
+        );
+        assert!(rejected.outcomes.is_empty());
+        assert_eq!(remote_call_count.load(Ordering::SeqCst), 0);
+        assert!(handle_b.prepared.lock().await.is_some());
+
+        let handle_a = test_handle(
+            directory.path(),
+            remote_call_count.clone(),
+            None,
+            &binding_a,
+        );
+        let accepted = cloud_sync_consume_prepared_message_create(&handle_a, valid_token).await;
+        assert_eq!(accepted.failure, None);
+        assert_eq!(accepted.outcomes.len(), 1);
+        assert_eq!(remote_call_count.load(Ordering::SeqCst), 1);
     }
 }
 
@@ -1944,6 +2444,42 @@ pub async fn cloud_sync_reconcile_message_create(
     {
         return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidScope);
     }
+    let writer_binding = match cloud_messages_client
+        .warm_message_writer_preparation_lookup_only()
+        .await
+    {
+        Ok(binding) => binding,
+        Err(_) => {
+            return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+        }
+    };
+    let auth_after_preparation =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_reconcile_failure(
+                    CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                )
+            }
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth,
+        &auth_after_preparation,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    if cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let container_scoped_user_id = writer_binding.container_scoped_user_id().to_owned();
 
     let storage_path = PathBuf::from(&storage_directory);
     if crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
@@ -1957,7 +2493,7 @@ pub async fn cloud_sync_reconcile_message_create(
     }
     let expected_message = match crate::cloud_sync_outbound::open_staged_outbound_message(
         storage_path.clone(),
-        auth.account_fingerprint.clone(),
+        auth_after_preparation.account_fingerprint.clone(),
         &input.protected_payload_reference,
         &input.payload_sha256,
     ) {
@@ -1985,7 +2521,7 @@ pub async fn cloud_sync_reconcile_message_create(
     }
     let server_record_name = match crate::cloud_sync_outbound::open_staged_server_record_name(
         storage_path,
-        auth.account_fingerprint,
+        auth_after_preparation.account_fingerprint.clone(),
         &input.protected_server_record_reference,
         &input.server_record_id_hash,
     ) {
@@ -1994,10 +2530,17 @@ pub async fn cloud_sync_reconcile_message_create(
             return cloud_sync_reconcile_failure(map_cloud_sync_outbound_failure(failure))
         }
     };
+    if let Err(failure) = crate::cloud_sync_outbound::verify_deterministic_message_record_name(
+        &expected_message.guid,
+        &container_scoped_user_id,
+        &server_record_name,
+    ) {
+        return cloud_sync_reconcile_failure(map_cloud_sync_outbound_failure(failure));
+    }
 
     use rustpush::cloud_messages::CloudMessageRecordLookup;
     let observation = match cloud_messages_client
-        .lookup_message_record(&server_record_name)
+        .lookup_message_record(&writer_binding, &server_record_name)
         .await
     {
         Ok(CloudMessageRecordLookup::Found(message)) => {
@@ -2019,6 +2562,23 @@ pub async fn cloud_sync_reconcile_message_create(
         },
         Err(_) => CloudSyncReconcileObservation::UnknownFailure,
     };
+    let auth_after_lookup =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory).await {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_reconcile_failure(
+                    CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                )
+            }
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth_after_preparation,
+        &auth_after_lookup,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
     classify_cloud_sync_reconcile_observation(
         observation,
         &input.payload_sha256,

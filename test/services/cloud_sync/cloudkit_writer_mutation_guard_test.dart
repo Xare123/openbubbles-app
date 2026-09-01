@@ -8,6 +8,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_mutatio
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as path;
 
 void main() {
   late Directory directory;
@@ -58,7 +59,7 @@ void main() {
   }) => CloudKitWriterMutationGuard.forTest(
     store: store,
     readActiveClient: reader ?? () => activeClient,
-    privateStorageDirectory: 'protected-test-directory',
+    privateStorageDirectory: directory.path,
     nativeAuthBinding: binding,
     buildDecision: decision(owner),
   );
@@ -94,6 +95,7 @@ void main() {
       expect(actionCalls, 1);
       expect(binding.captureCalls, 2);
       expect(binding.warmCalls, 0);
+      expect(_persistentFence(directory).existsSync(), isFalse);
     },
   );
 
@@ -164,6 +166,14 @@ void main() {
       ),
       throwsA(_failure('cloudkit_writer_mutation_outcome_unknown')),
     );
+    final snapshot = authority(CloudKitWriterOwner.legacy).read(_scope)!;
+    expect(snapshot.state, CloudKitWriterAuthorityState.mutationUnknown);
+    expect(
+      () => authority(
+        CloudKitWriterOwner.legacy,
+      ).issuePermit(_scope, expectedOwner: CloudKitWriterOwner.legacy),
+      throwsA(_failure('cloudkit_writer_authority_not_stable')),
+    );
   });
 
   test('native identity replacement after action becomes unknown', () async {
@@ -178,6 +188,14 @@ void main() {
     await expectLater(
       runGuard(action: () async {}),
       throwsA(_failure('cloudkit_writer_mutation_outcome_unknown')),
+    );
+    final snapshot = authority(CloudKitWriterOwner.legacy).read(_scope)!;
+    expect(snapshot.state, CloudKitWriterAuthorityState.mutationUnknown);
+    expect(
+      () => authority(
+        CloudKitWriterOwner.legacy,
+      ).issuePermit(_scope, expectedOwner: CloudKitWriterOwner.legacy),
+      throwsA(_failure('cloudkit_writer_authority_not_stable')),
     );
   });
 
@@ -200,6 +218,14 @@ void main() {
       ),
       throwsA(_failure('cloudkit_writer_mutation_outcome_unknown')),
     );
+    final snapshot = authority(CloudKitWriterOwner.legacy).read(_scope)!;
+    expect(snapshot.state, isNot(CloudKitWriterAuthorityState.stable));
+    expect(
+      () => authority(
+        CloudKitWriterOwner.legacy,
+      ).issuePermit(_scope, expectedOwner: CloudKitWriterOwner.legacy),
+      throwsA(_failure('cloudkit_writer_authority_not_stable')),
+    );
   });
 
   test(
@@ -212,6 +238,7 @@ void main() {
       );
       expect(binding.captureCalls, 1);
       expect(binding.warmCalls, 0);
+      expect(_persistentFence(directory).existsSync(), isTrue);
       final snapshot = authority(CloudKitWriterOwner.legacy).read(_scope)!;
       expect(snapshot.state, CloudKitWriterAuthorityState.mutationUnknown);
       expect(
@@ -220,6 +247,32 @@ void main() {
         ).issuePermit(_scope, expectedOwner: CloudKitWriterOwner.legacy),
         throwsA(_failure('cloudkit_writer_authority_not_stable')),
       );
+    },
+  );
+
+  test(
+    'ObjectBox fence failure leaves a restart-stable filesystem poison',
+    () async {
+      provision(CloudKitWriterOwner.legacy);
+      await expectLater(
+        runGuard(
+          action: () async {
+            store.close();
+            throw StateError('response_lost');
+          },
+        ),
+        throwsA(_failure('cloudkit_writer_mutation_authority_fence_failed')),
+      );
+      expect(_persistentFence(directory).existsSync(), isTrue);
+
+      store = await openStore(directory: directory.path);
+      var replayCalls = 0;
+      await expectLater(
+        runGuard(action: () async => replayCalls++),
+        throwsA(_failure('cloudkit_writer_mutation_reconciliation_required')),
+      );
+      expect(replayCalls, 0);
+      expect(_persistentFence(directory).existsSync(), isTrue);
     },
   );
 }
@@ -266,6 +319,10 @@ final class _FakeAuthBinding implements CloudSyncNativeAuthBinding {
 
 Matcher _failure(String safeCode) => isA<CloudKitWriterAuthorityFailure>()
     .having((value) => value.safeCode, 'safeCode', safeCode);
+
+File _persistentFence(Directory directory) => File(
+  path.join(directory.path, '.openbubbles-cloudkit-writer-mutation-v1.fence'),
+);
 
 DateTime _time(int seconds) => DateTime.utc(2026, 8, 22, 12, 0, seconds);
 

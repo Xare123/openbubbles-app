@@ -121,6 +121,7 @@ void main() {
     CloudOutboxAction action = CloudOutboxAction.save,
     DateTime? createdAt,
     Set<String> dependencies = const {},
+    int payloadVersion = cloudSyncOutboundPayloadVersion,
     String? protectedLeaseReference,
   }) {
     final payloadSha256 = action == CloudOutboxAction.save
@@ -130,7 +131,7 @@ void main() {
       scope: scope,
       logicalEntityKeyHash: 'logical-key-digest-$index',
       action: action,
-      payloadVersion: 1,
+      payloadVersion: payloadVersion,
       dependencyOperationIds: dependencies,
       createdAt: createdAt ?? testEpoch,
       encryptedPayloadReference: action == CloudOutboxAction.save
@@ -256,6 +257,131 @@ void main() {
       );
 
       expect(leased.map((value) => value.operationId), [operation.operationId]);
+    },
+  );
+
+  test(
+    'legacy outbound versions are durably quarantined while version two remains eligible',
+    () async {
+      await seedCompleteMessagesCloudAccount();
+      final scope = messagesCloudScope('messageManateeZone');
+      final legacy = <CloudOutboxOperation>[];
+      for (var index = 0; index < 4; index++) {
+        legacy.add(
+          await store.enqueueOutboxMutation(
+            draft(
+              scope,
+              9910 + index,
+              payloadVersion: 1,
+              protectedLeaseReference: testProtectedLeaseReference(
+                (index + 1).toRadixString(16),
+              ),
+            ),
+          ),
+        );
+      }
+      final current = await store.enqueueOutboxMutation(
+        draft(
+          scope,
+          9920,
+          protectedLeaseReference: testProtectedLeaseReference('e'),
+        ),
+      );
+      final outbox = objectBox.box<CloudOutboxOperationEntity>();
+      final legacyById = {
+        for (final operation in legacy) operation.operationId: operation,
+      };
+      final states = <CloudOutboxStatus>[
+        CloudOutboxStatus.pending,
+        CloudOutboxStatus.leased,
+        CloudOutboxStatus.paused,
+        CloudOutboxStatus.unknownOutcome,
+      ];
+      final preserved = <String, List<Object?>>{};
+      for (var index = 0; index < legacy.length; index++) {
+        final operation = legacy[index];
+        final row =
+            outbox.getAll().singleWhere(
+                (value) => value.operationId == operation.operationId,
+              )
+              ..state = states[index].index
+              ..appleRequestUuid =
+                  '11111111-2222-4ABC-8DEF-${(index + 1).toString().padLeft(12, '0')}'
+              ..appleOperationUuid =
+                  'AAAAAAAA-BBBB-4CCC-8DDD-${(index + 1).toString().padLeft(12, '0')}'
+              ..serverRecordIdHash = List.filled(
+                43,
+                String.fromCharCode(70 + index),
+              ).join()
+              ..lastErrorCategory = states[index] == CloudOutboxStatus.paused
+                  ? CloudFailureCategory.network.name
+                  : null
+              ..leaseIdHash = states[index] == CloudOutboxStatus.leased
+                  ? 'legacy-live-lease'
+                  : null
+              ..leaseExpiresAtMs = states[index] == CloudOutboxStatus.leased
+                  ? testEpoch
+                        .add(const Duration(days: 1))
+                        .millisecondsSinceEpoch
+                  : 0;
+        outbox.put(row);
+        preserved[row.operationId] = <Object?>[
+          row.encryptedPayloadRef,
+          row.payloadSha256,
+          row.protectedLeaseReference,
+          row.serverRecordIdHash,
+          row.appleRequestUuid,
+          row.appleOperationUuid,
+        ];
+      }
+
+      final leased = await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 8,
+        leaseId: 'version-two-control-lease',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      expect(leased.map((value) => value.operationId), [current.operationId]);
+      expect(
+        await store.leaseUnknownOutcomes(
+          scope,
+          now: testEpoch,
+          limit: 8,
+          leaseId: 'legacy-reconcile-tripwire',
+          leaseDuration: const Duration(minutes: 1),
+        ),
+        isEmpty,
+      );
+
+      final afterById = {
+        for (final row in outbox.getAll()) row.operationId: row,
+      };
+      for (final entry in legacyById.entries) {
+        final row = afterById[entry.key]!;
+        expect(row.payloadVersion, 1);
+        expect(row.state, CloudOutboxStatus.quarantined.index);
+        expect(row.lastErrorCategory, CloudFailureCategory.localStorage.name);
+        expect(row.leaseIdHash, isNull);
+        expect(row.leaseExpiresAtMs, 0);
+        expect(<Object?>[
+          row.encryptedPayloadRef,
+          row.payloadSha256,
+          row.protectedLeaseReference,
+          row.serverRecordIdHash,
+          row.appleRequestUuid,
+          row.appleOperationUuid,
+        ], preserved[entry.key]);
+      }
+      expect(
+        afterById[current.operationId]!.state,
+        CloudOutboxStatus.leased.index,
+      );
+      expect(
+        afterById[current.operationId]!.payloadVersion,
+        cloudSyncOutboundPayloadVersion,
+      );
     },
   );
 
@@ -1715,7 +1841,7 @@ void main() {
         scope: scope,
         logicalEntityKeyHash: List.filled(43, 'L').join(),
         action: CloudOutboxAction.save,
-        payloadVersion: 1,
+        payloadVersion: cloudSyncOutboundPayloadVersion,
         dependencyOperationIds: const {},
         createdAt: testEpoch,
         encryptedPayloadReference: testProtectedReference('P'),
@@ -1753,7 +1879,7 @@ void main() {
         scope: scope,
         logicalEntityKeyHash: first.logicalEntityKeyHash,
         action: CloudOutboxAction.save,
-        payloadVersion: 1,
+        payloadVersion: cloudSyncOutboundPayloadVersion,
         dependencyOperationIds: const {},
         createdAt: testEpoch.add(const Duration(seconds: 1)),
         encryptedPayloadReference: testProtectedReference('Q'),
@@ -1786,7 +1912,7 @@ void main() {
           scope: scope,
           logicalEntityKeyHash: List.filled(43, logical).join(),
           action: CloudOutboxAction.save,
-          payloadVersion: 1,
+          payloadVersion: cloudSyncOutboundPayloadVersion,
           dependencyOperationIds: const {},
           createdAt: testEpoch,
           encryptedPayloadReference: testProtectedReference(referenceChar),
@@ -1831,7 +1957,7 @@ void main() {
         scope: scope,
         logicalEntityKeyHash: List.filled(43, 'L').join(),
         action: CloudOutboxAction.save,
-        payloadVersion: 1,
+        payloadVersion: cloudSyncOutboundPayloadVersion,
         dependencyOperationIds: const {},
         createdAt: testEpoch,
         encryptedPayloadReference: 'obcs2.ref.not-a-capability',
@@ -3420,7 +3546,7 @@ void main() {
             scope: scope,
             logicalEntityKeyHash: logicalKeyHash,
             action: CloudOutboxAction.save,
-            payloadVersion: 1,
+            payloadVersion: cloudSyncOutboundPayloadVersion,
             dependencyOperationIds: const [],
             createdAt: testEpoch.add(Duration(seconds: revision)),
             encryptedPayloadReference: 'protected:objectbox-shared-$revision',

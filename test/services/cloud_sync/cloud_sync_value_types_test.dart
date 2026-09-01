@@ -58,25 +58,29 @@ void main() {
     );
   });
 
-  test('initial create identity matches the Rust cross-language fixture', () {
-    final scope = CloudSyncScope(
-      accountFingerprint: List.filled(43, 'A').join(),
-      container: 'com.apple.messages.cloud',
-      database: 'private',
-      zone: 'messageManateeZone',
-      streamKind: CloudSyncStreamKind.messages,
-      schemaVersion: 2,
-    );
+  test(
+    'semantic initial create identity matches the Rust cross-language fixture',
+    () {
+      final scope = CloudSyncScope(
+        accountFingerprint: List.filled(43, 'A').join(),
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'messageManateeZone',
+        streamKind: CloudSyncStreamKind.messages,
+        schemaVersion: 2,
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
 
-    expect(
-      CloudOperationIdentity.forInitialCreate(
-        scope: scope,
-        logicalEntityKeyHash: List.filled(43, 'L').join(),
-        payloadVersion: 1,
-      ),
-      'op1:516a95310adb6de12787de0e51d654e05f40f2289991f76dcd8e1dac2bd865cb',
-    );
-  });
+      expect(
+        CloudOperationIdentity.forInitialCreate(
+          scope: scope,
+          logicalEntityKeyHash: List.filled(43, 'L').join(),
+          payloadVersion: cloudSyncOutboundPayloadVersion,
+        ),
+        'op1:8751798749a671ef818533ff539e4aa2467dcde96d85831453ff06e651ba4d02',
+      );
+    },
+  );
 
   test('delete identity and draft do not require an etag or payload', () {
     final scope = testScope();

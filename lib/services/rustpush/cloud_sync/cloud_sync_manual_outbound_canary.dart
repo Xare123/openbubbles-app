@@ -7,6 +7,7 @@ import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_engine.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
+import 'cloudkit_operation_interlock.dart';
 import 'cloudkit_writer_ownership.dart';
 
 typedef CloudSyncOutboundCanarySessionFactory =
@@ -109,12 +110,14 @@ final class CloudSyncManualOutboundCanary {
     required CloudSyncShadowPreflightReader readPreflight,
     required CloudSyncNativeAuthSnapshotReader readAuthSnapshot,
     required CloudSyncOutboundCanarySessionFactory createSession,
+    required CloudKitOperationExclusion writerExclusion,
     bool? compileGateOverrideForTest,
     bool? v2WriterOverrideForTest,
     DateTime Function()? clock,
   }) : _readPreflight = readPreflight,
        _readAuthSnapshot = readAuthSnapshot,
        _createSession = createSession,
+       _writerExclusion = writerExclusion,
        _enabled =
            compileGateOverrideForTest ??
            CloudSyncDevGate.manualOutboundCanaryEnabled,
@@ -139,6 +142,7 @@ final class CloudSyncManualOutboundCanary {
   final CloudSyncShadowPreflightReader _readPreflight;
   final CloudSyncNativeAuthSnapshotReader _readAuthSnapshot;
   final CloudSyncOutboundCanarySessionFactory _createSession;
+  final CloudKitOperationExclusion _writerExclusion;
   final bool _enabled;
   final bool _v2WriterEnabled;
   final DateTime Function() _clock;
@@ -214,64 +218,69 @@ final class CloudSyncManualOutboundCanary {
     }
 
     _active = true;
-    CloudSyncOutboundCanarySession? session;
     try {
-      _validatePreflight(
-        await _readPreflight(),
-        expectedOutboxCount: confirmation.recovery ? 1 : 0,
-      );
-      final auth = await _readAuthSnapshot();
-      if (!confirmation.authSnapshot.sameIdentity(auth)) {
-        throw StateError('account_changed');
-      }
-      final scope = CloudSyncScope(
-        accountFingerprint: auth!.accountFingerprint,
-        container: container,
-        database: database,
-        zone: zone,
-        streamKind: CloudSyncStreamKind.messages,
-        schemaVersion: 2,
-        persistenceLane: CloudSyncPersistenceLane.semantic,
-      );
-      session = await _createSession(auth, scope);
-      final CloudOutboxOperation operation;
-      if (confirmation.recovery) {
-        operation = _requireSingleRecoverableOperation(
-          await session.readOutbox(),
-          scope,
-        );
-      } else {
-        operation = await session.admitMessage(
-          message: confirmation.message!,
-          createdAt: confirmation.createdAt!,
-        );
-        _validateAdmission(operation, scope, confirmation.createdAt!);
-      }
-      await _requireSameAuth(auth);
+      return await _writerExclusion.runExclusive(
+        kind: CloudKitOperationKind.v2ReadWrite,
+        action: () async {
+          CloudSyncOutboundCanarySession? session;
+          try {
+            _validatePreflight(
+              await _readPreflight(),
+              expectedOutboxCount: confirmation.recovery ? 1 : 0,
+            );
+            final auth = await _readAuthSnapshot();
+            if (!confirmation.authSnapshot.sameIdentity(auth)) {
+              throw StateError('account_changed');
+            }
+            final scope = CloudSyncScope(
+              accountFingerprint: auth!.accountFingerprint,
+              container: container,
+              database: database,
+              zone: zone,
+              streamKind: CloudSyncStreamKind.messages,
+              schemaVersion: 2,
+              persistenceLane: CloudSyncPersistenceLane.semantic,
+            );
+            session = await _createSession(auth, scope);
+            final CloudOutboxOperation operation;
+            if (confirmation.recovery) {
+              operation = _requireSingleRecoverableOperation(
+                await session.readOutbox(),
+                scope,
+              );
+            } else {
+              operation = await session.admitMessage(
+                message: confirmation.message!,
+                createdAt: confirmation.createdAt!,
+              );
+              _validateAdmission(operation, scope, confirmation.createdAt!);
+            }
+            await _requireSameAuth(auth);
 
-      final result = await session.flushOneBatch();
-      _validateRunResult(result);
-      await _requireSameAuth(auth);
-      _validatePreflight(await _readPreflight(), expectedOutboxCount: 1);
-      final durableOperation = _requireSameDurableOperation(
-        await session.readOutbox(),
-        operation,
-      );
-      return CloudSyncOutboundCanaryReport(
-        timestampUtc: _clock().toUtc(),
-        status: result.status,
-        confirmed: result.counters.confirmed,
-        quarantined: result.counters.quarantined,
-        retried: result.counters.retried,
-        outboxStatus: durableOperation.status,
-        recovery: confirmation.recovery,
+            final result = await session.flushOneBatch();
+            _validateRunResult(result);
+            await _requireSameAuth(auth);
+            _validatePreflight(await _readPreflight(), expectedOutboxCount: 1);
+            final durableOperation = _requireSameDurableOperation(
+              await session.readOutbox(),
+              operation,
+            );
+            return CloudSyncOutboundCanaryReport(
+              timestampUtc: _clock().toUtc(),
+              status: result.status,
+              confirmed: result.counters.confirmed,
+              quarantined: result.counters.quarantined,
+              retried: result.counters.retried,
+              outboxStatus: durableOperation.status,
+              recovery: confirmation.recovery,
+            );
+          } finally {
+            await session?.quiesce();
+          }
+        },
       );
     } finally {
-      try {
-        await session?.quiesce();
-      } finally {
-        _active = false;
-      }
+      _active = false;
     }
   }
 
@@ -326,7 +335,7 @@ final class CloudSyncManualOutboundCanary {
             ) ||
         !_nativeDigestPattern.hasMatch(operation.logicalEntityKeyHash) ||
         operation.action != CloudOutboxAction.save ||
-        operation.payloadVersion != 1 ||
+        operation.payloadVersion != cloudSyncOutboundPayloadVersion ||
         operation.mutationRevision <= 0 ||
         operation.status != CloudOutboxStatus.pending ||
         operation.attemptCount != 0 ||
@@ -408,7 +417,7 @@ final class CloudSyncManualOutboundCanary {
             ) &&
         _nativeDigestPattern.hasMatch(operation.logicalEntityKeyHash) &&
         operation.action == CloudOutboxAction.save &&
-        operation.payloadVersion == 1 &&
+        operation.payloadVersion == cloudSyncOutboundPayloadVersion &&
         operation.mutationRevision > 0 &&
         operation.checkpointGeneration > 0 &&
         operation.dependencyOperationIds.isEmpty &&

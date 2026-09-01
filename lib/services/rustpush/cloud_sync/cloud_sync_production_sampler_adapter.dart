@@ -29,6 +29,7 @@ import 'cloud_sync_outbound_admission.dart';
 import 'cloud_sync_writer_authority.dart';
 import 'cloudkit_operation_interlock.dart';
 import 'cloudkit_writer_authority.dart';
+import 'cloudkit_writer_mutation_guard.dart';
 import 'cloudkit_writer_ownership.dart';
 import 'objectbox_cloud_sync_store.dart';
 import 'cloud_sync_shadow_transport.dart';
@@ -663,12 +664,19 @@ final class CloudSyncProductionOutboundCanaryAdapter {
     canary = CloudSyncManualOutboundCanary(
       readPreflight: readPreflight,
       readAuthSnapshot: authProvider.capture,
+      writerExclusion: interlock,
       createSession: (snapshot, scope) async {
         final writerScope = CloudKitWriterScope(
           accountFingerprint: scope.accountFingerprint,
           container: scope.container,
           database: scope.database,
         );
+        final mutationGuard = CloudKitWriterMutationGuard(
+          store: Database.store,
+          readActiveClient: readActiveClient,
+          privateStorageDirectory: privateStorageDirectory,
+        );
+        mutationGuard.requireClear();
         final permit = authority.issuePermit(
           writerScope,
           expectedOwner: CloudKitWriterOwner.v2,
@@ -679,6 +687,7 @@ final class CloudSyncProductionOutboundCanaryAdapter {
           storageDirectory: privateStorageDirectory,
           protectedStoreIdentity: snapshot.protectedStoreIdentity,
           bindings: transportBindings,
+          writerMutationGuard: mutationGuard,
         );
         final lifecycle = CloudProtectedPageLeaseLifecycle(
           store: durableStore,

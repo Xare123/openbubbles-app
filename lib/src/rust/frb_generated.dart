@@ -319,6 +319,7 @@ abstract class RustLibApi extends BaseApi {
   Future<CloudSyncOutboundConsumeResult>
   crateApiApiCloudSyncConsumePreparedMessageCreate({
     required CloudSyncPreparedMessageCreateHandle handle,
+    required String mutationCapabilityToken,
   });
 
   Future<CloudSyncTransientDecodeResult>
@@ -3745,6 +3746,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Future<CloudSyncOutboundConsumeResult>
   crateApiApiCloudSyncConsumePreparedMessageCreate({
     required CloudSyncPreparedMessageCreateHandle handle,
+    required String mutationCapabilityToken,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -3754,6 +3756,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             handle,
             serializer,
           );
+          sse_encode_String(mutationCapabilityToken, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -3766,7 +3769,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: null,
         ),
         constMeta: kCrateApiApiCloudSyncConsumePreparedMessageCreateConstMeta,
-        argValues: [handle],
+        argValues: [handle, mutationCapabilityToken],
         apiImpl: this,
       ),
     );
@@ -3776,7 +3779,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   get kCrateApiApiCloudSyncConsumePreparedMessageCreateConstMeta =>
       const TaskConstMeta(
         debugName: "cloud_sync_consume_prepared_message_create",
-        argNames: ["handle"],
+        argNames: ["handle", "mutationCapabilityToken"],
       );
 
   @override
@@ -16558,14 +16561,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   dco_decode_cloud_sync_prepared_message_create_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 2)
-      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return CloudSyncPreparedMessageCreateResult(
       handle:
           dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
             arr[0],
           ),
-      failure: dco_decode_opt_box_autoadd_cloud_sync_outbound_safe_code(arr[1]),
+      handleBindingSha256: dco_decode_opt_String(arr[1]),
+      failure: dco_decode_opt_box_autoadd_cloud_sync_outbound_safe_code(arr[2]),
     );
   }
 
@@ -26071,11 +26075,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
           deserializer,
         );
+    var var_handleBindingSha256 = sse_decode_opt_String(deserializer);
     var var_failure = sse_decode_opt_box_autoadd_cloud_sync_outbound_safe_code(
       deserializer,
     );
     return CloudSyncPreparedMessageCreateResult(
       handle: var_handle,
+      handleBindingSha256: var_handleBindingSha256,
       failure: var_failure,
     );
   }
@@ -37382,6 +37388,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       self.handle,
       serializer,
     );
+    sse_encode_opt_String(self.handleBindingSha256, serializer);
     sse_encode_opt_box_autoadd_cloud_sync_outbound_safe_code(
       self.failure,
       serializer,

@@ -1,10 +1,15 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:flutter_test/flutter_test.dart';
 
@@ -99,8 +104,66 @@ void main() {
     expect(fixture.session.operation.status, CloudOutboxStatus.pending);
     expect(fixture.preflight.outboxCounts, [0, 0, 1]);
     expect(fixture.session.quiesceCalls, 1);
+    expect(fixture.exclusion.kinds, [CloudKitOperationKind.v2ReadWrite]);
     expect(canary.isActive, isFalse);
   });
+
+  test(
+    'second confirmation acquires cross-process exclusion before admission',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'openbubbles-outbound-canary-interlock-',
+      );
+      final fenceStore = InMemoryCloudSyncStore();
+      final holder = CloudKitOperationInterlock(
+        privateStorageDirectory: directory.path,
+        fenceStore: fenceStore,
+      );
+      final contender = CloudKitOperationInterlock(
+        privateStorageDirectory: directory.path,
+        fenceStore: fenceStore,
+      );
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      final held = holder.runExclusive<void>(
+        kind: CloudKitOperationKind.legacyReadWrite,
+        action: () async {
+          entered.complete();
+          await release.future;
+        },
+      );
+      await entered.future;
+
+      try {
+        final fixture = _CanaryFixture();
+        final canary = fixture.build(writerExclusion: contender);
+        final confirmation = await canary.armConfirmed(
+          message: fixture.message,
+          createdAt: testEpoch,
+        );
+
+        await expectLater(
+          canary.runDoubleConfirmed(confirmation),
+          throwsA(
+            isA<CloudKitOperationInterlockException>().having(
+              (error) => error.safeCode,
+              'safeCode',
+              'cloudkit_interlock_busy',
+            ),
+          ),
+        );
+        expect(fixture.preflight.calls, 1);
+        expect(fixture.sessionFactoryCalls, 0);
+        expect(fixture.session.admitCalls, 0);
+        expect(fixture.session.flushCalls, 0);
+        expect(canary.isActive, isFalse);
+      } finally {
+        release.complete();
+        await held;
+        await directory.delete(recursive: true);
+      }
+    },
+  );
 
   test('confirmation tokens are single-use', () async {
     final fixture = _CanaryFixture(
@@ -578,11 +641,11 @@ CloudOutboxOperation _validOperation(
         CloudOperationIdentity.forInitialCreate(
           scope: scope,
           logicalEntityKeyHash: logicalEntityKeyHash,
-          payloadVersion: 1,
+          payloadVersion: cloudSyncOutboundPayloadVersion,
         ),
     logicalEntityKeyHash: logicalEntityKeyHash,
     action: CloudOutboxAction.save,
-    payloadVersion: 1,
+    payloadVersion: cloudSyncOutboundPayloadVersion,
     mutationRevision: 1,
     checkpointGeneration: 1,
     encryptedPayloadReference: 'obcs2.ref.${List.filled(43, 'P').join()}',
@@ -621,6 +684,7 @@ final class _CanaryFixture {
   final _SessionFake session;
   final Object? flushError;
   final message = _FakeCloudMessage();
+  final exclusion = _ExclusionFake();
   final scopes = <CloudSyncScope>[];
   int sessionFactoryCalls = 0;
 
@@ -630,9 +694,11 @@ final class _CanaryFixture {
     bool? compileGate,
     bool? writerGate,
     MutableTestClock? clock,
+    CloudKitOperationExclusion? writerExclusion,
   }) => CloudSyncManualOutboundCanary(
     readPreflight: preflight.read,
     readAuthSnapshot: auth.read,
+    writerExclusion: writerExclusion ?? exclusion,
     createSession: (snapshot, scope) async {
       sessionFactoryCalls++;
       scopes.add(scope);
@@ -642,6 +708,22 @@ final class _CanaryFixture {
     v2WriterOverrideForTest: writerGate ?? true,
     clock: (clock ?? MutableTestClock(testEpoch)).call,
   );
+}
+
+final class _ExclusionFake implements CloudKitOperationExclusion {
+  final kinds = <CloudKitOperationKind>[];
+
+  @override
+  Future<T> runExclusive<T>({
+    required CloudKitOperationKind kind,
+    required CloudKitOperationBody<T> action,
+  }) async {
+    kinds.add(kind);
+    return action();
+  }
+
+  @override
+  void poisonUntilProcessRestart() {}
 }
 
 final class _PreflightFake {

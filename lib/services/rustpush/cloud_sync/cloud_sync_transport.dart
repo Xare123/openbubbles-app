@@ -102,6 +102,12 @@ abstract interface class CloudSyncNativeOperationQuiescence {
   Future<void> quiesceNativeOperations();
 }
 
+/// Fail-closed signal used when a Dart timeout can no longer determine whether
+/// a native mutation crossed the remote submission boundary.
+abstract interface class CloudSyncMutationUncertaintyBoundary {
+  void markActiveMutationUnknown();
+}
+
 /// Lets a read-only guard expose an underlying protected lifecycle without
 /// weakening the guard's [CloudSyncTransport] fetch boundary.
 abstract interface class CloudProtectedPageLeaseTransportProvider {

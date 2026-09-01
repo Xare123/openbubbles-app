@@ -2811,6 +2811,7 @@ fn wire__crate__api__api__cloud_sync_consume_prepared_message_create_impl(
                     CloudSyncPreparedMessageCreateHandle,
                 >,
             >>::sse_decode(&mut deserializer);
+            let api_mutation_capability_token = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, ()>(
@@ -2837,6 +2838,7 @@ fn wire__crate__api__api__cloud_sync_consume_prepared_message_create_impl(
                         let output_ok = Result::<_, ()>::Ok(
                             crate::api::api::cloud_sync_consume_prepared_message_create(
                                 &*api_handle_guard,
+                                api_mutation_capability_token,
                             )
                             .await,
                         )?;
@@ -19673,6 +19675,7 @@ impl SseDecode for crate::api::api::CloudSyncOutboundSafeCode {
             8 => crate::api::api::CloudSyncOutboundSafeCode::NativePrepareFailed,
             9 => crate::api::api::CloudSyncOutboundSafeCode::AlreadyConsumed,
             10 => crate::api::api::CloudSyncOutboundSafeCode::CorrelationMismatch,
+            11 => crate::api::api::CloudSyncOutboundSafeCode::MutationCapabilityInvalid,
             _ => unreachable!("Invalid variant for CloudSyncOutboundSafeCode: {}", inner),
         };
     }
@@ -19743,10 +19746,12 @@ impl SseDecode for crate::api::api::CloudSyncPreparedMessageCreateResult {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_handle =
             <Option<CloudSyncPreparedMessageCreateHandle>>::sse_decode(deserializer);
+        let mut var_handleBindingSha256 = <Option<String>>::sse_decode(deserializer);
         let mut var_failure =
             <Option<crate::api::api::CloudSyncOutboundSafeCode>>::sse_decode(deserializer);
         return crate::api::api::CloudSyncPreparedMessageCreateResult {
             handle: var_handle,
+            handle_binding_sha256: var_handleBindingSha256,
             failure: var_failure,
         };
     }
@@ -28804,6 +28809,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncOutboundSafeCod
             Self::NativePrepareFailed => 8.into_dart(),
             Self::AlreadyConsumed => 9.into_dart(),
             Self::CorrelationMismatch => 10.into_dart(),
+            Self::MutationCapabilityInvalid => 11.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -28901,6 +28907,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncPreparedMessage
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.handle.into_into_dart().into_dart(),
+            self.handle_binding_sha256.into_into_dart().into_dart(),
             self.failure.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -35782,6 +35789,7 @@ impl SseEncode for crate::api::api::CloudSyncOutboundSafeCode {
                 crate::api::api::CloudSyncOutboundSafeCode::NativePrepareFailed => 8,
                 crate::api::api::CloudSyncOutboundSafeCode::AlreadyConsumed => 9,
                 crate::api::api::CloudSyncOutboundSafeCode::CorrelationMismatch => 10,
+                crate::api::api::CloudSyncOutboundSafeCode::MutationCapabilityInvalid => 11,
                 _ => {
                     unimplemented!("");
                 }
@@ -35843,6 +35851,7 @@ impl SseEncode for crate::api::api::CloudSyncPreparedMessageCreateResult {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Option<CloudSyncPreparedMessageCreateHandle>>::sse_encode(self.handle, serializer);
+        <Option<String>>::sse_encode(self.handle_binding_sha256, serializer);
         <Option<crate::api::api::CloudSyncOutboundSafeCode>>::sse_encode(self.failure, serializer);
     }
 }

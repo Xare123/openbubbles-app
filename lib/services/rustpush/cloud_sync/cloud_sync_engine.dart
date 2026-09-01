@@ -312,6 +312,10 @@ class CloudSyncEngine {
            transport is CloudSyncNativeOperationQuiescence
            ? transport as CloudSyncNativeOperationQuiescence
            : null,
+       _mutationUncertaintyBoundary =
+           transport is CloudSyncMutationUncertaintyBoundary
+           ? transport as CloudSyncMutationUncertaintyBoundary
+           : null,
        _writerAuthority = writerAuthority,
        _writerExclusion = writerExclusion,
        _unknownOutcomeStore = store is CloudSyncUnknownOutcomeLeasingStore
@@ -350,6 +354,9 @@ class CloudSyncEngine {
     if (this.config.flags.saves && _nativeOperationQuiescence == null) {
       throw ArgumentError('cloud_sync_native_operation_quiescence_required');
     }
+    if (this.config.flags.saves && _mutationUncertaintyBoundary == null) {
+      throw ArgumentError('cloud_sync_mutation_uncertainty_boundary_required');
+    }
     if (this.config.flags.saves && _writeTransport == null) {
       throw ArgumentError('cloud_sync_write_preflight_transport_required');
     }
@@ -371,6 +378,7 @@ class CloudSyncEngine {
   final CloudSyncTransport _transport;
   final CloudSyncWriteTransport? _writeTransport;
   final CloudSyncNativeOperationQuiescence? _nativeOperationQuiescence;
+  final CloudSyncMutationUncertaintyBoundary? _mutationUncertaintyBoundary;
   final CloudSyncWriterAuthority? _writerAuthority;
   final CloudKitOperationExclusion? _writerExclusion;
   final CloudSyncUnknownOutcomeLeasingStore? _unknownOutcomeStore;
@@ -2598,6 +2606,9 @@ class CloudSyncEngine {
     try {
       return await action().timeout(config.writeOperationTimeout);
     } on TimeoutException {
+      if (operationName == 'push') {
+        _mutationUncertaintyBoundary!.markActiveMutationUnknown();
+      }
       try {
         await _nativeOperationQuiescence!.quiesceNativeOperations();
       } catch (_) {

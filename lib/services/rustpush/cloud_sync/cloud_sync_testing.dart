@@ -131,7 +131,8 @@ class FakeCloudSyncTransport
     implements
         CloudSyncTransport,
         CloudSyncWriteTransport,
-        CloudSyncNativeOperationQuiescence {
+        CloudSyncNativeOperationQuiescence,
+        CloudSyncMutationUncertaintyBoundary {
   final Queue<Object> _fetchResponses = Queue();
   final Queue<Object> _pushResponses = Queue();
   final Queue<Object> _preparedPushResponses = Queue();
@@ -157,6 +158,7 @@ class FakeCloudSyncTransport
   int conflictCallCount = 0;
   int unknownOutcomeCallCount = 0;
   int quiescenceCallCount = 0;
+  int mutationUnknownSignalCount = 0;
   final List<String?> observedFetchTokens = [];
   final List<List<String>> observedPushOperationIds = [];
   final List<List<String?>> observedAppleRequestUuids = [];
@@ -168,6 +170,11 @@ class FakeCloudSyncTransport
   Future<void> quiesceNativeOperations() async {
     quiescenceCallCount++;
     await quiescenceHandler?.call();
+  }
+
+  @override
+  void markActiveMutationUnknown() {
+    mutationUnknownSignalCount++;
   }
 
   void enqueueFetchBatch(CloudFetchBatch batch) => _fetchResponses.add(batch);

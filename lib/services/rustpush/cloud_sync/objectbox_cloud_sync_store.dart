@@ -1314,7 +1314,7 @@ class ObjectBoxCloudSyncStore
     required CloudRecordMapEntry recordMapping,
   }) async {
     if (draft.action != CloudOutboxAction.save ||
-        draft.payloadVersion != 1 ||
+        draft.payloadVersion != cloudSyncOutboundPayloadVersion ||
         draft.dependencyOperationIds.isNotEmpty ||
         draft.protectedLeaseReference == null ||
         !_isProtectedPageLease(draft.protectedLeaseReference!) ||
@@ -1549,6 +1549,7 @@ class ObjectBoxCloudSyncStore
     final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
     return _store.runInTransaction(TxMode.write, () {
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      _fenceUnsupportedOutboundVersionsLocked(scope, nowMs: nowMs);
       if (_hasBlockingOutboxLocked(scope)) {
         if (checkpoint.pendingBatchId != null ||
             _hasUnmarkedPendingInboxLocked(scope, checkpoint)) {
@@ -1689,6 +1690,7 @@ class ObjectBoxCloudSyncStore
     final nowMs = now.millisecondsSinceEpoch;
     return _store.runInTransaction(TxMode.write, () {
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      _fenceUnsupportedOutboundVersionsLocked(scope, nowMs: nowMs);
       _requireMessagesCloudAccountProjectionReadyLocked(scope);
       final entities = <String, CloudOutboxOperationEntity>{};
       for (final operationId in ids) {
@@ -2500,10 +2502,48 @@ class ObjectBoxCloudSyncStore
     required CloudSyncCheckpointEntity checkpoint,
     required int nowMs,
   }) {
+    _fenceUnsupportedOutboundVersionsLocked(scope, nowMs: nowMs);
     for (final entity in _findOutboxForScopeLocked(scope)) {
       final status = _outboxStatusFromInt(entity.state);
       if (!_isBlockingOutboxStatus(status) ||
           entity.checkpointGeneration == checkpoint.generation) {
+        continue;
+      }
+      entity
+        ..state = _outboxStatusToInt(CloudOutboxStatus.quarantined)
+        ..attemptCount += 1
+        ..lastErrorCategory = CloudFailureCategory.localStorage.name
+        ..nextEligibleAtMs = 0
+        ..leaseIdHash = null
+        ..leaseExpiresAtMs = 0
+        ..updatedAtMs = nowMs;
+      _outbox.put(entity);
+    }
+  }
+
+  /// Permanently quarantines durable rows created before deterministic Apple
+  /// record identity became a schema invariant.
+  ///
+  /// The transition is content-free and preserves every protected reference,
+  /// payload hash, server mapping, and Apple request/operation UUID. No row is
+  /// decrypted, restaged, deleted, or made eligible for remote reconciliation.
+  void _fenceUnsupportedOutboundVersionsLocked(
+    CloudSyncScope scope, {
+    required int nowMs,
+  }) {
+    if (scope.container != 'com.apple.messages.cloud' ||
+        scope.database != 'private' ||
+        scope.zone != 'messageManateeZone' ||
+        scope.streamKind != CloudSyncStreamKind.messages ||
+        scope.schemaVersion != 2 ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semanticV2) {
+      return;
+    }
+    for (final entity in _findOutboxForScopeLocked(scope)) {
+      final status = _outboxStatusFromInt(entity.state);
+      if (!_isBlockingOutboxStatus(status) ||
+          _actionFromInt(entity.action) != CloudOutboxAction.save ||
+          entity.payloadVersion == cloudSyncOutboundPayloadVersion) {
         continue;
       }
       entity

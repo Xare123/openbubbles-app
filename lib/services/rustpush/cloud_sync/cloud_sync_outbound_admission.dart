@@ -34,7 +34,7 @@ final class CloudSyncOutboundAdmissionCoordinator {
       scope: scope,
       logicalEntityKeyHash: stage.logicalEntityKeyHash,
       action: CloudOutboxAction.save,
-      payloadVersion: 1,
+      payloadVersion: cloudSyncOutboundPayloadVersion,
       dependencyOperationIds: const {},
       createdAt: createdAt,
       encryptedPayloadReference: stage.protectedEnvelopeReference,

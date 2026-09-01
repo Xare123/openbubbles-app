@@ -3449,6 +3449,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(runReturned, isFalse);
       expect(transport.quiescenceCallCount, 1);
+      expect(transport.mutationUnknownSignalCount, 1);
       expect(
         (await store.outboxEntries(scope)).single.status,
         CloudOutboxStatus.unknownOutcome,
@@ -3469,6 +3470,7 @@ void main() {
         (await store.outboxEntries(scope)).single.status,
         CloudOutboxStatus.unknownOutcome,
       );
+      expect(transport.mutationUnknownSignalCount, 1);
     },
   );
 
