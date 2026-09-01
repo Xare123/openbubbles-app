@@ -710,6 +710,7 @@ try {
     $uriBuilder.Scheme = if ($uriBuilder.Scheme -eq 'https') { 'wss' } else { 'ws' }
     $uriBuilder.Host = '127.0.0.1'
     $uriBuilder.Port = $script:ForwardLocalPort
+    $uriBuilder.Path = "$($uriBuilder.Path.TrimEnd('/'))/ws"
     Invoke-DartTrigger -Uri $uriBuilder.Uri.AbsoluteUri -DartPath $dartPath -ConfigPath $PackageConfig -ScriptPath $VmTriggerScript
 
     $newReport = $null
