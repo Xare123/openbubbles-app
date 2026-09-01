@@ -37,6 +37,11 @@ on:
           - build-only
           - bindings-only
           - rustpush-only
+      outbound_writer:
+        description: Build the isolated Android Canary with one-message V2 writer controls
+        required: true
+        default: false
+        type: boolean
 permissions:
   contents: read
 
@@ -59,6 +64,7 @@ env:
   DISK_TYPE: ${{ startsWith(inputs.machine_type || 'n2d-standard-16', 'c4d-') && 'hyperdisk-balanced' || startsWith(inputs.machine_type || 'n2d-standard-16', 't2d-') && 'pd-ssd' || 'pd-balanced' }}
   BUILD_FLAVOR: ${{ inputs.flavor || 'beta' }}
   VALIDATION_MODE: ${{ inputs.validation_mode || 'full' }}
+  OUTBOUND_WRITER: ${{ inputs.outbound_writer || false }}
   SOURCE_REF: ${{ inputs.source_ref || github.sha }}
   TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-auth-refresh-repair
 
@@ -101,6 +107,14 @@ jobs:
           fi
           if [[ ! "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
             echo 'source_ref must be a lowercase full 40-character commit SHA.' >&2
+            exit 1
+          fi
+          if [[ "$OUTBOUND_WRITER" == 'true' && "$BUILD_FLAVOR" != 'canary' ]]; then
+            echo 'outbound_writer requires flavor=canary.' >&2
+            exit 1
+          fi
+          if [[ "$OUTBOUND_WRITER" == 'true' && "$VALIDATION_MODE" != 'full' ]]; then
+            echo 'outbound_writer requires validation_mode=full.' >&2
             exit 1
           fi
           trusted_sha="$(
@@ -391,6 +405,13 @@ jobs:
           ./tooling/frb/guard_generated_sse_impls.ps1 -Mode Deduplicate -ExpectedRemovalCount 6
           ./tooling/frb/guard_generated_sse_impls.ps1 -Mode Verify
 
+      - name: Normalize platform-specific FRB diagnostics
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' }}
+        shell: pwsh
+        run: |
+          ./tooling/frb/normalize_generated_diagnostics.ps1 -Mode Normalize
+          ./tooling/frb/normalize_generated_diagnostics.ps1 -Mode Verify
+
       # The artifact is retained even if regeneration changes committed files.
       # Drift is recorded here and rejected after the requested validation has
       # produced its artifacts, so a failed reproducibility gate never hides
@@ -492,6 +513,12 @@ jobs:
           if [[ "$BUILD_FLAVOR" == 'canary' ]]; then
             build_args+=(--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true)
           fi
+          if [[ "$OUTBOUND_WRITER" == 'true' ]]; then
+            build_args+=(
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true
+              --dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2
+            )
+          fi
           flutter "${build_args[@]}"
           finished="$(date +%s)"
           elapsed="$((finished - started))"
@@ -501,6 +528,7 @@ jobs:
             echo
             echo "- Flavor: \`${BUILD_FLAVOR}\`"
             echo "- Machine: \`${MACHINE_TYPE}\`"
+            echo "- Outbound writer: \`${OUTBOUND_WRITER}\`"
             echo "- Flutter build time: \`${elapsed}s\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -542,7 +570,7 @@ jobs:
         if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: GCE producer ${{ inputs.flavor || 'beta' }} APK ${{ env.SOURCE_REF }}
+          name: GCE producer ${{ inputs.flavor || 'beta' }} APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }}
           path: build/app/outputs/flutter-apk/app-${{ inputs.flavor || 'beta' }}-debug.apk
           if-no-files-found: error
 
@@ -590,7 +618,7 @@ jobs:
       - name: Download GCE producer APK
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: GCE producer canary APK ${{ env.SOURCE_REF }}
+          name: GCE producer canary APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }}
           path: producer
 
       - name: Sign and verify Canary
@@ -664,7 +692,7 @@ jobs:
       - name: Upload signed Canary APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: GCE CloudKit V2 Evidence Canary APK ${{ env.SOURCE_REF }}
+          name: GCE CloudKit V2 Canary APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }}
           path: producer/app-canary-debug.apk
           if-no-files-found: error
 
