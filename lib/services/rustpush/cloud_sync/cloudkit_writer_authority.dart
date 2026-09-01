@@ -323,6 +323,67 @@ final class ObjectBoxCloudKitWriterAuthority {
     });
   }
 
+  /// Restores a writer to a fresh stable epoch only after an exact remote
+  /// readback has resolved the mutation protected by the filesystem fence.
+  ///
+  /// A process can die before [markMutationUnknown] runs, leaving the original
+  /// stable epoch beside an armed fence, or after this transaction commits but
+  /// before that fence is removed. Both states are accepted idempotently. No
+  /// other epoch or authority state may be repaired through this path.
+  CloudKitWriterAuthoritySnapshot reconcileMutationFence(
+    CloudKitWriterScope scope, {
+    required CloudKitWriterOwner owner,
+    required int fencedEpoch,
+    required DateTime now,
+  }) {
+    _requireMutationInterlock(owner);
+    _requireSelectedOwner(owner);
+    if (fencedEpoch < 0) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_mutation_reconciliation_epoch_invalid',
+      );
+    }
+    return _store.runInTransaction(TxMode.write, () {
+      final entity = _require(scope);
+      final current = _snapshot(scope, entity);
+      if (current.owner != owner ||
+          current.targetOwner != CloudKitWriterOwner.none ||
+          current.transitionIdHash != null) {
+        throw const CloudKitWriterAuthorityFailure(
+          'cloudkit_writer_mutation_reconciliation_precondition_failed',
+        );
+      }
+
+      final unresolvedStable =
+          current.state == CloudKitWriterAuthorityState.stable &&
+          current.epoch == fencedEpoch;
+      final explicitlyUnknown =
+          current.state == CloudKitWriterAuthorityState.mutationUnknown &&
+          current.epoch == fencedEpoch + 1;
+      final alreadyReconciled =
+          current.state == CloudKitWriterAuthorityState.stable &&
+          current.epoch == fencedEpoch + 2;
+      if (alreadyReconciled) return current;
+      if (!unresolvedStable && !explicitlyUnknown) {
+        throw const CloudKitWriterAuthorityFailure(
+          'cloudkit_writer_mutation_reconciliation_precondition_failed',
+        );
+      }
+
+      entity
+        ..state = _stateCode(CloudKitWriterAuthorityState.stable)
+        ..targetOwner = _ownerCode(CloudKitWriterOwner.none)
+        ..transitionIdHash = null
+        // Always converge on one deterministic post-reconciliation epoch.
+        // This invalidates the permit which armed the fence even when the
+        // process died before it could mark the mutation unknown.
+        ..epoch = fencedEpoch + 2
+        ..updatedAtMs = now.millisecondsSinceEpoch;
+      _authorities.put(entity);
+      return _snapshot(scope, entity);
+    });
+  }
+
   CloudKitWriterAuthoritySnapshot prepareMigration(
     CloudKitWriterScope scope, {
     required CloudKitWriterOwner from,

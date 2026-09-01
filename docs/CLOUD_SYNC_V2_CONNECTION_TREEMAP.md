@@ -56,9 +56,9 @@ listed falsification test before its status advances.
 | Drain termination and launcher identity | The 16-pass outcome is now distinct resumable non-success. Every status is bound to a cryptographic launch ID and exact Dart PID, launchers are profile-serialized, and timeout or identity mismatch leaves the active exact process running. A later invocation rejects that retained harness before touching build artifacts and rechecks immediately before launch. The focused Dart and PowerShell behavioral suites pass; independent audit found no P0-P3 issue. | `TEST-PROVEN`; live pending | Exercise exact status identity and either terminal-empty or resumable-cap behavior in the signed Windows harness. |
 | Remote-ingestion head | Engine evidence now distinguishes a durably journaled terminal empty server page from a duplicate nonempty page that inserts zero rows. No schema-v5 live drain report exists yet. | `REPAIRED; LIVE PROOF PENDING` | Run one guarded Windows drain until all exact zones prove terminal-empty or the hard cap returns resumable. |
 | Exact local projection | Earlier signed replays restored many chats/messages, but the durable backlog still includes unsupported-service and malformed decoder evidence. Thirty-one observed iMessage records used unresolved bare `chatID` syntax. | `LIVE-PROVEN` partial | After remote catch-up, run the content-free direct-CID cardinality diagnostic; promote no route until a unique style-45 interpretation and disagreement rules are proven. |
-| Outbound authority and exclusion | The manual writer now requires two single-use confirmations and holds the cross-process `v2ReadWrite` interlock from the second preflight through native quiescence. Every native writer boundary independently requires that active interlock. A changed account, exact Dart transport client, protected-store identity, authority epoch, or exact cached writer-container instance revokes the permit; an ambiguous postcondition durably marks authority `mutationUnknown`. The guard rechecks timeout poisoning after asynchronous identity capture and before it can arm mutation state. Each native prepared handle has a random SHA-256 binding recorded in the durable capability fence, so a capability for one handle cannot consume another. The native consume boundary accepts that one digest-bound capability and revalidates the retained container on both sides of submission. | `TEST-PROVEN`; no live write yet | Qualify the exact source in CI, then prove one bounded Canary create while legacy/read-only owners cannot overlap it. |
+| Outbound authority and exclusion | The Android-Canary-only UI selects the newest eligible existing one-to-one iMessage text, shows only a GUID hash, timestamp, and character count, and requires two single-use confirmations. The operator must enter the exact recipient; the persisted candidate must use canonical iMessage endpoint forms and agree across chat GUID, chat identifier, sole participant, and one current IDS sending handle. The encoded native `CloudMessage` is then checked against that same exact route before any admission. Before provisioning and again inside the final `v2ReadWrite` exclusion, it re-reads only that newest row and requires an exact private content/routing binding; edits, deletion, rerouting, active-handle replacement, expiry, or a newer outgoing row cancel the operation without falling back. The core holds the cross-process interlock through native quiescence. Every native writer boundary independently requires that active interlock. A changed account, exact Dart transport client, protected-store identity, authority epoch, or exact cached writer-container instance revokes the permit; an ambiguous postcondition durably marks authority `mutationUnknown`. The guard rechecks timeout poisoning after asynchronous identity capture and before it can arm mutation state. Each native prepared handle has a random SHA-256 binding recorded in the durable capability fence, so a capability for one handle cannot consume another. The native consume boundary accepts that one digest-bound capability and revalidates the retained container on both sides of submission. | `TEST-PROVEN`; no live write yet | Qualify the exact source in CI, then prove one bounded Canary create while legacy/read-only owners cannot overlap it. |
 | Deterministic Messages record identity | Apple derives a missing message record name as full lowercase hexadecimal HMAC-SHA256 with `ckAppInit.cloudKitUserId` as the UTF-8 key and the unchanged message GUID as UTF-8 data. A signed ARM64 Windows debug DLL from CI run `33484931375` compared that derivation with 142 Apple-created message records in the isolated profile: 142 matched and zero differed. No content or identity input was logged. The diagnostic oracle has been removed from the candidate. | `LIVE-PROVEN`; 142/142 exact matches | Keep the synthetic fixture in CI and reject any staged, prepared, or reconciled mapping that disagrees with the deterministic derivation. |
-| Exact first-create reconciliation | V2 now initializes the exact general Messages container, resolves only the existing `messageManateeZone` PCS configuration, and keeps its container-scoped user ID native-only. It derives the stable name before staging, then recomputes the derivation at prepare and reconcile. A non-forgeable native binding retains the exact container `Arc`; same-user replacement fails before proof or submission and a post-submit replacement becomes mutation-unknown. Exact absence may admit create-only; an exact matching digest is a local confirmed no-op; divergent state is quarantined; unresolved state stays pre-submit. A post-submit create conflict is ambiguous until exact reconciliation proves same, divergent, or unresolved state. | `REPAIRED`; live write pending | Run one exact remote-absence/create/no-op replay pair and prove one remote record, one durable terminal outcome, and no automatic replay. |
+| Exact first-create reconciliation | V2 now initializes the exact general Messages container, resolves only the existing `messageManateeZone` PCS configuration, and keeps its container-scoped user ID native-only. It derives the stable name before staging, then recomputes the derivation at prepare and reconcile. A non-forgeable native binding retains the exact container `Arc`; same-user replacement fails before proof or submission and a post-submit replacement becomes mutation-unknown. Exact absence may admit create-only; an exact matching digest is a local confirmed no-op; divergent state is quarantined; unresolved state stays pre-submit. A post-submit create conflict is ambiguous until exact reconciliation proves same, divergent, or unresolved state. Recovery accepts one exact `pending` or `unknownOutcome` create and automatically routes an exact `confirmed` row into no-save replay. The Canary's transition policy retains the confirmed native receipt durably; protected-store recovery treats that receipt as live across restart. Exact readback returns an opaque proof bound to the operation and receipt. Only that proof can release the local receipt, while quarantined and ordinary confirmed rows keep terminal cleanup behavior. Neither lane admits a new message. | `REPAIRED`; live write pending | Run one exact remote-absence/create/confirmed-only-replay sequence and prove one remote record, one durable terminal outcome, and zero replay saves. |
 | Candidate qualification | GCE run `33407697832` tested source `8d30f9610`: bindings, full Dart, Rust, rustpush, protector, native APK verification, and runner/VM cleanup all passed in about 24.5 minutes. It remains baseline toolchain/performance evidence only because the audit invalidated that source after dispatch. The replacement has passed focused host tests and a no-findings post-fix audit. | `TEST-PROVEN`; GCE pending | Freeze the corrected SHA, then rerun the same full T2D-32 gate. |
 
 ### Investigation checkpoint: session and launcher safety
@@ -181,8 +181,15 @@ the exact remote evidence.
 
 ```mermaid
 flowchart TD
-  A[Read setup and projection gates pass] --> B[Two explicit single-use confirmations]
-  B --> C[Acquire cross-process v2ReadWrite interlock]
+  A[Read setup and projection gates pass] --> A1[Query newest outgoing row only]
+  A1 --> A2[Require fresh ordinary one-to-one iMessage text]
+  A2 --> B[Show content-free hash, time, and character count]
+  B --> B1[First explicit confirmation]
+  B1 --> B2[Re-read newest row and require exact private content/routing binding]
+  B2 --> B3[Arm the exact in-memory candidate]
+  B3 --> B4[Provision V2 writer ownership; no CloudKit request]
+  B4 --> B5[Second explicit confirmation]
+  B5 --> C[Acquire cross-process v2ReadWrite interlock]
   C --> D[Revalidate account, client, store, epoch, and exact one-row outbox]
   D --> D1[Bind exact cached Messages container instance]
   D1 --> D1A[Read its container-scoped user ID]
@@ -206,13 +213,79 @@ flowchart TD
   L -. timeout or unknown result .-> U[Mark mutationUnknown; reconcile only]
   M -. identity or authority changed .-> U
   H -. create race conflict .-> U
+  U --> U1[Lease the exact unknown row; preserve Apple UUIDs and protected receipt]
+  U1 --> U2[Guard-owned exact native readback; no engine, admission, prepare, consume, or save]
+  U2 -- committed --> U3[Confirm; preserve UUIDs and receipt for no-save replay]
+  U2 -- proven not applied --> U4[Return pending; clear UUIDs only after proof; preserve receipt]
+  U2 -- divergent, unresolved, or exception --> U5[Remain unknown; preserve UUIDs, receipt, and fence]
 ```
 
 This writer is deliberately create-only. Exact absence is proven before the
 first save, but the ambiguity boundary is still durable before consumption
 because absence and create are not atomic. Once consumption may have happened,
 no automatic replay is legal. A later exact lookup may confirm the same digest;
-otherwise the operation remains unknown or is quarantined for review.
+authoritatively prove that no create was applied; or leave the operation unknown.
+Only pre-submission divergence may quarantine. Once native consumption may have
+occurred, divergence, a readback error, and an unresolved result all preserve
+the ambiguity evidence and stop.
+
+There are four deliberately separate operator lanes:
+
+1. **Initial create:** exact candidate selection, private binding revalidation,
+   arm, local writer provisioning, final confirmation, then at most one create.
+2. **Pending resubmission:** requires one exact `pending` row and a fresh second
+   confirmation. It may use the ordinary one-row engine path, but cannot admit
+   another message.
+3. **Unknown-outcome reconciliation:** requires one exact `unknownOutcome` row
+   and a fresh second confirmation. Its session has only read, quiesce, lease,
+   exact-readback, and closed-transition capabilities. It never constructs the
+   write transport, engine, admission coordinator, writer permit, conflict
+   merge, quarantine, delete, prepare, consume, or submit surfaces.
+4. **Confirmed-only replay verification:** requires the existing durable row to
+   be terminal-confirmed before entry and performs an exact protected remote
+   digest lookup. It never invokes native prepare, consume, or save, and must
+   finish with zero saves, quarantines, or retries. The readback returns an
+   opaque proof bound to the exact operation and protected receipt. Only that
+   proof may release the receipt. Release consumes the proof, atomically
+   compares every durable operation field, and clears the ObjectBox adoption
+   marker before idempotently acknowledging the native receipt. If the process
+   dies after the durable clear, startup recovery removes the now-unadopted
+   receipt while the separate protected payload reference remains live. A
+   stale row never loses its marker. Replay cannot silently become initial
+   admission or a second create.
+
+Provisioning is tracked as in-flight state. Account reset and teardown wait for
+bounded provisioning quiescence, and synchronous disposal refuses to release
+native handles underneath provisioning or a protected write.
+
+Recovery and postflight validation use a closed lifecycle relation, not merely
+an operation ID. A recoverable initial `pending` row has no Apple submission
+UUIDs, lease, confirmation, or retry metadata. A retried `pending` row has both
+failure and next-eligible metadata. An `unknownOutcome` row has the exact Apple
+request/operation UUID pair, `unknown` failure, and no live lease or
+confirmation. A `confirmed` row has that UUID pair and `confirmedAt`, with no
+retry metadata or live lease. Postflight may preserve or newly assign the UUID
+pair, but once assigned it cannot be cleared or replaced unless authoritative
+`notApplied` readback returns the row to `pending`. Unknown recovery can only
+confirm while preserving the pair and receipt, return to pending while clearing
+the pair after proof and preserving the receipt, or remain unknown while
+preserving all evidence. It cannot quarantine. `paused` is rejected until a
+separately reviewed paused-resumption protocol exists.
+
+### Canary installation identity boundary
+
+The signed Canary is installed as
+`com.bluebubbles.messaging.cloudkitcanary`, separate from Alpha. Its APK does
+not contain the registration-relay token. For the owned Mac mini, setup imports
+only the app's hardware-only `OABS` profile through Canary onboarding after
+installation. Import creates fresh Canary-local UDID and NGM state. It does not
+copy Alpha's `hw_info.plist`, Apple session, database, or messages.
+
+Before import, check only Canary's private state. If Canary already has
+`files/hw_info.plist`, stop and preserve it rather than re-importing. Keep the
+OABS value out of command lines, logs, CI artifacts, and preferences; discard
+the temporary transfer after successful onboarding. No setup command may read
+or write Alpha's package path.
 
 ### Candidate qualification feedback loop
 
@@ -347,12 +420,15 @@ show fetched, retained, and projected counts separately.
 | Honest Canary completion | [`CloudRetainedUnprojectedBacklogStore`](../lib/services/rustpush/cloud_sync/cloud_sync_store.dart#L290), [`ObjectBoxCloudSyncStore.readRetainedUnprojectedInboxCount`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L752), [`CloudSyncManualSemanticPullSampler`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart#L285), [`cloudSyncV2SemanticCanaryPresentation`](../lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart#L46) | Read the current-generation durable retained backlog after repair attempts, then sum it across all zones. A zero per-run transition count is insufficient. Report `Complete` only when the original three-zone/status/quarantine/retry/write-tripwire gates pass and durable retained count is zero; a completed read with retained evidence is degraded/`Partial`, while a blocking failure is `Stopped Safely`. | `TEST-PROVEN; LIVE-PROVEN` |
 | Token-expiry reset | [`CloudSyncStore.rebootstrapAfterReset`](../lib/services/rustpush/cloud_sync/cloud_sync_store.dart#L150), [`ObjectBoxCloudSyncStore.rebootstrapAfterReset`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L1312) | Obtain an account-bound remote-reset proof, quiesce the coordinator, atomically fence old evidence, increment generation, and restart from no token. The coordinator must also prove how unresolved old-generation saves and tombstones remain repairable or are reconciled by the full refetch. | `GAP / POLICY DECISION`: durable primitive exists, but production orchestration has no caller and current-generation reprojection cannot consume generation-zero evidence |
 | No-write exit tripwire | [`CloudSyncManualSemanticPullSampler._runConfirmedUnderInterlock`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart#L194) | Remote confirmations remain zero, outbox count is unchanged, active identity is revalidated, native operations quiesce, and writers resume. | `LIVE-PROVEN` |
-| Manual writer admission | [`CloudSyncManualOutboundCanary.runDoubleConfirmed`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart), [`CloudKitOperationInterlock`](../lib/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart) | Consume two single-use confirmations, then hold one durable `v2ReadWrite` exclusion across the second preflight, admission, fetch/apply, one-row flush, terminal checks, and native quiescence. | `TEST-PROVEN`; live write pending |
-| Revocable write authority | [`CloudKitWriterMutationGuard`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart), [`NativeProtectedCloudSyncTransport`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart), [`CloudMessagesWriterPreparationBinding`](../rustpush/src/imessage/cloud_messages.rs) | Every native writer boundary requires `v2ReadWrite`. Account, exact Dart transport client object, store, epoch, and exact cached writer-container instance must remain exact before and after action. Timeout poisoning is rechecked after asynchronous identity capture and before mutation state can be armed. Any ambiguous postcondition durably changes stable authority to `mutationUnknown`, so no new permit can be issued. | `TEST-PROVEN`; live write pending |
+| Manual writer admission | [`troubleshoot_panel.dart`](../lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart), [`CloudSyncManualOutboundCanary.runDoubleConfirmed`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart), [`CloudKitOperationInterlock`](../lib/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart) | Expose controls only in the compile-gated Android Canary. Initial create, interrupted recovery, and confirmed-only replay are separate two-confirmation lanes. Consume the confirmation before the first await, then hold one durable `v2ReadWrite` exclusion across fresh candidate or exact-operation revalidation, the second preflight, admission or reconciliation, one-row flush, terminal checks, and native quiescence. | `TEST-PROVEN`; live write pending |
+| Exact local candidate binding | [`CloudSyncOutboundCanaryCandidateSelector`](../lib/services/rustpush/cloud_sync/cloud_sync_outbound_canary_candidate.dart), [`RustPushService.armCloudSyncV2OutboundConfirmed`](../lib/services/rustpush/rustpush_service.dart) | Query only the newest outgoing row. Require one fresh ordinary one-to-one iMessage text with no subject; never fall back. Require canonical persisted endpoint forms and exact agreement with the operator-entered recipient across chat GUID, chat identifier, and sole participant, plus a current IDS sending handle. Validate the encoded `CloudMessage` service, type, error, chat ID, sender, destination caller ID, and GUID against that route. Re-read current IDS handles and the exact row before arming and once more inside the final run exclusion; require the same private SHA-256 binding over content, route, time, and state. Keep the binding, body, recipient, and handles out of diagnostics. | `TEST-PROVEN`; live write pending |
+| Writer provisioning quiescence | [`RustPushService.prepareCloudSyncV2OutboundWriter`](../lib/services/rustpush/rustpush_service.dart), [`RustPushService.resetAppleState`](../lib/services/rustpush/rustpush_service.dart), [`RustPushService.onClose`](../lib/services/rustpush/rustpush_service.dart) | Arm before provisioning. Track the provisioning future, reject concurrent admission, wait boundedly during account reset, and never dispose native handles underneath provisioning or an active write. | `TEST-PROVEN`; live write pending |
+| Recovery and no-save replay | [`CloudSyncManualOutboundCanary.armRecoveryConfirmed`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart), [`CloudSyncManualOutboundCanary.armConfirmedReplay`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart), [`CloudKitWriterMutationGuard.reconcileUnknownOutcome`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart), [`NativeProtectedCloudSyncTransport.releaseConfirmedReplayReceipt`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart) | Recovery snapshots the complete exact durable row and passes its explicit kind plus snapshot to a disjoint session factory. Pending resubmission, unknown readback, and confirmed replay cannot be cast into one another. The unknown lane constructs no engine, admission coordinator, write transport, writer permit, prepare, consume, conflict merge, quarantine, or delete capability. Guard-owned native readback is exhaustive: committed preserves UUIDs and receipt while confirming; proven-not-applied clears UUIDs only after proof while preserving the receipt and returning pending; divergent, unresolved, quarantined-envelope, and exception outcomes remain unknown and preserve UUIDs, receipt, and fence. ObjectBox reopen tests pin that evidence across restart. Confirmed replay remains exact no-save proof and is the only lane that can release a retained receipt after exact durable comparison. | `TEST-PROVEN`; live write pending |
+| Revocable write authority | [`CloudKitWriterMutationGuard`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart), [`NativeProtectedCloudSyncTransport`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart), [`CloudMessagesWriterPreparationBinding`](../rustpush/src/imessage/cloud_messages.rs) | Every native writer boundary requires `v2ReadWrite`. Account, exact Dart transport client object, store, epoch, and exact cached writer-container instance must remain exact before and after action. Timeout poisoning is rechecked after asynchronous identity capture and before mutation state can be armed. Ambiguity moves authority from stable epoch `E` to `mutationUnknown` at `E+1`; exact committed/not-applied readback reconciles to stable `E+2`, while unresolved evidence remains fenced at `E+1`. Fence schema v3 binds the exact lowercase reconciliation SHA-256 before and after native submission. | `TEST-PROVEN`; live write pending |
 | Exact prepared-handle capability | [`CloudKitWriterMutationGuard`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart), [`cloud_sync_consume_prepared_message_create`](../rust/src/api/api.rs) | Every native prepared handle owns a content-free random SHA-256 binding. The durable fence must contain that exact binding plus the capability digest, account, store, owner, and scope. A capability/fence for one prepared handle cannot consume another, and a rejected attempt does not consume either handle. | `TEST-PROVEN`; live write pending |
 | Cross-language operation identity | [`CloudOperationIdentity.forInitialCreate`](../lib/services/rustpush/cloud_sync/cloud_operation_identity.dart), [`initial_message_create_operation_id`](../rust/src/cloud_sync_outbound.rs) | Dart and Rust must hash the same semantic persistence lane and payload schema version. The semantic/payload-V2 synthetic fixture is pinned on both sides; a legacy-lane or V1 operation ID cannot enter a V2 prepared envelope. | `TEST-PROVEN`; live write pending |
 | Exact first-create proof | [`NativeProtectedCloudSyncTransport.prepareSubmission`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart) | Use the native exact record lookup before prepare. Only exact NotFound may create; exact digest match is a no-save confirmation; divergence conflicts; unresolved proof stays pre-submit. Mixed batches must partition exactly into remote and preconfirmed operation IDs. | `TEST-PROVEN`; live write pending |
-| Create-only race handling | [`NativeProtectedCloudSyncTransport.consumePreparedSubmission`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart) | Persist the ambiguity boundary before consume, correlate the complete operation set, and quarantine a native create conflict. Never route a create race into update merge or automatic replay. | `TEST-PROVEN`; live write pending |
+| Create-only race handling | [`NativeProtectedCloudSyncTransport.consumePreparedSubmission`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart) | Persist the ambiguity boundary before consume and correlate the complete operation set. After capability consumption, every non-confirmed result is durably `unknownOutcome` with its diagnostic failure category retained; a create conflict cannot quarantine, update-merge, or automatically replay until exact readback proves the outcome. | `TEST-PROVEN`; live write pending |
 
 ## Recovery policy
 
@@ -529,7 +605,8 @@ enabling writes.
     indeterminate proof, swapped proof references, create races, and restart
     reconciliation after a persisted ambiguity boundary.
 13. The first live write is one plain-text Canary message to the explicit test
-    recipient. A second identical run must perform no save, and content-free
+    recipient. A confirmed-only replay of that exact durable operation must
+    perform no save, and content-free
     evidence must prove one remote record, one local terminal operation, no
     delete, no update merge, and no automatic replay.
 
@@ -551,8 +628,8 @@ read gates:
    when the mapped Dart/Rust boundary changes;
 4. freeze one candidate SHA and qualify read plus create-only writer safety in
    CI before any live mutation;
-5. send one double-confirmed plain-text Canary, then repeat the exact operation
-   as a no-save idempotency proof;
+5. send one double-confirmed plain-text Canary, then use the distinct
+   confirmed-only replay lane as a zero-save idempotency proof;
 6. qualify an in-place Android Canary only after that writer proof; and
 7. design token-expiry reset and broader attachment-body materialization as
    separate reviewed changes after text/history projection is stable.

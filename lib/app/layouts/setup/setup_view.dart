@@ -64,6 +64,42 @@ class SetupViewController extends StatefulController {
   RxBool supportsPhoneReg = false.obs;
 
   final GlobalKey<HwInpState> _childKey = GlobalKey<HwInpState>();
+  final Map<String, Uint8List> _transientHardwareTransfers = {};
+
+  static bool isOpenAbsintheTransfer(Uint8List data) =>
+      data.length >= 5 &&
+      data[0] == 0x4f &&
+      data[1] == 0x41 &&
+      data[2] == 0x42 &&
+      data[3] == 0x53;
+
+  void retainTransientHardwareTransfer(String code, Uint8List data) {
+    if (!isOpenAbsintheTransfer(data)) {
+      throw const FormatException("Invalid hardware transfer format");
+    }
+    _transientHardwareTransfers[code] = Uint8List.fromList(data);
+  }
+
+  Uint8List? consumeTransientHardwareTransfer(String code) =>
+      _transientHardwareTransfers.remove(code);
+
+  void clearHardwareTransferMaterial() {
+    _transientHardwareTransfers.clear();
+    var removedPersistedTransfer = false;
+    for (final entry in ss.settings.cachedCodes.entries.toList()) {
+      try {
+        if (isOpenAbsintheTransfer(base64Decode(entry.value))) {
+          ss.settings.cachedCodes.remove(entry.key);
+          removedPersistedTransfer = true;
+        }
+      } catch (_) {
+        // Unrelated cache entries have their own validation and lifecycle.
+      }
+    }
+    if (removedPersistedTransfer) {
+      ss.saveSettings();
+    }
+  }
 
   bool goingTo2fa = true;
   bool success = false;
@@ -533,7 +569,7 @@ class SetupViewController extends StatefulController {
 
       success = true;
       // persisting SMS auth certs is actually really useful
-      // ss.settings.cachedCodes.clear();
+      clearHardwareTransferMaterial();
       Logger.debug("Success registered!");
       if (ss.settings.deviceIsHosted.value) {
         pushService.mixpanel?.track("hosted-setup-success");
@@ -607,7 +643,12 @@ class SetupViewController extends StatefulController {
 
     var data = response.data["data"];
     
-     var myData = Uint8List.fromList(decryptAESCryptoJS(data, code));
+    var myData = Uint8List.fromList(decryptAESCryptoJS(data, code));
+    if (isOpenAbsintheTransfer(myData)) {
+      retainTransientHardwareTransfer(code, myData);
+      Logger.debug("Retained hardware transfer in memory for setup");
+      return;
+    }
     Logger.debug("cached code");
     ss.settings.cachedCodes[code] = base64Encode(myData);
     ss.saveSettings();
@@ -1248,7 +1289,7 @@ class _ErrorTextState extends CustomState<ErrorText, String, SetupViewController
                         }
 
                         // stop stupid automatic cralwers from spamming the webhook
-                        var url = dotenv.get('REPORT_ISSUE_WEBHOOK');
+                        var url = dotenv.get('REPORT_ISSUE_WEBHOOK', fallback: '');
 
                         try {
                           final response = await http.dio.post(

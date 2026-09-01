@@ -195,15 +195,6 @@ bool _isProtectedReference(String value) =>
 bool _isProtectedLeaseReference(String value) =>
     RegExp(r'^obcs2\.lease\.[0-9a-f]{32}$').hasMatch(value);
 
-bool _isNativeProtectedReference(String value) =>
-    RegExp(r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$').hasMatch(value);
-
-bool _isNativeDigest(String value) =>
-    RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(value);
-
-bool _isOperationId(String value) =>
-    RegExp(r'^op1:[a-f0-9]{64}$').hasMatch(value);
-
 enum CloudChangeType { save, delete }
 
 /// Durable inbox states. Keep the order stable because ObjectBox persists the
@@ -784,7 +775,9 @@ class CloudOutboxOperation {
   /// Native protected lease adopted by this outbox row.
   ///
   /// This is deliberately separate from the page-lease adoption marker. It
-  /// remains live while the outbound operation is non-terminal.
+  /// remains live while the outbound operation is non-terminal. A manual
+  /// Canary may retain it on a confirmed row until exact no-save replay proves
+  /// the remote digest and releases the local receipt.
   final String? protectedLeaseReference;
   final String? appleRequestUuid;
   final String? appleOperationUuid;
@@ -857,6 +850,41 @@ class CloudOutboxOperation {
       confirmedAt: confirmedAt ?? this.confirmedAt,
     );
   }
+
+  /// True only when every durable field matches the supplied snapshot.
+  ///
+  /// This is intentionally stricter than operation identity. Receipt release
+  /// uses it after proof validation and before native acknowledgement so a
+  /// concurrent or stale ObjectBox row can never have its protected lease
+  /// marker cleared.
+  bool sameDurableSnapshotAs(CloudOutboxOperation other) =>
+      scope == other.scope &&
+      operationId == other.operationId &&
+      logicalEntityKeyHash == other.logicalEntityKeyHash &&
+      action == other.action &&
+      payloadVersion == other.payloadVersion &&
+      mutationRevision == other.mutationRevision &&
+      checkpointGeneration == other.checkpointGeneration &&
+      encryptedPayloadReference == other.encryptedPayloadReference &&
+      payloadSha256 == other.payloadSha256 &&
+      serverRecordIdHash == other.serverRecordIdHash &&
+      protectedLeaseReference == other.protectedLeaseReference &&
+      appleRequestUuid == other.appleRequestUuid &&
+      appleOperationUuid == other.appleOperationUuid &&
+      dependencyOperationIds.length == other.dependencyOperationIds.length &&
+      dependencyOperationIds.containsAll(other.dependencyOperationIds) &&
+      createdAt.millisecondsSinceEpoch ==
+          other.createdAt.millisecondsSinceEpoch &&
+      status == other.status &&
+      attemptCount == other.attemptCount &&
+      nextEligibleAt?.millisecondsSinceEpoch ==
+          other.nextEligibleAt?.millisecondsSinceEpoch &&
+      lastFailure == other.lastFailure &&
+      leaseId == other.leaseId &&
+      leaseExpiresAt?.millisecondsSinceEpoch ==
+          other.leaseExpiresAt?.millisecondsSinceEpoch &&
+      confirmedAt?.millisecondsSinceEpoch ==
+          other.confirmedAt?.millisecondsSinceEpoch;
 }
 
 class CloudOutboxDraft {
@@ -942,8 +970,8 @@ class CloudPushOutcome {
       throw ArgumentError('cloud_push_outcome_retry_after_invalid');
     }
     if (disposition == CloudPushDisposition.unknownOutcome &&
-        failureCategory != CloudFailureCategory.unknown) {
-      throw ArgumentError('cloud_push_unknown_outcome_requires_unknown');
+        failureCategory == null) {
+      throw ArgumentError('cloud_push_unknown_outcome_requires_category');
     }
   }
 
@@ -996,97 +1024,29 @@ enum CloudUnknownOutcomeDisposition {
   quarantined,
 }
 
-/// Content-free evidence binding one protected server-state comparison to the
-/// exact durable mutation it resolved. Production transports create the
-/// opaque proof reference inside the protected Rust boundary.
-final class CloudUnknownOutcomeProof {
-  CloudUnknownOutcomeProof({
-    required this.operationId,
-    required this.appleRequestUuid,
-    required this.appleOperationUuid,
-    required this.scopeStorageKey,
-    required this.checkpointGeneration,
-    required this.logicalEntityKeyHash,
-    required this.serverRecordIdHash,
-    required this.action,
-    required this.expectedPayloadSha256,
-    required this.protectedProofReference,
-    this.observedEtagHash,
-  }) {
-    if (!_isOperationId(operationId) ||
-        !_isCanonicalAppleUuid(appleRequestUuid) ||
-        !_isCanonicalAppleUuid(appleOperationUuid) ||
-        appleRequestUuid == appleOperationUuid ||
-        scopeStorageKey.isEmpty ||
-        checkpointGeneration <= 0 ||
-        !_isNativeDigest(logicalEntityKeyHash) ||
-        !_isNativeDigest(serverRecordIdHash) ||
-        !_isNativeProtectedReference(protectedProofReference) ||
-        (action == CloudOutboxAction.save && expectedPayloadSha256 == null) ||
-        (expectedPayloadSha256 != null && !_isDigest(expectedPayloadSha256!)) ||
-        (action == CloudOutboxAction.delete && expectedPayloadSha256 != null)) {
-      throw ArgumentError('cloud_unknown_outcome_proof_invalid');
-    }
-  }
-
-  final String operationId;
-  final String appleRequestUuid;
-  final String appleOperationUuid;
-  final String scopeStorageKey;
-  final int checkpointGeneration;
-  final String logicalEntityKeyHash;
-  final String serverRecordIdHash;
-  final CloudOutboxAction action;
-  final String? expectedPayloadSha256;
-  final String protectedProofReference;
-  final String? observedEtagHash;
-
-  bool binds(CloudOutboxOperation operation) =>
-      action == CloudOutboxAction.save &&
-      operationId == operation.operationId &&
-      appleRequestUuid == operation.appleRequestUuid &&
-      appleOperationUuid == operation.appleOperationUuid &&
-      scopeStorageKey == operation.scope.storageKey &&
-      checkpointGeneration == operation.checkpointGeneration &&
-      logicalEntityKeyHash == operation.logicalEntityKeyHash &&
-      serverRecordIdHash == operation.serverRecordIdHash &&
-      action == operation.action &&
-      expectedPayloadSha256 == operation.payloadSha256 &&
-      protectedProofReference == operation.encryptedPayloadReference;
-
-  @override
-  String toString() => 'CloudUnknownOutcomeProof(redacted)';
-}
+/// Opaque evidence returned only after a confirmed create's exact protected
+/// remote digest has been read back without preparing or submitting a save.
+/// Production receipt finalizers accept only their own private implementation.
+abstract interface class CloudSyncConfirmedReplayProof {}
 
 class CloudUnknownOutcomeResolution {
   const CloudUnknownOutcomeResolution._({
     required this.disposition,
-    this.proof,
     this.failureCategory,
     this.retryAfter,
   });
 
-  const CloudUnknownOutcomeResolution.committed({
-    required CloudUnknownOutcomeProof proof,
-  }) : this._(
-         disposition: CloudUnknownOutcomeDisposition.committed,
-         proof: proof,
-       );
+  const CloudUnknownOutcomeResolution.committed()
+    : this._(disposition: CloudUnknownOutcomeDisposition.committed);
 
-  const CloudUnknownOutcomeResolution.notApplied({
-    required CloudUnknownOutcomeProof proof,
-  }) : this._(
-         disposition: CloudUnknownOutcomeDisposition.notApplied,
-         proof: proof,
-       );
+  const CloudUnknownOutcomeResolution.notApplied()
+    : this._(disposition: CloudUnknownOutcomeDisposition.notApplied);
 
-  const CloudUnknownOutcomeResolution.serverRecordChanged({
-    required CloudUnknownOutcomeProof proof,
-  }) : this._(
-         disposition: CloudUnknownOutcomeDisposition.serverRecordChanged,
-         proof: proof,
-         failureCategory: CloudFailureCategory.conflict,
-       );
+  const CloudUnknownOutcomeResolution.serverRecordChanged()
+    : this._(
+        disposition: CloudUnknownOutcomeDisposition.serverRecordChanged,
+        failureCategory: CloudFailureCategory.conflict,
+      );
 
   const CloudUnknownOutcomeResolution.unresolved({
     required CloudFailureCategory failureCategory,
@@ -1105,7 +1065,6 @@ class CloudUnknownOutcomeResolution {
        );
 
   final CloudUnknownOutcomeDisposition disposition;
-  final CloudUnknownOutcomeProof? proof;
   final CloudFailureCategory? failureCategory;
   final Duration? retryAfter;
 
@@ -1205,6 +1164,9 @@ class CloudInboxApplyResult {
     String? safeCode,
     this.retryAfter,
   }) : disposition = CloudInboxApplyDisposition.deferred,
+       // Public callers use `safeCode`; the backing field stays private so the
+       // out-of-scope result can expose its typed code through the same getter.
+       // ignore: prefer_initializing_formals
        _safeCode = safeCode,
        outOfScopeService = null,
        inboxStatusPersisted = false;
@@ -1214,6 +1176,7 @@ class CloudInboxApplyResult {
     String? safeCode,
     this.retryAfter,
   }) : disposition = CloudInboxApplyDisposition.retryable,
+       // ignore: prefer_initializing_formals
        _safeCode = safeCode,
        outOfScopeService = null,
        inboxStatusPersisted = false;
@@ -1223,6 +1186,7 @@ class CloudInboxApplyResult {
     String? safeCode,
     this.inboxStatusPersisted = false,
   }) : disposition = CloudInboxApplyDisposition.quarantined,
+       // ignore: prefer_initializing_formals
        _safeCode = safeCode,
        outOfScopeService = null,
        retryAfter = null;

@@ -6,6 +6,8 @@ import 'package:bluebubbles/main.dart';
 import 'package:bluebubbles/services/backend/sync/chat_sync_manager.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
@@ -137,6 +139,87 @@ CloudSyncV2SemanticCanaryPresentation cloudSyncV2SemanticCanaryPresentation(
   );
 }
 
+enum CloudSyncV2OutboundCanaryOutcome {
+  writeConfirmed,
+  replayVerified,
+  recoveryCompleted,
+  quarantined,
+  unresolved,
+}
+
+@immutable
+final class CloudSyncV2OutboundCanaryPresentation {
+  const CloudSyncV2OutboundCanaryPresentation({
+    required this.outcome,
+    required this.title,
+    required this.message,
+  });
+
+  final CloudSyncV2OutboundCanaryOutcome outcome;
+  final String title;
+  final String message;
+}
+
+CloudSyncV2OutboundCanaryPresentation cloudSyncV2OutboundCanaryPresentation(
+  CloudSyncOutboundCanaryReport report,
+) {
+  final cleanTerminalConfirmation =
+      report.status == CloudSyncRunStatus.completed &&
+      report.outboxStatus == CloudOutboxStatus.confirmed &&
+      report.quarantined == 0 &&
+      report.retried == 0;
+
+  if (!report.recovery &&
+      !report.replayVerification &&
+      cleanTerminalConfirmation &&
+      report.confirmed == 1) {
+    return const CloudSyncV2OutboundCanaryPresentation(
+      outcome: CloudSyncV2OutboundCanaryOutcome.writeConfirmed,
+      title: "Cloud Sync V2 Upload Confirmed",
+      message:
+          "One create-only message record was confirmed. No deletes were enabled. Run the no-save replay verification next.",
+    );
+  }
+  if (report.recovery &&
+      report.replayVerification &&
+      cleanTerminalConfirmation &&
+      report.confirmed == 0) {
+    return const CloudSyncV2OutboundCanaryPresentation(
+      outcome: CloudSyncV2OutboundCanaryOutcome.replayVerified,
+      title: "Cloud Sync V2 Replay Verified",
+      message:
+          "The existing terminal operation was reconciled. No new message was admitted and no additional save was reported.",
+    );
+  }
+  if (report.recovery &&
+      !report.replayVerification &&
+      cleanTerminalConfirmation &&
+      report.confirmed >= 0 &&
+      report.confirmed <= 1) {
+    return const CloudSyncV2OutboundCanaryPresentation(
+      outcome: CloudSyncV2OutboundCanaryOutcome.recoveryCompleted,
+      title: "Cloud Sync V2 Recovery Completed",
+      message:
+          "The existing create operation reached confirmed state. Recovery may have completed one remote create, but no new message was admitted and no delete was enabled.",
+    );
+  }
+  if (report.outboxStatus == CloudOutboxStatus.quarantined ||
+      report.quarantined > 0) {
+    return const CloudSyncV2OutboundCanaryPresentation(
+      outcome: CloudSyncV2OutboundCanaryOutcome.quarantined,
+      title: "Cloud Sync V2 Upload Quarantined",
+      message:
+          "The one operation was quarantined. Do not retry automatically. Review the redacted diagnostic code before using recovery.",
+    );
+  }
+  return const CloudSyncV2OutboundCanaryPresentation(
+    outcome: CloudSyncV2OutboundCanaryOutcome.unresolved,
+    title: "Cloud Sync V2 Outcome Unresolved",
+    message:
+        "CloudKit did not return a safely confirmed terminal outcome. Do not retry automatically or admit another message. Use only the recovery action.",
+  );
+}
+
 class TroubleshootPanel extends StatefulWidget {
   @override
   State<StatefulWidget> createState() => _TroubleshootPanelState();
@@ -177,6 +260,243 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
       DisableBatteryOptimization.isAllBatteryOptimizationDisabled.then((value) {
         optimizationsDisabled.value = value ?? false;
       });
+    }
+  }
+
+  Future<bool> _confirmCloudSyncV2Outbound({
+    required String title,
+    required String message,
+    required String confirmLabel,
+  }) async {
+    if (!mounted) return false;
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            backgroundColor: context.theme.colorScheme.properSurface,
+            title: Text(title, style: context.theme.textTheme.titleLarge),
+            content: Text(message, style: context.theme.textTheme.bodyLarge),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text("Cancel"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(confirmLabel),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<String?> _requestCloudSyncV2OutboundRecipient() async {
+    if (!mounted) return null;
+    final controller = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: context.theme.colorScheme.properSurface,
+          title: Text(
+            "Enter the exact test recipient",
+            style: context.theme.textTheme.titleLarge,
+          ),
+          content: TextField(
+            controller: controller,
+            autocorrect: false,
+            enableSuggestions: false,
+            keyboardType: TextInputType.emailAddress,
+            decoration: const InputDecoration(
+              hintText: "Apple email or phone number",
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text("Cancel"),
+            ),
+            TextButton(
+              onPressed: () {
+                final recipient = controller.text.trim();
+                if (recipient.isNotEmpty) {
+                  Navigator.of(dialogContext).pop(recipient);
+                }
+              },
+              child: const Text("Use Exact Recipient"),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<CloudSyncV2OutboundCanaryPresentation?>
+      _runCloudSyncV2OutboundRecoveryFlow({
+    required bool prepareWriter,
+    required bool immediateReplay,
+  }) async {
+    CloudSyncOutboundCanaryConfirmation? armed;
+    try {
+      final firstConfirmed = await _confirmCloudSyncV2Outbound(
+        title: immediateReplay
+            ? "Verify the confirmed upload without another save?"
+            : "Recover one interrupted CloudKit upload?",
+        message: immediateReplay
+            ? "This performs an exact protected remote digest readback for the already-confirmed operation. It never prepares, consumes, or submits a save, selects or admits a new message, and must report zero additional saves."
+            : "This resumes the one exact durable operation. If it is pending or outcome-unknown, the first step may provision local V2 writer ownership before the final confirmation. If it is already confirmed, recovery automatically switches to a no-save protected digest readback. It never selects or admits a new message.",
+        confirmLabel: immediateReplay ? "Verify Existing" : "Prepare Recovery",
+      );
+      if (!firstConfirmed) return null;
+
+      armed = immediateReplay
+          ? await pushService.armCloudSyncV2OutboundReplayConfirmed()
+          : await pushService.armCloudSyncV2OutboundRecoveryConfirmed();
+      final replayVerification = armed.replayVerification;
+      if (prepareWriter && !replayVerification) {
+        await pushService.prepareCloudSyncV2OutboundWriter();
+      }
+
+      final secondConfirmed = await _confirmCloudSyncV2Outbound(
+        title: replayVerification
+            ? "Final no-save replay confirmation"
+            : "Final recovery confirmation",
+        message: replayVerification
+            ? "Only the exact already-confirmed operation may receive a protected remote digest readback. This never prepares, consumes, or submits a save. The run must report zero saves. No new message or delete is enabled, and an unresolved result must not be retried automatically."
+            : "Only the exact existing create operation may be reconciled. The first step may have provisioned local V2 writer ownership and quarantined local legacy queues; after this second confirmation, it may complete one durable remote create. No new message or delete is enabled, and an unresolved result must not be retried automatically.",
+        confirmLabel: replayVerification ? "Verify Once" : "Recover Once",
+      );
+      if (!secondConfirmed) return null;
+
+      final report = await pushService.runCloudSyncV2OutboundDoubleConfirmed(
+        armed,
+      );
+      return cloudSyncV2OutboundCanaryPresentation(report);
+    } finally {
+      if (armed != null) {
+        pushService.disarmCloudSyncV2Outbound(armed);
+      }
+    }
+  }
+
+  Future<void> _runCloudSyncV2OutboundCanary() async {
+    if (cloudSyncV2Running.value) return;
+    if (!pushService.cloudSyncV2ManualOutboundAvailable) {
+      showSnackbar(
+        "Cloud Sync V2 Writer Blocked",
+        "Use the isolated Android Canary writer build, finish setup, enable Developer Mode, turn off legacy Messages in iCloud sync, and wait for active sync or logout work to finish.",
+      );
+      return;
+    }
+
+    cloudSyncV2Running.value = true;
+    CloudSyncOutboundCanaryConfirmation? armed;
+    try {
+      final expectedRecipient = await _requestCloudSyncV2OutboundRecipient();
+      if (expectedRecipient == null) return;
+      final candidate = await pushService
+          .selectCloudSyncV2OutboundCanaryCandidate(
+            expectedRecipient: expectedRecipient,
+          );
+      if (candidate == null) {
+        showSnackbar(
+          "No Eligible Canary Message",
+          "The newest outgoing row is not a fresh, ordinary one-to-one iMessage text. No older message was selected and nothing was written.",
+        );
+        return;
+      }
+
+      final firstConfirmed = await _confirmCloudSyncV2Outbound(
+        title: "Prepare one create-only CloudKit upload?",
+        message:
+            "Expected recipient: $expectedRecipient. Candidate hash ${candidate.guidHash}, created ${candidate.createdAtUtc.toIso8601String()}, ${candidate.characterCount} characters. This first confirmation performs local safety checks only. Provisioning may change local V2 writer ownership and quarantine local legacy queues, but it cannot contact CloudKit or admit a message before the final confirmation. Message text is not shown or logged.",
+        confirmLabel: "Prepare One",
+      );
+      if (!firstConfirmed) return;
+
+      armed = await pushService.armCloudSyncV2OutboundConfirmed(
+        candidate: candidate,
+        expectedRecipient: expectedRecipient,
+      );
+      await pushService.prepareCloudSyncV2OutboundWriter();
+
+      final secondConfirmed = await _confirmCloudSyncV2Outbound(
+        title: "Final confirmation: create one record?",
+        message:
+            "This may create exactly one message record for $expectedRecipient after a final in-run check of the newest local message and the current IDS sending handle. Deletes are disabled. If the outcome is unknown, do not retry; use recovery to reconcile the exact durable operation.",
+        confirmLabel: "Create Once",
+      );
+      if (!secondConfirmed) return;
+
+      final report = await pushService.runCloudSyncV2OutboundDoubleConfirmed(
+        armed,
+      );
+      final presentation = cloudSyncV2OutboundCanaryPresentation(report);
+      showSnackbar(presentation.title, presentation.message);
+
+      if (presentation.outcome !=
+          CloudSyncV2OutboundCanaryOutcome.writeConfirmed) {
+        return;
+      }
+
+      final replayPresentation = await _runCloudSyncV2OutboundRecoveryFlow(
+        prepareWriter: false,
+        immediateReplay: true,
+      );
+      if (replayPresentation != null) {
+        showSnackbar(replayPresentation.title, replayPresentation.message);
+      }
+    } catch (error) {
+      final safeCode = cloudSyncV2SafeFailureCode(error);
+      Logger.warn(
+        "Cloud Sync V2 outbound canary stopped safely code=$safeCode",
+      );
+      showSnackbar(
+        "Cloud Sync V2 Writer Stopped Safely",
+        "Diagnostic code: $safeCode. Do not retry automatically. No deletes were enabled.",
+      );
+    } finally {
+      if (armed != null) {
+        pushService.disarmCloudSyncV2Outbound(armed);
+      }
+      cloudSyncV2Running.value = false;
+    }
+  }
+
+  Future<void> _recoverCloudSyncV2OutboundCanary() async {
+    if (cloudSyncV2Running.value) return;
+    if (!pushService.cloudSyncV2ManualOutboundAvailable) {
+      showSnackbar(
+        "Cloud Sync V2 Recovery Blocked",
+        "Use the isolated Android Canary writer build, finish setup, enable Developer Mode, turn off legacy Messages in iCloud sync, and wait for active sync or logout work to finish.",
+      );
+      return;
+    }
+
+    cloudSyncV2Running.value = true;
+    try {
+      final presentation = await _runCloudSyncV2OutboundRecoveryFlow(
+        prepareWriter: true,
+        immediateReplay: false,
+      );
+      if (presentation != null) {
+        showSnackbar(presentation.title, presentation.message);
+      }
+    } catch (error) {
+      final safeCode = cloudSyncV2SafeFailureCode(error);
+      Logger.warn(
+        "Cloud Sync V2 outbound recovery stopped safely code=$safeCode",
+      );
+      showSnackbar(
+        "Cloud Sync V2 Recovery Stopped Safely",
+        "Diagnostic code: $safeCode. Do not retry automatically and do not admit another message.",
+      );
+    } finally {
+      cloudSyncV2Running.value = false;
     }
   }
 
@@ -417,6 +737,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
 
                 if ((CloudSyncDevGate.manualShadowSamplerEnabled ||
                         CloudSyncDevGate.manualSemanticPullEnabled ||
+                        CloudSyncDevGate.manualOutboundCanaryEnabled ||
                         CloudSyncDevGate.protocolEvidenceAvailable) &&
                     ss.settings.developerEnabled.value &&
                     (Platform.isAndroid || Platform.isWindows))
@@ -427,6 +748,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                   ),
                 if ((CloudSyncDevGate.manualShadowSamplerEnabled ||
                         CloudSyncDevGate.manualSemanticPullEnabled ||
+                        CloudSyncDevGate.manualOutboundCanaryEnabled ||
                         CloudSyncDevGate.protocolEvidenceAvailable) &&
                     ss.settings.developerEnabled.value &&
                     (Platform.isAndroid || Platform.isWindows))
@@ -613,6 +935,56 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                             }
                           },
                         )),
+                      if (CloudSyncDevGate.manualOutboundCanaryEnabled &&
+                          Platform.isAndroid)
+                        Obx(
+                          () => SettingsTile(
+                            leading: const SettingsLeadingIcon(
+                              iosIcon: CupertinoIcons.cloud_upload,
+                              materialIcon: Icons.cloud_upload_outlined,
+                              containerColor: Colors.deepOrange,
+                            ),
+                            title: "Upload One Existing Text Canary",
+                            subtitle:
+                                "Developer-only, two-confirmation, create-only CloudKit V2 writer. Selects only the newest fresh ordinary one-to-one iMessage text. Never falls back to an older row. No deletes or automatic retry.",
+                            trailing: cloudSyncV2Running.value
+                                ? SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 3,
+                                      color: context.theme.colorScheme.primary,
+                                    ),
+                                  )
+                                : const NextButton(),
+                            onTap: _runCloudSyncV2OutboundCanary,
+                          ),
+                        ),
+                      if (CloudSyncDevGate.manualOutboundCanaryEnabled &&
+                          Platform.isAndroid)
+                        Obx(
+                          () => SettingsTile(
+                            leading: const SettingsLeadingIcon(
+                              iosIcon: CupertinoIcons.refresh,
+                              materialIcon: Icons.settings_backup_restore,
+                              containerColor: Colors.amber,
+                            ),
+                            title: "Recover One Interrupted Upload",
+                            subtitle:
+                                "May complete only the one exact durable CloudKit create after interruption or an unknown outcome. It does not select or admit a new message. Never retry automatically.",
+                            trailing: cloudSyncV2Running.value
+                                ? SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 3,
+                                      color: context.theme.colorScheme.primary,
+                                    ),
+                                  )
+                                : const NextButton(),
+                            onTap: _recoverCloudSyncV2OutboundCanary,
+                          ),
+                        ),
                     ],
                   ),
 
@@ -936,6 +1308,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                         Navigator.of(context).pop();
                                         ss.settings.developerEnabled.value = true;
                                         ss.settings.save();
+                                        if (mounted) setState(() {});
                                       },
                                     ),
                                   ]);
@@ -955,6 +1328,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                         } else {
                           await ss.settings.saveOne('developerEnabled');
                         }
+                        if (mounted) setState(() {});
                         showSnackbar("Success", "Restart device or force quit OpenBubbles to unload extensions");
                       },
                       initialVal: ss.settings.developerEnabled.value,

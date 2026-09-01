@@ -1331,7 +1331,7 @@ class _MessagePopupState extends OptimizedState<MessagePopup>
                   var chatMeta = encoder.convert(chat.toMap());
 
                   // stop stupid automatic cralwers from spamming the webhook
-                  var url = dotenv.get('REPORT_ISSUE_WEBHOOK');
+                  var url = dotenv.get('REPORT_ISSUE_WEBHOOK', fallback: '');
 
                   try {
                     final response = await http.dio.post(

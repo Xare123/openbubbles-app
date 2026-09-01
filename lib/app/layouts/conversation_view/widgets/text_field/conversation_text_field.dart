@@ -508,7 +508,7 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
                   }
                 },
               ),
-              if (!kIsWeb && !Platform.isAndroid && (kIsWeb ? GIPHY_API_KEY : dotenv.get('GIPHY_API_KEY')) != "")
+              if (!kIsWeb && !Platform.isAndroid && (kIsWeb ? GIPHY_API_KEY : dotenv.get('GIPHY_API_KEY', fallback: '')) != "")
                 IconButton(
                     icon: Icon(Icons.gif, color: context.theme.colorScheme.outline, size: 28),
                     onPressed: () async {
@@ -517,7 +517,7 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
                       }
                       GiphyGif? gif = await GiphyGet.getGif(
                         context: context,
-                        apiKey: kIsWeb ? GIPHY_API_KEY : dotenv.get('GIPHY_API_KEY'),
+                        apiKey: kIsWeb ? GIPHY_API_KEY : dotenv.get('GIPHY_API_KEY', fallback: ''),
                         tabColor: context.theme.primaryColor,
                         showEmojis: false,
                       );

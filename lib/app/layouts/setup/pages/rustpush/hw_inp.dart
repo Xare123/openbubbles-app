@@ -208,7 +208,7 @@ class HwInpState extends OptimizedState<HwInp> {
   }
 
   Future<void> handleCode(Uint8List data) async {
-    if (String.fromCharCodes(data).startsWith("OABS")) {
+    if (SetupViewController.isOpenAbsintheTransfer(data)) {
       var shared = data[4];
       var rawData = data.toList();
       rawData.removeRange(0, 5);
@@ -225,8 +225,19 @@ class HwInpState extends OptimizedState<HwInp> {
     if (code == lastCheckedCode) return;
     lastCheckedCode = code;
 
-    if (ss.settings.cachedCodes.containsKey(code)) {
-      return handleCode(base64Decode(ss.settings.cachedCodes[code]!));
+    final transient = controller.consumeTransientHardwareTransfer(code);
+    if (transient != null) {
+      return handleCode(transient);
+    }
+
+    final cached = ss.settings.cachedCodes[code];
+    if (cached != null) {
+      final decoded = base64Decode(cached);
+      if (SetupViewController.isOpenAbsintheTransfer(decoded)) {
+        ss.settings.cachedCodes.remove(code);
+        ss.saveSettings();
+      }
+      return handleCode(decoded);
     }
 
     
@@ -254,10 +265,7 @@ class HwInpState extends OptimizedState<HwInp> {
       var data = response.data["data"];
       
       var myData = Uint8List.fromList(decryptAESCryptoJS(data, code));
-      ss.settings.cachedCodes[code] = base64Encode(myData);
-      ss.saveSettings();
-
-      handleCode(myData);
+      await handleCode(myData);
     } catch (e) {
       showSnackbar("Fetching data", "Failed");
       rethrow;
@@ -265,7 +273,7 @@ class HwInpState extends OptimizedState<HwInp> {
   }
 
   Future<void> checkCode(String text) async {
-    Logger.debug("Here $text");
+    Logger.debug("Checking hardware setup input");
     if (text == "testing-please-letmein") {
       FocusManager.instance.primaryFocus?.unfocus();
       setState(() {

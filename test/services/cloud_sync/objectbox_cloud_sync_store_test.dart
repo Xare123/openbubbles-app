@@ -1787,7 +1787,7 @@ void main() {
       expect(admitted.protectedLeaseReference, reference);
       expect(await store.hasNonterminalOutbox(scope), isTrue);
       expect(
-        await store.readNonterminalProtectedOutboundLeaseReferences(
+        await store.readLiveProtectedOutboundLeaseReferences(
           maximumCount: 4096,
         ),
         {reference},
@@ -1795,7 +1795,7 @@ void main() {
       await reopen();
       expect(await store.hasNonterminalOutbox(scope), isTrue);
       expect(
-        await store.readNonterminalProtectedOutboundLeaseReferences(
+        await store.readLiveProtectedOutboundLeaseReferences(
           maximumCount: 4096,
         ),
         {reference},
@@ -1869,7 +1869,7 @@ void main() {
       );
       expect(mapping?.encryptedServerRecordId, first.encryptedPayloadReference);
       expect(
-        await store.readNonterminalProtectedOutboundLeaseReferences(
+        await store.readLiveProtectedOutboundLeaseReferences(
           maximumCount: 4096,
         ),
         {first.protectedLeaseReference},
@@ -1881,10 +1881,10 @@ void main() {
         action: CloudOutboxAction.save,
         payloadVersion: cloudSyncOutboundPayloadVersion,
         dependencyOperationIds: const {},
-        createdAt: testEpoch.add(const Duration(seconds: 1)),
+        createdAt: testEpoch,
         encryptedPayloadReference: testProtectedReference('Q'),
         payloadSha256: first.payloadSha256,
-        serverRecordIdHash: List.filled(43, 'T').join(),
+        serverRecordIdHash: first.serverRecordIdHash,
         protectedLeaseReference: testProtectedLeaseReference('b'),
       );
       final retried = await store.admitProtectedOutboundCreate(
@@ -1900,6 +1900,92 @@ void main() {
       expect(retried.operationId, admitted.operationId);
       expect(retried.mutationRevision, admitted.mutationRevision);
       expect(retried.protectedLeaseReference, first.protectedLeaseReference);
+    },
+  );
+
+  test(
+    'protected create rejects a restaged retry whose stable binding changed',
+    () async {
+      final scope = testScope();
+      final first = CloudOutboxDraft(
+        scope: scope,
+        logicalEntityKeyHash: List.filled(43, 'L').join(),
+        action: CloudOutboxAction.save,
+        payloadVersion: cloudSyncOutboundPayloadVersion,
+        dependencyOperationIds: const {},
+        createdAt: testEpoch,
+        encryptedPayloadReference: testProtectedReference('P'),
+        payloadSha256: testSha256('a'),
+        serverRecordIdHash: List.filled(43, 'S').join(),
+        protectedLeaseReference: testProtectedLeaseReference('a'),
+      );
+      CloudRecordMapEntry mappingFor(CloudOutboxDraft value) =>
+          CloudRecordMapEntry(
+            scope: scope,
+            logicalEntityKeyHash: value.logicalEntityKeyHash,
+            serverRecordIdHash: value.serverRecordIdHash!,
+            encryptedServerRecordId: value.encryptedPayloadReference!,
+            updatedAt: value.createdAt,
+          );
+
+      await store.admitProtectedOutboundCreate(
+        draft: first,
+        recordMapping: mappingFor(first),
+      );
+
+      for (final changed in <CloudOutboxDraft>[
+        CloudOutboxDraft(
+          scope: scope,
+          logicalEntityKeyHash: first.logicalEntityKeyHash,
+          action: CloudOutboxAction.save,
+          payloadVersion: cloudSyncOutboundPayloadVersion,
+          dependencyOperationIds: const {},
+          createdAt: testEpoch.add(const Duration(seconds: 1)),
+          encryptedPayloadReference: testProtectedReference('Q'),
+          payloadSha256: first.payloadSha256,
+          serverRecordIdHash: first.serverRecordIdHash,
+          protectedLeaseReference: testProtectedLeaseReference('b'),
+        ),
+        CloudOutboxDraft(
+          scope: scope,
+          logicalEntityKeyHash: first.logicalEntityKeyHash,
+          action: CloudOutboxAction.save,
+          payloadVersion: cloudSyncOutboundPayloadVersion,
+          dependencyOperationIds: const {},
+          createdAt: testEpoch,
+          encryptedPayloadReference: testProtectedReference('Q'),
+          payloadSha256: testSha256('b'),
+          serverRecordIdHash: first.serverRecordIdHash,
+          protectedLeaseReference: testProtectedLeaseReference('b'),
+        ),
+        CloudOutboxDraft(
+          scope: scope,
+          logicalEntityKeyHash: first.logicalEntityKeyHash,
+          action: CloudOutboxAction.save,
+          payloadVersion: cloudSyncOutboundPayloadVersion,
+          dependencyOperationIds: const {},
+          createdAt: testEpoch,
+          encryptedPayloadReference: testProtectedReference('Q'),
+          payloadSha256: first.payloadSha256,
+          serverRecordIdHash: List.filled(43, 'T').join(),
+          protectedLeaseReference: testProtectedLeaseReference('b'),
+        ),
+      ]) {
+        await expectLater(
+          store.admitProtectedOutboundCreate(
+            draft: changed,
+            recordMapping: mappingFor(changed),
+          ),
+          throwsA(
+            isA<CloudSyncFailure>().having(
+              (failure) => failure.safeCode,
+              'safeCode',
+              'protected_outbound_retry_payload_changed',
+            ),
+          ),
+        );
+      }
+      expect((await store.readCheckpoint(scope)).mutationRevisionCounter, 1);
     },
   );
 
@@ -3406,10 +3492,13 @@ void main() {
   );
 
   test(
-    'marked submission can be resolved by a returned confirmation',
+    'Canary confirmation retains a live protected replay receipt across reopen',
     () async {
       final scope = testScope();
-      final operation = await store.enqueueOutboxMutation(draft(scope, 21));
+      final protectedReceipt = testProtectedLeaseReference('c');
+      final operation = await store.enqueueOutboxMutation(
+        draft(scope, 21, protectedLeaseReference: protectedReceipt),
+      );
       await store.leaseEligibleOutbox(
         scope,
         now: testEpoch,
@@ -3417,6 +3506,13 @@ void main() {
         leaseId: 'objectbox-submission-confirm-lease',
         leaseDuration: const Duration(minutes: 1),
         allowedActions: const {CloudOutboxAction.save},
+      );
+      await store.attachOutboxRecordMapping(
+        scope,
+        leaseId: 'objectbox-submission-confirm-lease',
+        operationId: operation.operationId,
+        serverRecordIdHash: List.filled(43, 'S').join(),
+        now: testEpoch,
       );
       await store.markOutboxSubmissionStarted(
         scope,
@@ -3428,7 +3524,12 @@ void main() {
       await store.applyOutboxTransitions(
         scope,
         leaseId: 'objectbox-submission-confirm-lease',
-        transitions: [CloudOutboxTransition.confirmed(operation.operationId)],
+        transitions: [
+          CloudOutboxTransition.confirmed(
+            operation.operationId,
+            retainProtectedLeaseReference: true,
+          ),
+        ],
         now: testEpoch.add(const Duration(seconds: 1)),
       );
       final resolved = objectBox
@@ -3436,8 +3537,157 @@ void main() {
           .getAll()
           .single;
       expect(resolved.state, 2);
+      expect(resolved.protectedLeaseReference, protectedReceipt);
       expect(resolved.leaseIdHash, isNull);
       expect(resolved.attemptCount, 0);
+
+      await reopen();
+      final persisted = (await store.readOutboxEntries(scope)).single;
+      expect(persisted.status, CloudOutboxStatus.confirmed);
+      expect(persisted.protectedLeaseReference, protectedReceipt);
+      expect(
+        await store.readLiveProtectedOutboundLeaseReferences(
+          maximumCount: 4096,
+        ),
+        {protectedReceipt},
+      );
+
+      await expectLater(
+        store.clearConfirmedProtectedOutboundLeaseReference(
+          expectedOperation: persisted.copyWith(attemptCount: 1),
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'confirmed_outbound_receipt_snapshot_changed',
+          ),
+        ),
+      );
+      expect(
+        await store.readLiveProtectedOutboundLeaseReferences(
+          maximumCount: 4096,
+        ),
+        {protectedReceipt},
+      );
+
+      await store.clearConfirmedProtectedOutboundLeaseReference(
+        expectedOperation: persisted,
+      );
+      await reopen();
+      expect(
+        (await store.readOutboxEntries(scope)).single.protectedLeaseReference,
+        isNull,
+      );
+      expect(
+        await store.readLiveProtectedOutboundLeaseReferences(
+          maximumCount: 4096,
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'unresolved unknown recovery preserves submission identities and receipt across reopen',
+    () async {
+      final scope = testScope();
+      final protectedReceipt = testProtectedLeaseReference('e');
+      final operation = await store.enqueueOutboxMutation(
+        draft(scope, 22, protectedLeaseReference: protectedReceipt),
+      );
+
+      await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'objectbox-unknown-recovery-seed',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      final submitted = await store.markOutboxSubmissionStarted(
+        scope,
+        leaseId: 'objectbox-unknown-recovery-seed',
+        submissionIdentity: testSubmissionIdentity([operation.operationId]),
+        now: testEpoch,
+      );
+      final requestUuid = submitted.single.appleRequestUuid;
+      final operationUuid = submitted.single.appleOperationUuid;
+
+      await reopen();
+      final recoveredLease = await store.leaseUnknownOutcomes(
+        scope,
+        now: testEpoch.add(const Duration(minutes: 2)),
+        limit: 1,
+        leaseId: 'objectbox-unknown-recovery-lease',
+        leaseDuration: const Duration(minutes: 1),
+      );
+      expect(recoveredLease.single.operationId, operation.operationId);
+
+      await store.applyOutboxTransitions(
+        scope,
+        leaseId: 'objectbox-unknown-recovery-lease',
+        transitions: [
+          CloudOutboxTransition.unknownOutcome(
+            operation.operationId,
+            nextEligibleAt: testEpoch.add(const Duration(minutes: 3)),
+          ),
+        ],
+        now: testEpoch.add(const Duration(minutes: 2)),
+      );
+
+      await reopen();
+      final persisted = (await store.readOutboxEntries(scope)).single;
+      expect(persisted.status, CloudOutboxStatus.unknownOutcome);
+      expect(persisted.appleRequestUuid, requestUuid);
+      expect(persisted.appleOperationUuid, operationUuid);
+      expect(persisted.protectedLeaseReference, protectedReceipt);
+      expect(
+        await store.readLiveProtectedOutboundLeaseReferences(
+          maximumCount: 4096,
+        ),
+        {protectedReceipt},
+      );
+    },
+  );
+
+  test(
+    'ordinary confirmation clears its protected receipt reference',
+    () async {
+      final scope = testScope();
+      final operation = await store.enqueueOutboxMutation(
+        draft(
+          scope,
+          2021,
+          protectedLeaseReference: testProtectedLeaseReference('d'),
+        ),
+      );
+      await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'objectbox-ordinary-confirm-lease',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      await store.applyOutboxTransitions(
+        scope,
+        leaseId: 'objectbox-ordinary-confirm-lease',
+        transitions: [CloudOutboxTransition.confirmed(operation.operationId)],
+        now: testEpoch.add(const Duration(seconds: 1)),
+      );
+
+      await reopen();
+      expect(
+        (await store.readOutboxEntries(scope)).single.protectedLeaseReference,
+        isNull,
+      );
+      expect(
+        await store.readLiveProtectedOutboundLeaseReferences(
+          maximumCount: 4096,
+        ),
+        isEmpty,
+      );
     },
   );
 

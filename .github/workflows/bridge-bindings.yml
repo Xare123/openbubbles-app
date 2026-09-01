@@ -11,6 +11,7 @@ on:
   push:
     paths:
       - ".github/workflows/bridge-bindings.yml"
+      - "tooling/frb/**"
       - ".gitmodules"
       - "rust/Cargo.toml"
       - "rust/Cargo.lock"
@@ -23,6 +24,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/bridge-bindings.yml"
+      - "tooling/frb/**"
       - ".gitmodules"
       - "rust/Cargo.toml"
       - "rust/Cargo.lock"
@@ -98,6 +100,12 @@ jobs:
         run: |
           ./tooling/frb/guard_generated_sse_impls.ps1 -Mode Deduplicate -ExpectedRemovalCount 6
           ./tooling/frb/guard_generated_sse_impls.ps1 -Mode Verify
+
+      - name: Normalize platform-specific FRB diagnostics
+        shell: pwsh
+        run: |
+          ./tooling/frb/normalize_generated_diagnostics.ps1 -Mode Normalize
+          ./tooling/frb/normalize_generated_diagnostics.ps1 -Mode Verify
 
       - name: Upload regenerated bridge bindings
         if: always()

@@ -15,7 +15,8 @@ class InMemoryCloudSyncStore
         CloudRetainedUnprojectedBacklogStore,
         CloudRetainedUnprojectedBacklogSummaryStore,
         CloudSyncUnknownOutcomeLeasingStore,
-        CloudSyncOutboxPresenceStore {
+        CloudSyncOutboxPresenceStore,
+        CloudConfirmedOutboundReceiptStore {
   final Lock _lock = Lock();
   final Map<String, CloudSyncCheckpoint> _checkpoints = {};
   final Map<String, String?> _pendingFetchedTokens = {};
@@ -40,6 +41,32 @@ class InMemoryCloudSyncStore
     return _lock.synchronized(() async {
       return List.unmodifiable(
         _outbox[scope.storageKey]?.values ?? const <CloudOutboxOperation>[],
+      );
+    });
+  }
+
+  @override
+  Future<void> clearConfirmedProtectedOutboundLeaseReference({
+    required CloudOutboxOperation expectedOperation,
+  }) {
+    return _lock.synchronized(() async {
+      _requireConfirmedReceiptReleaseCandidate(expectedOperation);
+      final entries = _outbox[expectedOperation.scope.storageKey];
+      final current = entries?[expectedOperation.operationId];
+      if (current == null) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'confirmed_outbound_receipt_row_missing',
+        );
+      }
+      if (!current.sameDurableSnapshotAs(expectedOperation)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'confirmed_outbound_receipt_snapshot_changed',
+        );
+      }
+      entries![expectedOperation.operationId] = current.copyWith(
+        clearProtectedLeaseReference: true,
       );
     });
   }
@@ -941,6 +968,12 @@ class InMemoryCloudSyncStore
             'Unknown outcome transitions require unknown category',
           );
         }
+        if (transition.retainProtectedLeaseReference &&
+            transition.type != CloudOutboxTransitionType.confirmed) {
+          throw ArgumentError(
+            'Only confirmed transitions may retain a protected receipt',
+          );
+        }
       }
 
       for (final transition in transitionList) {
@@ -954,6 +987,8 @@ class InMemoryCloudSyncStore
               clearLeaseExpiresAt: true,
               clearLastFailure: true,
               clearNextEligibleAt: true,
+              clearProtectedLeaseReference:
+                  !transition.retainProtectedLeaseReference,
             );
             break;
           case CloudOutboxTransitionType.retryable:
@@ -990,6 +1025,7 @@ class InMemoryCloudSyncStore
               clearLeaseId: true,
               clearLeaseExpiresAt: true,
               clearNextEligibleAt: true,
+              clearProtectedLeaseReference: true,
             );
             break;
           case CloudOutboxTransitionType.unknownOutcome:
@@ -1599,6 +1635,27 @@ class InMemoryCloudSyncStore
       status == CloudOutboxStatus.leased ||
       status == CloudOutboxStatus.paused ||
       status == CloudOutboxStatus.unknownOutcome;
+
+  void _requireConfirmedReceiptReleaseCandidate(
+    CloudOutboxOperation operation,
+  ) {
+    if (operation.action != CloudOutboxAction.save ||
+        operation.status != CloudOutboxStatus.confirmed ||
+        operation.protectedLeaseReference == null ||
+        operation.serverRecordIdHash == null ||
+        operation.appleRequestUuid == null ||
+        operation.appleOperationUuid == null ||
+        operation.confirmedAt == null ||
+        operation.nextEligibleAt != null ||
+        operation.lastFailure != null ||
+        operation.leaseId != null ||
+        operation.leaseExpiresAt != null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'confirmed_outbound_receipt_release_invalid',
+      );
+    }
+  }
 
   String _recordMapKey(CloudSyncScope scope, String logicalKeyHash) =>
       '${scope.storageKey}\u001f$logicalKeyHash';

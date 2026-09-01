@@ -97,7 +97,10 @@ void main() {
     expect(outbound, contains('prepareCloudSyncV2OutboundWriter'));
     expect(outbound, contains('armCloudSyncV2OutboundConfirmed'));
     expect(outbound, contains('armCloudSyncV2OutboundRecoveryConfirmed'));
+    expect(outbound, contains('armCloudSyncV2OutboundReplayConfirmed'));
     expect(outbound, contains('runCloudSyncV2OutboundDoubleConfirmed'));
+    expect(outbound, contains('reselectExact(candidate)'));
+    expect(outbound, contains('_cloudSyncV2OutboundProvisioningInFlight'));
     expect(outbound, contains('pendingCountForScope'));
     expect(outbound, contains("lookupPortByName('bg_sync')"));
 
@@ -320,14 +323,6 @@ void main() {
     expect(presentation, contains('Incomplete records/zone'));
     expect(semantic, contains('cloudSyncV2SafeFailureCode(error)'));
     expect(semantic, isNot(contains('catch (_)')));
-    expect(
-      semantic,
-      isNot(contains('title: "Upload One Existing Text Canary"')),
-    );
-    expect(
-      semantic,
-      isNot(contains('title: "Recover One Interrupted Upload"')),
-    );
     expect(section, contains('title: "Record CloudKit protocol evidence"'));
     expect(section, contains('CloudSyncDevGate.protocolEvidenceAvailable'));
     expect(section, contains('cloudSyncV2EvidenceEnabled'));
@@ -360,14 +355,239 @@ void main() {
     expect(panel, contains("'cloudSyncV2EvidenceEnabled'"));
   });
 
-  test('outbound UI remains absent until remote absence proof exists', () {
+  test('outbound UI is gated, double-confirmed, and recovery-only', () {
     final source = File(
       'lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart',
     ).readAsStringSync();
-    expect(source, isNot(contains('_runCloudSyncV2OutboundCanary')));
-    expect(source, isNot(contains('_recoverCloudSyncV2OutboundCanary')));
-    expect(source, isNot(contains('Upload One Existing Text Canary')));
-    expect(source, isNot(contains('Recover One Interrupted Upload')));
+
+    expect(source, contains('CloudSyncDevGate.manualOutboundCanaryEnabled'));
+    expect(source, contains('title: "Upload One Existing Text Canary"'));
+    expect(source, contains('title: "Recover One Interrupted Upload"'));
+    expect(source, contains('create-only CloudKit V2 writer'));
+    expect(source, contains('No deletes or automatic retry'));
+    expect(source, contains('Never retry automatically'));
+
+    final outboundStart = source.indexOf(
+      'Future<void> _runCloudSyncV2OutboundCanary()',
+    );
+    final outboundEnd = source.indexOf(
+      'Future<void> _recoverCloudSyncV2OutboundCanary()',
+      outboundStart,
+    );
+    expect(outboundStart, greaterThanOrEqualTo(0));
+    expect(outboundEnd, greaterThan(outboundStart));
+    final outbound = source.substring(outboundStart, outboundEnd);
+    final selection = outbound.indexOf(
+      'selectCloudSyncV2OutboundCanaryCandidate(',
+    );
+    final arm = outbound.indexOf('armCloudSyncV2OutboundConfirmed(', selection);
+    final prepare = outbound.indexOf('prepareCloudSyncV2OutboundWriter()', arm);
+    final run = outbound.indexOf('runCloudSyncV2OutboundDoubleConfirmed(', arm);
+    final finallyBlock = outbound.lastIndexOf('finally {');
+    final disarm = outbound.indexOf(
+      'disarmCloudSyncV2Outbound(armed)',
+      finallyBlock,
+    );
+    expect(selection, greaterThanOrEqualTo(0));
+    expect(arm, greaterThan(selection));
+    expect(prepare, greaterThan(arm));
+    expect(run, greaterThan(prepare));
+    expect(finallyBlock, greaterThan(run));
+    expect(disarm, greaterThan(finallyBlock));
+    expect(outbound, contains('if (!secondConfirmed) return;'));
+    expect(outbound, contains('Do not retry'));
+    expect(outbound, contains('candidate.guidHash'));
+    expect(outbound, contains('candidate.characterCount'));
+    expect(outbound, contains('_requestCloudSyncV2OutboundRecipient()'));
+    expect(outbound, contains('expectedRecipient: expectedRecipient'));
+    expect(outbound, contains('current IDS sending handle'));
+    expect(outbound, isNot(contains('candidate.cloudMessage.text')));
+    expect(outbound, isNot(contains('candidate.destination')));
+
+    final recoveryFlowStart = source.indexOf(
+      '_runCloudSyncV2OutboundRecoveryFlow({',
+    );
+    final recoveryFlowEnd = source.indexOf(
+      'Future<void> _runCloudSyncV2OutboundCanary()',
+      recoveryFlowStart,
+    );
+    expect(recoveryFlowStart, greaterThanOrEqualTo(0));
+    expect(recoveryFlowEnd, greaterThan(recoveryFlowStart));
+    final recoveryFlow = source.substring(recoveryFlowStart, recoveryFlowEnd);
+    expect(recoveryFlow, contains('armCloudSyncV2OutboundRecoveryConfirmed()'));
+    expect(recoveryFlow, contains('armCloudSyncV2OutboundReplayConfirmed()'));
+    expect(
+      recoveryFlow,
+      contains('final replayVerification = armed.replayVerification;'),
+    );
+    expect(recoveryFlow, contains('if (prepareWriter && !replayVerification)'));
+    expect(
+      recoveryFlow.indexOf(
+        'final replayVerification = armed.replayVerification;',
+      ),
+      lessThan(
+        recoveryFlow.indexOf('if (prepareWriter && !replayVerification)'),
+      ),
+    );
+    expect(recoveryFlow, contains('runCloudSyncV2OutboundDoubleConfirmed('));
+    expect(recoveryFlow, contains('disarmCloudSyncV2Outbound(armed)'));
+    expect(recoveryFlow, isNot(contains('selectCloudSyncV2Outbound')));
+    expect(recoveryFlow, isNot(contains('armCloudSyncV2OutboundConfirmed(')));
+    expect(source, contains('CloudSyncDevGate.manualOutboundCanaryEnabled'));
+    expect(source, contains('Platform.isAndroid'));
+  });
+
+  test('confirmed replay is an exact no-save protected readback', () {
+    final manual = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart',
+    ).readAsStringSync();
+    final replayBranchStart = manual.indexOf(
+      'case CloudSyncOutboundCanarySessionKind.confirmedReplay:',
+    );
+    final replayBranchEnd = manual.indexOf(
+      'case CloudSyncOutboundCanarySessionKind.unknownRecovery:',
+      replayBranchStart,
+    );
+    expect(replayBranchStart, greaterThanOrEqualTo(0));
+    expect(replayBranchEnd, greaterThan(replayBranchStart));
+    final replayBranch = manual.substring(replayBranchStart, replayBranchEnd);
+    expect(replayBranch, contains('verifyConfirmedNoSave'));
+    expect(replayBranch, isNot(contains('flushOneBatch')));
+
+    final adapter = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart',
+    ).readAsStringSync();
+    expect(
+      adapter,
+      contains('Future<CloudSyncConfirmedReplayProof> verifyConfirmedNoSave'),
+    );
+    expect(adapter, contains('verifyConfirmedMessageCreateNoSave'));
+    expect(adapter, contains('retainConfirmedReceiptsForReplay: true'));
+    expect(adapter, contains('Future<void> finalizeConfirmedReplayProof'));
+    expect(adapter, contains('required CloudSyncConfirmedReplayProof proof'));
+    expect(adapter, contains('releaseConfirmedReplayReceipt'));
+    expect(adapter, contains('clearConfirmedProtectedOutboundLeaseReference'));
+    expect(adapter, contains('proof: proof'));
+    expect(manual, contains('finalizeConfirmedReplayProof'));
+    expect(adapter, contains('verifyConfirmedMessageCreateNoSave('));
+    final verifyStart = adapter.indexOf('verifyConfirmedMessageCreateNoSave(');
+    final verifyEnd = adapter.indexOf(');', verifyStart);
+    expect(verifyStart, greaterThanOrEqualTo(0));
+    expect(verifyEnd, greaterThan(verifyStart));
+    final verificationCall = adapter.substring(verifyStart, verifyEnd);
+    expect(verificationCall, contains('scope'));
+    expect(verificationCall, contains('operation: operation'));
+
+    expect(adapter, contains('clearDurableAdoptionMarker: () =>'));
+
+    final native = File(
+      'lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart',
+    ).readAsStringSync();
+    final releaseStart = native.indexOf(
+      'Future<void> releaseConfirmedReplayReceipt(',
+    );
+    final durableClearStart = native.indexOf(
+      'await clearDurableAdoptionMarker();',
+      releaseStart,
+    );
+    final nativeAcknowledgeStart = native.indexOf(
+      '_bindings.acknowledgeCommittedPageLease(',
+      releaseStart,
+    );
+    expect(releaseStart, greaterThanOrEqualTo(0));
+    expect(durableClearStart, greaterThan(releaseStart));
+    expect(nativeAcknowledgeStart, greaterThan(durableClearStart));
+  });
+
+  test('ambiguous recovery is structurally isolated from every write lane', () {
+    final adapter = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart',
+    ).readAsStringSync();
+    final sessionStart = adapter.indexOf(
+      'createSession: (snapshot, scope, kind, expectedOperation) async {',
+    );
+    final sessionEnd = adapter.indexOf('\n      },', sessionStart);
+    expect(sessionStart, greaterThanOrEqualTo(0));
+    expect(sessionEnd, greaterThan(sessionStart));
+    final session = adapter.substring(sessionStart, sessionEnd);
+    final durableRead = session.indexOf('readOutboxEntries(scope)');
+    final unknownStatus = session.indexOf('CloudOutboxStatus.unknownOutcome');
+    final reconciliationAdmission = session.indexOf(
+      'requireReconciliationAllowed(',
+      unknownStatus,
+    );
+    final firstUnknownBranch = session.indexOf(
+      'if (kind == CloudSyncOutboundCanarySessionKind.unknownRecovery)',
+      unknownStatus,
+    );
+    final unknownLaneStart = session.indexOf(
+      'if (kind == CloudSyncOutboundCanarySessionKind.unknownRecovery)',
+      firstUnknownBranch + 1,
+    );
+    final transportStart = session.indexOf(
+      'final transport = NativeProtectedCloudSyncTransport(',
+      unknownLaneStart,
+    );
+    expect(durableRead, greaterThanOrEqualTo(0));
+    expect(unknownStatus, greaterThan(durableRead));
+    expect(firstUnknownBranch, greaterThan(unknownStatus));
+    expect(reconciliationAdmission, greaterThan(firstUnknownBranch));
+    expect(unknownLaneStart, greaterThan(firstUnknownBranch));
+    expect(transportStart, greaterThan(unknownLaneStart));
+    final unknownLane = session.substring(unknownLaneStart, transportStart);
+    expect(unknownLane, contains('_ProductionUnknownOutcomeCanarySession'));
+    expect(unknownLane, contains('mutationGuard.reconcileUnknownOutcome('));
+    for (final forbidden in const [
+      'CloudSyncEngine',
+      'CloudSyncOutboundAdmissionCoordinator',
+      'NativeProtectedCloudSyncTransport',
+      'prepareSubmission',
+      'consumePreparedSubmission',
+      '_resolveServerRecordChanged',
+      'CloudOutboxTransition.quarantined',
+      'CloudOutboxAction.delete',
+    ]) {
+      expect(unknownLane, isNot(contains(forbidden)), reason: forbidden);
+    }
+    expect(session, isNot(contains('reconcileUnknownOutcomesOnly')));
+
+    final manual = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart',
+    ).readAsStringSync();
+    expect(manual, contains('CloudSyncOutboundCanaryUnknownRecoverySession'));
+    expect(manual, contains('CloudSyncOutboundCanaryReplaySession'));
+    expect(manual, contains('_requireExactSessionCapability'));
+    expect(
+      manual,
+      contains('_requireAllowedUnknownRecoveryPostflightOperation'),
+    );
+
+    final native = File(
+      'lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart',
+    ).readAsStringSync();
+    final reconcileStart = native.indexOf(
+      'Future<CloudUnknownOutcomeResolution> reconcileUnknownOutcome(',
+    );
+    final reconcileEnd = native.indexOf(
+      'verifyConfirmedMessageCreateNoSave(',
+      reconcileStart,
+    );
+    final reconcile = native.substring(reconcileStart, reconcileEnd);
+    expect(reconcile, contains('mutationGuard.reconcileUnknownOutcome('));
+    expect(reconcile, isNot(contains('prepareSubmission(')));
+    expect(reconcile, isNot(contains('consumePreparedSubmission(')));
+
+    final guard = File(
+      'lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart',
+    ).readAsStringSync();
+    expect(guard, contains('_completeReconciliationAfterExactReadback('));
+    expect(guard, contains('binding.reconcileMessageCreate('));
+    expect(guard, isNot(contains('Future<void> completeReconciliation(')));
+
+    final models = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_models.dart',
+    ).readAsStringSync();
+    expect(models, isNot(contains('CloudUnknownOutcomeProof')));
   });
 
   test('semantic sampler pins local-only flags and manual trigger', () {
@@ -423,6 +643,9 @@ void main() {
     final outboundWait = reset.indexOf(
       'await outbound.timeout(_cloudSyncV2OutboundQuiescenceTimeout)',
     );
+    final provisioningWait = reset.indexOf(
+      'await outboundProvisioning.timeout(',
+    );
     final nativeReset = reset.indexOf('api.resetState(');
     final resume = reset.indexOf('resumeAfterAccountTransition()');
 
@@ -431,7 +654,8 @@ void main() {
     expect(awaitSemantic, greaterThan(semanticWait));
     expect(boundedWait, greaterThan(awaitSemantic));
     expect(safeAbort, greaterThan(boundedWait));
-    expect(outboundWait, greaterThan(safeAbort));
+    expect(provisioningWait, greaterThan(safeAbort));
+    expect(outboundWait, greaterThan(provisioningWait));
     expect(detachState, greaterThan(outboundWait));
     expect(nativeReset, greaterThan(detachState));
     expect(resume, greaterThan(nativeReset));

@@ -411,17 +411,33 @@ jobs:
 
       # Separate applicationId for bounded, local-only protocol evidence. The
       # audited outbound path remains compile-time absent until a remote-
-      # absence proof can prevent duplicate logical messages.
+      # absence proof can prevent duplicate logical messages. Relay hardware is
+      # imported after installation; no relay credential is embedded in this
+      # distributable artifact.
+      - name: Exclude dotenv asset from the Canary APK
+        run: |
+          set -euo pipefail
+          dotenv_asset_line='    - .env'
+          dotenv_asset_count="$(
+            grep -Fxc -- "$dotenv_asset_line" pubspec.yaml || true
+          )"
+          if [[ "$dotenv_asset_count" != '1' ]]; then
+            echo "Expected exactly one dotenv asset line, found $dotenv_asset_count" >&2
+            exit 1
+          fi
+          sed -i '/^    - \.env$/d' pubspec.yaml
+          if grep -Fxq -- "$dotenv_asset_line" pubspec.yaml; then
+            echo 'Failed to remove the dotenv asset line' >&2
+            exit 1
+          fi
+
       - name: Build developer-only CloudKit V2 Evidence Canary APK
-        env:
-          REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
         run: >-
           flutter build apk --flavor canary --debug --target-platform android-arm64
           --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true
           --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
           --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true
           --dart-define=OPENBUBBLES_BUILD_COMMIT=${{ github.sha }}
-          "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
 
       # Debug APKs otherwise use a runner-generated key that changes between
       # jobs. A stable, Canary-only key permits safe in-place updates without
@@ -493,6 +509,10 @@ jobs:
           )"
           if [[ "$application_id" != 'com.bluebubbles.messaging.cloudkitcanary' ]]; then
             echo "Unexpected Canary application ID: $application_id" >&2
+            exit 1
+          fi
+          if unzip -Z1 "$apk" 'assets/flutter_assets/.env' >/dev/null 2>&1; then
+            echo 'evidence canary APK unexpectedly contains assets/flutter_assets/.env' >&2
             exit 1
           fi
           for entry in \

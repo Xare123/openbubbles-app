@@ -58,9 +58,7 @@ void main() {
     expect(timeline, ['recover', 'stage', 'commit:${stage.leaseReference}']);
     expect(operation.protectedLeaseReference, stage.leaseReference);
     expect(
-      await store.readNonterminalProtectedOutboundLeaseReferences(
-        maximumCount: 4096,
-      ),
+      await store.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
       {stage.leaseReference},
     );
     final mapping = await store.readRecordMap(
@@ -75,7 +73,7 @@ void main() {
     'restaged retry keeps the durable identity and rolls back only the new lease',
     () async {
       final first = _stage('a', 'P', 'L', 'S');
-      final retry = _stage('b', 'Q', 'L', 'T');
+      final retry = _stage('b', 'Q', 'L', 'S');
       transport.stages.addAll([first, retry]);
       final initial = await coordinator.admitMessage(
         testScope(),
@@ -85,7 +83,7 @@ void main() {
       final repeated = await coordinator.admitMessage(
         testScope(),
         message: _FakeCloudMessage(),
-        createdAt: testEpoch.add(const Duration(seconds: 1)),
+        createdAt: testEpoch,
       );
 
       expect(repeated.operationId, initial.operationId);
@@ -112,9 +110,7 @@ void main() {
 
     expect(transport.rolledBack, isEmpty);
     expect(
-      await store.readNonterminalProtectedOutboundLeaseReferences(
-        maximumCount: 4096,
-      ),
+      await store.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
       {stage.leaseReference},
     );
   });

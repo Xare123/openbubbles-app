@@ -413,6 +413,22 @@ final class _NativeCloudSyncPreparedSubmission
   final List<String> preconfirmedOperationIds;
 }
 
+final class _NativeConfirmedReplayProof
+    implements CloudSyncConfirmedReplayProof {
+  _NativeConfirmedReplayProof(this._operation, this._protectedLeaseReference);
+
+  final CloudOutboxOperation _operation;
+  final String _protectedLeaseReference;
+  bool consumed = false;
+
+  bool binds(CloudOutboxOperation operation) =>
+      _operation.sameDurableSnapshotAs(operation) &&
+      _protectedLeaseReference == operation.protectedLeaseReference;
+
+  @override
+  String toString() => 'CloudSyncConfirmedReplayProof(redacted)';
+}
+
 /// Default-off Cloud Sync V2 transport whose bridge surface contains
 /// only keyed hashes and opaque protected-local references.
 ///
@@ -426,6 +442,7 @@ final class NativeProtectedCloudSyncTransport
         CloudSyncOutboundStagingTransport,
         CloudSyncWriteTransport,
         CloudSyncWriteReceiptFinalizer,
+        CloudSyncConfirmedReceiptRetentionPolicy,
         CloudSyncNativeOperationQuiescence,
         CloudSyncMutationUncertaintyBoundary {
   NativeProtectedCloudSyncTransport({
@@ -437,6 +454,7 @@ final class NativeProtectedCloudSyncTransport
     this._writerMutationGuard,
     this._refreshAuthentication,
     this._refreshPcsAccess,
+    this._retainConfirmedReceiptsForReplay = false,
   }) : _storageDirectory = storageDirectory,
        _protectedStoreIdentity = protectedStoreIdentity,
        _nativeWriterPauseToken = nativeWriterPauseToken,
@@ -462,10 +480,15 @@ final class NativeProtectedCloudSyncTransport
   final CloudKitWriterMutationRunner? _writerMutationGuard;
   final Future<bool> Function(CloudSyncScope scope)? _refreshAuthentication;
   final Future<bool> Function(CloudSyncScope scope)? _refreshPcsAccess;
+  final bool _retainConfirmedReceiptsForReplay;
   final Set<Future<void>> _activeNativeOperations = {};
   Future<void>? _nativeQuiescence;
   bool _nativeAdmissionClosed = false;
   bool _mutationAdmissionPoisoned = false;
+
+  @override
+  bool get retainConfirmedReceiptsForReplay =>
+      _retainConfirmedReceiptsForReplay;
 
   @override
   String get protectedPageLeaseRecoveryIdentity => _protectedStoreIdentity;
@@ -748,6 +771,22 @@ final class NativeProtectedCloudSyncTransport
           safeCode: 'cloud_sync_writer_mutation_guard_required',
         );
       }
+      final remoteOperations = operations
+          .where((operation) => expectedRemote.contains(operation.operationId))
+          .toList(growable: false);
+      if (remoteOperations.length != 1 || expectedRemote.length != 1) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.authorization,
+          safeCode: 'cloud_sync_outbound_reconciliation_batch_unsupported',
+        );
+      }
+      final reconciliationBindingSha256 =
+          cloudKitWriterReconciliationBindingSha256(
+            remoteOperations.single,
+            appleRequestUuid: persistedIdentity.requestUuid,
+            appleOperationUuid: persistedIdentity
+                .operationUuids[remoteOperations.single.operationId],
+          );
       final bindings = _requireWriteBindings();
       final remoteOutcomes = await _runProtectedStoreOperation(() async {
         // The queue may have waited long enough for the cross-process lease to
@@ -760,12 +799,14 @@ final class NativeProtectedCloudSyncTransport
           persistedIdentity: persistedIdentity,
           protectedOperations: protectedOperations,
         );
-        List<CloudPushOutcome>? exactAmbiguousOutcomes;
+        CloudFailureCategory? ambiguousFailureCategory;
+        Duration? ambiguousRetryAfter;
         try {
           return await mutationGuard.runAuthorized(
             owner: CloudKitWriterOwner.v2,
             expectedClient: _cloudMessagesClient,
             preparedHandleBindingSha256: preparedSubmission.handleBindingSha256,
+            reconciliationBindingSha256: reconciliationBindingSha256,
             requireAdmission: _requireMutationAdmission,
             action: (capability) async {
               _requireV2WriterInterlock();
@@ -803,11 +844,14 @@ final class NativeProtectedCloudSyncTransport
                 (outcome) =>
                     outcome.disposition != CloudPushDisposition.confirmed,
               )) {
-                // Preserve the exact, fully correlated per-row dispositions
-                // while the guard revokes global mutation authority. This is
-                // diagnostic state only; the retained fence still prevents
-                // every automatic retry until explicit reconciliation.
-                exactAmbiguousOutcomes = List.unmodifiable(mapped);
+                // Once the native capability was consumed, a classified
+                // non-success is not proof that CloudKit rejected the save.
+                // Preserve only its diagnostic category and retry hint; the
+                // durable operation must remain outcome-unknown with the exact
+                // Apple UUIDs and protected receipt intact until readback.
+                final diagnostic = mapped.single;
+                ambiguousFailureCategory = diagnostic.failureCategory;
+                ambiguousRetryAfter = diagnostic.retryAfter;
                 throw CloudSyncFailure(
                   category: CloudFailureCategory.unknown,
                   safeCode:
@@ -819,15 +863,14 @@ final class NativeProtectedCloudSyncTransport
           );
         } on CloudKitWriterAuthorityFailure catch (error) {
           if (!_isAmbiguousMutationGuardFailure(error.safeCode)) rethrow;
-          if (exactAmbiguousOutcomes case final outcomes?) {
-            return outcomes;
-          }
           return <CloudPushOutcome>[
             for (final operationId in expectedRemote)
               CloudPushOutcome(
                 operationId: operationId,
                 disposition: CloudPushDisposition.unknownOutcome,
-                failureCategory: CloudFailureCategory.unknown,
+                failureCategory:
+                    ambiguousFailureCategory ?? CloudFailureCategory.unknown,
+                retryAfter: ambiguousRetryAfter,
               ),
           ];
         }
@@ -1086,11 +1129,12 @@ final class NativeProtectedCloudSyncTransport
       }
     }
     final terminalIds = transitions
-        .where(
-          (transition) =>
-              transition.type == CloudOutboxTransitionType.confirmed ||
-              transition.type == CloudOutboxTransitionType.quarantined,
-        )
+        .where((transition) {
+          if (transition.type == CloudOutboxTransitionType.confirmed) {
+            return !_retainConfirmedReceiptsForReplay;
+          }
+          return transition.type == CloudOutboxTransitionType.quarantined;
+        })
         .map((transition) => transition.operationId)
         .toSet();
     final leases = operations
@@ -1633,6 +1677,80 @@ final class NativeProtectedCloudSyncTransport
     required CloudOutboxOperation operation,
   }) async {
     _requireV2WriterInterlock();
+    if (operation.scope != scope) {
+      throw _localStorage('cloud_sync_outbound_reconcile_operation_invalid');
+    }
+    final mutationGuard = _writerMutationGuard;
+    if (mutationGuard == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.authorization,
+        safeCode: 'cloud_sync_writer_mutation_guard_required',
+      );
+    }
+    return _runProtectedStoreOperation(
+      () => mutationGuard.reconcileUnknownOutcome(
+        owner: CloudKitWriterOwner.v2,
+        expectedClient: _cloudMessagesClient,
+        operation: operation,
+      ),
+    );
+  }
+
+  /// Verifies an already-confirmed create through the exact protected remote
+  /// digest lookup. This path never calls native prepare or consume and cannot
+  /// submit a CloudKit mutation.
+  Future<CloudSyncConfirmedReplayProof> verifyConfirmedMessageCreateNoSave(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+  }) async {
+    final resolution = await _reconcileMessageCreateOutcome(
+      scope,
+      operation: operation,
+      expectedStatus: CloudOutboxStatus.confirmed,
+      invalidOperationCode: 'cloud_sync_outbound_replay_operation_invalid',
+      invalidEnvelopeCode: 'cloud_sync_outbound_replay_envelope_invalid',
+    );
+    switch (resolution.disposition) {
+      case CloudUnknownOutcomeDisposition.committed:
+        return _NativeConfirmedReplayProof(
+          operation,
+          operation.protectedLeaseReference!,
+        );
+      case CloudUnknownOutcomeDisposition.notApplied:
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'cloud_sync_outbound_replay_record_missing',
+        );
+      case CloudUnknownOutcomeDisposition.serverRecordChanged:
+      case CloudUnknownOutcomeDisposition.quarantined:
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'cloud_sync_outbound_replay_conflict',
+        );
+      case CloudUnknownOutcomeDisposition.unresolved:
+        throw CloudSyncFailure(
+          category: resolution.failureCategory ?? CloudFailureCategory.unknown,
+          retryAfter: resolution.retryAfter,
+          safeCode: 'cloud_sync_outbound_replay_unresolved',
+        );
+    }
+  }
+
+  /// Durably releases adoption, then removes the retained local receipt, only
+  /// after an exact remote digest replay has succeeded.
+  ///
+  /// The proof is consumed before the first await. The durable marker callback
+  /// runs before native acknowledgement: if the process dies after that local
+  /// transaction, startup recovery sees the receipt as unadopted and removes
+  /// it while the operation's protected payload reference remains live. No
+  /// CloudKit operation is performed here.
+  Future<void> releaseConfirmedReplayReceipt(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+    required CloudSyncConfirmedReplayProof proof,
+    required Future<void> Function() clearDurableAdoptionMarker,
+  }) async {
+    _requireV2WriterInterlock();
     _validateOutboundMessageScope(scope);
     final payloadReference = operation.encryptedPayloadReference;
     final payloadSha256 = operation.payloadSha256;
@@ -1640,8 +1758,11 @@ final class NativeProtectedCloudSyncTransport
     final leaseReference = operation.protectedLeaseReference;
     final requestUuid = operation.appleRequestUuid;
     final operationUuid = operation.appleOperationUuid;
-    if (operation.scope != scope ||
-        operation.status != CloudOutboxStatus.unknownOutcome ||
+    if (proof is! _NativeConfirmedReplayProof ||
+        proof.consumed ||
+        !proof.binds(operation) ||
+        operation.scope != scope ||
+        operation.status != CloudOutboxStatus.confirmed ||
         operation.action != CloudOutboxAction.save ||
         operation.payloadVersion != cloudSyncOutboundPayloadVersion ||
         !_isInitialCreateOperationIdentity(
@@ -1663,7 +1784,61 @@ final class NativeProtectedCloudSyncTransport
         operationUuid == null ||
         !_canonicalAppleUuidPattern.hasMatch(operationUuid) ||
         requestUuid == operationUuid) {
-      throw _localStorage('cloud_sync_outbound_reconcile_operation_invalid');
+      throw _localStorage('cloud_sync_outbound_replay_operation_invalid');
+    }
+
+    proof.consumed = true;
+    await clearDurableAdoptionMarker();
+    final result = await _runProtectedStoreOperation(
+      () => _bindings.acknowledgeCommittedPageLease(
+        storageDirectory: _storageDirectory,
+        leaseReference: leaseReference,
+      ),
+    );
+    if (result.failure != null) {
+      throw _mapFailure(result.failure!);
+    }
+  }
+
+  Future<CloudUnknownOutcomeResolution> _reconcileMessageCreateOutcome(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+    required CloudOutboxStatus expectedStatus,
+    required String invalidOperationCode,
+    required String invalidEnvelopeCode,
+  }) async {
+    _requireV2WriterInterlock();
+    _validateOutboundMessageScope(scope);
+    final payloadReference = operation.encryptedPayloadReference;
+    final payloadSha256 = operation.payloadSha256;
+    final serverRecordIdHash = operation.serverRecordIdHash;
+    final leaseReference = operation.protectedLeaseReference;
+    final requestUuid = operation.appleRequestUuid;
+    final operationUuid = operation.appleOperationUuid;
+    if (operation.scope != scope ||
+        operation.status != expectedStatus ||
+        operation.action != CloudOutboxAction.save ||
+        operation.payloadVersion != cloudSyncOutboundPayloadVersion ||
+        !_isInitialCreateOperationIdentity(
+          scope,
+          operationId: operation.operationId,
+          logicalEntityKeyHash: operation.logicalEntityKeyHash,
+          payloadVersion: operation.payloadVersion,
+        ) ||
+        payloadReference == null ||
+        !_protectedReferencePattern.hasMatch(payloadReference) ||
+        payloadSha256 == null ||
+        !_contentDigestPattern.hasMatch(payloadSha256) ||
+        serverRecordIdHash == null ||
+        !_nativeDigestPattern.hasMatch(serverRecordIdHash) ||
+        leaseReference == null ||
+        !_leaseReferencePattern.hasMatch(leaseReference) ||
+        requestUuid == null ||
+        !_canonicalAppleUuidPattern.hasMatch(requestUuid) ||
+        operationUuid == null ||
+        !_canonicalAppleUuidPattern.hasMatch(operationUuid) ||
+        requestUuid == operationUuid) {
+      throw _localStorage(invalidOperationCode);
     }
 
     final result = await _runProtectedStoreOperation(
@@ -1688,27 +1863,14 @@ final class NativeProtectedCloudSyncTransport
     final disposition = _requireOutboundReconcileDisposition(
       result,
       expectedProtectedProofReference: payloadReference,
-      invalidEnvelopeCode: 'cloud_sync_outbound_reconcile_envelope_invalid',
-    );
-
-    CloudUnknownOutcomeProof proof() => CloudUnknownOutcomeProof(
-      operationId: operation.operationId,
-      appleRequestUuid: requestUuid,
-      appleOperationUuid: operationUuid,
-      scopeStorageKey: scope.storageKey,
-      checkpointGeneration: operation.checkpointGeneration,
-      logicalEntityKeyHash: operation.logicalEntityKeyHash,
-      serverRecordIdHash: serverRecordIdHash,
-      action: operation.action,
-      expectedPayloadSha256: payloadSha256,
-      protectedProofReference: result.protectedProofReference!,
+      invalidEnvelopeCode: invalidEnvelopeCode,
     );
 
     return switch (disposition) {
       frb_api.CloudSyncOutboundReconcileDisposition.committed =>
-        CloudUnknownOutcomeResolution.committed(proof: proof()),
+        const CloudUnknownOutcomeResolution.committed(),
       frb_api.CloudSyncOutboundReconcileDisposition.notApplied =>
-        CloudUnknownOutcomeResolution.notApplied(proof: proof()),
+        const CloudUnknownOutcomeResolution.notApplied(),
       frb_api.CloudSyncOutboundReconcileDisposition.diverged =>
         const CloudUnknownOutcomeResolution.quarantined(
           failureCategory: CloudFailureCategory.conflict,
@@ -1743,7 +1905,8 @@ final class NativeProtectedCloudSyncTransport
 final class FrbNativeProtectedCloudSyncBindings
     implements
         NativeProtectedCloudSyncBindings,
-        NativeProtectedCloudSyncWriteBindings {
+        NativeProtectedCloudSyncWriteBindings,
+        CloudKitWriterReconciliationBinding {
   FrbNativeProtectedCloudSyncBindings({RustLibApi? api})
     // ignore: invalid_use_of_internal_member
     : _api = api ?? RustLib.instance.api;

@@ -664,39 +664,139 @@ final class CloudSyncProductionOutboundCanaryAdapter {
     canary = CloudSyncManualOutboundCanary(
       readPreflight: readPreflight,
       readAuthSnapshot: authProvider.capture,
+      readOutboxForConfirmation: durableStore.readOutboxEntries,
       writerExclusion: interlock,
-      createSession: (snapshot, scope) async {
+      createSession: (snapshot, scope, kind, expectedOperation) async {
         final writerScope = CloudKitWriterScope(
           accountFingerprint: scope.accountFingerprint,
           container: scope.container,
           database: scope.database,
         );
+        final resolvedTransportBindings =
+            transportBindings ?? FrbNativeProtectedCloudSyncBindings();
+        if (resolvedTransportBindings is! CloudKitWriterReconciliationBinding) {
+          throw StateError('cloud_sync_writer_reconciliation_binding_required');
+        }
+        final reconciliationBinding =
+            resolvedTransportBindings as CloudKitWriterReconciliationBinding;
         final mutationGuard = CloudKitWriterMutationGuard(
           store: Database.store,
           readActiveClient: readActiveClient,
           privateStorageDirectory: privateStorageDirectory,
+          reconciliationBinding: reconciliationBinding,
         );
-        mutationGuard.requireClear();
+        final durableOperations = await durableStore.readOutboxEntries(scope);
+        final expectedStatus = switch (kind) {
+          CloudSyncOutboundCanarySessionKind.freshWrite => null,
+          CloudSyncOutboundCanarySessionKind.pendingRecovery =>
+            CloudOutboxStatus.pending,
+          CloudSyncOutboundCanarySessionKind.unknownRecovery =>
+            CloudOutboxStatus.unknownOutcome,
+          CloudSyncOutboundCanarySessionKind.confirmedReplay =>
+            CloudOutboxStatus.confirmed,
+        };
+        if ((expectedStatus == null && durableOperations.isNotEmpty) ||
+            (expectedStatus != null &&
+                (durableOperations.length != 1 ||
+                    durableOperations.single.status != expectedStatus ||
+                    expectedOperation == null ||
+                    !durableOperations.single.sameDurableSnapshotAs(
+                      expectedOperation,
+                    ))) ||
+            (expectedStatus == null && expectedOperation != null)) {
+          throw StateError('cloud_sync_outbound_session_mode_mismatch');
+        }
+        final recoveryOperation = expectedStatus == null
+            ? null
+            : durableOperations.single;
+        if (kind == CloudSyncOutboundCanarySessionKind.unknownRecovery) {
+          await mutationGuard.requireReconciliationAllowed(
+            owner: CloudKitWriterOwner.v2,
+            expectedClient: snapshot.cloudMessagesClient,
+            operation: recoveryOperation!,
+          );
+        } else {
+          mutationGuard.requireClear();
+        }
+        if (kind == CloudSyncOutboundCanarySessionKind.unknownRecovery) {
+          return _ProductionUnknownOutcomeCanarySession(
+            scope: scope,
+            expectedOperation: recoveryOperation!,
+            readOutbox: () => durableStore.readOutboxEntries(scope),
+            leaseUnknown:
+                ({
+                  required DateTime now,
+                  required String leaseId,
+                  required Duration leaseDuration,
+                }) => durableStore.leaseUnknownOutcomes(
+                  scope,
+                  now: now,
+                  limit: 1,
+                  leaseId: leaseId,
+                  leaseDuration: leaseDuration,
+                ),
+            applyTransition:
+                ({
+                  required String leaseId,
+                  required CloudOutboxTransition transition,
+                  required DateTime now,
+                }) => durableStore.applyOutboxTransitions(
+                  scope,
+                  leaseId: leaseId,
+                  transitions: [transition],
+                  now: now,
+                ),
+            reconcile: (operation) => mutationGuard.reconcileUnknownOutcome(
+              owner: CloudKitWriterOwner.v2,
+              expectedClient: snapshot.cloudMessagesClient,
+              operation: operation,
+            ),
+            quiesce: () async {},
+          );
+        }
+
+        final transport = NativeProtectedCloudSyncTransport(
+          cloudMessagesClient: snapshot.cloudMessagesClient,
+          storageDirectory: privateStorageDirectory,
+          protectedStoreIdentity: snapshot.protectedStoreIdentity,
+          bindings: resolvedTransportBindings,
+          writerMutationGuard: mutationGuard,
+          retainConfirmedReceiptsForReplay: true,
+        );
+
+        if (kind == CloudSyncOutboundCanarySessionKind.confirmedReplay) {
+          return _ProductionConfirmedReplayCanarySession(
+            scope: scope,
+            readOutbox: () => durableStore.readOutboxEntries(scope),
+            verify: (operation) => transport.verifyConfirmedMessageCreateNoSave(
+              scope,
+              operation: operation,
+            ),
+            finalize: (operation, proof) =>
+                transport.releaseConfirmedReplayReceipt(
+                  scope,
+                  operation: operation,
+                  proof: proof,
+                  clearDurableAdoptionMarker: () => durableStore
+                      .clearConfirmedProtectedOutboundLeaseReference(
+                        expectedOperation: operation,
+                      ),
+                ),
+            quiesce: transport.quiesceNativeOperations,
+          );
+        }
+
         final permit = authority.issuePermit(
           writerScope,
           expectedOwner: CloudKitWriterOwner.v2,
         );
         authority.verifyPermit(permit);
-        final transport = NativeProtectedCloudSyncTransport(
-          cloudMessagesClient: snapshot.cloudMessagesClient,
-          storageDirectory: privateStorageDirectory,
-          protectedStoreIdentity: snapshot.protectedStoreIdentity,
-          bindings: transportBindings,
-          writerMutationGuard: mutationGuard,
+        final engineWriterAuthority = ObjectBoxCloudSyncWriterAuthority(
+          store: Database.store,
         );
         final lifecycle = CloudProtectedPageLeaseLifecycle(
           store: durableStore,
           transport: transport,
-        );
-        final admission = CloudSyncOutboundAdmissionCoordinator(
-          store: durableStore,
-          transport: transport,
-          ensureProtectedStoreRecovered: lifecycle.ensureRecoveredBeforeWrite,
         );
         final engine = CloudSyncEngine(
           scope: scope,
@@ -705,9 +805,7 @@ final class CloudSyncProductionOutboundCanaryAdapter {
           store: durableStore,
           transport: transport,
           inboxApplier: const RejectingShadowInboxApplier(),
-          writerAuthority: ObjectBoxCloudSyncWriterAuthority(
-            store: Database.store,
-          ),
+          writerAuthority: engineWriterAuthority,
           writerExclusion: interlock,
           config: CloudSyncEngineConfig(
             maximumBatchSize: 1,
@@ -724,12 +822,26 @@ final class CloudSyncProductionOutboundCanaryAdapter {
             ),
           ),
         );
-        return _ProductionOutboundCanarySession(
-          scope: scope,
-          admission: admission,
-          engine: engine,
-          transport: transport,
+        if (kind == CloudSyncOutboundCanarySessionKind.pendingRecovery) {
+          return _ProductionPendingRecoveryCanarySession(
+            readOutbox: () => durableStore.readOutboxEntries(scope),
+            flush: () =>
+                engine.synchronize(trigger: CloudSyncTrigger.localOutbox),
+            quiesce: transport.quiesceNativeOperations,
+          );
+        }
+        final admission = CloudSyncOutboundAdmissionCoordinator(
           store: durableStore,
+          transport: transport,
+          ensureProtectedStoreRecovered: lifecycle.ensureRecoveredBeforeWrite,
+        );
+        return _ProductionFreshWriteCanarySession(
+          admit: ({required message, required createdAt}) => admission
+              .admitMessage(scope, message: message, createdAt: createdAt),
+          readOutbox: () => durableStore.readOutboxEntries(scope),
+          flush: () =>
+              engine.synchronize(trigger: CloudSyncTrigger.localOutbox),
+          quiesce: transport.quiesceNativeOperations,
         );
       },
       compileGateOverrideForTest: compileGateOverrideForTest,
@@ -750,41 +862,262 @@ final class CloudSyncProductionOutboundCanaryAdapter {
   }
 }
 
-final class _ProductionOutboundCanarySession
-    implements CloudSyncOutboundCanarySession {
-  const _ProductionOutboundCanarySession({
-    required this.scope,
-    required CloudSyncOutboundAdmissionCoordinator admission,
-    required CloudSyncEngine engine,
-    required NativeProtectedCloudSyncTransport transport,
-    required ObjectBoxCloudSyncStore store,
-  }) : _admission = admission,
-       _engine = engine,
-       _transport = transport,
-       _store = store;
+typedef _CanaryOutboxRead = Future<List<CloudOutboxOperation>> Function();
+typedef _CanaryFlush = Future<CloudSyncRunResult> Function();
+typedef _CanaryQuiesce = Future<void> Function();
+typedef _CanaryAdmit =
+    Future<CloudOutboxOperation> Function({
+      required frb_api.CloudMessage message,
+      required DateTime createdAt,
+    });
+typedef _CanaryLeaseUnknown =
+    Future<List<CloudOutboxOperation>> Function({
+      required DateTime now,
+      required String leaseId,
+      required Duration leaseDuration,
+    });
+typedef _CanaryApplyUnknownTransition =
+    Future<void> Function({
+      required String leaseId,
+      required CloudOutboxTransition transition,
+      required DateTime now,
+    });
+typedef _CanaryReconcileUnknown =
+    Future<CloudUnknownOutcomeResolution> Function(
+      CloudOutboxOperation operation,
+    );
+typedef _CanaryVerifyReplay =
+    Future<CloudSyncConfirmedReplayProof> Function(
+      CloudOutboxOperation operation,
+    );
+typedef _CanaryFinalizeReplay =
+    Future<void> Function(
+      CloudOutboxOperation operation,
+      CloudSyncConfirmedReplayProof proof,
+    );
 
-  final CloudSyncScope scope;
-  final CloudSyncOutboundAdmissionCoordinator _admission;
-  final CloudSyncEngine _engine;
-  final NativeProtectedCloudSyncTransport _transport;
-  final ObjectBoxCloudSyncStore _store;
+final class _ProductionFreshWriteCanarySession
+    implements CloudSyncOutboundCanaryWriteSession {
+  const _ProductionFreshWriteCanarySession({
+    required _CanaryAdmit admit,
+    required _CanaryOutboxRead readOutbox,
+    required _CanaryFlush flush,
+    required _CanaryQuiesce quiesce,
+  }) : _admit = admit,
+       _readOutbox = readOutbox,
+       _flush = flush,
+       _quiesce = quiesce;
+
+  final _CanaryAdmit _admit;
+  final _CanaryOutboxRead _readOutbox;
+  final _CanaryFlush _flush;
+  final _CanaryQuiesce _quiesce;
 
   @override
   Future<CloudOutboxOperation> admitMessage({
     required frb_api.CloudMessage message,
     required DateTime createdAt,
-  }) => _admission.admitMessage(scope, message: message, createdAt: createdAt);
+  }) => _admit(message: message, createdAt: createdAt);
 
   @override
-  Future<CloudSyncRunResult> flushOneBatch() =>
-      _engine.synchronize(trigger: CloudSyncTrigger.localOutbox);
+  Future<CloudSyncRunResult> flushOneBatch() => _flush();
 
   @override
-  Future<List<CloudOutboxOperation>> readOutbox() =>
-      _store.readOutboxEntries(scope);
+  Future<List<CloudOutboxOperation>> readOutbox() => _readOutbox();
 
   @override
-  Future<void> quiesce() => _transport.quiesceNativeOperations();
+  Future<void> quiesce() => _quiesce();
+}
+
+final class _ProductionPendingRecoveryCanarySession
+    implements CloudSyncOutboundCanaryFlushSession {
+  const _ProductionPendingRecoveryCanarySession({
+    required _CanaryOutboxRead readOutbox,
+    required _CanaryFlush flush,
+    required _CanaryQuiesce quiesce,
+  }) : _readOutbox = readOutbox,
+       _flush = flush,
+       _quiesce = quiesce;
+
+  final _CanaryOutboxRead _readOutbox;
+  final _CanaryFlush _flush;
+  final _CanaryQuiesce _quiesce;
+
+  @override
+  Future<CloudSyncRunResult> flushOneBatch() => _flush();
+
+  @override
+  Future<List<CloudOutboxOperation>> readOutbox() => _readOutbox();
+
+  @override
+  Future<void> quiesce() => _quiesce();
+}
+
+final class _ProductionUnknownOutcomeCanarySession
+    implements CloudSyncOutboundCanaryUnknownRecoverySession {
+  const _ProductionUnknownOutcomeCanarySession({
+    required this.scope,
+    required this.expectedOperation,
+    required _CanaryOutboxRead readOutbox,
+    required _CanaryLeaseUnknown leaseUnknown,
+    required _CanaryApplyUnknownTransition applyTransition,
+    required _CanaryReconcileUnknown reconcile,
+    required _CanaryQuiesce quiesce,
+  }) : _readOutbox = readOutbox,
+       _leaseUnknown = leaseUnknown,
+       _applyTransition = applyTransition,
+       _reconcile = reconcile,
+       _quiesce = quiesce;
+
+  static const _leaseDuration = Duration(minutes: 2);
+  static const _defaultRetryDelay = Duration(seconds: 30);
+
+  final CloudSyncScope scope;
+  final CloudOutboxOperation expectedOperation;
+  final _CanaryOutboxRead _readOutbox;
+  final _CanaryLeaseUnknown _leaseUnknown;
+  final _CanaryApplyUnknownTransition _applyTransition;
+  final _CanaryReconcileUnknown _reconcile;
+  final _CanaryQuiesce _quiesce;
+
+  @override
+  Future<CloudSyncRunResult> reconcileUnknownOutcome({
+    required CloudOutboxOperation operation,
+  }) async {
+    if (operation.status != CloudOutboxStatus.unknownOutcome ||
+        operation.scope != scope ||
+        !operation.sameDurableSnapshotAs(expectedOperation)) {
+      throw StateError('cloud_sync_unknown_recovery_operation_changed');
+    }
+    final startedAt = DateTime.now().toUtc();
+    final leaseId =
+        'manual-unknown-recovery:${operation.operationId}:'
+        '${startedAt.microsecondsSinceEpoch}';
+    final leased = await _leaseUnknown(
+      now: startedAt,
+      leaseId: leaseId,
+      leaseDuration: _leaseDuration,
+    );
+    if (leased.isEmpty) {
+      return CloudSyncRunResult(
+        status: CloudSyncRunStatus.completed,
+        counters: const CloudSyncRunCounters(),
+        startedAt: startedAt,
+        finishedAt: DateTime.now().toUtc(),
+      );
+    }
+    if (leased.length != 1 ||
+        !_sameSnapshotIgnoringLease(leased.single, operation)) {
+      if (leased.length == 1) {
+        await _applyTransition(
+          leaseId: leaseId,
+          transition: CloudOutboxTransition.unknownOutcome(
+            leased.single.operationId,
+            nextEligibleAt: startedAt.add(_defaultRetryDelay),
+          ),
+          now: startedAt,
+        );
+      }
+      throw StateError('cloud_sync_unknown_recovery_lease_mismatch');
+    }
+
+    final leasedOperation = leased.single;
+    CloudUnknownOutcomeResolution? resolution;
+    try {
+      resolution = await _reconcile(leasedOperation);
+    } catch (_) {
+      // Any readback failure is still ambiguous. Keep the exact Apple UUIDs,
+      // protected receipt, and durable mutation fence for another readback.
+    }
+    final now = DateTime.now().toUtc();
+    final CloudOutboxTransition transition;
+    final CloudSyncRunCounters counters;
+    switch (resolution?.disposition) {
+      case CloudUnknownOutcomeDisposition.committed:
+        transition = CloudOutboxTransition.confirmed(
+          operation.operationId,
+          retainProtectedLeaseReference: true,
+        );
+        counters = const CloudSyncRunCounters(confirmed: 1);
+        break;
+      case CloudUnknownOutcomeDisposition.notApplied:
+        transition = CloudOutboxTransition.provenNotApplied(
+          operation.operationId,
+          category: CloudFailureCategory.server,
+          nextEligibleAt: now,
+        );
+        counters = const CloudSyncRunCounters(retried: 1);
+        break;
+      case CloudUnknownOutcomeDisposition.serverRecordChanged:
+      case CloudUnknownOutcomeDisposition.quarantined:
+      case CloudUnknownOutcomeDisposition.unresolved:
+      case null:
+        final retryAfter = resolution?.retryAfter ?? _defaultRetryDelay;
+        transition = CloudOutboxTransition.unknownOutcome(
+          operation.operationId,
+          nextEligibleAt: now.add(retryAfter),
+        );
+        counters = const CloudSyncRunCounters();
+        break;
+    }
+    await _applyTransition(leaseId: leaseId, transition: transition, now: now);
+    return CloudSyncRunResult(
+      status: CloudSyncRunStatus.completed,
+      counters: counters,
+      startedAt: startedAt,
+      finishedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  bool _sameSnapshotIgnoringLease(
+    CloudOutboxOperation leased,
+    CloudOutboxOperation expected,
+  ) => leased
+      .copyWith(clearLeaseId: true, clearLeaseExpiresAt: true)
+      .sameDurableSnapshotAs(expected);
+
+  @override
+  Future<List<CloudOutboxOperation>> readOutbox() => _readOutbox();
+
+  @override
+  Future<void> quiesce() => _quiesce();
+}
+
+final class _ProductionConfirmedReplayCanarySession
+    implements CloudSyncOutboundCanaryReplaySession {
+  const _ProductionConfirmedReplayCanarySession({
+    required this.scope,
+    required _CanaryOutboxRead readOutbox,
+    required _CanaryVerifyReplay verify,
+    required _CanaryFinalizeReplay finalize,
+    required _CanaryQuiesce quiesce,
+  }) : _readOutbox = readOutbox,
+       _verify = verify,
+       _finalize = finalize,
+       _quiesce = quiesce;
+
+  final CloudSyncScope scope;
+  final _CanaryOutboxRead _readOutbox;
+  final _CanaryVerifyReplay _verify;
+  final _CanaryFinalizeReplay _finalize;
+  final _CanaryQuiesce _quiesce;
+
+  @override
+  Future<CloudSyncConfirmedReplayProof> verifyConfirmedNoSave({
+    required CloudOutboxOperation operation,
+  }) => _verify(operation);
+
+  @override
+  Future<void> finalizeConfirmedReplayProof({
+    required CloudOutboxOperation operation,
+    required CloudSyncConfirmedReplayProof proof,
+  }) => _finalize(operation, proof);
+
+  @override
+  Future<List<CloudOutboxOperation>> readOutbox() => _readOutbox();
+
+  @override
+  Future<void> quiesce() => _quiesce();
 }
 
 /// Captures a client-bound snapshot and rejects replacement races.

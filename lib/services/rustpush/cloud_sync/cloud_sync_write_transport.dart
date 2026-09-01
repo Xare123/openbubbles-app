@@ -212,6 +212,15 @@ abstract interface class CloudSyncWriteReceiptFinalizer {
   });
 }
 
+/// Durable policy consulted before a confirmed outbox transition is committed.
+///
+/// Most writers release terminal receipts immediately. The manual outbound
+/// Canary retains exactly one confirmed receipt until a separate no-save
+/// replay proves the remote digest.
+abstract interface class CloudSyncConfirmedReceiptRetentionPolicy {
+  bool get retainConfirmedReceiptsForReplay;
+}
+
 String _protectedOperationBinding(CloudSyncProtectedWriteOperation operation) =>
     '${operation.operationId}\u001f${operation.logicalEntityKeyHash}\u001f'
     '${operation.action.name}\u001f${operation.protectedLeaseReference ?? ''}\u001f'

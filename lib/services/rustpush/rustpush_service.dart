@@ -7381,6 +7381,8 @@ class RustPushService extends GetxService {
   bool _cloudSyncV2SemanticPullQuiescing = false;
   CloudSyncProductionOutboundCanaryAdapter? _cloudSyncV2OutboundAdapter;
   CloudSyncOutboundCanaryConfirmation? _cloudSyncV2OutboundConfirmation;
+  Future<CloudKitV2WriterProvisioningResult>?
+      _cloudSyncV2OutboundProvisioningInFlight;
   Future<CloudSyncOutboundCanaryReport>? _cloudSyncV2OutboundInFlight;
   bool _cloudSyncV2OutboundQuiescing = false;
   static const _cloudSyncV2SemanticPullQuiescenceTimeout =
@@ -7533,6 +7535,7 @@ class RustPushService extends GetxService {
         !ls.isUiThread ||
         loggingOut ||
         _cloudSyncV2OutboundQuiescing ||
+        _cloudSyncV2OutboundProvisioningInFlight != null ||
         _cloudSyncV2OutboundInFlight != null ||
         statePath.isEmpty ||
         state?.icloudServices?.cloudMessagesClient == null) {
@@ -7544,16 +7547,38 @@ class RustPushService extends GetxService {
   /// Selects, without mutation, the newest existing local message that is safe
   /// for the one-text outbound canary. Content and destination are never
   /// exposed through the returned diagnostics.
-  CloudSyncOutboundCanaryCandidate?
-      selectCloudSyncV2OutboundCanaryCandidate() {
+  Future<CloudSyncOutboundCanaryCandidate?>
+      selectCloudSyncV2OutboundCanaryCandidate({
+    required String expectedRecipient,
+  }) async {
     if (!cloudSyncV2ManualOutboundAvailable) {
       throw StateError('cloud_sync_outbound_canary_unavailable');
     }
+    final activeHandles = await _readCloudSyncV2ActiveHandles();
     try {
-      return CloudSyncOutboundCanaryCandidateSelector().selectNewest();
+      return CloudSyncOutboundCanaryCandidateSelector(
+        expectedRecipient: expectedRecipient,
+        activeHandles: activeHandles,
+      ).selectNewest();
     } catch (_) {
       throw StateError('cloud_sync_outbound_candidate_selection_failed');
     }
+  }
+
+  Future<List<String>> _readCloudSyncV2ActiveHandles() async {
+    final client = state?.client;
+    if (client == null) {
+      throw StateError('cloud_sync_outbound_active_handles_unavailable');
+    }
+    try {
+      final handles = await api.getHandles(state: client);
+      if (handles.isNotEmpty) {
+        return handles;
+      }
+    } catch (_) {
+      // Collapse all native/auth details to one reviewed content-free code.
+    }
+    throw StateError('cloud_sync_outbound_active_handles_unavailable');
   }
 
   /// Establishes V2 writer ownership from direct, fail-closed local probes.
@@ -7563,13 +7588,19 @@ class RustPushService extends GetxService {
     if (!cloudSyncV2ManualOutboundAvailable) {
       throw StateError('cloud_sync_outbound_canary_unavailable');
     }
-    return _cloudSyncV2Outbound().ensureWriterOwned();
+    final future = _cloudSyncV2Outbound().ensureWriterOwned();
+    _cloudSyncV2OutboundProvisioningInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_cloudSyncV2OutboundProvisioningInFlight, future)) {
+        _cloudSyncV2OutboundProvisioningInFlight = null;
+      }
+    });
   }
 
   Future<CloudSyncOutboundCanaryConfirmation>
       armCloudSyncV2OutboundConfirmed({
-    required api.CloudMessage message,
-    required DateTime createdAt,
+    required CloudSyncOutboundCanaryCandidate candidate,
+    required String expectedRecipient,
   }) async {
     if (!cloudSyncV2ManualOutboundAvailable) {
       throw StateError('cloud_sync_outbound_canary_unavailable');
@@ -7577,10 +7608,32 @@ class RustPushService extends GetxService {
     if (_cloudSyncV2OutboundConfirmation != null) {
       throw StateError('cloud_sync_outbound_canary_already_armed');
     }
+    Future<CloudSyncOutboundCanaryCandidate?> reselect() async {
+      try {
+        return CloudSyncOutboundCanaryCandidateSelector(
+          expectedRecipient: expectedRecipient,
+          activeHandles: await _readCloudSyncV2ActiveHandles(),
+        ).reselectExact(candidate);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final exactCandidate = await reselect();
+    if (exactCandidate == null) {
+      throw StateError('cloud_sync_outbound_candidate_changed');
+    }
     final confirmation = await _cloudSyncV2Outbound().canary.armConfirmed(
-          message: message,
-          createdAt: createdAt,
+      selectedCreatedAt: exactCandidate.createdAtUtc,
+      revalidateAdmission: () async {
+        final fresh = await reselect();
+        if (fresh == null) return null;
+        return CloudSyncOutboundCanaryAdmission(
+          message: fresh.cloudMessage,
+          createdAt: fresh.createdAtUtc,
         );
+      },
+    );
     _cloudSyncV2OutboundConfirmation = confirmation;
     return confirmation;
   }
@@ -7595,6 +7648,20 @@ class RustPushService extends GetxService {
     }
     final confirmation =
         await _cloudSyncV2Outbound().canary.armRecoveryConfirmed();
+    _cloudSyncV2OutboundConfirmation = confirmation;
+    return confirmation;
+  }
+
+  Future<CloudSyncOutboundCanaryConfirmation>
+      armCloudSyncV2OutboundReplayConfirmed() async {
+    if (!cloudSyncV2ManualOutboundAvailable) {
+      throw StateError('cloud_sync_outbound_canary_unavailable');
+    }
+    if (_cloudSyncV2OutboundConfirmation != null) {
+      throw StateError('cloud_sync_outbound_canary_already_armed');
+    }
+    final confirmation = await _cloudSyncV2Outbound().canary
+        .armConfirmedReplay();
     _cloudSyncV2OutboundConfirmation = confirmation;
     return confirmation;
   }
@@ -7958,6 +8025,22 @@ class RustPushService extends GetxService {
         _cloudSyncV2OutboundAdapter?.canary.disarm(outboundConfirmation);
         _cloudSyncV2OutboundConfirmation = null;
       }
+      final outboundProvisioning = _cloudSyncV2OutboundProvisioningInFlight;
+      if (outboundProvisioning != null) {
+        try {
+          await outboundProvisioning.timeout(
+            _cloudSyncV2OutboundQuiescenceTimeout,
+          );
+        } on TimeoutException {
+          throw StateError(
+            'cloud_sync_outbound_provisioning_quiescence_timeout',
+          );
+        } catch (_) {
+          Logger.warn(
+            "Cloud Sync V2 writer provisioning stopped during account transition",
+          );
+        }
+      }
       final outbound = _cloudSyncV2OutboundInFlight;
       if (outbound != null) {
         try {
@@ -8098,7 +8181,8 @@ class RustPushService extends GetxService {
       _cloudSyncV2OutboundAdapter?.canary.disarm(outboundConfirmation);
       _cloudSyncV2OutboundConfirmation = null;
     }
-    if (_cloudSyncV2OutboundInFlight == null) {
+    if (_cloudSyncV2OutboundProvisioningInFlight == null &&
+        _cloudSyncV2OutboundInFlight == null) {
       if (state != null) disposeState(state!, true, false);
     } else {
       // onClose is synchronous. Do not dispose native handles underneath a

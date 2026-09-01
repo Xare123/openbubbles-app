@@ -554,7 +554,7 @@ final class _AdoptionStore
   }
 
   @override
-  Future<Set<String>> readNonterminalProtectedOutboundLeaseReferences({
+  Future<Set<String>> readLiveProtectedOutboundLeaseReferences({
     required int maximumCount,
   }) async {
     if (outboundAdopted.length > maximumCount) throw StateError('bounded');

@@ -1,12 +1,15 @@
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
 
@@ -61,6 +64,7 @@ void main() {
     readActiveClient: reader ?? () => activeClient,
     privateStorageDirectory: directory.path,
     nativeAuthBinding: binding,
+    reconciliationBinding: binding,
     buildDecision: decision(owner),
   );
 
@@ -76,6 +80,33 @@ void main() {
       action: () => guard(
         reader: reader,
       ).run(owner: CloudKitWriterOwner.legacy, action: action),
+    );
+  }
+
+  Future<T> runV2<T>(Future<T> Function() action) {
+    return CloudKitOperationInterlock(
+      privateStorageDirectory: directory.path,
+      fenceStore: InMemoryCloudSyncStore(),
+    ).runExclusive(kind: CloudKitOperationKind.v2ReadWrite, action: action);
+  }
+
+  Future<void> armUnknownV2Fence(CloudOutboxOperation operation) async {
+    await expectLater(
+      runV2(
+        () => guard(owner: CloudKitWriterOwner.v2).runAuthorized<void>(
+          owner: CloudKitWriterOwner.v2,
+          expectedClient: activeClient,
+          preparedHandleBindingSha256: _sha('a'),
+          reconciliationBindingSha256:
+              cloudKitWriterReconciliationBindingSha256(operation),
+          requireAdmission: () {},
+          action: (capability) async {
+            capability.consumeForNative();
+            throw StateError('response_lost');
+          },
+        ),
+      ),
+      throwsA(_failure('cloudkit_writer_mutation_outcome_unknown')),
     );
   }
 
@@ -275,14 +306,82 @@ void main() {
       expect(_persistentFence(directory).existsSync(), isTrue);
     },
   );
+
+  test(
+    'reconciliation rejects a different operation without releasing poison',
+    () async {
+      provision(CloudKitWriterOwner.v2);
+      final operation = _unknownOutcomeOperation();
+      await armUnknownV2Fence(operation);
+      final unknown = authority(CloudKitWriterOwner.v2).read(_scope)!;
+      expect(unknown.state, CloudKitWriterAuthorityState.mutationUnknown);
+
+      final differentOperation = operation.copyWith(
+        serverRecordIdHash: _hash('T'),
+      );
+      binding.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: differentOperation.encryptedPayloadReference,
+      );
+      await expectLater(
+        runV2(
+          () => guard(owner: CloudKitWriterOwner.v2).reconcileUnknownOutcome(
+            owner: CloudKitWriterOwner.v2,
+            expectedClient: activeClient,
+            operation: differentOperation,
+          ),
+        ),
+        throwsA(
+          _failure('cloudkit_writer_mutation_reconciliation_fence_mismatch'),
+        ),
+      );
+
+      expect(binding.reconcileCalls, 0);
+      expect(_persistentFence(directory).existsSync(), isTrue);
+      final stillUnknown = authority(CloudKitWriterOwner.v2).read(_scope)!;
+      expect(stillUnknown.state, CloudKitWriterAuthorityState.mutationUnknown);
+      expect(stillUnknown.epoch, unknown.epoch);
+    },
+  );
+
+  test('legacy version-two mutation fence fails closed', () async {
+    final stable = () {
+      provision(CloudKitWriterOwner.v2);
+      return authority(CloudKitWriterOwner.v2).read(_scope)!;
+    }();
+    _persistentFence(directory).writeAsStringSync('{"version":2}');
+    final operation = _unknownOutcomeOperation();
+
+    await expectLater(
+      runV2(
+        () => guard(owner: CloudKitWriterOwner.v2).requireReconciliationAllowed(
+          owner: CloudKitWriterOwner.v2,
+          expectedClient: activeClient,
+          operation: operation,
+        ),
+      ),
+      throwsA(_failure('cloudkit_writer_mutation_fence_corrupt')),
+    );
+
+    expect(_persistentFence(directory).existsSync(), isTrue);
+    final unchanged = authority(CloudKitWriterOwner.v2).read(_scope)!;
+    expect(unchanged.state, CloudKitWriterAuthorityState.stable);
+    expect(unchanged.epoch, stable.epoch);
+  });
 }
 
-final class _FakeAuthBinding implements CloudSyncNativeAuthBinding {
+final class _FakeAuthBinding
+    implements CloudSyncNativeAuthBinding, CloudKitWriterReconciliationBinding {
   int captureCalls = 0;
   int warmCalls = 0;
   int pausedWarmCalls = 0;
+  int reconcileCalls = 0;
   void Function(int call)? afterCapture;
   CloudSyncNativeAuthMetadata Function(int call)? metadataForCall;
+  frb_api.CloudSyncOutboundReconcileResult reconcileResult =
+      const frb_api.CloudSyncOutboundReconcileResult(
+        failure: frb_api.CloudSyncOutboundSafeCode.invalidRequest,
+      );
 
   @override
   Future<void> ensureReadAuthentication({
@@ -315,6 +414,19 @@ final class _FakeAuthBinding implements CloudSyncNativeAuthBinding {
     afterCapture?.call(captureCalls);
     return metadata;
   }
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileMessageCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) async {
+    reconcileCalls++;
+    return reconcileResult;
+  }
 }
 
 Matcher _failure(String safeCode) => isA<CloudKitWriterAuthorityFailure>()
@@ -335,6 +447,13 @@ const _metadataA = CloudSyncNativeAuthMetadata(
   protectedStoreIdentity: 'obcs2.store.$_digestA',
 );
 final _scope = CloudKitWriterScope(accountFingerprint: _digestA);
+final _cloudScope = CloudSyncScope(
+  accountFingerprint: _digestA,
+  container: 'com.apple.messages.cloud',
+  database: 'private',
+  zone: 'messageManateeZone',
+  persistenceLane: CloudSyncPersistenceLane.semanticV2,
+);
 const _completeEvidence = CloudKitWriterTransitionEvidence.forTest(
   operationsQuiesced: true,
   activeIdentityRevalidated: true,
@@ -342,3 +461,37 @@ const _completeEvidence = CloudKitWriterTransitionEvidence.forTest(
 );
 const _migrationId =
     '3333333333333333333333333333333333333333333333333333333333333333';
+
+CloudOutboxOperation _unknownOutcomeOperation() {
+  final logicalEntityKeyHash = _hash('L');
+  return CloudOutboxOperation(
+    scope: _cloudScope,
+    operationId: CloudOperationIdentity.forInitialCreate(
+      scope: _cloudScope,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+      payloadVersion: cloudSyncOutboundPayloadVersion,
+    ),
+    logicalEntityKeyHash: logicalEntityKeyHash,
+    action: CloudOutboxAction.save,
+    payloadVersion: cloudSyncOutboundPayloadVersion,
+    mutationRevision: 1,
+    checkpointGeneration: 1,
+    encryptedPayloadReference: _reference('P'),
+    payloadSha256: _sha('b'),
+    serverRecordIdHash: _hash('S'),
+    protectedLeaseReference: _lease('a'),
+    appleRequestUuid: '11111111-2222-4ABC-8DEF-555555555555',
+    appleOperationUuid: 'AAAAAAAA-BBBB-4CCC-8DDD-000000000001',
+    dependencyOperationIds: const {},
+    createdAt: DateTime.fromMillisecondsSinceEpoch(1, isUtc: true),
+    status: CloudOutboxStatus.unknownOutcome,
+    attemptCount: 1,
+  );
+}
+
+String _repeat(String character, int length) =>
+    List.filled(length, character).join();
+String _hash(String character) => _repeat(character, 43);
+String _sha(String character) => _repeat(character, 64);
+String _reference(String character) => 'obcs2.ref.${_hash(character)}';
+String _lease(String character) => 'obcs2.lease.${_repeat(character, 32)}';

@@ -8,7 +8,6 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 final _now = DateTime.utc(2026, 8, 22, 12);
-const _opaqueCloudMessage = _FakeCloudMessage();
 
 void main() {
   test('selects the newest eligible one-to-one text', () {
@@ -23,33 +22,34 @@ void main() {
       createdAt: _now.subtract(const Duration(minutes: 1)),
     );
     final encoded = <Message>[];
+    late api.CloudMessage encodedCloudMessage;
 
-    final candidate = CloudSyncOutboundCanaryCandidateSelector(
+    final candidate = _selector(
       reader: _Reader([older, newest]),
       encoder: (message) {
         encoded.add(message);
-        return _opaqueCloudMessage;
+        return encodedCloudMessage = _cloudMessageFor(message);
       },
       clock: () => _now,
     ).selectNewest();
 
     expect(candidate, isNotNull);
     expect(encoded, [newest]);
-    expect(candidate!.cloudMessage, same(_opaqueCloudMessage));
+    expect(candidate!.cloudMessage, same(encodedCloudMessage));
     expect(candidate.characterCount, 'newest text'.runes.length);
     expect(candidate.createdAtUtc, newest.dateCreated!.toUtc());
     expect(candidate.guidHash, 'f094c2d57a312a52');
   });
 
   test('returns only redacted diagnostics', () {
-    final candidate = CloudSyncOutboundCanaryCandidateSelector(
+    final candidate = _selector(
       reader: _Reader([
         _ordinaryMessage(
           guid: 'redaction-guid',
           text: 'THIS MUST NEVER APPEAR IN DIAGNOSTICS',
         ),
       ]),
-      encoder: (_) => _opaqueCloudMessage,
+      encoder: _cloudMessageFor,
       clock: () => _now,
     ).selectNewest()!;
 
@@ -59,6 +59,84 @@ void main() {
     expect(diagnostic, isNot(contains('THIS MUST NEVER APPEAR')));
     expect(diagnostic, isNot(contains('person@example.com')));
     expect(diagnostic, isNot(contains('redaction-guid')));
+  });
+
+  test('requires the exact operator-entered recipient', () {
+    final candidate = _selector(
+      expectedRecipient: 'different@example.com',
+      reader: _Reader([_ordinaryMessage()]),
+      encoder: _cloudMessageFor,
+      clock: () => _now,
+    ).selectNewest();
+
+    expect(candidate, isNull);
+  });
+
+  test('requires the persisted sender to remain a current IDS handle', () {
+    final candidate = _selector(
+      activeHandles: const ['mailto:prior-account@example.com'],
+      reader: _Reader([_ordinaryMessage()]),
+      encoder: _cloudMessageFor,
+      clock: () => _now,
+    ).selectNewest();
+
+    expect(candidate, isNull);
+  });
+
+  test('normalizes Apple mailto prefixes without weakening exact routing', () {
+    final candidate = _selector(
+      expectedRecipient: 'MAILTO:PERSON@example.com',
+      activeHandles: const ['MAILTO:ME@example.com'],
+      reader: _Reader([_ordinaryMessage()]),
+      encoder: _cloudMessageFor,
+      clock: () => _now,
+    ).selectNewest();
+
+    expect(candidate, isNotNull);
+  });
+
+  test('rejects noncanonical persisted endpoint forms', () {
+    final chats = <Chat>[
+      _chat(chatIdentifier: 'PERSON@example.com'),
+      _chat(usingHandle: 'MAILTO:me@example.com'),
+      _chat(participants: [_handle('MAILTO:person@example.com')]),
+    ];
+
+    for (final chat in chats) {
+      expect(
+        _selector(
+          reader: _Reader([_ordinaryMessage(chat: chat)]),
+          encoder: _cloudMessageFor,
+          clock: () => _now,
+        ).selectNewest(),
+        isNull,
+      );
+    }
+  });
+
+  test('rejects encoded endpoints that differ from the validated route', () {
+    final message = _ordinaryMessage();
+    final encoders = <CloudSyncOutboundCanaryCloudEncoder>[
+      (value) => _FakeCloudMessage(
+        guid: value.guid!,
+        chatId: 'iMessage;-;different@example.com',
+      ),
+      (value) => _FakeCloudMessage(
+        guid: value.guid!,
+        destinationCallerId: 'prior-account@example.com',
+      ),
+    ];
+
+    for (final encoder in encoders) {
+      expect(
+        _selector(
+          reader: _Reader([message]),
+          encoder: encoder,
+          clock: () => _now,
+        ).selectNewest(),
+        isNull,
+      );
+    }
   });
 
   test('never falls back when the newest outgoing row is unsafe', () {
@@ -73,11 +151,11 @@ void main() {
     );
     var conversions = 0;
 
-    final candidate = CloudSyncOutboundCanaryCandidateSelector(
+    final candidate = _selector(
       reader: _Reader([older, newest]),
-      encoder: (_) {
+      encoder: (message) {
         conversions++;
-        return _opaqueCloudMessage;
+        return _cloudMessageFor(message);
       },
       clock: () => _now,
     ).selectNewest();
@@ -97,7 +175,7 @@ void main() {
     );
     final encoded = <Message>[];
 
-    final candidate = CloudSyncOutboundCanaryCandidateSelector(
+    final candidate = _selector(
       reader: _Reader([older, newest]),
       encoder: (message) {
         encoded.add(message);
@@ -110,8 +188,81 @@ void main() {
     expect(encoded, [newest]);
   });
 
+  test('exact revalidation rejects edits, rerouting, and superseding rows', () {
+    final reader = _Reader([
+      _ordinaryMessage(
+        guid: 'selected-message',
+        text: 'original text',
+        createdAt: _now.subtract(const Duration(minutes: 1)),
+      ),
+    ]);
+    final selector = _selector(
+      reader: reader,
+      encoder: _cloudMessageFor,
+      clock: () => _now,
+    );
+    final selected = selector.selectNewest()!;
+
+    expect(selector.reselectExact(selected), isNotNull);
+
+    reader.messages[0] = _ordinaryMessage(
+      guid: 'selected-message',
+      text: 'edited text',
+      createdAt: _now.subtract(const Duration(minutes: 1)),
+    );
+    expect(selector.reselectExact(selected), isNull);
+
+    reader.messages[0] = _ordinaryMessage(
+      guid: 'selected-message',
+      text: 'original text',
+      createdAt: _now.subtract(const Duration(minutes: 1)),
+      chat: _chat(chatIdentifier: 'different@example.com'),
+    );
+    expect(selector.reselectExact(selected), isNull);
+
+    reader.messages[0] = _ordinaryMessage(
+      guid: 'selected-message',
+      text: 'original text',
+      createdAt: _now.subtract(const Duration(minutes: 1)),
+      chat: _chat(participants: [_handle('MAILTO:person@example.com')]),
+    );
+    expect(selector.reselectExact(selected), isNull);
+
+    reader.messages
+      ..[0] = _ordinaryMessage(
+        guid: 'selected-message',
+        text: 'original text',
+        createdAt: _now.subtract(const Duration(minutes: 1)),
+      )
+      ..add(
+        _ordinaryMessage(
+          guid: 'newer-message',
+          createdAt: _now.subtract(const Duration(seconds: 10)),
+        ),
+      );
+    expect(selector.reselectExact(selected), isNull);
+  });
+
+  test('exact revalidation repeats the short freshness check', () {
+    var clock = _now;
+    final selector = _selector(
+      reader: _Reader([
+        _ordinaryMessage(createdAt: _now.subtract(const Duration(minutes: 1))),
+      ]),
+      encoder: _cloudMessageFor,
+      clock: () => clock,
+    );
+    final selected = selector.selectNewest()!;
+
+    clock = _now.add(
+      CloudSyncOutboundCanaryCandidateSelector.maximumCandidateAge,
+    );
+
+    expect(selector.reselectExact(selected), isNull);
+  });
+
   test('rejects a candidate older than the short operator-intent window', () {
-    final candidate = CloudSyncOutboundCanaryCandidateSelector(
+    final candidate = _selector(
       reader: _Reader([
         _ordinaryMessage(
           createdAt: _now.subtract(
@@ -120,7 +271,7 @@ void main() {
           ),
         ),
       ]),
-      encoder: (_) => _opaqueCloudMessage,
+      encoder: _cloudMessageFor,
       clock: () => _now,
     ).selectNewest();
 
@@ -165,6 +316,7 @@ void main() {
         _ordinaryMessage(ckRecordId: 'record-id'),
     'already crawled': () => _ordinaryMessage(ckSyncState: true),
     'subject': () => _ordinaryMessage(subject: 'subject'),
+    'whitespace subject': () => _ordinaryMessage(subject: '   '),
     'multiple attributed bodies': () => _ordinaryMessage(
       attributedBody: [
         AttributedBody.raw('message'),
@@ -183,11 +335,11 @@ void main() {
   }.entries) {
     test('skips ${entry.key}', () {
       var conversions = 0;
-      final candidate = CloudSyncOutboundCanaryCandidateSelector(
+      final candidate = _selector(
         reader: _Reader([entry.value()]),
-        encoder: (_) {
+        encoder: (message) {
           conversions++;
-          return _opaqueCloudMessage;
+          return _cloudMessageFor(message);
         },
         clock: () => _now,
       ).selectNewest();
@@ -209,14 +361,23 @@ void main() {
       ),
     );
     final styleGroup = _ordinaryMessage(chat: _chat(style: 43));
+    final groupRoute = _ordinaryMessage(chat: _chat(guidSeparator: '+'));
+    final unknownStyle = _ordinaryMessage(chat: _chat(style: null));
 
-    for (final message in [sms, rcs, group, styleGroup]) {
+    for (final message in [
+      sms,
+      rcs,
+      group,
+      styleGroup,
+      groupRoute,
+      unknownStyle,
+    ]) {
       var conversions = 0;
-      final candidate = CloudSyncOutboundCanaryCandidateSelector(
+      final candidate = _selector(
         reader: _Reader([message]),
         encoder: (_) {
           conversions++;
-          return _opaqueCloudMessage;
+          return _cloudMessageFor(message);
         },
         clock: () => _now,
       ).selectNewest();
@@ -232,11 +393,11 @@ void main() {
     final originalText = message.text;
     final originalBody = message.attributedBody;
 
-    final candidate = CloudSyncOutboundCanaryCandidateSelector(
+    final candidate = _selector(
       reader: _Reader([message]),
       encoder: (value) {
         expect(value, same(message));
-        return _opaqueCloudMessage;
+        return _cloudMessageFor(message);
       },
       clock: () => _now,
     ).selectNewest();
@@ -277,11 +438,11 @@ void main() {
         final id = messages.put(message);
         final countBefore = messages.count();
 
-        final candidate = CloudSyncOutboundCanaryCandidateSelector(
+        final candidate = _selector(
           reader: ObjectBoxCloudSyncOutboundCanaryMessageReader(
             messages: messages,
           ),
-          encoder: (_) => _opaqueCloudMessage,
+          encoder: _cloudMessageFor,
           clock: () => _now,
         ).selectNewest();
 
@@ -307,6 +468,20 @@ final class _Reader implements CloudSyncOutboundCanaryMessageReader {
   @override
   List<Message> readMessages() => List<Message>.of(messages);
 }
+
+CloudSyncOutboundCanaryCandidateSelector _selector({
+  CloudSyncOutboundCanaryMessageReader? reader,
+  CloudSyncOutboundCanaryCloudEncoder? encoder,
+  DateTime Function()? clock,
+  String expectedRecipient = 'person@example.com',
+  Iterable<String> activeHandles = const ['mailto:me@example.com'],
+}) => CloudSyncOutboundCanaryCandidateSelector(
+  expectedRecipient: expectedRecipient,
+  activeHandles: activeHandles,
+  reader: reader,
+  encoder: encoder,
+  clock: clock,
+);
 
 Message _ordinaryMessage({
   String? guid = 'message-guid',
@@ -380,13 +555,16 @@ Message _ordinaryMessage({
 Chat _chat({
   bool isRpSms = false,
   int? style = 45,
+  String guidSeparator = '-',
   String participantService = 'iMessage',
+  String chatIdentifier = 'person@example.com',
+  String usingHandle = 'me@example.com',
   List<Handle>? participants,
 }) {
   return Chat(
-    guid: 'iMessage;-;person@example.com',
-    chatIdentifier: 'person@example.com',
-    usingHandle: 'me@example.com',
+    guid: 'iMessage;$guidSeparator;$chatIdentifier',
+    chatIdentifier: chatIdentifier,
+    usingHandle: usingHandle,
     isRpSms: isRpSms,
     style: style,
     participants:
@@ -400,8 +578,36 @@ Handle _handle(String address, [String service = 'iMessage']) => Handle(
   uniqueAddressAndService: '$address/$service',
 );
 
+api.CloudMessage _cloudMessageFor(Message message) =>
+    _FakeCloudMessage(guid: message.guid!);
+
 final class _FakeCloudMessage implements api.CloudMessage {
-  const _FakeCloudMessage();
+  const _FakeCloudMessage({
+    required this.guid,
+    this.chatId = 'iMessage;-;person@example.com',
+    this.destinationCallerId = 'me@example.com',
+  });
+
+  @override
+  final int type = 1;
+
+  @override
+  final int error = 0;
+
+  @override
+  final String chatId;
+
+  @override
+  final String sender = '';
+
+  @override
+  final String destinationCallerId;
+
+  @override
+  final String guid;
+
+  @override
+  final String service = 'iMessage';
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

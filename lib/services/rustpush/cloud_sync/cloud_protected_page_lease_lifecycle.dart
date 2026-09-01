@@ -66,7 +66,7 @@ final class CloudProtectedPageLeaseLifecycle {
     final adoptedOutbound =
         outboundStore is CloudProtectedOutboundLeaseAdoptionStore
         ? await (outboundStore as CloudProtectedOutboundLeaseAdoptionStore)
-              .readNonterminalProtectedOutboundLeaseReferences(
+              .readLiveProtectedOutboundLeaseReferences(
                 maximumCount: maximumAdoptedLeases,
               )
         : const <String>{};

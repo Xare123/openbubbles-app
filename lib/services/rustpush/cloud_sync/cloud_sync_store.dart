@@ -429,12 +429,27 @@ abstract interface class CloudProtectedPageLeaseAdoptionStore {
   );
 }
 
-/// Optional capability for native protected leases owned by non-terminal
-/// outbound operations. These are intentionally separate from page leases so
-/// page cleanup can never acknowledge an outbox receipt prematurely.
+/// Optional capability for native protected leases still owned by outbound
+/// operations. These are intentionally separate from page leases so page
+/// cleanup can never acknowledge an outbox receipt prematurely. A confirmed
+/// manual Canary remains live until its exact no-save replay releases it.
 abstract interface class CloudProtectedOutboundLeaseAdoptionStore {
-  Future<Set<String>> readNonterminalProtectedOutboundLeaseReferences({
+  Future<Set<String>> readLiveProtectedOutboundLeaseReferences({
     required int maximumCount,
+  });
+}
+
+/// Narrow mutation capability for releasing a confirmed manual-Canary
+/// protected receipt after its exact remote no-save replay is proven.
+///
+/// Implementations must compare every durable field in [expectedOperation]
+/// with the current row in one transaction and clear only the protected lease
+/// reference. The caller must validate and consume the exact replay proof
+/// first, then acknowledge the native receipt only after this transaction. A
+/// missing, changed, non-confirmed, or already-cleared row must fail closed.
+abstract interface class CloudConfirmedOutboundReceiptStore {
+  Future<void> clearConfirmedProtectedOutboundLeaseReference({
+    required CloudOutboxOperation expectedOperation,
   });
 }
 
@@ -466,13 +481,17 @@ class CloudOutboxTransition {
     this.payloadSha256,
     this.serverRecordIdHash,
     this.clearSubmissionIdentity = false,
+    this.retainProtectedLeaseReference = false,
   });
 
-  const CloudOutboxTransition.confirmed(String operationId)
-    : this._(
-        operationId: operationId,
-        type: CloudOutboxTransitionType.confirmed,
-      );
+  const CloudOutboxTransition.confirmed(
+    String operationId, {
+    bool retainProtectedLeaseReference = false,
+  }) : this._(
+         operationId: operationId,
+         type: CloudOutboxTransitionType.confirmed,
+         retainProtectedLeaseReference: retainProtectedLeaseReference,
+       );
 
   const CloudOutboxTransition.retryable(
     String operationId, {
@@ -563,4 +582,5 @@ class CloudOutboxTransition {
   final String? payloadSha256;
   final String? serverRecordIdHash;
   final bool clearSubmissionIdentity;
+  final bool retainProtectedLeaseReference;
 }

@@ -97,6 +97,7 @@ class CloudSyncEngineConfig {
     this.allowManualPullBackoffOverride = false,
     this.unknownInboxBarrierRecoveryCutoff,
     this.retainKnownDependencyDeferralsForReadOnlySemanticCanary = false,
+    this.reconcileUnknownOutcomesOnly = false,
     CloudShadowJournalBudget? shadowJournalBudget,
     this.flags = const CloudSyncFeatureFlags(),
   }) : shadowJournalBudget = shadowJournalBudget ?? CloudShadowJournalBudget() {
@@ -132,6 +133,10 @@ class CloudSyncEngineConfig {
   ///
   /// This is deliberately unavailable to ordinary or write-capable syncs.
   final bool retainKnownDependencyDeferralsForReadOnlySemanticCanary;
+
+  /// Restricts a write-capable engine to exact read-only reconciliation of an
+  /// already-unknown outbox create. No prepare or consume phase is reachable.
+  final bool reconcileUnknownOutcomesOnly;
   final CloudShadowJournalBudget shadowJournalBudget;
   final CloudSyncFeatureFlags flags;
 
@@ -226,6 +231,19 @@ class CloudSyncEngineConfig {
             flags.notificationHints)) {
       throw ArgumentError(
         'cloud_sync_config_read_only_semantic_dependency_retention_unsafe',
+      );
+    }
+    if (reconcileUnknownOutcomesOnly &&
+        (!flags.saves ||
+            flags.readOnlyFetch ||
+            flags.semanticApply ||
+            flags.deletions ||
+            flags.profiles ||
+            flags.notificationHints ||
+            maximumBatchSize != 1 ||
+            maximumOutboxBatchesPerRun != 1)) {
+      throw ArgumentError(
+        'cloud_sync_config_unknown_reconciliation_only_unsafe',
       );
     }
     shadowJournalBudget.validate();
@@ -1784,6 +1802,11 @@ class CloudSyncEngine {
       retried: reconciliationCounters.retried,
     );
 
+    // This lane exists only to resolve the exact mutation fence which admitted
+    // the run. Even a newly appearing pending row must wait for a separately
+    // authorized normal session.
+    if (config.reconcileUnknownOutcomesOnly) return counters;
+
     // Clearing an earlier submission identity is a durable decision boundary,
     // not permission to submit the operation again immediately. A later,
     // separately triggered run must make that new submission decision.
@@ -1934,7 +1957,11 @@ class CloudSyncEngine {
         switch (outcome.disposition) {
           case CloudPushDisposition.confirmed:
             transitions.add(
-              CloudOutboxTransition.confirmed(operation.operationId),
+              CloudOutboxTransition.confirmed(
+                operation.operationId,
+                retainProtectedLeaseReference:
+                    _retainConfirmedReceiptsForReplay,
+              ),
             );
             counters = counters.add(confirmed: 1);
             break;
@@ -2119,29 +2146,23 @@ class CloudSyncEngine {
     }
   }
 
+  bool get _retainConfirmedReceiptsForReplay {
+    final transport = _writeTransport;
+    return transport is CloudSyncConfirmedReceiptRetentionPolicy &&
+        (transport as CloudSyncConfirmedReceiptRetentionPolicy)
+            .retainConfirmedReceiptsForReplay;
+  }
+
   Future<CloudOutboxTransition> _transitionForUnknownResolution(
     CloudOutboxOperation operation,
     CloudUnknownOutcomeResolution resolution,
   ) async {
-    final proofRequired = switch (resolution.disposition) {
-      CloudUnknownOutcomeDisposition.committed ||
-      CloudUnknownOutcomeDisposition.notApplied ||
-      CloudUnknownOutcomeDisposition.serverRecordChanged => true,
-      CloudUnknownOutcomeDisposition.unresolved ||
-      CloudUnknownOutcomeDisposition.quarantined => false,
-    };
-    if (proofRequired && !(resolution.proof?.binds(operation) ?? false)) {
-      return _unresolvedUnknownTransition(
-        operation,
-        CloudSyncFailure(
-          category: CloudFailureCategory.unknown,
-          safeCode: 'unknown_outcome_proof_mismatch',
-        ),
-      );
-    }
     switch (resolution.disposition) {
       case CloudUnknownOutcomeDisposition.committed:
-        return CloudOutboxTransition.confirmed(operation.operationId);
+        return CloudOutboxTransition.confirmed(
+          operation.operationId,
+          retainProtectedLeaseReference: _retainConfirmedReceiptsForReplay,
+        );
       case CloudUnknownOutcomeDisposition.notApplied:
         return CloudOutboxTransition.provenNotApplied(
           operation.operationId,
@@ -2149,6 +2170,15 @@ class CloudSyncEngine {
           nextEligibleAt: _clock(),
         );
       case CloudUnknownOutcomeDisposition.serverRecordChanged:
+        if (config.reconcileUnknownOutcomesOnly) {
+          return _unresolvedUnknownTransition(
+            operation,
+            CloudSyncFailure(
+              category: CloudFailureCategory.conflict,
+              safeCode: 'unknown_outcome_diverged_under_mutation_fence',
+            ),
+          );
+        }
         return _resolveServerRecordChanged(operation);
       case CloudUnknownOutcomeDisposition.unresolved:
         return _unresolvedUnknownTransition(
@@ -2163,7 +2193,9 @@ class CloudSyncEngine {
       case CloudUnknownOutcomeDisposition.quarantined:
         final category =
             resolution.failureCategory ?? CloudFailureCategory.unknown;
-        if (category == CloudFailureCategory.unknown || category.isRetryable) {
+        if (config.reconcileUnknownOutcomesOnly ||
+            category == CloudFailureCategory.unknown ||
+            category.isRetryable) {
           return _unresolvedUnknownTransition(
             operation,
             CloudSyncFailure(

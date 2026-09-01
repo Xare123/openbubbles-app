@@ -15,7 +15,7 @@ void main() {
     scope = testScope();
   });
 
-  test('unknown push outcomes require an unknown failure category', () {
+  test('unknown push outcomes require a diagnostic failure category', () {
     final operationId = testOutboxOperation(scope, 1).operationId;
     expect(
       () => CloudPushOutcome(
@@ -28,9 +28,9 @@ void main() {
       CloudPushOutcome(
         operationId: operationId,
         disposition: CloudPushDisposition.unknownOutcome,
-        failureCategory: CloudFailureCategory.unknown,
+        failureCategory: CloudFailureCategory.authorization,
       ).failureCategory,
-      CloudFailureCategory.unknown,
+      CloudFailureCategory.authorization,
     );
   });
 
@@ -1692,36 +1692,130 @@ void main() {
     },
   );
 
+  test('Canary confirmation retains its protected replay receipt', () async {
+    final protectedReceipt = testProtectedLeaseReference('a');
+    final operation = testOutboxOperation(
+      scope,
+      2,
+    ).copyWith(protectedLeaseReference: protectedReceipt);
+    await store.enqueueOutbox(operation);
+    await store.leaseEligibleOutbox(
+      scope,
+      now: testEpoch,
+      limit: 1,
+      leaseId: 'submission-confirm-lease',
+      leaseDuration: const Duration(minutes: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+    await store.attachOutboxRecordMapping(
+      scope,
+      leaseId: 'submission-confirm-lease',
+      operationId: operation.operationId,
+      serverRecordIdHash: List.filled(43, 'S').join(),
+      now: testEpoch,
+    );
+    await store.markOutboxSubmissionStarted(
+      scope,
+      leaseId: 'submission-confirm-lease',
+      submissionIdentity: testSubmissionIdentity([operation.operationId]),
+      now: testEpoch,
+    );
+
+    await store.applyOutboxTransitions(
+      scope,
+      leaseId: 'submission-confirm-lease',
+      transitions: [
+        CloudOutboxTransition.confirmed(
+          operation.operationId,
+          retainProtectedLeaseReference: true,
+        ),
+      ],
+      now: testEpoch.add(const Duration(seconds: 1)),
+    );
+    final resolved = (await store.outboxEntries(scope)).single;
+    expect(resolved.status, CloudOutboxStatus.confirmed);
+    expect(resolved.protectedLeaseReference, protectedReceipt);
+    expect(resolved.leaseId, isNull);
+    expect(resolved.attemptCount, 0);
+
+    await expectLater(
+      store.clearConfirmedProtectedOutboundLeaseReference(
+        expectedOperation: resolved.copyWith(attemptCount: 1),
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'confirmed_outbound_receipt_snapshot_changed',
+        ),
+      ),
+    );
+    expect(
+      (await store.outboxEntries(scope)).single.protectedLeaseReference,
+      protectedReceipt,
+    );
+
+    await store.clearConfirmedProtectedOutboundLeaseReference(
+      expectedOperation: resolved,
+    );
+    expect(
+      (await store.outboxEntries(scope)).single.protectedLeaseReference,
+      isNull,
+    );
+  });
+
+  test('protected receipt release rejects a pending row', () async {
+    final operation = testOutboxOperation(
+      scope,
+      2001,
+    ).copyWith(protectedLeaseReference: testProtectedLeaseReference('e'));
+    await store.enqueueOutbox(operation);
+
+    await expectLater(
+      store.clearConfirmedProtectedOutboundLeaseReference(
+        expectedOperation: operation,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'confirmed_outbound_receipt_release_invalid',
+        ),
+      ),
+    );
+    expect(
+      (await store.outboxEntries(scope)).single.protectedLeaseReference,
+      isNotNull,
+    );
+  });
+
   test(
-    'marked submission can be resolved by a returned confirmation',
+    'ordinary confirmation clears its protected receipt reference',
     () async {
-      final operation = testOutboxOperation(scope, 2);
+      final operation = testOutboxOperation(
+        scope,
+        2002,
+      ).copyWith(protectedLeaseReference: testProtectedLeaseReference('b'));
       await store.enqueueOutbox(operation);
       await store.leaseEligibleOutbox(
         scope,
         now: testEpoch,
         limit: 1,
-        leaseId: 'submission-confirm-lease',
+        leaseId: 'ordinary-confirm-lease',
         leaseDuration: const Duration(minutes: 1),
         allowedActions: const {CloudOutboxAction.save},
       );
-      await store.markOutboxSubmissionStarted(
-        scope,
-        leaseId: 'submission-confirm-lease',
-        submissionIdentity: testSubmissionIdentity([operation.operationId]),
-        now: testEpoch,
-      );
-
       await store.applyOutboxTransitions(
         scope,
-        leaseId: 'submission-confirm-lease',
+        leaseId: 'ordinary-confirm-lease',
         transitions: [CloudOutboxTransition.confirmed(operation.operationId)],
         now: testEpoch.add(const Duration(seconds: 1)),
       );
-      final resolved = (await store.outboxEntries(scope)).single;
-      expect(resolved.status, CloudOutboxStatus.confirmed);
-      expect(resolved.leaseId, isNull);
-      expect(resolved.attemptCount, 0);
+
+      expect(
+        (await store.outboxEntries(scope)).single.protectedLeaseReference,
+        isNull,
+      );
     },
   );
 

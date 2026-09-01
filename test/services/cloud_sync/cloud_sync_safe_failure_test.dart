@@ -118,24 +118,24 @@ void main() {
   });
 
   test('preserves reviewed outbound canary and candidate state codes', () {
-    expect(
-      cloudSyncV2SafeFailureCode(
-        StateError('cloud_sync_outbound_canary_recovery_invalid'),
-      ),
+    const codes = <String>{
       'cloud_sync_outbound_canary_recovery_invalid',
-    );
-    expect(
-      cloudSyncV2SafeFailureCode(
-        StateError('cloud_sync_outbound_canary_unavailable'),
-      ),
       'cloud_sync_outbound_canary_unavailable',
-    );
-    expect(
-      cloudSyncV2SafeFailureCode(
-        StateError('cloud_sync_outbound_candidate_selection_failed'),
-      ),
       'cloud_sync_outbound_candidate_selection_failed',
-    );
+      'cloud_sync_outbound_candidate_changed',
+      'cloud_sync_outbound_active_handles_unavailable',
+      'cloud_sync_outbound_canary_operation_changed',
+      'cloud_sync_outbound_provisioning_quiescence_timeout',
+      'cloud_sync_outbound_canary_replay_invalid',
+      'cloud_sync_outbound_replay_operation_invalid',
+      'cloud_sync_outbound_replay_envelope_invalid',
+      'cloud_sync_outbound_replay_record_missing',
+      'cloud_sync_outbound_replay_conflict',
+      'cloud_sync_outbound_replay_unresolved',
+    };
+    for (final code in codes) {
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code, reason: code);
+    }
   });
 
   test('collapses arbitrary exception text', () {

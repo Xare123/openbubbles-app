@@ -50,6 +50,7 @@ void main() {
     bool allowManualPullBackoffOverride = false,
     DateTime? unknownInboxBarrierRecoveryCutoff,
     bool retainKnownDependencyDeferralsForReadOnlySemanticCanary = false,
+    bool reconcileUnknownOutcomesOnly = false,
     MemoryCloudSyncObserver? observer,
     String coordinatorId = 'coordinator-a',
     CloudShadowJournalBudget? shadowJournalBudget,
@@ -91,6 +92,7 @@ void main() {
         unknownInboxBarrierRecoveryCutoff: unknownInboxBarrierRecoveryCutoff,
         retainKnownDependencyDeferralsForReadOnlySemanticCanary:
             retainKnownDependencyDeferralsForReadOnlySemanticCanary,
+        reconcileUnknownOutcomesOnly: reconcileUnknownOutcomesOnly,
         shadowJournalBudget: shadowJournalBudget ?? CloudShadowJournalBudget(),
         flags: flags,
       ),
@@ -205,29 +207,6 @@ void main() {
       CloudOutboxStatus.unknownOutcome,
     );
     return (await store.outboxEntries(scope)).single;
-  }
-
-  CloudUnknownOutcomeProof proofFor(
-    CloudOutboxOperation operation, {
-    String? operationId,
-    String? appleRequestUuid,
-    String? appleOperationUuid,
-    String? protectedProofReference,
-  }) {
-    return CloudUnknownOutcomeProof(
-      operationId: operationId ?? operation.operationId,
-      appleRequestUuid: appleRequestUuid ?? operation.appleRequestUuid!,
-      appleOperationUuid: appleOperationUuid ?? operation.appleOperationUuid!,
-      scopeStorageKey: operation.scope.storageKey,
-      checkpointGeneration: operation.checkpointGeneration,
-      logicalEntityKeyHash: operation.logicalEntityKeyHash,
-      serverRecordIdHash: operation.serverRecordIdHash!,
-      action: operation.action,
-      expectedPayloadSha256: operation.payloadSha256,
-      protectedProofReference:
-          protectedProofReference ?? operation.encryptedPayloadReference!,
-      observedEtagHash: 'test-observed-etag-hash',
-    );
   }
 
   test('fetches, journals, applies, and advances checkpoint', () async {
@@ -412,6 +391,39 @@ void main() {
       expect(transport.consumePreparedSubmissionCallCount, 1);
       expect(writerExclusion.runCallCount, 1);
       expect(writerExclusion.isActive, isFalse);
+    },
+  );
+
+  test(
+    'retention-policy transport preserves a confirmed protected receipt',
+    () async {
+      transport = _RetainingFakeCloudSyncTransport();
+      final operation = testOutboxOperation(scope, 991);
+      await store.enqueueOutbox(operation);
+      transport.enqueuePushResult(
+        CloudPushBatchResult(
+          outcomes: [
+            CloudPushOutcome(
+              operationId: operation.operationId,
+              disposition: CloudPushDisposition.confirmed,
+            ),
+          ],
+        ),
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: false,
+          semanticApply: false,
+          saves: true,
+        ),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      final stored = (await store.outboxEntries(scope)).single;
+      expect(result.counters.confirmed, 1);
+      expect(stored.status, CloudOutboxStatus.confirmed);
+      expect(stored.protectedLeaseReference, operation.protectedLeaseReference);
     },
   );
 
@@ -2979,6 +2991,32 @@ void main() {
     );
   });
 
+  test(
+    'unknown reconciliation-only lane rejects every mutation-capable shape',
+    () {
+      expect(
+        () => CloudSyncEngineConfig(reconcileUnknownOutcomesOnly: true),
+        throwsArgumentError,
+      );
+      expect(
+        () => CloudSyncEngineConfig(
+          reconcileUnknownOutcomesOnly: true,
+          flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => CloudSyncEngineConfig(
+          maximumBatchSize: 1,
+          maximumOutboxBatchesPerRun: 1,
+          reconcileUnknownOutcomesOnly: true,
+          flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        ),
+        returnsNormally,
+      );
+    },
+  );
+
   test('fresh fetch reserve holds at least one complete transport page', () {
     const readOnlySemanticFlags = CloudSyncFeatureFlags(
       readOnlyFetch: true,
@@ -3650,7 +3688,7 @@ void main() {
   test('server read confirms an ambiguous write without replay', () async {
     await seedAmbiguousOutbox(801);
     transport.unknownOutcomeHandler = (_, operation) async =>
-        CloudUnknownOutcomeResolution.committed(proof: proofFor(operation));
+        const CloudUnknownOutcomeResolution.committed();
 
     final result = await engine(
       flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
@@ -3668,7 +3706,6 @@ void main() {
 
   test('reconciliation timeout never replays the write', () async {
     await seedAmbiguousOutbox(808);
-    final storedOperation = (await store.outboxEntries(scope)).single;
     final nativeResolution = Completer<CloudUnknownOutcomeResolution>();
     final quiescenceStarted = Completer<void>();
     transport.unknownOutcomeHandler = (_, _) => nativeResolution.future;
@@ -3692,9 +3729,7 @@ void main() {
     expect(runReturned, isFalse);
     expect(transport.pushCallCount, 1);
 
-    nativeResolution.complete(
-      CloudUnknownOutcomeResolution.committed(proof: proofFor(storedOperation)),
-    );
+    nativeResolution.complete(const CloudUnknownOutcomeResolution.committed());
     await completion;
     expect(transport.unknownOutcomeCallCount, 1);
     expect(transport.pushCallCount, 1);
@@ -3721,78 +3756,12 @@ void main() {
     );
   });
 
-  test('mismatched reconciliation proof cannot confirm or replay', () async {
-    await seedAmbiguousOutbox(806);
-    transport.unknownOutcomeHandler = (_, operation) async =>
-        CloudUnknownOutcomeResolution.committed(
-          proof: proofFor(
-            operation,
-            appleRequestUuid: '99999999-2222-4ABC-8DEF-555555555555',
-          ),
-        );
-
-    await engine(
-      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
-      maximumOutboxBatches: 1,
-    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
-
-    expect(
-      (await store.outboxEntries(scope)).single.status,
-      CloudOutboxStatus.unknownOutcome,
-    );
-    expect(transport.pushCallCount, 1);
-  });
-
-  test('mismatched operation UUID proof cannot confirm or replay', () async {
-    await seedAmbiguousOutbox(807);
-    transport.unknownOutcomeHandler = (_, operation) async =>
-        CloudUnknownOutcomeResolution.committed(
-          proof: proofFor(
-            operation,
-            appleOperationUuid: 'AAAAAAAA-BBBB-4CCC-8DDD-999999999999',
-          ),
-        );
-
-    await engine(
-      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
-      maximumOutboxBatches: 1,
-    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
-
-    final stored = (await store.outboxEntries(scope)).single;
-    expect(stored.status, CloudOutboxStatus.unknownOutcome);
-    expect(stored.appleRequestUuid, isNotNull);
-    expect(stored.appleOperationUuid, isNotNull);
-    expect(transport.pushCallCount, 1);
-  });
-
-  test('mismatched protected proof cannot confirm or replay', () async {
-    await seedAmbiguousOutbox(811);
-    transport.unknownOutcomeHandler = (_, operation) async =>
-        CloudUnknownOutcomeResolution.committed(
-          proof: proofFor(
-            operation,
-            protectedProofReference: testProtectedReference('Z'),
-          ),
-        );
-
-    await engine(
-      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
-      maximumOutboxBatches: 1,
-    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
-
-    expect(
-      (await store.outboxEntries(scope)).single.status,
-      CloudOutboxStatus.unknownOutcome,
-    );
-    expect(transport.pushCallCount, 1);
-  });
-
   test(
     'server-proven absence requires a later run before one resubmission',
     () async {
       final operation = await seedAmbiguousOutbox(802);
       transport.unknownOutcomeHandler = (_, operation) async =>
-          CloudUnknownOutcomeResolution.notApplied(proof: proofFor(operation));
+          const CloudUnknownOutcomeResolution.notApplied();
       transport.enqueuePushResult(
         CloudPushBatchResult(
           outcomes: [
@@ -3881,9 +3850,7 @@ void main() {
     () async {
       final operation = await seedAmbiguousOutbox(804);
       transport.unknownOutcomeHandler = (_, operation) async =>
-          CloudUnknownOutcomeResolution.serverRecordChanged(
-            proof: proofFor(operation),
-          );
+          const CloudUnknownOutcomeResolution.serverRecordChanged();
       transport.conflictHandler = (_, leasedOperation) async {
         return CloudServerConflictResolution.mergedForRetry(
           encryptedPayloadReference: testProtectedReference('M'),
@@ -3929,12 +3896,43 @@ void main() {
     },
   );
 
+  test(
+    'reconciliation-only lane keeps divergent state fenced and never merges',
+    () async {
+      await seedAmbiguousOutbox(812);
+      transport.unknownOutcomeHandler = (_, operation) async =>
+          const CloudUnknownOutcomeResolution.serverRecordChanged();
+      transport.conflictHandler = (_, operation) async =>
+          CloudServerConflictResolution.mergedForRetry(
+            encryptedPayloadReference: testProtectedReference('M'),
+            payloadSha256: testSha256('a'),
+            serverRecordIdHash: operation.serverRecordIdHash!,
+            encryptedRawRecordReference: 'protected:should-not-be-read',
+          );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        batchSize: 1,
+        maximumOutboxBatches: 1,
+        reconcileUnknownOutcomesOnly: true,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      expect(result.counters.confirmed, 0);
+      expect(result.counters.quarantined, 0);
+      expect(transport.unknownOutcomeCallCount, 1);
+      expect(transport.conflictCallCount, 0);
+      expect(transport.pushCallCount, 1);
+      expect(
+        (await store.outboxEntries(scope)).single.status,
+        CloudOutboxStatus.unknownOutcome,
+      );
+    },
+  );
+
   test('retryable conflict reconciliation stays unknown', () async {
     await seedAmbiguousOutbox(809);
     transport.unknownOutcomeHandler = (_, operation) async =>
-        CloudUnknownOutcomeResolution.serverRecordChanged(
-          proof: proofFor(operation),
-        );
+        const CloudUnknownOutcomeResolution.serverRecordChanged();
     transport.conflictHandler = (_, _) async =>
         const CloudServerConflictResolution.retryable(
           failureCategory: CloudFailureCategory.network,
@@ -3956,9 +3954,7 @@ void main() {
   test('retryable conflict quarantine stays unknown', () async {
     await seedAmbiguousOutbox(810);
     transport.unknownOutcomeHandler = (_, operation) async =>
-        CloudUnknownOutcomeResolution.serverRecordChanged(
-          proof: proofFor(operation),
-        );
+        const CloudUnknownOutcomeResolution.serverRecordChanged();
     transport.conflictHandler = (_, _) async =>
         const CloudServerConflictResolution.quarantined(
           failureCategory: CloudFailureCategory.throttled,
@@ -4550,6 +4546,12 @@ class _OutboxPresenceRaceStore extends InMemoryCloudSyncStore {
   }
 }
 
+final class _RetainingFakeCloudSyncTransport extends FakeCloudSyncTransport
+    implements CloudSyncConfirmedReceiptRetentionPolicy {
+  @override
+  bool get retainConfirmedReceiptsForReplay => true;
+}
+
 class _ProtectedRecoveryTrackingStore extends InMemoryCloudSyncStore
     implements
         CloudProtectedPageLeaseAdoptionStore,
@@ -4573,7 +4575,7 @@ class _ProtectedRecoveryTrackingStore extends InMemoryCloudSyncStore
   ) async {}
 
   @override
-  Future<Set<String>> readNonterminalProtectedOutboundLeaseReferences({
+  Future<Set<String>> readLiveProtectedOutboundLeaseReferences({
     required int maximumCount,
   }) async => Set.unmodifiable(outboundLeaseReferences);
 }

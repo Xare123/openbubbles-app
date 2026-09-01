@@ -1011,6 +1011,7 @@ pub struct CloudSyncPreparedMessageCreateHandle {
     expected_account_fingerprint: String,
     expected_protected_store_identity: String,
     expected_handle_binding_sha256: String,
+    expected_reconciliation_binding_sha256: std::sync::OnceLock<String>,
 }
 
 enum CloudSyncPreparedMessageCreateOwner {
@@ -1084,7 +1085,7 @@ const CLOUD_SYNC_WRITER_MUTATION_FENCE_FILE: &str =
 const CLOUD_SYNC_WRITER_MUTATION_FENCE_MAX_BYTES: u64 = 4096;
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CloudSyncWriterMutationFence {
     account_fingerprint: String,
     capability_sha256: String,
@@ -1094,6 +1095,7 @@ struct CloudSyncWriterMutationFence {
     owner: String,
     prepared_handle_binding_sha256: String,
     protected_store_identity: String,
+    reconciliation_binding_sha256: String,
     version: u32,
 }
 
@@ -1140,7 +1142,7 @@ fn cloud_sync_writer_mutation_capability_is_valid(
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    fence.version == 2
+    let fence_is_valid = fence.version == 3
         && fence.epoch > 0
         && fence.owner == "v2"
         && fence.container == "com.apple.messages.cloud"
@@ -1149,6 +1151,24 @@ fn cloud_sync_writer_mutation_capability_is_valid(
         && fence.protected_store_identity == handle.expected_protected_store_identity
         && fence.prepared_handle_binding_sha256 == handle.expected_handle_binding_sha256
         && fence.capability_sha256 == capability_sha256
+        && is_cloud_sync_hex_digest(&fence.reconciliation_binding_sha256);
+    if !fence_is_valid {
+        return false;
+    }
+
+    match handle.expected_reconciliation_binding_sha256.get() {
+        Some(expected) => expected == &fence.reconciliation_binding_sha256,
+        None => match handle
+            .expected_reconciliation_binding_sha256
+            .set(fence.reconciliation_binding_sha256)
+        {
+            Ok(()) => true,
+            Err(binding) => handle
+                .expected_reconciliation_binding_sha256
+                .get()
+                .is_some_and(|expected| expected == &binding),
+        },
+    }
 }
 
 #[derive(Debug)]
@@ -2012,6 +2032,7 @@ pub async fn cloud_sync_prepare_message_create(
                     expected_account_fingerprint,
                     expected_protected_store_identity,
                     expected_handle_binding_sha256: handle_binding_sha256.clone(),
+                    expected_reconciliation_binding_sha256: std::sync::OnceLock::new(),
                 }),
                 handle_binding_sha256: Some(handle_binding_sha256),
                 failure: None,
@@ -2157,7 +2178,8 @@ mod cloud_sync_writer_mutation_capability_tests {
             "owner": "v2",
             "preparedHandleBindingSha256": prepared_handle_binding_sha256,
             "protectedStoreIdentity": protected_store_identity,
-            "version": 2,
+            "reconciliationBindingSha256": "9".repeat(64),
+            "version": 3,
         });
         fs::write(&path, serde_json::to_vec(&encoded).unwrap()).unwrap();
         path
@@ -2183,7 +2205,69 @@ mod cloud_sync_writer_mutation_capability_tests {
             expected_account_fingerprint: "account-fingerprint".to_owned(),
             expected_protected_store_identity: "protected-store".to_owned(),
             expected_handle_binding_sha256: handle_binding_sha256.to_owned(),
+            expected_reconciliation_binding_sha256: std::sync::OnceLock::new(),
         }
+    }
+
+    #[test]
+    fn dart_v3_fence_requires_stable_reconciliation_binding() {
+        let directory = tempfile::tempdir().unwrap();
+        let token = "a".repeat(64);
+        let handle_binding_sha256 = "d".repeat(64);
+        let fence_path = write_valid_fence(
+            directory.path(),
+            &token,
+            "account-fingerprint",
+            "protected-store",
+            &handle_binding_sha256,
+        );
+        let handle = test_handle(
+            directory.path(),
+            Arc::new(AtomicUsize::new(0)),
+            None,
+            &handle_binding_sha256,
+        );
+
+        assert!(cloud_sync_writer_mutation_capability_is_valid(
+            &handle, &token
+        ));
+
+        let mut fence: serde_json::Value =
+            serde_json::from_slice(&fs::read(&fence_path).unwrap()).unwrap();
+        fence["version"] = serde_json::json!(2);
+        fs::write(&fence_path, serde_json::to_vec(&fence).unwrap()).unwrap();
+        assert!(!cloud_sync_writer_mutation_capability_is_valid(
+            &handle, &token
+        ));
+
+        fence["version"] = serde_json::json!(3);
+        fence
+            .as_object_mut()
+            .unwrap()
+            .remove("reconciliationBindingSha256");
+        fs::write(&fence_path, serde_json::to_vec(&fence).unwrap()).unwrap();
+        assert!(!cloud_sync_writer_mutation_capability_is_valid(
+            &handle, &token
+        ));
+
+        fence["reconciliationBindingSha256"] = serde_json::json!("8".repeat(64));
+        fs::write(&fence_path, serde_json::to_vec(&fence).unwrap()).unwrap();
+        assert!(!cloud_sync_writer_mutation_capability_is_valid(
+            &handle, &token
+        ));
+
+        fence["reconciliationBindingSha256"] = serde_json::json!("A".repeat(64));
+        fs::write(&fence_path, serde_json::to_vec(&fence).unwrap()).unwrap();
+        let fresh_handle = test_handle(
+            directory.path(),
+            Arc::new(AtomicUsize::new(0)),
+            None,
+            &handle_binding_sha256,
+        );
+        assert!(!cloud_sync_writer_mutation_capability_is_valid(
+            &fresh_handle,
+            &token
+        ));
     }
 
     #[tokio::test]

@@ -25,7 +25,8 @@ class ObjectBoxCloudSyncStore
         CloudSyncUnknownOutcomeLeasingStore,
         CloudSyncOutboxPresenceStore,
         CloudProtectedPageLeaseAdoptionStore,
-        CloudProtectedOutboundLeaseAdoptionStore {
+        CloudProtectedOutboundLeaseAdoptionStore,
+        CloudConfirmedOutboundReceiptStore {
   ObjectBoxCloudSyncStore({
     required Store store,
     required this._protector,
@@ -490,15 +491,14 @@ class ObjectBoxCloudSyncStore
     });
   }
 
-  /// Returns protected outbound lease references adopted by non-terminal
-  /// outbox rows.
+  /// Returns protected outbound lease references still owned by outbox rows.
   ///
   /// These references are intentionally returned separately from page leases:
   /// page-lease cleanup must not acknowledge or release an outbound receipt.
   /// Existing rows without the not-yet-generated schema property are treated
   /// as having no outbound lease reference.
   @override
-  Future<Set<String>> readNonterminalProtectedOutboundLeaseReferences({
+  Future<Set<String>> readLiveProtectedOutboundLeaseReferences({
     required int maximumCount,
   }) async {
     if (maximumCount <= 0 || maximumCount > 4096) {
@@ -507,7 +507,9 @@ class ObjectBoxCloudSyncStore
     return _store.runInTransaction(TxMode.read, () {
       final references = <String>{};
       for (final entity in _outbox.getAll()) {
-        if (!_isBlockingOutboxStatus(_outboxStatusFromInt(entity.state))) {
+        final status = _outboxStatusFromInt(entity.state);
+        if (!_isBlockingOutboxStatus(status) &&
+            status != CloudOutboxStatus.confirmed) {
           continue;
         }
         final reference = entity.protectedLeaseReference;
@@ -523,6 +525,30 @@ class ObjectBoxCloudSyncStore
         }
       }
       return Set<String>.unmodifiable(references);
+    });
+  }
+
+  @override
+  Future<void> clearConfirmedProtectedOutboundLeaseReference({
+    required CloudOutboxOperation expectedOperation,
+  }) async {
+    _requireConfirmedReceiptReleaseCandidate(expectedOperation);
+    _store.runInTransaction(TxMode.write, () {
+      final entity = _findOutboxByOperationIdLocked(
+        expectedOperation.operationId,
+      );
+      if (entity == null) {
+        throw _storageFailure('confirmed_outbound_receipt_row_missing');
+      }
+      if (entity.scopeKey != _scopeKey(expectedOperation.scope)) {
+        throw _storageFailure('confirmed_outbound_receipt_snapshot_changed');
+      }
+      final current = _outboxFromEntity(expectedOperation.scope, entity);
+      if (!current.sameDurableSnapshotAs(expectedOperation)) {
+        throw _storageFailure('confirmed_outbound_receipt_snapshot_changed');
+      }
+      entity.protectedLeaseReference = null;
+      _outbox.put(entity);
     });
   }
 
@@ -1330,6 +1356,8 @@ class ObjectBoxCloudSyncStore
         recordMapping.serverRecordIdHash != draft.serverRecordIdHash ||
         recordMapping.encryptedServerRecordId !=
             draft.encryptedPayloadReference ||
+        recordMapping.updatedAt.millisecondsSinceEpoch !=
+            draft.createdAt.millisecondsSinceEpoch ||
         recordMapping.etagHash != null ||
         recordMapping.encryptedRawRecordReference != null) {
       throw _storageFailure('protected_outbound_admission_invalid');
@@ -1350,14 +1378,58 @@ class ObjectBoxCloudSyncStore
       final existingOperation = _findOutboxByOperationIdLocked(operationId);
       if (existingOperation != null) {
         final existing = _outboxFromEntity(draft.scope, existingOperation);
+        final mapKey = _scopedDigest(
+          draft.scope,
+          'record-map',
+          draft.logicalEntityKeyHash,
+        );
+        final existingMapping = _findRecordMapByKeyLocked(mapKey);
         if (existing.scope != draft.scope ||
             existing.logicalEntityKeyHash != draft.logicalEntityKeyHash ||
             existing.action != CloudOutboxAction.save ||
             existing.payloadVersion != draft.payloadVersion ||
-            existing.payloadSha256 != draft.payloadSha256) {
+            existing.checkpointGeneration != checkpoint.generation ||
+            existing.dependencyOperationIds.isNotEmpty ||
+            existing.createdAt.millisecondsSinceEpoch !=
+                draft.createdAt.millisecondsSinceEpoch ||
+            existing.payloadSha256 != draft.payloadSha256 ||
+            existing.serverRecordIdHash != draft.serverRecordIdHash ||
+            existing.encryptedPayloadReference == null ||
+            !_isNativeProtectedReference(existing.encryptedPayloadReference!) ||
+            existing.protectedLeaseReference == null ||
+            !_isProtectedPageLease(existing.protectedLeaseReference!) ||
+            existing.status != CloudOutboxStatus.pending ||
+            existing.attemptCount != 0 ||
+            existing.nextEligibleAt != null ||
+            existing.lastFailure != null ||
+            existing.leaseId != null ||
+            existing.leaseExpiresAt != null ||
+            existing.confirmedAt != null ||
+            existing.appleRequestUuid != null ||
+            existing.appleOperationUuid != null) {
           throw CloudSyncFailure(
             category: CloudFailureCategory.conflict,
             safeCode: 'protected_outbound_retry_payload_changed',
+          );
+        }
+        if (existingMapping == null ||
+            existingMapping.scopeKey != _scopeKey(draft.scope) ||
+            existingMapping.accountFingerprint !=
+                draft.scope.accountFingerprint ||
+            existingMapping.zone != draft.scope.zone ||
+            existingMapping.logicalEntityKeyHash !=
+                existing.logicalEntityKeyHash ||
+            existingMapping.serverRecordIdHash != existing.serverRecordIdHash ||
+            existingMapping.generation != existing.checkpointGeneration ||
+            existingMapping.encryptedServerRecordId !=
+                existing.encryptedPayloadReference ||
+            existingMapping.etagHash != null ||
+            existingMapping.encryptedRawRecordRef != null ||
+            existingMapping.updatedAtMs !=
+                existing.createdAt.millisecondsSinceEpoch) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'protected_outbound_retry_mapping_changed',
           );
         }
         return existing;
@@ -1775,7 +1847,11 @@ class ObjectBoxCloudSyncStore
               ..state = _outboxStatusToInt(CloudOutboxStatus.confirmed)
               ..confirmedAtMs = nowMs
               ..lastErrorCategory = null
-              ..nextEligibleAtMs = 0;
+              ..nextEligibleAtMs = 0
+              ..protectedLeaseReference =
+                  transition.retainProtectedLeaseReference
+                  ? entity.protectedLeaseReference
+                  : null;
             break;
           case CloudOutboxTransitionType.retryable:
             entity
@@ -1814,6 +1890,7 @@ class ObjectBoxCloudSyncStore
               ..state = _outboxStatusToInt(CloudOutboxStatus.quarantined)
               ..attemptCount += 1
               ..nextEligibleAtMs = 0
+              ..protectedLeaseReference = null
               ..lastErrorCategory =
                   (transition.category ?? CloudFailureCategory.unknown).name;
             break;
@@ -2564,6 +2641,24 @@ class ObjectBoxCloudSyncStore
       status == CloudOutboxStatus.paused ||
       status == CloudOutboxStatus.unknownOutcome;
 
+  void _requireConfirmedReceiptReleaseCandidate(
+    CloudOutboxOperation operation,
+  ) {
+    if (operation.action != CloudOutboxAction.save ||
+        operation.status != CloudOutboxStatus.confirmed ||
+        operation.protectedLeaseReference == null ||
+        operation.serverRecordIdHash == null ||
+        operation.appleRequestUuid == null ||
+        operation.appleOperationUuid == null ||
+        operation.confirmedAt == null ||
+        operation.nextEligibleAt != null ||
+        operation.lastFailure != null ||
+        operation.leaseId != null ||
+        operation.leaseExpiresAt != null) {
+      throw _storageFailure('confirmed_outbound_receipt_release_invalid');
+    }
+  }
+
   int _compareMutationOrder(
     CloudOutboxOperationEntity first,
     CloudOutboxOperationEntity second,
@@ -2868,6 +2963,12 @@ class ObjectBoxCloudSyncStore
   }
 
   void _validateTransition(CloudOutboxTransition transition) {
+    if (transition.retainProtectedLeaseReference &&
+        transition.type != CloudOutboxTransitionType.confirmed) {
+      throw ArgumentError(
+        'Only confirmed transitions may retain a protected receipt',
+      );
+    }
     if (transition.type == CloudOutboxTransitionType.retryable &&
         (transition.category == null || transition.nextEligibleAt == null)) {
       throw ArgumentError(

@@ -210,6 +210,75 @@ void main() {
     },
   );
 
+  test(
+    'mutation fence recovery invalidates a pre-unknown permit exactly once',
+    () {
+      final provisioned = provision(owner: CloudKitWriterOwner.v2);
+      final v2 = authority(CloudKitWriterOwner.v2);
+      final permit = v2.issuePermit(
+        _scopeA,
+        expectedOwner: CloudKitWriterOwner.v2,
+      );
+
+      final recovered = v2.reconcileMutationFence(
+        _scopeA,
+        owner: CloudKitWriterOwner.v2,
+        fencedEpoch: provisioned.epoch,
+        now: _time(2),
+      );
+      expect(recovered.state, CloudKitWriterAuthorityState.stable);
+      expect(recovered.owner, CloudKitWriterOwner.v2);
+      expect(recovered.epoch, provisioned.epoch + 2);
+      expect(
+        () => v2.verifyPermit(permit),
+        throwsA(_failure('cloudkit_writer_permit_stale')),
+      );
+
+      final replay = v2.reconcileMutationFence(
+        _scopeA,
+        owner: CloudKitWriterOwner.v2,
+        fencedEpoch: provisioned.epoch,
+        now: _time(3),
+      );
+      expect(replay.state, CloudKitWriterAuthorityState.stable);
+      expect(replay.epoch, recovered.epoch);
+    },
+  );
+
+  test('mutation fence recovery accepts only the exact unknown epoch', () {
+    final provisioned = provision(owner: CloudKitWriterOwner.v2);
+    final v2 = authority(CloudKitWriterOwner.v2);
+    final permit = v2.issuePermit(
+      _scopeA,
+      expectedOwner: CloudKitWriterOwner.v2,
+    );
+    v2.markMutationUnknown(permit, now: _time(2));
+
+    expect(
+      () => v2.reconcileMutationFence(
+        _scopeA,
+        owner: CloudKitWriterOwner.v2,
+        fencedEpoch: provisioned.epoch + 1,
+        now: _time(3),
+      ),
+      throwsA(
+        _failure('cloudkit_writer_mutation_reconciliation_precondition_failed'),
+      ),
+    );
+    final stillUnknown = v2.read(_scopeA)!;
+    expect(stillUnknown.state, CloudKitWriterAuthorityState.mutationUnknown);
+    expect(stillUnknown.epoch, provisioned.epoch + 1);
+
+    final recovered = v2.reconcileMutationFence(
+      _scopeA,
+      owner: CloudKitWriterOwner.v2,
+      fencedEpoch: provisioned.epoch,
+      now: _time(4),
+    );
+    expect(recovered.state, CloudKitWriterAuthorityState.stable);
+    expect(recovered.epoch, provisioned.epoch + 2);
+  });
+
   test('migration prepare revokes old permit and survives reopen', () async {
     final provisioned = provision();
     final legacy = authority(CloudKitWriterOwner.legacy);

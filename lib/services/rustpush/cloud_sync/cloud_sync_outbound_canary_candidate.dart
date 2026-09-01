@@ -44,7 +44,8 @@ typedef CloudSyncOutboundCanaryCloudEncoder =
 /// confirmed canary step, but this object's diagnostics never include its
 /// contents, destination, or local handle.
 final class CloudSyncOutboundCanaryCandidate {
-  CloudSyncOutboundCanaryCandidate._({
+  CloudSyncOutboundCanaryCandidate._(
+    this._selectionBinding, {
     required this.cloudMessage,
     required this.guidHash,
     required this.createdAtUtc,
@@ -58,6 +59,10 @@ final class CloudSyncOutboundCanaryCandidate {
 
   final DateTime createdAtUtc;
   final int characterCount;
+
+  /// Full content and routing binding used only for immediate revalidation.
+  /// It is intentionally excluded from diagnostics and [toString].
+  final String _selectionBinding;
 
   Map<String, Object> toJson() => <String, Object>{
     'guidHash': guidHash,
@@ -84,17 +89,34 @@ final class CloudSyncOutboundCanaryCandidateSelector {
   static const maximumCandidateAge = Duration(minutes: 10);
 
   CloudSyncOutboundCanaryCandidateSelector({
+    required String expectedRecipient,
+    required Iterable<String> activeHandles,
     CloudSyncOutboundCanaryMessageReader? reader,
     CloudSyncOutboundCanaryCloudEncoder? encoder,
     DateTime Function()? clock,
   }) : _reader =
            reader ?? const ObjectBoxCloudSyncOutboundCanaryMessageReader(),
        _encoder = encoder ?? ((message) => message.toCloud(true)),
-       _clock = clock ?? DateTime.now;
+       _clock = clock ?? DateTime.now,
+       _expectedRecipient = _normalizeEndpoint(expectedRecipient),
+       _activeHandles = Set.unmodifiable(
+         activeHandles
+             .map(_normalizeEndpoint)
+             .where((handle) => handle.isNotEmpty),
+       ) {
+    if (_expectedRecipient.isEmpty) {
+      throw ArgumentError('cloud_sync_outbound_recipient_invalid');
+    }
+    if (_activeHandles.isEmpty) {
+      throw ArgumentError('cloud_sync_outbound_active_handles_unavailable');
+    }
+  }
 
   final CloudSyncOutboundCanaryMessageReader _reader;
   final CloudSyncOutboundCanaryCloudEncoder _encoder;
   final DateTime Function() _clock;
+  final String _expectedRecipient;
+  final Set<String> _activeHandles;
 
   /// Returns the newest eligible candidate, or null if no row is safe.
   ///
@@ -107,12 +129,26 @@ final class CloudSyncOutboundCanaryCandidateSelector {
 
     final now = _clock().toUtc();
     final message = messages.first;
-    final validated = _validate(message, now: now);
+    final validated = _validate(
+      message,
+      now: now,
+      expectedRecipient: _expectedRecipient,
+      activeHandles: _activeHandles,
+    );
     if (validated == null) return null;
 
     try {
       final cloudMessage = _encoder(message);
+      if (!_encodedMessageMatches(
+        cloudMessage,
+        message,
+        expectedRecipient: _expectedRecipient,
+        activeHandles: _activeHandles,
+      )) {
+        return null;
+      }
       return CloudSyncOutboundCanaryCandidate._(
+        validated.selectionBinding,
         cloudMessage: cloudMessage,
         guidHash: _guidHash(message.guid!),
         createdAtUtc: validated.createdAtUtc,
@@ -123,6 +159,21 @@ final class CloudSyncOutboundCanaryCandidateSelector {
       // Message text must never enter diagnostics.
       return null;
     }
+  }
+
+  /// Re-reads only the newest outgoing row and returns a freshly encoded
+  /// candidate when its complete content/routing binding is still exact.
+  /// A stale, edited, deleted, rerouted, or newly superseded row returns null;
+  /// an older row is never considered.
+  CloudSyncOutboundCanaryCandidate? reselectExact(
+    CloudSyncOutboundCanaryCandidate expected,
+  ) {
+    final current = selectNewest();
+    if (current == null ||
+        current._selectionBinding != expected._selectionBinding) {
+      return null;
+    }
+    return current;
   }
 
   static int _newestFirst(Message left, Message right) {
@@ -141,9 +192,69 @@ final class CloudSyncOutboundCanaryCandidateSelector {
   static String _guidHash(String guid) =>
       sha256.convert(utf8.encode(guid)).toString().substring(0, 16);
 
+  static String _normalizeEndpoint(String value) {
+    var normalized = value.trim();
+    final lower = normalized.toLowerCase();
+    if (lower.startsWith('mailto:')) {
+      normalized = normalized.substring('mailto:'.length);
+    } else if (lower.startsWith('tel:')) {
+      normalized = normalized.substring('tel:'.length);
+    }
+    return normalized.trim().toLowerCase();
+  }
+
+  static String _selectionBinding(
+    Message message,
+    AttributedBody body,
+    Chat chat,
+    DateTime createdAtUtc, {
+    required String participantAddress,
+    required String participantService,
+  }) {
+    final runs = body.runs
+        .map(
+          (run) => <String, Object?>{
+            'range': run.range,
+            'messagePart': run.attributes?.messagePart,
+            'attachmentGuid': run.attributes?.attachmentGuid,
+            'mention': run.attributes?.mention,
+            'audioTranscript': run.attributes?.audioTranscript,
+            'stickerData': run.attributes?.stickerData,
+            'textEffect': run.attributes?.textEffect,
+            'bold': run.attributes?.bold,
+            'italic': run.attributes?.italic,
+            'strikethrough': run.attributes?.strikethrough,
+            'underline': run.attributes?.underline,
+          },
+        )
+        .toList(growable: false);
+    final encoded = jsonEncode(<String, Object?>{
+      'guid': message.guid,
+      'createdAtMicros': createdAtUtc.microsecondsSinceEpoch,
+      'dateReadMicros': message.dateRead?.toUtc().microsecondsSinceEpoch,
+      'dateDeliveredMicros': message.dateDelivered
+          ?.toUtc()
+          .microsecondsSinceEpoch,
+      'isDelivered': message.isDelivered,
+      'hasBeenForwarded': message.hasBeenForwarded,
+      'subject': message.subject,
+      'text': message.text,
+      'body': body.string,
+      'runs': runs,
+      'chatGuid': chat.guid,
+      'chatIdentifier': chat.chatIdentifier,
+      'usingHandle': chat.usingHandle,
+      'participantAddress': participantAddress,
+      'participantService': participantService,
+    });
+    return sha256.convert(utf8.encode(encoded)).toString();
+  }
+
   static _ValidatedCanaryMessage? _validate(
     Message message, {
     required DateTime now,
+    required String expectedRecipient,
+    required Set<String> activeHandles,
   }) {
     if (message.isFromMe != true) return null;
 
@@ -170,7 +281,7 @@ final class CloudSyncOutboundCanaryCandidateSelector {
       return null;
     }
     if (message.ckRecordId != null || message.ckSyncState) return null;
-    if (message.subject?.trim().isNotEmpty == true) return null;
+    if (message.subject != null) return null;
     if (message.expressiveSendStyleId != null ||
         message.balloonBundleId != null ||
         message.payloadData != null ||
@@ -251,7 +362,7 @@ final class CloudSyncOutboundCanaryCandidateSelector {
         chat.usingHandle?.trim().isEmpty != false ||
         chat.isRpSms ||
         chat.isRoutingStub ||
-        chat.style == 43) {
+        chat.style != 45) {
       return null;
     }
 
@@ -270,15 +381,64 @@ final class CloudSyncOutboundCanaryCandidateSelector {
     final participants = chat.handles.isNotEmpty
         ? chat.handles.toList(growable: false)
         : chat.participants;
-    if (participants.length != 1 || chat.style == 43) return null;
-    if (participants.single.service.trim().toLowerCase() != 'imessage') {
+    if (participants.length != 1) return null;
+    final participant = participants.single;
+    if (participant.service != 'iMessage') {
+      return null;
+    }
+
+    final guidParts = chat.guid.split(';');
+    final serializedUsingHandle = _serializedCanonicalEndpoint(
+      chat.usingHandle!,
+    );
+    if (guidParts.length != 3 ||
+        guidParts.first != 'iMessage' ||
+        guidParts[1] != '-' ||
+        guidParts.last != expectedRecipient ||
+        chat.chatIdentifier != expectedRecipient ||
+        participant.address != expectedRecipient ||
+        serializedUsingHandle == null ||
+        !activeHandles.contains(serializedUsingHandle)) {
       return null;
     }
 
     return _ValidatedCanaryMessage(
       createdAtUtc: createdAtUtc,
       characterCount: body.string.runes.length,
+      selectionBinding: _selectionBinding(
+        message,
+        body,
+        chat,
+        createdAtUtc,
+        participantAddress: participant.address,
+        participantService: participant.service,
+      ),
     );
+  }
+
+  static String? _serializedCanonicalEndpoint(String value) {
+    final normalized = _normalizeEndpoint(value);
+    if (value == normalized ||
+        value == 'mailto:$normalized' ||
+        value == 'tel:$normalized') {
+      return normalized;
+    }
+    return null;
+  }
+
+  static bool _encodedMessageMatches(
+    api.CloudMessage cloudMessage,
+    Message message, {
+    required String expectedRecipient,
+    required Set<String> activeHandles,
+  }) {
+    return cloudMessage.type == 1 &&
+        cloudMessage.error == 0 &&
+        cloudMessage.chatId == 'iMessage;-;$expectedRecipient' &&
+        cloudMessage.sender.isEmpty &&
+        activeHandles.contains(cloudMessage.destinationCallerId) &&
+        cloudMessage.guid == message.guid &&
+        cloudMessage.service == 'iMessage';
   }
 }
 
@@ -286,8 +446,10 @@ final class _ValidatedCanaryMessage {
   const _ValidatedCanaryMessage({
     required this.createdAtUtc,
     required this.characterCount,
+    required this.selectionBinding,
   });
 
   final DateTime createdAtUtc;
   final int characterCount;
+  final String selectionBinding;
 }
