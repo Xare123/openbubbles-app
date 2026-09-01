@@ -13,6 +13,7 @@ import 'package:bluebubbles/app/layouts/setup/setup_view.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/services/rustpush/relay_registration_validation.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/crypto_utils.dart';
@@ -150,6 +151,7 @@ class HwInpState extends OptimizedState<HwInp> {
         "$relayHost/api/v1/bridge/get-version-info",
         data: {},
         options: Options(
+          validateStatus: (_) => true,
           headers: {
             // not a secret; burner account
             "X-Beeper-Access-Token":
@@ -159,8 +161,37 @@ class HwInpState extends OptimizedState<HwInp> {
         )
       );
 
+      final versionResponse = validateRelayVersionResponse(
+        statusCode: response2.statusCode,
+        data: response2.data,
+      );
+      if (versionResponse.kind == RelayVersionResponseKind.rejected) {
+        Logger.warn(
+          "Relay registration code rejected status=${response2.statusCode}",
+        );
+        showSnackbar(
+          "Fetching validation data",
+          "Relay code rejected. Generate a new code and try again.",
+        );
+        lastCheckedCode = "";
+        return;
+      }
+      if (versionResponse.kind != RelayVersionResponseKind.success) {
+        Logger.warn(
+          "Relay version request failed status=${response2.statusCode} "
+          "kind=${versionResponse.kind.name}",
+        );
+        showSnackbar(
+          "Fetching validation data",
+          "Relay did not return valid device information.",
+        );
+        lastCheckedCode = "";
+        return;
+      }
+      final versions = versionResponse.versions!;
+
       api.JoinedOsConfig parsed;
-      if (response2.data["versions"]["software_name"] == "iPhone OS") {
+      if (versions["software_name"] == "iPhone OS") {
         Logger.debug("Using as iOS");
         parsed = await api.configFromRelay(
             code: code,
@@ -172,6 +203,7 @@ class HwInpState extends OptimizedState<HwInp> {
           "$relayHost/api/v1/bridge/get-validation-data",
           data: {},
           options: Options(
+            validateStatus: (_) => true,
             headers: {
               // not a secret; burner account
               "X-Beeper-Access-Token":
@@ -186,10 +218,26 @@ class HwInpState extends OptimizedState<HwInp> {
           lastCheckedCode = "";
           return;
         }
-        parsed = await api.configFromValidationData(data: base64Decode(response.data["data"]), extra: api.HwExtra(
-          version: response2.data["versions"]["software_version"],
+        final validationDataPayload = response.data;
+        if (response.statusCode == null ||
+            response.statusCode! < 200 ||
+            response.statusCode! >= 300 ||
+            validationDataPayload is! Map ||
+            validationDataPayload["data"] is! String) {
+          Logger.warn(
+            "Relay validation-data request failed status=${response.statusCode}",
+          );
+          showSnackbar(
+            "Fetching validation data",
+            "Relay did not return valid activation data.",
+          );
+          lastCheckedCode = "";
+          return;
+        }
+        parsed = await api.configFromValidationData(data: base64Decode(validationDataPayload["data"]), extra: api.HwExtra(
+          version: versions["software_version"],
           protocolVersion: 1660,
-          deviceId: response2.data["versions"]["unique_device_id"],
+          deviceId: versions["unique_device_id"],
           icloudUa: "com.apple.iCloudHelper/282 CFNetwork/1408.0.4 Darwin/22.5.0",
           aoskitVersion: "com.apple.AOSKit/282 (com.apple.accountsd/113)"
         ));
@@ -273,6 +321,7 @@ class HwInpState extends OptimizedState<HwInp> {
   }
 
   Future<void> checkCode(String text) async {
+    text = text.trim();
     Logger.debug("Checking hardware setup input");
     if (text == "testing-please-letmein") {
       FocusManager.instance.primaryFocus?.unfocus();
@@ -327,15 +376,20 @@ class HwInpState extends OptimizedState<HwInp> {
       await handleOpenAbsinthe(text.replaceFirst(header, ""));
       return;
     }
-    var firstDashPos = text.split("-").firstOrNull?.length ?? 0;
-    if (firstDashPos == 6 && "-".allMatches(text).length == 3 && text.length == 21) {
+    if (isCompleteOpenAbsintheCode(text)) {
       Logger.debug("here");
       await handleOpenAbsinthe(text);
       return;
     }
-    if (firstDashPos == 4 && "-".allMatches(text).length == 3 && text.length == 19) {
+    if (isCompleteRelayCode(text)) {
       Logger.debug("here");
       await handleBeeper(text);
+      return;
+    }
+    if (text.isEmpty ||
+        text.contains("-") ||
+        !isPotentialEncodedHardwareTransfer(text)) {
+      setState(() => staging = stagingInfo = null);
       return;
     }
     try {
@@ -360,9 +414,8 @@ class HwInpState extends OptimizedState<HwInp> {
         Logger.debug("resettingb");
         setState(() => staging = stagingInfo = null);
       }
-    } catch (e) {
+    } on FormatException {
       setState(() => staging = stagingInfo = null);
-      rethrow;
     }
   }
 
