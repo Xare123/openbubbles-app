@@ -25,6 +25,7 @@ class ObjectBoxCloudSyncStore
         CloudLegacyOwnershipConflictBarrierRecoveryStore,
         CloudSyncUnknownOutcomeLeasingStore,
         CloudSyncOutboxPresenceStore,
+        CloudCoordinatorLeaseStatusReader,
         CloudProtectedPageLeaseAdoptionStore,
         CloudProtectedOutboundLeaseAdoptionStore,
         CloudConfirmedOutboundReceiptStore {
@@ -2182,6 +2183,23 @@ class ObjectBoxCloudSyncStore
       return CloudCoordinatorLeaseFence(
         ownerId: ownerId,
         generation: generation,
+      );
+    });
+  }
+
+  @override
+  Future<DateTime?> readActiveCoordinatorLeaseExpiry(
+    CloudSyncScope scope, {
+    required DateTime now,
+  }) async {
+    final leaseKey = _scopedDigest(scope, 'coordinator-lease', 'v1');
+    final nowMs = now.millisecondsSinceEpoch;
+    return _store.runInTransaction(TxMode.read, () {
+      final existing = _findLeaseByKeyLocked(leaseKey);
+      if (existing == null || existing.expiresAtMs <= nowMs) return null;
+      return DateTime.fromMillisecondsSinceEpoch(
+        existing.expiresAtMs,
+        isUtc: true,
       );
     });
   }

@@ -16,6 +16,7 @@ class InMemoryCloudSyncStore
         CloudRetainedUnprojectedBacklogSummaryStore,
         CloudSyncUnknownOutcomeLeasingStore,
         CloudSyncOutboxPresenceStore,
+        CloudCoordinatorLeaseStatusReader,
         CloudConfirmedOutboundReceiptStore {
   final Lock _lock = Lock();
   final Map<String, CloudSyncCheckpoint> _checkpoints = {};
@@ -1200,6 +1201,18 @@ class InMemoryCloudSyncStore
         ownerId: ownerId,
         generation: generation,
       );
+    });
+  }
+
+  @override
+  Future<DateTime?> readActiveCoordinatorLeaseExpiry(
+    CloudSyncScope scope, {
+    required DateTime now,
+  }) {
+    return _lock.synchronized(() async {
+      final existing = _coordinatorLeases[scope.storageKey];
+      if (existing == null || !existing.expiresAt.isAfter(now)) return null;
+      return existing.expiresAt.toUtc();
     });
   }
 

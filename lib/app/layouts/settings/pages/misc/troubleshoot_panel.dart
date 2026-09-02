@@ -10,6 +10,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbo
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -139,6 +140,27 @@ CloudSyncV2SemanticCanaryPresentation cloudSyncV2SemanticCanaryPresentation(
   );
 }
 
+String? cloudSyncV2InterlockBusyMessage(
+  Object error, {
+  DateTime? now,
+}) {
+  if (error is! CloudKitOperationInterlockException ||
+      error.safeCode != 'cloudkit_interlock_busy') {
+    return null;
+  }
+
+  final current = (now ?? DateTime.now()).toUtc();
+  final retryAt = error.retryAt?.toUtc();
+  if (retryAt == null || !retryAt.isAfter(current)) {
+    return "Another CloudKit operation is active. Wait for it to finish and retry. If OpenBubbles was just force-stopped, its data-protection lease can take up to five minutes to expire.";
+  }
+
+  final secondsRemaining = retryAt.difference(current).inSeconds;
+  final minutesRemaining = (secondsRemaining + 59) ~/ 60;
+  final unit = minutesRemaining == 1 ? "minute" : "minutes";
+  return "Another CloudKit operation is active, or a recently interrupted operation still holds its data-protection lease. Retry in about $minutesRemaining $unit; it may become available sooner if the active operation finishes.";
+}
+
 enum CloudSyncV2OutboundCanaryOutcome {
   writeConfirmed,
   replayVerified,
@@ -237,6 +259,18 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
   bool isExportingLogs = false;
   final RxnBool reregisteringIds = RxnBool();
 
+  bool _showCloudSyncV2Busy(Object error) {
+    final message = cloudSyncV2InterlockBusyMessage(error);
+    if (message == null) return false;
+    final retryTimeAvailable =
+        error is CloudKitOperationInterlockException && error.retryAt != null;
+    Logger.warn(
+      "Cloud Sync V2 operation blocked code=cloudkit_interlock_busy retry_time_available=$retryTimeAvailable",
+    );
+    showSnackbar("Cloud Sync V2 Busy", message);
+    return true;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -319,6 +353,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
           );
       }
     } catch (error) {
+      if (_showCloudSyncV2Busy(error)) return;
       final safeCode = cloudSyncV2SafeFailureCode(error);
       Logger.warn(
         "Cloud Sync V2 PCS preparation stopped safely code=$safeCode",
@@ -520,6 +555,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
         showSnackbar(replayPresentation.title, replayPresentation.message);
       }
     } catch (error) {
+      if (_showCloudSyncV2Busy(error)) return;
       final safeCode = cloudSyncV2SafeFailureCode(error);
       Logger.warn(
         "Cloud Sync V2 outbound canary stopped safely code=$safeCode",
@@ -556,6 +592,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
         showSnackbar(presentation.title, presentation.message);
       }
     } catch (error) {
+      if (_showCloudSyncV2Busy(error)) return;
       final safeCode = cloudSyncV2SafeFailureCode(error);
       Logger.warn(
         "Cloud Sync V2 outbound recovery stopped safely code=$safeCode",
@@ -913,6 +950,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                               );
                             }
                           } catch (error) {
+                            if (_showCloudSyncV2Busy(error)) return;
                             final safeCode =
                                 cloudSyncV2SafeFailureCode(error);
                             Logger.warn(
@@ -1074,6 +1112,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                 "${presentation.message} $progress $chatListRefreshMessage",
                               );
                             } catch (error) {
+                              if (_showCloudSyncV2Busy(error)) return;
                               final safeCode = cloudSyncV2SafeFailureCode(error);
                               Logger.warn(
                                 "Cloud Sync V2 semantic pull stopped safely code=$safeCode",

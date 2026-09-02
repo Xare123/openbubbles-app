@@ -280,6 +280,70 @@ void main() {
     },
   );
 
+  test('database-busy failure reports bounded retry time', () async {
+    var now = DateTime.utc(2026, 9, 1, 12);
+    final expiry = now.add(const Duration(minutes: 3));
+    final busyStore = _ExternalLeaseUntilStore(expiry);
+    final busyInterlock = CloudKitOperationInterlock(
+      privateStorageDirectory: temporaryDirectory.path,
+      fenceStore: busyStore,
+      clock: () => now,
+    );
+
+    await expectLater(
+      busyInterlock.runExclusive(
+        kind: CloudKitOperationKind.v2SemanticRead,
+        action: () async {},
+      ),
+      throwsA(
+        isA<CloudKitOperationInterlockException>()
+            .having(
+              (error) => error.safeCode,
+              'safeCode',
+              'cloudkit_interlock_busy',
+            )
+            .having((error) => error.retryAt, 'retryAt', expiry),
+      ),
+    );
+
+    now = expiry;
+    expect(
+      await busyInterlock.runExclusive(
+        kind: CloudKitOperationKind.v2SemanticRead,
+        action: () async => 'entered',
+      ),
+      'entered',
+    );
+  });
+
+  test('implausible busy expiry is not exposed', () async {
+    final now = DateTime.utc(2026, 9, 1, 12);
+    final busyStore = _ExternalLeaseUntilStore(
+      now.add(const Duration(minutes: 10)),
+    );
+    final busyInterlock = CloudKitOperationInterlock(
+      privateStorageDirectory: temporaryDirectory.path,
+      fenceStore: busyStore,
+      clock: () => now,
+    );
+
+    await expectLater(
+      busyInterlock.runExclusive(
+        kind: CloudKitOperationKind.v2SemanticRead,
+        action: () async {},
+      ),
+      throwsA(
+        isA<CloudKitOperationInterlockException>()
+            .having(
+              (error) => error.safeCode,
+              'safeCode',
+              'cloudkit_interlock_busy',
+            )
+            .having((error) => error.retryAt, 'retryAt', isNull),
+      ),
+    );
+  });
+
   test('a lost database fence fails the operation closed', () async {
     final rejectingStore = _RejectingRenewalStore();
     final fencedInterlock = CloudKitOperationInterlock(
@@ -441,4 +505,32 @@ final class _RejectingAcquisitionStore extends InMemoryCloudSyncStore {
     required DateTime now,
     required Duration leaseDuration,
   }) async => null;
+}
+
+final class _ExternalLeaseUntilStore extends InMemoryCloudSyncStore {
+  _ExternalLeaseUntilStore(this.expiry);
+
+  final DateTime expiry;
+
+  @override
+  Future<CloudCoordinatorLeaseFence?> tryAcquireCoordinatorLease(
+    CloudSyncScope scope, {
+    required String ownerId,
+    required DateTime now,
+    required Duration leaseDuration,
+  }) {
+    if (expiry.isAfter(now)) return Future.value();
+    return super.tryAcquireCoordinatorLease(
+      scope,
+      ownerId: ownerId,
+      now: now,
+      leaseDuration: leaseDuration,
+    );
+  }
+
+  @override
+  Future<DateTime?> readActiveCoordinatorLeaseExpiry(
+    CloudSyncScope scope, {
+    required DateTime now,
+  }) async => expiry.isAfter(now) ? expiry : null;
 }

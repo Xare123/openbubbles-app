@@ -1,6 +1,7 @@
 import 'package:bluebubbles/app/layouts/settings/pages/misc/troubleshoot_panel.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 CloudSyncSemanticPullZoneReport _zone(
@@ -73,6 +74,33 @@ CloudSyncSemanticPullReport _report({
 );
 
 void main() {
+  test('busy lease presents a bounded retry window', () {
+    final now = DateTime.utc(2026, 9, 1, 12);
+    final message = cloudSyncV2InterlockBusyMessage(
+      CloudKitOperationInterlockException(
+        'cloudkit_interlock_busy',
+        retryAt: now.add(const Duration(seconds: 61)),
+      ),
+      now: now,
+    );
+
+    expect(message, contains('Retry in about 2 minutes'));
+    expect(message, contains('data-protection lease'));
+  });
+
+  test('busy lease without expiry explains the crash-safety maximum', () {
+    final message = cloudSyncV2InterlockBusyMessage(
+      const CloudKitOperationInterlockException('cloudkit_interlock_busy'),
+      now: DateTime.utc(2026, 9, 1, 12),
+    );
+
+    expect(message, contains('up to five minutes'));
+  });
+
+  test('unrelated failure has no busy presentation', () {
+    expect(cloudSyncV2InterlockBusyMessage(StateError('test')), isNull);
+  });
+
   test('zero retained rows can report complete and totals show the count', () {
     final presentation = cloudSyncV2SemanticCanaryPresentation(_report());
 

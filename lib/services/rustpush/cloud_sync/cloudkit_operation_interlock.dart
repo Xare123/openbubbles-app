@@ -54,11 +54,13 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
     required this._fenceStore,
     Duration leaseDuration = const Duration(minutes: 5),
     Duration heartbeatInterval = const Duration(seconds: 30),
+    DateTime Function()? clock,
   }) : _privateStorageDirectory = _validateStorageDirectory(
          privateStorageDirectory,
        ),
        _leaseDuration = leaseDuration,
-       _heartbeatInterval = heartbeatInterval {
+       _heartbeatInterval = heartbeatInterval,
+       _clock = clock ?? DateTime.now {
     if (leaseDuration.inMicroseconds <= 0 ||
         heartbeatInterval.inMicroseconds <= 0 ||
         heartbeatInterval.inMicroseconds >= leaseDuration.inMicroseconds) {
@@ -98,6 +100,7 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
   final CloudSyncStore _fenceStore;
   final Duration _leaseDuration;
   final Duration _heartbeatInterval;
+  final DateTime Function() _clock;
 
   String get lockPath => path.join(_privateStorageDirectory, _lockFileName);
 
@@ -221,15 +224,17 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
     var retainedUntilRestart = false;
     try {
       isolateReservation = _ProcessIsolateReservation.acquire(lockPath);
+      final acquisitionTime = _clock();
       final fence = await _fenceStore.tryAcquireCoordinatorLease(
         _fenceScope,
         ownerId: ownerId,
-        now: DateTime.now(),
+        now: acquisitionTime,
         leaseDuration: _leaseDuration,
       );
       if (fence == null) {
-        throw const CloudKitOperationInterlockException(
+        throw CloudKitOperationInterlockException(
           'cloudkit_interlock_busy',
+          retryAt: await _readBusyRetryAt(acquisitionTime),
         );
       }
       databaseFence = fence;
@@ -332,12 +337,38 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
       final renewed = await _fenceStore.renewCoordinatorLease(
         _fenceScope,
         leaseFence: leaseFence,
-        now: DateTime.now(),
+        now: _clock(),
         leaseDuration: _leaseDuration,
       );
       if (!renewed) active.fenceLost = true;
     } catch (_) {
       active.fenceLost = true;
+    }
+  }
+
+  Future<DateTime?> _readBusyRetryAt(DateTime now) async {
+    final store = _fenceStore;
+    if (store is! CloudCoordinatorLeaseStatusReader) return null;
+    final statusReader = store as CloudCoordinatorLeaseStatusReader;
+    try {
+      final expiry = await statusReader.readActiveCoordinatorLeaseExpiry(
+        _fenceScope,
+        now: now,
+      );
+      if (expiry == null) return null;
+      final nowUtc = now.toUtc();
+      final expiryUtc = expiry.toUtc();
+      // A corrupt or clock-skewed row must not tell the user to wait beyond
+      // this interlock's own maximum crash-recovery lease.
+      if (!expiryUtc.isAfter(nowUtc) ||
+          expiryUtc.isAfter(nowUtc.add(_leaseDuration))) {
+        return null;
+      }
+      return expiryUtc;
+    } catch (_) {
+      // Status is advisory. Lease acquisition still fails closed even when a
+      // safe retry time cannot be read.
+      return null;
     }
   }
 
@@ -441,9 +472,10 @@ final class _ActiveCloudKitOperation {
 }
 
 final class CloudKitOperationInterlockException implements Exception {
-  const CloudKitOperationInterlockException(this.safeCode);
+  const CloudKitOperationInterlockException(this.safeCode, {this.retryAt});
 
   final String safeCode;
+  final DateTime? retryAt;
 
   @override
   String toString() => 'CloudKitOperationInterlockException($safeCode)';

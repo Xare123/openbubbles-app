@@ -396,6 +396,21 @@ void main() {
       semantic,
       contains('Cloud Sync V2 local chat refresh failed code='),
     );
+    final semanticCatch = semantic.indexOf(
+      '} catch (error) {',
+      semanticPresentation,
+    );
+    final busyPresentation = semantic.indexOf(
+      'if (_showCloudSyncV2Busy(error)) return;',
+      semanticCatch,
+    );
+    final genericFailure = semantic.indexOf(
+      'cloudSyncV2SafeFailureCode(error)',
+      semanticCatch,
+    );
+    expect(semanticCatch, greaterThan(chatRefresh));
+    expect(busyPresentation, greaterThan(semanticCatch));
+    expect(genericFailure, greaterThan(busyPresentation));
     final presentationStart = source.indexOf(
       'CloudSyncV2SemanticCanaryPresentation cloudSyncV2SemanticCanaryPresentation(',
     );

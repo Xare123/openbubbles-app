@@ -1958,6 +1958,30 @@ void main() {
     );
   });
 
+  test('coordinator lease status reports only an active expiry', () async {
+    expect(
+      await store.readActiveCoordinatorLeaseExpiry(scope, now: testEpoch),
+      isNull,
+    );
+    await store.tryAcquireCoordinatorLease(
+      scope,
+      ownerId: 'owner-a',
+      now: testEpoch,
+      leaseDuration: const Duration(minutes: 1),
+    );
+    expect(
+      await store.readActiveCoordinatorLeaseExpiry(scope, now: testEpoch),
+      testEpoch.add(const Duration(minutes: 1)),
+    );
+    expect(
+      await store.readActiveCoordinatorLeaseExpiry(
+        scope,
+        now: testEpoch.add(const Duration(minutes: 1)),
+      ),
+      isNull,
+    );
+  });
+
   test('stale coordinator cannot regress token after lease takeover', () async {
     final firstFence = (await store.tryAcquireCoordinatorLease(
       scope,

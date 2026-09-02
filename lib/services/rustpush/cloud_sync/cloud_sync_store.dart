@@ -11,6 +11,18 @@ class CloudCoordinatorLeaseFence {
   final int generation;
 }
 
+/// Optional, owner-free status surface for explaining a rejected coordinator
+/// lease without weakening the lease or exposing its holder.
+abstract interface class CloudCoordinatorLeaseStatusReader {
+  /// Returns the expiry of the current unexpired lease, or null when no active
+  /// lease can be reported. This method must never acquire, renew, or release
+  /// the lease.
+  Future<DateTime?> readActiveCoordinatorLeaseExpiry(
+    CloudSyncScope scope, {
+    required DateTime now,
+  });
+}
+
 /// Durable persistence boundary for Cloud Sync V2.
 ///
 /// Production implementations should use ObjectBox transactions for every

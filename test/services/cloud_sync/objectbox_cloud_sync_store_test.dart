@@ -4150,6 +4150,42 @@ void main() {
     );
   });
 
+  test('coordinator lease status is visible across adapter instances', () async {
+    final scope = testScope();
+    final secondAdapter = ObjectBoxCloudSyncStore(
+      store: objectBox,
+      protector: protector,
+      clock: () => currentTime,
+    );
+    expect(
+      await secondAdapter.readActiveCoordinatorLeaseExpiry(
+        scope,
+        now: testEpoch,
+      ),
+      isNull,
+    );
+    await store.tryAcquireCoordinatorLease(
+      scope,
+      ownerId: 'owner-a',
+      now: testEpoch,
+      leaseDuration: const Duration(minutes: 1),
+    );
+    expect(
+      await secondAdapter.readActiveCoordinatorLeaseExpiry(
+        scope,
+        now: testEpoch,
+      ),
+      testEpoch.add(const Duration(minutes: 1)),
+    );
+    expect(
+      await secondAdapter.readActiveCoordinatorLeaseExpiry(
+        scope,
+        now: testEpoch.add(const Duration(minutes: 1)),
+      ),
+      isNull,
+    );
+  });
+
   test(
     'same-owner lease ABA cannot renew or release a newer generation',
     () async {
