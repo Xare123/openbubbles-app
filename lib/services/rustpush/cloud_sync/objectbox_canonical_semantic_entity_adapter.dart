@@ -7,6 +7,7 @@ import 'cloud_inbox_applier.dart';
 import 'cloud_merge_policy.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_attachment_provenance.dart';
+import 'cloud_sync_chat_presentation_repair.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 import 'objectbox_cloud_semantic_store_gateway.dart';
@@ -1359,6 +1360,9 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
 
     _applyMessageSummary(message, payload);
     _messages.put(message);
+    if (updateCloudSyncChatLatestMessageDate(chat, message.dateCreated!)) {
+      _chats.put(chat, mode: PutMode.update);
+    }
     return CloudCanonicalSemanticMutationReceipt.committed;
   }
 
@@ -2505,12 +2509,115 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         'canonical_message_chat_reference_weak_evidence_only',
       );
     }
+    final oppositeServiceGroupChat = _resolveOppositeServiceGroupChat(
+      scope: scope,
+      generation: generation,
+      service: service,
+      routeKind: routeKind,
+      sameServiceOwnersPresent:
+          candidateOwners.isNotEmpty ||
+          weakOwners.isNotEmpty ||
+          proto4Owners.isNotEmpty,
+      serviceIdentifierHash: serviceCandidate.keyHash,
+      groupIdHash: groupCandidate.keyHash,
+    );
+    if (oppositeServiceGroupChat != null) {
+      _diagnosticRecorder?.call(
+        'canonical_message_chat_reference_cross_service_group_id',
+      );
+      return oppositeServiceGroupChat;
+    }
     _diagnosticRecorder?.call('canonical_message_chat_reference_unavailable');
     throw CloudSyncFailure(
       category: CloudFailureCategory.dependency,
       safeCode: 'canonical_message_chat_unavailable',
     );
   }
+
+  Chat? _resolveOppositeServiceGroupChat({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticService service,
+    required _MessageChatRouteKind routeKind,
+    required bool sameServiceOwnersPresent,
+    required String serviceIdentifierHash,
+    required String groupIdHash,
+  }) {
+    final oppositeService = switch (service) {
+      CloudSemanticService.iMessage => CloudSemanticService.sms,
+      CloudSemanticService.sms => CloudSemanticService.iMessage,
+    };
+
+    Map<int, _ProvenChatOwner>? observe({
+      required CloudSemanticChatAliasKind kind,
+      required String aliasKeyHash,
+      required String diagnosticPrefix,
+    }) {
+      try {
+        final owners = _resolveChatOwnersByAlias(
+          scope: scope,
+          generation: generation,
+          service: oppositeService,
+          kind: kind,
+          aliasKeyHash: aliasKeyHash,
+        );
+        _recordChatOwnerCardinality(diagnosticPrefix, owners);
+        if (kind == CloudSemanticChatAliasKind.groupId && owners.length == 1) {
+          final style = owners.values.single.chat.style;
+          _diagnosticRecorder?.call(
+            '${diagnosticPrefix}_unique_style_${_chatStyleDiagnosticSegment(style)}',
+          );
+        }
+        return owners;
+      } catch (_) {
+        // This is evidence-only diagnostics for an operation that is already
+        // failing closed. Opposite-service corruption must not replace the
+        // original, actionable unavailable-chat failure.
+        _diagnosticRecorder?.call('${diagnosticPrefix}_lookup_failed');
+        return null;
+      }
+    }
+
+    final serviceOwners = observe(
+      kind: CloudSemanticChatAliasKind.serviceIdentifier,
+      aliasKeyHash: serviceIdentifierHash,
+      diagnosticPrefix:
+          'canonical_message_chat_candidate_opposite_service_identifier',
+    );
+    final groupOwners = observe(
+      kind: CloudSemanticChatAliasKind.groupId,
+      aliasKeyHash: groupIdHash,
+      diagnosticPrefix: 'canonical_message_chat_candidate_opposite_group_id',
+    );
+
+    // CloudChat service reflects the conversation's current route, while
+    // historical MessageEncryptedV3 records retain the service used when the
+    // message was sent. Apple can therefore identify an old iMessage only by
+    // the group ID of a now-SMS group. This compatibility join is deliberately
+    // narrower than normal alias resolution: it never applies to direct
+    // messages, never displaces any same-service evidence, requires the
+    // opposite service identity to be absent, and accepts exactly one proven
+    // group-style SMS owner.
+    if (service != CloudSemanticService.iMessage ||
+        routeKind == _MessageChatRouteKind.direct ||
+        sameServiceOwnersPresent ||
+        serviceOwners == null ||
+        serviceOwners.isNotEmpty ||
+        groupOwners == null ||
+        groupOwners.length != 1) {
+      return null;
+    }
+    final owner = groupOwners.values.single;
+    if (owner.chat.style != 43 || !owner.chat.isRpSms) return null;
+    return owner.chat;
+  }
+
+  String _chatStyleDiagnosticSegment(int? style) => switch (style) {
+    43 => 'group',
+    45 => 'direct',
+    null => 'unknown',
+    _ => 'other',
+  };
 
   Map<int, _ProvenChatOwner> _resolveExactChatOwner({
     required CloudSyncScope scope,

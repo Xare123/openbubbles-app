@@ -1755,28 +1755,11 @@ fn convert_chat_internal(
     }
     let service = match chat.service_name.as_str() {
         "iMessage" => CloudCanonicalService::IMessage,
-        "SMS" => {
-            if [
-                &chat.guid,
-                &chat.chat_identifier,
-                &chat.group_id,
-                &chat.original_group_id,
-            ]
-            .iter()
-            .any(|value| value.is_empty())
-            {
-                return chat_diagnostic(
-                    diagnostic,
-                    CloudChatDiagnosticCode::EmptyRequiredIdentity,
-                    CloudCanonicalConversionOutcome::Quarantined(
-                        CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
-                    ),
-                );
-            }
-            return CloudCanonicalConversionOutcome::OutOfScopeService(
-                CloudCanonicalOutOfScopeService::SmsFamily,
-            );
-        }
+        // Messages retain the service used when sent, but CloudChat reflects
+        // the conversation's current route. Keep SMS chat metadata so a
+        // historical iMessage can resolve its authenticated group container;
+        // SMS message bodies remain explicitly outside this projection.
+        "SMS" => CloudCanonicalService::Sms,
         "RCS" => {
             if [
                 &chat.guid,
@@ -4696,23 +4679,26 @@ mod tests {
     }
 
     #[test]
-    fn exact_sms_and_rcs_are_outside_imessage_projection() {
+    fn sms_chat_metadata_remains_available_without_importing_sms_or_rcs_messages() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut sms_chat = direct_chat();
+        sms_chat.service_name = "SMS".to_owned();
+        let CloudCanonicalConversionOutcome::Ready(chat_mutation) = convert_chat(
+            &context(&hasher, "server-sms-routing-chat", None),
+            &chat_required_presence(false),
+            &sms_chat,
+        ) else {
+            panic!("SMS chat metadata should remain a projection dependency");
+        };
+        let Some(CloudCanonicalPayload::Chat(chat_payload)) = chat_mutation.payload() else {
+            panic!("SMS chat payload expected");
+        };
+        assert_eq!(chat_payload.service(), CloudCanonicalService::Sms);
+
         for (service_name, expected) in [
             ("SMS", CloudCanonicalOutOfScopeService::SmsFamily),
             ("RCS", CloudCanonicalOutOfScopeService::Rcs),
         ] {
-            let mut chat = direct_chat();
-            chat.service_name = service_name.to_owned();
-            assert_eq!(
-                convert_chat(
-                    &context(&hasher, "server-out-of-scope-chat", None),
-                    &chat_required_presence(false),
-                    &chat,
-                ),
-                CloudCanonicalConversionOutcome::OutOfScopeService(expected)
-            );
-
             let mut message = normal_message(Some("hello"));
             message.service = service_name.to_owned();
             assert_eq!(
@@ -4724,6 +4710,19 @@ mod tests {
                 CloudCanonicalConversionOutcome::OutOfScopeService(expected)
             );
         }
+
+        let mut rcs_chat = direct_chat();
+        rcs_chat.service_name = "RCS".to_owned();
+        assert_eq!(
+            convert_chat(
+                &context(&hasher, "server-rcs-out-of-scope-chat", None),
+                &chat_required_presence(false),
+                &rcs_chat,
+            ),
+            CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::Rcs
+            )
+        );
     }
 
     #[test]

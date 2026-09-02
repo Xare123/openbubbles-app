@@ -5,6 +5,7 @@ import 'package:bluebubbles/helpers/backend/settings_helpers.dart';
 import 'package:bluebubbles/main.dart';
 import 'package:bluebubbles/services/backend/sync/chat_sync_manager.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
@@ -1086,6 +1087,11 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                               var chatListRefreshMessage =
                                   "Chat list refreshed.";
                               try {
+                                final repairedChatOrderRows =
+                                    await repairCloudSyncChatLatestMessageDates();
+                                Logger.info(
+                                  "Cloud Sync V2 local chat ordering cache repaired rows=$repairedChatOrderRows",
+                                );
                                 // The ObjectBox count watcher intentionally ignores its
                                 // first zero-to-nonzero transition and only adds one chat
                                 // for a multi-chat transaction. A semantic pull can make

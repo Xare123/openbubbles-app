@@ -1117,6 +1117,7 @@ void main() {
     final message = messages.single;
     expect(message.guid, 'message-guid');
     expect(message.chat.targetId, chat.id);
+    expect(chat.dbOnlyLatestMessageDate?.toUtc(), createdAt);
     expect(message.text, 'A😀B');
     expect(message.subject, 'Subject');
     expect(message.isFromMe, isFalse);
@@ -2236,6 +2237,343 @@ void main() {
     );
     expect(store.box<Message>().count(), 0);
     expect(store.box<CloudSemanticChatAliasEntity>().count(), aliasCountBefore);
+  });
+
+  test('reports opposite-service chat evidence without cross-linking', () {
+    const sharedIdentifier = 'opposite-service-only-identifier';
+    const smsServiceIdentifier = 'SMS;+;opposite-service-direct-owner';
+    const smsChatGuid = 'opposite-service-sms-chat-guid';
+    const smsChatHash = 'opposite-service-sms-chat-logical-hash';
+    final chatId = store.box<Chat>().put(
+      Chat(
+        guid: smsChatGuid,
+        chatIdentifier: smsServiceIdentifier,
+        style: 45,
+        isRpSms: true,
+      ),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: smsChatHash,
+      canonicalGuid: smsChatGuid,
+      chatIdentifier: smsServiceIdentifier,
+      chatId: chatId,
+      service: CloudSemanticService.sms,
+    );
+    _seedChatAliasClaim(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: smsChatHash,
+      canonicalGuid: smsChatGuid,
+      chatIdentifier: sharedIdentifier,
+      chatId: chatId,
+      service: CloudSemanticService.sms,
+      aliasKind: CloudSemanticChatAliasKind.groupId,
+    );
+    final diagnostics = <String>[];
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      diagnosticRecorder: diagnostics.add,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    final routeHash = _testChatAliasHash(sharedIdentifier);
+
+    expect(
+      () => adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: sharedIdentifier,
+          service: CloudSemanticService.iMessage,
+          chatAliasKeyHash: routeHash,
+          chatIdExactGuidLogicalKeyHash: _testChatAliasHash(
+            'missing-opposite-service-exact-owner',
+          ),
+          chatIdAliasCandidates: _typedMessageAliases(
+            serviceIdentifierHash: routeHash,
+            groupIdHash: routeHash,
+          ),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) =>
+              failure.category == CloudFailureCategory.dependency &&
+              failure.safeCode == 'canonical_message_chat_unavailable',
+        ),
+      ),
+    );
+
+    expect(store.box<Message>().count(), 0);
+    expect(
+      diagnostics,
+      containsAll(<String>[
+        'canonical_message_chat_candidate_opposite_service_identifier_none',
+        'canonical_message_chat_candidate_opposite_group_id_unique',
+        'canonical_message_chat_candidate_opposite_group_id_unique_style_direct',
+        'canonical_message_chat_reference_unavailable',
+      ]),
+    );
+  });
+
+  test(
+    'links a historical iMessage only to one proven current SMS group owner',
+    () {
+      const groupIdentifier = 'historical-imessage-current-sms-group';
+      const smsServiceIdentifier = 'SMS;+;current-sms-group';
+      const smsChatGuid = 'cross-service-group-chat-guid';
+      const smsChatHash = 'cross-service-group-chat-logical-hash';
+      final chatId = store.box<Chat>().put(
+        Chat(
+          guid: smsChatGuid,
+          chatIdentifier: smsServiceIdentifier,
+          style: 43,
+          isRpSms: true,
+        ),
+      );
+      _seedChatOwnershipAndAlias(
+        store,
+        scope: scope,
+        generation: generation,
+        logicalEntityKeyHash: smsChatHash,
+        canonicalGuid: smsChatGuid,
+        chatIdentifier: smsServiceIdentifier,
+        chatId: chatId,
+        service: CloudSemanticService.sms,
+      );
+      _seedChatAliasClaim(
+        store,
+        scope: scope,
+        generation: generation,
+        logicalEntityKeyHash: smsChatHash,
+        canonicalGuid: smsChatGuid,
+        chatIdentifier: groupIdentifier,
+        chatId: chatId,
+        service: CloudSemanticService.sms,
+        aliasKind: CloudSemanticChatAliasKind.groupId,
+      );
+      final diagnostics = <String>[];
+      final adapter = _newAdapter(
+        store: store,
+        activeScopeProvider: () => activeScope,
+        resolver: resolver,
+        diagnosticRecorder: diagnostics.add,
+        semanticApplyEnabled: true,
+        allowMessageUpserts: true,
+      );
+      final routeHash = _testChatAliasHash(groupIdentifier);
+
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: _messagePayload(
+            logicalEntityKeyHash: messageHash,
+            canonicalGuid: 'message-guid',
+            chatIdentifier: groupIdentifier,
+            service: CloudSemanticService.iMessage,
+            chatAliasKeyHash: routeHash,
+            chatIdExactGuidLogicalKeyHash: _testChatAliasHash(
+              'missing-cross-service-exact-owner',
+            ),
+            chatIdAliasCandidates: _typedMessageAliases(
+              serviceIdentifierHash: routeHash,
+              groupIdHash: routeHash,
+            ),
+          ),
+          snapshot: _snapshot(CloudEntityKind.message, messageHash),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+
+      final message = store.box<Message>().getAll().single;
+      expect(message.chat.targetId, chatId);
+      expect(message.chat.target!.isRpSms, isTrue);
+      expect(
+        diagnostics,
+        containsAll(<String>[
+          'canonical_message_chat_candidate_opposite_service_identifier_none',
+          'canonical_message_chat_candidate_opposite_group_id_unique',
+          'canonical_message_chat_candidate_opposite_group_id_unique_style_group',
+          'canonical_message_chat_reference_cross_service_group_id',
+        ]),
+      );
+      expect(
+        diagnostics,
+        isNot(contains('canonical_message_chat_reference_unavailable')),
+      );
+    },
+  );
+
+  test('never uses an opposite-service group owner for a direct route', () {
+    const groupIdentifier = 'direct-route-opposite-group-id';
+    const directIdentifier = 'iMessage;-;direct-route-recipient';
+    const smsChatGuid = 'direct-route-sms-group-guid';
+    const smsChatHash = 'direct-route-sms-group-hash';
+    final chatId = store.box<Chat>().put(
+      Chat(
+        guid: smsChatGuid,
+        chatIdentifier: 'SMS;+;direct-route-group',
+        style: 43,
+        isRpSms: true,
+      ),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: smsChatHash,
+      canonicalGuid: smsChatGuid,
+      chatIdentifier: 'SMS;+;direct-route-group',
+      chatId: chatId,
+      service: CloudSemanticService.sms,
+    );
+    _seedChatAliasClaim(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: smsChatHash,
+      canonicalGuid: smsChatGuid,
+      chatIdentifier: groupIdentifier,
+      chatId: chatId,
+      service: CloudSemanticService.sms,
+      aliasKind: CloudSemanticChatAliasKind.groupId,
+    );
+    final diagnostics = <String>[];
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      diagnosticRecorder: diagnostics.add,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+
+    expect(
+      () => adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: directIdentifier,
+          chatIdExactGuidLogicalKeyHash: _testChatAliasHash(
+            'missing-direct-route-exact-owner',
+          ),
+          chatIdAliasCandidates: _typedMessageAliases(
+            serviceIdentifierHash: _testChatAliasHash(directIdentifier),
+            groupIdHash: _testChatAliasHash(groupIdentifier),
+          ),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) => failure.safeCode == 'canonical_message_chat_unavailable',
+        ),
+      ),
+    );
+    expect(store.box<Message>().count(), 0);
+    expect(
+      diagnostics,
+      isNot(
+        contains('canonical_message_chat_reference_cross_service_group_id'),
+      ),
+    );
+  });
+
+  test('never uses an ambiguous opposite-service group owner', () {
+    const groupIdentifier = 'ambiguous-opposite-group-id';
+    for (var index = 0; index < 2; index++) {
+      final logicalHash = 'ambiguous-sms-chat-hash-$index';
+      final guid = 'ambiguous-sms-chat-guid-$index';
+      final serviceIdentifier = 'SMS:+:ambiguous-owner-$index';
+      final chatId = store.box<Chat>().put(
+        Chat(
+          guid: guid,
+          chatIdentifier: serviceIdentifier,
+          style: 43,
+          isRpSms: true,
+        ),
+      );
+      _seedChatOwnershipAndAlias(
+        store,
+        scope: scope,
+        generation: generation,
+        logicalEntityKeyHash: logicalHash,
+        canonicalGuid: guid,
+        chatIdentifier: serviceIdentifier,
+        chatId: chatId,
+        service: CloudSemanticService.sms,
+      );
+      _seedChatAliasClaim(
+        store,
+        scope: scope,
+        generation: generation,
+        logicalEntityKeyHash: logicalHash,
+        canonicalGuid: guid,
+        chatIdentifier: groupIdentifier,
+        chatId: chatId,
+        service: CloudSemanticService.sms,
+        aliasKind: CloudSemanticChatAliasKind.groupId,
+      );
+    }
+    final diagnostics = <String>[];
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      diagnosticRecorder: diagnostics.add,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    final routeHash = _testChatAliasHash(groupIdentifier);
+
+    expect(
+      () => adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: groupIdentifier,
+          chatAliasKeyHash: routeHash,
+          chatIdExactGuidLogicalKeyHash: _testChatAliasHash(
+            'missing-ambiguous-exact-owner',
+          ),
+          chatIdAliasCandidates: _typedMessageAliases(
+            serviceIdentifierHash: routeHash,
+            groupIdHash: routeHash,
+          ),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) => failure.safeCode == 'canonical_message_chat_unavailable',
+        ),
+      ),
+    );
+    expect(store.box<Message>().count(), 0);
+    expect(
+      diagnostics,
+      contains('canonical_message_chat_candidate_opposite_group_id_multiple'),
+    );
+    expect(
+      diagnostics,
+      isNot(
+        contains('canonical_message_chat_reference_cross_service_group_id'),
+      ),
+    );
   });
 
   test('uses attributed-body text when Apple omits the plain body', () {

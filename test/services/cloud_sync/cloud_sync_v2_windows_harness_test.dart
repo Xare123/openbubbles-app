@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:bluebubbles/cloud_sync_v2_windows_harness.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
@@ -83,6 +85,47 @@ void main() {
     expect(payload['process_id'], 4242);
     expect(payload['state'], 'running');
     expect(payload['stage'], 'semantic-drain');
+  });
+
+  test(
+    'status replacement retries transient Windows sharing violations',
+    () async {
+      var attempts = 0;
+      final delays = <Duration>[];
+
+      await retryCloudSyncV2WindowsHarnessStatusReplace(
+        replace: () async {
+          attempts += 1;
+          if (attempts < 3) {
+            throw const FileSystemException('sharing violation');
+          }
+        },
+        delay: (duration) async => delays.add(duration),
+      );
+
+      expect(attempts, 3);
+      expect(delays, const [
+        Duration(milliseconds: 25),
+        Duration(milliseconds: 25),
+      ]);
+    },
+  );
+
+  test('status replacement preserves the final filesystem failure', () async {
+    var attempts = 0;
+
+    await expectLater(
+      retryCloudSyncV2WindowsHarnessStatusReplace(
+        maximumAttempts: 2,
+        replace: () async {
+          attempts += 1;
+          throw const FileSystemException('still locked');
+        },
+        delay: (_) async {},
+      ),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(attempts, 2);
   });
 
   test(

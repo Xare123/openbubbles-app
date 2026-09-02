@@ -8,6 +8,7 @@ import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/backend/filesystem/filesystem_service.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_preflight.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
@@ -480,8 +481,40 @@ Future<void> _writeHarnessStatusNow({
     stack: stack,
   );
   await temporary.writeAsString(jsonEncode(payload), flush: true);
-  if (await target.exists()) await target.delete();
-  await temporary.rename(target.path);
+  try {
+    await retryCloudSyncV2WindowsHarnessStatusReplace(
+      replace: () async {
+        if (await target.exists()) await target.delete();
+        await temporary.rename(target.path);
+      },
+    );
+  } finally {
+    try {
+      if (await temporary.exists()) await temporary.delete();
+    } catch (_) {
+      // A stale status temp is non-authoritative and never blocks the harness.
+    }
+  }
+}
+
+@visibleForTesting
+Future<void> retryCloudSyncV2WindowsHarnessStatusReplace({
+  required Future<void> Function() replace,
+  Future<void> Function(Duration) delay = Future<void>.delayed,
+  int maximumAttempts = 20,
+}) async {
+  if (maximumAttempts <= 0) {
+    throw ArgumentError.value(maximumAttempts, 'maximumAttempts');
+  }
+  for (var attempt = 1; attempt <= maximumAttempts; attempt++) {
+    try {
+      await replace();
+      return;
+    } on FileSystemException {
+      if (attempt == maximumAttempts) rethrow;
+      await delay(const Duration(milliseconds: 25));
+    }
+  }
 }
 
 String _sanitizeHarnessDetail(String value, {int maxLength = 1000}) {
@@ -981,6 +1014,8 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
     await _setRuntimeStage('semantic-pull', state: 'running');
     try {
       final report = await adapter.sampler.runConfirmed();
+      final repairedChatOrderRows =
+          await repairCloudSyncChatLatestMessageDates();
       final reportFile = await reportWriter.write(report);
       final fetched = report.zones.fold<int>(
         0,
@@ -1007,6 +1042,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         state: 'finished',
         detail:
             'fetched=$fetched applied=$applied retained=$retained '
+            'chat_order_cache_repaired=$repairedChatOrderRows '
             'report=${path.basename(reportFile.path)}',
       );
       _resumeAfterTwoFactor = null;
@@ -1028,6 +1064,8 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
     await _setRuntimeStage('semantic-drain', state: 'running');
     try {
       final result = await controller.drainConfirmedAndPersist();
+      final repairedChatOrderRows =
+          await repairCloudSyncChatLatestMessageDates();
       final reportReference = result.persistedReportReference;
       final reportName = reportReference is File
           ? path.basename(reportReference.path)
@@ -1062,7 +1100,9 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
             'retained_save_projection_complete='
             '${result.retainedSaveProjectionComplete} '
             'projection_sweep_attempted=${result.projectionSweepAttempted} '
-            'pass_limit=${result.reachedPassLimit} report=$reportName',
+            'pass_limit=${result.reachedPassLimit} '
+            'chat_order_cache_repaired=$repairedChatOrderRows '
+            'report=$reportName',
       );
       _resumeAfterTwoFactor = null;
     } catch (error) {

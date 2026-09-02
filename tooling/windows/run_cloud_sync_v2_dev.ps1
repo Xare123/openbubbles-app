@@ -291,6 +291,75 @@ function ConvertTo-SafeHarnessStatusValue {
     return $Fallback
 }
 
+function Read-HarnessStatusText {
+    param([Parameter(Mandatory)][string] $Path)
+
+    $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+    $stream = [System.IO.File]::Open(
+        $Path,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        $share
+    )
+    try {
+        $reader = [System.IO.StreamReader]::new(
+            $stream,
+            [System.Text.Encoding]::UTF8,
+            $true
+        )
+        try {
+            return $reader.ReadToEnd()
+        }
+        finally {
+            $reader.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
+function Find-LatestReadOnlyHarnessReport {
+    param(
+        [Parameter(Mandatory)][string] $ReportDirectory,
+        [Parameter(Mandatory)][datetime] $NotOlderThanUtc
+    )
+
+    $reports = Get-ChildItem `
+        -LiteralPath $ReportDirectory `
+        -Filter "obcs2-semantic-*.json" `
+        -File `
+        -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending
+    foreach ($report in $reports) {
+        if ($report.LastWriteTimeUtc -lt $NotOlderThanUtc) {
+            break
+        }
+        try {
+            $payload = Read-HarnessStatusText -Path $report.FullName |
+                ConvertFrom-Json
+        }
+        catch {
+            throw "The latest harness report is not readable."
+        }
+        $modeProperty = $payload.PSObject.Properties['mode']
+        if ($null -eq $modeProperty) {
+            throw "The latest harness report mode is missing."
+        }
+        $mode = [string]$modeProperty.Value
+        if ($mode -eq 'manual-semantic-read-only-cloudkit') {
+            return [pscustomobject]@{
+                File = $report
+                Payload = $payload
+            }
+        }
+        if ($mode -ne 'manual-semantic-local-projection-sweep') {
+            throw "The latest harness report mode is not recognized."
+        }
+    }
+    return $null
+}
+
 function Read-FreshHarnessStatus {
     param(
         [Parameter(Mandatory)][string] $StatusPath,
@@ -308,7 +377,7 @@ function Read-FreshHarnessStatus {
         if ($statusFile.LastWriteTimeUtc -le $BaselineWriteUtc) {
             return $null
         }
-        $payload = Get-Content -LiteralPath $StatusPath -Raw | ConvertFrom-Json
+        $payload = Read-HarnessStatusText -Path $StatusPath | ConvertFrom-Json
         $updatedProperty = $payload.PSObject.Properties['updated_utc']
         $versionProperty = $payload.PSObject.Properties['version']
         $launchIdProperty = $payload.PSObject.Properties['launch_id']
@@ -685,28 +754,17 @@ try {
     }
     else {
         $reportDirectory = Join-Path $profile "cloud-sync-v2\reports"
-        $latestReport = Get-ChildItem `
-            -LiteralPath $reportDirectory `
-            -Filter "obcs2-semantic-*.json" `
-            -File `
-            -ErrorAction SilentlyContinue |
-            Sort-Object LastWriteTimeUtc -Descending |
-            Select-Object -First 1
-        if ($null -eq $latestReport -or
-            $latestReport.LastWriteTimeUtc -lt
-                (Get-Item -LiteralPath $runner).LastWriteTimeUtc -or
-            $latestReport.LastWriteTimeUtc -lt
-                (Get-Item -LiteralPath $rustLibrary).LastWriteTimeUtc) {
+        $minimumReportWriteUtc = @(
+            (Get-Item -LiteralPath $runner).LastWriteTimeUtc,
+            (Get-Item -LiteralPath $rustLibrary).LastWriteTimeUtc
+        ) | Sort-Object -Descending | Select-Object -First 1
+        $latestReport = Find-LatestReadOnlyHarnessReport `
+            -ReportDirectory $reportDirectory `
+            -NotOlderThanUtc $minimumReportWriteUtc
+        if ($null -eq $latestReport) {
             throw "No fresh report proves the existing harness build."
         }
-        try {
-            $latestReportPayload = Get-Content `
-                -LiteralPath $latestReport.FullName `
-                -Raw | ConvertFrom-Json
-        }
-        catch {
-            throw "The latest harness report is not readable."
-        }
+        $latestReportPayload = $latestReport.Payload
         if ($latestReportPayload.mode -ne
                 "manual-semantic-read-only-cloudkit" -or
             $latestReportPayload.buildCommit -ne $buildIdentifier) {

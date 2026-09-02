@@ -133,6 +133,45 @@ try {
         )) `
         -Message 'A receipt accepted a modified executable.'
 
+    $reportDirectory = Join-Path $testDirectory 'reports'
+    New-Item -ItemType Directory -Path $reportDirectory | Out-Null
+    $readOnlyReportPath = Join-Path `
+        $reportDirectory `
+        'obcs2-semantic-100.json'
+    $projectionReportPath = Join-Path `
+        $reportDirectory `
+        'obcs2-semantic-200.json'
+    [ordered]@{
+        mode = 'manual-semantic-read-only-cloudkit'
+        buildCommit = 'test-build-v1'
+    } | ConvertTo-Json -Compress |
+        Set-Content -LiteralPath $readOnlyReportPath -Encoding UTF8
+    [ordered]@{
+        mode = 'manual-semantic-local-projection-sweep'
+        buildCommit = 'test-build-v1'
+    } | ConvertTo-Json -Compress |
+        Set-Content -LiteralPath $projectionReportPath -Encoding UTF8
+    $readOnlyWriteUtc = [datetime]::UtcNow.AddMinutes(-2)
+    (Get-Item -LiteralPath $readOnlyReportPath).LastWriteTimeUtc =
+        $readOnlyWriteUtc
+    (Get-Item -LiteralPath $projectionReportPath).LastWriteTimeUtc =
+        $readOnlyWriteUtc.AddMinutes(1)
+    $selectedReport = Find-LatestReadOnlyHarnessReport `
+        -ReportDirectory $reportDirectory `
+        -NotOlderThanUtc $readOnlyWriteUtc.AddSeconds(-1)
+    Assert-True `
+        -Condition ($null -ne $selectedReport -and
+            $selectedReport.File.FullName -eq $readOnlyReportPath) `
+        -Message (
+            'A newer projection report hid the matching read-only report.'
+        )
+    $staleReport = Find-LatestReadOnlyHarnessReport `
+        -ReportDirectory $reportDirectory `
+        -NotOlderThanUtc $readOnlyWriteUtc.AddSeconds(1)
+    Assert-True `
+        -Condition ($null -eq $staleReport) `
+        -Message 'A stale read-only report was accepted.'
+
     $launcherSource = Get-Content -LiteralPath $launcher -Raw
     $processChecks = [regex]::Matches(
         $launcherSource,

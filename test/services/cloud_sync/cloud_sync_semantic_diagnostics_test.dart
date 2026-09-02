@@ -35,20 +35,30 @@ void main() {
 
     for (final code in const <String>[
       'canonical_identity_guid_invalid',
+      'canonical_message_chat_candidate_opposite_group_id_unique_style_direct',
       'canonical_message_chat_candidate_original_group_id_unique',
+      'canonical_message_chat_candidate_opposite_service_identifier_unique',
+      'canonical_message_chat_reference_cross_service_group_id',
+      'canonical_preexisting_ownership_bootstrap',
       'decoder_malformed_record',
       'native_quarantined_malformed_record',
       'retained_backlog_failure_dependency',
+      'retained_projection_window_has_more',
     ]) {
       diagnostics.record(code);
     }
 
     expect(diagnostics.snapshot().keys, <String>[
       'canonical_identity_guid_invalid',
+      'canonical_message_chat_candidate_opposite_group_id_unique_style_direct',
+      'canonical_message_chat_candidate_opposite_service_identifier_unique',
       'canonical_message_chat_candidate_original_group_id_unique',
+      'canonical_message_chat_reference_cross_service_group_id',
+      'canonical_preexisting_ownership_bootstrap',
       'decoder_malformed_record',
       'native_quarantined_malformed_record',
       'retained_backlog_failure_dependency',
+      'retained_projection_window_has_more',
     ]);
   });
 
@@ -59,5 +69,15 @@ void main() {
       }),
       throwsArgumentError,
     );
+  });
+
+  test('rejects unbounded raw chat styles from persisted diagnostics', () {
+    final diagnostics = CloudSyncSemanticDiagnosticCollector();
+
+    diagnostics.record(
+      'canonical_message_chat_candidate_opposite_group_id_unique_style_45',
+    );
+
+    expect(diagnostics.snapshot(), <String, int>{'diagnostic_code_invalid': 1});
   });
 }

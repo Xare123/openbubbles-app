@@ -149,9 +149,7 @@ void main() {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
-    final methodStart = source.indexOf(
-      'prepareCloudSyncV2PcsConfirmed()',
-    );
+    final methodStart = source.indexOf('prepareCloudSyncV2PcsConfirmed()');
     final methodEnd = source.indexOf(
       'bool get cloudSyncV2ManualShadowAvailable',
       methodStart,
@@ -228,14 +226,8 @@ void main() {
     expect(source, contains("args[1] != '--catch-up'"));
     expect(source, contains("args.first"));
     expect(source, isNot(contains('args.single')));
-    expect(
-      source,
-      contains("'runCloudSyncV2ManualSemanticPullConfirmed'"),
-    );
-    expect(
-      source,
-      contains("'runCloudSyncV2ManualSemanticCatchUpConfirmed'"),
-    );
+    expect(source, contains("'runCloudSyncV2ManualSemanticPullConfirmed'"));
+    expect(source, contains("'runCloudSyncV2ManualSemanticCatchUpConfirmed'"));
   });
 
   test('semantic projection suppresses historical message notifications', () {
@@ -374,6 +366,10 @@ void main() {
     final semanticRun = semantic.indexOf(
       'runCloudSyncV2ManualSemanticPullConfirmed(',
     );
+    final chatOrderRepair = semantic.indexOf(
+      'await repairCloudSyncChatLatestMessageDates();',
+      semanticRun,
+    );
     final chatRefresh = semantic.indexOf(
       'await chats.init(force: true);',
       semanticRun,
@@ -383,7 +379,8 @@ void main() {
       semanticRun,
     );
     expect(semanticRun, greaterThanOrEqualTo(0));
-    expect(chatRefresh, greaterThan(semanticRun));
+    expect(chatOrderRepair, greaterThan(semanticRun));
+    expect(chatRefresh, greaterThan(chatOrderRepair));
     expect(semanticPresentation, greaterThan(chatRefresh));
     expect(semantic, contains('Chat list refreshed.'));
     expect(
@@ -392,10 +389,7 @@ void main() {
         'CloudKit catch-up completed, but the chat list could not refresh. Restart OpenBubbles to display any newly available history.',
       ),
     );
-    expect(
-      semantic,
-      contains('Cloud Sync V2 local chat refresh failed code='),
-    );
+    expect(semantic, contains('Cloud Sync V2 local chat refresh failed code='));
     final semanticCatch = semantic.indexOf(
       '} catch (error) {',
       semanticPresentation,
@@ -753,10 +747,7 @@ void main() {
       '_cloudSyncV2PcsPreparationQuiescing = true;',
     );
     final pcsWait = reset.indexOf('final pcsPreparation =');
-    final awaitPcs = reset.indexOf(
-      'await pcsPreparation.timeout(',
-      pcsWait,
-    );
+    final awaitPcs = reset.indexOf('await pcsPreparation.timeout(', pcsWait);
     final quiesce = reset.indexOf('_cloudSyncV2SemanticPullQuiescing = true;');
     final semanticWait = reset.indexOf('final semanticPull =');
     final awaitSemantic = reset.indexOf(

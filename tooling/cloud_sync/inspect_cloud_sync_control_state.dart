@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/helpers/types/constants.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_materialization.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 
 const _pageSize = 256;
@@ -91,6 +94,7 @@ Future<Map<String, Object?>> inspectCloudSyncControlState(
 Map<String, Object?> _inspectStore(Store store) {
   final now = DateTime.now().toUtc();
   final legacyChatShapeCounts = _inspectLegacyChatShapes(store);
+  final presentationFidelityCounts = _inspectPresentationFidelity(store);
   final semanticOwnershipCounts = _inspectSemanticOwnership(store);
   final checkpoints = <Map<String, Object?>>[];
   _scanPaged(
@@ -170,7 +174,7 @@ Map<String, Object?> _inspectStore(Store store) {
   );
 
   return <String, Object?>{
-    'schema': 4,
+    'schema': 5,
     'canonicalCounts': <String, int>{
       'chats': store.box<Chat>().count(),
       'messages': store.box<Message>().count(),
@@ -186,6 +190,7 @@ Map<String, Object?> _inspectStore(Store store) {
       'chatAliases': store.box<CloudSemanticChatAliasEntity>().count(),
     },
     'legacyChatShapeCounts': legacyChatShapeCounts,
+    'presentationFidelityCounts': presentationFidelityCounts,
     'semanticOwnershipCounts': semanticOwnershipCounts,
     'checkpoints': checkpoints,
     'inboxGroups': inboxGroups,
@@ -193,6 +198,272 @@ Map<String, Object?> _inspectStore(Store store) {
     'replaySafeCodes': replaySafeCodes,
   };
 }
+
+Map<String, int> _inspectPresentationFidelity(Store store) {
+  var messagesWithRecognizedUrlInText = 0;
+  var messagesWithMultipleRecognizedUrlsInText = 0;
+  var messagesWithUrlSchemeButNoRecognizedUrlInText = 0;
+  var messagesWithRecognizedUrlInAttributedBody = 0;
+  var messagesWithUrlOnlyInAttributedBody = 0;
+  var messagesWithBalloonBundleId = 0;
+  var messagesWithUrlBalloonBundleId = 0;
+  var messagesWithDecodedPayload = 0;
+  var messagesWithApplePayloadMarker = 0;
+  var messagesWithAttachmentFlag = 0;
+  var messagesWithAttachmentRelation = 0;
+  var messagesWithAttributedAttachmentRun = 0;
+  var messagesWithAttachmentFlagWithoutRelation = 0;
+  var messagesWithAttachmentRelationWithoutFlag = 0;
+  var messagesWithAttributedAttachmentRunWithoutRelation = 0;
+  var messagesWithMissingReferencedAttachmentRow = 0;
+  var messagesWithAttachmentReferenceMissingRelation = 0;
+  var messagesWithAttachmentReferenceOwnedByAnotherMessage = 0;
+  var messagesAtRiskOfEmptyAttachmentPlaceholder = 0;
+  var missingReferencedAttachmentRows = 0;
+  var missingAttachmentRelations = 0;
+
+  final attachmentOwnerByGuid = <String, int>{};
+  _scanPaged((store.box<Attachment>().query()..order(Attachment_.id)).build(), (
+    attachment,
+  ) {
+    final guid = attachment.guid;
+    if (guid != null && guid.isNotEmpty) {
+      attachmentOwnerByGuid[guid] = attachment.message.targetId;
+    }
+  });
+
+  _scanPaged((store.box<Message>().query()..order(Message_.id)).build(), (
+    message,
+  ) {
+    final text = message.text ?? '';
+    final recognizedTextUrls = urlRegex.allMatches(text).length;
+    final hasRecognizedTextUrl = recognizedTextUrls > 0;
+    final hasUrlScheme = _urlSchemeMarker.hasMatch(text);
+    final hasRecognizedAttributedUrl = message.attributedBody.any(
+      (body) => urlRegex.hasMatch(body.string),
+    );
+    final relatedAttachmentGuids = message.dbAttachments
+        .map((attachment) => attachment.guid)
+        .whereType<String>()
+        .toSet();
+    final attributedAttachmentGuids = message.attributedBody
+        .expand((body) => body.runs)
+        .map((run) => run.attributes?.attachmentGuid)
+        .whereType<String>()
+        .where((guid) => guid.isNotEmpty)
+        .toSet();
+    final hasAttachmentRelation = relatedAttachmentGuids.isNotEmpty;
+    final hasAttributedAttachmentRun = attributedAttachmentGuids.isNotEmpty;
+    final missingRows = attributedAttachmentGuids
+        .where((guid) => !attachmentOwnerByGuid.containsKey(guid))
+        .length;
+    final missingRelations = attributedAttachmentGuids
+        .where(
+          (guid) =>
+              attachmentOwnerByGuid.containsKey(guid) &&
+              !relatedAttachmentGuids.contains(guid),
+        )
+        .length;
+    final anotherOwner = attributedAttachmentGuids.any((guid) {
+      final ownerId = attachmentOwnerByGuid[guid];
+      return ownerId != null && ownerId != 0 && ownerId != message.id;
+    });
+
+    if (hasRecognizedTextUrl) messagesWithRecognizedUrlInText += 1;
+    if (recognizedTextUrls > 1) messagesWithMultipleRecognizedUrlsInText += 1;
+    if (hasUrlScheme && !hasRecognizedTextUrl) {
+      messagesWithUrlSchemeButNoRecognizedUrlInText += 1;
+    }
+    if (hasRecognizedAttributedUrl) {
+      messagesWithRecognizedUrlInAttributedBody += 1;
+    }
+    if (!hasRecognizedTextUrl && hasRecognizedAttributedUrl) {
+      messagesWithUrlOnlyInAttributedBody += 1;
+    }
+    if (message.balloonBundleId?.isNotEmpty ?? false) {
+      messagesWithBalloonBundleId += 1;
+    }
+    if (message.balloonBundleId == 'com.apple.messages.URLBalloonProvider') {
+      messagesWithUrlBalloonBundleId += 1;
+    }
+    if (message.payloadData != null) messagesWithDecodedPayload += 1;
+    if (message.hasApplePayloadData) messagesWithApplePayloadMarker += 1;
+    if (message.hasAttachments) messagesWithAttachmentFlag += 1;
+    if (hasAttachmentRelation) messagesWithAttachmentRelation += 1;
+    if (hasAttributedAttachmentRun) messagesWithAttributedAttachmentRun += 1;
+    if (message.hasAttachments && !hasAttachmentRelation) {
+      messagesWithAttachmentFlagWithoutRelation += 1;
+    }
+    if (!message.hasAttachments && hasAttachmentRelation) {
+      messagesWithAttachmentRelationWithoutFlag += 1;
+    }
+    if (hasAttributedAttachmentRun && !hasAttachmentRelation) {
+      messagesWithAttributedAttachmentRunWithoutRelation += 1;
+    }
+    if (missingRows > 0) {
+      messagesWithMissingReferencedAttachmentRow += 1;
+      missingReferencedAttachmentRows += missingRows;
+      final hasVisibleText = text
+          .replaceAll(_nonVisibleAttachmentText, '')
+          .isNotEmpty;
+      final hasVisibleSubject =
+          message.subject
+              ?.replaceAll(_nonVisibleAttachmentText, '')
+              .isNotEmpty ??
+          false;
+      if (!hasVisibleText && !hasVisibleSubject) {
+        messagesAtRiskOfEmptyAttachmentPlaceholder += 1;
+      }
+    }
+    if (missingRelations > 0) {
+      messagesWithAttachmentReferenceMissingRelation += 1;
+      missingAttachmentRelations += missingRelations;
+    }
+    if (anotherOwner) {
+      messagesWithAttachmentReferenceOwnedByAnotherMessage += 1;
+    }
+  });
+
+  var attachmentsWithoutOwner = 0;
+  var attachmentsWithTransferName = 0;
+  var attachmentsWithMimeType = 0;
+  var attachmentsWithPositiveByteCount = 0;
+  var v2AttachmentRows = 0;
+  var v2LegacyProvenanceRows = 0;
+  var v2CurrentProvenanceRows = 0;
+  var v2MaterializableRows = 0;
+  var v2MetadataOnlyRows = 0;
+  var v2UnknownCapabilityRows = 0;
+  var legacyCloudAttachmentRows = 0;
+  var idsAttachmentRows = 0;
+  _scanPaged((store.box<Attachment>().query()..order(Attachment_.id)).build(), (
+    attachment,
+  ) {
+    if (attachment.message.targetId == 0) attachmentsWithoutOwner += 1;
+    if (attachment.transferName?.isNotEmpty ?? false) {
+      attachmentsWithTransferName += 1;
+    }
+    if (attachment.mimeType?.isNotEmpty ?? false) attachmentsWithMimeType += 1;
+    if ((attachment.totalBytes ?? 0) > 0) attachmentsWithPositiveByteCount += 1;
+
+    final metadata = attachment.metadata;
+    if (hasCloudAttachmentV2Provenance(metadata)) {
+      v2AttachmentRows += 1;
+      switch (metadata?[cloudAttachmentV2MetadataKey]) {
+        case cloudAttachmentV2LegacyMetadataVersion:
+          v2LegacyProvenanceRows += 1;
+        case cloudAttachmentV2MetadataVersion:
+          v2CurrentProvenanceRows += 1;
+      }
+      switch (cloudAttachmentBodyCapabilityFor(metadata)) {
+        case CloudAttachmentBodyCapability.materializable:
+          v2MaterializableRows += 1;
+        case CloudAttachmentBodyCapability
+            .metadataOnlyUnsupportedMediaCredentials:
+          v2MetadataOnlyRows += 1;
+        case null:
+          v2UnknownCapabilityRows += 1;
+      }
+    } else if (metadata?.containsKey('cloud') ?? false) {
+      legacyCloudAttachmentRows += 1;
+    } else if (metadata?.containsKey('rustpush') ?? false) {
+      idsAttachmentRows += 1;
+    }
+  });
+
+  final materializationStages = <CloudAttachmentMaterializationStage, int>{};
+  var invalidMaterializationStages = 0;
+  _scanPaged(
+    (store.box<CloudAttachmentMaterializationEntity>().query()
+          ..order(CloudAttachmentMaterializationEntity_.id))
+        .build(),
+    (entry) {
+      if (entry.stage < 0 ||
+          entry.stage >= CloudAttachmentMaterializationStage.values.length) {
+        invalidMaterializationStages += 1;
+        return;
+      }
+      final stage = CloudAttachmentMaterializationStage.values[entry.stage];
+      materializationStages.update(
+        stage,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    },
+  );
+
+  return <String, int>{
+    'messagesWithRecognizedUrlInText': messagesWithRecognizedUrlInText,
+    'messagesWithMultipleRecognizedUrlsInText':
+        messagesWithMultipleRecognizedUrlsInText,
+    'messagesWithUrlSchemeButNoRecognizedUrlInText':
+        messagesWithUrlSchemeButNoRecognizedUrlInText,
+    'messagesWithRecognizedUrlInAttributedBody':
+        messagesWithRecognizedUrlInAttributedBody,
+    'messagesWithUrlOnlyInAttributedBody': messagesWithUrlOnlyInAttributedBody,
+    'messagesWithBalloonBundleId': messagesWithBalloonBundleId,
+    'messagesWithUrlBalloonBundleId': messagesWithUrlBalloonBundleId,
+    'messagesWithDecodedPayload': messagesWithDecodedPayload,
+    'messagesWithApplePayloadMarker': messagesWithApplePayloadMarker,
+    'messagesWithAttachmentFlag': messagesWithAttachmentFlag,
+    'messagesWithAttachmentRelation': messagesWithAttachmentRelation,
+    'messagesWithAttributedAttachmentRun': messagesWithAttributedAttachmentRun,
+    'messagesWithAttachmentFlagWithoutRelation':
+        messagesWithAttachmentFlagWithoutRelation,
+    'messagesWithAttachmentRelationWithoutFlag':
+        messagesWithAttachmentRelationWithoutFlag,
+    'messagesWithAttributedAttachmentRunWithoutRelation':
+        messagesWithAttributedAttachmentRunWithoutRelation,
+    'messagesWithMissingReferencedAttachmentRow':
+        messagesWithMissingReferencedAttachmentRow,
+    'messagesWithAttachmentReferenceMissingRelation':
+        messagesWithAttachmentReferenceMissingRelation,
+    'messagesWithAttachmentReferenceOwnedByAnotherMessage':
+        messagesWithAttachmentReferenceOwnedByAnotherMessage,
+    'messagesAtRiskOfEmptyAttachmentPlaceholder':
+        messagesAtRiskOfEmptyAttachmentPlaceholder,
+    'missingReferencedAttachmentRows': missingReferencedAttachmentRows,
+    'missingAttachmentRelations': missingAttachmentRelations,
+    'attachmentsWithoutOwner': attachmentsWithoutOwner,
+    'attachmentsWithTransferName': attachmentsWithTransferName,
+    'attachmentsWithMimeType': attachmentsWithMimeType,
+    'attachmentsWithPositiveByteCount': attachmentsWithPositiveByteCount,
+    'v2AttachmentRows': v2AttachmentRows,
+    'v2LegacyProvenanceRows': v2LegacyProvenanceRows,
+    'v2CurrentProvenanceRows': v2CurrentProvenanceRows,
+    'v2MaterializableRows': v2MaterializableRows,
+    'v2MetadataOnlyRows': v2MetadataOnlyRows,
+    'v2UnknownCapabilityRows': v2UnknownCapabilityRows,
+    'legacyCloudAttachmentRows': legacyCloudAttachmentRows,
+    'idsAttachmentRows': idsAttachmentRows,
+    'materializationMetadataReadyRows':
+        materializationStages[CloudAttachmentMaterializationStage
+            .metadataReady] ??
+        0,
+    'materializationTempStreamingRows':
+        materializationStages[CloudAttachmentMaterializationStage
+            .tempStreaming] ??
+        0,
+    'materializationContentVerifiedRows':
+        materializationStages[CloudAttachmentMaterializationStage
+            .contentVerified] ??
+        0,
+    'materializationFilePlacedRows':
+        materializationStages[CloudAttachmentMaterializationStage.filePlaced] ??
+        0,
+    'materializationReferencedRows':
+        materializationStages[CloudAttachmentMaterializationStage.referenced] ??
+        0,
+    'invalidMaterializationStageRows': invalidMaterializationStages,
+  };
+}
+
+final RegExp _urlSchemeMarker = RegExp(
+  r'(?:(?:https?|ftp)://|www\.)',
+  caseSensitive: false,
+);
+
+final RegExp _nonVisibleAttachmentText = RegExp(r'[\s\uFFFC]');
 
 Map<String, Object?> _inspectSemanticOwnership(Store store) {
   final snapshotsByEntityKind = <String, int>{};
@@ -238,6 +509,7 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
   final guidCounts = <String, int>{};
   final messageGuids = <String>{};
   final attachmentGuids = <String>{};
+  final latestVisibleMessageDateByChatId = <int, DateTime>{};
   var messagesLinkedToSmsChats = 0;
   var messagesLinkedToIMessageChats = 0;
   var messagesWithoutChats = 0;
@@ -260,6 +532,14 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
       messagesLinkedToSmsChats += 1;
     } else {
       messagesLinkedToIMessageChats += 1;
+    }
+    final chatId = message.chat.targetId;
+    final createdAt = message.dateCreated;
+    if (chatId != 0 && createdAt != null && message.dateDeleted == null) {
+      final previous = latestVisibleMessageDateByChatId[chatId];
+      if (previous == null || createdAt.isAfter(previous)) {
+        latestVisibleMessageDateByChatId[chatId] = createdAt;
+      }
     }
     final hasText = message.text?.trim().isNotEmpty ?? false;
     final hasSubject = message.subject?.trim().isNotEmpty ?? false;
@@ -309,6 +589,13 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
   var cloudDataRows = 0;
   var guidReferenceRows = 0;
   var compositeLegacyCloudEvidenceRows = 0;
+  var chatsWithVisibleMessages = 0;
+  var chatsWithMatchingLatestMessageDate = 0;
+  var chatsWithNullLatestMessageDate = 0;
+  var chatsWithLatestMessageDateBehind = 0;
+  var chatsWithLatestMessageDateAhead = 0;
+  var smsChatsWithNullOrStaleLatestMessageDate = 0;
+  var iMessageChatsWithNullOrStaleLatestMessageDate = 0;
   _scanPaged((store.box<Chat>().query()..order(Chat_.id)).build(), (chat) {
     if (chat.isRpSms) {
       smsServiceRows += 1;
@@ -326,6 +613,30 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
     if (hasCloudGuid) cloudGuidRows += 1;
     if (hasCloudData) cloudDataRows += 1;
     if (hasGuidReferences) guidReferenceRows += 1;
+    final latestVisibleMessageDate = latestVisibleMessageDateByChatId[chat.id];
+    if (latestVisibleMessageDate != null) {
+      chatsWithVisibleMessages += 1;
+      final cachedLatestMessageDate = chat.dbOnlyLatestMessageDate;
+      final cacheIsNullOrBehind =
+          cachedLatestMessageDate == null ||
+          cachedLatestMessageDate.isBefore(latestVisibleMessageDate);
+      if (cachedLatestMessageDate == null) {
+        chatsWithNullLatestMessageDate += 1;
+      } else if (cachedLatestMessageDate.isBefore(latestVisibleMessageDate)) {
+        chatsWithLatestMessageDateBehind += 1;
+      } else if (cachedLatestMessageDate.isAfter(latestVisibleMessageDate)) {
+        chatsWithLatestMessageDateAhead += 1;
+      } else {
+        chatsWithMatchingLatestMessageDate += 1;
+      }
+      if (cacheIsNullOrBehind) {
+        if (chat.isRpSms) {
+          smsChatsWithNullOrStaleLatestMessageDate += 1;
+        } else {
+          iMessageChatsWithNullOrStaleLatestMessageDate += 1;
+        }
+      }
+    }
     if (messageGuids.contains(chat.guid) ||
         attachmentGuids.contains(chat.guid)) {
       crossKindGuidCollisions += 1;
@@ -406,6 +717,15 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
     'cloudDataRows': cloudDataRows,
     'guidReferenceRows': guidReferenceRows,
     'compositeLegacyCloudEvidenceRows': compositeLegacyCloudEvidenceRows,
+    'chatsWithVisibleMessages': chatsWithVisibleMessages,
+    'chatsWithMatchingLatestMessageDate': chatsWithMatchingLatestMessageDate,
+    'chatsWithNullLatestMessageDate': chatsWithNullLatestMessageDate,
+    'chatsWithLatestMessageDateBehind': chatsWithLatestMessageDateBehind,
+    'chatsWithLatestMessageDateAhead': chatsWithLatestMessageDateAhead,
+    'smsChatsWithNullOrStaleLatestMessageDate':
+        smsChatsWithNullOrStaleLatestMessageDate,
+    'iMessageChatsWithNullOrStaleLatestMessageDate':
+        iMessageChatsWithNullOrStaleLatestMessageDate,
   };
 }
 

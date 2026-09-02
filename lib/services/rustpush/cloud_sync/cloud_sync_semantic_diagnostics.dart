@@ -15,6 +15,11 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'canonical_attachment_relation_conflict',
     'canonical_attachment_size_invalid',
     'canonical_chat_alias_conflict',
+    'canonical_chat_alias_conflict_binding_owner',
+    'canonical_chat_alias_conflict_binding_target',
+    'canonical_chat_alias_conflict_duplicate_binding_rows',
+    'canonical_chat_alias_conflict_duplicate_identifier_rows',
+    'canonical_chat_alias_conflict_identifier_owner',
     'canonical_chat_alias_unproven',
     'canonical_chat_apply_disabled',
     'canonical_chat_creation_unavailable',
@@ -42,8 +47,11 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'canonical_message_chat_candidate_bare_direct_service_identifier_lookup_failed',
     'canonical_message_chat_candidate_bare_direct_service_identifier_style_45',
     'canonical_message_chat_candidate_bare_direct_service_identifier_wrong_style',
+    'canonical_message_chat_candidate_opposite_group_id_lookup_failed',
+    'canonical_message_chat_candidate_opposite_service_identifier_lookup_failed',
     'canonical_message_chat_conflict',
     'canonical_message_chat_reference_current_group_id',
+    'canonical_message_chat_reference_cross_service_group_id',
     'canonical_message_chat_reference_exact_guid',
     'canonical_message_chat_reference_strong',
     'canonical_message_chat_reference_strong_service',
@@ -64,6 +72,7 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'canonical_message_text_range_invalid',
     'canonical_payload_dto_incomplete',
     'canonical_payload_snapshot_mismatch',
+    'canonical_preexisting_ownership_bootstrap',
     'canonical_reaction_created_at_conflict',
     'canonical_reaction_parent_conflict',
     'canonical_reaction_parent_unavailable',
@@ -116,6 +125,7 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'retained_projection_scope_mismatch',
     'retained_projection_store_unavailable',
     'retained_projection_unknown',
+    'retained_projection_window_has_more',
     'semantic_parent_missing',
     'semantic_out_of_scope_rcs',
     'semantic_out_of_scope_sms_family',
@@ -199,11 +209,24 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'canonical_message_chat_candidate_original_group_id_',
     'canonical_message_chat_candidate_legacy_group_identifier_',
     'canonical_message_chat_candidate_bare_direct_service_identifier_',
+    'canonical_message_chat_candidate_opposite_group_id_',
+    'canonical_message_chat_candidate_opposite_service_identifier_',
     'canonical_message_chat_candidate_union_',
     'canonical_message_chat_group_corroborator_',
   };
 
   static const _cardinalitySegments = <String>{'none', 'unique', 'multiple'};
+
+  static const _oppositeGroupStylePrefixes = <String>{
+    'canonical_message_chat_candidate_opposite_group_id_unique_style_',
+  };
+
+  static const _chatStyleSegments = <String>{
+    'group',
+    'direct',
+    'unknown',
+    'other',
+  };
 
   static bool isReviewed(String code) {
     if (_exact.contains(code)) return true;
@@ -224,10 +247,15 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
       return true;
     }
     return _matchesAnyPrefix(
-      code,
-      _chatCardinalityPrefixes,
-      _cardinalitySegments,
-    );
+          code,
+          _chatCardinalityPrefixes,
+          _cardinalitySegments,
+        ) ||
+        _matchesAnyPrefix(
+          code,
+          _oppositeGroupStylePrefixes,
+          _chatStyleSegments,
+        );
   }
 
   static bool _matchesAnyPrefix(
