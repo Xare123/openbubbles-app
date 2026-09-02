@@ -3859,7 +3859,7 @@ void main() {
     final chat = Chat(
       guid: canonicalGuid,
       chatIdentifier: chatIdentifier,
-      style: 45,
+      style: null,
     )..isRpSms = false;
     final chatId = store.box<Chat>().put(chat);
     final adapter = _newAdapter(
@@ -3905,6 +3905,58 @@ void main() {
     expect(after.chatIdentifier, before.chatIdentifier);
     expect(after.style, before.style);
     expect(after.displayName, before.displayName);
+  });
+
+  test('rejects contradictory non-null legacy chat style ownership', () {
+    final chatScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: 'chatManateeZone',
+    );
+    const logicalKey = 'legacy-chat-style-mismatch-key';
+    const canonicalGuid = 'legacy-chat-style-mismatch-guid';
+    const chatIdentifier = 'legacy-chat-style-mismatch-identifier';
+    resolver.put(
+      scope: chatScope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: logicalKey,
+      canonicalGuid: canonicalGuid,
+    );
+    activeScope = CloudCanonicalActiveScope(
+      scope: chatScope,
+      generation: generation,
+    );
+    store.box<Chat>().put(
+      Chat(guid: canonicalGuid, chatIdentifier: chatIdentifier, style: 43)
+        ..isRpSms = false,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+    );
+
+    expect(
+      () => adapter.proveLegacyCanonicalOwnership(
+        scope: chatScope,
+        generation: generation,
+        payload: _chatPayload(
+          logicalEntityKeyHash: logicalKey,
+          canonicalGuid: canonicalGuid,
+          chatIdentifier: chatIdentifier,
+        ),
+        snapshot: _snapshot(CloudEntityKind.chat, logicalKey),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) =>
+              failure.safeCode == 'legacy_ownership_canonical_row_mismatch',
+        ),
+      ),
+    );
   });
 
   test('proves exact legacy message ownership without comparing body', () {

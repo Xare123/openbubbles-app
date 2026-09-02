@@ -373,6 +373,23 @@ abstract interface class CloudUnknownInboxBarrierRecoveryStore {
   });
 }
 
+/// Narrow, local-only migration surface for retrying one semantic ownership
+/// conflict created before nullable legacy chat style was recognized.
+///
+/// Implementations may reopen only the first nonterminal current-generation
+/// save row, must require the active coordinator fence, and must not alter a
+/// checkpoint, protected reference, payload digest, or remote CloudKit state.
+/// The fixed cutoff makes the retry single-use: a failed retry is completed
+/// after the cutoff and cannot be reopened again by the same migration.
+abstract interface class CloudLegacyOwnershipConflictBarrierRecoveryStore {
+  Future<bool> requeueLegacyOwnershipConflictBarrier(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required DateTime quarantinedBefore,
+    required CloudCoordinatorLeaseFence leaseFence,
+  });
+}
+
 /// Optional outbox capability used by the reconciliation worker.
 ///
 /// The read-only shadow wrapper deliberately does not expose this mutation

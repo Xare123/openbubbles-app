@@ -72,6 +72,7 @@ Future<Map<String, Object?>> inspectCloudSyncControlState(
 
 Map<String, Object?> _inspectStore(Store store) {
   final now = DateTime.now().toUtc();
+  final legacyChatShapeCounts = _inspectLegacyChatShapes(store);
   final checkpoints = <Map<String, Object?>>[];
   _scanPaged(
     (store.box<CloudSyncCheckpointEntity>().query()
@@ -149,7 +150,7 @@ Map<String, Object?> _inspectStore(Store store) {
   );
 
   return <String, Object?>{
-    'schema': 2,
+    'schema': 3,
     'canonicalCounts': <String, int>{
       'chats': store.box<Chat>().count(),
       'messages': store.box<Message>().count(),
@@ -164,10 +165,102 @@ Map<String, Object?> _inspectStore(Store store) {
       'replays': store.box<CloudSemanticReplayEntity>().count(),
       'chatAliases': store.box<CloudSemanticChatAliasEntity>().count(),
     },
+    'legacyChatShapeCounts': legacyChatShapeCounts,
     'checkpoints': checkpoints,
     'inboxGroups': inboxGroups,
     'replayOutcomes': replayOutcomes,
     'replaySafeCodes': replaySafeCodes,
+  };
+}
+
+Map<String, int> _inspectLegacyChatShapes(Store store) {
+  final guidCounts = <String, int>{};
+  final messageGuids = <String>{};
+  final attachmentGuids = <String>{};
+  _scanPaged((store.box<Message>().query()..order(Message_.id)).build(), (
+    message,
+  ) {
+    final guid = message.guid;
+    if (guid != null && guid.isNotEmpty) messageGuids.add(guid);
+  });
+  _scanPaged((store.box<Attachment>().query()..order(Attachment_.id)).build(), (
+    attachment,
+  ) {
+    final guid = attachment.guid;
+    if (guid != null && guid.isNotEmpty) attachmentGuids.add(guid);
+  });
+
+  var blankIdentifiers = 0;
+  var compositeRows = 0;
+  var compositeDirectRows = 0;
+  var compositeGroupRows = 0;
+  var compositeIdentifierMismatches = 0;
+  var compositeStyleMismatches = 0;
+  var compositeServiceMismatches = 0;
+  var nullStyleRows = 0;
+  var directStyleRows = 0;
+  var groupStyleRows = 0;
+  var otherStyleRows = 0;
+  var crossKindGuidCollisions = 0;
+  _scanPaged((store.box<Chat>().query()..order(Chat_.id)).build(), (chat) {
+    guidCounts.update(chat.guid, (count) => count + 1, ifAbsent: () => 1);
+    final identifier = chat.chatIdentifier;
+    if (identifier == null || identifier.isEmpty) blankIdentifiers += 1;
+    if (messageGuids.contains(chat.guid) ||
+        attachmentGuids.contains(chat.guid)) {
+      crossKindGuidCollisions += 1;
+    }
+
+    final direct = chat.guid.startsWith('iMessage;-;');
+    final group = chat.guid.startsWith('iMessage;+;');
+    if (!direct && !group) return;
+    compositeRows += 1;
+    if (direct) {
+      compositeDirectRows += 1;
+    } else {
+      compositeGroupRows += 1;
+    }
+    final expectedIdentifier = chat.guid.substring('iMessage;-;'.length);
+    if (identifier != expectedIdentifier) {
+      compositeIdentifierMismatches += 1;
+    }
+    final expectedStyle = direct ? 45 : 43;
+    if (chat.style != expectedStyle) compositeStyleMismatches += 1;
+    switch (chat.style) {
+      case null:
+        nullStyleRows += 1;
+      case 45:
+        directStyleRows += 1;
+      case 43:
+        groupStyleRows += 1;
+      default:
+        otherStyleRows += 1;
+    }
+    if (chat.isRpSms) compositeServiceMismatches += 1;
+  });
+
+  var duplicateGuidGroups = 0;
+  var duplicateGuidRows = 0;
+  for (final count in guidCounts.values) {
+    if (count <= 1) continue;
+    duplicateGuidGroups += 1;
+    duplicateGuidRows += count;
+  }
+  return <String, int>{
+    'blankIdentifiers': blankIdentifiers,
+    'compositeRows': compositeRows,
+    'compositeDirectRows': compositeDirectRows,
+    'compositeGroupRows': compositeGroupRows,
+    'compositeIdentifierMismatches': compositeIdentifierMismatches,
+    'compositeStyleMismatches': compositeStyleMismatches,
+    'compositeServiceMismatches': compositeServiceMismatches,
+    'nullStyleRows': nullStyleRows,
+    'directStyleRows': directStyleRows,
+    'groupStyleRows': groupStyleRows,
+    'otherStyleRows': otherStyleRows,
+    'duplicateGuidGroups': duplicateGuidGroups,
+    'duplicateGuidRows': duplicateGuidRows,
+    'crossKindGuidCollisions': crossKindGuidCollisions,
   };
 }
 

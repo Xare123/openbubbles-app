@@ -2428,6 +2428,110 @@ void main() {
     },
   );
 
+  test(
+    'requeues one old ownership conflict after retained predecessors only once',
+    () async {
+      final scope = testScope(
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      await journal(
+        batch(
+          scope,
+          batchId: 'legacy-ownership-conflict-page',
+          token: 'legacy-ownership-conflict-token',
+          changes: [testChange(1), testChange(2), testChange(3)],
+        ),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+      currentTime = testEpoch.add(const Duration(minutes: 10));
+      await store.markInboxRetainedUnprojected(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.dependency,
+        now: currentTime,
+        maximumDeferredAttempts: 1,
+        maximumDeferredAge: const Duration(days: 1),
+        leaseFence: fence,
+      );
+      currentTime = testEpoch.add(const Duration(minutes: 20));
+      await store.quarantineInbox(
+        scope,
+        sequence: 2,
+        category: CloudFailureCategory.conflict,
+        now: currentTime,
+        leaseFence: fence,
+      );
+
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final beforeRow = inboxBox.getAll().singleWhere(
+        (row) => row.fetchSequence == 2,
+      );
+      final beforeCheckpoint = await store.readCheckpoint(scope);
+      final protectedReference = beforeRow.encryptedPayloadRef;
+      final payloadDigest = beforeRow.payloadSha256;
+      final retryCount = beforeRow.retryCount;
+      final cutoff = testEpoch.add(const Duration(minutes: 30));
+      currentTime = testEpoch.add(const Duration(hours: 1));
+
+      expect(
+        await store.requeueLegacyOwnershipConflictBarrier(
+          scope,
+          now: currentTime,
+          quarantinedBefore: cutoff,
+          leaseFence: fence,
+        ),
+        isTrue,
+      );
+
+      final rows = inboxBox.getAll()
+        ..sort(
+          (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+        );
+      expect(rows[0].status, CloudInboxStatus.retainedUnprojected.index);
+      expect(rows[1].status, CloudInboxStatus.pending.index);
+      expect(rows[1].retryCount, retryCount);
+      expect(rows[1].failureCategory, CloudFailureCategory.conflict.name);
+      expect(rows[1].nextEligibleAtMs, 0);
+      expect(rows[1].completedAtMs, 0);
+      expect(rows[1].updatedAtMs, currentTime.millisecondsSinceEpoch);
+      expect(rows[1].encryptedPayloadRef, protectedReference);
+      expect(rows[1].payloadSha256, payloadDigest);
+      expect(rows[2].status, CloudInboxStatus.pending.index);
+
+      final afterCheckpoint = await store.readCheckpoint(scope);
+      expect(afterCheckpoint.fetchedToken, beforeCheckpoint.fetchedToken);
+      expect(afterCheckpoint.pendingBatchId, beforeCheckpoint.pendingBatchId);
+      expect(afterCheckpoint.fetchedSequence, beforeCheckpoint.fetchedSequence);
+      expect(
+        afterCheckpoint.lastAppliedSequence,
+        beforeCheckpoint.lastAppliedSequence,
+      );
+
+      currentTime = testEpoch.add(const Duration(hours: 1, minutes: 1));
+      await store.quarantineInbox(
+        scope,
+        sequence: 2,
+        category: CloudFailureCategory.conflict,
+        now: currentTime,
+        leaseFence: fence,
+      );
+      currentTime = testEpoch.add(const Duration(hours: 2));
+      expect(
+        await store.requeueLegacyOwnershipConflictBarrier(
+          scope,
+          now: currentTime,
+          quarantinedBefore: cutoff,
+          leaseFence: fence,
+        ),
+        isFalse,
+      );
+      expect(
+        inboxBox.get(beforeRow.id)!.status,
+        CloudInboxStatus.quarantined.index,
+      );
+    },
+  );
+
   test('duplicate inbox sequence lookup fails closed', () async {
     final scope = testScope();
     await journal(batch(scope, changes: [testChange(1)]));

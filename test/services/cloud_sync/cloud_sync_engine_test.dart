@@ -49,6 +49,7 @@ void main() {
     Duration outboxLeaseDuration = const Duration(minutes: 2),
     bool allowManualPullBackoffOverride = false,
     DateTime? unknownInboxBarrierRecoveryCutoff,
+    DateTime? legacyOwnershipConflictRecoveryCutoff,
     bool retainKnownDependencyDeferralsForReadOnlySemanticCanary = false,
     bool reconcileUnknownOutcomesOnly = false,
     MemoryCloudSyncObserver? observer,
@@ -90,6 +91,8 @@ void main() {
         outboxLeaseDuration: outboxLeaseDuration,
         allowManualPullBackoffOverride: allowManualPullBackoffOverride,
         unknownInboxBarrierRecoveryCutoff: unknownInboxBarrierRecoveryCutoff,
+        legacyOwnershipConflictRecoveryCutoff:
+            legacyOwnershipConflictRecoveryCutoff,
         retainKnownDependencyDeferralsForReadOnlySemanticCanary:
             retainKnownDependencyDeferralsForReadOnlySemanticCanary,
         reconcileUnknownOutcomesOnly: reconcileUnknownOutcomesOnly,
@@ -3222,6 +3225,75 @@ void main() {
   });
 
   test(
+    'manual semantic run invokes fenced legacy ownership conflict recovery',
+    () async {
+      final recoveryStore = _LegacyOwnershipConflictRecoveryTrackingStore();
+      store = recoveryStore;
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          batchId: 'post-ownership-recovery-empty-page',
+          generation: 1,
+          changes: const [],
+          nextToken: 'post-ownership-recovery-token',
+          hasMore: false,
+        ),
+      );
+      final cutoff = testEpoch.subtract(const Duration(seconds: 1));
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: false,
+        ),
+        legacyOwnershipConflictRecoveryCutoff: cutoff,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(recoveryStore.calls, 1);
+      expect(recoveryStore.scope, scope);
+      expect(recoveryStore.now, testEpoch);
+      expect(recoveryStore.cutoff, cutoff);
+      expect(recoveryStore.leaseFence, isNotNull);
+    },
+  );
+
+  test(
+    'legacy ownership conflict recovery rejects non-semantic write configs',
+    () {
+      final cutoff = DateTime.utc(2026, 9, 2);
+      expect(
+        () => CloudSyncEngineConfig(
+          legacyOwnershipConflictRecoveryCutoff: cutoff,
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => CloudSyncEngineConfig(
+          legacyOwnershipConflictRecoveryCutoff: cutoff,
+          flags: const CloudSyncFeatureFlags(
+            readOnlyFetch: true,
+            semanticApply: true,
+            saves: true,
+          ),
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => CloudSyncEngineConfig(
+          legacyOwnershipConflictRecoveryCutoff: DateTime(2026, 9, 2),
+          flags: const CloudSyncFeatureFlags(
+            readOnlyFetch: true,
+            semanticApply: true,
+          ),
+        ),
+        throwsArgumentError,
+      );
+    },
+  );
+
+  test(
     'bounds a stalled read-only fetch and persists network backoff',
     () async {
       final fetchStarted = Completer<void>();
@@ -4472,6 +4544,31 @@ final class _UnknownBarrierRecoveryTrackingStore extends InMemoryCloudSyncStore
 
   @override
   Future<bool> requeueUnknownInboxBarrier(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required DateTime quarantinedBefore,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    calls++;
+    this.scope = scope;
+    this.now = now;
+    cutoff = quarantinedBefore;
+    this.leaseFence = leaseFence;
+    return true;
+  }
+}
+
+final class _LegacyOwnershipConflictRecoveryTrackingStore
+    extends InMemoryCloudSyncStore
+    implements CloudLegacyOwnershipConflictBarrierRecoveryStore {
+  int calls = 0;
+  CloudSyncScope? scope;
+  DateTime? now;
+  DateTime? cutoff;
+  CloudCoordinatorLeaseFence? leaseFence;
+
+  @override
+  Future<bool> requeueLegacyOwnershipConflictBarrier(
     CloudSyncScope scope, {
     required DateTime now,
     required DateTime quarantinedBefore,

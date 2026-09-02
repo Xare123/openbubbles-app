@@ -1058,7 +1058,7 @@ void main() {
         Chat(
           guid: payload.canonicalGuid,
           chatIdentifier: payload.chatIdentifier,
-          style: 45,
+          style: null,
         )..isRpSms = false,
       );
 
@@ -1103,6 +1103,7 @@ void main() {
       }
 
       expect(objectBox.box<Chat>().count(), 1);
+      expect(objectBox.box<Chat>().getAll().single.style, 45);
       expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 1);
       expect(objectBox.box<CloudRecordMapEntity>().count(), 1);
       expect(objectBox.box<CloudSemanticReplayEntity>().count(), 1);

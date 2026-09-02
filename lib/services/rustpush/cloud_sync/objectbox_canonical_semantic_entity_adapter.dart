@@ -466,7 +466,11 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
             chat.id! <= 0 ||
             chat.guid != canonicalGuid ||
             chat.chatIdentifier != value.chatIdentifier ||
-            chat.style != expectedStyle ||
+            // Legacy CloudKit projection can leave style unset even though
+            // the composite GUID, chat identifier, and iMessage service are
+            // exact. Style is restored by the canonical upsert below; a
+            // contradictory non-null style still fails ownership proof.
+            (chat.style != null && chat.style != expectedStyle) ||
             chat.isRpSms != (service == CloudSemanticService.sms) ||
             _findMessage(canonicalGuid) != null ||
             _findAttachment(canonicalGuid) != null) {

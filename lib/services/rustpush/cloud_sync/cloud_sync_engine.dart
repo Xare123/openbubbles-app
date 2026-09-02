@@ -96,6 +96,7 @@ class CloudSyncEngineConfig {
     this.maximumUnknownAttempts = 3,
     this.allowManualPullBackoffOverride = false,
     this.unknownInboxBarrierRecoveryCutoff,
+    this.legacyOwnershipConflictRecoveryCutoff,
     this.retainKnownDependencyDeferralsForReadOnlySemanticCanary = false,
     this.reconcileUnknownOutcomesOnly = false,
     CloudShadowJournalBudget? shadowJournalBudget,
@@ -125,6 +126,7 @@ class CloudSyncEngineConfig {
   final int maximumUnknownAttempts;
   final bool allowManualPullBackoffOverride;
   final DateTime? unknownInboxBarrierRecoveryCutoff;
+  final DateTime? legacyOwnershipConflictRecoveryCutoff;
 
   /// Lets the developer-only, read-only semantic Canary preserve a known
   /// dependency-blocked source row without pinning its fetched page. Both
@@ -219,6 +221,19 @@ class CloudSyncEngineConfig {
           flags.notificationHints) {
         throw ArgumentError(
           'cloud_sync_config_unknown_barrier_recovery_unsafe',
+        );
+      }
+    }
+    if (legacyOwnershipConflictRecoveryCutoff case final cutoff?) {
+      if (!cutoff.isUtc ||
+          !flags.readOnlyFetch ||
+          !flags.semanticApply ||
+          flags.saves ||
+          flags.deletions ||
+          flags.profiles ||
+          flags.notificationHints) {
+        throw ArgumentError(
+          'cloud_sync_config_legacy_ownership_conflict_recovery_unsafe',
         );
       }
     }
@@ -535,6 +550,24 @@ class CloudSyncEngine {
             scope,
             now: _clock(),
             quarantinedBefore: unknownBarrierCutoff,
+            leaseFence: _requireActiveLeaseFence(),
+          );
+        }
+      }
+
+      final legacyOwnershipConflictCutoff =
+          config.legacyOwnershipConflictRecoveryCutoff;
+      if (config.flags.semanticApply &&
+          legacyOwnershipConflictCutoff != null &&
+          !_isCancelled(cancellationToken)) {
+        if (_store
+            case CloudLegacyOwnershipConflictBarrierRecoveryStore
+                recoveryStore) {
+          await _renewCoordinatorLeaseOrThrow();
+          await recoveryStore.requeueLegacyOwnershipConflictBarrier(
+            scope,
+            now: _clock(),
+            quarantinedBefore: legacyOwnershipConflictCutoff,
             leaseFence: _requireActiveLeaseFence(),
           );
         }
