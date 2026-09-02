@@ -371,6 +371,31 @@ void main() {
     );
     expect(semantic, contains('cloudSyncV2SemanticCanaryPresentation('));
     expect(semantic, contains('result.lastReport'));
+    final semanticRun = semantic.indexOf(
+      'runCloudSyncV2ManualSemanticPullConfirmed(',
+    );
+    final chatRefresh = semantic.indexOf(
+      'await chats.init(force: true);',
+      semanticRun,
+    );
+    final semanticPresentation = semantic.indexOf(
+      'cloudSyncV2SemanticCanaryPresentation(',
+      semanticRun,
+    );
+    expect(semanticRun, greaterThanOrEqualTo(0));
+    expect(chatRefresh, greaterThan(semanticRun));
+    expect(semanticPresentation, greaterThan(chatRefresh));
+    expect(semantic, contains('Chat list refreshed.'));
+    expect(
+      semantic,
+      contains(
+        'CloudKit catch-up completed, but the chat list could not refresh. Restart OpenBubbles to display any newly available history.',
+      ),
+    );
+    expect(
+      semantic,
+      contains('Cloud Sync V2 local chat refresh failed code='),
+    );
     final presentationStart = source.indexOf(
       'CloudSyncV2SemanticCanaryPresentation cloudSyncV2SemanticCanaryPresentation(',
     );

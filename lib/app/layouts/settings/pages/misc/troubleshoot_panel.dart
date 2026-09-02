@@ -1045,6 +1045,23 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                               final result = await pushService.runCloudSyncV2ManualSemanticPullConfirmed(
                                 maximumPasses: maximumPasses,
                               );
+                              var chatListRefreshMessage =
+                                  "Chat list refreshed.";
+                              try {
+                                // The ObjectBox count watcher intentionally ignores its
+                                // first zero-to-nonzero transition and only adds one chat
+                                // for a multi-chat transaction. A semantic pull can make
+                                // exactly that transition, so refresh the presentation
+                                // once after the durable pull has completed.
+                                await chats.init(force: true);
+                              } catch (error) {
+                                final safeCode = cloudSyncV2SafeFailureCode(error);
+                                Logger.warn(
+                                  "Cloud Sync V2 local chat refresh failed code=$safeCode",
+                                );
+                                chatListRefreshMessage =
+                                    "CloudKit catch-up completed, but the chat list could not refresh. Restart OpenBubbles to display any newly available history.";
+                              }
                               final presentation =
                                   cloudSyncV2SemanticCanaryPresentation(result.lastReport);
                               final progress = result.reachedPassLimit
@@ -1054,7 +1071,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                       : "Stopped safely after ${result.passes} pass(es).";
                               showSnackbar(
                                 presentation.title,
-                                "${presentation.message} $progress",
+                                "${presentation.message} $progress $chatListRefreshMessage",
                               );
                             } catch (error) {
                               final safeCode = cloudSyncV2SafeFailureCode(error);
