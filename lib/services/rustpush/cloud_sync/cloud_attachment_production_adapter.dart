@@ -76,6 +76,7 @@ final class CloudAttachmentProductionAdapter {
         fenceStore: durableStore,
       ),
       nativeWriterPause: FrbCloudSyncNativeWriterPause(),
+      ensureAuthSnapshot: authProvider.ensureReadAuthenticationUnderInterlock,
       prepareAuthUnderPause:
           authProvider.prepareReadAuthenticationUnderNativeWriterPause,
       readAuthSnapshot: authProvider.capture,
@@ -102,7 +103,19 @@ final class CloudAttachmentProductionAdapter {
     required String canonicalGuid,
     required int expectedBytes,
   }) async {
-    final auth = await _readAuthSnapshot();
+    late final CloudSyncNativeAuthSnapshot? auth;
+    try {
+      auth = await _readAuthSnapshot();
+    } catch (_) {
+      // A cold process may not have cached GSA identity material yet. The full
+      // coordinator owns the interlocked ensure-before-pause sequence and must
+      // make the authoritative decision; never reinterpret this as permission
+      // to fall back to another attachment transport.
+      return _download(
+        canonicalGuid: canonicalGuid,
+        expectedBytes: expectedBytes,
+      );
+    }
     if (auth == null) {
       return CloudAttachmentDownloadUnavailable(
         CloudAttachmentSourceResolutionCode.missingIdentity,

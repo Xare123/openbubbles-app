@@ -210,6 +210,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     implements
         CloudCanonicalSemanticEntityAdapter,
         CloudAppliedChatProjectionRepairAdapter,
+        CloudAppliedAttachmentProjectionRepairAdapter,
         CloudLegacyCanonicalOwnershipProofAdapter {
   static final RegExp _externalDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
 
@@ -771,6 +772,104 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       generation: generation,
       payload: payload,
     );
+  }
+
+  @override
+  CloudCanonicalSemanticMutationReceipt repairAttachmentProjection({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudAttachmentEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) {
+    _requireActiveScope(scope, generation);
+    if (scope.zone != 'attachmentManateeZone' ||
+        snapshot.kind != CloudEntityKind.attachment ||
+        payload.logicalEntityKeyHash != snapshot.logicalEntityKeyHash) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.malformedRecord,
+        safeCode: 'canonical_attachment_repair_snapshot_mismatch',
+      );
+    }
+    _validateMutationIdentitySet(payload);
+    final canonicalGuid = _requireResolvedGuid(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.attachment,
+      logicalEntityKeyHash: payload.logicalEntityKeyHash,
+      payloadCanonicalGuid: payload.canonicalGuid,
+    );
+    final attachment = _findUniqueLegacyOwnershipAttachment(canonicalGuid);
+    if (attachment == null ||
+        attachment.id == null ||
+        attachment.id! <= 0 ||
+        attachment.guid != canonicalGuid) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_attachment_repair_target_unavailable',
+      );
+    }
+
+    final hasOwner = payload.ownerCanonicalGuid != null;
+    if (hasOwner &&
+        canonicalGuid != '${payload.ownerCanonicalGuid}_${payload.ownerPart}') {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_attachment_repair_owner_conflict',
+      );
+    }
+    if (hasOwner) {
+      final messageDependency = _dependencyScopeFor(
+        kind: CloudEntityKind.message,
+        currentScope: scope,
+        currentGeneration: generation,
+      );
+      final ownerGuid = _requireResolvedGuid(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: payload.ownerLogicalKeyHash!,
+        payloadCanonicalGuid: payload.ownerCanonicalGuid!,
+        durableOwnershipScope: messageDependency,
+      );
+      final owner = _findMessage(ownerGuid);
+      if (owner == null ||
+          owner.id == null ||
+          owner.id! <= 0 ||
+          attachment.message.targetId != owner.id) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'canonical_attachment_repair_owner_conflict',
+        );
+      }
+    } else if (attachment.message.targetId != 0) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_attachment_repair_owner_conflict',
+      );
+    }
+
+    final metadata = Map<String, dynamic>.from(
+      attachment.metadata ?? const <String, dynamic>{},
+    );
+    final marker = metadata[cloudAttachmentV2MetadataKey];
+    final currentCapability = cloudAttachmentBodyCapabilityFor(metadata);
+    if (marker == cloudAttachmentV2MetadataVersion &&
+        currentCapability == payload.bodyCapability) {
+      return CloudCanonicalSemanticMutationReceipt.committed;
+    }
+    if (marker != cloudAttachmentV2NoAssetsMetadataVersion ||
+        currentCapability == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_attachment_repair_provenance_conflict',
+      );
+    }
+    metadata[cloudAttachmentV2MetadataKey] = cloudAttachmentV2MetadataVersion;
+    metadata[cloudAttachmentV2BodyCapabilityKey] =
+        payload.bodyCapability.metadataValue;
+    attachment.metadata = metadata;
+    _attachments.put(attachment);
+    return CloudCanonicalSemanticMutationReceipt.committed;
   }
 
   @override

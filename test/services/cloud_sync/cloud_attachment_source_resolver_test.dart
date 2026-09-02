@@ -526,8 +526,8 @@ void _seedApplied(
   final protectedReference = testProtectedReference('A');
   final changeKey =
       'change:${_digest('${scope.storageKey}\u001fchange\u001f$changeIdHash')}';
-  final replayKey =
-      'semantic-replay4:$scopeGenerationKey:${_digest(changeIdHash)}';
+  final replayChangeIdHash = _digest(changeIdHash);
+  final replayKey = 'semantic-replay4:$scopeGenerationKey:$replayChangeIdHash';
   final recordMapKey = _recordMapKey(scope);
 
   objectBox.box<CloudSemanticSnapshotEntity>().put(
@@ -574,7 +574,7 @@ void _seedApplied(
       streamKind: scope.streamKind.name,
       schemaVersion: scope.schemaVersion,
       generation: generation,
-      changeIdHash: changeIdHash,
+      changeIdHash: replayChangeIdHash,
       serverRecordIdHash: recordIdHash,
       logicalEntityKeyHash: logicalEntityKeyHash,
       payloadSha256: payloadSha256,
@@ -644,8 +644,8 @@ void _seedHistoricalAppliedVersion(
       'semantic-generation4:${_digest('$scopeKey\u001f$generation')}';
   final changeKey =
       'change:${_digest('${scope.storageKey}\u001fchange\u001f$changeIdHash')}';
-  final replayKey =
-      'semantic-replay4:$scopeGenerationKey:${_digest(changeIdHash)}';
+  final replayChangeIdHash = _digest(changeIdHash);
+  final replayKey = 'semantic-replay4:$scopeGenerationKey:$replayChangeIdHash';
 
   objectBox.box<CloudSemanticReplayEntity>().put(
     CloudSemanticReplayEntity(
@@ -659,7 +659,7 @@ void _seedHistoricalAppliedVersion(
       streamKind: scope.streamKind.name,
       schemaVersion: scope.schemaVersion,
       generation: generation,
-      changeIdHash: changeIdHash,
+      changeIdHash: replayChangeIdHash,
       serverRecordIdHash: recordIdHash,
       logicalEntityKeyHash: logicalEntityKeyHash,
       payloadSha256: payloadSha256,

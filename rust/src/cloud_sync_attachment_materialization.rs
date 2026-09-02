@@ -548,6 +548,18 @@ fn map_download_failure(error: &PushError) -> CloudNativeAttachmentMaterializati
         | PushError::TooManyRequests => {
             CloudNativeAttachmentMaterializationFailure::RetryableUpstream
         }
+        // The closed CloudKit/MMCS reader reports malformed or incomplete
+        // server-described asset metadata as InvalidData/InvalidInput. That is
+        // an unusable protected source, not a local-disk failure and must not
+        // spin as though freeing local storage could repair it.
+        PushError::IoError(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::InvalidData | io::ErrorKind::InvalidInput
+            ) =>
+        {
+            CloudNativeAttachmentMaterializationFailure::SourceUnusable
+        }
         PushError::IoError(_) => CloudNativeAttachmentMaterializationFailure::LocalStorage,
         // A fetched attachment whose current record etag differs from the
         // protected source is intentionally terminal for this source.  A later
@@ -1116,7 +1128,9 @@ async fn cloud_sync_materialize_attachment_body_inner(
     // helpers assert on malformed transfer metadata, so contain an unexpected
     // assertion at this native boundary. The Drop guard still removes the
     // unique partial file while unwinding; Dart receives only an opaque
-    // integrity failure rather than a process-level failure.
+    // decoder failure rather than a process-level failure. This remains
+    // distinct from a regular MMCS verification failure so diagnostics do not
+    // mislabel an internal panic as evidence that downloaded bytes mismatched.
     let transfer = std::panic::AssertUnwindSafe(
         cloud_messages_client.download_attachment_checked_lookup_only(
             read_authentication_permit,
@@ -1130,7 +1144,11 @@ async fn cloud_sync_materialize_attachment_body_inner(
     match transfer.await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => return Err(map_download_failure(&error)),
-        Err(_) => return Err(CloudNativeAttachmentMaterializationFailure::IntegrityMismatch),
+        Err(_) => {
+            log::warn!("Closed CloudKit attachment lookup panicked before completion");
+            log::logger().flush();
+            return Err(CloudNativeAttachmentMaterializationFailure::DecoderFailure);
+        }
     }
     writer
         .sync_all()
@@ -1220,6 +1238,27 @@ mod tests {
         assert_eq!(
             map_download_failure(&PushError::CloudKitError(Default::default())),
             CloudNativeAttachmentMaterializationFailure::DecoderFailure
+        );
+        assert_eq!(
+            map_download_failure(&PushError::IoError(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "redacted malformed asset fixture",
+            ))),
+            CloudNativeAttachmentMaterializationFailure::SourceUnusable
+        );
+        assert_eq!(
+            map_download_failure(&PushError::IoError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "redacted invalid asset fixture",
+            ))),
+            CloudNativeAttachmentMaterializationFailure::SourceUnusable
+        );
+        assert_eq!(
+            map_download_failure(&PushError::IoError(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "redacted local storage fixture",
+            ))),
+            CloudNativeAttachmentMaterializationFailure::LocalStorage
         );
     }
 

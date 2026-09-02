@@ -92,6 +92,7 @@ final class CloudAttachmentDownloadCoordinator {
   CloudAttachmentDownloadCoordinator({
     required this._operationExclusion,
     required this._nativeWriterPause,
+    required this._ensureAuthSnapshot,
     required this._prepareAuthUnderPause,
     required this._readAuthSnapshot,
     required this._readActiveGeneration,
@@ -126,7 +127,9 @@ final class CloudAttachmentDownloadCoordinator {
 
   final CloudKitOperationExclusion _operationExclusion;
   final CloudSyncNativeWriterPause _nativeWriterPause;
-  final CloudSyncPausedPreparedAuthSnapshotReader _prepareAuthUnderPause;
+  final CloudSyncEnsuredAuthSnapshotReader _ensureAuthSnapshot;
+  final CloudSyncSemanticPausedPreparedAuthSnapshotReader
+  _prepareAuthUnderPause;
   final CloudSyncNativeAuthSnapshotReader _readAuthSnapshot;
   final CloudAttachmentActiveGenerationReader _readActiveGeneration;
   final CloudAttachmentSourceResolverCall _resolveSource;
@@ -149,6 +152,7 @@ final class CloudAttachmentDownloadCoordinator {
       return await _operationExclusion.runExclusive(
         kind: CloudKitOperationKind.v2SemanticRead,
         action: () async {
+          final ensuredAuth = await _ensureAuthentication();
           late final Object pauseToken;
           try {
             pauseToken = await _nativeWriterPause.pause();
@@ -161,7 +165,10 @@ final class CloudAttachmentDownloadCoordinator {
           try {
             _validatePauseToken(pauseToken);
 
-            final auth = await _prepareAuthentication(pauseToken);
+            final auth = await _prepareAuthentication(pauseToken, ensuredAuth);
+            if (!ensuredAuth.sameIdentity(auth)) {
+              throw _authorizationFailure();
+            }
             await _requireUnchangedAuth(auth);
             final scope = _attachmentScope(auth);
             final generation = await _readActiveGenerationFor(scope);
@@ -212,11 +219,24 @@ final class CloudAttachmentDownloadCoordinator {
     }
   }
 
+  Future<CloudSyncNativeAuthSnapshot> _ensureAuthentication() async {
+    try {
+      final auth = await _ensureAuthSnapshot();
+      if (auth == null) throw _authorizationFailure();
+      return auth;
+    } on CloudSyncFailure {
+      rethrow;
+    } catch (_) {
+      throw _authorizationFailure();
+    }
+  }
+
   Future<CloudSyncNativeAuthSnapshot> _prepareAuthentication(
     Object pauseToken,
+    CloudSyncNativeAuthSnapshot expectedAuth,
   ) async {
     try {
-      final auth = await _prepareAuthUnderPause(pauseToken);
+      final auth = await _prepareAuthUnderPause(pauseToken, expectedAuth);
       if (auth == null) throw _authorizationFailure();
       return auth;
     } on CloudSyncFailure {

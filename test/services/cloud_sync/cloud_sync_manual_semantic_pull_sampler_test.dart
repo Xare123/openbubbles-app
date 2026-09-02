@@ -1841,11 +1841,12 @@ void main() {
   );
 
   test(
-    'repairs applied chat projection before transport and releases its lease',
+    'repairs applied chat and attachment projections before transport',
     () async {
       final events = <String>[];
       final stores = <String, InMemoryCloudSyncStore>{};
       late _RepairingFakeCloudInboxApplier chatApplier;
+      late _RepairingFakeCloudInboxApplier attachmentApplier;
       final sampler = _sampler(
         privateStorageDirectory: privateStorageDirectory,
         operationFenceStore: InMemoryCloudSyncStore(),
@@ -1862,8 +1863,9 @@ void main() {
         },
         createInboxApplier: (auth, scope, generation) async {
           events.add('applier:${scope.zone}');
-          if (scope.zone == 'chatManateeZone') {
-            chatApplier = _RepairingFakeCloudInboxApplier(
+          if (scope.zone == 'chatManateeZone' ||
+              scope.zone == 'attachmentManateeZone') {
+            final repairingApplier = _RepairingFakeCloudInboxApplier(
               onRepair: (repairScope, repairGeneration, leaseFence, limit) {
                 events.add('repair:${repairScope.zone}');
                 expect(repairGeneration, generation);
@@ -1874,7 +1876,12 @@ void main() {
                 );
               },
             );
-            return chatApplier;
+            if (scope.zone == 'chatManateeZone') {
+              chatApplier = repairingApplier;
+            } else {
+              attachmentApplier = repairingApplier;
+            }
+            return repairingApplier;
           }
           return FakeCloudInboxApplier();
         },
@@ -1883,6 +1890,7 @@ void main() {
       await sampler.runConfirmed();
 
       expect(chatApplier.repairCalls, 1);
+      expect(attachmentApplier.repairCalls, 1);
       expect(events, const [
         'applier:chatManateeZone',
         'repair:chatManateeZone',
@@ -1890,6 +1898,7 @@ void main() {
         'applier:messageManateeZone',
         'transport:messageManateeZone',
         'applier:attachmentManateeZone',
+        'repair:attachmentManateeZone',
         'transport:attachmentManateeZone',
       ]);
       final chatScope = CloudSyncScope(

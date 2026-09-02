@@ -2653,6 +2653,12 @@ pub(crate) fn convert_attachment(
             CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
         );
     }
+    // Semantic change pages intentionally request `NO_ASSETS`. The absence
+    // (or valueless presence) of `lqa` on this cached page therefore says
+    // nothing about whether the current record can supply a body. The native
+    // materializer re-fetches this exact record with `ALL_ASSETS`, validates
+    // its etag, account, and read permit, and fails closed if that authoritative
+    // response has no usable asset.
     let mut materialization_capability =
         CloudCanonicalAttachmentMaterializationCapability::Materializable;
     if let Some(user_info) = attachment.user_info.as_ref() {
@@ -2670,13 +2676,6 @@ pub(crate) fn convert_attachment(
                 return CloudCanonicalConversionOutcome::Quarantined(reason);
             }
         }
-    }
-    // `lqa` is the CloudKit asset/download capability, not the attachment's
-    // logical identity. Its absence limits body materialization without
-    // suppressing otherwise valid canonical metadata.
-    if presence.field("lqa") != CloudRawFieldPresence::PresentWithValue {
-        materialization_capability = CloudCanonicalAttachmentMaterializationCapability::
-            MetadataOnlyUnsupportedMediaCredentials;
     }
     if attachment.is_sticker {
         return CloudCanonicalConversionOutcome::Deferred(
@@ -5068,7 +5067,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_or_valueless_asset_projects_metadata_only() {
+    fn no_assets_change_page_remains_exact_fetch_eligible() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let attachment = AttachmentMeta {
             guid: "standalone-attachment-guid".to_owned(),
@@ -5083,7 +5082,7 @@ mod tests {
         ));
         assert_eq!(
             missing_payload.materialization_capability(),
-            CloudCanonicalAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials
+            CloudCanonicalAttachmentMaterializationCapability::Materializable
         );
 
         let mut valueless = attachment_presence();
@@ -5097,7 +5096,7 @@ mod tests {
         ));
         assert_eq!(
             valueless_payload.materialization_capability(),
-            CloudCanonicalAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials
+            CloudCanonicalAttachmentMaterializationCapability::Materializable
         );
     }
 

@@ -197,16 +197,20 @@ void main() {
     });
 
     test(
-      'auth bridge errors are never converted into legacy fallback',
+      'cold auth capture delegates to the fail-closed coordinator',
       () async {
+        var downloads = 0;
         final adapter = CloudAttachmentProductionAdapter(
           readAuthSnapshot: () async => throw StateError('fixed-auth-failure'),
           readActiveGeneration: (_) async => 7,
           resolveSource: _unexpectedResolver,
-          download: ({required canonicalGuid, required expectedBytes}) async =>
-              CloudAttachmentDownloadUnavailable(
-                CloudAttachmentSourceResolutionCode.missingSource,
-              ),
+          download: ({required canonicalGuid, required expectedBytes}) async {
+            downloads++;
+            throw CloudSyncFailure(
+              category: CloudFailureCategory.authorization,
+              safeCode: 'cloud_attachment_account_changed',
+            );
+          },
         );
 
         await expectLater(
@@ -214,8 +218,15 @@ void main() {
             canonicalGuid: 'attachment-guid',
             expectedBytes: 8,
           ),
-          throwsA(isA<StateError>()),
+          throwsA(
+            isA<CloudSyncFailure>().having(
+              (failure) => failure.safeCode,
+              'safeCode',
+              'cloud_attachment_account_changed',
+            ),
+          ),
         );
+        expect(downloads, 1);
       },
     );
   });
@@ -297,6 +308,18 @@ void main() {
     );
     expect(
       hasCloudAttachmentV2Provenance(<String, dynamic>{
+        cloudAttachmentV2MetadataKey: cloudAttachmentV2NoAssetsMetadataVersion,
+      }),
+      isTrue,
+    );
+    expect(
+      hasCloudAttachmentV2Provenance(<String, dynamic>{
+        cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion + 1,
+      }),
+      isFalse,
+    );
+    expect(
+      hasCloudAttachmentV2Provenance(<String, dynamic>{
         cloudAttachmentV2MetadataKey: true,
       }),
       isFalse,
@@ -330,6 +353,25 @@ void main() {
           'rustpush': 'ids-source',
         }),
         CloudAttachmentDownloadLane.cloudSyncV2,
+      );
+      expect(
+        cloudAttachmentDownloadLaneFor(<String, dynamic>{
+          cloudAttachmentV2MetadataKey:
+              cloudAttachmentV2NoAssetsMetadataVersion,
+          cloudAttachmentV2BodyCapabilityKey:
+              CloudAttachmentBodyCapability.materializable.metadataValue,
+        }),
+        CloudAttachmentDownloadLane.cloudSyncV2,
+      );
+      expect(
+        cloudAttachmentDownloadLaneFor(<String, dynamic>{
+          cloudAttachmentV2MetadataKey:
+              cloudAttachmentV2NoAssetsMetadataVersion,
+          cloudAttachmentV2BodyCapabilityKey: CloudAttachmentBodyCapability
+              .metadataOnlyUnsupportedMediaCredentials
+              .metadataValue,
+        }),
+        CloudAttachmentDownloadLane.unavailable,
       );
       expect(
         cloudAttachmentDownloadLaneFor(<String, dynamic>{

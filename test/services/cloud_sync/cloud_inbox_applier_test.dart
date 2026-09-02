@@ -723,6 +723,14 @@ void main() {
   test(
     'applied projection repair yields on a continue path before the next candidate',
     () async {
+      scope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintA,
+        container: 'messages-container',
+        database: 'private',
+        zone: 'chatManateeZone',
+      );
+      store = _MemorySemanticStore(scope: scope, generation: 3);
+      decoder = _Decoder();
       final failed = entry(1).copyWith(status: CloudInboxStatus.applied);
       final successful = entry(2).copyWith(status: CloudInboxStatus.applied);
       decodeUpsert(
@@ -755,6 +763,85 @@ void main() {
       expect(observedDecodeCalls, 1);
       expect(repaired, 1);
       expect(store.appliedRepairCount, 1);
+    },
+  );
+
+  test(
+    'applied projection repair accepts exact attachment-zone capability repair',
+    () async {
+      scope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintA,
+        container: 'messages-container',
+        database: 'private',
+        zone: 'attachmentManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+      );
+      store = _MemorySemanticStore(scope: scope, generation: 3);
+      decoder = _Decoder();
+      final inbox = entry(1).copyWith(status: CloudInboxStatus.applied);
+      decodeUpsert(
+        inbox,
+        CloudSemanticSnapshot(
+          kind: CloudEntityKind.attachment,
+          logicalEntityKeyHash: 'attachment-logical-key',
+          parentLogicalKeyHash: 'owner-message-logical-key',
+        ),
+      );
+      store.appliedEntries.add(inbox);
+      final diagnostics = <String>[];
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+        diagnosticRecorder: diagnostics.add,
+      );
+
+      expect(
+        await applier.repairAppliedProjections(
+          scope: scope,
+          generation: 3,
+          leaseFence: _testLeaseFence,
+          limit: 8,
+        ),
+        1,
+      );
+      expect(store.appliedRepairCount, 1);
+      expect(diagnostics, ['projection_repaired_attachment_capability']);
+    },
+  );
+
+  test(
+    'applied projection repair rejects attachment outside its zone',
+    () async {
+      final inbox = entry(1).copyWith(status: CloudInboxStatus.applied);
+      decodeUpsert(
+        inbox,
+        CloudSemanticSnapshot(
+          kind: CloudEntityKind.attachment,
+          logicalEntityKeyHash: 'attachment-logical-key',
+          parentLogicalKeyHash: 'owner-message-logical-key',
+        ),
+      );
+      store.appliedEntries.add(inbox);
+      final diagnostics = <String>[];
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+        diagnosticRecorder: diagnostics.add,
+      );
+
+      expect(
+        await applier.repairAppliedProjections(
+          scope: scope,
+          generation: 3,
+          leaseFence: _testLeaseFence,
+          limit: 8,
+        ),
+        0,
+      );
+      expect(store.appliedRepairCount, 0);
+      expect(diagnostics, ['projection_repair_decoded_shape_invalid']);
     },
   );
 
@@ -802,6 +889,14 @@ void main() {
   test(
     'applied repair yields only after operation and identity lease release',
     () async {
+      scope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintA,
+        container: 'messages-container',
+        database: 'private',
+        zone: 'chatManateeZone',
+      );
+      store = _MemorySemanticStore(scope: scope, generation: 3);
+      decoder = _Decoder();
       final first = entry(1).copyWith(status: CloudInboxStatus.applied);
       final second = entry(2).copyWith(status: CloudInboxStatus.applied);
       decodeUpsert(

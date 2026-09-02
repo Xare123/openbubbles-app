@@ -4,7 +4,10 @@
 /// download path avoid CloudKit setup for ordinary IDS attachments.
 const String cloudAttachmentV2MetadataKey = 'cloudSyncV2';
 const int cloudAttachmentV2LegacyMetadataVersion = 2;
-const int cloudAttachmentV2MetadataVersion = 3;
+// Version 3 was projected while the NO_ASSETS change-page response was
+// incorrectly treated as proof that an attachment body was unavailable.
+const int cloudAttachmentV2NoAssetsMetadataVersion = 3;
+const int cloudAttachmentV2MetadataVersion = 4;
 const String cloudAttachmentV2BodyCapabilityKey = 'cloudSyncV2BodyCapability';
 
 enum CloudAttachmentBodyCapability {
@@ -34,6 +37,7 @@ bool hasCloudAttachmentV2Provenance(Map<String, dynamic>? metadata) {
   final marker = metadata?[cloudAttachmentV2MetadataKey];
   return marker is int &&
       (marker == cloudAttachmentV2LegacyMetadataVersion ||
+          marker == cloudAttachmentV2NoAssetsMetadataVersion ||
           marker == cloudAttachmentV2MetadataVersion);
 }
 
@@ -54,7 +58,8 @@ CloudAttachmentDownloadLane cloudAttachmentDownloadLaneFor(
     if (marker == cloudAttachmentV2LegacyMetadataVersion) {
       return CloudAttachmentDownloadLane.cloudSyncV2;
     }
-    if (marker == cloudAttachmentV2MetadataVersion &&
+    if ((marker == cloudAttachmentV2NoAssetsMetadataVersion ||
+            marker == cloudAttachmentV2MetadataVersion) &&
         cloudAttachmentBodyCapabilityFor(metadata) ==
             CloudAttachmentBodyCapability.materializable) {
       return CloudAttachmentDownloadLane.cloudSyncV2;

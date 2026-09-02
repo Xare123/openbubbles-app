@@ -34,6 +34,7 @@ void main() {
       expect(result, isA<CloudAttachmentDownloadMaterialized>());
       expect(fixture.events, <String>[
         'operation:v2SemanticRead',
+        'ensure-auth',
         'pause',
         'prepare-auth',
         'auth-check',
@@ -163,6 +164,19 @@ void main() {
     );
     expect(changedFixture.bodyNative!.calls, 0);
     expect(changedFixture.events.last, 'resume');
+  });
+
+  test('authentication is ensured before writers are paused', () async {
+    final fixture = _Fixture();
+    final coordinator = fixture.build(ensureAuthReturnsNull: true);
+
+    await _expectAuthorizationFailure(
+      coordinator.download(canonicalGuid: 'attachment-guid', expectedBytes: 8),
+    );
+
+    expect(fixture.events, <String>['operation:v2SemanticRead', 'ensure-auth']);
+    expect(fixture.writerPause!.pauseCalls, 0);
+    expect(fixture.bodyNative!.calls, 0);
   });
 
   test(
@@ -380,6 +394,7 @@ final class _Fixture {
     CloudAttachmentBodyNativeResult bodyResult =
         const CloudAttachmentBodyNativeResult.completed(8),
     bool prepareAuthReturnsNull = false,
+    bool ensureAuthReturnsNull = false,
     CloudSyncNativeAuthSnapshot? currentAuth,
     String? resolverError,
     Object? pauseError,
@@ -406,8 +421,13 @@ final class _Fixture {
     return CloudAttachmentDownloadCoordinator(
       operationExclusion: operation,
       nativeWriterPause: writerPause,
-      prepareAuthUnderPause: (token) async {
+      ensureAuthSnapshot: () async {
+        events.add('ensure-auth');
+        return ensureAuthReturnsNull ? null : auth;
+      },
+      prepareAuthUnderPause: (token, expectedAuth) async {
         expect(token, pauseToken ?? BigInt.from(7));
+        expect(identical(expectedAuth, auth), isTrue);
         events.add('prepare-auth');
         return prepareAuthReturnsNull ? null : auth;
       },

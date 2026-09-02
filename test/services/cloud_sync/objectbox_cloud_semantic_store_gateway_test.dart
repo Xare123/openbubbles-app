@@ -249,6 +249,15 @@ void main() {
         objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
         CloudInboxStatus.applied.index,
       );
+
+      final source = CloudAttachmentSourceResolver(store: objectBox).resolve(
+        scope: fixture.entry.scope,
+        generation: fixture.entry.generation,
+        canonicalGuid: fixture.payload.canonicalGuid,
+      );
+      expect(source.recordIdHash, fixture.entry.change.recordIdHash);
+      expect(source.payloadSha256, fixture.entry.change.payloadSha256);
+      expect(source.replayOutcome, 'applied');
     },
   );
 
@@ -3077,6 +3086,178 @@ void main() {
   });
 
   test(
+    'repairs version-3 attachment capability without changing sync state',
+    () async {
+      final fixture = _prepareCrossZoneAttachmentFixture(objectBox, now);
+      await fixture.gateway.writeTransaction<void>(
+        entry: fixture.entry,
+        leaseFence: fixture.leaseFence,
+        action: (transaction) {
+          transaction.applyEntity(
+            payload: fixture.payload,
+            snapshot: fixture.snapshot,
+          );
+          transaction.markChangeApplied(fixture.entry.change.changeId);
+        },
+      );
+
+      final attachmentBox = objectBox.box<Attachment>();
+      final staleAttachment = attachmentBox.getAll().single;
+      final staleMetadata =
+          Map<String, dynamic>.from(
+              staleAttachment.metadata ?? const <String, dynamic>{},
+            )
+            ..[cloudAttachmentV2MetadataKey] =
+                cloudAttachmentV2NoAssetsMetadataVersion
+            ..[cloudAttachmentV2BodyCapabilityKey] =
+                CloudAttachmentBodyCapability
+                    .metadataOnlyUnsupportedMediaCredentials
+                    .metadataValue;
+      staleAttachment.metadata = staleMetadata;
+      attachmentBox.put(staleAttachment);
+
+      final before = attachmentBox.get(staleAttachment.id!)!;
+      final nonProvenanceMetadataBefore =
+          Map<String, dynamic>.from(
+              before.metadata ?? const <String, dynamic>{},
+            )
+            ..remove(cloudAttachmentV2MetadataKey)
+            ..remove(cloudAttachmentV2BodyCapabilityKey);
+      final stableFieldsBefore = <Object?>[
+        before.id,
+        before.originalROWID,
+        before.guid,
+        before.uti,
+        before.mimeType,
+        before.isOutgoing,
+        before.transferName,
+        before.totalBytes,
+        before.height,
+        before.width,
+        before.webUrl,
+        before.hasLivePhoto,
+        before.ckRecordId,
+        before.message.targetId,
+      ];
+      final controlBefore = _durableSyncControlFingerprint(objectBox);
+
+      final identityRegistry = TransientCloudCanonicalIdentityRegistry();
+      final activeScope = CloudCanonicalActiveScope(
+        scope: fixture.entry.scope,
+        generation: fixture.entry.generation,
+      );
+      final currentAdapter = ObjectBoxCanonicalSemanticEntityAdapter(
+        store: objectBox,
+        activeScopeProvider: () => activeScope,
+        identityResolver: identityRegistry,
+        messageDependencyScope: CloudCanonicalActiveScope(
+          scope: fixture.messageScope,
+          generation: fixture.messageGeneration,
+        ),
+        semanticApplyEnabled: true,
+        allowAttachmentMetadataUpserts: true,
+      );
+      final currentGateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: currentAdapter,
+        clock: () => now,
+      );
+      final diagnostics = <String>[];
+      final repairer = TransactionalCloudInboxApplier(
+        decoder: _FixedDecoder(
+          CloudDecodedMutation.upsert(
+            scope: fixture.entry.scope,
+            generation: fixture.entry.generation,
+            changeId: fixture.entry.change.changeId,
+            snapshot: fixture.snapshot,
+            payload: fixture.payload,
+          ),
+        ),
+        store: currentGateway,
+        identityRegistrar: identityRegistry,
+        activeScopeRevalidator: () async => true,
+        diagnosticRecorder: diagnostics.add,
+      );
+
+      final candidates = await currentGateway
+          .readAppliedProjectionRepairCandidates(
+            scope: fixture.entry.scope,
+            generation: fixture.entry.generation,
+            leaseFence: fixture.leaseFence,
+            limit: 8,
+          );
+      expect(candidates, hasLength(1));
+      expect(
+        await repairer.repairAppliedProjections(
+          scope: fixture.entry.scope,
+          generation: fixture.entry.generation,
+          leaseFence: fixture.leaseFence,
+          limit: 8,
+        ),
+        1,
+      );
+
+      final after = attachmentBox.get(staleAttachment.id!)!;
+      expect(
+        after.metadata?[cloudAttachmentV2MetadataKey],
+        cloudAttachmentV2MetadataVersion,
+      );
+      expect(
+        cloudAttachmentBodyCapabilityFor(after.metadata),
+        CloudAttachmentBodyCapability.materializable,
+      );
+      final nonProvenanceMetadataAfter =
+          Map<String, dynamic>.from(after.metadata ?? const <String, dynamic>{})
+            ..remove(cloudAttachmentV2MetadataKey)
+            ..remove(cloudAttachmentV2BodyCapabilityKey);
+      expect(nonProvenanceMetadataAfter, nonProvenanceMetadataBefore);
+      expect(<Object?>[
+        after.id,
+        after.originalROWID,
+        after.guid,
+        after.uti,
+        after.mimeType,
+        after.isOutgoing,
+        after.transferName,
+        after.totalBytes,
+        after.height,
+        after.width,
+        after.webUrl,
+        after.hasLivePhoto,
+        after.ckRecordId,
+        after.message.targetId,
+      ], stableFieldsBefore);
+      expect(after.message.targetId, fixture.ownerMessageId);
+      expect(_durableSyncControlFingerprint(objectBox), controlBefore);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(
+        diagnostics,
+        contains('projection_repaired_attachment_capability'),
+      );
+      expect(
+        await currentGateway.readAppliedProjectionRepairCandidates(
+          scope: fixture.entry.scope,
+          generation: fixture.entry.generation,
+          leaseFence: fixture.leaseFence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+      expect(
+        await repairer.repairAppliedProjections(
+          scope: fixture.entry.scope,
+          generation: fixture.entry.generation,
+          leaseFence: fixture.leaseFence,
+          limit: 8,
+        ),
+        0,
+      );
+      expect(_durableSyncControlFingerprint(objectBox), controlBefore);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  test(
     'retained message reprojection commits exactly once and advances exact floor',
     () async {
       final entry = _entry(scope: scope);
@@ -3748,7 +3929,11 @@ void main() {
   );
 }
 
-CloudSyncScope _scope({String? account, String zone = 'messageManateeZone'}) {
+CloudSyncScope _scope({
+  String? account,
+  String zone = 'messageManateeZone',
+  CloudSyncPersistenceLane persistenceLane = CloudSyncPersistenceLane.legacy,
+}) {
   return CloudSyncScope(
     accountFingerprint: account ?? _digestValue('A'),
     container: 'com.apple.messages.cloud',
@@ -3756,6 +3941,7 @@ CloudSyncScope _scope({String? account, String zone = 'messageManateeZone'}) {
     zone: zone,
     streamKind: CloudSyncStreamKind.messages,
     schemaVersion: 2,
+    persistenceLane: persistenceLane,
   );
 }
 
@@ -4272,8 +4458,14 @@ _CrossZoneAttachmentFixture _prepareCrossZoneAttachmentFixture(
   Store store,
   DateTime now,
 ) {
-  final messageScope = _scope(zone: 'messageManateeZone');
-  final attachmentScope = _scope(zone: 'attachmentManateeZone');
+  final messageScope = _scope(
+    zone: 'messageManateeZone',
+    persistenceLane: CloudSyncPersistenceLane.semanticV2,
+  );
+  final attachmentScope = _scope(
+    zone: 'attachmentManateeZone',
+    persistenceLane: CloudSyncPersistenceLane.semanticV2,
+  );
   const messageGeneration = 5;
   const attachmentGeneration = 7;
   final ownerLogicalKeyHash = _digestValue('P');

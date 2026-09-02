@@ -18,6 +18,7 @@ param(
     [switch] $RunOnce,
     [switch] $Drain,
     [switch] $AttachmentProbe,
+    [switch] $AttachmentProbeReuse,
     [switch] $ProjectionViewer,
     [switch] $ProjectionDetailViewer,
     [ValidateRange(30, 3600)]
@@ -37,6 +38,7 @@ $selectedOperations = @(
         $RunOnce,
         $Drain,
         $AttachmentProbe,
+        $AttachmentProbeReuse,
         $ProjectionViewer,
         $ProjectionDetailViewer
     ) | Where-Object { $_ }
@@ -503,7 +505,12 @@ function Wait-HarnessOperation {
         [Parameter(Mandatory)][datetime] $LaunchStartedUtc,
         [Parameter(Mandatory)][datetime] $BaselineWriteUtc,
         [Parameter(Mandatory)][string] $ExpectedLaunchId,
-        [Parameter(Mandatory)][ValidateSet('run-once', 'drain', 'attachment-probe')]
+        [Parameter(Mandatory)][ValidateSet(
+            'run-once',
+            'drain',
+            'attachment-probe',
+            'attachment-reuse-probe'
+        )]
         [string] $ExpectedOperation,
         [Parameter(Mandatory)][int] $TimeoutSeconds
     )
@@ -526,6 +533,9 @@ function Wait-HarnessOperation {
                 }
                 elseif ($ExpectedOperation -eq 'attachment-probe') {
                     $status.stage -eq 'attachment-probe-complete'
+                }
+                elseif ($ExpectedOperation -eq 'attachment-reuse-probe') {
+                    $status.stage -eq 'attachment-reuse-probe-complete'
                 }
                 else {
                     $status.stage -eq 'semantic-pull'
@@ -605,7 +615,7 @@ if (-not (Test-Path -LiteralPath $marker -PathType Leaf) -or
 $attachmentProbeMarker = Join-Path `
     $profile `
     ".openbubbles-cloud-sync-v2-attachment-probe-copy"
-if ($AttachmentProbe -and
+if (($AttachmentProbe -or $AttachmentProbeReuse) -and
     (-not (Test-Path -LiteralPath $attachmentProbeMarker -PathType Leaf) -or
         (Get-Content -LiteralPath $attachmentProbeMarker -Raw) -ne
             "openbubbles-cloud-sync-v2-attachment-probe-copy:v1")) {
@@ -808,6 +818,9 @@ try {
     elseif ($AttachmentProbe) {
         $harnessArguments = @("probe-attachment") + $harnessArguments
     }
+    elseif ($AttachmentProbeReuse) {
+        $harnessArguments = @("probe-attachment-reuse") + $harnessArguments
+    }
     elseif ($ProjectionViewer) {
         $harnessArguments = @("view-projection") + $harnessArguments
     }
@@ -840,11 +853,11 @@ try {
         throw "The Windows Cloud Sync V2 harness exited during startup."
     }
     Write-Host "Cloud Sync V2 Windows harness started (PID $($process.Id))."
-    if ($RunOnce -or $Drain -or $AttachmentProbe) {
+    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse) {
         $operationTimeoutSeconds = if ($Drain) {
             $DrainTimeoutSeconds
         }
-        elseif ($AttachmentProbe) {
+        elseif ($AttachmentProbe -or $AttachmentProbeReuse) {
             $AttachmentProbeTimeoutSeconds
         }
         else {
@@ -861,6 +874,8 @@ try {
                 'drain'
             } elseif ($AttachmentProbe) {
                 'attachment-probe'
+            } elseif ($AttachmentProbeReuse) {
+                'attachment-reuse-probe'
             } else {
                 'run-once'
             }) `

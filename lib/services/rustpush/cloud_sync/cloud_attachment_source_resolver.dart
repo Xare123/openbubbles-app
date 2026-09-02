@@ -24,10 +24,17 @@ enum CloudAttachmentSourceResolutionCode {
   invalidSource,
 }
 
+/// Content-free location of a source-resolution failure.
+///
+/// This narrows diagnostics without exposing a record identifier, attachment
+/// name, path, payload, account, or protected reference.
+enum CloudAttachmentSourceResolutionStage { recordMap, inbox, replay }
+
 final class CloudAttachmentSourceResolutionFailure implements Exception {
-  const CloudAttachmentSourceResolutionFailure(this.code);
+  const CloudAttachmentSourceResolutionFailure(this.code, {this.stage});
 
   final CloudAttachmentSourceResolutionCode code;
+  final CloudAttachmentSourceResolutionStage? stage;
 
   @override
   String toString() => 'CloudAttachmentSourceResolutionFailure(${code.name})';
@@ -192,6 +199,7 @@ final class CloudAttachmentSourceResolver {
         }
         throw const CloudAttachmentSourceResolutionFailure(
           CloudAttachmentSourceResolutionCode.missingSource,
+          stage: CloudAttachmentSourceResolutionStage.recordMap,
         );
       }
       if (recordMaps.length > 1) {
@@ -255,6 +263,7 @@ final class CloudAttachmentSourceResolver {
         }
         throw const CloudAttachmentSourceResolutionFailure(
           CloudAttachmentSourceResolutionCode.missingSource,
+          stage: CloudAttachmentSourceResolutionStage.inbox,
         );
       }
       if (inboxCandidates.length > 1) {
@@ -264,13 +273,15 @@ final class CloudAttachmentSourceResolver {
       }
 
       final inbox = inboxCandidates.single;
+      final replayChangeIdHash = _replayChangeIdHash(inbox.changeIdHash);
       final replayCandidates = _findCurrentReplayCandidates(
         scopeGenerationKey: scopeGenerationKey,
-        changeIdHash: inbox.changeIdHash,
+        replayChangeIdHash: replayChangeIdHash,
       );
       if (replayCandidates.isEmpty) {
         throw const CloudAttachmentSourceResolutionFailure(
           CloudAttachmentSourceResolutionCode.missingSource,
+          stage: CloudAttachmentSourceResolutionStage.replay,
         );
       }
       if (replayCandidates.length > 1) {
@@ -285,6 +296,7 @@ final class CloudAttachmentSourceResolver {
         generation: generation,
         scopeKey: scopeKey,
         scopeGenerationKey: scopeGenerationKey,
+        expectedChangeIdHash: replayChangeIdHash,
         logicalEntityKeyHash: logicalEntityKeyHash,
         expectedRecordIdHash: recordMap.serverRecordIdHash,
         expectedInboxSequence: inbox.fetchSequence,
@@ -398,7 +410,7 @@ final class CloudAttachmentSourceResolver {
 
   List<CloudSemanticReplayEntity> _findCurrentReplayCandidates({
     required String scopeGenerationKey,
-    required String changeIdHash,
+    required String replayChangeIdHash,
   }) {
     final query =
         _replay
@@ -407,7 +419,7 @@ final class CloudAttachmentSourceResolver {
                   .equals(scopeGenerationKey)
                   .and(
                     CloudSemanticReplayEntity_.changeIdHash.equals(
-                      changeIdHash,
+                      replayChangeIdHash,
                     ),
                   ),
             )
@@ -562,6 +574,7 @@ final class CloudAttachmentSourceResolver {
     required int generation,
     required String scopeKey,
     required String scopeGenerationKey,
+    required String expectedChangeIdHash,
     required String logicalEntityKeyHash,
     required String expectedRecordIdHash,
     required int expectedInboxSequence,
@@ -569,7 +582,7 @@ final class CloudAttachmentSourceResolver {
     required String? expectedProtectedPayloadReferenceHash,
   }) {
     final expectedReplayKey =
-        'semantic-replay4:$scopeGenerationKey:${_digest(replay.changeIdHash)}';
+        'semantic-replay4:$scopeGenerationKey:$expectedChangeIdHash';
     final outcomeIsApplied =
         replay.terminalOutcome == 'applied' ||
         replay.terminalOutcome == 'appliedWithConflict';
@@ -586,13 +599,14 @@ final class CloudAttachmentSourceResolver {
         replay.streamKind == scope.streamKind.name &&
         replay.schemaVersion == scope.schemaVersion &&
         replay.generation == generation &&
+        replay.changeIdHash == expectedChangeIdHash &&
         replay.logicalEntityKeyHash == logicalEntityKeyHash &&
         replay.changeType == CloudChangeType.save.name &&
         outcomeIsApplied &&
         conflictCodeValid &&
         replay.serverRecordIdHash == expectedRecordIdHash &&
         _externalDigest.hasMatch(replay.serverRecordIdHash) &&
-        _externalDigest.hasMatch(replay.changeIdHash) &&
+        _isLowerHexDigest(replay.changeIdHash) &&
         replay.inboxSequence == expectedInboxSequence &&
         replay.inboxSequence > 0 &&
         replay.payloadSha256 != null &&
@@ -739,7 +753,7 @@ final class CloudAttachmentSourceResolver {
     }
     if (inbox.encryptedPayloadRef != recordMap.encryptedRawRecordRef ||
         inbox.encryptedServerRecordId != recordMap.encryptedServerRecordId ||
-        inbox.changeIdHash != replay.changeIdHash ||
+        _replayChangeIdHash(inbox.changeIdHash) != replay.changeIdHash ||
         inbox.payloadSha256 != replay.payloadSha256 ||
         inbox.fetchSequence != replay.inboxSequence ||
         replay.protectedPayloadReferenceHash !=
@@ -795,6 +809,12 @@ final class CloudAttachmentSourceResolver {
 
   static bool _isLowerHexDigest(String value) =>
       RegExp(r'^[0-9a-f]{64}$').hasMatch(value);
+
+  // Inbox rows retain the native account-keyed change identifier. Semantic
+  // replay rows deliberately store its SHA-256 digest, matching
+  // _SemanticTransactionContext.prepare in the ObjectBox semantic gateway.
+  static String _replayChangeIdHash(String inboxChangeIdHash) =>
+      _digest(inboxChangeIdHash);
 
   static String _digest(String value) =>
       sha256.convert(utf8.encode(value)).toString();

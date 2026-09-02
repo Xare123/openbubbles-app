@@ -888,10 +888,11 @@ final class CloudSyncManualSemanticPullSampler {
     required Duration leaseDuration,
   }) async {
     final repairsLegacyOwnership = inboxApplier is CloudLegacyOwnershipRepairer;
-    final repairsChatProjection =
-        scope.zone == 'chatManateeZone' &&
+    final repairsAppliedProjection =
+        (scope.zone == 'chatManateeZone' ||
+            scope.zone == 'attachmentManateeZone') &&
         inboxApplier is CloudAppliedProjectionRepairer;
-    if (!repairsLegacyOwnership && !repairsChatProjection) {
+    if (!repairsLegacyOwnership && !repairsAppliedProjection) {
       return;
     }
     final leaseFence = await store.tryAcquireCoordinatorLease(
@@ -913,7 +914,7 @@ final class CloudSyncManualSemanticPullSampler {
           limit: maximumLegacyOwnershipRepairCandidates,
         );
       }
-      if (repairsChatProjection) {
+      if (repairsAppliedProjection) {
         final projectionRepairer =
             inboxApplier as CloudAppliedProjectionRepairer;
         await projectionRepairer.repairAppliedProjections(

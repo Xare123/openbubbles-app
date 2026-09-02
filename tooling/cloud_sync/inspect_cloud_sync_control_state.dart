@@ -5,6 +5,8 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/helpers/types/constants.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_materialization.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_source_resolver.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 
 const _pageSize = 256;
@@ -336,6 +338,7 @@ Map<String, int> _inspectPresentationFidelity(Store store) {
   var v2UnknownCapabilityRows = 0;
   var legacyCloudAttachmentRows = 0;
   var idsAttachmentRows = 0;
+  final currentV2Attachments = <Attachment>[];
   _scanPaged((store.box<Attachment>().query()..order(Attachment_.id)).build(), (
     attachment,
   ) {
@@ -354,6 +357,7 @@ Map<String, int> _inspectPresentationFidelity(Store store) {
           v2LegacyProvenanceRows += 1;
         case cloudAttachmentV2MetadataVersion:
           v2CurrentProvenanceRows += 1;
+          currentV2Attachments.add(attachment);
       }
       switch (cloudAttachmentBodyCapabilityFor(metadata)) {
         case CloudAttachmentBodyCapability.materializable:
@@ -370,6 +374,66 @@ Map<String, int> _inspectPresentationFidelity(Store store) {
       idsAttachmentRows += 1;
     }
   });
+
+  final attachmentCheckpoints = store
+      .box<CloudSyncCheckpointEntity>()
+      .getAll()
+      .where(
+        (checkpoint) =>
+            checkpoint.container == 'com.apple.messages.cloud' &&
+            checkpoint.database == 'private' &&
+            checkpoint.zone == 'attachmentManateeZone' &&
+            checkpoint.streamKind == CloudSyncStreamKind.messages.name &&
+            checkpoint.schemaVersion == cloudSyncSchemaVersion &&
+            checkpoint.persistenceLane ==
+                CloudSyncPersistenceLane.semanticV2.name &&
+            checkpoint.generation > 0,
+      )
+      .toList(growable: false);
+  var v2ResolvableSourceRows = 0;
+  final v2SourceResolutionFailures =
+      <CloudAttachmentSourceResolutionCode, int>{};
+  final v2SourceResolutionStages =
+      <CloudAttachmentSourceResolutionStage, int>{};
+  if (attachmentCheckpoints.length == 1) {
+    final checkpoint = attachmentCheckpoints.single;
+    final scope = CloudSyncScope(
+      accountFingerprint: checkpoint.accountFingerprint,
+      container: checkpoint.container,
+      database: checkpoint.database,
+      zone: checkpoint.zone,
+      streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: checkpoint.schemaVersion,
+      persistenceLane: CloudSyncPersistenceLane.semanticV2,
+    );
+    final resolver = CloudAttachmentSourceResolver(store: store);
+    for (final attachment in currentV2Attachments) {
+      final guid = attachment.guid;
+      if (guid == null || guid.isEmpty) continue;
+      try {
+        resolver.resolve(
+          scope: scope,
+          generation: checkpoint.generation,
+          canonicalGuid: guid,
+        );
+        v2ResolvableSourceRows += 1;
+      } on CloudAttachmentSourceResolutionFailure catch (failure) {
+        v2SourceResolutionFailures.update(
+          failure.code,
+          (count) => count + 1,
+          ifAbsent: () => 1,
+        );
+        final stage = failure.stage;
+        if (stage != null) {
+          v2SourceResolutionStages.update(
+            stage,
+            (count) => count + 1,
+            ifAbsent: () => 1,
+          );
+        }
+      }
+    }
+  }
 
   final materializationStages = <CloudAttachmentMaterializationStage, int>{};
   var invalidMaterializationStages = 0;
@@ -434,6 +498,12 @@ Map<String, int> _inspectPresentationFidelity(Store store) {
     'v2MaterializableRows': v2MaterializableRows,
     'v2MetadataOnlyRows': v2MetadataOnlyRows,
     'v2UnknownCapabilityRows': v2UnknownCapabilityRows,
+    'v2AttachmentSourceCheckpointRows': attachmentCheckpoints.length,
+    'v2ResolvableSourceRows': v2ResolvableSourceRows,
+    for (final entry in v2SourceResolutionFailures.entries)
+      'v2SourceResolutionFailure_${entry.key.name}': entry.value,
+    for (final entry in v2SourceResolutionStages.entries)
+      'v2SourceResolutionStage_${entry.key.name}': entry.value,
     'legacyCloudAttachmentRows': legacyCloudAttachmentRows,
     'idsAttachmentRows': idsAttachmentRows,
     'materializationMetadataReadyRows':
@@ -516,10 +586,27 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
   var messagesWithText = 0;
   var messagesWithSubject = 0;
   var messagesWithAttributedBody = 0;
+  var messagesWithAttributedText = 0;
   var messagesWithAttachments = 0;
   var associatedMessages = 0;
   var eventMessages = 0;
   var messagesWithoutRenderableContent = 0;
+  var visibleMessagesWithoutRenderableContent = 0;
+  var deletedMessagesWithoutRenderableContent = 0;
+  var unrenderableMessagesWithPayloadData = 0;
+  var unrenderableMessagesWithBalloonBundleId = 0;
+  var unrenderableMessagesWithCloudRecordId = 0;
+  var unrenderableMessagesWithoutChat = 0;
+  var projectedBodiesUsingText = 0;
+  var projectedBodiesUsingAttributedText = 0;
+  var projectedBodiesUsingSubject = 0;
+  var projectedBodiesWithUnicodeReplacementCharacter = 0;
+  var projectedBodiesWithUnexpectedControlCharacter = 0;
+  var projectedBodiesWithUnpairedUtf16Surrogate = 0;
+  var projectedBodiesWithLikelyMojibake = 0;
+  var projectedBodiesWithHtmlDocumentText = 0;
+  var projectedBodiesWithoutVisibleGlyphCandidate = 0;
+  var messagesWithoutTextWithAttachments = 0;
   _scanPaged((store.box<Message>().query()..order(Message_.id)).build(), (
     message,
   ) {
@@ -541,9 +628,18 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
         latestVisibleMessageDateByChatId[chatId] = createdAt;
       }
     }
-    final hasText = message.text?.trim().isNotEmpty ?? false;
-    final hasSubject = message.subject?.trim().isNotEmpty ?? false;
+    final text = _normalizedProjectionCandidate(message.text);
+    final attributedText = _normalizedProjectionCandidate(
+      message.attributedBody
+          .map((part) => part.string.trim())
+          .where((part) => part.isNotEmpty)
+          .join(' '),
+    );
+    final subject = _normalizedProjectionCandidate(message.subject);
+    final hasText = text != null;
+    final hasSubject = subject != null;
     final hasAttributedBody = message.attributedBody.isNotEmpty;
+    final hasAttributedText = attributedText != null;
     final hasAttachments =
         message.hasAttachments || message.dbAttachments.isNotEmpty;
     final isAssociated = message.associatedMessageGuid?.isNotEmpty ?? false;
@@ -551,16 +647,63 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
     if (hasText) messagesWithText += 1;
     if (hasSubject) messagesWithSubject += 1;
     if (hasAttributedBody) messagesWithAttributedBody += 1;
+    if (hasAttributedText) messagesWithAttributedText += 1;
     if (hasAttachments) messagesWithAttachments += 1;
     if (isAssociated) associatedMessages += 1;
     if (isEvent) eventMessages += 1;
+    final projectedBody = text ?? attributedText ?? subject;
+    if (projectedBody != null) {
+      if (text != null) {
+        projectedBodiesUsingText += 1;
+      } else if (attributedText != null) {
+        projectedBodiesUsingAttributedText += 1;
+      } else {
+        projectedBodiesUsingSubject += 1;
+      }
+      if (projectedBody.contains('\u{fffd}')) {
+        projectedBodiesWithUnicodeReplacementCharacter += 1;
+      }
+      if (_hasUnexpectedControlCharacter(projectedBody)) {
+        projectedBodiesWithUnexpectedControlCharacter += 1;
+      }
+      if (_hasUnpairedUtf16Surrogate(projectedBody)) {
+        projectedBodiesWithUnpairedUtf16Surrogate += 1;
+      }
+      if (_hasLikelyMojibake(projectedBody)) {
+        projectedBodiesWithLikelyMojibake += 1;
+      }
+      if (_looksLikeHtmlDocument(projectedBody)) {
+        projectedBodiesWithHtmlDocumentText += 1;
+      }
+      if (!_hasVisibleGlyphCandidate(projectedBody)) {
+        projectedBodiesWithoutVisibleGlyphCandidate += 1;
+      }
+    }
+    if (!hasText && hasAttachments) messagesWithoutTextWithAttachments += 1;
     if (!hasText &&
         !hasSubject &&
-        !hasAttributedBody &&
+        !hasAttributedText &&
         !hasAttachments &&
         !isAssociated &&
         !isEvent) {
       messagesWithoutRenderableContent += 1;
+      if (message.dateDeleted == null) {
+        visibleMessagesWithoutRenderableContent += 1;
+      } else {
+        deletedMessagesWithoutRenderableContent += 1;
+      }
+      if (message.payloadData != null || message.hasApplePayloadData) {
+        unrenderableMessagesWithPayloadData += 1;
+      }
+      if (message.balloonBundleId?.trim().isNotEmpty ?? false) {
+        unrenderableMessagesWithBalloonBundleId += 1;
+      }
+      if (message.ckRecordId?.trim().isNotEmpty ?? false) {
+        unrenderableMessagesWithCloudRecordId += 1;
+      }
+      if (chat == null || chatId == 0) {
+        unrenderableMessagesWithoutChat += 1;
+      }
     }
   });
   _scanPaged((store.box<Attachment>().query()..order(Attachment_.id)).build(), (
@@ -706,10 +849,35 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
     'messagesWithText': messagesWithText,
     'messagesWithSubject': messagesWithSubject,
     'messagesWithAttributedBody': messagesWithAttributedBody,
+    'messagesWithAttributedText': messagesWithAttributedText,
     'messagesWithAttachments': messagesWithAttachments,
     'associatedMessages': associatedMessages,
     'eventMessages': eventMessages,
     'messagesWithoutRenderableContent': messagesWithoutRenderableContent,
+    'visibleMessagesWithoutRenderableContent':
+        visibleMessagesWithoutRenderableContent,
+    'deletedMessagesWithoutRenderableContent':
+        deletedMessagesWithoutRenderableContent,
+    'unrenderableMessagesWithPayloadData': unrenderableMessagesWithPayloadData,
+    'unrenderableMessagesWithBalloonBundleId':
+        unrenderableMessagesWithBalloonBundleId,
+    'unrenderableMessagesWithCloudRecordId':
+        unrenderableMessagesWithCloudRecordId,
+    'unrenderableMessagesWithoutChat': unrenderableMessagesWithoutChat,
+    'projectedBodiesUsingText': projectedBodiesUsingText,
+    'projectedBodiesUsingAttributedText': projectedBodiesUsingAttributedText,
+    'projectedBodiesUsingSubject': projectedBodiesUsingSubject,
+    'projectedBodiesWithUnicodeReplacementCharacter':
+        projectedBodiesWithUnicodeReplacementCharacter,
+    'projectedBodiesWithUnexpectedControlCharacter':
+        projectedBodiesWithUnexpectedControlCharacter,
+    'projectedBodiesWithUnpairedUtf16Surrogate':
+        projectedBodiesWithUnpairedUtf16Surrogate,
+    'projectedBodiesWithLikelyMojibake': projectedBodiesWithLikelyMojibake,
+    'projectedBodiesWithHtmlDocumentText': projectedBodiesWithHtmlDocumentText,
+    'projectedBodiesWithoutVisibleGlyphCandidate':
+        projectedBodiesWithoutVisibleGlyphCandidate,
+    'messagesWithoutTextWithAttachments': messagesWithoutTextWithAttachments,
     'smsServiceRows': smsServiceRows,
     'iMessageServiceRows': iMessageServiceRows,
     'ckRecordIdRows': ckRecordIdRows,
@@ -727,6 +895,78 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
     'iMessageChatsWithNullOrStaleLatestMessageDate':
         iMessageChatsWithNullOrStaleLatestMessageDate,
   };
+}
+
+String? _normalizedProjectionCandidate(String? value) {
+  final normalized = value?.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return normalized == null || normalized.isEmpty ? null : normalized;
+}
+
+bool _hasUnexpectedControlCharacter(String value) {
+  for (final codeUnit in value.codeUnits) {
+    if (codeUnit == 0x09 || codeUnit == 0x0a || codeUnit == 0x0d) continue;
+    if (codeUnit < 0x20 || (codeUnit >= 0x7f && codeUnit <= 0x9f)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool _hasUnpairedUtf16Surrogate(String value) {
+  final codeUnits = value.codeUnits;
+  for (var index = 0; index < codeUnits.length; index += 1) {
+    final codeUnit = codeUnits[index];
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      if (index + 1 >= codeUnits.length ||
+          codeUnits[index + 1] < 0xdc00 ||
+          codeUnits[index + 1] > 0xdfff) {
+        return true;
+      }
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool _hasLikelyMojibake(String value) {
+  final codeUnits = value.codeUnits;
+  for (var index = 0; index + 1 < codeUnits.length; index += 1) {
+    final first = codeUnits[index];
+    final second = codeUnits[index + 1];
+    if ((first == 0x00c2 || first == 0x00c3) &&
+        second >= 0x0080 &&
+        second <= 0x00bf) {
+      return true;
+    }
+    if (first == 0x00e2 && second == 0x20ac) return true;
+    if (first == 0x00f0 && second == 0x0178) return true;
+  }
+  return false;
+}
+
+bool _looksLikeHtmlDocument(String value) {
+  final normalized = value.trimLeft().toLowerCase();
+  return normalized.startsWith('<!doctype html') ||
+      normalized.startsWith('<html');
+}
+
+bool _hasVisibleGlyphCandidate(String value) {
+  for (final rune in value.runes) {
+    if (rune <= 0x20 || (rune >= 0x7f && rune <= 0xa0)) continue;
+    if (rune == 0x200b ||
+        rune == 0x200c ||
+        rune == 0x200d ||
+        rune == 0x2060 ||
+        rune == 0xfeff ||
+        (rune >= 0xfe00 && rune <= 0xfe0f) ||
+        (rune >= 0xe0100 && rune <= 0xe01ef)) {
+      continue;
+    }
+    return true;
+  }
+  return false;
 }
 
 void _scanPaged<T>(Query<T> query, void Function(T row) visit) {

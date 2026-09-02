@@ -453,6 +453,31 @@ try {
         -Condition $attachmentProcess.HasExited `
         -Message 'The verified attachment probe harness was not closed.'
 
+    $attachmentReuseProcess = Start-TestHarnessProcess -Executable $testExecutable
+    $children.Add($attachmentReuseProcess)
+    $attachmentReusePath = Join-Path `
+        $testDirectory `
+        'attachment-reuse-probe-finished-status.json'
+    Write-TestHarnessStatus `
+        -Path $attachmentReusePath `
+        -LaunchId $firstLaunchId `
+        -ProcessId $attachmentReuseProcess.Id `
+        -State finished `
+        -Stage attachment-reuse-probe-complete
+    Wait-HarnessOperation `
+        -Process $attachmentReuseProcess `
+        -ExpectedExecutable $testExecutable `
+        -StatusPath $attachmentReusePath `
+        -LaunchStartedUtc ([datetime]::UtcNow.AddSeconds(-1)) `
+        -BaselineWriteUtc ([datetime]::MinValue) `
+        -ExpectedLaunchId $firstLaunchId `
+        -ExpectedOperation attachment-reuse-probe `
+        -TimeoutSeconds 5
+    $attachmentReuseProcess.Refresh()
+    Assert-True `
+        -Condition $attachmentReuseProcess.HasExited `
+        -Message 'The verified attachment reuse probe harness was not closed.'
+
     Write-Host 'Cloud Sync V2 Windows launcher behavioral tests passed.'
 }
 finally {

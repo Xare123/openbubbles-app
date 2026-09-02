@@ -99,6 +99,7 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'projection_repair_candidate_invalid',
     'projection_repair_decode_retryable',
     'projection_repair_decoded_shape_invalid',
+    'projection_repaired_attachment_capability',
     'projection_repaired_chat_alias',
     'retained_backlog_blocking_saves',
     'retained_backlog_out_of_scope_services',

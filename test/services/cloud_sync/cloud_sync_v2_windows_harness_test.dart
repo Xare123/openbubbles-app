@@ -10,7 +10,7 @@ void main() {
   const launchId = '0123456789abcdef0123456789abcdef';
 
   test(
-    'parses interactive, run-once, drain, attachment, and viewers',
+    'parses interactive, run-once, drain, attachment probes, and viewers',
     () {
       expect(
         CloudSyncV2WindowsHarnessLaunch.parse(const [
@@ -41,6 +41,13 @@ void main() {
       );
       expect(
         CloudSyncV2WindowsHarnessLaunch.parse(const [
+          'probe-attachment-reuse',
+          '--launch-id=$launchId',
+        ]).operation,
+        CloudSyncV2WindowsHarnessOperation.attachmentReuseProbe,
+      );
+      expect(
+        CloudSyncV2WindowsHarnessLaunch.parse(const [
           'view-projection',
           '--launch-id=$launchId',
         ]).operation,
@@ -64,6 +71,11 @@ void main() {
       const ['--launch-id=$launchId', '--launch-id=$launchId'],
       const ['run-once', 'drain', '--launch-id=$launchId'],
       const ['probe-attachment', 'drain', '--launch-id=$launchId'],
+      const [
+        'probe-attachment-reuse',
+        'probe-attachment',
+        '--launch-id=$launchId',
+      ],
       const ['view-projection', 'run-once', '--launch-id=$launchId'],
       const [
         'view-projection-detail',
@@ -310,6 +322,45 @@ void main() {
     );
   });
 
+  test('attachment reuse probe selects only an existing V2 body', () {
+    final currentV2 = <String, dynamic>{
+      cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion,
+      cloudAttachmentV2BodyCapabilityKey:
+          CloudAttachmentBodyCapability.materializable.metadataValue,
+    };
+    final candidates = <Attachment>[
+      Attachment(
+        id: 1,
+        guid: 'missing',
+        transferName: 'missing.bin',
+        totalBytes: 1024,
+        metadata: currentV2,
+      ),
+      Attachment(
+        id: 2,
+        guid: 'existing-larger',
+        transferName: 'larger.bin',
+        totalBytes: 2048,
+        metadata: currentV2,
+      ),
+      Attachment(
+        id: 3,
+        guid: 'existing-smallest',
+        transferName: 'smallest.bin',
+        totalBytes: 512,
+        metadata: currentV2,
+      ),
+    ];
+
+    final selected = cloudSyncV2WindowsSelectAttachmentProbeCandidate(
+      candidates,
+      existsOnDisk: (attachment) => attachment.guid!.startsWith('existing-'),
+      requireMaterialized: true,
+    );
+
+    expect(selected?.guid, 'existing-smallest');
+  });
+
   test('attachment probe accepts only the exact disposable marker', () async {
     final directory = await Directory.systemTemp.createTemp(
       'openbubbles-attachment-probe-marker-',
@@ -322,12 +373,16 @@ void main() {
       '$cloudSyncV2WindowsAttachmentProbeMarkerFileName',
     );
 
-    expect(cloudSyncV2WindowsAttachmentProbeProfileIsMarked(directory), isFalse);
-    await marker.writeAsString('wrong');
-    expect(cloudSyncV2WindowsAttachmentProbeProfileIsMarked(directory), isFalse);
-    await marker.writeAsString(
-      cloudSyncV2WindowsAttachmentProbeMarkerContents,
+    expect(
+      cloudSyncV2WindowsAttachmentProbeProfileIsMarked(directory),
+      isFalse,
     );
+    await marker.writeAsString('wrong');
+    expect(
+      cloudSyncV2WindowsAttachmentProbeProfileIsMarked(directory),
+      isFalse,
+    );
+    await marker.writeAsString(cloudSyncV2WindowsAttachmentProbeMarkerContents);
     expect(cloudSyncV2WindowsAttachmentProbeProfileIsMarked(directory), isTrue);
   });
 

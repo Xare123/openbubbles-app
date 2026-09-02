@@ -1413,13 +1413,21 @@ class TransactionalCloudInboxApplier
 
       final snapshot = decoded.snapshot;
       final payload = decoded.payload;
+      final repairsChat =
+          payload is CloudChatEntityPayload &&
+          snapshot?.kind == CloudEntityKind.chat &&
+          scope.zone == 'chatManateeZone';
+      final repairsAttachment =
+          payload is CloudAttachmentEntityPayload &&
+          snapshot?.kind == CloudEntityKind.attachment &&
+          scope.zone == 'attachmentManateeZone';
       if (decoded.scope != entry.scope ||
           decoded.generation != entry.generation ||
           decoded.changeId != entry.change.changeId ||
           decoded.kind != CloudDecodedMutationKind.upsert ||
           snapshot == null ||
-          payload is! CloudChatEntityPayload ||
-          snapshot.kind != CloudEntityKind.chat ||
+          payload == null ||
+          (!repairsChat && !repairsAttachment) ||
           snapshot.logicalEntityKeyHash != payload.logicalEntityKeyHash) {
         _recordDiagnostic('projection_repair_decoded_shape_invalid');
         await Future<void>.delayed(Duration.zero);
@@ -1443,7 +1451,11 @@ class TransactionalCloudInboxApplier
           snapshot: snapshot,
         );
         repaired++;
-        _recordDiagnostic('projection_repaired_chat_alias');
+        _recordDiagnostic(
+          repairsAttachment
+              ? 'projection_repaired_attachment_capability'
+              : 'projection_repaired_chat_alias',
+        );
       } finally {
         identityLease?.release();
       }

@@ -25,6 +25,7 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/src/rust/lib.dart' as rustlib;
 import 'package:bluebubbles/utils/logger/logger.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 
@@ -41,7 +42,9 @@ Future<void> main(List<String> arguments) async {
   final operation = launch.operation;
 
   fs.configureCloudSyncV2WindowsDevProfile();
-  if (operation == CloudSyncV2WindowsHarnessOperation.attachmentProbe &&
+  if ((operation == CloudSyncV2WindowsHarnessOperation.attachmentProbe ||
+          operation ==
+              CloudSyncV2WindowsHarnessOperation.attachmentReuseProbe) &&
       !cloudSyncV2WindowsAttachmentProbeProfileIsMarked(fs.appDocDir)) {
     throw StateError('cloud_attachment_probe_disposable_profile_required');
   }
@@ -89,6 +92,7 @@ enum CloudSyncV2WindowsHarnessOperation {
   runOnce,
   drain,
   attachmentProbe,
+  attachmentReuseProbe,
   projectionViewer,
   projectionDetailViewer;
 
@@ -179,6 +183,9 @@ const String cloudSyncV2WindowsAttachmentProbeMarkerContents =
     'openbubbles-cloud-sync-v2-attachment-probe-copy:v1';
 const int cloudSyncV2WindowsAttachmentProbeMaximumBytes = 8 * 1024 * 1024;
 
+Future<String> _cloudSyncV2WindowsFileSha256(File file) async =>
+    (await sha256.bind(file.openRead()).first).toString();
+
 bool cloudSyncV2WindowsAttachmentProbeProfileIsMarked(Directory directory) {
   try {
     final marker = File(
@@ -200,6 +207,7 @@ Attachment? cloudSyncV2WindowsSelectAttachmentProbeCandidate(
   Iterable<Attachment> attachments, {
   int maximumExpectedBytes = cloudSyncV2WindowsAttachmentProbeMaximumBytes,
   bool Function(Attachment attachment)? existsOnDisk,
+  bool requireMaterialized = false,
 }) {
   if (maximumExpectedBytes <= 0 ||
       maximumExpectedBytes >
@@ -227,7 +235,7 @@ Attachment? cloudSyncV2WindowsSelectAttachmentProbeCandidate(
       continue;
     }
     try {
-      if (isMaterialized(attachment)) continue;
+      if (isMaterialized(attachment) != requireMaterialized) continue;
     } catch (_) {
       continue;
     }
@@ -412,6 +420,12 @@ final class CloudSyncV2WindowsHarnessLaunch {
           }
           operation = CloudSyncV2WindowsHarnessOperation.attachmentProbe;
           operationSeen = true;
+        case 'probe-attachment-reuse':
+          if (operationSeen) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          operation = CloudSyncV2WindowsHarnessOperation.attachmentReuseProbe;
+          operationSeen = true;
         case 'view-projection':
           if (operationSeen) {
             throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
@@ -480,6 +494,7 @@ enum _CloudSyncV2WindowsHarnessResumeOperation {
   semanticPull,
   semanticDrain,
   attachmentProbe,
+  attachmentReuseProbe,
 }
 
 Future<void> _harnessStatusWriteTail = Future<void>.value();
@@ -930,6 +945,8 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         await _runSemanticDrain();
       case CloudSyncV2WindowsHarnessOperation.attachmentProbe:
         await _runAttachmentProbe();
+      case CloudSyncV2WindowsHarnessOperation.attachmentReuseProbe:
+        await _runAttachmentProbe(requireAlreadyReferenced: true);
       case CloudSyncV2WindowsHarnessOperation.projectionViewer:
         return;
       case CloudSyncV2WindowsHarnessOperation.projectionDetailViewer:
@@ -1085,6 +1102,8 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         await _runSemanticDrain();
       case _CloudSyncV2WindowsHarnessResumeOperation.attachmentProbe:
         await _runAttachmentProbe();
+      case _CloudSyncV2WindowsHarnessResumeOperation.attachmentReuseProbe:
+        await _runAttachmentProbe(requireAlreadyReferenced: true);
       case null:
         await _runRequestedLaunchOperation();
     }
@@ -1200,27 +1219,51 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
     }
   }
 
-  Future<void> _runAttachmentProbe() async {
+  Future<void> _runAttachmentProbe({
+    bool requireAlreadyReferenced = false,
+  }) async {
     if (_activeClient == null || _busy) return;
-    _resumeAfterTwoFactor =
-        _CloudSyncV2WindowsHarnessResumeOperation.attachmentProbe;
+    _resumeAfterTwoFactor = requireAlreadyReferenced
+        ? _CloudSyncV2WindowsHarnessResumeOperation.attachmentReuseProbe
+        : _CloudSyncV2WindowsHarnessResumeOperation.attachmentProbe;
     setState(() {
       _busy = true;
-      _status =
-          'Verifying one bounded attachment body in the disposable copy...';
+      _status = requireAlreadyReferenced
+          ? 'Verifying that one local attachment is reused unchanged...'
+          : 'Verifying one bounded attachment body in the disposable copy...';
     });
-    await _setRuntimeStage('attachment-probe', state: 'running');
+    final runningStage = requireAlreadyReferenced
+        ? 'attachment-reuse-probe'
+        : 'attachment-probe';
+    final finishedStage = requireAlreadyReferenced
+        ? 'attachment-reuse-probe-complete'
+        : 'attachment-probe-complete';
+    await _setRuntimeStage(runningStage, state: 'running');
     try {
       if (!cloudSyncV2WindowsAttachmentProbeProfileIsMarked(fs.appDocDir)) {
         throw StateError('cloud_attachment_probe_disposable_profile_required');
       }
       final candidate = cloudSyncV2WindowsSelectAttachmentProbeCandidate(
         Database.attachments.getAll(),
+        requireMaterialized: requireAlreadyReferenced,
       );
       if (candidate == null) {
         throw StateError('cloud_attachment_probe_candidate_unavailable');
       }
       final expectedBytes = candidate.totalBytes!;
+      final finalFile = File(candidate.path);
+      FileStat? priorStat;
+      String? priorDigest;
+      if (requireAlreadyReferenced) {
+        if (!await finalFile.exists()) {
+          throw StateError('cloud_attachment_final_file_missing');
+        }
+        priorStat = await finalFile.stat();
+        if (priorStat.size != expectedBytes) {
+          throw StateError('cloud_attachment_size_mismatch');
+        }
+        priorDigest = await _cloudSyncV2WindowsFileSha256(finalFile);
+      }
       final adapter = CloudAttachmentProductionAdapter.fromDatabase(
         readActiveClient: () => _activeClient,
         privateStorageDirectory: fs.appDocDir.path,
@@ -1234,7 +1277,9 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           result.body.verifiedBytes != expectedBytes) {
         throw StateError('cloud_attachment_probe_source_unavailable');
       }
-      final finalFile = File(candidate.path);
+      if (result.body.alreadyReferenced != requireAlreadyReferenced) {
+        throw StateError('cloud_attachment_probe_reference_state_mismatch');
+      }
       if (!await finalFile.exists()) {
         throw StateError('cloud_attachment_final_file_missing');
       }
@@ -1242,17 +1287,30 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       if (placedBytes != expectedBytes) {
         throw StateError('cloud_attachment_size_mismatch');
       }
+      if (requireAlreadyReferenced) {
+        final afterStat = await finalFile.stat();
+        final afterDigest = await _cloudSyncV2WindowsFileSha256(finalFile);
+        if (priorStat == null ||
+            priorDigest == null ||
+            afterStat.modified.toUtc() != priorStat.modified.toUtc() ||
+            afterDigest != priorDigest) {
+          throw StateError('cloud_attachment_probe_reuse_modified_file');
+        }
+      }
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _status = 'Attachment body verified locally ($placedBytes bytes).';
+        _status = requireAlreadyReferenced
+            ? 'Attachment was reused unchanged ($placedBytes bytes).'
+            : 'Attachment body verified locally ($placedBytes bytes).';
       });
       await _setRuntimeStage(
-        'attachment-probe-complete',
+        finishedStage,
         state: 'finished',
         detail:
             'verified_bytes=$placedBytes '
-            'already_referenced=${result.body.alreadyReferenced}',
+            'already_referenced=${result.body.alreadyReferenced} '
+            'content_unchanged=$requireAlreadyReferenced',
       );
       _resumeAfterTwoFactor = null;
     } catch (error) {

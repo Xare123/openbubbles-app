@@ -42,6 +42,7 @@ void main() {
       'canonical_preexisting_ownership_bootstrap',
       'decoder_malformed_record',
       'native_quarantined_malformed_record',
+      'projection_repaired_attachment_capability',
       'retained_backlog_failure_dependency',
       'retained_projection_window_has_more',
     ]) {
@@ -57,6 +58,7 @@ void main() {
       'canonical_preexisting_ownership_bootstrap',
       'decoder_malformed_record',
       'native_quarantined_malformed_record',
+      'projection_repaired_attachment_capability',
       'retained_backlog_failure_dependency',
       'retained_projection_window_has_more',
     ]);
