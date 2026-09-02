@@ -2450,7 +2450,7 @@ void main() {
         category: CloudFailureCategory.dependency,
         now: currentTime,
         maximumDeferredAttempts: 1,
-        maximumDeferredAge: const Duration(days: 1),
+        maximumDeferredAge: const Duration(minutes: 5),
         leaseFence: fence,
       );
       currentTime = testEpoch.add(const Duration(minutes: 20));
