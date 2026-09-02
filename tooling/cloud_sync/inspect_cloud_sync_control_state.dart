@@ -25,6 +25,24 @@ const _replayOutcomes = <String>{
   'appliedWithConflict',
   'quarantined',
 };
+const _semanticEntityKinds = <String>{
+  'chat',
+  'message',
+  'attachment',
+  'reaction',
+};
+const _semanticServices = <String>{'iMessage', 'sms'};
+const _semanticAliasKinds = <String>{
+  'groupId',
+  'originalGroupId',
+  'serviceIdentifier',
+  'legacyGroupIdentifier',
+};
+const _cloudZones = <String>{
+  'chatManateeZone',
+  'messageManateeZone',
+  'attachmentManateeZone',
+};
 
 Future<void> main(List<String> arguments) async {
   if (arguments.length != 1) {
@@ -73,6 +91,7 @@ Future<Map<String, Object?>> inspectCloudSyncControlState(
 Map<String, Object?> _inspectStore(Store store) {
   final now = DateTime.now().toUtc();
   final legacyChatShapeCounts = _inspectLegacyChatShapes(store);
+  final semanticOwnershipCounts = _inspectSemanticOwnership(store);
   final checkpoints = <Map<String, Object?>>[];
   _scanPaged(
     (store.box<CloudSyncCheckpointEntity>().query()
@@ -81,6 +100,7 @@ Map<String, Object?> _inspectStore(Store store) {
     (checkpoint) {
       checkpoints.add(<String, Object?>{
         'groupOrdinal': checkpoints.length + 1,
+        'zone': _allowlistedOrInvalid(checkpoint.zone, _cloudZones),
         'streamKind': _allowlistedOrInvalid(
           checkpoint.streamKind,
           _streamKinds,
@@ -150,7 +170,7 @@ Map<String, Object?> _inspectStore(Store store) {
   );
 
   return <String, Object?>{
-    'schema': 3,
+    'schema': 4,
     'canonicalCounts': <String, int>{
       'chats': store.box<Chat>().count(),
       'messages': store.box<Message>().count(),
@@ -166,6 +186,7 @@ Map<String, Object?> _inspectStore(Store store) {
       'chatAliases': store.box<CloudSemanticChatAliasEntity>().count(),
     },
     'legacyChatShapeCounts': legacyChatShapeCounts,
+    'semanticOwnershipCounts': semanticOwnershipCounts,
     'checkpoints': checkpoints,
     'inboxGroups': inboxGroups,
     'replayOutcomes': replayOutcomes,
@@ -173,15 +194,66 @@ Map<String, Object?> _inspectStore(Store store) {
   };
 }
 
+Map<String, Object?> _inspectSemanticOwnership(Store store) {
+  final snapshotsByEntityKind = <String, int>{};
+  _scanPaged(
+    (store.box<CloudSemanticSnapshotEntity>().query()
+          ..order(CloudSemanticSnapshotEntity_.id))
+        .build(),
+    (snapshot) {
+      final kind = _allowlistedOrInvalid(
+        snapshot.entityKind,
+        _semanticEntityKinds,
+      );
+      snapshotsByEntityKind.update(
+        kind,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    },
+  );
+
+  final aliasesByService = <String, int>{};
+  final aliasesByKind = <String, int>{};
+  _scanPaged(
+    (store.box<CloudSemanticChatAliasEntity>().query()
+          ..order(CloudSemanticChatAliasEntity_.id))
+        .build(),
+    (alias) {
+      final service = _allowlistedOrInvalid(alias.service, _semanticServices);
+      aliasesByService.update(service, (count) => count + 1, ifAbsent: () => 1);
+      final kind = _allowlistedOrInvalid(alias.aliasKind, _semanticAliasKinds);
+      aliasesByKind.update(kind, (count) => count + 1, ifAbsent: () => 1);
+    },
+  );
+
+  return <String, Object?>{
+    'snapshotsByEntityKind': snapshotsByEntityKind,
+    'chatAliasesByService': aliasesByService,
+    'chatAliasesByKind': aliasesByKind,
+  };
+}
+
 Map<String, int> _inspectLegacyChatShapes(Store store) {
   final guidCounts = <String, int>{};
   final messageGuids = <String>{};
   final attachmentGuids = <String>{};
+  var messagesLinkedToSmsChats = 0;
+  var messagesLinkedToIMessageChats = 0;
+  var messagesWithoutChats = 0;
   _scanPaged((store.box<Message>().query()..order(Message_.id)).build(), (
     message,
   ) {
     final guid = message.guid;
     if (guid != null && guid.isNotEmpty) messageGuids.add(guid);
+    final chat = message.chat.target;
+    if (chat == null) {
+      messagesWithoutChats += 1;
+    } else if (chat.isRpSms) {
+      messagesLinkedToSmsChats += 1;
+    } else {
+      messagesLinkedToIMessageChats += 1;
+    }
   });
   _scanPaged((store.box<Attachment>().query()..order(Attachment_.id)).build(), (
     attachment,
@@ -202,10 +274,30 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
   var groupStyleRows = 0;
   var otherStyleRows = 0;
   var crossKindGuidCollisions = 0;
+  var smsServiceRows = 0;
+  var iMessageServiceRows = 0;
+  var ckRecordIdRows = 0;
+  var cloudGuidRows = 0;
+  var cloudDataRows = 0;
+  var guidReferenceRows = 0;
+  var compositeLegacyCloudEvidenceRows = 0;
   _scanPaged((store.box<Chat>().query()..order(Chat_.id)).build(), (chat) {
+    if (chat.isRpSms) {
+      smsServiceRows += 1;
+    } else {
+      iMessageServiceRows += 1;
+    }
     guidCounts.update(chat.guid, (count) => count + 1, ifAbsent: () => 1);
     final identifier = chat.chatIdentifier;
     if (identifier == null || identifier.isEmpty) blankIdentifiers += 1;
+    final hasCkRecordId = chat.ckRecordId?.isNotEmpty ?? false;
+    final hasCloudGuid = chat.cloudGuid?.isNotEmpty ?? false;
+    final hasCloudData = chat.cloudData?.isNotEmpty ?? false;
+    final hasGuidReferences = chat.guidRefs.isNotEmpty;
+    if (hasCkRecordId) ckRecordIdRows += 1;
+    if (hasCloudGuid) cloudGuidRows += 1;
+    if (hasCloudData) cloudDataRows += 1;
+    if (hasGuidReferences) guidReferenceRows += 1;
     if (messageGuids.contains(chat.guid) ||
         attachmentGuids.contains(chat.guid)) {
       crossKindGuidCollisions += 1;
@@ -223,6 +315,14 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
     final expectedIdentifier = chat.guid.substring('iMessage;-;'.length);
     if (identifier != expectedIdentifier) {
       compositeIdentifierMismatches += 1;
+    }
+    if (identifier == expectedIdentifier &&
+        !chat.isRpSms &&
+        hasCkRecordId &&
+        hasCloudGuid &&
+        chat.guidRefs.contains(chat.guid) &&
+        chat.guidRefs.contains(identifier)) {
+      compositeLegacyCloudEvidenceRows += 1;
     }
     final expectedStyle = direct ? 45 : 43;
     if (chat.style != expectedStyle) compositeStyleMismatches += 1;
@@ -261,6 +361,16 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
     'duplicateGuidGroups': duplicateGuidGroups,
     'duplicateGuidRows': duplicateGuidRows,
     'crossKindGuidCollisions': crossKindGuidCollisions,
+    'messagesLinkedToSmsChats': messagesLinkedToSmsChats,
+    'messagesLinkedToIMessageChats': messagesLinkedToIMessageChats,
+    'messagesWithoutChats': messagesWithoutChats,
+    'smsServiceRows': smsServiceRows,
+    'iMessageServiceRows': iMessageServiceRows,
+    'ckRecordIdRows': ckRecordIdRows,
+    'cloudGuidRows': cloudGuidRows,
+    'cloudDataRows': cloudDataRows,
+    'guidReferenceRows': guidReferenceRows,
+    'compositeLegacyCloudEvidenceRows': compositeLegacyCloudEvidenceRows,
   };
 }
 
