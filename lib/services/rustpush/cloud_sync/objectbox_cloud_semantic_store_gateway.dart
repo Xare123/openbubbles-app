@@ -95,6 +95,18 @@ final class CloudLegacyCanonicalOwnershipProof {
 /// Implementations must inspect existing canonical state only and must not
 /// mutate canonical entities, aliases, sync control state, or transport state.
 abstract interface class CloudLegacyCanonicalOwnershipProofAdapter {
+  /// Returns proof only when the incoming first semantic snapshot resolves to
+  /// an already-present canonical row whose immutable identity still matches
+  /// exactly. A missing canonical row returns null; a mismatch fails closed.
+  /// The caller must persist this proof in the same ObjectBox transaction as
+  /// the canonical mutation and its terminal inbox outcome.
+  CloudLegacyCanonicalOwnershipProof? provePreexistingCanonicalOwnership({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  });
+
   CloudLegacyCanonicalOwnershipProof proveLegacyCanonicalOwnership({
     required CloudSyncScope scope,
     required int generation,
@@ -1990,15 +2002,69 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     _validateEntityKindForStream(snapshot.kind);
     _validatePayloadParent(payload, snapshot);
     _validateSnapshot(snapshot);
+    final key = _context.snapshotKey(
+      snapshot.kind,
+      snapshot.logicalEntityKeyHash,
+    );
     // The adapter scans all scoped ownership evidence, including legacy
     // snapshots for a different logical row. Do this before the record-map
     // write so a create/update cannot transiently mutate metadata first.
-    _canonicalAdapter.validateOwnershipEvidence(
-      scope: _context.entry.scope,
-      generation: _context.entry.generation,
-      kind: snapshot.kind,
-      logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
-    );
+    try {
+      _canonicalAdapter.validateOwnershipEvidence(
+        scope: _context.entry.scope,
+        generation: _context.entry.generation,
+        kind: snapshot.kind,
+        logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+      );
+    } on CloudSyncFailure catch (failure) {
+      final preexistingSnapshot = _findSnapshot(key);
+      if (failure.safeCode != 'canonical_identity_owner_unproven' ||
+          preexistingSnapshot != null ||
+          _canonicalAdapter is! CloudLegacyCanonicalOwnershipProofAdapter) {
+        rethrow;
+      }
+      final proofAdapter =
+          _canonicalAdapter as CloudLegacyCanonicalOwnershipProofAdapter;
+      final proof = proofAdapter.provePreexistingCanonicalOwnership(
+        scope: _context.entry.scope,
+        generation: _context.entry.generation,
+        payload: payload,
+        snapshot: snapshot,
+      );
+      if (proof == null) rethrow;
+      if (!ObjectBoxCloudSemanticStoreGateway._lowerHexDigestPattern.hasMatch(
+            proof.canonicalGuidHash,
+          ) ||
+          !ObjectBoxCloudSemanticStoreGateway._lowerHexDigestPattern.hasMatch(
+            proof.canonicalGuidLookupHash,
+          )) {
+        throw ObjectBoxCloudSemanticStoreGateway._failure(
+          'preexisting_canonical_ownership_proof_invalid',
+        );
+      }
+      // This provisional row becomes durable only if the canonical apply,
+      // replay, inbox terminal outcome, and checkpoint all commit. It lets the
+      // adapter verify exact ownership before mutating a canonical row that
+      // predates semantic sync, while transaction rollback prevents a failed
+      // bootstrap from leaving evidence behind.
+      _snapshots.put(
+        _snapshotEntity(
+          snapshot,
+          snapshotKey: key,
+          canonicalGuidHash: proof.canonicalGuidHash,
+          canonicalGuidLookupHash: proof.canonicalGuidLookupHash,
+          existingId: 0,
+        ),
+      );
+      // Re-run the full global check. The provisional exact owner must not
+      // mask any unrelated incomplete or conflicting proof in this scope.
+      _canonicalAdapter.validateOwnershipEvidence(
+        scope: _context.entry.scope,
+        generation: _context.entry.generation,
+        kind: snapshot.kind,
+        logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+      );
+    }
     bindRecordIdentity(
       logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
       encryptedRawRecordReference: snapshot.encryptedRawRecordReference,
@@ -2016,10 +2082,6 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     }
     _canonicalMutationPerformed = true;
 
-    final key = _context.snapshotKey(
-      snapshot.kind,
-      snapshot.logicalEntityKeyHash,
-    );
     final existing = _findSnapshot(key);
     if (existing != null) {
       _validateSnapshotScope(

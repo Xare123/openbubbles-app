@@ -340,6 +340,35 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   }
 
   @override
+  CloudLegacyCanonicalOwnershipProof? provePreexistingCanonicalOwnership({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) {
+    _requireActiveScope(scope, generation);
+    final canonicalGuid = switch (payload) {
+      CloudChatEntityPayload value => value.canonicalGuid,
+      CloudMessageEntityPayload value => value.canonicalGuid,
+      CloudReactionEntityPayload value => value.canonicalGuid,
+      CloudAttachmentEntityPayload value => value.canonicalGuid,
+      _ => throw CloudSyncFailure(
+        category: CloudFailureCategory.malformedRecord,
+        safeCode: 'preexisting_canonical_ownership_shape_invalid',
+      ),
+    };
+    if (!_canonicalRowExists(canonicalGuid)) return null;
+    final proof = proveLegacyCanonicalOwnership(
+      scope: scope,
+      generation: generation,
+      payload: payload,
+      snapshot: snapshot,
+    );
+    _diagnosticRecorder?.call('canonical_preexisting_ownership_bootstrap');
+    return proof;
+  }
+
+  @override
   CloudLegacyCanonicalOwnershipProof proveLegacyCanonicalOwnership({
     required CloudSyncScope scope,
     required int generation,
