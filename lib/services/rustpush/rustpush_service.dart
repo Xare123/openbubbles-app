@@ -44,7 +44,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_s
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protocol_evidence.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector_health.dart';
-import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report_file.dart';
@@ -1910,6 +1910,12 @@ class RustPushBackend implements BackendService {
         await pushService.doValidateTargets([formatted], handle);
     return available.isNotEmpty;
   }
+}
+
+enum CloudSyncV2PcsPreparationOutcome {
+  alreadyReady,
+  joined,
+  cancelled,
 }
 
 class RustPushService extends GetxService {
@@ -7377,7 +7383,10 @@ class RustPushService extends GetxService {
 
   String statePath = "";
   CloudSyncManualShadowOwner? _cloudSyncV2ShadowOwner;
-  Future<CloudSyncSemanticPullReport>? _cloudSyncV2SemanticPullInFlight;
+  Future<CloudSyncV2PcsPreparationOutcome>?
+      _cloudSyncV2PcsPreparationInFlight;
+  bool _cloudSyncV2PcsPreparationQuiescing = false;
+  Future<CloudSyncSemanticDrainResult>? _cloudSyncV2SemanticPullInFlight;
   bool _cloudSyncV2SemanticPullQuiescing = false;
   CloudSyncProductionOutboundCanaryAdapter? _cloudSyncV2OutboundAdapter;
   CloudSyncOutboundCanaryConfirmation? _cloudSyncV2OutboundConfirmation;
@@ -7387,6 +7396,7 @@ class RustPushService extends GetxService {
   bool _cloudSyncV2OutboundQuiescing = false;
   static const _cloudSyncV2SemanticPullQuiescenceTimeout =
       Duration(seconds: 50);
+  static const _cloudSyncV2PcsOperationTimeout = Duration(seconds: 30);
   static const _cloudSyncV2OutboundQuiescenceTimeout = Duration(seconds: 90);
 
   bool get _cloudSyncV2CanaryRuntimeAllowed =>
@@ -7394,6 +7404,209 @@ class RustPushService extends GetxService {
         isAndroid: Platform.isAndroid,
         packageName: fs.packageInfo.packageName,
       );
+
+  bool get cloudSyncV2PcsPreparationAvailable {
+    if (!CloudSyncDevGate.manualSemanticPullEnabled ||
+        !_cloudSyncV2CanaryRuntimeAllowed ||
+        !_cloudSyncV2DeveloperRuntimeAllowed ||
+        !ls.isUiThread ||
+        loggingOut ||
+        _cloudSyncV2PcsPreparationQuiescing ||
+        _cloudSyncV2PcsPreparationInFlight != null ||
+        _cloudSyncV2SemanticPullQuiescing ||
+        _cloudSyncV2SemanticPullInFlight != null ||
+        _cloudSyncV2OutboundQuiescing ||
+        _cloudSyncV2OutboundConfirmation != null ||
+        _cloudSyncV2OutboundProvisioningInFlight != null ||
+        _cloudSyncV2OutboundInFlight != null ||
+        ss.settings.cloudSyncingEnabled.value ||
+        isSyncing.value != null ||
+        state?.icloudServices?.keychain == null ||
+        state?.icloudServices?.cloudMessagesClient == null) {
+      return false;
+    }
+    final abi = ffi.Abi.current();
+    return abi == ffi.Abi.androidArm64 ||
+        abi == ffi.Abi.windowsArm64 ||
+        abi == ffi.Abi.windowsX64;
+  }
+
+  /// Joins this app instance to the existing iCloud Keychain clique needed by
+  /// CloudKit V2. This never enables legacy sync and has no reset path.
+  Future<CloudSyncV2PcsPreparationOutcome>
+  prepareCloudSyncV2PcsConfirmed() {
+    if (!CloudSyncDevGate.manualSemanticPullEnabled) {
+      throw StateError('cloud_sync_semantic_pull_disabled');
+    }
+    if (!_cloudSyncV2CanaryRuntimeAllowed) {
+      throw StateError('cloud_sync_canary_package_required');
+    }
+    if (!_cloudSyncV2DeveloperRuntimeAllowed) {
+      throw StateError('cloud_sync_developer_mode_required');
+    }
+    if (!ls.isUiThread) {
+      throw StateError('cloud_sync_v2_pcs_ui_required');
+    }
+    if (_cloudSyncV2PcsPreparationQuiescing) {
+      throw StateError('cloud_sync_v2_pcs_preparation_quiescing');
+    }
+    if (_cloudSyncV2PcsPreparationInFlight != null) {
+      throw StateError('cloud_sync_v2_pcs_preparation_active');
+    }
+    if (ss.settings.cloudSyncingEnabled.value || isSyncing.value != null) {
+      throw StateError('legacy_sync_active');
+    }
+    if (!cloudSyncV2PcsPreparationAvailable) {
+      throw StateError('cloud_sync_v2_pcs_preparation_unavailable');
+    }
+
+    final future = _prepareCloudSyncV2Pcs();
+    _cloudSyncV2PcsPreparationInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_cloudSyncV2PcsPreparationInFlight, future)) {
+        _cloudSyncV2PcsPreparationInFlight = null;
+      }
+    });
+  }
+
+  Future<CloudSyncV2PcsPreparationOutcome> _prepareCloudSyncV2Pcs() async {
+    final preparedState = state;
+    final services = preparedState?.icloudServices;
+    final keychain = services?.keychain;
+    if (preparedState == null ||
+        keychain == null ||
+        services?.cloudMessagesClient == null) {
+      throw StateError('cloud_sync_v2_pcs_client_unavailable');
+    }
+
+    void ensureAccountStillActive() {
+      if (_cloudSyncV2PcsPreparationQuiescing ||
+          loggingOut ||
+          !identical(state, preparedState)) {
+        throw StateError('cloud_sync_v2_pcs_account_changed');
+      }
+      if (ss.settings.cloudSyncingEnabled.value || isSyncing.value != null) {
+        throw StateError('legacy_sync_active');
+      }
+    }
+
+    ensureAccountStillActive();
+    bool ready;
+    try {
+      ready = await api
+          .isInClique(keychain: keychain)
+          .timeout(_cloudSyncV2PcsOperationTimeout);
+    } catch (_) {
+      throw StateError('cloud_sync_v2_pcs_status_failed');
+    }
+    ensureAccountStillActive();
+    if (ready) {
+      cachedInClique = true;
+      return CloudSyncV2PcsPreparationOutcome.alreadyReady;
+    }
+
+    List<api.ViableBottle> bottles;
+    try {
+      bottles = await api
+          .getBottles(keychain: keychain)
+          .timeout(_cloudSyncV2PcsOperationTimeout);
+    } catch (_) {
+      throw StateError('cloud_sync_v2_pcs_recovery_fetch_failed');
+    }
+    ensureAccountStillActive();
+    if (bottles.isEmpty) {
+      throw StateError('cloud_sync_v2_pcs_recovery_required');
+    }
+
+    api.ViableBottle? bottle = bottles.first;
+    String description =
+        "Your device's password is required to access end-to-end encrypted data in iCloud.";
+    String? localDevicePassword;
+    while (bottle != null) {
+      final (changeDevice, credential) =
+          await promptPassword(bottle, description);
+      ensureAccountStillActive();
+      if (changeDevice) {
+        bottle = await _promptCloudSyncV2BottleChoice(bottles);
+        description =
+            "Your device's password is required to access end-to-end encrypted data in iCloud.";
+        continue;
+      }
+      if (credential == null) {
+        return CloudSyncV2PcsPreparationOutcome.cancelled;
+      }
+
+      localDevicePassword ??=
+          Random.secure().nextInt(1000000).toString().padLeft(6, '0');
+      ss.settings.keychainDefaultPassword.value = localDevicePassword;
+      ss.saveSettings();
+
+      try {
+        await api
+            .joinCliqueWithBottle(
+              keychain: keychain,
+              bottle: bottle.escrow,
+              password: credential,
+              devicePassword: localDevicePassword,
+            )
+            .timeout(_cloudSyncV2PcsOperationTimeout);
+      } catch (error) {
+        if (error is AnyhowException &&
+            error.message.contains('Credential is not verified.')) {
+          description = "Invalid Credential";
+          continue;
+        }
+        // A transport failure after submission can be ambiguous. A later run
+        // rechecks clique membership before attempting another join.
+        throw StateError('cloud_sync_v2_pcs_join_outcome_unknown');
+      }
+      ensureAccountStillActive();
+
+      try {
+        ready = await api
+            .isInClique(keychain: keychain)
+            .timeout(_cloudSyncV2PcsOperationTimeout);
+      } catch (_) {
+        throw StateError('cloud_sync_v2_pcs_status_failed');
+      }
+      ensureAccountStillActive();
+      if (!ready) {
+        throw StateError('cloud_sync_v2_pcs_join_unverified');
+      }
+      cachedInClique = true;
+      return CloudSyncV2PcsPreparationOutcome.joined;
+    }
+    return CloudSyncV2PcsPreparationOutcome.cancelled;
+  }
+
+  Future<api.ViableBottle?> _promptCloudSyncV2BottleChoice(
+      List<api.ViableBottle> bottles) async {
+    final context = Get.context;
+    if (context == null) {
+      throw StateError('cloud_sync_v2_pcs_ui_required');
+    }
+    return showDialog<api.ViableBottle>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        backgroundColor: context.theme.colorScheme.properSurface,
+        title: Text(
+          "Choose a trusted device",
+          style: context.theme.textTheme.titleLarge,
+        ),
+        children: [
+          for (final bottle in bottles)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(dialogContext).pop(bottle),
+              child: Text(bottle.deviceName),
+            ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text("Cancel"),
+          ),
+        ],
+      ),
+    );
+  }
 
   bool get cloudSyncV2ManualShadowAvailable {
     if (!CloudSyncDevGate.manualShadowSamplerEnabled ||
@@ -7443,11 +7656,15 @@ class RustPushService extends GetxService {
         abi == ffi.Abi.windowsX64;
   }
 
-  /// Runs one explicitly confirmed, bounded CloudKit read whose supported
+  /// Runs an explicitly confirmed, bounded CloudKit read whose supported
   /// records may be projected into canonical local ObjectBox entities.
+  ///
+  /// One pass preserves the original sampler behavior. A larger bounded pass
+  /// count resumes from the same durable zone checkpoints while holding one
+  /// operation interlock and one native-writer pause for the complete drain.
   /// CloudKit saves, CloudKit deletes, and local tombstones remain disabled.
-  Future<CloudSyncSemanticPullReport>
-  runCloudSyncV2ManualSemanticPullConfirmed() {
+  Future<CloudSyncSemanticDrainResult>
+  runCloudSyncV2ManualSemanticPullConfirmed({int maximumPasses = 1}) {
     if (!CloudSyncDevGate.manualSemanticPullEnabled) {
       throw StateError('cloud_sync_semantic_pull_disabled');
     }
@@ -7463,8 +7680,14 @@ class RustPushService extends GetxService {
     if (_cloudSyncV2SemanticPullInFlight != null) {
       throw StateError('cloud_sync_semantic_pull_active');
     }
+    if (maximumPasses < 1 ||
+        maximumPasses > CloudSyncSemanticDrainController.defaultMaximumPasses) {
+      throw StateError('cloud_sync_semantic_drain_pass_limit_invalid');
+    }
 
-    final future = _runCloudSyncV2ManualSemanticPull();
+    final future = _runCloudSyncV2ManualSemanticPull(
+      maximumPasses: maximumPasses,
+    );
     _cloudSyncV2SemanticPullInFlight = future;
     return future.whenComplete(() {
       if (identical(_cloudSyncV2SemanticPullInFlight, future)) {
@@ -7473,8 +7696,15 @@ class RustPushService extends GetxService {
     });
   }
 
-  Future<CloudSyncSemanticPullReport>
-  _runCloudSyncV2ManualSemanticPull() async {
+  /// Debug-VM entry point for one maximum bounded catch-up session.
+  Future<CloudSyncSemanticDrainResult>
+  runCloudSyncV2ManualSemanticCatchUpConfirmed() =>
+      runCloudSyncV2ManualSemanticPullConfirmed(
+        maximumPasses: CloudSyncSemanticDrainController.defaultMaximumPasses,
+      );
+
+  Future<CloudSyncSemanticDrainResult>
+  _runCloudSyncV2ManualSemanticPull({required int maximumPasses}) async {
     if (statePath.isEmpty || !Directory(statePath).existsSync()) {
       throw StateError('cloud_sync_private_storage_unavailable');
     }
@@ -7513,15 +7743,31 @@ class RustPushService extends GetxService {
         buildCommit: _cloudSyncV2BuildIdentifier(),
         observerFactory: _cloudSyncV2EvidenceObserverFactory(),
       );
-      final report = await adapter.sampler.runConfirmed();
-      final reportFile = await CloudSyncSemanticPullReportFileWriter(
+      final reportWriter = CloudSyncSemanticPullReportFileWriter(
         privateReportDirectory: join(statePath, 'cloud-sync-v2', 'reports'),
         trustedStorageRoot: statePath,
-      ).write(report);
-      Logger.info(
-          "Cloud Sync V2 semantic canary report_file=${basename(reportFile.path)} "
-          "report=${jsonEncode(report.toJson())}");
-      return report;
+      );
+      final controller = CloudSyncSemanticDrainController.production(
+        sampler: adapter.sampler,
+        reportWriter: reportWriter,
+        maximumPasses: maximumPasses,
+      );
+      try {
+        final result = await controller.drainConfirmedAndPersist();
+        final reportReference = result.persistedReportReference;
+        final reportName = reportReference is File
+            ? basename(reportReference.path)
+            : 'persisted';
+        Logger.info(
+            "Cloud Sync V2 semantic canary passes=${result.passes} "
+            "remote_drained=${result.remoteDrained} "
+            "pass_limit=${result.reachedPassLimit} "
+            "report_file=$reportName "
+            "report=${jsonEncode(result.lastReport.toJson())}");
+        return result;
+      } finally {
+        await controller.dispose();
+      }
     } finally {
       chats.restoring = restoringBeforeSemanticPull;
     }
@@ -8000,10 +8246,24 @@ class RustPushService extends GetxService {
 
   Future reset(bool hw, bool logout, bool setup) async {
     final shadowOwner = _cloudSyncV2ShadowOwner;
+    _cloudSyncV2PcsPreparationQuiescing = true;
     _cloudSyncV2SemanticPullQuiescing = true;
     _cloudSyncV2OutboundQuiescing = true;
     try {
       await shadowOwner?.quiesceForAccountTransition();
+      final pcsPreparation = _cloudSyncV2PcsPreparationInFlight;
+      if (pcsPreparation != null) {
+        try {
+          await pcsPreparation.timeout(
+            _cloudSyncV2SemanticPullQuiescenceTimeout,
+          );
+        } on TimeoutException {
+          throw StateError('cloud_sync_v2_pcs_preparation_quiescence_timeout');
+        } catch (_) {
+          Logger.warn(
+              "Cloud Sync V2 PCS preparation stopped during account transition");
+        }
+      }
       final semanticPull = _cloudSyncV2SemanticPullInFlight;
       if (semanticPull != null) {
         try {
@@ -8084,6 +8344,7 @@ class RustPushService extends GetxService {
       disposeState(thisState, hw, setup);
     } finally {
       await shadowOwner?.resumeAfterAccountTransition();
+      _cloudSyncV2PcsPreparationQuiescing = false;
       _cloudSyncV2SemanticPullQuiescing = false;
       _cloudSyncV2OutboundQuiescing = false;
     }

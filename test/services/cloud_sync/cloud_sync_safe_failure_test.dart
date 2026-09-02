@@ -21,6 +21,23 @@ void main() {
       ),
       'cloud_sync_canary_package_required',
     );
+    const pcsCodes = <String>{
+      'cloud_sync_v2_pcs_account_changed',
+      'cloud_sync_v2_pcs_client_unavailable',
+      'cloud_sync_v2_pcs_join_outcome_unknown',
+      'cloud_sync_v2_pcs_join_unverified',
+      'cloud_sync_v2_pcs_preparation_active',
+      'cloud_sync_v2_pcs_preparation_quiescence_timeout',
+      'cloud_sync_v2_pcs_preparation_quiescing',
+      'cloud_sync_v2_pcs_preparation_unavailable',
+      'cloud_sync_v2_pcs_recovery_fetch_failed',
+      'cloud_sync_v2_pcs_recovery_required',
+      'cloud_sync_v2_pcs_status_failed',
+      'cloud_sync_v2_pcs_ui_required',
+    };
+    for (final code in pcsCodes) {
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+    }
     expect(
       cloudSyncV2SafeFailureCode(
         StateError('account-secret@example.com should never be shown'),
@@ -68,6 +85,12 @@ void main() {
         StateError('cloud_sync_semantic_drain_unsafe_report'),
       ),
       'cloud_sync_semantic_drain_unsafe_report',
+    );
+    expect(
+      cloudSyncV2SafeFailureCode(
+        StateError('cloud_sync_semantic_drain_pass_limit_invalid'),
+      ),
+      'cloud_sync_semantic_drain_pass_limit_invalid',
     );
   });
 

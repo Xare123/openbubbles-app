@@ -2,11 +2,19 @@ import 'package:vm_service/vm_service.dart';
 import 'package:vm_service/vm_service_io.dart';
 
 Future<void> main(List<String> args) async {
-  if (args.length != 1) {
-    throw ArgumentError('usage: vm_trigger_semantic.dart <ws-uri>');
+  if (args.isEmpty ||
+      args.length > 2 ||
+      (args.length == 2 && args[1] != '--catch-up')) {
+    throw ArgumentError(
+      'usage: vm_trigger_semantic.dart <ws-uri> [--catch-up]',
+    );
   }
+  final catchUp = args.length == 2;
+  final selector = catchUp
+      ? 'runCloudSyncV2ManualSemanticCatchUpConfirmed'
+      : 'runCloudSyncV2ManualSemanticPullConfirmed';
 
-  final service = await vmServiceConnectUri(args.single);
+  final service = await vmServiceConnectUri(args.first);
   try {
     final vm = await service.getVM();
     for (final isolateRef in vm.isolates ?? const <IsolateRef>[]) {
@@ -42,13 +50,16 @@ Future<void> main(List<String> args) async {
         final result = await service.invoke(
           isolateId,
           target.id!,
-          'runCloudSyncV2ManualSemanticPullConfirmed',
+          selector,
           const [],
         );
         if (result is ErrorRef) {
           throw StateError('semantic_pull_invoke_error:${result.kind}');
         }
-        print('semantic_pull_invoked isolate=${isolateRef.name}');
+        print(
+          'semantic_pull_invoked mode=${catchUp ? 'catch-up' : 'single'} '
+          'isolate=${isolateRef.name}',
+        );
         return;
       }
     }

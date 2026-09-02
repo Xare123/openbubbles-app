@@ -145,15 +145,64 @@ void main() {
     expect(method, contains('runConfirmedAndPersist()'));
   });
 
+  test('V2 PCS preparation joins existing trust without a reset path', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final methodStart = source.indexOf(
+      'prepareCloudSyncV2PcsConfirmed()',
+    );
+    final methodEnd = source.indexOf(
+      'bool get cloudSyncV2ManualShadowAvailable',
+      methodStart,
+    );
+
+    expect(methodStart, greaterThanOrEqualTo(0));
+    expect(methodEnd, greaterThan(methodStart));
+    final method = source.substring(methodStart, methodEnd);
+    expect(method, contains('CloudSyncDevGate.manualSemanticPullEnabled'));
+    expect(method, contains('_cloudSyncV2CanaryRuntimeAllowed'));
+    expect(method, contains('_cloudSyncV2DeveloperRuntimeAllowed'));
+    expect(method, contains('legacy_sync_active'));
+    expect(method, contains('.isInClique('));
+    expect(method, contains('.getBottles('));
+    expect(method, contains('.joinCliqueWithBottle('));
+    expect(method, contains('promptPassword('));
+    expect(method, contains('_promptCloudSyncV2BottleChoice('));
+    expect(method, contains("identical(state, preparedState)"));
+    expect(method, contains('cloud_sync_v2_pcs_recovery_required'));
+    expect(method, isNot(contains('promptResetData(')));
+    expect(method, isNot(contains('resetClique(')));
+    expect(method, isNot(contains('cloudSyncingEnabled.value = true')));
+    expect(method, isNot(contains('doCloudKitSync(')));
+
+    final uiSource = File(
+      'lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart',
+    ).readAsStringSync();
+    final uiStart = uiSource.indexOf(
+      'title: "Prepare iCloud Encryption (Canary)"',
+    );
+    final uiEnd = uiSource.indexOf(
+      'title: "Catch Up Messages in iCloud (Canary)"',
+      uiStart,
+    );
+    expect(uiStart, greaterThanOrEqualTo(0));
+    expect(uiEnd, greaterThan(uiStart));
+    final ui = uiSource.substring(uiStart, uiEnd);
+    expect(ui, contains('_runCloudSyncV2PcsPreparation'));
+    expect(ui, contains('Never resets encrypted data'));
+    expect(ui, isNot(contains('promptResetData')));
+  });
+
   test('semantic production entry point is separately gated and bounded', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
     final methodStart = source.indexOf(
-      'runCloudSyncV2ManualSemanticPullConfirmed()',
+      'runCloudSyncV2ManualSemanticPullConfirmed({int maximumPasses = 1})',
     );
     final methodEnd = source.indexOf(
-      '_runCloudSyncV2ManualSemanticPull() async',
+      'runCloudSyncV2ManualSemanticCatchUpConfirmed()',
       methodStart,
     );
 
@@ -167,6 +216,26 @@ void main() {
     expect(method, contains('_cloudSyncV2SemanticPullInFlight'));
     expect(method, contains('cloud_sync_semantic_pull_disabled'));
     expect(method, contains('cloud_sync_semantic_pull_active'));
+    expect(method, contains('cloud_sync_semantic_drain_pass_limit_invalid'));
+    expect(
+      method,
+      contains('CloudSyncSemanticDrainController.defaultMaximumPasses'),
+    );
+  });
+
+  test('VM trigger preserves one-pass mode and exposes bounded catch-up', () {
+    final source = File('tooling/vm_trigger_semantic.dart').readAsStringSync();
+    expect(source, contains("args[1] != '--catch-up'"));
+    expect(source, contains("args.first"));
+    expect(source, isNot(contains('args.single')));
+    expect(
+      source,
+      contains("'runCloudSyncV2ManualSemanticPullConfirmed'"),
+    );
+    expect(
+      source,
+      contains("'runCloudSyncV2ManualSemanticCatchUpConfirmed'"),
+    );
   });
 
   test('semantic projection suppresses historical message notifications', () {
@@ -174,7 +243,7 @@ void main() {
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
     final methodStart = rustpushSource.indexOf(
-      '_runCloudSyncV2ManualSemanticPull() async',
+      '_runCloudSyncV2ManualSemanticPull({',
     );
     final methodEnd = rustpushSource.indexOf(
       'bool get cloudSyncV2ManualOutboundAvailable',
@@ -188,7 +257,10 @@ void main() {
       'final restoringBeforeSemanticPull = chats.restoring;',
     );
     final suppress = method.indexOf('chats.restoring = true;', capture);
-    final run = method.indexOf('adapter.sampler.runConfirmed()', suppress);
+    final run = method.indexOf(
+      'controller.drainConfirmedAndPersist()',
+      suppress,
+    );
     final restore = method.indexOf(
       'chats.restoring = restoringBeforeSemanticPull;',
       run,
@@ -275,10 +347,21 @@ void main() {
     expect(shadow, contains('cloudSyncV2SafeFailureCode(error)'));
     expect(shadow, isNot(contains('catch (_)')));
 
-    final semanticStart = section.indexOf('title: "Run Semantic Pull Canary"');
+    final semanticStart = section.indexOf(
+      'title: "Catch Up Messages in iCloud (Canary)"',
+    );
     final semantic = section.substring(semanticStart);
     expect(semantic, contains('cloudSyncV2ManualSemanticPullAvailable'));
-    expect(semantic, contains('runCloudSyncV2ManualSemanticPullConfirmed()'));
+    expect(semantic, contains('runCloudSyncV2ManualSemanticPullConfirmed('));
+    expect(semantic, contains('maximumPasses: maximumPasses'));
+    expect(semantic, contains('maximumPasses * 200'));
+    expect(semantic, contains('Up to 200 changes per CloudKit zone.'));
+    expect(semantic, contains('Up to 800 changes per zone'));
+    expect(semantic, contains('Up to 3,200 changes per zone'));
+    expect(
+      semantic,
+      contains('checkpoint-ordered rather than safely date-seekable'),
+    );
     expect(semantic, contains('Local canonical chats, messages, reactions'));
     expect(semantic, contains('No CloudKit uploads or deletes'));
     expect(semantic, contains('no local message deletes'));
@@ -286,7 +369,8 @@ void main() {
       semantic,
       contains('tombstones are retained as read-only acknowledgements'),
     );
-    expect(semantic, contains('cloudSyncV2SemanticCanaryPresentation(report)'));
+    expect(semantic, contains('cloudSyncV2SemanticCanaryPresentation('));
+    expect(semantic, contains('result.lastReport'));
     final presentationStart = source.indexOf(
       'CloudSyncV2SemanticCanaryPresentation cloudSyncV2SemanticCanaryPresentation(',
     );
@@ -625,6 +709,14 @@ void main() {
     expect(resetEnd, greaterThan(resetStart));
 
     final reset = source.substring(resetStart, resetEnd);
+    final pcsQuiesce = reset.indexOf(
+      '_cloudSyncV2PcsPreparationQuiescing = true;',
+    );
+    final pcsWait = reset.indexOf('final pcsPreparation =');
+    final awaitPcs = reset.indexOf(
+      'await pcsPreparation.timeout(',
+      pcsWait,
+    );
     final quiesce = reset.indexOf('_cloudSyncV2SemanticPullQuiescing = true;');
     final semanticWait = reset.indexOf('final semanticPull =');
     final awaitSemantic = reset.indexOf(
@@ -649,8 +741,11 @@ void main() {
     final nativeReset = reset.indexOf('api.resetState(');
     final resume = reset.indexOf('resumeAfterAccountTransition()');
 
-    expect(quiesce, greaterThanOrEqualTo(0));
-    expect(semanticWait, greaterThan(quiesce));
+    expect(pcsQuiesce, greaterThanOrEqualTo(0));
+    expect(quiesce, greaterThan(pcsQuiesce));
+    expect(pcsWait, greaterThan(quiesce));
+    expect(awaitPcs, greaterThan(pcsWait));
+    expect(semanticWait, greaterThan(awaitPcs));
     expect(awaitSemantic, greaterThan(semanticWait));
     expect(boundedWait, greaterThan(awaitSemantic));
     expect(safeAbort, greaterThan(boundedWait));

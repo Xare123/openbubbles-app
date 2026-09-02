@@ -263,6 +263,75 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
     }
   }
 
+  Future<void> _runCloudSyncV2PcsPreparation() async {
+    if (cloudSyncV2Running.value) return;
+    if (!pushService.cloudSyncV2PcsPreparationAvailable) {
+      showSnackbar(
+        "CloudKit Encryption Setup Blocked",
+        "Finish OpenBubbles setup, enable Developer Mode, turn off legacy Messages in iCloud sync, and wait for active sync or logout work to finish.",
+      );
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: context.theme.colorScheme.properSurface,
+        title: Text(
+          "Prepare iCloud encryption?",
+          style: context.theme.textTheme.titleLarge,
+        ),
+        content: Text(
+          "This checks whether this Canary can decrypt Messages in iCloud. If needed, you can enter the passcode or password of one trusted Apple device. It will not enable legacy sync, reset encrypted data, upload or delete CloudKit records, or delete local messages.",
+          style: context.theme.textTheme.bodyLarge,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text("Continue"),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || cloudSyncV2Running.value) return;
+
+    cloudSyncV2Running.value = true;
+    try {
+      final outcome = await pushService.prepareCloudSyncV2PcsConfirmed();
+      switch (outcome) {
+        case CloudSyncV2PcsPreparationOutcome.alreadyReady:
+          showSnackbar(
+            "CloudKit Encryption Ready",
+            "This Canary already has the iCloud encryption access needed for a bounded catch-up.",
+          );
+        case CloudSyncV2PcsPreparationOutcome.joined:
+          showSnackbar(
+            "CloudKit Encryption Ready",
+            "Encrypted iCloud access was prepared without enabling legacy sync. You can run Messages in iCloud catch-up now.",
+          );
+        case CloudSyncV2PcsPreparationOutcome.cancelled:
+          showSnackbar(
+            "CloudKit Encryption Setup Cancelled",
+            "Nothing was reset, uploaded, deleted, or enabled.",
+          );
+      }
+    } catch (error) {
+      final safeCode = cloudSyncV2SafeFailureCode(error);
+      Logger.warn(
+        "Cloud Sync V2 PCS preparation stopped safely code=$safeCode",
+      );
+      showSnackbar(
+        "CloudKit Encryption Setup Stopped",
+        "Diagnostic code: $safeCode. No encrypted data was reset and legacy sync stayed off.",
+      );
+    } finally {
+      cloudSyncV2Running.value = false;
+    }
+  }
+
   Future<bool> _confirmCloudSyncV2Outbound({
     required String title,
     required String message,
@@ -861,12 +930,33 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                       if (CloudSyncDevGate.manualSemanticPullEnabled)
                         Obx(() => SettingsTile(
                           leading: const SettingsLeadingIcon(
+                            iosIcon: CupertinoIcons.lock_shield,
+                            materialIcon: Icons.lock_open_outlined,
+                            containerColor: Colors.indigo,
+                          ),
+                          title: "Prepare iCloud Encryption (Canary)",
+                          subtitle: "Checks and, if needed, joins this app to your existing iCloud Keychain trust so Messages in iCloud can be decrypted. Never resets encrypted data or enables legacy sync.",
+                          trailing: cloudSyncV2Running.value
+                              ? SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 3,
+                                    color: context.theme.colorScheme.primary,
+                                  ),
+                                )
+                              : const NextButton(),
+                          onTap: _runCloudSyncV2PcsPreparation,
+                        )),
+                      if (CloudSyncDevGate.manualSemanticPullEnabled)
+                        Obx(() => SettingsTile(
+                          leading: const SettingsLeadingIcon(
                             iosIcon: CupertinoIcons.cloud_download,
                             materialIcon: Icons.cloud_sync,
                             containerColor: Colors.teal,
                           ),
-                          title: "Run Semantic Pull Canary",
-                          subtitle: "Developer-only bounded read. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. No CloudKit uploads or deletes, no local message deletes, and tombstones are retained as read-only acknowledgements.",
+                          title: "Catch Up Messages in iCloud (Canary)",
+                          subtitle: "Choose a bounded, resumable history batch. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. No CloudKit uploads or deletes, no local message deletes, and tombstones are retained as read-only acknowledgements.",
                           trailing: cloudSyncV2Running.value
                               ? SizedBox(
                                   width: 20,
@@ -886,16 +976,54 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                               );
                               return;
                             }
+                            final maximumPasses = await showDialog<int>(
+                              context: context,
+                              builder: (dialogContext) => SimpleDialog(
+                                backgroundColor: context.theme.colorScheme.properSurface,
+                                title: Text(
+                                  "Choose catch-up size",
+                                  style: context.theme.textTheme.titleLarge,
+                                ),
+                                children: [
+                                  SimpleDialogOption(
+                                    onPressed: () => Navigator.of(dialogContext).pop(1),
+                                    child: const ListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      title: Text("Small"),
+                                      subtitle: Text("Up to 200 changes per CloudKit zone."),
+                                    ),
+                                  ),
+                                  SimpleDialogOption(
+                                    onPressed: () => Navigator.of(dialogContext).pop(4),
+                                    child: const ListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      title: Text("Standard"),
+                                      subtitle: Text("Up to 800 changes per zone, then pause safely."),
+                                    ),
+                                  ),
+                                  SimpleDialogOption(
+                                    onPressed: () => Navigator.of(dialogContext).pop(16),
+                                    child: const ListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      title: Text("Deep catch-up"),
+                                      subtitle: Text("Up to 3,200 changes per zone. This can take several minutes."),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (maximumPasses == null) return;
+                            final maximumChangesPerZone = maximumPasses * 200;
                             final confirmed = await showDialog<bool>(
                               context: context,
                               builder: (dialogContext) => AlertDialog(
                                 backgroundColor: context.theme.colorScheme.properSurface,
                                 title: Text(
-                                  "Run semantic pull canary?",
+                                  "Run bounded CloudKit catch-up?",
                                   style: context.theme.textTheme.titleLarge,
                                 ),
                                 content: Text(
-                                  "This performs one manual, bounded CloudKit read. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. It will not upload or delete CloudKit records, delete local messages, or apply tombstones. Tombstones are retained and acknowledged locally without deleting canonical state. No background run is enabled.",
+                                  "This reads up to $maximumChangesPerZone changes per CloudKit zone and pauses at a durable checkpoint. CloudKit change history is checkpoint-ordered rather than safely date-seekable, so each later run resumes without skipping earlier changes. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. It will not upload or delete CloudKit records, delete local messages, or apply tombstones.",
                                   style: context.theme.textTheme.bodyLarge,
                                 ),
                                 actions: [
@@ -914,12 +1042,19 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                             if (cloudSyncV2Running.value) return;
                             cloudSyncV2Running.value = true;
                             try {
-                              final report = await pushService.runCloudSyncV2ManualSemanticPullConfirmed();
+                              final result = await pushService.runCloudSyncV2ManualSemanticPullConfirmed(
+                                maximumPasses: maximumPasses,
+                              );
                               final presentation =
-                                  cloudSyncV2SemanticCanaryPresentation(report);
+                                  cloudSyncV2SemanticCanaryPresentation(result.lastReport);
+                              final progress = result.reachedPassLimit
+                                  ? "Paused safely after ${result.passes} pass(es). Run catch-up again to resume from the saved checkpoint."
+                                  : result.remoteDrained
+                                      ? "Remote CloudKit change history reached its current head after ${result.passes} pass(es)."
+                                      : "Stopped safely after ${result.passes} pass(es).";
                               showSnackbar(
                                 presentation.title,
-                                presentation.message,
+                                "${presentation.message} $progress",
                               );
                             } catch (error) {
                               final safeCode = cloudSyncV2SafeFailureCode(error);
