@@ -241,6 +241,13 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
   var messagesLinkedToSmsChats = 0;
   var messagesLinkedToIMessageChats = 0;
   var messagesWithoutChats = 0;
+  var messagesWithText = 0;
+  var messagesWithSubject = 0;
+  var messagesWithAttributedBody = 0;
+  var messagesWithAttachments = 0;
+  var associatedMessages = 0;
+  var eventMessages = 0;
+  var messagesWithoutRenderableContent = 0;
   _scanPaged((store.box<Message>().query()..order(Message_.id)).build(), (
     message,
   ) {
@@ -253,6 +260,27 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
       messagesLinkedToSmsChats += 1;
     } else {
       messagesLinkedToIMessageChats += 1;
+    }
+    final hasText = message.text?.trim().isNotEmpty ?? false;
+    final hasSubject = message.subject?.trim().isNotEmpty ?? false;
+    final hasAttributedBody = message.attributedBody.isNotEmpty;
+    final hasAttachments =
+        message.hasAttachments || message.dbAttachments.isNotEmpty;
+    final isAssociated = message.associatedMessageGuid?.isNotEmpty ?? false;
+    final isEvent = (message.itemType ?? 0) != 0;
+    if (hasText) messagesWithText += 1;
+    if (hasSubject) messagesWithSubject += 1;
+    if (hasAttributedBody) messagesWithAttributedBody += 1;
+    if (hasAttachments) messagesWithAttachments += 1;
+    if (isAssociated) associatedMessages += 1;
+    if (isEvent) eventMessages += 1;
+    if (!hasText &&
+        !hasSubject &&
+        !hasAttributedBody &&
+        !hasAttachments &&
+        !isAssociated &&
+        !isEvent) {
+      messagesWithoutRenderableContent += 1;
     }
   });
   _scanPaged((store.box<Attachment>().query()..order(Attachment_.id)).build(), (
@@ -364,6 +392,13 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
     'messagesLinkedToSmsChats': messagesLinkedToSmsChats,
     'messagesLinkedToIMessageChats': messagesLinkedToIMessageChats,
     'messagesWithoutChats': messagesWithoutChats,
+    'messagesWithText': messagesWithText,
+    'messagesWithSubject': messagesWithSubject,
+    'messagesWithAttributedBody': messagesWithAttributedBody,
+    'messagesWithAttachments': messagesWithAttachments,
+    'associatedMessages': associatedMessages,
+    'eventMessages': eventMessages,
+    'messagesWithoutRenderableContent': messagesWithoutRenderableContent,
     'smsServiceRows': smsServiceRows,
     'iMessageServiceRows': iMessageServiceRows,
     'ckRecordIdRows': ckRecordIdRows,

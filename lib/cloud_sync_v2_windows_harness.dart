@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:io';
 
+import 'package:bitsdojo_window/bitsdojo_window.dart';
 import 'package:bluebubbles/database/database.dart';
+import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/backend/filesystem/filesystem_service.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_preflight.dart';
@@ -55,6 +57,11 @@ Future<void> main(List<String> arguments) async {
     await _writeHarnessStatus(state: 'initializing', stage: stage);
 
     runApp(CloudSyncV2WindowsHarness(operation: operation));
+    doWhenWindowReady(() {
+      appWindow.minSize = const Size(640, 480);
+      appWindow.title = 'Cloud Sync V2 Windows Harness';
+      appWindow.show();
+    });
     await _writeHarnessStatus(state: 'running', stage: 'ui-started');
   } catch (error, stackTrace) {
     await _writeHarnessStatus(
@@ -72,7 +79,9 @@ Future<void> main(List<String> arguments) async {
 enum CloudSyncV2WindowsHarnessOperation {
   interactive,
   runOnce,
-  drain;
+  drain,
+  projectionViewer,
+  projectionDetailViewer;
 
   static CloudSyncV2WindowsHarnessOperation parse(List<String> arguments) {
     return CloudSyncV2WindowsHarnessLaunch.parse(arguments).operation;
@@ -109,6 +118,183 @@ bool cloudSyncV2WindowsHarnessShouldStartFreshReadAuthentication({
     safeCode == 'cloud_sync_native_auth_refresh_session_missing' &&
     !alreadyAttempted;
 
+String cloudSyncV2WindowsProjectionChatTitle({
+  required String? displayName,
+  required String? chatIdentifier,
+}) {
+  final name = displayName?.trim();
+  if (name != null && name.isNotEmpty) return name;
+  final identifier = chatIdentifier?.trim();
+  if (identifier != null && identifier.isNotEmpty) return identifier;
+  return 'Unnamed conversation';
+}
+
+String cloudSyncV2WindowsProjectionBody({
+  required String? text,
+  required String? attributedText,
+  required String? subject,
+  required bool hasAttachments,
+  required bool isAssociated,
+  required bool isEvent,
+}) {
+  for (final candidate in <String?>[text, attributedText, subject]) {
+    final normalized = candidate?.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized != null && normalized.isNotEmpty) return normalized;
+  }
+  if (hasAttachments) return '[Attachment]';
+  if (isAssociated) return '[Reaction or associated message]';
+  if (isEvent) return '[Conversation event]';
+  return '[No renderable content]';
+}
+
+String _cloudSyncV2WindowsAttributedText(Message message) => message
+    .attributedBody
+    .map((part) => part.string.trim())
+    .where((part) => part.isNotEmpty)
+    .join(' ');
+
+bool _cloudSyncV2WindowsIsEvent(Message message) =>
+    (message.itemType ?? 0) != 0;
+
+String _cloudSyncV2WindowsTimestamp(DateTime? value) {
+  if (value == null) return 'Unknown time';
+  final local = value.toLocal();
+  String twoDigits(int part) => part.toString().padLeft(2, '0');
+  return '${local.year}-${twoDigits(local.month)}-${twoDigits(local.day)} '
+      '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
+}
+
+final class _CloudSyncProjectionConversation {
+  const _CloudSyncProjectionConversation({
+    required this.chatId,
+    required this.title,
+    required this.preview,
+    required this.latestDate,
+  });
+
+  final int chatId;
+  final String title;
+  final String preview;
+  final DateTime? latestDate;
+}
+
+final class _CloudSyncProjectionMessage {
+  const _CloudSyncProjectionMessage({
+    required this.sender,
+    required this.body,
+    required this.date,
+  });
+
+  final String sender;
+  final String body;
+  final DateTime? date;
+}
+
+Set<int> _cloudSyncV2WindowsAttachmentMessageIds() {
+  final ids = <int>{};
+  for (final attachment in Database.attachments.getAll()) {
+    final messageId = attachment.message.targetId;
+    if (messageId != 0) ids.add(messageId);
+  }
+  return ids;
+}
+
+List<_CloudSyncProjectionConversation>
+_cloudSyncV2WindowsReadProjectionConversations() {
+  return Database.runInTransaction(TxMode.read, () {
+    final chatsById = <int, Chat>{};
+    for (final chat in Database.chats.getAll()) {
+      final id = chat.id;
+      if (id != null) chatsById[id] = chat;
+    }
+    final attachmentMessageIds = _cloudSyncV2WindowsAttachmentMessageIds();
+    final query =
+        (Database.messages.query(
+                Message_.dateDeleted.isNull().and(
+                  Message_.dateCreated.notNull(),
+                ),
+              )
+              ..order(Message_.dateCreated, flags: Order.descending)
+              ..order(Message_.id, flags: Order.descending))
+            .build()
+          ..limit = 5000;
+    final messages = query.find();
+    query.close();
+
+    final conversations = <_CloudSyncProjectionConversation>[];
+    final seenChatIds = <int>{};
+    for (final message in messages) {
+      final chatId = message.chat.targetId;
+      final chat = chatsById[chatId];
+      if (chatId == 0 || chat == null || !seenChatIds.add(chatId)) continue;
+      final messageId = message.id;
+      conversations.add(
+        _CloudSyncProjectionConversation(
+          chatId: chatId,
+          title: cloudSyncV2WindowsProjectionChatTitle(
+            displayName: chat.displayName,
+            chatIdentifier: chat.chatIdentifier,
+          ),
+          preview: cloudSyncV2WindowsProjectionBody(
+            text: message.text,
+            attributedText: _cloudSyncV2WindowsAttributedText(message),
+            subject: message.subject,
+            hasAttachments:
+                message.hasAttachments ||
+                (messageId != null && attachmentMessageIds.contains(messageId)),
+            isAssociated: message.associatedMessageGuid?.isNotEmpty ?? false,
+            isEvent: _cloudSyncV2WindowsIsEvent(message),
+          ),
+          latestDate: message.dateCreated,
+        ),
+      );
+      if (conversations.length == 100) break;
+    }
+    return conversations;
+  });
+}
+
+List<_CloudSyncProjectionMessage> _cloudSyncV2WindowsReadProjectionMessages(
+  int chatId,
+) {
+  return Database.runInTransaction(TxMode.read, () {
+    final attachmentMessageIds = _cloudSyncV2WindowsAttachmentMessageIds();
+    final query =
+        (Database.messages.query(
+                Message_.dateDeleted
+                    .isNull()
+                    .and(Message_.dateCreated.notNull())
+                    .and(Message_.chat.equals(chatId)),
+              )
+              ..order(Message_.dateCreated, flags: Order.descending)
+              ..order(Message_.id, flags: Order.descending))
+            .build()
+          ..limit = 500;
+    final messages = query.find();
+    query.close();
+    return messages
+        .map((message) {
+          final messageId = message.id;
+          return _CloudSyncProjectionMessage(
+            sender: message.isFromMe ?? false ? 'You' : 'Other person',
+            body: cloudSyncV2WindowsProjectionBody(
+              text: message.text,
+              attributedText: _cloudSyncV2WindowsAttributedText(message),
+              subject: message.subject,
+              hasAttachments:
+                  message.hasAttachments ||
+                  (messageId != null &&
+                      attachmentMessageIds.contains(messageId)),
+              isAssociated: message.associatedMessageGuid?.isNotEmpty ?? false,
+              isEvent: _cloudSyncV2WindowsIsEvent(message),
+            ),
+            date: message.dateCreated,
+          );
+        })
+        .toList(growable: false);
+  });
+}
+
 final class CloudSyncV2WindowsHarnessLaunch {
   const CloudSyncV2WindowsHarnessLaunch({
     required this.operation,
@@ -140,6 +326,18 @@ final class CloudSyncV2WindowsHarnessLaunch {
             throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
           }
           operation = CloudSyncV2WindowsHarnessOperation.drain;
+          operationSeen = true;
+        case 'view-projection':
+          if (operationSeen) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          operation = CloudSyncV2WindowsHarnessOperation.projectionViewer;
+          operationSeen = true;
+        case 'view-projection-detail':
+          if (operationSeen) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          operation = CloudSyncV2WindowsHarnessOperation.projectionDetailViewer;
           operationSeen = true;
         default:
           if (!argument.startsWith(launchIdArgumentPrefix) ||
@@ -356,6 +554,25 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
     _resumeAfterTwoFactor =
         _CloudSyncV2WindowsHarnessResumeOperation.initialize;
     try {
+      if (widget.operation ==
+              CloudSyncV2WindowsHarnessOperation.projectionViewer ||
+          widget.operation ==
+              CloudSyncV2WindowsHarnessOperation.projectionDetailViewer) {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _status = 'Viewing the existing local projection read-only.';
+        });
+        _resumeAfterTwoFactor = null;
+        await _setRuntimeStage(
+          widget.operation ==
+                  CloudSyncV2WindowsHarnessOperation.projectionDetailViewer
+              ? 'projection-detail-viewer-ready'
+              : 'projection-viewer-ready',
+          state: 'ready',
+        );
+        return;
+      }
       // Main has already bound the process-global DPAPI keystore to this exact
       // isolated profile. Keep this composition CloudKit-only: do not invoke
       // SharedPushState.restore, which also restores IDS and FaceTime services.
@@ -593,6 +810,10 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         await _runSemanticPull();
       case CloudSyncV2WindowsHarnessOperation.drain:
         await _runSemanticDrain();
+      case CloudSyncV2WindowsHarnessOperation.projectionViewer:
+        return;
+      case CloudSyncV2WindowsHarnessOperation.projectionDetailViewer:
+        return;
     }
   }
 
@@ -888,110 +1109,412 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
 
   @override
   Widget build(BuildContext context) {
+    final isProjectionViewer =
+        widget.operation ==
+            CloudSyncV2WindowsHarnessOperation.projectionViewer ||
+        widget.operation ==
+            CloudSyncV2WindowsHarnessOperation.projectionDetailViewer;
+    final Widget home = isProjectionViewer
+        ? _CloudSyncProjectionViewer(
+            openFirstConversation:
+                widget.operation ==
+                CloudSyncV2WindowsHarnessOperation.projectionDetailViewer,
+          )
+        : Scaffold(
+            appBar: AppBar(title: const Text('Cloud Sync V2 Windows Harness')),
+            body: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _buildHarnessControls(context),
+                ),
+              ),
+            ),
+          );
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true),
-      home: Scaffold(
-        appBar: AppBar(title: const Text('Cloud Sync V2 Windows Harness')),
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Card(
-                    color: Color(0xFF3A2414),
-                    child: Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Text(
-                        'PRIVATE DEVELOPMENT PROFILE\n'
-                        'No remote saves or deletes. Do not run the Microsoft '
-                        'Store app at the same time.',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(_status),
-                  if (_smsPhoneOptions.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    ..._smsPhoneOptions.map(
-                      (phone) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: OutlinedButton.icon(
-                          onPressed: _busy
-                              ? null
-                              : () => _sendSmsTwoFactor(phone),
-                          icon: const Icon(Icons.sms_outlined),
-                          label: Text(
-                            'Send SMS to trusted phone ending '
-                            '${phone.lastTwoDigits}',
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                  if (_needsTwoFactor) ...[
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _twoFactorController,
-                      autofocus: true,
-                      keyboardType: TextInputType.number,
-                      textInputAction: TextInputAction.done,
-                      maxLength: 6,
-                      obscureText: true,
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        labelText: 'Apple SMS verification code',
-                      ),
-                      onSubmitted: (_) {
-                        if (!_busy) unawaited(_verifyTwoFactorCode());
-                      },
-                    ),
-                    FilledButton.icon(
-                      onPressed: _busy ? null : _verifyTwoFactorCode,
-                      icon: const Icon(Icons.verified_user_outlined),
-                      label: const Text('Verify and resume'),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed:
-                        _busy ||
-                            _adapter == null ||
-                            _needsTwoFactor ||
-                            _smsPhoneOptions.isNotEmpty
-                        ? null
-                        : _runSemanticPull,
-                    icon: _busy
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.cloud_download_outlined),
-                    label: const Text('Run semantic pull'),
-                  ),
-                  const SizedBox(height: 20),
-                  if (_report case final report?)
-                    ...report.zones.map(
-                      (zone) => ListTile(
-                        title: Text(zone.zoneLabel),
-                        subtitle: Text(
-                          'fetched ${zone.fetched}  applied ${zone.applied}  '
-                          'retained ${zone.retainedUnprojected}',
-                        ),
-                        trailing: Text(zone.status.name),
-                      ),
-                    ),
-                ],
-              ),
+      home: home,
+    );
+  }
+
+  Widget _buildHarnessControls(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Card(
+          color: Color(0xFF3A2414),
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Text(
+              'PRIVATE DEVELOPMENT PROFILE\n'
+              'No remote saves or deletes. Do not run the Microsoft '
+              'Store app at the same time.',
             ),
           ),
         ),
+        const SizedBox(height: 16),
+        Text(_status),
+        if (_smsPhoneOptions.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          ..._smsPhoneOptions.map(
+            (phone) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: OutlinedButton.icon(
+                onPressed: _busy ? null : () => _sendSmsTwoFactor(phone),
+                icon: const Icon(Icons.sms_outlined),
+                label: Text(
+                  'Send SMS to trusted phone ending '
+                  '${phone.lastTwoDigits}',
+                ),
+              ),
+            ),
+          ),
+        ],
+        if (_needsTwoFactor) ...[
+          const SizedBox(height: 16),
+          TextField(
+            controller: _twoFactorController,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            textInputAction: TextInputAction.done,
+            maxLength: 6,
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: 'Apple SMS verification code',
+            ),
+            onSubmitted: (_) {
+              if (!_busy) unawaited(_verifyTwoFactorCode());
+            },
+          ),
+          FilledButton.icon(
+            onPressed: _busy ? null : _verifyTwoFactorCode,
+            icon: const Icon(Icons.verified_user_outlined),
+            label: const Text('Verify and resume'),
+          ),
+        ],
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          onPressed:
+              _busy ||
+                  _adapter == null ||
+                  _needsTwoFactor ||
+                  _smsPhoneOptions.isNotEmpty
+              ? null
+              : _runSemanticPull,
+          icon: _busy
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.cloud_download_outlined),
+          label: const Text('Run semantic pull'),
+        ),
+        const SizedBox(height: 12),
+        Builder(
+          builder: (navigationContext) => OutlinedButton.icon(
+            onPressed: _busy
+                ? null
+                : () => Navigator.of(navigationContext).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const _CloudSyncProjectionViewer(),
+                    ),
+                  ),
+            icon: const Icon(Icons.forum_outlined),
+            label: const Text('View projected messages'),
+          ),
+        ),
+        const SizedBox(height: 20),
+        if (_report case final report?)
+          ...report.zones.map(
+            (zone) => ListTile(
+              title: Text(zone.zoneLabel),
+              subtitle: Text(
+                'fetched ${zone.fetched}  applied ${zone.applied}  '
+                'retained ${zone.retainedUnprojected}',
+              ),
+              trailing: Text(zone.status.name),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _CloudSyncProjectionViewer extends StatefulWidget {
+  const _CloudSyncProjectionViewer({this.openFirstConversation = false});
+
+  final bool openFirstConversation;
+
+  @override
+  State<_CloudSyncProjectionViewer> createState() =>
+      _CloudSyncProjectionViewerState();
+}
+
+class _CloudSyncProjectionViewerState
+    extends State<_CloudSyncProjectionViewer> {
+  List<_CloudSyncProjectionConversation> _conversations = const [];
+  String? _errorType;
+  bool _loading = true;
+  bool _didOpenFirstConversation = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future<void>.microtask(_reload);
+  }
+
+  Future<void> _reload() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _errorType = null;
+      });
+    }
+    await Future<void>.delayed(Duration.zero);
+    try {
+      final conversations = _cloudSyncV2WindowsReadProjectionConversations();
+      if (!mounted) return;
+      setState(() {
+        _conversations = conversations;
+        _loading = false;
+      });
+      if (widget.openFirstConversation &&
+          !_didOpenFirstConversation &&
+          conversations.isNotEmpty) {
+        _didOpenFirstConversation = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final conversation = conversations.first;
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => _CloudSyncProjectionConversationView(
+                chatId: conversation.chatId,
+                title: conversation.title,
+              ),
+            ),
+          );
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorType = error.runtimeType.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Projected conversations'),
+        actions: [
+          IconButton(
+            onPressed: _loading ? null : _reload,
+            tooltip: 'Refresh local projection',
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
+      body: Column(
+        children: [
+          const _CloudSyncProjectionReadOnlyBanner(),
+          Expanded(child: _buildBody(context)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_errorType case final errorType?) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'The local projection could not be opened ($errorType).',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    if (_conversations.isEmpty) {
+      return const Center(
+        child: Text('No projected messages are available in this profile.'),
+      );
+    }
+    return ListView.separated(
+      itemCount: _conversations.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final conversation = _conversations[index];
+        return ListTile(
+          title: Text(
+            conversation.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            conversation.preview,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: Text(
+            _cloudSyncV2WindowsTimestamp(conversation.latestDate),
+            textAlign: TextAlign.end,
+          ),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => _CloudSyncProjectionConversationView(
+                chatId: conversation.chatId,
+                title: conversation.title,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CloudSyncProjectionConversationView extends StatefulWidget {
+  const _CloudSyncProjectionConversationView({
+    required this.chatId,
+    required this.title,
+  });
+
+  final int chatId;
+  final String title;
+
+  @override
+  State<_CloudSyncProjectionConversationView> createState() =>
+      _CloudSyncProjectionConversationViewState();
+}
+
+class _CloudSyncProjectionConversationViewState
+    extends State<_CloudSyncProjectionConversationView> {
+  List<_CloudSyncProjectionMessage> _messages = const [];
+  String? _errorType;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    Future<void>.microtask(_reload);
+  }
+
+  Future<void> _reload() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _errorType = null;
+      });
+    }
+    await Future<void>.delayed(Duration.zero);
+    try {
+      final messages = _cloudSyncV2WindowsReadProjectionMessages(widget.chatId);
+      if (!mounted) return;
+      setState(() {
+        _messages = messages;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorType = error.runtimeType.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.title),
+        actions: [
+          IconButton(
+            onPressed: _loading ? null : _reload,
+            tooltip: 'Refresh local conversation',
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_errorType case final errorType?) {
+      return Center(
+        child: Text('The local conversation could not be opened ($errorType).'),
+      );
+    }
+    if (_messages.isEmpty) {
+      return const Center(child: Text('No projected messages in this chat.'));
+    }
+    return Column(
+      children: [
+        const _CloudSyncProjectionReadOnlyBanner(),
+        Expanded(
+          child: ListView.separated(
+            reverse: true,
+            padding: const EdgeInsets.all(16),
+            itemCount: _messages.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 12),
+            itemBuilder: (context, index) {
+              final message = _messages[index];
+              return Align(
+                alignment: message.sender == 'You'
+                    ? Alignment.centerRight
+                    : Alignment.centerLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 620),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${message.sender} - '
+                            '${_cloudSyncV2WindowsTimestamp(message.date)}',
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
+                          const SizedBox(height: 6),
+                          SelectableText(message.body),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CloudSyncProjectionReadOnlyBanner extends StatelessWidget {
+  const _CloudSyncProjectionReadOnlyBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialBanner(
+      content: Text(
+        'READ-ONLY LOCAL VIEW. This screen cannot send, delete, or change '
+        'CloudKit data.',
+      ),
+      actions: [SizedBox.shrink()],
     );
   }
 }

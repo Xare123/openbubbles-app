@@ -17,6 +17,8 @@ param(
     [switch] $SkipBuild,
     [switch] $RunOnce,
     [switch] $Drain,
+    [switch] $ProjectionViewer,
+    [switch] $ProjectionDetailViewer,
     [ValidateRange(30, 3600)]
     [int] $RunOnceTimeoutSeconds = 600,
     [ValidateRange(60, 7200)]
@@ -27,8 +29,16 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-if ($RunOnce -and $Drain) {
-    throw "Choose either -RunOnce or -Drain, not both."
+$selectedOperations = @(
+    @(
+        $RunOnce,
+        $Drain,
+        $ProjectionViewer,
+        $ProjectionDetailViewer
+    ) | Where-Object { $_ }
+)
+if ($selectedOperations.Count -gt 1) {
+    throw "Choose only one harness operation."
 }
 
 function Get-Sha256Hex {
@@ -57,6 +67,79 @@ function New-CryptographicLaunchId {
     }
     finally {
         $generator.Dispose()
+    }
+}
+
+function Write-HarnessBuildReceipt {
+    param(
+        [Parameter(Mandatory)][string] $ReceiptPath,
+        [Parameter(Mandatory)][string] $BuildIdentifier,
+        [Parameter(Mandatory)][string] $Runner,
+        [Parameter(Mandatory)][string] $RustLibrary
+    )
+
+    $receiptDirectory = Split-Path -Parent $ReceiptPath
+    New-Item -ItemType Directory -Path $receiptDirectory -Force | Out-Null
+    $temporaryReceipt = Join-Path $receiptDirectory (
+        '.windows-harness-build-' + [guid]::NewGuid().ToString('N') + '.tmp'
+    )
+    try {
+        [ordered]@{
+            version = 'cloud-sync-v2-windows-harness-build-v1'
+            build_identifier = $BuildIdentifier
+            runner_sha256 = (
+                Get-FileHash -LiteralPath $Runner -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            rust_library_sha256 = (
+                Get-FileHash -LiteralPath $RustLibrary -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            created_utc = [datetime]::UtcNow.ToString('o')
+        } | ConvertTo-Json -Compress |
+            Set-Content -LiteralPath $temporaryReceipt -Encoding UTF8
+        Move-Item `
+            -LiteralPath $temporaryReceipt `
+            -Destination $ReceiptPath `
+            -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryReceipt -PathType Leaf) {
+            Remove-Item -LiteralPath $temporaryReceipt -Force
+        }
+    }
+}
+
+function Test-HarnessBuildReceipt {
+    param(
+        [Parameter(Mandatory)][string] $ReceiptPath,
+        [Parameter(Mandatory)][string] $BuildIdentifier,
+        [Parameter(Mandatory)][string] $Runner,
+        [Parameter(Mandatory)][string] $RustLibrary
+    )
+
+    if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
+        return $false
+    }
+    try {
+        $receipt = Get-Content -LiteralPath $ReceiptPath -Raw |
+            ConvertFrom-Json
+        if ($receipt.version -ne
+                'cloud-sync-v2-windows-harness-build-v1' -or
+            $receipt.build_identifier -ne $BuildIdentifier) {
+            return $false
+        }
+        $runnerHash = (
+            Get-FileHash -LiteralPath $Runner -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+        $rustLibraryHash = (
+            Get-FileHash -LiteralPath $RustLibrary -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+        return (
+            $receipt.runner_sha256 -eq $runnerHash -and
+            $receipt.rust_library_sha256 -eq $rustLibraryHash
+        )
+    }
+    catch {
+        return $false
     }
 }
 
@@ -501,6 +584,9 @@ $rustLibrary = [System.IO.Path]::GetFullPath(
 $runner = [System.IO.Path]::GetFullPath(
     (Join-Path $runnerDirectory "bluebubbles_app.exe")
 )
+$buildReceiptPath = Join-Path (
+    Join-Path $profile 'cloud-sync-v2'
+) 'windows-harness-build-receipt.json'
 $trustedPrefix = "$runnerDirectory\"
 
 $arguments = @(
@@ -581,6 +667,21 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "Signing the Windows harness Rust library failed."
         }
+        Write-HarnessBuildReceipt `
+            -ReceiptPath $buildReceiptPath `
+            -BuildIdentifier $buildIdentifier `
+            -Runner $runner `
+            -RustLibrary $rustLibrary
+    }
+    elseif ($ProjectionViewer -or $ProjectionDetailViewer) {
+        if (-not (Test-HarnessBuildReceipt `
+            -ReceiptPath $buildReceiptPath `
+            -BuildIdentifier $buildIdentifier `
+            -Runner $runner `
+            -RustLibrary $rustLibrary
+        )) {
+            throw "No matching receipt proves the existing viewer build."
+        }
     }
     else {
         $reportDirectory = Join-Path $profile "cloud-sync-v2\reports"
@@ -629,6 +730,12 @@ try {
     }
     elseif ($Drain) {
         $harnessArguments = @("drain") + $harnessArguments
+    }
+    elseif ($ProjectionViewer) {
+        $harnessArguments = @("view-projection") + $harnessArguments
+    }
+    elseif ($ProjectionDetailViewer) {
+        $harnessArguments = @("view-projection-detail") + $harnessArguments
     }
     $startParameters = @{
         FilePath = $runner

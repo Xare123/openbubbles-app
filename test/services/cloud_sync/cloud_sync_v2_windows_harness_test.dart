@@ -5,28 +5,45 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const launchId = '0123456789abcdef0123456789abcdef';
 
-  test('parses interactive, run-once, and drain with one exact launch id', () {
-    expect(
-      CloudSyncV2WindowsHarnessLaunch.parse(const [
-        '--launch-id=$launchId',
-      ]).operation,
-      CloudSyncV2WindowsHarnessOperation.interactive,
-    );
-    expect(
-      CloudSyncV2WindowsHarnessLaunch.parse(const [
-        'run-once',
-        '--launch-id=$launchId',
-      ]).operation,
-      CloudSyncV2WindowsHarnessOperation.runOnce,
-    );
-    expect(
-      CloudSyncV2WindowsHarnessLaunch.parse(const [
-        '--launch-id=$launchId',
-        'drain',
-      ]).operation,
-      CloudSyncV2WindowsHarnessOperation.drain,
-    );
-  });
+  test(
+    'parses interactive, run-once, drain, and viewers with one launch id',
+    () {
+      expect(
+        CloudSyncV2WindowsHarnessLaunch.parse(const [
+          '--launch-id=$launchId',
+        ]).operation,
+        CloudSyncV2WindowsHarnessOperation.interactive,
+      );
+      expect(
+        CloudSyncV2WindowsHarnessLaunch.parse(const [
+          'run-once',
+          '--launch-id=$launchId',
+        ]).operation,
+        CloudSyncV2WindowsHarnessOperation.runOnce,
+      );
+      expect(
+        CloudSyncV2WindowsHarnessLaunch.parse(const [
+          '--launch-id=$launchId',
+          'drain',
+        ]).operation,
+        CloudSyncV2WindowsHarnessOperation.drain,
+      );
+      expect(
+        CloudSyncV2WindowsHarnessLaunch.parse(const [
+          'view-projection',
+          '--launch-id=$launchId',
+        ]).operation,
+        CloudSyncV2WindowsHarnessOperation.projectionViewer,
+      );
+      expect(
+        CloudSyncV2WindowsHarnessLaunch.parse(const [
+          'view-projection-detail',
+          '--launch-id=$launchId',
+        ]).operation,
+        CloudSyncV2WindowsHarnessOperation.projectionDetailViewer,
+      );
+    },
+  );
 
   test('rejects missing, malformed, duplicate, and ambiguous launch input', () {
     final candidates = <List<String>>[
@@ -35,6 +52,12 @@ void main() {
       const ['--launch-id=not-hex'],
       const ['--launch-id=$launchId', '--launch-id=$launchId'],
       const ['run-once', 'drain', '--launch-id=$launchId'],
+      const ['view-projection', 'run-once', '--launch-id=$launchId'],
+      const [
+        'view-projection-detail',
+        'view-projection',
+        '--launch-id=$launchId',
+      ],
     ];
 
     for (final candidate in candidates) {
@@ -113,6 +136,56 @@ void main() {
       ),
       isFalse,
     );
+  });
+
+  test('projection titles prefer display name and use safe fallbacks', () {
+    expect(
+      cloudSyncV2WindowsProjectionChatTitle(
+        displayName: '  Family  ',
+        chatIdentifier: 'fallback',
+      ),
+      'Family',
+    );
+    expect(
+      cloudSyncV2WindowsProjectionChatTitle(
+        displayName: '   ',
+        chatIdentifier: '  identifier  ',
+      ),
+      'identifier',
+    );
+    expect(
+      cloudSyncV2WindowsProjectionChatTitle(
+        displayName: null,
+        chatIdentifier: null,
+      ),
+      'Unnamed conversation',
+    );
+  });
+
+  test('projection bodies normalize content and identify non-text rows', () {
+    String body({
+      String? text,
+      String? attributedText,
+      String? subject,
+      bool attachment = false,
+      bool associated = false,
+      bool event = false,
+    }) => cloudSyncV2WindowsProjectionBody(
+      text: text,
+      attributedText: attributedText,
+      subject: subject,
+      hasAttachments: attachment,
+      isAssociated: associated,
+      isEvent: event,
+    );
+
+    expect(body(text: '  one\n two  ', attributedText: 'ignored'), 'one two');
+    expect(body(attributedText: ' attributed '), 'attributed');
+    expect(body(subject: ' subject '), 'subject');
+    expect(body(attachment: true), '[Attachment]');
+    expect(body(associated: true), '[Reaction or associated message]');
+    expect(body(event: true), '[Conversation event]');
+    expect(body(), '[No renderable content]');
   });
 
   test(

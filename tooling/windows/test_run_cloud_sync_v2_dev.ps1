@@ -92,6 +92,47 @@ try {
         -Condition ($firstLaunchId -ne $secondLaunchId) `
         -Message 'Two cryptographic launch IDs unexpectedly matched.'
 
+    $receiptRunner = Join-Path $testDirectory 'runner.bin'
+    $receiptLibrary = Join-Path $testDirectory 'library.bin'
+    $receiptPath = Join-Path $testDirectory 'build-receipt.json'
+    Set-Content -LiteralPath $receiptRunner -Value 'runner-v1' -Encoding UTF8
+    Set-Content -LiteralPath $receiptLibrary -Value 'library-v1' -Encoding UTF8
+    Write-HarnessBuildReceipt `
+        -ReceiptPath $receiptPath `
+        -BuildIdentifier 'test-build-v1' `
+        -Runner $receiptRunner `
+        -RustLibrary $receiptLibrary
+    Write-HarnessBuildReceipt `
+        -ReceiptPath $receiptPath `
+        -BuildIdentifier 'test-build-v1' `
+        -Runner $receiptRunner `
+        -RustLibrary $receiptLibrary
+    Assert-True `
+        -Condition (Test-HarnessBuildReceipt `
+            -ReceiptPath $receiptPath `
+            -BuildIdentifier 'test-build-v1' `
+            -Runner $receiptRunner `
+            -RustLibrary $receiptLibrary
+        ) `
+        -Message 'A matching build receipt was rejected.'
+    Assert-True `
+        -Condition (-not (Test-HarnessBuildReceipt `
+            -ReceiptPath $receiptPath `
+            -BuildIdentifier 'test-build-v2' `
+            -Runner $receiptRunner `
+            -RustLibrary $receiptLibrary
+        )) `
+        -Message 'A receipt for a different source build was accepted.'
+    Set-Content -LiteralPath $receiptRunner -Value 'runner-v2' -Encoding UTF8
+    Assert-True `
+        -Condition (-not (Test-HarnessBuildReceipt `
+            -ReceiptPath $receiptPath `
+            -BuildIdentifier 'test-build-v1' `
+            -Runner $receiptRunner `
+            -RustLibrary $receiptLibrary
+        )) `
+        -Message 'A receipt accepted a modified executable.'
+
     $launcherSource = Get-Content -LiteralPath $launcher -Raw
     $processChecks = [regex]::Matches(
         $launcherSource,
