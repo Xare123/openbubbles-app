@@ -428,6 +428,31 @@ try {
         -Condition $runOnceProcess.HasExited `
         -Message 'The verified run-once harness was not closed.'
 
+    $attachmentProcess = Start-TestHarnessProcess -Executable $testExecutable
+    $children.Add($attachmentProcess)
+    $attachmentPath = Join-Path `
+        $testDirectory `
+        'attachment-probe-finished-status.json'
+    Write-TestHarnessStatus `
+        -Path $attachmentPath `
+        -LaunchId $firstLaunchId `
+        -ProcessId $attachmentProcess.Id `
+        -State finished `
+        -Stage attachment-probe-complete
+    Wait-HarnessOperation `
+        -Process $attachmentProcess `
+        -ExpectedExecutable $testExecutable `
+        -StatusPath $attachmentPath `
+        -LaunchStartedUtc ([datetime]::UtcNow.AddSeconds(-1)) `
+        -BaselineWriteUtc ([datetime]::MinValue) `
+        -ExpectedLaunchId $firstLaunchId `
+        -ExpectedOperation attachment-probe `
+        -TimeoutSeconds 5
+    $attachmentProcess.Refresh()
+    Assert-True `
+        -Condition $attachmentProcess.HasExited `
+        -Message 'The verified attachment probe harness was not closed.'
+
     Write-Host 'Cloud Sync V2 Windows launcher behavioral tests passed.'
 }
 finally {

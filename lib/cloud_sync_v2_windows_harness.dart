@@ -7,6 +7,9 @@ import 'package:bitsdojo_window/bitsdojo_window.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/backend/filesystem/filesystem_service.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_download_coordinator.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_production_adapter.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_preflight.dart';
@@ -38,6 +41,10 @@ Future<void> main(List<String> arguments) async {
   final operation = launch.operation;
 
   fs.configureCloudSyncV2WindowsDevProfile();
+  if (operation == CloudSyncV2WindowsHarnessOperation.attachmentProbe &&
+      !cloudSyncV2WindowsAttachmentProbeProfileIsMarked(fs.appDocDir)) {
+    throw StateError('cloud_attachment_probe_disposable_profile_required');
+  }
   var stage = 'profile-configured';
   await _writeHarnessStatus(state: 'initializing', stage: stage);
   try {
@@ -81,6 +88,7 @@ enum CloudSyncV2WindowsHarnessOperation {
   interactive,
   runOnce,
   drain,
+  attachmentProbe,
   projectionViewer,
   projectionDetailViewer;
 
@@ -163,6 +171,76 @@ String _cloudSyncV2WindowsTimestamp(DateTime? value) {
   String twoDigits(int part) => part.toString().padLeft(2, '0');
   return '${local.year}-${twoDigits(local.month)}-${twoDigits(local.day)} '
       '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
+}
+
+const String cloudSyncV2WindowsAttachmentProbeMarkerFileName =
+    '.openbubbles-cloud-sync-v2-attachment-probe-copy';
+const String cloudSyncV2WindowsAttachmentProbeMarkerContents =
+    'openbubbles-cloud-sync-v2-attachment-probe-copy:v1';
+const int cloudSyncV2WindowsAttachmentProbeMaximumBytes = 8 * 1024 * 1024;
+
+bool cloudSyncV2WindowsAttachmentProbeProfileIsMarked(Directory directory) {
+  try {
+    final marker = File(
+      path.join(
+        directory.path,
+        cloudSyncV2WindowsAttachmentProbeMarkerFileName,
+      ),
+    );
+    return marker.existsSync() &&
+        marker.readAsStringSync() ==
+            cloudSyncV2WindowsAttachmentProbeMarkerContents;
+  } catch (_) {
+    return false;
+  }
+}
+
+@visibleForTesting
+Attachment? cloudSyncV2WindowsSelectAttachmentProbeCandidate(
+  Iterable<Attachment> attachments, {
+  int maximumExpectedBytes = cloudSyncV2WindowsAttachmentProbeMaximumBytes,
+  bool Function(Attachment attachment)? existsOnDisk,
+}) {
+  if (maximumExpectedBytes <= 0 ||
+      maximumExpectedBytes >
+          CloudAttachmentDownloadCoordinator.maximumExpectedBytes) {
+    throw ArgumentError.value(maximumExpectedBytes, 'maximumExpectedBytes');
+  }
+  final isMaterialized =
+      existsOnDisk ?? (attachment) => attachment.existsOnDisk;
+  final candidates = <Attachment>[];
+  for (final attachment in attachments) {
+    final guid = attachment.guid?.trim();
+    final transferName = attachment.transferName?.trim();
+    final expectedBytes = attachment.totalBytes;
+    if (guid == null ||
+        guid.isEmpty ||
+        transferName == null ||
+        transferName.isEmpty ||
+        expectedBytes == null ||
+        expectedBytes <= 0 ||
+        expectedBytes > maximumExpectedBytes ||
+        cloudAttachmentBodyCapabilityFor(attachment.metadata) !=
+            CloudAttachmentBodyCapability.materializable ||
+        cloudAttachmentDownloadLaneFor(attachment.metadata) !=
+            CloudAttachmentDownloadLane.cloudSyncV2) {
+      continue;
+    }
+    try {
+      if (isMaterialized(attachment)) continue;
+    } catch (_) {
+      continue;
+    }
+    candidates.add(attachment);
+  }
+  candidates.sort((left, right) {
+    final bySize = left.totalBytes!.compareTo(right.totalBytes!);
+    if (bySize != 0) return bySize;
+    final byId = (left.id ?? 0).compareTo(right.id ?? 0);
+    if (byId != 0) return byId;
+    return left.guid!.compareTo(right.guid!);
+  });
+  return candidates.isEmpty ? null : candidates.first;
 }
 
 final class _CloudSyncProjectionConversation {
@@ -328,6 +406,12 @@ final class CloudSyncV2WindowsHarnessLaunch {
           }
           operation = CloudSyncV2WindowsHarnessOperation.drain;
           operationSeen = true;
+        case 'probe-attachment':
+          if (operationSeen) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          operation = CloudSyncV2WindowsHarnessOperation.attachmentProbe;
+          operationSeen = true;
         case 'view-projection':
           if (operationSeen) {
             throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
@@ -395,6 +479,7 @@ enum _CloudSyncV2WindowsHarnessResumeOperation {
   initialize,
   semanticPull,
   semanticDrain,
+  attachmentProbe,
 }
 
 Future<void> _harnessStatusWriteTail = Future<void>.value();
@@ -843,6 +928,8 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         await _runSemanticPull();
       case CloudSyncV2WindowsHarnessOperation.drain:
         await _runSemanticDrain();
+      case CloudSyncV2WindowsHarnessOperation.attachmentProbe:
+        await _runAttachmentProbe();
       case CloudSyncV2WindowsHarnessOperation.projectionViewer:
         return;
       case CloudSyncV2WindowsHarnessOperation.projectionDetailViewer:
@@ -996,6 +1083,8 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         await _runSemanticPull();
       case _CloudSyncV2WindowsHarnessResumeOperation.semanticDrain:
         await _runSemanticDrain();
+      case _CloudSyncV2WindowsHarnessResumeOperation.attachmentProbe:
+        await _runAttachmentProbe();
       case null:
         await _runRequestedLaunchOperation();
     }
@@ -1103,6 +1192,67 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
             'pass_limit=${result.reachedPassLimit} '
             'chat_order_cache_repaired=$repairedChatOrderRows '
             'report=$reportName',
+      );
+      _resumeAfterTwoFactor = null;
+    } catch (error) {
+      if (await _handleMissingReadAuthentication(error)) return;
+      _showFailure(error);
+    }
+  }
+
+  Future<void> _runAttachmentProbe() async {
+    if (_activeClient == null || _busy) return;
+    _resumeAfterTwoFactor =
+        _CloudSyncV2WindowsHarnessResumeOperation.attachmentProbe;
+    setState(() {
+      _busy = true;
+      _status =
+          'Verifying one bounded attachment body in the disposable copy...';
+    });
+    await _setRuntimeStage('attachment-probe', state: 'running');
+    try {
+      if (!cloudSyncV2WindowsAttachmentProbeProfileIsMarked(fs.appDocDir)) {
+        throw StateError('cloud_attachment_probe_disposable_profile_required');
+      }
+      final candidate = cloudSyncV2WindowsSelectAttachmentProbeCandidate(
+        Database.attachments.getAll(),
+      );
+      if (candidate == null) {
+        throw StateError('cloud_attachment_probe_candidate_unavailable');
+      }
+      final expectedBytes = candidate.totalBytes!;
+      final adapter = CloudAttachmentProductionAdapter.fromDatabase(
+        readActiveClient: () => _activeClient,
+        privateStorageDirectory: fs.appDocDir.path,
+        applicationDocumentsDirectory: fs.appDocDir.path,
+      );
+      final result = await adapter.downloadIfAvailable(
+        canonicalGuid: candidate.guid!,
+        expectedBytes: expectedBytes,
+      );
+      if (result is! CloudAttachmentDownloadMaterialized ||
+          result.body.verifiedBytes != expectedBytes) {
+        throw StateError('cloud_attachment_probe_source_unavailable');
+      }
+      final finalFile = File(candidate.path);
+      if (!await finalFile.exists()) {
+        throw StateError('cloud_attachment_final_file_missing');
+      }
+      final placedBytes = await finalFile.length();
+      if (placedBytes != expectedBytes) {
+        throw StateError('cloud_attachment_size_mismatch');
+      }
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _status = 'Attachment body verified locally ($placedBytes bytes).';
+      });
+      await _setRuntimeStage(
+        'attachment-probe-complete',
+        state: 'finished',
+        detail:
+            'verified_bytes=$placedBytes '
+            'already_referenced=${result.body.alreadyReferenced}',
       );
       _resumeAfterTwoFactor = null;
     } catch (error) {

@@ -17,12 +17,15 @@ param(
     [switch] $SkipBuild,
     [switch] $RunOnce,
     [switch] $Drain,
+    [switch] $AttachmentProbe,
     [switch] $ProjectionViewer,
     [switch] $ProjectionDetailViewer,
     [ValidateRange(30, 3600)]
     [int] $RunOnceTimeoutSeconds = 600,
     [ValidateRange(60, 7200)]
     [int] $DrainTimeoutSeconds = 3600,
+    [ValidateRange(60, 1800)]
+    [int] $AttachmentProbeTimeoutSeconds = 900,
     [switch] $FunctionsOnlyForTest
 )
 
@@ -33,6 +36,7 @@ $selectedOperations = @(
     @(
         $RunOnce,
         $Drain,
+        $AttachmentProbe,
         $ProjectionViewer,
         $ProjectionDetailViewer
     ) | Where-Object { $_ }
@@ -499,7 +503,7 @@ function Wait-HarnessOperation {
         [Parameter(Mandatory)][datetime] $LaunchStartedUtc,
         [Parameter(Mandatory)][datetime] $BaselineWriteUtc,
         [Parameter(Mandatory)][string] $ExpectedLaunchId,
-        [Parameter(Mandatory)][ValidateSet('run-once', 'drain')]
+        [Parameter(Mandatory)][ValidateSet('run-once', 'drain', 'attachment-probe')]
         [string] $ExpectedOperation,
         [Parameter(Mandatory)][int] $TimeoutSeconds
     )
@@ -519,6 +523,9 @@ function Wait-HarnessOperation {
                         'semantic-drain-complete',
                         'semantic-drain-remote-complete-projection-partial'
                     )
+                }
+                elseif ($ExpectedOperation -eq 'attachment-probe') {
+                    $status.stage -eq 'attachment-probe-complete'
                 }
                 else {
                     $status.stage -eq 'semantic-pull'
@@ -594,6 +601,15 @@ if (-not (Test-Path -LiteralPath $marker -PathType Leaf) -or
     (Get-Content -LiteralPath $marker -Raw) -ne
         "openbubbles-cloud-sync-v2-windows-dev-profile:v1") {
     throw "Run bootstrap_cloud_sync_v2_dev_profile.ps1 first."
+}
+$attachmentProbeMarker = Join-Path `
+    $profile `
+    ".openbubbles-cloud-sync-v2-attachment-probe-copy"
+if ($AttachmentProbe -and
+    (-not (Test-Path -LiteralPath $attachmentProbeMarker -PathType Leaf) -or
+        (Get-Content -LiteralPath $attachmentProbeMarker -Raw) -ne
+            "openbubbles-cloud-sync-v2-attachment-probe-copy:v1")) {
+    throw "Attachment probing requires an explicitly marked disposable profile copy."
 }
 
 $flutter = Join-Path $FlutterRoot "bin\flutter.bat"
@@ -789,6 +805,9 @@ try {
     elseif ($Drain) {
         $harnessArguments = @("drain") + $harnessArguments
     }
+    elseif ($AttachmentProbe) {
+        $harnessArguments = @("probe-attachment") + $harnessArguments
+    }
     elseif ($ProjectionViewer) {
         $harnessArguments = @("view-projection") + $harnessArguments
     }
@@ -821,9 +840,12 @@ try {
         throw "The Windows Cloud Sync V2 harness exited during startup."
     }
     Write-Host "Cloud Sync V2 Windows harness started (PID $($process.Id))."
-    if ($RunOnce -or $Drain) {
+    if ($RunOnce -or $Drain -or $AttachmentProbe) {
         $operationTimeoutSeconds = if ($Drain) {
             $DrainTimeoutSeconds
+        }
+        elseif ($AttachmentProbe) {
+            $AttachmentProbeTimeoutSeconds
         }
         else {
             $RunOnceTimeoutSeconds
@@ -835,7 +857,13 @@ try {
             -LaunchStartedUtc $launchStartedUtc `
             -BaselineWriteUtc $statusBaselineWriteUtc `
             -ExpectedLaunchId $launchId `
-            -ExpectedOperation $(if ($Drain) { 'drain' } else { 'run-once' }) `
+            -ExpectedOperation $(if ($Drain) {
+                'drain'
+            } elseif ($AttachmentProbe) {
+                'attachment-probe'
+            } else {
+                'run-once'
+            }) `
             -TimeoutSeconds $operationTimeoutSeconds
     }
 }
