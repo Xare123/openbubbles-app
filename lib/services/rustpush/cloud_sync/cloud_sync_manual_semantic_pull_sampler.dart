@@ -139,6 +139,7 @@ final class CloudSyncManualSemanticPullSampler {
   static const pageLimit = 4;
   static const changeLimit = 50;
   static const projectionRepairLimit = 256;
+  static const maximumLegacyOwnershipRepairCandidates = 4096;
   static const retainedProjectionSweepBatchSize = 256;
   static const maximumRetainedProjectionSweepBatches = 4096;
   static const maximumConfirmedRemotePasses = 16;
@@ -886,11 +887,13 @@ final class CloudSyncManualSemanticPullSampler {
     required CloudInboxApplier inboxApplier,
     required Duration leaseDuration,
   }) async {
-    if (scope.zone != 'chatManateeZone' ||
-        inboxApplier is! CloudAppliedProjectionRepairer) {
+    final repairsLegacyOwnership = inboxApplier is CloudLegacyOwnershipRepairer;
+    final repairsChatProjection =
+        scope.zone == 'chatManateeZone' &&
+        inboxApplier is CloudAppliedProjectionRepairer;
+    if (!repairsLegacyOwnership && !repairsChatProjection) {
       return;
     }
-    final repairer = inboxApplier as CloudAppliedProjectionRepairer;
     final leaseFence = await store.tryAcquireCoordinatorLease(
       scope,
       ownerId: 'manual-semantic-projection-repair-${auth.nativeSessionId}',
@@ -901,12 +904,25 @@ final class CloudSyncManualSemanticPullSampler {
       throw StateError('cloud_sync_projection_repair_lease_unavailable');
     }
     try {
-      await repairer.repairAppliedProjections(
-        scope: scope,
-        generation: generation,
-        leaseFence: leaseFence,
-        limit: projectionRepairLimit,
-      );
+      if (repairsLegacyOwnership) {
+        final ownershipRepairer = inboxApplier as CloudLegacyOwnershipRepairer;
+        await ownershipRepairer.repairLegacyOwnershipEvidence(
+          scope: scope,
+          generation: generation,
+          leaseFence: leaseFence,
+          limit: maximumLegacyOwnershipRepairCandidates,
+        );
+      }
+      if (repairsChatProjection) {
+        final projectionRepairer =
+            inboxApplier as CloudAppliedProjectionRepairer;
+        await projectionRepairer.repairAppliedProjections(
+          scope: scope,
+          generation: generation,
+          leaseFence: leaseFence,
+          limit: projectionRepairLimit,
+        );
+      }
     } finally {
       await store.releaseCoordinatorLease(scope, leaseFence: leaseFence);
     }

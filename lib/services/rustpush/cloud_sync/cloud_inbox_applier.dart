@@ -855,6 +855,40 @@ abstract interface class CloudAppliedProjectionRepairer {
   });
 }
 
+/// Local storage half of the one-time ownership-evidence migration for
+/// snapshots written before canonical GUID digests existed.
+///
+/// Candidate selection must require an exact applied inbox row, replay row,
+/// current record map, and null/null legacy snapshot. The write method may
+/// update only that snapshot's two ownership digest fields.
+abstract interface class CloudLegacyOwnershipRepairStoreGateway {
+  Future<List<CloudInboxEntry>> readLegacyOwnershipRepairCandidates({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  });
+
+  Future<void> repairLegacyOwnershipEvidence({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required CloudSemanticEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  });
+}
+
+/// Optional pre-transport repair capability used by the manual semantic
+/// Canary. It re-decodes only store-selected, already-applied protected rows
+/// and cannot fetch CloudKit or move any sync-control state.
+abstract interface class CloudLegacyOwnershipRepairer {
+  Future<int> repairLegacyOwnershipEvidence({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  });
+}
+
 /// Durable storage half of [CloudRetainedProjectionReprocessor]. Candidate
 /// selection is read-only. The write method must fence the exact retained row
 /// and roll all local projection writes back if [action] throws.
@@ -955,6 +989,7 @@ class TransactionalCloudInboxApplier
     implements
         CloudInboxApplier,
         CloudAppliedProjectionRepairer,
+        CloudLegacyOwnershipRepairer,
         CloudRetainedProjectionReprocessor,
         CloudRetainedProjectionWindowReprocessor,
         CloudReadOnlyTombstoneAcknowledgementPolicy {
@@ -1414,6 +1449,121 @@ class TransactionalCloudInboxApplier
       }
       // The repaired row is fully committed and its transient identity lease
       // is released before yielding to Flutter's event loop.
+      await Future<void>.delayed(Duration.zero);
+    }
+    return repaired;
+  }
+
+  @override
+  Future<int> repairLegacyOwnershipEvidence({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  }) async {
+    final repairStore = _store;
+    final registrar = _identityRegistrar;
+    if (repairStore is! CloudLegacyOwnershipRepairStoreGateway ||
+        registrar == null) {
+      return 0;
+    }
+    final ownershipStore =
+        repairStore as CloudLegacyOwnershipRepairStoreGateway;
+    if (generation <= 0 || limit <= 0 || limit > 4096) {
+      throw ArgumentError('cloud_legacy_ownership_repair_request_invalid');
+    }
+
+    final candidates = await ownershipStore.readLegacyOwnershipRepairCandidates(
+      scope: scope,
+      generation: generation,
+      leaseFence: leaseFence,
+      limit: limit,
+    );
+    var repaired = 0;
+    for (final entry in candidates) {
+      if (entry.scope != scope ||
+          entry.generation != generation ||
+          entry.status != CloudInboxStatus.applied ||
+          entry.change.type != CloudChangeType.save ||
+          entry.change.isTombstone) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'legacy_ownership_repair_candidate_invalid',
+        );
+      }
+      _recordDiagnostic('legacy_ownership_repair_candidate');
+
+      final CloudDecodedMutation decoded;
+      try {
+        decoded = await _decoder.decode(entry);
+      } on CloudSemanticOutOfScopeServiceDisposition catch (disposition) {
+        _recordDiagnostic(disposition.safeCode);
+        await Future<void>.delayed(Duration.zero);
+        continue;
+      } on CloudSemanticDecodeFailure catch (failure) {
+        _recordDiagnostic(
+          'legacy_ownership_repair_decoder_${_safeCodeSegment(failure.category.name)}',
+        );
+        if (failure.category.isRetryable) {
+          throw CloudSyncFailure(
+            category: failure.category,
+            safeCode:
+                failure.safeCode ?? 'legacy_ownership_repair_decode_retryable',
+          );
+        }
+        await Future<void>.delayed(Duration.zero);
+        continue;
+      } catch (_) {
+        _recordDiagnostic('legacy_ownership_repair_decoder_unknown');
+        await Future<void>.delayed(Duration.zero);
+        continue;
+      }
+
+      final snapshot = decoded.snapshot;
+      final payload = decoded.payload;
+      final supportedShape =
+          (payload is CloudChatEntityPayload &&
+              snapshot?.kind == CloudEntityKind.chat) ||
+          (payload is CloudMessageEntityPayload &&
+              snapshot?.kind == CloudEntityKind.message) ||
+          (payload is CloudReactionEntityPayload &&
+              snapshot?.kind == CloudEntityKind.reaction) ||
+          (payload is CloudAttachmentEntityPayload &&
+              snapshot?.kind == CloudEntityKind.attachment);
+      if (decoded.scope != entry.scope ||
+          decoded.generation != entry.generation ||
+          decoded.changeId != entry.change.changeId ||
+          decoded.kind != CloudDecodedMutationKind.upsert ||
+          snapshot == null ||
+          payload == null ||
+          !supportedShape ||
+          snapshot.logicalEntityKeyHash != payload.logicalEntityKeyHash) {
+        _recordDiagnostic('legacy_ownership_repair_decoded_shape_invalid');
+        await Future<void>.delayed(Duration.zero);
+        continue;
+      }
+
+      CloudTransientCanonicalIdentityLease? identityLease;
+      try {
+        identityLease = registrar.bind(decoded);
+        if (_activeScopeRevalidator != null &&
+            !await _activeScopeRevalidator()) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'legacy_ownership_repair_active_scope_changed',
+          );
+        }
+        await ownershipStore.repairLegacyOwnershipEvidence(
+          entry: entry,
+          leaseFence: leaseFence,
+          payload: payload,
+          snapshot: snapshot,
+        );
+        repaired++;
+        _recordDiagnostic('legacy_ownership_repaired');
+      } finally {
+        identityLease?.release();
+      }
       await Future<void>.delayed(Duration.zero);
     }
     return repaired;

@@ -1042,6 +1042,796 @@ void main() {
   );
 
   test(
+    'dedicated repair adds only ownership evidence to an applied legacy chat',
+    () async {
+      final chatScope = _scope(zone: 'chatManateeZone');
+      adapter
+        ..activeScope = chatScope
+        ..activeGeneration = leaseFence.generation;
+      final entry = _entry(scope: chatScope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final payload = _chatPayload(includeServiceIdentifierAlias: true);
+      final snapshot = _chatSnapshot();
+
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.applyEntity(payload: payload, snapshot: snapshot);
+          transaction.markChangeApplied(entry.change.changeId);
+        },
+      );
+      final snapshotBox = objectBox.box<CloudSemanticSnapshotEntity>();
+      final legacy = snapshotBox.getAll().single;
+      final originalId = legacy.id;
+      final originalUpdatedAt = legacy.updatedAtMs;
+      legacy
+        ..canonicalGuidHash = null
+        ..canonicalGuidLookupHash = null;
+      snapshotBox.put(legacy);
+      final chat = Chat(
+        guid: payload.canonicalGuid,
+        chatIdentifier: payload.chatIdentifier,
+        style: 45,
+      )..isRpSms = false;
+      objectBox.box<Chat>().put(chat);
+
+      final identityRegistry = TransientCloudCanonicalIdentityRegistry();
+      final activeScope = CloudCanonicalActiveScope(
+        scope: chatScope,
+        generation: entry.generation,
+      );
+      final currentGateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(
+          store: objectBox,
+          activeScopeProvider: () => activeScope,
+          identityResolver: identityRegistry,
+          semanticApplyEnabled: true,
+        ),
+        clock: () => now,
+      );
+      final repairer = TransactionalCloudInboxApplier(
+        decoder: _FixedDecoder(
+          CloudDecodedMutation.upsert(
+            scope: chatScope,
+            generation: entry.generation,
+            changeId: entry.change.changeId,
+            snapshot: snapshot,
+            payload: payload,
+          ),
+        ),
+        store: currentGateway,
+        identityRegistrar: identityRegistry,
+        activeScopeRevalidator: () async => true,
+      );
+
+      final candidates = await currentGateway
+          .readLegacyOwnershipRepairCandidates(
+            scope: chatScope,
+            generation: entry.generation,
+            leaseFence: leaseFence,
+            limit: 8,
+          );
+      expect(candidates, hasLength(1));
+      final controlBefore = _durableSyncControlFingerprint(
+        objectBox,
+        includeOwnershipEvidence: false,
+      );
+
+      expect(
+        await repairer.repairLegacyOwnershipEvidence(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        1,
+      );
+
+      final repaired = snapshotBox.getAll().single;
+      expect(repaired.id, originalId);
+      expect(repaired.updatedAtMs, originalUpdatedAt);
+      expect(
+        repaired.canonicalGuidHash,
+        CloudCanonicalIdentityDigest.forPayload(
+          scope: chatScope,
+          generation: entry.generation,
+          payload: payload,
+        ),
+      );
+      expect(
+        repaired.canonicalGuidLookupHash,
+        CloudCanonicalIdentityDigest.forPayloadLookup(
+          scope: chatScope,
+          generation: entry.generation,
+          payload: payload,
+        ),
+      );
+      expect(
+        _durableSyncControlFingerprint(
+          objectBox,
+          includeOwnershipEvidence: false,
+        ),
+        controlBefore,
+      );
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(
+        await currentGateway.readLegacyOwnershipRepairCandidates(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'dedicated repair proves an applied legacy message through its chat owner',
+    () async {
+      final messageScope = _scope(zone: 'messageManateeZone');
+      final chatScope = _scope(zone: 'chatManateeZone');
+      adapter
+        ..activeScope = messageScope
+        ..activeGeneration = leaseFence.generation;
+      final entry = _entry(scope: messageScope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final createdAt = DateTime.utc(2026, 7, 31, 10);
+      final messageLogicalKey = _digestValue('L');
+      final chatLogicalKey = _digestValue('T');
+      final chatAliasKey = _digestValue('H');
+      const messageGuid = 'legacy-message-guid';
+      const chatGuid = 'legacy-message-chat-guid';
+      const chatIdentifier = 'iMessage;-;legacy-message-chat';
+      final payload = CloudMessageEntityPayload(
+        logicalEntityKeyHash: messageLogicalKey,
+        canonicalGuid: messageGuid,
+        chatAliasKeyHash: chatAliasKey,
+        chatIdentifier: chatIdentifier,
+        body: 'new mutable body',
+        senderHandle: 'mailto:sender@example.com',
+        createdAt: createdAt,
+        service: CloudSemanticService.iMessage,
+        knownFlags: const CloudSemanticKnownMessageFlags(
+          fromMe: false,
+          delivered: false,
+          read: false,
+          hasDataDetectorResults: false,
+          deliveredQuietly: false,
+          didNotifyRecipient: false,
+        ),
+      );
+      final snapshot = CloudSemanticSnapshot(
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: messageLogicalKey,
+        immutableContentDigest: _digestValue('I'),
+        createdAt: createdAt,
+        etagHash: entry.change.etagHash,
+        encryptedRawRecordReference: entry.change.encryptedPayloadReference,
+      );
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.applyEntity(payload: payload, snapshot: snapshot);
+          transaction.markChangeApplied(entry.change.changeId);
+        },
+      );
+      final snapshotBox = objectBox.box<CloudSemanticSnapshotEntity>();
+      final legacy = snapshotBox.getAll().single
+        ..canonicalGuidHash = null
+        ..canonicalGuidLookupHash = null;
+      snapshotBox.put(legacy);
+
+      final chat = Chat(
+        guid: chatGuid,
+        chatIdentifier: chatIdentifier,
+        style: 45,
+      )..isRpSms = false;
+      final chatId = objectBox.box<Chat>().put(chat);
+      objectBox.box<CloudSyncCheckpointEntity>().put(
+        CloudSyncCheckpointEntity(
+          checkpointKey: _scopeKey(chatScope),
+          accountFingerprint: chatScope.accountFingerprint,
+          container: chatScope.container,
+          database: chatScope.database,
+          zone: chatScope.zone,
+          streamKind: chatScope.streamKind.name,
+          schemaVersion: chatScope.schemaVersion,
+          persistenceLane: chatScope.persistenceLane.name,
+          generation: entry.generation,
+          updatedAtMs: now.millisecondsSinceEpoch,
+        ),
+      );
+      snapshotBox.put(
+        CloudSemanticSnapshotEntity(
+          snapshotKey: 'chat-owner:$chatLogicalKey',
+          scopeGenerationKey: _scopeGenerationKey(chatScope, entry.generation),
+          scopeKey: _scopeKey(chatScope),
+          accountFingerprint: chatScope.accountFingerprint,
+          container: chatScope.container,
+          database: chatScope.database,
+          zone: chatScope.zone,
+          streamKind: chatScope.streamKind.name,
+          schemaVersion: chatScope.schemaVersion,
+          generation: entry.generation,
+          entityKind: CloudEntityKind.chat.name,
+          logicalEntityKeyHash: chatLogicalKey,
+          canonicalGuidHash: CloudCanonicalIdentityDigest.forCanonicalGuid(
+            scope: chatScope,
+            generation: entry.generation,
+            kind: CloudEntityKind.chat,
+            logicalEntityKeyHash: chatLogicalKey,
+            canonicalGuid: chatGuid,
+          ),
+          canonicalGuidLookupHash:
+              CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+                scope: chatScope,
+                generation: entry.generation,
+                canonicalGuid: chatGuid,
+              ),
+          updatedAtMs: now.millisecondsSinceEpoch,
+        ),
+      );
+      _seedStrongChatAlias(
+        objectBox,
+        scope: chatScope,
+        generation: entry.generation,
+        logicalEntityKeyHash: chatLogicalKey,
+        canonicalGuid: chatGuid,
+        aliasKeyHash: chatAliasKey,
+        updatedAtMs: now.millisecondsSinceEpoch,
+      );
+      final messageId = objectBox.box<Message>().put(
+        Message(
+          guid: messageGuid,
+          dateCreated: createdAt,
+          text: 'old mutable body',
+          isFromMe: false,
+        )..chat.targetId = chatId,
+      );
+
+      final identityRegistry = TransientCloudCanonicalIdentityRegistry();
+      final activeScope = CloudCanonicalActiveScope(
+        scope: messageScope,
+        generation: entry.generation,
+      );
+      final currentGateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(
+          store: objectBox,
+          activeScopeProvider: () => activeScope,
+          identityResolver: identityRegistry,
+          chatDependencyScope: CloudCanonicalActiveScope(
+            scope: chatScope,
+            generation: entry.generation,
+          ),
+          semanticApplyEnabled: true,
+        ),
+        clock: () => now,
+      );
+      final repairer = TransactionalCloudInboxApplier(
+        decoder: _FixedDecoder(
+          CloudDecodedMutation.upsert(
+            scope: messageScope,
+            generation: entry.generation,
+            changeId: entry.change.changeId,
+            snapshot: snapshot,
+            payload: payload,
+          ),
+        ),
+        store: currentGateway,
+        identityRegistrar: identityRegistry,
+        activeScopeRevalidator: () async => true,
+      );
+      final controlBefore = _durableSyncControlFingerprint(
+        objectBox,
+        includeOwnershipEvidence: false,
+      );
+
+      expect(
+        await repairer.repairLegacyOwnershipEvidence(
+          scope: messageScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        1,
+      );
+
+      final repaired = snapshotBox.getAll().singleWhere(
+        (row) => row.id == legacy.id,
+      );
+      expect(
+        repaired.canonicalGuidHash,
+        CloudCanonicalIdentityDigest.forPayload(
+          scope: messageScope,
+          generation: entry.generation,
+          payload: payload,
+        ),
+      );
+      expect(
+        repaired.canonicalGuidLookupHash,
+        CloudCanonicalIdentityDigest.forPayloadLookup(
+          scope: messageScope,
+          generation: entry.generation,
+          payload: payload,
+        ),
+      );
+      expect(objectBox.box<Message>().get(messageId)!.text, 'old mutable body');
+      expect(
+        _durableSyncControlFingerprint(
+          objectBox,
+          includeOwnershipEvidence: false,
+        ),
+        controlBefore,
+      );
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  test('message-zone legacy repair admits a reaction snapshot', () async {
+    final messageScope = _scope(zone: 'messageManateeZone');
+    adapter
+      ..activeScope = messageScope
+      ..activeGeneration = leaseFence.generation;
+    final entry = _entry(scope: messageScope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final logicalKey = _digestValue('L');
+    final parentLogicalKey = _digestValue('P');
+    adapter.existingEntities.add((CloudEntityKind.message, parentLogicalKey));
+    final payload = CloudReactionEntityPayload(
+      logicalEntityKeyHash: logicalKey,
+      canonicalGuid: 'legacy-reaction-guid',
+      parentLogicalKeyHash: parentLogicalKey,
+      parentCanonicalGuid: 'legacy-reaction-parent-guid',
+      parentPart: 0,
+      senderHandle: 'mailto:sender@example.com',
+      reactionType: 'emoji',
+      associatedEmoji: 'heart',
+      createdAt: now,
+      service: CloudSemanticService.iMessage,
+      knownFlags: const CloudSemanticKnownMessageFlags(
+        fromMe: false,
+        delivered: false,
+        read: false,
+        hasDataDetectorResults: false,
+        deliveredQuietly: false,
+        didNotifyRecipient: false,
+      ),
+    );
+    final snapshot = CloudSemanticSnapshot(
+      kind: CloudEntityKind.reaction,
+      logicalEntityKeyHash: logicalKey,
+      parentLogicalKeyHash: parentLogicalKey,
+      immutableContentDigest: _digestValue('I'),
+      createdAt: now,
+      etagHash: entry.change.etagHash,
+      encryptedRawRecordReference: entry.change.encryptedPayloadReference,
+    );
+    await gateway.writeTransaction<void>(
+      entry: entry,
+      leaseFence: leaseFence,
+      action: (transaction) {
+        transaction.applyEntity(payload: payload, snapshot: snapshot);
+        transaction.markChangeApplied(entry.change.changeId);
+      },
+    );
+    final snapshotBox = objectBox.box<CloudSemanticSnapshotEntity>();
+    final legacy = snapshotBox.getAll().single
+      ..canonicalGuidHash = null
+      ..canonicalGuidLookupHash = null;
+    snapshotBox.put(legacy);
+
+    final candidates = await gateway.readLegacyOwnershipRepairCandidates(
+      scope: messageScope,
+      generation: entry.generation,
+      leaseFence: leaseFence,
+      limit: 8,
+    );
+
+    expect(candidates, hasLength(1));
+    expect(candidates.single.change.changeId, entry.change.changeId);
+    expect(
+      snapshotBox.get(legacy.id)!.entityKind,
+      CloudEntityKind.reaction.name,
+    );
+    expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  test(
+    'partial legacy ownership evidence fails closed before candidate decode',
+    () async {
+      final chatScope = _scope(zone: 'chatManateeZone');
+      adapter
+        ..activeScope = chatScope
+        ..activeGeneration = leaseFence.generation;
+      final entry = _entry(scope: chatScope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final payload = _chatPayload(includeServiceIdentifierAlias: true);
+      final snapshot = _chatSnapshot();
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.applyEntity(payload: payload, snapshot: snapshot);
+          transaction.markChangeApplied(entry.change.changeId);
+        },
+      );
+      final snapshotBox = objectBox.box<CloudSemanticSnapshotEntity>();
+      final partial = snapshotBox.getAll().single
+        ..canonicalGuidLookupHash = null;
+      snapshotBox.put(partial);
+
+      await expectLater(
+        gateway.readLegacyOwnershipRepairCandidates(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'legacy_ownership_evidence_partial',
+          ),
+        ),
+      );
+      final unchanged = snapshotBox.getAll().single;
+      expect(unchanged.canonicalGuidHash, isNotNull);
+      expect(unchanged.canonicalGuidLookupHash, isNull);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  test('decoded snapshot drift rolls back legacy ownership repair', () async {
+    final chatScope = _scope(zone: 'chatManateeZone');
+    adapter
+      ..activeScope = chatScope
+      ..activeGeneration = leaseFence.generation;
+    final entry = _entry(scope: chatScope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final payload = _chatPayload(includeServiceIdentifierAlias: true);
+    final snapshot = _chatSnapshot();
+    await gateway.writeTransaction<void>(
+      entry: entry,
+      leaseFence: leaseFence,
+      action: (transaction) {
+        transaction.applyEntity(payload: payload, snapshot: snapshot);
+        transaction.markChangeApplied(entry.change.changeId);
+      },
+    );
+    final snapshotBox = objectBox.box<CloudSemanticSnapshotEntity>();
+    final legacy = snapshotBox.getAll().single
+      ..canonicalGuidHash = null
+      ..canonicalGuidLookupHash = null;
+    snapshotBox.put(legacy);
+    objectBox.box<Chat>().put(
+      Chat(
+        guid: payload.canonicalGuid,
+        chatIdentifier: payload.chatIdentifier,
+        style: 45,
+      )..isRpSms = false,
+    );
+
+    final identityRegistry = TransientCloudCanonicalIdentityRegistry();
+    final activeScope = CloudCanonicalActiveScope(
+      scope: chatScope,
+      generation: entry.generation,
+    );
+    final currentGateway = ObjectBoxCloudSemanticStoreGateway(
+      store: objectBox,
+      canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(
+        store: objectBox,
+        activeScopeProvider: () => activeScope,
+        identityResolver: identityRegistry,
+        semanticApplyEnabled: true,
+      ),
+      clock: () => now,
+    );
+    final changedSnapshot = CloudSemanticSnapshot(
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+      groupVersion: 1,
+      etagHash: snapshot.etagHash,
+      encryptedRawRecordReference: snapshot.encryptedRawRecordReference,
+    );
+    final repairer = TransactionalCloudInboxApplier(
+      decoder: _FixedDecoder(
+        CloudDecodedMutation.upsert(
+          scope: chatScope,
+          generation: entry.generation,
+          changeId: entry.change.changeId,
+          snapshot: changedSnapshot,
+          payload: payload,
+        ),
+      ),
+      store: currentGateway,
+      identityRegistrar: identityRegistry,
+      activeScopeRevalidator: () async => true,
+    );
+    final controlBefore = _durableSyncControlFingerprint(
+      objectBox,
+      includeOwnershipEvidence: false,
+    );
+
+    await expectLater(
+      repairer.repairLegacyOwnershipEvidence(
+        scope: chatScope,
+        generation: entry.generation,
+        leaseFence: leaseFence,
+        limit: 8,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'legacy_ownership_repair_snapshot_changed',
+        ),
+      ),
+    );
+
+    final unchanged = snapshotBox.getAll().single;
+    expect(unchanged.canonicalGuidHash, isNull);
+    expect(unchanged.canonicalGuidLookupHash, isNull);
+    expect(
+      _durableSyncControlFingerprint(
+        objectBox,
+        includeOwnershipEvidence: false,
+      ),
+      controlBefore,
+    );
+    expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  test('competing durable owner prevents legacy ownership repair', () async {
+    final chatScope = _scope(zone: 'chatManateeZone');
+    adapter
+      ..activeScope = chatScope
+      ..activeGeneration = leaseFence.generation;
+    final entry = _entry(scope: chatScope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final payload = _chatPayload(includeServiceIdentifierAlias: true);
+    final snapshot = _chatSnapshot();
+    await gateway.writeTransaction<void>(
+      entry: entry,
+      leaseFence: leaseFence,
+      action: (transaction) {
+        transaction.applyEntity(payload: payload, snapshot: snapshot);
+        transaction.markChangeApplied(entry.change.changeId);
+      },
+    );
+    final snapshotBox = objectBox.box<CloudSemanticSnapshotEntity>();
+    final legacy = snapshotBox.getAll().single
+      ..canonicalGuidHash = null
+      ..canonicalGuidLookupHash = null;
+    snapshotBox.put(legacy);
+    final competingLogicalKey = _digestValue('Q');
+    final competingGuidHash = CloudCanonicalIdentityDigest.forCanonicalGuid(
+      scope: chatScope,
+      generation: entry.generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: competingLogicalKey,
+      canonicalGuid: payload.canonicalGuid,
+    );
+    final competingLookupHash =
+        CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+          scope: chatScope,
+          generation: entry.generation,
+          canonicalGuid: payload.canonicalGuid,
+        );
+    snapshotBox.put(
+      CloudSemanticSnapshotEntity(
+        snapshotKey: 'competing-owner:$competingLogicalKey',
+        scopeGenerationKey: _scopeGenerationKey(chatScope, entry.generation),
+        scopeKey: _scopeKey(chatScope),
+        accountFingerprint: chatScope.accountFingerprint,
+        container: chatScope.container,
+        database: chatScope.database,
+        zone: chatScope.zone,
+        streamKind: chatScope.streamKind.name,
+        schemaVersion: chatScope.schemaVersion,
+        generation: entry.generation,
+        entityKind: CloudEntityKind.chat.name,
+        logicalEntityKeyHash: competingLogicalKey,
+        canonicalGuidHash: competingGuidHash,
+        canonicalGuidLookupHash: competingLookupHash,
+        updatedAtMs: now.millisecondsSinceEpoch - 1,
+      ),
+    );
+    objectBox.box<Chat>().put(
+      Chat(
+        guid: payload.canonicalGuid,
+        chatIdentifier: payload.chatIdentifier,
+        style: 45,
+      )..isRpSms = false,
+    );
+
+    final identityRegistry = TransientCloudCanonicalIdentityRegistry();
+    final activeScope = CloudCanonicalActiveScope(
+      scope: chatScope,
+      generation: entry.generation,
+    );
+    final currentGateway = ObjectBoxCloudSemanticStoreGateway(
+      store: objectBox,
+      canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(
+        store: objectBox,
+        activeScopeProvider: () => activeScope,
+        identityResolver: identityRegistry,
+        semanticApplyEnabled: true,
+      ),
+      clock: () => now,
+    );
+    final repairer = TransactionalCloudInboxApplier(
+      decoder: _FixedDecoder(
+        CloudDecodedMutation.upsert(
+          scope: chatScope,
+          generation: entry.generation,
+          changeId: entry.change.changeId,
+          snapshot: snapshot,
+          payload: payload,
+        ),
+      ),
+      store: currentGateway,
+      identityRegistrar: identityRegistry,
+      activeScopeRevalidator: () async => true,
+    );
+
+    await expectLater(
+      repairer.repairLegacyOwnershipEvidence(
+        scope: chatScope,
+        generation: entry.generation,
+        leaseFence: leaseFence,
+        limit: 8,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'canonical_identity_owner_conflict',
+        ),
+      ),
+    );
+
+    final unchanged = snapshotBox.getAll().singleWhere(
+      (row) => row.id == legacy.id,
+    );
+    expect(unchanged.canonicalGuidHash, isNull);
+    expect(unchanged.canonicalGuidLookupHash, isNull);
+    final competing = snapshotBox.getAll().singleWhere(
+      (row) => row.logicalEntityKeyHash == competingLogicalKey,
+    );
+    expect(competing.canonicalGuidHash, competingGuidHash);
+    expect(competing.canonicalGuidLookupHash, competingLookupHash);
+    expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  test(
+    'legacy ownership repair rolls back when canonical identity differs',
+    () async {
+      final chatScope = _scope(zone: 'chatManateeZone');
+      adapter
+        ..activeScope = chatScope
+        ..activeGeneration = leaseFence.generation;
+      final entry = _entry(scope: chatScope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final payload = _chatPayload(includeServiceIdentifierAlias: true);
+      final snapshot = _chatSnapshot();
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.applyEntity(payload: payload, snapshot: snapshot);
+          transaction.markChangeApplied(entry.change.changeId);
+        },
+      );
+      final snapshotBox = objectBox.box<CloudSemanticSnapshotEntity>();
+      final legacy = snapshotBox.getAll().single
+        ..canonicalGuidHash = null
+        ..canonicalGuidLookupHash = null;
+      snapshotBox.put(legacy);
+      objectBox.box<Chat>().put(
+        Chat(
+          guid: payload.canonicalGuid,
+          chatIdentifier: 'different-chat-identifier',
+          style: 45,
+        )..isRpSms = false,
+      );
+
+      final identityRegistry = TransientCloudCanonicalIdentityRegistry();
+      final activeScope = CloudCanonicalActiveScope(
+        scope: chatScope,
+        generation: entry.generation,
+      );
+      final currentGateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(
+          store: objectBox,
+          activeScopeProvider: () => activeScope,
+          identityResolver: identityRegistry,
+          semanticApplyEnabled: true,
+        ),
+        clock: () => now,
+      );
+      final repairer = TransactionalCloudInboxApplier(
+        decoder: _FixedDecoder(
+          CloudDecodedMutation.upsert(
+            scope: chatScope,
+            generation: entry.generation,
+            changeId: entry.change.changeId,
+            snapshot: snapshot,
+            payload: payload,
+          ),
+        ),
+        store: currentGateway,
+        identityRegistrar: identityRegistry,
+        activeScopeRevalidator: () async => true,
+      );
+      final controlBefore = _durableSyncControlFingerprint(objectBox);
+
+      await expectLater(
+        repairer.repairLegacyOwnershipEvidence(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'legacy_ownership_canonical_row_mismatch',
+          ),
+        ),
+      );
+
+      final unchanged = snapshotBox.getAll().single;
+      expect(unchanged.canonicalGuidHash, isNull);
+      expect(unchanged.canonicalGuidLookupHash, isNull);
+      expect(_durableSyncControlFingerprint(objectBox), controlBefore);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  test(
     'quarantine after a canonical mutation is forbidden and rolls back',
     () async {
       final entry = _entry(scope: scope);
@@ -3017,6 +3807,55 @@ CloudSemanticChatAliasEntity _seedLegacyChatAlias(
   return row;
 }
 
+CloudSemanticChatAliasEntity _seedStrongChatAlias(
+  Store store, {
+  required CloudSyncScope scope,
+  required int generation,
+  required String logicalEntityKeyHash,
+  required String canonicalGuid,
+  required String aliasKeyHash,
+  required int updatedAtMs,
+  CloudSemanticService service = CloudSemanticService.iMessage,
+}) {
+  final chat = store.box<Chat>().getAll().singleWhere(
+    (candidate) => candidate.guid == canonicalGuid,
+  );
+  final row = CloudSemanticChatAliasEntity(
+    bindingKey:
+        'semantic-chat-strong2:${_sha256('${scope.storageKey}\u001f$generation\u001f${service.name}\u001f${CloudSemanticChatAliasKind.serviceIdentifier.name}\u001f$aliasKeyHash')}',
+    scopeGenerationKey: _scopeGenerationKey(scope, generation),
+    scopeKey: _scopeKey(scope),
+    accountFingerprint: scope.accountFingerprint,
+    container: scope.container,
+    database: scope.database,
+    zone: scope.zone,
+    streamKind: scope.streamKind.name,
+    schemaVersion: scope.schemaVersion,
+    generation: generation,
+    service: service.name,
+    aliasKind: CloudSemanticChatAliasKind.serviceIdentifier.name,
+    aliasKeyHash: aliasKeyHash,
+    chatLogicalEntityKeyHash: logicalEntityKeyHash,
+    canonicalGuidHash: CloudCanonicalIdentityDigest.forCanonicalGuid(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+      canonicalGuid: canonicalGuid,
+    ),
+    canonicalGuidLookupHash:
+        CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+          scope: scope,
+          generation: generation,
+          canonicalGuid: canonicalGuid,
+        ),
+    chatId: chat.id!,
+    updatedAtMs: updatedAtMs,
+  );
+  row.id = store.box<CloudSemanticChatAliasEntity>().put(row);
+  return row;
+}
+
 String _recordMapKey(CloudSyncScope scope, String logicalEntityKeyHash) =>
     _scopedDigest(scope, 'record-map', logicalEntityKeyHash);
 
@@ -3037,7 +3876,10 @@ String _indexedProtectedReference(String value) =>
 String _protectedReference(String character) =>
     'obcs2.ref.${_digestValue(character)}';
 
-String _durableSyncControlFingerprint(Store store) {
+String _durableSyncControlFingerprint(
+  Store store, {
+  bool includeOwnershipEvidence = true,
+}) {
   final checkpoints = store.box<CloudSyncCheckpointEntity>().getAll()
     ..sort((left, right) => left.id.compareTo(right.id));
   final inbox = store.box<CloudInboxChangeEntity>().getAll()
@@ -3122,8 +3964,8 @@ String _durableSyncControlFingerprint(Store store) {
             row.generation,
             row.entityKind,
             row.logicalEntityKeyHash,
-            row.canonicalGuidHash,
-            row.canonicalGuidLookupHash,
+            includeOwnershipEvidence ? row.canonicalGuidHash : null,
+            includeOwnershipEvidence ? row.canonicalGuidLookupHash : null,
             row.parentLogicalKeyHash,
             row.immutableContentDigest,
             row.createdAtMs,

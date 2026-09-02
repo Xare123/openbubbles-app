@@ -1915,6 +1915,82 @@ void main() {
   );
 
   test(
+    'scans the bounded legacy ownership window before message transport',
+    () async {
+      final events = <String>[];
+      final stores = <String, InMemoryCloudSyncStore>{};
+      late _LegacyOwnershipRepairingFakeCloudInboxApplier messageApplier;
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async {
+          final store = InMemoryCloudSyncStore();
+          stores[scope.zone] = store;
+          return store;
+        },
+        createRawTransport: (auth, scope, pauseToken) async {
+          events.add('transport:${scope.zone}');
+          return FakeCloudSyncTransport();
+        },
+        createInboxApplier: (auth, scope, generation) async {
+          events.add('applier:${scope.zone}');
+          if (scope.zone == 'messageManateeZone') {
+            messageApplier = _LegacyOwnershipRepairingFakeCloudInboxApplier(
+              repairResults: const [1],
+              onRepair: (repairScope, repairGeneration, leaseFence, limit) {
+                events.add('ownership:${repairScope.zone}');
+                expect(repairGeneration, generation);
+                expect(leaseFence.ownerId, contains(auth.nativeSessionId));
+                expect(
+                  limit,
+                  CloudSyncManualSemanticPullSampler
+                      .maximumLegacyOwnershipRepairCandidates,
+                );
+              },
+            );
+            return messageApplier;
+          }
+          return FakeCloudInboxApplier();
+        },
+      );
+
+      await sampler.runConfirmed();
+
+      expect(messageApplier.repairCalls, 1);
+      expect(events, const [
+        'applier:chatManateeZone',
+        'transport:chatManateeZone',
+        'applier:messageManateeZone',
+        'ownership:messageManateeZone',
+        'transport:messageManateeZone',
+        'applier:attachmentManateeZone',
+        'transport:attachmentManateeZone',
+      ]);
+      final messageScope = CloudSyncScope(
+        accountFingerprint: _accountFingerprintA,
+        container: CloudSyncManualSemanticPullSampler.container,
+        database: CloudSyncManualSemanticPullSampler.database,
+        zone: 'messageManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      final replacementLease = await stores['messageManateeZone']!
+          .tryAcquireCoordinatorLease(
+            messageScope,
+            ownerId: 'post-ownership-repair-test-owner',
+            now: DateTime.now().toUtc(),
+            leaseDuration: const Duration(minutes: 1),
+          );
+      expect(replacementLease, isNotNull);
+      await stores['messageManateeZone']!.releaseCoordinatorLease(
+        messageScope,
+        leaseFence: replacementLease!,
+      );
+    },
+  );
+
+  test(
     'normal engine reprojects retained rows for every capable semantic zone',
     () async {
       final events = <String>[];
@@ -2433,6 +2509,31 @@ final class _RepairingFakeCloudInboxApplier extends FakeCloudInboxApplier
     repairCalls++;
     onRepair(scope, generation, leaseFence, limit);
     return 1;
+  }
+}
+
+final class _LegacyOwnershipRepairingFakeCloudInboxApplier
+    extends FakeCloudInboxApplier
+    implements CloudLegacyOwnershipRepairer {
+  _LegacyOwnershipRepairingFakeCloudInboxApplier({
+    required List<int> repairResults,
+    required this.onRepair,
+  }) : _repairResults = List<int>.of(repairResults);
+
+  final List<int> _repairResults;
+  final _ProjectionRepairCallback onRepair;
+  int repairCalls = 0;
+
+  @override
+  Future<int> repairLegacyOwnershipEvidence({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  }) async {
+    repairCalls++;
+    onRepair(scope, generation, leaseFence, limit);
+    return _repairResults.removeAt(0);
   }
 }
 

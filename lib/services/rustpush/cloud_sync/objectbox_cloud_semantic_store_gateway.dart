@@ -79,6 +79,30 @@ abstract interface class CloudAppliedChatProjectionRepairAdapter {
   });
 }
 
+/// Content-free result of proving that one pre-digest semantic snapshot still
+/// owns the exact canonical row produced by its already-applied mutation.
+final class CloudLegacyCanonicalOwnershipProof {
+  const CloudLegacyCanonicalOwnershipProof({
+    required this.canonicalGuidHash,
+    required this.canonicalGuidLookupHash,
+  });
+
+  final String canonicalGuidHash;
+  final String canonicalGuidLookupHash;
+}
+
+/// Narrow synchronous proof surface for the legacy ownership migration.
+/// Implementations must inspect existing canonical state only and must not
+/// mutate canonical entities, aliases, sync control state, or transport state.
+abstract interface class CloudLegacyCanonicalOwnershipProofAdapter {
+  CloudLegacyCanonicalOwnershipProof proveLegacyCanonicalOwnership({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  });
+}
+
 enum _SemanticReplayOutcome { applied, appliedWithConflict, quarantined }
 
 enum _SemanticTransactionPhase { open, appliedTerminal, quarantinedTerminal }
@@ -306,6 +330,7 @@ final class ObjectBoxCloudSemanticStoreGateway
     implements
         CloudSemanticStoreGateway,
         CloudAppliedProjectionRepairStoreGateway,
+        CloudLegacyOwnershipRepairStoreGateway,
         CloudRetainedProjectionStoreGateway,
         CloudRetainedProjectionWindowStoreGateway {
   ObjectBoxCloudSemanticStoreGateway({
@@ -696,6 +721,307 @@ final class ObjectBoxCloudSemanticStoreGateway
         query.close();
       }
     });
+  }
+
+  @override
+  Future<List<CloudInboxEntry>> readLegacyOwnershipRepairCandidates({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  }) async {
+    if (generation <= 0 || limit <= 0 || limit > 4096) {
+      throw ArgumentError('legacy_ownership_repair_request_invalid');
+    }
+    final expectedKinds = _legacyOwnershipKindsForScope(scope);
+    if (expectedKinds == null) return const <CloudInboxEntry>[];
+
+    final scopeKey =
+        'scope2:${_SemanticTransactionContext._digest(scope.storageKey)}';
+    final scopeGenerationKey =
+        'semantic-generation4:${_SemanticTransactionContext._digest('$scopeKey\u001f$generation')}';
+    _store.runInTransaction(TxMode.read, () {
+      final partialQuery =
+          _snapshots
+              .query(
+                CloudSemanticSnapshotEntity_.scopeGenerationKey
+                    .equals(scopeGenerationKey)
+                    .and(
+                      CloudSemanticSnapshotEntity_.canonicalGuidHash
+                          .isNull()
+                          .and(
+                            CloudSemanticSnapshotEntity_.canonicalGuidLookupHash
+                                .notNull(),
+                          )
+                          .or(
+                            CloudSemanticSnapshotEntity_.canonicalGuidHash
+                                .notNull()
+                                .and(
+                                  CloudSemanticSnapshotEntity_
+                                      .canonicalGuidLookupHash
+                                      .isNull(),
+                                ),
+                          ),
+                    ),
+              )
+              .build()
+            ..limit = 1;
+      try {
+        if (partialQuery.findFirst() != null) {
+          throw _failure('legacy_ownership_evidence_partial');
+        }
+      } finally {
+        partialQuery.close();
+      }
+    });
+    final candidates = <CloudInboxEntry>[];
+    final seenLogicalKeys = <String>{};
+    var offset = 0;
+    while (candidates.length < limit) {
+      final page = _store.runInTransaction(TxMode.read, () {
+        final query =
+            (_inbox.query(
+                  CloudInboxChangeEntity_.scopeKey
+                      .equals(scopeKey)
+                      .and(
+                        CloudInboxChangeEntity_.generation.equals(generation),
+                      )
+                      .and(
+                        CloudInboxChangeEntity_.status.equals(
+                          CloudInboxStatus.applied.index,
+                        ),
+                      )
+                      .and(CloudInboxChangeEntity_.isTombstone.equals(false)),
+                )..order(
+                  CloudInboxChangeEntity_.fetchSequence,
+                  flags: Order.descending,
+                ))
+                .build();
+        try {
+          query
+            ..offset = offset
+            ..limit = _projectionCandidateQueryPageSize;
+          final rows = query.find();
+          final pageCandidates = <CloudInboxEntry>[];
+          for (final row in rows) {
+            final entry = _appliedEntryFromEntity(scope, row);
+            final context = _SemanticTransactionContext.prepare(
+              entry: entry,
+              leaseFence: leaseFence,
+            );
+            ObjectBoxCloudSemanticFence.validateLocked(
+              store: _store,
+              entry: entry,
+              leaseFence: leaseFence,
+              nowMs: _clock().toUtc().millisecondsSinceEpoch,
+              expectedInboxStatus: CloudInboxStatus.applied,
+              canonicalAdapter: _canonicalAdapter,
+            );
+            final logicalEntityKeyHash = _currentAppliedLogicalKey(
+              context,
+              row,
+            );
+            if (logicalEntityKeyHash == null ||
+                !seenLogicalKeys.add(logicalEntityKeyHash)) {
+              continue;
+            }
+            final snapshot = _findLegacyOwnershipSnapshot(
+              context,
+              logicalEntityKeyHash,
+            );
+            if (snapshot == null) continue;
+            _validateLegacyOwnershipSnapshot(
+              context: context,
+              snapshot: snapshot,
+              expectedKinds: expectedKinds,
+              expectedLogicalKeyHash: logicalEntityKeyHash,
+            );
+            final hasGuidHash = snapshot.canonicalGuidHash != null;
+            final hasLookupHash = snapshot.canonicalGuidLookupHash != null;
+            if (hasGuidHash != hasLookupHash) {
+              throw _failure('legacy_ownership_evidence_partial');
+            }
+            if (hasGuidHash) continue;
+            pageCandidates.add(entry);
+            if (candidates.length + pageCandidates.length == limit) break;
+          }
+          return (
+            rowsRead: rows.length,
+            candidates: List<CloudInboxEntry>.unmodifiable(pageCandidates),
+          );
+        } finally {
+          query.close();
+        }
+      });
+      candidates.addAll(page.candidates);
+      offset += page.rowsRead;
+      if (candidates.length == limit ||
+          page.rowsRead < _projectionCandidateQueryPageSize) {
+        break;
+      }
+      await Future<void>.delayed(Duration.zero);
+    }
+    return List<CloudInboxEntry>.unmodifiable(candidates);
+  }
+
+  @override
+  Future<void> repairLegacyOwnershipEvidence({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required CloudSemanticEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) {
+    final expectedKinds = _legacyOwnershipKindsForScope(entry.scope);
+    if (expectedKinds == null ||
+        !expectedKinds.contains(payload.kind) ||
+        snapshot.kind != payload.kind ||
+        payload.logicalEntityKeyHash != snapshot.logicalEntityKeyHash) {
+      return Future<void>.error(
+        _malformed('legacy_ownership_repair_shape_invalid'),
+      );
+    }
+    try {
+      ObjectBoxCloudSemanticFence.validateEntryContext(
+        entry: entry,
+        leaseFence: leaseFence,
+        expectedInboxStatus: CloudInboxStatus.applied,
+      );
+    } on CloudSyncFailure catch (failure) {
+      return Future<void>.error(failure);
+    } catch (_) {
+      return Future<void>.error(
+        _failure('legacy_ownership_repair_context_invalid'),
+      );
+    }
+    if (!_activeStores.add(_store)) {
+      return Future<void>.error(
+        _failure('semantic_nested_transaction_forbidden'),
+      );
+    }
+
+    try {
+      final context = _SemanticTransactionContext.prepare(
+        entry: entry,
+        leaseFence: leaseFence,
+      );
+      _store.runInTransaction(TxMode.write, () {
+        final durable = ObjectBoxCloudSemanticFence.validateLocked(
+          store: _store,
+          entry: entry,
+          leaseFence: leaseFence,
+          nowMs: _clock().toUtc().millisecondsSinceEpoch,
+          expectedInboxStatus: CloudInboxStatus.applied,
+          canonicalAdapter: _canonicalAdapter,
+        );
+        final currentLogicalKey = _currentAppliedLogicalKey(
+          context,
+          durable.inbox,
+        );
+        if (currentLogicalKey == null ||
+            currentLogicalKey != snapshot.logicalEntityKeyHash) {
+          throw _failure('legacy_ownership_repair_logical_binding_invalid');
+        }
+        final snapshotEntity = _findLegacyOwnershipSnapshot(
+          context,
+          currentLogicalKey,
+        );
+        if (snapshotEntity == null) {
+          throw _failure('legacy_ownership_repair_snapshot_missing');
+        }
+        _validateLegacyOwnershipSnapshot(
+          context: context,
+          snapshot: snapshotEntity,
+          expectedKinds: expectedKinds,
+          expectedLogicalKeyHash: currentLogicalKey,
+        );
+        if (snapshotEntity.entityKind != payload.kind.name) {
+          throw _failure('legacy_ownership_repair_kind_changed');
+        }
+        final hasGuidHash = snapshotEntity.canonicalGuidHash != null;
+        final hasLookupHash = snapshotEntity.canonicalGuidLookupHash != null;
+        if (hasGuidHash != hasLookupHash) {
+          throw _failure('legacy_ownership_evidence_partial');
+        }
+
+        final recordMap = _findCurrentRecordMap(context, currentLogicalKey);
+        final localSnapshot = _legacySnapshotFromEntity(
+          snapshotEntity,
+          recordMap,
+        );
+        if (!_legacySnapshotsMatchExactly(localSnapshot, snapshot)) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'legacy_ownership_repair_snapshot_changed',
+          );
+        }
+        _validateLegacyOwnershipPayloadParent(payload, snapshot);
+        if (_canonicalAdapter is! CloudLegacyCanonicalOwnershipProofAdapter) {
+          throw _failure('legacy_ownership_repair_adapter_unavailable');
+        }
+        final proofAdapter =
+            _canonicalAdapter as CloudLegacyCanonicalOwnershipProofAdapter;
+        final proof = proofAdapter.proveLegacyCanonicalOwnership(
+          scope: entry.scope,
+          generation: entry.generation,
+          payload: payload,
+          snapshot: snapshot,
+        );
+        if (!_lowerHexDigestPattern.hasMatch(proof.canonicalGuidHash) ||
+            !_lowerHexDigestPattern.hasMatch(proof.canonicalGuidLookupHash)) {
+          throw _failure('legacy_ownership_repair_proof_invalid');
+        }
+
+        final ownerQuery =
+            _snapshots
+                .query(
+                  CloudSemanticSnapshotEntity_.scopeGenerationKey
+                      .equals(context.scopeGenerationKey)
+                      .and(
+                        CloudSemanticSnapshotEntity_.canonicalGuidLookupHash
+                            .equals(proof.canonicalGuidLookupHash),
+                      ),
+                )
+                .build()
+              ..limit = 2;
+        late final List<CloudSemanticSnapshotEntity> owners;
+        try {
+          owners = ownerQuery.find();
+        } finally {
+          ownerQuery.close();
+        }
+        if (owners.any((owner) => owner.id != snapshotEntity.id)) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'canonical_identity_owner_conflict',
+          );
+        }
+        if (hasGuidHash) {
+          if (snapshotEntity.canonicalGuidHash != proof.canonicalGuidHash ||
+              snapshotEntity.canonicalGuidLookupHash !=
+                  proof.canonicalGuidLookupHash) {
+            throw CloudSyncFailure(
+              category: CloudFailureCategory.conflict,
+              safeCode: 'canonical_identity_owner_conflict',
+            );
+          }
+          return;
+        }
+
+        snapshotEntity
+          ..canonicalGuidHash = proof.canonicalGuidHash
+          ..canonicalGuidLookupHash = proof.canonicalGuidLookupHash;
+        _snapshots.put(snapshotEntity);
+      });
+      return Future<void>.value();
+    } on CloudSyncFailure catch (failure) {
+      return Future<void>.error(failure);
+    } catch (_) {
+      return Future<void>.error(
+        _failure('legacy_ownership_repair_write_failed'),
+      );
+    } finally {
+      _activeStores.remove(_store);
+    }
   }
 
   @override
@@ -1137,6 +1463,193 @@ final class ObjectBoxCloudSemanticStoreGateway
       return hasAuthoritativeAlias;
     } finally {
       query.close();
+    }
+  }
+
+  static Set<CloudEntityKind>? _legacyOwnershipKindsForScope(
+    CloudSyncScope scope,
+  ) {
+    if (scope.streamKind != CloudSyncStreamKind.messages) return null;
+    return switch (scope.zone) {
+      'chatManateeZone' => const {CloudEntityKind.chat},
+      'messageManateeZone' => const {
+        CloudEntityKind.message,
+        CloudEntityKind.reaction,
+      },
+      'attachmentManateeZone' => const {CloudEntityKind.attachment},
+      _ => null,
+    };
+  }
+
+  CloudSemanticSnapshotEntity? _findLegacyOwnershipSnapshot(
+    _SemanticTransactionContext context,
+    String logicalEntityKeyHash,
+  ) {
+    final query =
+        _snapshots
+            .query(
+              CloudSemanticSnapshotEntity_.scopeGenerationKey
+                  .equals(context.scopeGenerationKey)
+                  .and(
+                    CloudSemanticSnapshotEntity_.logicalEntityKeyHash.equals(
+                      logicalEntityKeyHash,
+                    ),
+                  ),
+            )
+            .build()
+          ..limit = 2;
+    late final List<CloudSemanticSnapshotEntity> rows;
+    try {
+      rows = query.find();
+    } finally {
+      query.close();
+    }
+    if (rows.length > 1) {
+      throw _failure('legacy_ownership_repair_snapshot_not_unique');
+    }
+    return rows.isEmpty ? null : rows.single;
+  }
+
+  void _validateLegacyOwnershipSnapshot({
+    required _SemanticTransactionContext context,
+    required CloudSemanticSnapshotEntity snapshot,
+    required Set<CloudEntityKind> expectedKinds,
+    required String expectedLogicalKeyHash,
+  }) {
+    final scope = context.entry.scope;
+    final snapshotKind = _ObjectBoxCloudSemanticStoreTransaction._entityKind(
+      snapshot.entityKind,
+    );
+    if (!expectedKinds.contains(snapshotKind) ||
+        snapshot.snapshotKey !=
+            context.snapshotKey(snapshotKind, expectedLogicalKeyHash) ||
+        snapshot.scopeGenerationKey != context.scopeGenerationKey ||
+        snapshot.scopeKey != context.scopeKey ||
+        snapshot.accountFingerprint != scope.accountFingerprint ||
+        snapshot.container != scope.container ||
+        snapshot.database != scope.database ||
+        snapshot.zone != scope.zone ||
+        snapshot.streamKind != scope.streamKind.name ||
+        snapshot.schemaVersion != scope.schemaVersion ||
+        snapshot.generation != context.entry.generation ||
+        snapshot.logicalEntityKeyHash != expectedLogicalKeyHash) {
+      throw _failure('legacy_ownership_repair_snapshot_scope_invalid');
+    }
+  }
+
+  CloudRecordMapEntity _findCurrentRecordMap(
+    _SemanticTransactionContext context,
+    String logicalEntityKeyHash,
+  ) {
+    final query =
+        _recordMaps
+            .query(
+              CloudRecordMapEntity_.mapKey.equals(
+                context.recordMapKey(logicalEntityKeyHash),
+              ),
+            )
+            .build()
+          ..limit = 2;
+    late final List<CloudRecordMapEntity> rows;
+    try {
+      rows = query.find();
+    } finally {
+      query.close();
+    }
+    if (rows.length != 1) {
+      throw _failure('legacy_ownership_repair_record_map_not_unique');
+    }
+    final map = rows.single;
+    final change = context.entry.change;
+    if (map.scopeKey != context.scopeKey ||
+        map.accountFingerprint != context.entry.scope.accountFingerprint ||
+        map.zone != context.entry.scope.zone ||
+        map.logicalEntityKeyHash != logicalEntityKeyHash ||
+        map.generation != context.entry.generation ||
+        map.serverRecordIdHash != change.recordIdHash ||
+        map.encryptedServerRecordId != change.encryptedServerRecordId ||
+        map.etagHash != change.etagHash ||
+        map.encryptedRawRecordRef != change.encryptedPayloadReference) {
+      throw _failure('legacy_ownership_repair_record_map_invalid');
+    }
+    return map;
+  }
+
+  static CloudSemanticSnapshot _legacySnapshotFromEntity(
+    CloudSemanticSnapshotEntity entity,
+    CloudRecordMapEntity recordMap,
+  ) => CloudSemanticSnapshot(
+    kind: _ObjectBoxCloudSemanticStoreTransaction._entityKind(
+      entity.entityKind,
+    ),
+    logicalEntityKeyHash: entity.logicalEntityKeyHash,
+    parentLogicalKeyHash: entity.parentLogicalKeyHash,
+    immutableContentDigest: entity.immutableContentDigest,
+    createdAt: _ObjectBoxCloudSemanticStoreTransaction._dateOrNull(
+      entity.createdAtMs,
+    ),
+    readAt: _ObjectBoxCloudSemanticStoreTransaction._dateOrNull(
+      entity.readAtMs,
+    ),
+    deliveredAt: _ObjectBoxCloudSemanticStoreTransaction._dateOrNull(
+      entity.deliveredAtMs,
+    ),
+    editParts: _ObjectBoxCloudSemanticStoreTransaction._decodeEditParts(
+      entity.editPartsJson,
+    ),
+    retractedAt: _ObjectBoxCloudSemanticStoreTransaction._dateOrNull(
+      entity.retractedAtMs,
+    ),
+    groupVersion: entity.groupVersion,
+    groupMetadataDigest: entity.groupMetadataDigest,
+    etagHash: entity.etagHash,
+    encryptedRawRecordReference: recordMap.encryptedRawRecordRef,
+  );
+
+  static bool _legacySnapshotsMatchExactly(
+    CloudSemanticSnapshot left,
+    CloudSemanticSnapshot right,
+  ) {
+    if (left.kind != right.kind ||
+        left.logicalEntityKeyHash != right.logicalEntityKeyHash ||
+        left.parentLogicalKeyHash != right.parentLogicalKeyHash ||
+        left.immutableContentDigest != right.immutableContentDigest ||
+        left.createdAt != right.createdAt ||
+        left.readAt != right.readAt ||
+        left.deliveredAt != right.deliveredAt ||
+        left.retractedAt != right.retractedAt ||
+        left.groupVersion != right.groupVersion ||
+        left.groupMetadataDigest != right.groupMetadataDigest ||
+        left.etagHash != right.etagHash ||
+        left.encryptedRawRecordReference != right.encryptedRawRecordReference ||
+        left.editParts.length != right.editParts.length) {
+      return false;
+    }
+    for (final entry in left.editParts.entries) {
+      final other = right.editParts[entry.key];
+      if (other == null ||
+          entry.value.partKeyHash != other.partKeyHash ||
+          entry.value.revision != other.revision ||
+          entry.value.contentDigest != other.contentDigest ||
+          entry.value.modifiedAt != other.modifiedAt) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static void _validateLegacyOwnershipPayloadParent(
+    CloudSemanticEntityPayload payload,
+    CloudSemanticSnapshot snapshot,
+  ) {
+    final expectedParent = switch (payload) {
+      CloudMessageEntityPayload value => value.replyParentLogicalKeyHash,
+      CloudReactionEntityPayload value => value.parentLogicalKeyHash,
+      CloudAttachmentEntityPayload value => value.ownerLogicalKeyHash,
+      _ => null,
+    };
+    if (snapshot.parentLogicalKeyHash != expectedParent) {
+      throw _malformed('legacy_ownership_repair_parent_mismatch');
     }
   }
 

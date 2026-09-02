@@ -3835,6 +3835,590 @@ void main() {
     },
   );
 
+  test('proves exact legacy chat ownership without mutating the chat', () {
+    final chatScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: 'chatManateeZone',
+    );
+    const logicalKey = 'legacy-chat-proof-key';
+    const canonicalGuid = 'legacy-chat-proof-guid';
+    const chatIdentifier = 'legacy-chat-proof-identifier';
+    resolver.put(
+      scope: chatScope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: logicalKey,
+      canonicalGuid: canonicalGuid,
+    );
+    activeScope = CloudCanonicalActiveScope(
+      scope: chatScope,
+      generation: generation,
+    );
+    final chat = Chat(
+      guid: canonicalGuid,
+      chatIdentifier: chatIdentifier,
+      style: 45,
+    )..isRpSms = false;
+    final chatId = store.box<Chat>().put(chat);
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+    );
+    final payload = _chatPayload(
+      logicalEntityKeyHash: logicalKey,
+      canonicalGuid: canonicalGuid,
+      chatIdentifier: chatIdentifier,
+      displayName: 'mutable-name-is-not-identity',
+    );
+    final snapshot = _snapshot(CloudEntityKind.chat, logicalKey);
+    final before = store.box<Chat>().get(chatId)!;
+
+    final proof = adapter.proveLegacyCanonicalOwnership(
+      scope: chatScope,
+      generation: generation,
+      payload: payload,
+      snapshot: snapshot,
+    );
+
+    expect(
+      proof.canonicalGuidHash,
+      CloudCanonicalIdentityDigest.forPayload(
+        scope: chatScope,
+        generation: generation,
+        payload: payload,
+      ),
+    );
+    expect(
+      proof.canonicalGuidLookupHash,
+      CloudCanonicalIdentityDigest.forPayloadLookup(
+        scope: chatScope,
+        generation: generation,
+        payload: payload,
+      ),
+    );
+    final after = store.box<Chat>().get(chatId)!;
+    expect(after.guid, before.guid);
+    expect(after.chatIdentifier, before.chatIdentifier);
+    expect(after.style, before.style);
+    expect(after.displayName, before.displayName);
+  });
+
+  test('proves exact legacy message ownership without comparing body', () {
+    final chatScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: 'chatManateeZone',
+    );
+    const chatGuid = 'legacy-message-proof-chat-guid';
+    const chatIdentifier = 'legacy-message-proof-chat-identifier';
+    const logicalKey = 'legacy-message-proof-key';
+    const canonicalGuid = 'legacy-message-proof-guid';
+    resolver
+      ..put(
+        scope: chatScope,
+        generation: generation,
+        kind: CloudEntityKind.chat,
+        logicalEntityKeyHash: chatHash,
+        canonicalGuid: chatGuid,
+      )
+      ..put(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: logicalKey,
+        canonicalGuid: canonicalGuid,
+      );
+    final chat = Chat(guid: chatGuid, chatIdentifier: chatIdentifier, style: 45)
+      ..isRpSms = false;
+    final chatId = store.box<Chat>().put(chat);
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: chatScope,
+      generation: generation,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: chatGuid,
+      chatIdentifier: chatIdentifier,
+      chatId: chatId,
+    );
+    _seedCheckpoint(store, scope: chatScope, generation: generation);
+    final message =
+        Message(
+            guid: canonicalGuid,
+            dateCreated: testEpoch,
+            text: 'old mutable body',
+          )
+          ..chat.targetId = chatId
+          ..isFromMe = false;
+    final messageId = store.box<Message>().put(message);
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      chatDependencyScope: CloudCanonicalActiveScope(
+        scope: chatScope,
+        generation: generation,
+      ),
+      semanticApplyEnabled: true,
+    );
+    final payload = _messagePayload(
+      logicalEntityKeyHash: logicalKey,
+      canonicalGuid: canonicalGuid,
+      chatIdentifier: chatIdentifier,
+      body: 'new mutable body',
+    );
+
+    final proof = adapter.proveLegacyCanonicalOwnership(
+      scope: scope,
+      generation: generation,
+      payload: payload,
+      snapshot: _snapshot(CloudEntityKind.message, logicalKey),
+    );
+
+    expect(
+      proof.canonicalGuidHash,
+      CloudCanonicalIdentityDigest.forPayload(
+        scope: scope,
+        generation: generation,
+        payload: payload,
+      ),
+    );
+    expect(store.box<Message>().get(messageId)!.text, 'old mutable body');
+  });
+
+  test('proves exact legacy reaction ownership through its stored parent', () {
+    const reactionLogicalKey = 'legacy-reaction-proof-key';
+    const reactionGuid = 'legacy-reaction-proof-guid';
+    const parentGuid = 'message-guid';
+    resolver.put(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.reaction,
+      logicalEntityKeyHash: reactionLogicalKey,
+      canonicalGuid: reactionGuid,
+    );
+    final chatId = store.box<Chat>().put(
+      Chat(
+        guid: 'legacy-reaction-chat-guid',
+        chatIdentifier: 'legacy-reaction-chat',
+        style: 45,
+      )..isRpSms = false,
+    );
+    final parentId = store.box<Message>().put(
+      Message(guid: parentGuid, dateCreated: testEpoch, isFromMe: false)
+        ..chat.targetId = chatId,
+    );
+    final reactionId = store.box<Message>().put(
+      Message(guid: reactionGuid, dateCreated: testEpoch, isFromMe: false)
+        ..chat.targetId = chatId
+        ..associatedMessageGuid = parentGuid
+        ..associatedMessagePart = 0
+        ..associatedMessageType = 'emoji',
+    );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: parentGuid,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+    );
+    final payload = _reactionPayload(
+      logicalEntityKeyHash: reactionLogicalKey,
+      canonicalGuid: reactionGuid,
+      parentLogicalKeyHash: messageHash,
+      parentCanonicalGuid: parentGuid,
+      parentPart: 0,
+    );
+
+    final proof = adapter.proveLegacyCanonicalOwnership(
+      scope: scope,
+      generation: generation,
+      payload: payload,
+      snapshot: _snapshot(
+        CloudEntityKind.reaction,
+        reactionLogicalKey,
+        parentLogicalKeyHash: messageHash,
+      ),
+    );
+
+    expect(
+      proof.canonicalGuidHash,
+      CloudCanonicalIdentityDigest.forPayload(
+        scope: scope,
+        generation: generation,
+        payload: payload,
+      ),
+    );
+    expect(store.box<Message>().get(parentId)!.guid, parentGuid);
+    expect(
+      store.box<Message>().get(reactionId)!.associatedMessageGuid,
+      parentGuid,
+    );
+  });
+
+  test(
+    'rejects legacy reaction when parent proof is from a stale generation',
+    () {
+      const reactionLogicalKey = 'legacy-reaction-stale-parent-key';
+      const reactionGuid = 'legacy-reaction-stale-parent-guid';
+      const parentGuid = 'message-guid';
+      resolver.put(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.reaction,
+        logicalEntityKeyHash: reactionLogicalKey,
+        canonicalGuid: reactionGuid,
+      );
+      final chatId = store.box<Chat>().put(
+        Chat(
+          guid: 'legacy-reaction-stale-chat-guid',
+          chatIdentifier: 'legacy-reaction-stale-chat',
+          style: 45,
+        )..isRpSms = false,
+      );
+      store.box<Message>()
+        ..put(
+          Message(guid: parentGuid, dateCreated: testEpoch, isFromMe: false)
+            ..chat.targetId = chatId,
+        )
+        ..put(
+          Message(guid: reactionGuid, dateCreated: testEpoch, isFromMe: false)
+            ..chat.targetId = chatId
+            ..associatedMessageGuid = parentGuid
+            ..associatedMessagePart = 0
+            ..associatedMessageType = 'emoji',
+        );
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation + 1,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: messageHash,
+        canonicalGuid: parentGuid,
+      );
+      final adapter = _newAdapter(
+        store: store,
+        activeScopeProvider: () => activeScope,
+        resolver: resolver,
+        semanticApplyEnabled: true,
+      );
+      final payload = _reactionPayload(
+        logicalEntityKeyHash: reactionLogicalKey,
+        canonicalGuid: reactionGuid,
+        parentLogicalKeyHash: messageHash,
+        parentCanonicalGuid: parentGuid,
+        parentPart: 0,
+      );
+
+      expect(
+        () => adapter.proveLegacyCanonicalOwnership(
+          scope: scope,
+          generation: generation,
+          payload: payload,
+          snapshot: _snapshot(
+            CloudEntityKind.reaction,
+            reactionLogicalKey,
+            parentLogicalKeyHash: messageHash,
+          ),
+        ),
+        throwsA(
+          predicate<CloudSyncFailure>(
+            (failure) =>
+                failure.safeCode == 'canonical_identity_owner_unproven',
+          ),
+        ),
+      );
+    },
+  );
+
+  test('rejects legacy ownership when payload and snapshot parents differ', () {
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+    );
+
+    expect(
+      () => adapter.proveLegacyCanonicalOwnership(
+        scope: scope,
+        generation: generation,
+        payload: _reactionPayload(
+          logicalEntityKeyHash: 'legacy-reaction-parent-mismatch-key',
+          canonicalGuid: 'legacy-reaction-parent-mismatch-guid',
+          parentLogicalKeyHash: messageHash,
+          parentCanonicalGuid: 'message-guid',
+          parentPart: 0,
+        ),
+        snapshot: _snapshot(
+          CloudEntityKind.reaction,
+          'legacy-reaction-parent-mismatch-key',
+          parentLogicalKeyHash: 'different-parent-logical-key',
+        ),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) =>
+              failure.safeCode == 'legacy_ownership_canonical_shape_invalid',
+        ),
+      ),
+    );
+  });
+
+  test('proves exact legacy attachment ownership through its stored owner', () {
+    final messageScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: 'messageManateeZone',
+    );
+    final attachmentScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: 'attachmentManateeZone',
+    );
+    const attachmentLogicalKey = 'legacy-attachment-proof-key';
+    const ownerGuid = 'message-guid';
+    const ownerPart = 1;
+    const attachmentGuid = '${ownerGuid}_$ownerPart';
+    resolver
+      ..put(
+        scope: attachmentScope,
+        generation: generation,
+        kind: CloudEntityKind.attachment,
+        logicalEntityKeyHash: attachmentLogicalKey,
+        canonicalGuid: attachmentGuid,
+      )
+      ..put(
+        scope: attachmentScope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: messageHash,
+        canonicalGuid: ownerGuid,
+      );
+    activeScope = CloudCanonicalActiveScope(
+      scope: attachmentScope,
+      generation: generation,
+    );
+    final ownerId = store.box<Message>().put(
+      Message(guid: ownerGuid, dateCreated: testEpoch, isFromMe: false),
+    );
+    final attachmentId = store.box<Attachment>().put(
+      Attachment(guid: attachmentGuid)..message.targetId = ownerId,
+    );
+    _seedCheckpoint(store, scope: messageScope, generation: generation);
+    _seedExactOwnershipProof(
+      store,
+      scope: messageScope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: ownerGuid,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      messageDependencyScope: CloudCanonicalActiveScope(
+        scope: messageScope,
+        generation: generation,
+      ),
+      semanticApplyEnabled: true,
+    );
+    final payload = _attachmentPayload(
+      logicalEntityKeyHash: attachmentLogicalKey,
+      canonicalGuid: attachmentGuid,
+      ownerLogicalKeyHash: messageHash,
+      ownerCanonicalGuid: ownerGuid,
+      ownerPart: ownerPart,
+      protectedLocalReference: 'protected:legacy-attachment-proof',
+    );
+
+    final proof = adapter.proveLegacyCanonicalOwnership(
+      scope: attachmentScope,
+      generation: generation,
+      payload: payload,
+      snapshot: _snapshot(
+        CloudEntityKind.attachment,
+        attachmentLogicalKey,
+        parentLogicalKeyHash: messageHash,
+      ),
+    );
+
+    expect(
+      proof.canonicalGuidLookupHash,
+      CloudCanonicalIdentityDigest.forPayloadLookup(
+        scope: attachmentScope,
+        generation: generation,
+        payload: payload,
+      ),
+    );
+    expect(
+      store.box<Attachment>().get(attachmentId)!.message.targetId,
+      ownerId,
+    );
+  });
+
+  test('rejects legacy attachment owner proof from another account scope', () {
+    final messageScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: 'messageManateeZone',
+    );
+    final staleMessageScope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintB,
+      container: scope.container,
+      database: scope.database,
+      zone: 'messageManateeZone',
+    );
+    final attachmentScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: 'attachmentManateeZone',
+    );
+    const attachmentLogicalKey = 'legacy-attachment-cross-scope-key';
+    const ownerGuid = 'legacy-attachment-cross-scope-owner';
+    const attachmentGuid = '${ownerGuid}_2';
+    final attachmentResolver = _Resolver()
+      ..put(
+        scope: attachmentScope,
+        generation: generation,
+        kind: CloudEntityKind.attachment,
+        logicalEntityKeyHash: attachmentLogicalKey,
+        canonicalGuid: attachmentGuid,
+      )
+      ..put(
+        scope: attachmentScope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: messageHash,
+        canonicalGuid: ownerGuid,
+      );
+    activeScope = CloudCanonicalActiveScope(
+      scope: attachmentScope,
+      generation: generation,
+    );
+    final ownerId = store.box<Message>().put(
+      Message(guid: ownerGuid, dateCreated: testEpoch, isFromMe: false),
+    );
+    store.box<Attachment>().put(
+      Attachment(guid: attachmentGuid)..message.targetId = ownerId,
+    );
+    _seedCheckpoint(store, scope: messageScope, generation: generation);
+    _seedExactOwnershipProof(
+      store,
+      scope: staleMessageScope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: ownerGuid,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: attachmentResolver,
+      messageDependencyScope: CloudCanonicalActiveScope(
+        scope: messageScope,
+        generation: generation,
+      ),
+      semanticApplyEnabled: true,
+    );
+    final payload = _attachmentPayload(
+      logicalEntityKeyHash: attachmentLogicalKey,
+      canonicalGuid: attachmentGuid,
+      ownerLogicalKeyHash: messageHash,
+      ownerCanonicalGuid: ownerGuid,
+      ownerPart: 2,
+      protectedLocalReference: 'protected:cross-scope-rejected',
+    );
+
+    expect(
+      () => adapter.proveLegacyCanonicalOwnership(
+        scope: attachmentScope,
+        generation: generation,
+        payload: payload,
+        snapshot: _snapshot(
+          CloudEntityKind.attachment,
+          attachmentLogicalKey,
+          parentLogicalKeyHash: messageHash,
+        ),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) => failure.safeCode == 'canonical_identity_owner_unproven',
+        ),
+      ),
+    );
+  });
+
+  test('rejects legacy ownership when immutable chat identity differs', () {
+    final chatScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: 'chatManateeZone',
+    );
+    const logicalKey = 'legacy-chat-mismatch-key';
+    const canonicalGuid = 'legacy-chat-mismatch-guid';
+    resolver.put(
+      scope: chatScope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: logicalKey,
+      canonicalGuid: canonicalGuid,
+    );
+    activeScope = CloudCanonicalActiveScope(
+      scope: chatScope,
+      generation: generation,
+    );
+    store.box<Chat>().put(
+      Chat(
+        guid: canonicalGuid,
+        chatIdentifier: 'different-identifier',
+        style: 45,
+      )..isRpSms = false,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+    );
+
+    expect(
+      () => adapter.proveLegacyCanonicalOwnership(
+        scope: chatScope,
+        generation: generation,
+        payload: _chatPayload(
+          logicalEntityKeyHash: logicalKey,
+          canonicalGuid: canonicalGuid,
+          chatIdentifier: 'expected-identifier',
+        ),
+        snapshot: _snapshot(CloudEntityKind.chat, logicalKey),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) =>
+              failure.safeCode == 'legacy_ownership_canonical_row_mismatch',
+        ),
+      ),
+    );
+  });
+
   test(
     'rejects ownership evidence re-homed across scope generation kind or owner',
     () {

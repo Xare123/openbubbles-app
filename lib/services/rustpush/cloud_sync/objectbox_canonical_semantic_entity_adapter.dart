@@ -208,7 +208,8 @@ final class CloudCanonicalIdentityDigest {
 final class ObjectBoxCanonicalSemanticEntityAdapter
     implements
         CloudCanonicalSemanticEntityAdapter,
-        CloudAppliedChatProjectionRepairAdapter {
+        CloudAppliedChatProjectionRepairAdapter,
+        CloudLegacyCanonicalOwnershipProofAdapter {
   static final RegExp _externalDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
 
   ObjectBoxCanonicalSemanticEntityAdapter({
@@ -335,6 +336,276 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       kind: kind,
       logicalEntityKeyHash: logicalEntityKeyHash,
       canonicalGuid: canonicalGuid,
+    );
+  }
+
+  @override
+  CloudLegacyCanonicalOwnershipProof proveLegacyCanonicalOwnership({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) {
+    _requireActiveScope(scope, generation);
+    final payloadParentLogicalKeyHash = switch (payload) {
+      CloudMessageEntityPayload value => value.replyParentLogicalKeyHash,
+      CloudReactionEntityPayload value => value.parentLogicalKeyHash,
+      CloudAttachmentEntityPayload value => value.ownerLogicalKeyHash,
+      _ => null,
+    };
+    if (payload.kind != snapshot.kind ||
+        payload.logicalEntityKeyHash != snapshot.logicalEntityKeyHash ||
+        payloadParentLogicalKeyHash != snapshot.parentLogicalKeyHash ||
+        (payload is! CloudChatEntityPayload &&
+            payload is! CloudMessageEntityPayload &&
+            payload is! CloudReactionEntityPayload &&
+            payload is! CloudAttachmentEntityPayload)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.malformedRecord,
+        safeCode: 'legacy_ownership_canonical_shape_invalid',
+      );
+    }
+    _validateMutationIdentitySet(payload);
+
+    final canonicalGuid = switch (payload) {
+      CloudChatEntityPayload value => value.canonicalGuid,
+      CloudMessageEntityPayload value => value.canonicalGuid,
+      CloudReactionEntityPayload value => value.canonicalGuid,
+      CloudAttachmentEntityPayload value => value.canonicalGuid,
+      _ => throw StateError('legacy_ownership_payload_unreachable'),
+    };
+    final resolvedGuid = _resolveCanonicalGuid(
+      scope: scope,
+      generation: generation,
+      kind: payload.kind,
+      logicalEntityKeyHash: payload.logicalEntityKeyHash,
+    );
+    if (resolvedGuid == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_identity_unavailable',
+      );
+    }
+    if (resolvedGuid != canonicalGuid) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_identity_mismatch',
+      );
+    }
+    final transientOwner = _identityResolver.resolveCanonicalIdentityOwner(
+      scope: scope,
+      generation: generation,
+      canonicalGuid: canonicalGuid,
+    );
+    if (transientOwner == null ||
+        !transientOwner.matches(
+          expectedKind: payload.kind,
+          expectedLogicalEntityKeyHash: payload.logicalEntityKeyHash,
+        )) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'legacy_ownership_transient_owner_invalid',
+      );
+    }
+
+    switch (payload) {
+      case CloudChatEntityPayload value:
+        final service = value.service;
+        final style = value.style;
+        if (service == null ||
+            style == null ||
+            value.aliases.isEmpty ||
+            !value.aliases.any(
+              (alias) =>
+                  alias.kind == CloudSemanticChatAliasKind.serviceIdentifier,
+            ) ||
+            value.aliases.any(
+              (alias) => !_externalDigestPattern.hasMatch(alias.keyHash),
+            )) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.malformedRecord,
+            safeCode: 'legacy_ownership_chat_shape_invalid',
+          );
+        }
+        final chat = _findUniqueLegacyOwnershipChat(canonicalGuid);
+        final expectedStyle = switch (style) {
+          CloudSemanticChatStyle.direct => 45,
+          CloudSemanticChatStyle.group => 43,
+        };
+        if (chat == null ||
+            chat.id == null ||
+            chat.id! <= 0 ||
+            chat.guid != canonicalGuid ||
+            chat.chatIdentifier != value.chatIdentifier ||
+            chat.style != expectedStyle ||
+            chat.isRpSms != (service == CloudSemanticService.sms) ||
+            _findMessage(canonicalGuid) != null ||
+            _findAttachment(canonicalGuid) != null) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'legacy_ownership_canonical_row_mismatch',
+          );
+        }
+      case CloudMessageEntityPayload value:
+        final service = value.service;
+        final createdAt = value.createdAt;
+        final flags = value.knownFlags;
+        if (service == null ||
+            createdAt == null ||
+            flags == null ||
+            value.associationKind != CloudSemanticAssociationKind.none) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.malformedRecord,
+            safeCode: 'legacy_ownership_message_shape_invalid',
+          );
+        }
+        final chatDependency = _dependencyScopeFor(
+          kind: CloudEntityKind.chat,
+          currentScope: scope,
+          currentGeneration: generation,
+        );
+        final expectedChat = _resolveMessageChat(
+          scope: chatDependency.scope,
+          generation: chatDependency.generation,
+          service: service,
+          payload: value,
+        );
+        final message = _findUniqueLegacyOwnershipMessage(canonicalGuid);
+        if (message == null ||
+            message.id == null ||
+            message.id! <= 0 ||
+            message.guid != canonicalGuid ||
+            message.dateCreated == null ||
+            message.dateCreated!.toUtc() != createdAt.toUtc() ||
+            message.isFromMe == null ||
+            message.isFromMe != flags.fromMe ||
+            message.associatedMessageGuid != null ||
+            message.associatedMessagePart != null ||
+            message.associatedMessageType != null ||
+            message.chat.targetId <= 0 ||
+            message.chat.targetId != expectedChat.id ||
+            _findChat(canonicalGuid) != null ||
+            _findAttachment(canonicalGuid) != null) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'legacy_ownership_canonical_row_mismatch',
+          );
+        }
+      case CloudReactionEntityPayload value:
+        final service = value.service;
+        final createdAt = value.createdAt;
+        final flags = value.knownFlags;
+        if (service != CloudSemanticService.iMessage ||
+            createdAt == null ||
+            flags == null ||
+            !_reactionTypes.contains(value.reactionType)) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.malformedRecord,
+            safeCode: 'legacy_ownership_reaction_shape_invalid',
+          );
+        }
+        final messageDependency = _dependencyScopeFor(
+          kind: CloudEntityKind.message,
+          currentScope: scope,
+          currentGeneration: generation,
+        );
+        _requireLegacyDependencyOwnership(
+          mutationScope: scope,
+          mutationGeneration: generation,
+          durableOwnershipScope: messageDependency,
+          kind: CloudEntityKind.message,
+          logicalEntityKeyHash: value.parentLogicalKeyHash,
+          canonicalGuid: value.parentCanonicalGuid,
+        );
+        final parent = _findUniqueLegacyOwnershipMessage(
+          value.parentCanonicalGuid,
+        );
+        final reaction = _findUniqueLegacyOwnershipMessage(canonicalGuid);
+        if (parent == null ||
+            parent.id == null ||
+            parent.id! <= 0 ||
+            reaction == null ||
+            reaction.id == null ||
+            reaction.id! <= 0 ||
+            reaction.guid != canonicalGuid ||
+            reaction.dateCreated == null ||
+            reaction.dateCreated!.toUtc() != createdAt.toUtc() ||
+            reaction.isFromMe == null ||
+            reaction.isFromMe != flags.fromMe ||
+            reaction.associatedMessageGuid != value.parentCanonicalGuid ||
+            reaction.associatedMessagePart != value.parentPart ||
+            reaction.associatedMessageType != value.reactionType ||
+            parent.chat.targetId <= 0 ||
+            reaction.chat.targetId != parent.chat.targetId ||
+            _findChat(canonicalGuid) != null ||
+            _findAttachment(canonicalGuid) != null) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'legacy_ownership_canonical_row_mismatch',
+          );
+        }
+      case CloudAttachmentEntityPayload value:
+        final hasOwner = value.ownerCanonicalGuid != null;
+        if (hasOwner &&
+            canonicalGuid != '${value.ownerCanonicalGuid}_${value.ownerPart}') {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.malformedRecord,
+            safeCode: 'legacy_ownership_attachment_shape_invalid',
+          );
+        }
+        final attachment = _findUniqueLegacyOwnershipAttachment(canonicalGuid);
+        Message? owner;
+        if (hasOwner) {
+          final messageDependency = _dependencyScopeFor(
+            kind: CloudEntityKind.message,
+            currentScope: scope,
+            currentGeneration: generation,
+          );
+          _requireLegacyDependencyOwnership(
+            mutationScope: scope,
+            mutationGeneration: generation,
+            durableOwnershipScope: messageDependency,
+            kind: CloudEntityKind.message,
+            logicalEntityKeyHash: value.ownerLogicalKeyHash!,
+            canonicalGuid: value.ownerCanonicalGuid!,
+          );
+          owner = _findUniqueLegacyOwnershipMessage(value.ownerCanonicalGuid!);
+        }
+        if (attachment == null ||
+            attachment.id == null ||
+            attachment.id! <= 0 ||
+            attachment.guid != canonicalGuid ||
+            (hasOwner &&
+                (owner == null ||
+                    owner.id == null ||
+                    owner.id! <= 0 ||
+                    attachment.message.targetId != owner.id)) ||
+            (!hasOwner && attachment.message.targetId != 0) ||
+            _findChat(canonicalGuid) != null ||
+            _findMessage(canonicalGuid) != null) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'legacy_ownership_canonical_row_mismatch',
+          );
+        }
+      default:
+        throw StateError('legacy_ownership_payload_unreachable');
+    }
+
+    return CloudLegacyCanonicalOwnershipProof(
+      canonicalGuidHash: CloudCanonicalIdentityDigest.forCanonicalGuid(
+        scope: scope,
+        generation: generation,
+        kind: payload.kind,
+        logicalEntityKeyHash: payload.logicalEntityKeyHash,
+        canonicalGuid: canonicalGuid,
+      ),
+      canonicalGuidLookupHash:
+          CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+            scope: scope,
+            generation: generation,
+            canonicalGuid: canonicalGuid,
+          ),
     );
   }
 
@@ -1309,6 +1580,110 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     return resolved;
   }
 
+  void _requireLegacyDependencyOwnership({
+    required CloudSyncScope mutationScope,
+    required int mutationGeneration,
+    required CloudCanonicalActiveScope durableOwnershipScope,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+    required String canonicalGuid,
+  }) {
+    final resolved = _resolveCanonicalGuid(
+      scope: mutationScope,
+      generation: mutationGeneration,
+      kind: kind,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+    );
+    if (resolved == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_identity_unavailable',
+      );
+    }
+    if (resolved != canonicalGuid) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_identity_mismatch',
+      );
+    }
+    final transientOwner = _identityResolver.resolveCanonicalIdentityOwner(
+      scope: mutationScope,
+      generation: mutationGeneration,
+      canonicalGuid: canonicalGuid,
+    );
+    if (transientOwner == null ||
+        !transientOwner.matches(
+          expectedKind: kind,
+          expectedLogicalEntityKeyHash: logicalEntityKeyHash,
+        )) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'legacy_ownership_dependency_transient_owner_invalid',
+      );
+    }
+
+    final dependencyScope = durableOwnershipScope.scope;
+    final dependencyGeneration = durableOwnershipScope.generation;
+    final lookupHash = CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+      scope: dependencyScope,
+      generation: dependencyGeneration,
+      canonicalGuid: canonicalGuid,
+    );
+    final ownerQuery =
+        _snapshots
+            .query(
+              CloudSemanticSnapshotEntity_.scopeGenerationKey
+                  .equals(
+                    _scopeGenerationKey(dependencyScope, dependencyGeneration),
+                  )
+                  .and(
+                    CloudSemanticSnapshotEntity_.canonicalGuidLookupHash.equals(
+                      lookupHash,
+                    ),
+                  ),
+            )
+            .build()
+          ..limit = 2;
+    late final List<CloudSemanticSnapshotEntity> owners;
+    try {
+      owners = ownerQuery.find();
+    } finally {
+      ownerQuery.close();
+    }
+    if (owners.length > 1) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_identity_owner_conflict',
+      );
+    }
+    if (owners.length != 1) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_identity_owner_unproven',
+      );
+    }
+    final owner = owners.single;
+    final ownerKind = _snapshotKind(owner.entityKind);
+    final expectedGuidHash = CloudCanonicalIdentityDigest.forCanonicalGuid(
+      scope: dependencyScope,
+      generation: dependencyGeneration,
+      kind: kind,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+      canonicalGuid: canonicalGuid,
+    );
+    if (!_snapshotMatchesScope(owner, dependencyScope, dependencyGeneration) ||
+        ownerKind != kind ||
+        owner.logicalEntityKeyHash != logicalEntityKeyHash ||
+        owner.canonicalGuidLookupHash != lookupHash ||
+        owner.canonicalGuidHash != expectedGuidHash ||
+        !CloudCanonicalIdentityDigest.isValid(expectedGuidHash)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_identity_owner_unproven',
+      );
+    }
+  }
+
   CloudCanonicalActiveScope _dependencyScopeFor({
     required CloudEntityKind kind,
     required CloudSyncScope currentScope,
@@ -1623,6 +1998,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     CloudSyncScope scope,
     int generation,
   ) =>
+      snapshot.scopeGenerationKey == _scopeGenerationKey(scope, generation) &&
       snapshot.scopeKey == _scopeKey(scope) &&
       snapshot.accountFingerprint == scope.accountFingerprint &&
       snapshot.container == scope.container &&
@@ -2706,6 +3082,22 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     }
   }
 
+  Chat? _findUniqueLegacyOwnershipChat(String guid) {
+    final query = _chats.query(Chat_.guid.equals(guid)).build()..limit = 2;
+    try {
+      final rows = query.find();
+      if (rows.length > 1) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'legacy_ownership_canonical_row_ambiguous',
+        );
+      }
+      return rows.isEmpty ? null : rows.single;
+    } finally {
+      query.close();
+    }
+  }
+
   CloudSemanticChatAliasEntity? _findChatAlias(String bindingKey) {
     final query =
         _chatAliases
@@ -2791,11 +3183,45 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     }
   }
 
+  Message? _findUniqueLegacyOwnershipMessage(String guid) {
+    final query = _messages.query(Message_.guid.equals(guid)).build()
+      ..limit = 2;
+    try {
+      final rows = query.find();
+      if (rows.length > 1) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'legacy_ownership_canonical_row_ambiguous',
+        );
+      }
+      return rows.isEmpty ? null : rows.single;
+    } finally {
+      query.close();
+    }
+  }
+
   Attachment? _findAttachment(String guid) {
     final query = _attachments.query(Attachment_.guid.equals(guid)).build()
       ..limit = 1;
     try {
       return query.findFirst();
+    } finally {
+      query.close();
+    }
+  }
+
+  Attachment? _findUniqueLegacyOwnershipAttachment(String guid) {
+    final query = _attachments.query(Attachment_.guid.equals(guid)).build()
+      ..limit = 2;
+    try {
+      final rows = query.find();
+      if (rows.length > 1) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'legacy_ownership_canonical_row_ambiguous',
+        );
+      }
+      return rows.isEmpty ? null : rows.single;
     } finally {
       query.close();
     }
