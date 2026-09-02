@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -39,6 +40,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_common.dart' show RustOpaqueInterface;
 import 'package:get/get.dart' hide FormData, MultipartFile;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
@@ -47,6 +49,25 @@ import 'package:convert/convert.dart';
 import 'package:app_links/app_links.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:in_app_purchase_android/billing_client_wrappers.dart';
+
+class LoginAttemptGuard {
+  int _generation = 0;
+
+  int begin() => ++_generation;
+
+  void invalidate() {
+    _generation++;
+  }
+
+  bool isCurrent(int generation) => generation == _generation;
+}
+
+class StaleLoginAttemptException implements Exception {
+  const StaleLoginAttemptException();
+
+  @override
+  String toString() => 'The Apple login attempt was canceled or superseded';
+}
 
 class SetupViewController extends StatefulController {
   static const int _maxIdsAliasRetries = 1;
@@ -120,13 +141,114 @@ class SetupViewController extends StatefulController {
   ApsState? cachedState;
   ArcAnisetteClientDefaultAnisetteProvider? anisette;
 
+  Future<void> initialHardwareRestore = Future<void>.value();
+  bool restoredConfigNeedsFreshIdentity = false;
+
 
   api.CircleClientSessionDefaultAnisetteProvider? circleSession;
 
+  final LoginAttemptGuard _loginAttempts = LoginAttemptGuard();
+  final Map<RustOpaqueInterface, int> _loginResourceUsers = HashMap.identity();
+  final Set<RustOpaqueInterface> _loginResourcesPendingDispose = HashSet.identity();
+  bool _disposed = false;
+
+  int beginLoginAttempt() => _loginAttempts.begin();
+
+  bool isLoginAttemptCurrent(int attempt) => !_disposed && _loginAttempts.isCurrent(attempt);
+
+  bool _isCurrentOrUntracked(int? attempt) => attempt == null || isLoginAttemptCurrent(attempt);
+
+  void cancelLoginAttempt() {
+    _loginAttempts.invalidate();
+    clearCurrentAppleAccount();
+    final circle = circleSession;
+    circleSession = null;
+    _disposeLoginResourceWhenIdle(circle);
+  }
+
+  void replaceCurrentAppleAccount(
+    ArcMutexAppleAccountDefaultAnisetteProvider? account, {
+    int? attempt,
+  }) {
+    if (attempt != null && !isLoginAttemptCurrent(attempt)) {
+      _disposeLoginResourceWhenIdle(account);
+      return;
+    }
+    final previous = currentAppleAccount;
+    currentAppleAccount = account;
+    if (!identical(previous, account)) {
+      _disposeLoginResourceWhenIdle(previous);
+    }
+  }
+
+  void clearCurrentAppleAccount() {
+    final account = currentAppleAccount;
+    currentAppleAccount = null;
+    _disposeLoginResourceWhenIdle(account);
+  }
+
+  void _retainLoginResource(RustOpaqueInterface resource) {
+    if (resource.isDisposed) {
+      throw StateError('Cannot use a disposed login resource');
+    }
+    _loginResourceUsers[resource] = (_loginResourceUsers[resource] ?? 0) + 1;
+  }
+
+  void _releaseLoginResource(RustOpaqueInterface resource) {
+    final users = _loginResourceUsers[resource];
+    if (users == null) return;
+    if (users > 1) {
+      _loginResourceUsers[resource] = users - 1;
+      return;
+    }
+    _loginResourceUsers.remove(resource);
+    if (_loginResourcesPendingDispose.remove(resource) && !resource.isDisposed) {
+      resource.dispose();
+    }
+  }
+
+  void _disposeLoginResourceWhenIdle(RustOpaqueInterface? resource) {
+    if (resource == null || resource.isDisposed) return;
+    if (_loginResourceUsers.containsKey(resource)) {
+      _loginResourcesPendingDispose.add(resource);
+      return;
+    }
+    resource.dispose();
+  }
+
+  Future<T> withLoginAttemptResources<T>(
+    int attempt,
+    Iterable<RustOpaqueInterface?> resources,
+    Future<T> Function() operation,
+  ) async {
+    if (!isLoginAttemptCurrent(attempt)) {
+      throw const StaleLoginAttemptException();
+    }
+    final held = <RustOpaqueInterface>[];
+    try {
+      for (final resource in resources) {
+        if (resource == null) continue;
+        _retainLoginResource(resource);
+        held.add(resource);
+      }
+      return await operation();
+    } finally {
+      for (final resource in held.reversed) {
+        _releaseLoginResource(resource);
+      }
+    }
+  }
+
   @override
   void dispose() {
-    super.dispose();
+    _disposed = true;
+    _loginAttempts.invalidate();
+    clearCurrentAppleAccount();
+    final circle = circleSession;
+    circleSession = null;
+    _disposeLoginResourceWhenIdle(circle);
     destroyConnection();
+    super.dispose();
   }
 
   RxBool phoneValidating = false.obs;
@@ -330,25 +452,55 @@ class SetupViewController extends StatefulController {
     );
   }
 
-  Future<api.LoginState> updateLoginState(api.LoginState ret) async {
+  Future<api.LoginState> updateLoginState(api.LoginState ret, {int? attempt}) async {
+    if (!_isCurrentOrUntracked(attempt)) return ret;
     if (ret is api.LoginState_NeedsLogin) {
-      ArcMutexAppleAccountDefaultAnisetteProvider account;
-      (account, ret) = await api.tryAuth(
-        path: pushService.statePath,
-        conf: config!,
-        conn: connection!,
-        anisette: anisette!, 
-
-        creds: twoFaCreds
+      final (account, nextState) = await withLoginAttemptResources(
+        attempt ?? beginLoginAttempt(),
+        [config, connection, anisette],
+        () => api.tryAuth(
+          path: pushService.statePath,
+          conf: config!,
+          conn: connection!,
+          anisette: anisette!,
+          creds: twoFaCreds,
+        ),
       );
-      currentAppleAccount?.dispose();
-      currentAppleAccount = account;
-      currentAppleUser = await api.tryIcloudLogin(path: pushService.statePath, conf: config!, account: account);
+      if (attempt != null && !isLoginAttemptCurrent(attempt)) {
+        _disposeLoginResourceWhenIdle(account);
+        return ret;
+      }
+      replaceCurrentAppleAccount(account, attempt: attempt);
+      final user = await withLoginAttemptResources(
+        attempt ?? beginLoginAttempt(),
+        [account, config],
+        () => api.tryIcloudLogin(path: pushService.statePath, conf: config!, account: account),
+      );
+      if (attempt != null && !isLoginAttemptCurrent(attempt)) {
+        _disposeLoginResourceWhenIdle(account);
+        return nextState;
+      }
+      currentAppleUser = user;
+      ret = nextState;
     }
     if (ret is api.LoginState_NeedsDevice2FA) {
+      if (!_isCurrentOrUntracked(attempt)) return ret;
       // subscribe now to not miss the 2fa message
-      await ensureWatcher();
-      var (provider, rett, sid) = await api.send2FaToDevices(state: currentAppleAccount!, conn: connection!);
+      if (!await ensureWatcher(attempt: attempt)) return ret;
+      final account = currentAppleAccount;
+      final conn = connection;
+      if (account == null || conn == null) {
+        throw StateError('Apple login resources are unavailable for device 2FA');
+      }
+      var (provider, rett, sid) = await withLoginAttemptResources(
+        attempt ?? beginLoginAttempt(),
+        [account, conn],
+        () => api.send2FaToDevices(state: account, conn: conn),
+      );
+      if (!_isCurrentOrUntracked(attempt)) {
+        _disposeLoginResourceWhenIdle(provider);
+        return ret;
+      }
       if (sid != null) {
         mcs.invokeMethod("circle-proximity-session", {
           'sid': sid
@@ -359,14 +511,25 @@ class SetupViewController extends StatefulController {
       circleSession = provider;
     }
     if (ret is api.LoginState_NeedsSMS2FA) {
+      if (!_isCurrentOrUntracked(attempt)) return ret;
       mcs.invokeMethod("circle-proximity-session", {
         'sid': null
       });
-      var options = await api.get2FaSmsOpts(state: currentAppleAccount!);
+      final account = currentAppleAccount;
+      if (account == null) throw StateError('Apple account is unavailable for SMS 2FA');
+      var options = await withLoginAttemptResources(
+        attempt ?? beginLoginAttempt(),
+        [account],
+        () => api.get2FaSmsOpts(state: account),
+      );
       if (options.$2 != null) {
         ret = options.$2!;
       } else if (options.$1.length == 1) {
-        ret = await api.send2FaSms(locked: circleSession, account: currentAppleAccount!, phoneId: options.$1[0].id);
+        ret = await withLoginAttemptResources<api.LoginState>(
+          attempt ?? beginLoginAttempt(),
+          [account, circleSession],
+          () => api.send2FaSms(locked: circleSession, account: account, phoneId: options.$1[0].id),
+        );
         circleSession = null;
       } else {
         int selectedRadio = -1;
@@ -409,18 +572,31 @@ class SetupViewController extends StatefulController {
         if (selectedRadio == -1) {
           return ret;
         }
-        ret = await api.send2FaSms(locked: circleSession, account: currentAppleAccount!, phoneId: selectedRadio);
+        ret = await withLoginAttemptResources<api.LoginState>(
+          attempt ?? beginLoginAttempt(),
+          [account, circleSession],
+          () => api.send2FaSms(locked: circleSession, account: account, phoneId: selectedRadio),
+        );
         circleSession = null;
       }
       isSms.value = true;
     }
+    if (!_isCurrentOrUntracked(attempt)) return ret;
     state = ret;
     if (ret is api.LoginState_LoggedIn) {
       mcs.invokeMethod("circle-proximity-session", {
         'sid': null
       });
-      ss.settings.userName.value = await api.getUserName(state: currentAppleAccount!);
-      await doRegister();
+      final account = currentAppleAccount;
+      if (account == null) throw StateError('Apple account is unavailable after login');
+      await withLoginAttemptResources(
+        attempt ?? beginLoginAttempt(),
+        [account],
+        () async {
+          ss.settings.userName.value = await api.getUserName(state: account);
+          await doRegister();
+        },
+      );
     }
     return ret;
   }
@@ -654,55 +830,115 @@ class SetupViewController extends StatefulController {
     ss.saveSettings();
   }
 
-  Future<void> ensureWatcher() async {
-    if (connReceiver != null) return;
-    connReceiver = api.subscribeConn(conn: connection!);
-    connListener = await api.makeIdms(conn: connection!);
+  Future<bool> ensureWatcher({int? attempt}) async {
+    if (!_isCurrentOrUntracked(attempt)) return false;
+    if (connReceiver != null && !connReceiver!.isDisposed && connListener != null && !connListener!.isDisposed) return true;
+    final conn = connection;
+    if (conn == null || conn.isDisposed) {
+      throw StateError('Apple push connection is unavailable for 2FA');
+    }
+    final effectiveAttempt = attempt ?? beginLoginAttempt();
+    final receiver = api.subscribeConn(conn: conn);
+    late final ArcIdmsAuthListener listener;
+    try {
+      listener = await withLoginAttemptResources(
+        effectiveAttempt,
+        [conn],
+        () => api.makeIdms(conn: conn),
+      );
+    } catch (_) {
+      _disposeLoginResourceWhenIdle(receiver);
+      rethrow;
+    }
+    if (!isLoginAttemptCurrent(effectiveAttempt)) {
+      _disposeLoginResourceWhenIdle(receiver);
+      _disposeLoginResourceWhenIdle(listener);
+      return false;
+    }
+    final oldReceiver = connReceiver;
+    final oldListener = connListener;
+    connReceiver = receiver;
+    connListener = listener;
+    _disposeLoginResourceWhenIdle(oldReceiver);
+    _disposeLoginResourceWhenIdle(oldListener);
+    return true;
   }
 
   void destroyConnection() {
-    connReceiver?.dispose();
+    final receiver = connReceiver;
     connReceiver = null;
+    _disposeLoginResourceWhenIdle(receiver);
 
-    connListener?.dispose();
+    final listener = connListener;
     connListener = null;
+    _disposeLoginResourceWhenIdle(listener);
 
-    connection?.dispose();
+    final oldConnection = connection;
     connection = null;
+    _disposeLoginResourceWhenIdle(oldConnection);
   }
-  
 
-  Future<api.LoginState> submitCode(String code) async {
-    if (state is api.LoginState_Needs2FAVerification) {
-      var (dart, isAnnoying) = await api.verify2Fa(
-        path: pushService.statePath,
-        client: circleSession!,
-        anisette: anisette!, 
-        osConfig: config!,
-        watcher: connReceiver!,
-        idms: connListener!,
+  Future<void> rebuildLoginResources() async {
+    final oldAnisette = anisette;
+    anisette = null;
+    cancelLoginAttempt();
+    destroyConnection();
+    _disposeLoginResourceWhenIdle(oldAnisette);
+    if (_disposed || config == null || identity == null) return;
+    await setupConnection();
+  }
 
 
-        account: currentAppleAccount!,
-        code: code
-      );
-      state = dart;
-      currentAppleUser = isAnnoying;
-    } else if (state is api.LoginState_NeedsSMS2FAVerification) {
-      var myState = state as api.LoginState_NeedsSMS2FAVerification;
-      var (dart, isAnnoying) = await api.verify2FaSms(
-        path: pushService.statePath,
-        accountMut: currentAppleAccount!,
-        anisette: anisette!, 
-        config: config!, 
-
-        body: myState.field0, 
-        code: code
-      );
-      state = dart;
-      currentAppleUser = isAnnoying;
+  Future<api.LoginState> submitCode(String code, {int? attempt}) async {
+    final effectiveAttempt = attempt ?? beginLoginAttempt();
+    if (!isLoginAttemptCurrent(effectiveAttempt)) return state;
+    final account = currentAppleAccount;
+    final currentConnection = connection;
+    final currentAnisette = anisette;
+    final currentConfig = config;
+    final currentReceiver = connReceiver;
+    final currentListener = connListener;
+    if (account == null || currentAnisette == null || currentConfig == null) {
+      throw StateError('Apple login resources are unavailable for 2FA');
     }
-    return await updateLoginState(state);
+    return withLoginAttemptResources(
+      effectiveAttempt,
+      [account, currentConnection, currentAnisette, currentConfig, currentReceiver, currentListener, circleSession],
+      () async {
+        if (state is api.LoginState_Needs2FAVerification) {
+          if (circleSession == null || currentReceiver == null || currentListener == null || currentConnection == null) {
+            throw StateError('Trusted-device 2FA resources are unavailable');
+          }
+          var (dart, isAnnoying) = await api.verify2Fa(
+            path: pushService.statePath,
+            client: circleSession!,
+            anisette: currentAnisette,
+            osConfig: currentConfig,
+            watcher: currentReceiver,
+            idms: currentListener,
+            account: account,
+            code: code,
+          );
+          if (!isLoginAttemptCurrent(effectiveAttempt)) return state;
+          state = dart;
+          currentAppleUser = isAnnoying;
+        } else if (state is api.LoginState_NeedsSMS2FAVerification) {
+          var myState = state as api.LoginState_NeedsSMS2FAVerification;
+          var (dart, isAnnoying) = await api.verify2FaSms(
+            path: pushService.statePath,
+            accountMut: account,
+            anisette: currentAnisette,
+            config: currentConfig,
+            body: myState.field0,
+            code: code,
+          );
+          if (!isLoginAttemptCurrent(effectiveAttempt)) return state;
+          state = dart;
+          currentAppleUser = isAnnoying;
+        }
+        return await updateLoginState(state, attempt: effectiveAttempt);
+      },
+    );
   }
 
   (String, String)? twoFaCreds;
@@ -863,7 +1099,7 @@ class _SetupViewState extends OptimizedState<SetupView> {
   void initState() {
     super.initState();
 
-    (() async {
+    controller.initialHardwareRestore = (() async {
       if (ss.settings.cachedCodes.containsKey("sms-auth")) {
         ss.settings.cachedCodes["sms-auth-1"] = ss.settings.cachedCodes["sms-auth"]!;
         ss.settings.cachedCodes.remove("sms-auth");
@@ -883,10 +1119,20 @@ class _SetupViewState extends OptimizedState<SetupView> {
       }
 
       if (restored != null && pushService.state == null && controller.connection == null) {
-        controller.identity = api.decodeIdentity(identity: restored.identity);
         controller.config = restored.osConfig;
-        controller.cachedState = restored.push;
-        await controller.setupConnection();
+        try {
+          controller.identity = api.decodeIdentity(identity: restored.identity);
+          controller.cachedState = restored.push;
+          await controller.setupConnection();
+          controller.restoredConfigNeedsFreshIdentity = false;
+        } catch (e) {
+          controller.destroyConnection();
+          controller.identity = null;
+          controller.cachedState = null;
+          controller.restoredConfigNeedsFreshIdentity = true;
+          Logger.warn(
+              "Saved hardware credentials cannot be reused on this device; staging the saved relay configuration for local reactivation (${e.runtimeType})");
+        }
       }
 
       var dumb = File("${pushService.statePath}/dumb");

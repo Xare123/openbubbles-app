@@ -435,10 +435,16 @@ class HwInpState extends OptimizedState<HwInp> {
     if (link != null && link.toString().startsWith(rpApiRoot)) {
       unawaited(_checkCodeSafely(link.toString()));
     } else {
+      try {
+        await controller.initialHardwareRestore;
+      } catch (e, s) {
+        Logger.error("Failed to wait for saved hardware", error: e, trace: s);
+      }
+      if (!mounted) return;
       if (controller.config != null) {
         // restore
         stagingNonInp = true;
-        alreadyActivated = true;
+        alreadyActivated = !controller.restoredConfigNeedsFreshIdentity;
         select(controller.config!, ss.settings.macIsMine.value);
       }
     }

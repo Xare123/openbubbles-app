@@ -51,6 +51,7 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
 
   void handleBack() {
     if (loading) return;
+    controller.cancelLoginAttempt();
     controller.pageController.previousPage(
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeInOut,
@@ -548,6 +549,7 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
   }
 
   Future<void> connect(String appleId, String? password) async {
+    final attempt = controller.beginLoginAttempt();
     // apple only takes lowercase
     appleId = appleId.toLowerCase();
     controller.updateConnectError("");
@@ -555,17 +557,34 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
       loading = true;
     });
     try {
-      var (account, result) = await api.tryAuth(
-        path: pushService.statePath,
-        conf: controller.config!,
-        conn: controller.connection!,
-        anisette: controller.anisette!, 
-        creds: password == null ? null : (appleId, password),
+      var (account, result) = await controller.withLoginAttemptResources(
+        attempt,
+        [controller.config, controller.connection, controller.anisette],
+        () => api.tryAuth(
+          path: pushService.statePath,
+          conf: controller.config!,
+          conn: controller.connection!,
+          anisette: controller.anisette!,
+          creds: password == null ? null : (appleId, password),
+        ),
       );
-      controller.currentAppleAccount = account;
-      controller.currentAppleUser = await api.tryIcloudLogin(path: pushService.statePath, conf: controller.config!, account: account);
+      if (!controller.isLoginAttemptCurrent(attempt)) {
+        controller.replaceCurrentAppleAccount(account, attempt: attempt);
+        return;
+      }
+      controller.replaceCurrentAppleAccount(account, attempt: attempt);
+      final user = await controller.withLoginAttemptResources(
+        attempt,
+        [account, controller.config],
+        () => api.tryIcloudLogin(path: pushService.statePath, conf: controller.config!, account: account),
+      );
+      if (!controller.isLoginAttemptCurrent(attempt)) {
+        controller.replaceCurrentAppleAccount(account, attempt: attempt);
+        return;
+      }
+      controller.currentAppleUser = user;
 
-      result = await controller.updateLoginState(result);
+      result = await controller.updateLoginState(result, attempt: attempt);
 
 
       // if (result is api.LoginState_NeedsSMS2FA) {
@@ -577,6 +596,7 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
       //   result = const api.LoginState.needs2FaVerification();
       // }
 
+      if (!controller.isLoginAttemptCurrent(attempt)) return;
       ss.settings.iCloudAccount.value = appleId;
       if (result is api.LoginState_Needs2FAVerification || result is api.LoginState_NeedsSMS2FAVerification) {
         // we need 2fa
@@ -601,6 +621,23 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
         FocusManager.instance.primaryFocus?.unfocus();
       }
     } catch (e) {
+      if (e is StaleLoginAttemptException) return;
+      if (e is StateError && e.message == 'Cannot use a disposed login resource') {
+        controller.cancelLoginAttempt();
+        try {
+          await controller.rebuildLoginResources();
+        } catch (rebuildError, rebuildTrace) {
+          Logger.warn(
+            "Failed to rebuild expired Apple login resources",
+            error: rebuildError,
+            trace: rebuildTrace,
+          );
+        }
+        controller.updateConnectError(
+          "Apple login session expired. Please try again.",
+        );
+        return;
+      }
       if (e is AnyhowException) {
         if (e.message.contains("MOBILEME_TERMS_OF_SERVICE_UPDATE")) {
           await controller.updateAccountUi((finished) => setState(() { 
@@ -620,6 +657,19 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
           }));
         }
         controller.updateConnectError(e.message);
+        if (e.message.contains("6005")) {
+          controller.cancelLoginAttempt();
+          try {
+            await controller.rebuildLoginResources();
+          } catch (rebuildError, rebuildTrace) {
+            Logger.warn(
+              "Failed to rebuild Apple login resources after 6005",
+              error: rebuildError,
+              trace: rebuildTrace,
+            );
+          }
+          return;
+        }
       }
       if (e is PanicException) {
         controller.updateConnectError(e.message);

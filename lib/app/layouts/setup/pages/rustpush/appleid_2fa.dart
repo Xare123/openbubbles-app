@@ -343,12 +343,14 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
   }
 
   Future<void> appleHelp() async {
+    final attempt = controller.beginLoginAttempt();
     setState(() {
       appleHelping = true;
     });
     try {
-      await controller.updateLoginState(const api.LoginState.needsSms2Fa());
+      await controller.updateLoginState(const api.LoginState.needsSms2Fa(), attempt: attempt);
     } catch (e) {
+      if (e is StaleLoginAttemptException) return;
       controller.updateConnectError("$e");
       rethrow;
     } finally {
@@ -359,9 +361,7 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
   }
 
   void goBack() {
-    controller.currentAppleAccount?.dispose();
-    controller.currentAppleAccount = null;
-
+    controller.cancelLoginAttempt();
     controller.twoFaCreds = null;
     controller.pageController.previousPage(
       duration: const Duration(milliseconds: 300),
@@ -370,12 +370,14 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
   }
 
   Future<void> connect(String code) async {
+    final attempt = controller.beginLoginAttempt();
     controller.updateConnectError("");
     setState(() {
       loading = true;
     });
     try {
-      if (await controller.submitCode(code) is api.LoginState_LoggedIn) {
+      if (await controller.submitCode(code, attempt: attempt) is api.LoginState_LoggedIn) {
+        if (!controller.isLoginAttemptCurrent(attempt)) return;
         if (controller.success) {
           controller.pageController.nextPage(
             duration: const Duration(milliseconds: 300),
@@ -390,6 +392,7 @@ class _AppleId2FAState extends OptimizedState<AppleId2FA> {
         FocusManager.instance.primaryFocus?.unfocus();
       }
     } catch (e) {
+      if (e is StaleLoginAttemptException) return;
       if (e is AnyhowException) {
         if (e.message.contains("MOBILEME_TERMS_OF_SERVICE_UPDATE")) {
           await controller.updateAccountUi((finished) => setState(() { 
