@@ -105,6 +105,20 @@ jobs:
           fi
           echo "LD_LIBRARY_PATH=$(dirname "$library")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
+      # The FRB diagnostics contract tests and the protected-data logging scan
+      # share PowerShell tooling with local Windows runs. Install it before the
+      # full Dart suite so those tests execute instead of failing to spawn pwsh.
+      # Guarded so a runner image that already ships PowerShell costs nothing.
+      - name: Ensure PowerShell is available
+        run: |
+          set -euo pipefail
+          if command -v pwsh >/dev/null 2>&1; then
+            pwsh --version
+            exit 0
+          fi
+          sudo snap install powershell --classic
+          pwsh --version
+
       # Deliberately the whole suite rather than an enumerated list. The list
       # had drifted: eleven test files were never executed by any workflow,
       # including the only coverage for the attachment-GUID parser and the
@@ -131,20 +145,6 @@ jobs:
         run: >-
           flutter test --platform chrome
           test/services/cloud_sync/cloudkit_quarantine_repair_web_test.dart
-
-      # This gate is a .ps1 shared with local Windows runs, so install pwsh
-      # rather than forking the scan logic into a second implementation that
-      # could drift. Guarded so a runner image that already ships PowerShell
-      # costs nothing.
-      - name: Ensure PowerShell is available
-        run: |
-          set -euo pipefail
-          if command -v pwsh >/dev/null 2>&1; then
-            pwsh --version
-            exit 0
-          fi
-          sudo snap install powershell --classic
-          pwsh --version
 
       - name: Scan Rust diagnostics for protected-data logging
         shell: pwsh
