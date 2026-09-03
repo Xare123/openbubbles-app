@@ -3126,15 +3126,15 @@ fn map_fetch_failure(error: &PushError) -> CloudNativeFetchFailure {
                     match error.status().map(|status| status.as_u16()) {
                         Some(408) => (
                             CloudNativeFailureCategory::Network,
-                            CloudNativeSafeCode::NativeAuthUnavailable,
+                            CloudNativeSafeCode::HttpTimeout,
                         ),
                         Some(429) => (
                             CloudNativeFailureCategory::Throttled,
-                            CloudNativeSafeCode::NativeAuthUnavailable,
+                            CloudNativeSafeCode::HttpThrottled,
                         ),
                         Some(500..=599) => (
                             CloudNativeFailureCategory::Server,
-                            CloudNativeSafeCode::NativeAuthUnavailable,
+                            CloudNativeSafeCode::HttpServer,
                         ),
                         _ => (
                             CloudNativeFailureCategory::Authorization,
@@ -3146,11 +3146,11 @@ fn map_fetch_failure(error: &PushError) -> CloudNativeFetchFailure {
             rustpush::AnisetteError::WsError(_)
             | rustpush::AnisetteError::ProvisioningSocketClosed => (
                 CloudNativeFailureCategory::Network,
-                CloudNativeSafeCode::NativeAuthUnavailable,
+                CloudNativeSafeCode::Network,
             ),
             rustpush::AnisetteError::ProvisioningServerError(_) => (
                 CloudNativeFailureCategory::Server,
-                CloudNativeSafeCode::NativeAuthUnavailable,
+                CloudNativeSafeCode::HttpServer,
             ),
             _ => (
                 CloudNativeFailureCategory::Authorization,
@@ -4419,7 +4419,7 @@ mod tests {
                     "private-message-sentinel".to_owned(),
                 )),
                 CloudNativeFailureCategory::Server,
-                CloudNativeSafeCode::NativeAuthUnavailable,
+                CloudNativeSafeCode::HttpServer,
             ),
             (
                 PushError::CloudKitSemanticOperationDenied,
