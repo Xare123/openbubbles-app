@@ -150,12 +150,18 @@ final class CloudSyncSemanticPullReportFileWriter {
       return 'cloud_sync_semantic_report_zone_count_invalid';
     }
     final maximumZoneRecords = report.pageLimit * report.changeLimit;
+    // Normal semantic runs may examine one bounded retained-projection window
+    // before consuming their complete four-page remote-fetch allowance. Both
+    // lanes share the report counters, so bound total local work separately
+    // from the unchanged remote fetched-record ceiling.
+    final maximumZoneWorkRecords =
+        maximumZoneRecords + maximumZoneRecords - report.changeLimit;
     for (final zone in report.zones) {
       final projectionSweep =
           report.mode == CloudSyncSemanticReportMode.retainedProjectionSweep;
       final maximumApplied = projectionSweep
           ? maximumDiagnosticCount
-          : maximumZoneRecords;
+          : maximumZoneWorkRecords;
       final maximumElapsedMilliseconds = projectionSweep
           ? 30 * 60 * 1000
           : 10 * 60 * 1000;
@@ -165,37 +171,37 @@ final class CloudSyncSemanticPullReportFileWriter {
           zone.applied < 0 ||
           zone.applied > maximumApplied ||
           zone.deferred < 0 ||
-          zone.deferred > maximumZoneRecords ||
+          zone.deferred > maximumZoneWorkRecords ||
           zone.quarantined < 0 ||
-          zone.quarantined > maximumZoneRecords ||
+          zone.quarantined > maximumZoneWorkRecords ||
           zone.preflightQuarantined < 0 ||
-          zone.preflightQuarantined > maximumZoneRecords ||
+          zone.preflightQuarantined > maximumZoneWorkRecords ||
           zone.preflightUnsupportedRecordType < 0 ||
-          zone.preflightUnsupportedRecordType > maximumZoneRecords ||
+          zone.preflightUnsupportedRecordType > maximumZoneWorkRecords ||
           zone.preflightMalformedMetadata < 0 ||
-          zone.preflightMalformedMetadata > maximumZoneRecords ||
+          zone.preflightMalformedMetadata > maximumZoneWorkRecords ||
           zone.preflightOversizedRecord < 0 ||
-          zone.preflightOversizedRecord > maximumZoneRecords ||
+          zone.preflightOversizedRecord > maximumZoneWorkRecords ||
           zone.preflightInvalidChangeShape < 0 ||
-          zone.preflightInvalidChangeShape > maximumZoneRecords ||
+          zone.preflightInvalidChangeShape > maximumZoneWorkRecords ||
           zone.preflightUnknown < 0 ||
-          zone.preflightUnknown > maximumZoneRecords ||
+          zone.preflightUnknown > maximumZoneWorkRecords ||
           zone.startupQuarantined < 0 ||
-          zone.startupQuarantined > maximumZoneRecords ||
+          zone.startupQuarantined > maximumZoneWorkRecords ||
           zone.postFetchQuarantined < 0 ||
-          zone.postFetchQuarantined > maximumZoneRecords ||
+          zone.postFetchQuarantined > maximumZoneWorkRecords ||
           zone.tombstoneQuarantined < 0 ||
-          zone.tombstoneQuarantined > maximumZoneRecords ||
+          zone.tombstoneQuarantined > maximumZoneWorkRecords ||
           zone.tombstoneReadOnlyAcknowledged < 0 ||
-          zone.tombstoneReadOnlyAcknowledged > maximumZoneRecords ||
+          zone.tombstoneReadOnlyAcknowledged > maximumZoneWorkRecords ||
           zone.retainedUnprojected < 0 ||
           zone.retainedUnprojected > maximumDiagnosticCount ||
           zone.semanticUnsupportedServiceQuarantined < 0 ||
-          zone.semanticUnsupportedServiceQuarantined > maximumZoneRecords ||
+          zone.semanticUnsupportedServiceQuarantined > maximumZoneWorkRecords ||
           zone.semanticStageQuarantined < 0 ||
-          zone.semanticStageQuarantined > maximumZoneRecords ||
+          zone.semanticStageQuarantined > maximumZoneWorkRecords ||
           zone.retried < 0 ||
-          zone.retried > maximumZoneRecords ||
+          zone.retried > maximumZoneWorkRecords ||
           (zone.observedEmptyTerminalRead && zone.fetched != 0) ||
           zone.elapsedMilliseconds < 0 ||
           zone.elapsedMilliseconds > maximumElapsedMilliseconds ||

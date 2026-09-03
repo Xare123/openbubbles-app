@@ -733,7 +733,44 @@ void main() {
     );
   });
 
-  test('rejects non-four page limits and counters above 200', () async {
+  test('accepts the bounded 350-record local work contract', () async {
+    final writer = CloudSyncSemanticPullReportFileWriter(
+      privateReportDirectory: reports.path,
+      trustedStorageRoot: root.path,
+    );
+    final boundaryZones = [
+      _zone('chats', applied: 350),
+      _zone('chats', deferred: 350),
+      _zone('chats', quarantined: 350),
+      _zone('chats', retried: 350),
+      _zone('chats', preflightQuarantined: 350),
+      _zone('chats', preflightUnsupportedRecordType: 350),
+      _zone('chats', preflightMalformedMetadata: 350),
+      _zone('chats', preflightOversizedRecord: 350),
+      _zone('chats', preflightInvalidChangeShape: 350),
+      _zone('chats', preflightUnknown: 350),
+      _zone('chats', startupQuarantined: 350),
+      _zone('chats', postFetchQuarantined: 350),
+      _zone('chats', tombstoneQuarantined: 350),
+      _zone('chats', tombstoneReadOnlyAcknowledged: 350),
+      _zone('chats', semanticUnsupportedServiceQuarantined: 350),
+      _zone('chats', semanticStageQuarantined: 350),
+    ];
+    for (var index = 0; index < boundaryZones.length; index++) {
+      await writer.write(
+        _report(
+          DateTime.utc(2026, 8, 29, 1, 4, index),
+          zoneReports: [
+            boundaryZones[index],
+            _zone('messages'),
+            _zone('attachments'),
+          ],
+        ),
+      );
+    }
+  });
+
+  test('rejects non-four page limits and fetched counters above 200', () async {
     final writer = CloudSyncSemanticPullReportFileWriter(
       privateReportDirectory: reports.path,
       trustedStorageRoot: root.path,
@@ -754,29 +791,29 @@ void main() {
     }
   });
 
-  test('bounds retry and quarantine subtype counters at 200', () async {
+  test('bounds local work counters at 350', () async {
     final writer = CloudSyncSemanticPullReportFileWriter(
       privateReportDirectory: reports.path,
       trustedStorageRoot: root.path,
     );
     final invalidZones = [
       _zone('chats', fetched: 201),
-      _zone('chats', applied: 201),
-      _zone('chats', deferred: 201),
-      _zone('chats', quarantined: 201),
-      _zone('chats', retried: 201),
-      _zone('chats', preflightQuarantined: 201),
-      _zone('chats', preflightUnsupportedRecordType: 201),
-      _zone('chats', preflightMalformedMetadata: 201),
-      _zone('chats', preflightOversizedRecord: 201),
-      _zone('chats', preflightInvalidChangeShape: 201),
-      _zone('chats', preflightUnknown: 201),
-      _zone('chats', startupQuarantined: 201),
-      _zone('chats', postFetchQuarantined: 201),
-      _zone('chats', tombstoneQuarantined: 201),
-      _zone('chats', tombstoneReadOnlyAcknowledged: 201),
-      _zone('chats', semanticUnsupportedServiceQuarantined: 201),
-      _zone('chats', semanticStageQuarantined: 201),
+      _zone('chats', applied: 351),
+      _zone('chats', deferred: 351),
+      _zone('chats', quarantined: 351),
+      _zone('chats', retried: 351),
+      _zone('chats', preflightQuarantined: 351),
+      _zone('chats', preflightUnsupportedRecordType: 351),
+      _zone('chats', preflightMalformedMetadata: 351),
+      _zone('chats', preflightOversizedRecord: 351),
+      _zone('chats', preflightInvalidChangeShape: 351),
+      _zone('chats', preflightUnknown: 351),
+      _zone('chats', startupQuarantined: 351),
+      _zone('chats', postFetchQuarantined: 351),
+      _zone('chats', tombstoneQuarantined: 351),
+      _zone('chats', tombstoneReadOnlyAcknowledged: 351),
+      _zone('chats', semanticUnsupportedServiceQuarantined: 351),
+      _zone('chats', semanticStageQuarantined: 351),
     ];
     for (var index = 0; index < invalidZones.length; index++) {
       final zone = invalidZones[index];

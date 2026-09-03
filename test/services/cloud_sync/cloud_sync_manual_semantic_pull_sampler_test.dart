@@ -2005,6 +2005,7 @@ void main() {
       final events = <String>[];
       final stores = <String, InMemoryCloudSyncStore>{};
       final reprocessors = <String, _RetainedProjectionFakeApplier>{};
+      final fetchCounts = <String, int>{};
       final sampler = _sampler(
         privateStorageDirectory: privateStorageDirectory,
         operationFenceStore: InMemoryCloudSyncStore(),
@@ -2021,13 +2022,23 @@ void main() {
           transport.fetchHandler =
               (requestedScope, previousToken, generation, limit) async {
                 events.add('fetch:${requestedScope.zone}');
+                expect(limit, CloudSyncManualSemanticPullSampler.changeLimit);
+                final page = (fetchCounts[requestedScope.zone] ?? 0) + 1;
+                fetchCounts[requestedScope.zone] = page;
+                final firstChange =
+                    (page - 1) * CloudSyncManualSemanticPullSampler.changeLimit;
                 return CloudFetchBatch(
                   scope: requestedScope,
-                  changes: const [],
-                  batchId: 'retained-${requestedScope.zone}',
+                  changes: List.generate(
+                    CloudSyncManualSemanticPullSampler.changeLimit,
+                    (index) => _change(
+                      '${requestedScope.zone}-${firstChange + index}',
+                    ),
+                  ),
+                  batchId: 'retained-${requestedScope.zone}-$page',
                   generation: generation,
-                  nextToken: previousToken,
-                  hasMore: false,
+                  nextToken: 'retained-${requestedScope.zone}-token-$page',
+                  hasMore: page < CloudSyncManualSemanticPullSampler.pageLimit,
                 );
               };
           return transport;
@@ -2042,9 +2053,13 @@ void main() {
                   expect(leaseFence.ownerId, contains(auth.nativeSessionId));
                   expect(
                     limit,
-                    CloudSyncManualSemanticPullSampler.pageLimit *
-                            CloudSyncManualSemanticPullSampler.changeLimit -
-                        CloudSyncManualSemanticPullSampler.changeLimit,
+                    CloudSyncManualSemanticPullSampler
+                        .retainedProjectionAllowance,
+                  );
+                  return CloudRetainedProjectionResult(
+                    examined: limit,
+                    reprojected: limit,
+                    retained: 0,
                   );
                 },
           );
@@ -2053,27 +2068,41 @@ void main() {
         },
       );
 
-      await sampler.runConfirmed();
+      final report = await sampler.runConfirmed();
 
-      expect(events, const [
-        'applier:chatManateeZone',
-        'transport:chatManateeZone',
-        'retained:chatManateeZone',
-        'fetch:chatManateeZone',
-        'applier:messageManateeZone',
-        'transport:messageManateeZone',
-        'retained:messageManateeZone',
-        'fetch:messageManateeZone',
-        'applier:attachmentManateeZone',
-        'transport:attachmentManateeZone',
-        'retained:attachmentManateeZone',
-        'fetch:attachmentManateeZone',
-      ]);
+      final expectedEvents = <String>[];
+      for (final zone in CloudSyncManualSemanticPullSampler.zones) {
+        expectedEvents.addAll([
+          'applier:$zone',
+          'transport:$zone',
+          'retained:$zone',
+          ...List.filled(
+            CloudSyncManualSemanticPullSampler.pageLimit,
+            'fetch:$zone',
+          ),
+        ]);
+        expect(events.where((event) => event == 'fetch:$zone').length, 4);
+        expect(fetchCounts[zone], CloudSyncManualSemanticPullSampler.pageLimit);
+      }
+      expect(events, expectedEvents);
       expect(reprocessors.values.map((applier) => applier.reprojectCalls), [
         1,
         1,
         1,
       ]);
+      for (final zone in report.zones) {
+        expect(
+          zone.fetched,
+          CloudSyncManualSemanticPullSampler.pageLimit *
+              CloudSyncManualSemanticPullSampler.changeLimit,
+        );
+        expect(
+          zone.applied,
+          CloudSyncManualSemanticPullSampler.pageLimit *
+                  CloudSyncManualSemanticPullSampler.changeLimit +
+              CloudSyncManualSemanticPullSampler.retainedProjectionAllowance,
+        );
+      }
 
       for (final zone in CloudSyncManualSemanticPullSampler.zones) {
         final scope = CloudSyncScope(
@@ -2494,7 +2523,7 @@ typedef _ProjectionRepairCallback =
     );
 
 typedef _RetainedProjectionCallback =
-    Future<void> Function(
+    Future<CloudRetainedProjectionResult> Function(
       CloudSyncScope scope,
       int generation,
       CloudCoordinatorLeaseFence leaseFence,
@@ -2561,12 +2590,7 @@ final class _RetainedProjectionFakeApplier extends FakeCloudInboxApplier
     required int limit,
   }) async {
     reprojectCalls++;
-    await onReproject(scope, generation, leaseFence, limit);
-    return const CloudRetainedProjectionResult(
-      examined: 0,
-      reprojected: 0,
-      retained: 0,
-    );
+    return onReproject(scope, generation, leaseFence, limit);
   }
 }
 

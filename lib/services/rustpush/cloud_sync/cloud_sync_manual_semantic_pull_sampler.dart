@@ -138,6 +138,8 @@ final class CloudSyncManualSemanticPullSampler {
   ];
   static const pageLimit = 4;
   static const changeLimit = 50;
+  static const retainedProjectionAllowance =
+      pageLimit * changeLimit - changeLimit;
   static const projectionRepairLimit = 256;
   static const maximumLegacyOwnershipRepairCandidates = 4096;
   static const retainedProjectionSweepBatchSize = 256;
@@ -946,8 +948,9 @@ final class CloudSyncManualSemanticPullSampler {
   CloudSyncEngineConfig _config() => CloudSyncEngineConfig(
     maximumBatchSize: changeLimit,
     maximumFetchPagesPerRun: pageLimit,
-    maximumInboxEntriesPerRun: pageLimit * changeLimit,
-    minimumInboxEntriesReservedForFetch: changeLimit,
+    maximumInboxEntriesPerRun:
+        pageLimit * changeLimit + retainedProjectionAllowance,
+    minimumInboxEntriesReservedForFetch: pageLimit * changeLimit,
     maximumOutboxBatchesPerRun: 1,
     fetchOperationTimeout: _fetchTimeout,
     allowManualPullBackoffOverride: true,
