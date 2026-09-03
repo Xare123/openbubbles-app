@@ -11,6 +11,8 @@ import 'cloud_sync_models.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 
+typedef CloudSyncVerboseDiagnosticsEnabled = bool Function();
+
 final class CloudTombstoneIdentity {
   const CloudTombstoneIdentity({
     required this.scope,
@@ -127,6 +129,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     RustCloudSemanticDecodeBindings? bindings,
     CloudTombstoneIdentityResolver? tombstoneIdentityResolver,
     CloudSyncSemanticDiagnosticRecorder? diagnosticRecorder,
+    CloudSyncVerboseDiagnosticsEnabled? verboseDiagnosticsEnabled,
   }) => RustCloudSemanticDecoder._(
     readAuthSnapshot,
     _validateStorageDirectory(storageDirectory),
@@ -134,6 +137,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     bindings ?? FrbRustCloudSemanticDecodeBindings(),
     tombstoneIdentityResolver,
     diagnosticRecorder,
+    verboseDiagnosticsEnabled,
   );
 
   RustCloudSemanticDecoder._(
@@ -143,6 +147,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     this._bindings,
     this._tombstoneIdentityResolver,
     this._diagnosticRecorder,
+    this._verboseDiagnosticsEnabled,
   );
 
   static final RegExp _externalDigest = RegExp(r'^[A-Za-z0-9_-]{43}$');
@@ -160,6 +165,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
   final RustCloudSemanticDecodeBindings _bindings;
   final CloudTombstoneIdentityResolver? _tombstoneIdentityResolver;
   final CloudSyncSemanticDiagnosticRecorder? _diagnosticRecorder;
+  final CloudSyncVerboseDiagnosticsEnabled? _verboseDiagnosticsEnabled;
 
   @override
   Future<CloudDecodedMutation> decode(CloudInboxEntry entry) async {
@@ -229,10 +235,12 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     );
 
     final nativeDisposition = _nativeDisposition(result);
-    _logContentFreeNativeDisposition(
-      _nativeStream(entry.scope),
-      nativeDisposition,
-    );
+    if (_verboseDiagnosticsAreEnabled()) {
+      _logContentFreeNativeDisposition(
+        _nativeStream(entry.scope),
+        nativeDisposition,
+      );
+    }
     _recordDiagnostic('native_$nativeDisposition');
 
     // A native failure contains no decoded semantic payload. Preserve that
@@ -303,6 +311,15 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       'CloudKit V2 semantic native outcome stream=$stream '
       'disposition=$logDisposition',
     );
+  }
+
+  bool _verboseDiagnosticsAreEnabled() {
+    try {
+      return _verboseDiagnosticsEnabled?.call() ?? false;
+    } catch (_) {
+      // A diagnostics preference must never change projection behavior.
+      return false;
+    }
   }
 
   static String _displayDisposition(String value) {

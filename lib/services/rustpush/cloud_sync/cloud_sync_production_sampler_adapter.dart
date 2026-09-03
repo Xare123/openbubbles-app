@@ -501,6 +501,7 @@ final class CloudSyncProductionSemanticPullAdapter {
     NativeProtectedCloudSyncBindings? transportBindings,
     RustCloudSemanticDecodeBindings? semanticDecodeBindings,
     CloudSyncNativeWriterPause? nativeWriterPause,
+    CloudSyncVerboseDiagnosticsEnabled? verboseDiagnosticsEnabled,
     bool? compileGateOverrideForTest,
   }) {
     final diagnosticCollectors =
@@ -589,6 +590,7 @@ final class CloudSyncProductionSemanticPullAdapter {
             nativeWriterPauseToken: pauseToken,
             bindings: semanticDecodeBindings,
             diagnosticRecorder: diagnostics.record,
+            verboseDiagnosticsEnabled: verboseDiagnosticsEnabled,
           ),
           store: gateway,
           identityRegistrar: identityRegistry,

@@ -7388,6 +7388,9 @@ class RustPushService extends GetxService {
   bool _cloudSyncV2PcsPreparationQuiescing = false;
   Future<CloudSyncSemanticDrainResult>? _cloudSyncV2SemanticPullInFlight;
   bool _cloudSyncV2SemanticPullQuiescing = false;
+  static const int _cloudSyncV2AutomaticCatchUpMaximumBatches = 8;
+  static const Duration _cloudSyncV2AutomaticCatchUpYield =
+      Duration(milliseconds: 250);
   CloudSyncProductionOutboundCanaryAdapter? _cloudSyncV2OutboundAdapter;
   CloudSyncOutboundCanaryConfirmation? _cloudSyncV2OutboundConfirmation;
   Future<CloudKitV2WriterProvisioningResult>?
@@ -7703,6 +7706,96 @@ class RustPushService extends GetxService {
         maximumPasses: CloudSyncSemanticDrainController.defaultMaximumPasses,
       );
 
+  /// Continues through independently bounded catch-up batches after one user
+  /// confirmation. Each batch releases and reacquires the operation interlock,
+  /// revalidates the active account, and resumes from durable checkpoints.
+  /// A hard batch cap prevents an endless foreground operation if a server
+  /// repeatedly returns non-terminal history.
+  Future<CloudSyncSemanticDrainResult>
+  runCloudSyncV2AutomaticSemanticCatchUpConfirmed() {
+    if (!CloudSyncDevGate.manualSemanticPullEnabled) {
+      throw StateError('cloud_sync_semantic_pull_disabled');
+    }
+    if (!_cloudSyncV2CanaryRuntimeAllowed) {
+      throw StateError('cloud_sync_canary_package_required');
+    }
+    if (!_cloudSyncV2DeveloperRuntimeAllowed) {
+      throw StateError('cloud_sync_developer_mode_required');
+    }
+    if (_cloudSyncV2SemanticPullQuiescing || loggingOut) {
+      throw StateError('cloud_sync_semantic_pull_quiescing');
+    }
+    if (_cloudSyncV2SemanticPullInFlight != null) {
+      throw StateError('cloud_sync_semantic_pull_active');
+    }
+    final expectedCloudMessagesClient =
+        state?.icloudServices?.cloudMessagesClient;
+    if (expectedCloudMessagesClient == null) {
+      throw StateError('cloud_sync_native_auth_account_unavailable');
+    }
+
+    final future = _runCloudSyncV2AutomaticSemanticCatchUp(
+      expectedCloudMessagesClient: expectedCloudMessagesClient,
+    );
+    _cloudSyncV2SemanticPullInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_cloudSyncV2SemanticPullInFlight, future)) {
+        _cloudSyncV2SemanticPullInFlight = null;
+      }
+    });
+  }
+
+  Future<CloudSyncSemanticDrainResult>
+  _runCloudSyncV2AutomaticSemanticCatchUp({
+    required Object expectedCloudMessagesClient,
+  }) async {
+    var totalPasses = 0;
+    for (var batch = 1;
+        batch <= _cloudSyncV2AutomaticCatchUpMaximumBatches;
+        batch++) {
+      if (_cloudSyncV2SemanticPullQuiescing || loggingOut) {
+        throw StateError('cloud_sync_semantic_pull_quiescing');
+      }
+      if (!identical(
+        state?.icloudServices?.cloudMessagesClient,
+        expectedCloudMessagesClient,
+      )) {
+        throw StateError('cloud_sync_native_auth_account_changed');
+      }
+
+      final result = await _runCloudSyncV2ManualSemanticPull(
+        maximumPasses: CloudSyncSemanticDrainController.defaultMaximumPasses,
+      );
+      totalPasses += result.passes;
+      final combined = CloudSyncSemanticDrainResult(
+        passes: totalPasses,
+        lastReport: result.lastReport,
+        persistedReportReference: result.persistedReportReference,
+        remoteDrained: result.remoteDrained,
+        projectionComplete: result.projectionComplete,
+        retainedSaveProjectionComplete: result.retainedSaveProjectionComplete,
+        projectionSweepAttempted: result.projectionSweepAttempted,
+        reachedPassLimit: result.reachedPassLimit,
+      );
+      if (result.remoteDrained || !result.reachedPassLimit) {
+        Logger.info(
+          "Cloud Sync V2 automatic catch-up batches=$batch "
+          "passes=$totalPasses remote_drained=${result.remoteDrained}",
+        );
+        return combined;
+      }
+      if (batch == _cloudSyncV2AutomaticCatchUpMaximumBatches) {
+        Logger.info(
+          "Cloud Sync V2 automatic catch-up paused at safety cap "
+          "batches=$batch passes=$totalPasses",
+        );
+        return combined;
+      }
+      await Future<void>.delayed(_cloudSyncV2AutomaticCatchUpYield);
+    }
+    throw StateError('cloud_sync_semantic_remote_pass_limit_unreachable');
+  }
+
   Future<CloudSyncSemanticDrainResult>
   _runCloudSyncV2ManualSemanticPull({required int maximumPasses}) async {
     if (statePath.isEmpty || !Directory(statePath).existsSync()) {
@@ -7742,6 +7835,9 @@ class RustPushService extends GetxService {
         architecture: ffi.Abi.current().toString(),
         buildCommit: _cloudSyncV2BuildIdentifier(),
         observerFactory: _cloudSyncV2EvidenceObserverFactory(),
+        verboseDiagnosticsEnabled: () =>
+            ss.settings.developerEnabled.value &&
+            ss.settings.cloudSyncV2VerboseDiagnosticsEnabled.value,
       );
       final reportWriter = CloudSyncSemanticPullReportFileWriter(
         privateReportDirectory: join(statePath, 'cloud-sync-v2', 'reports'),
@@ -7758,12 +7854,40 @@ class RustPushService extends GetxService {
         final reportName = reportReference is File
             ? basename(reportReference.path)
             : 'persisted';
+        final report = result.lastReport;
+        final fetched = report.zones.fold<int>(
+          0,
+          (total, zone) => total + zone.fetched,
+        );
+        final applied = report.zones.fold<int>(
+          0,
+          (total, zone) => total + zone.applied,
+        );
+        final retained = report.zones.fold<int>(
+          0,
+          (total, zone) => total + zone.retainedUnprojected,
+        );
+        final deferred = report.zones.fold<int>(
+          0,
+          (total, zone) => total + zone.deferred,
+        );
+        final quarantined = report.zones.fold<int>(
+          0,
+          (total, zone) => total + zone.quarantined,
+        );
         Logger.info(
             "Cloud Sync V2 semantic canary passes=${result.passes} "
             "remote_drained=${result.remoteDrained} "
             "pass_limit=${result.reachedPassLimit} "
-            "report_file=$reportName "
-            "report=${jsonEncode(result.lastReport.toJson())}");
+            "fetched=$fetched applied=$applied retained=$retained "
+            "deferred=$deferred quarantined=$quarantined "
+            "outbox=${report.outboxCountBefore}->${report.outboxCountAfter} "
+            "report_file=$reportName");
+        if (ss.settings.developerEnabled.value &&
+            ss.settings.cloudSyncV2VerboseDiagnosticsEnabled.value) {
+          Logger.info(
+              "Cloud Sync V2 verbose semantic report=${jsonEncode(report.toJson())}");
+        }
         return result;
       } finally {
         await controller.dispose();

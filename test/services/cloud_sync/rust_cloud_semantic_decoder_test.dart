@@ -28,6 +28,7 @@ void main() {
     CloudTombstoneIdentityResolver? tombstoneResolver,
     CloudSyncSemanticDiagnosticRecorder? diagnosticRecorder,
     CloudSyncNativeAuthSnapshotReader? readAuthSnapshot,
+    CloudSyncVerboseDiagnosticsEnabled? verboseDiagnosticsEnabled,
   }) => RustCloudSemanticDecoder(
     readAuthSnapshot: readAuthSnapshot ?? (() async => currentAuth),
     storageDirectory: r'C:\private\cloud-sync',
@@ -35,6 +36,7 @@ void main() {
     bindings: bindings,
     tombstoneIdentityResolver: tombstoneResolver,
     diagnosticRecorder: diagnosticRecorder,
+    verboseDiagnosticsEnabled: verboseDiagnosticsEnabled,
   );
 
   test('maps a native message upsert and passes every source fence', () async {
@@ -532,7 +534,7 @@ void main() {
   });
 
   test(
-    'logs only the bounded native disposition for unsupported service',
+    'normal logging aggregates unsupported service without a per-record line',
     () async {
       final output = _CapturingLogOutput();
       final diagnostics = CloudSyncSemanticDiagnosticCollector();
@@ -554,12 +556,10 @@ void main() {
           CloudFailureCategory.unsupportedService,
         );
 
-        final message = output.lines.join('\n');
-        expect(message, contains('disposition=quarantined:unsupportedService'));
-        expect(message, isNot(contains(entry.change.changeId)));
-        expect(message, isNot(contains(_sourceReference)));
-        expect(message, isNot(contains(_payloadSha)));
-        expect(message, isNot(contains('iMessage')));
+        expect(
+          output.lines.join('\n'),
+          isNot(contains('CloudKit V2 semantic native outcome')),
+        );
         expect(diagnostics.snapshot(), <String, int>{
           'native_quarantined_unsupported_service': 1,
         });
@@ -568,6 +568,44 @@ void main() {
       }
     },
   );
+
+  test('verbose logging emits only the bounded native disposition', () async {
+    final output = _CapturingLogOutput();
+    final diagnostics = CloudSyncSemanticDiagnosticCollector();
+    final previousLogger = Logger;
+    Logger = BaseLogger();
+    Logger.currentOutput = output;
+    Logger.currentLevel = logger_api.Level.info;
+    try {
+      final entry = _entry();
+      bindings.result = frb.CloudSyncTransientDecodeResult(
+        protectedSourceReference: _sourceReference,
+        generation: BigInt.from(entry.generation),
+        quarantineReason:
+            frb.CloudSyncTransientQuarantineReason.unsupportedService,
+      );
+
+      await _expectFailure(
+        decoder(
+          diagnosticRecorder: diagnostics.record,
+          verboseDiagnosticsEnabled: () => true,
+        ).decode(entry),
+        CloudFailureCategory.unsupportedService,
+      );
+
+      final message = output.lines.join('\n');
+      expect(message, contains('disposition=quarantined:unsupportedService'));
+      expect(message, isNot(contains(entry.change.changeId)));
+      expect(message, isNot(contains(_sourceReference)));
+      expect(message, isNot(contains(_payloadSha)));
+      expect(message, isNot(contains('iMessage')));
+      expect(diagnostics.snapshot(), <String, int>{
+        'native_quarantined_unsupported_service': 1,
+      });
+    } finally {
+      Logger = previousLogger;
+    }
+  });
 
   test('rejects mixed dispositions and malformed payload lanes', () async {
     final entry = _entry();

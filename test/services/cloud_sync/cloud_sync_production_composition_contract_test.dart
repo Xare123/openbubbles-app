@@ -196,7 +196,7 @@ void main() {
       'title: "Prepare iCloud Encryption (Canary)"',
     );
     final uiEnd = uiSource.indexOf(
-      'title: "Catch Up Messages in iCloud (Canary)"',
+      'title: "Sync Messages in iCloud (Canary)"',
       uiStart,
     );
     expect(uiStart, greaterThanOrEqualTo(0));
@@ -234,6 +234,35 @@ void main() {
       method,
       contains('CloudSyncSemanticDrainController.defaultMaximumPasses'),
     );
+  });
+
+  test('one confirmed action auto-resumes only bounded semantic batches', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final start = source.indexOf(
+      'runCloudSyncV2AutomaticSemanticCatchUpConfirmed()',
+    );
+    final end = source.indexOf(
+      '_runCloudSyncV2ManualSemanticPull({required int maximumPasses})',
+      start,
+    );
+
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final method = source.substring(start, end);
+    expect(method, contains('_cloudSyncV2AutomaticCatchUpMaximumBatches'));
+    expect(
+      method,
+      contains('CloudSyncSemanticDrainController.defaultMaximumPasses'),
+    );
+    expect(method, contains('_cloudSyncV2SemanticPullQuiescing'));
+    expect(method, contains('loggingOut'));
+    expect(method, contains('cloud_sync_native_auth_account_changed'));
+    expect(method, contains('_cloudSyncV2AutomaticCatchUpYield'));
+    expect(method, contains('result.remoteDrained'));
+    expect(method, contains('result.reachedPassLimit'));
+    expect(method, isNot(contains('while (true)')));
   });
 
   test('VM trigger preserves one-pass mode and exposes bounded catch-up', () {
@@ -355,16 +384,17 @@ void main() {
     expect(shadow, isNot(contains('catch (_)')));
 
     final semanticStart = section.indexOf(
-      'title: "Catch Up Messages in iCloud (Canary)"',
+      'title: "Sync Messages in iCloud (Canary)"',
     );
     final semantic = section.substring(semanticStart);
     expect(semantic, contains('cloudSyncV2ManualSemanticPullAvailable'));
-    expect(semantic, contains('runCloudSyncV2ManualSemanticPullConfirmed('));
-    expect(semantic, contains('maximumPasses: maximumPasses'));
-    expect(semantic, contains('maximumPasses * 200'));
-    expect(semantic, contains('Up to 200 changes per CloudKit zone.'));
-    expect(semantic, contains('Up to 800 changes per zone'));
-    expect(semantic, contains('Up to 3,200 changes per zone'));
+    expect(
+      semantic,
+      contains('runCloudSyncV2AutomaticSemanticCatchUpConfirmed()'),
+    );
+    expect(semantic, isNot(contains('Choose catch-up size')));
+    expect(semantic, contains('continues through checkpointed batches'));
+    expect(semantic, contains('pauses safely at a hard session cap'));
     expect(
       semantic,
       contains('checkpoint-ordered rather than safely date-seekable'),
@@ -379,7 +409,7 @@ void main() {
     expect(semantic, contains('cloudSyncV2SemanticCanaryPresentation('));
     expect(semantic, contains('result.lastReport'));
     final semanticRun = semantic.indexOf(
-      'runCloudSyncV2ManualSemanticPullConfirmed(',
+      'runCloudSyncV2AutomaticSemanticCatchUpConfirmed()',
     );
     final chatOrderRepair = semantic.indexOf(
       'await repairCloudSyncChatLatestMessageDates();',
@@ -486,6 +516,51 @@ void main() {
       contains('ss.settings.cloudSyncV2EvidenceEnabled.value = false'),
     );
     expect(panel, contains("'cloudSyncV2EvidenceEnabled'"));
+  });
+
+  test('verbose CloudKit diagnostics are default-off and developer-bound', () {
+    final settings = File(
+      'lib/database/global/settings.dart',
+    ).readAsStringSync();
+    final panel = File(
+      'lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart',
+    ).readAsStringSync();
+    final service = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+
+    expect(
+      settings,
+      contains(
+        'final RxBool cloudSyncV2VerboseDiagnosticsEnabled = false.obs;',
+      ),
+    );
+    expect(settings, contains("'cloudSyncV2VerboseDiagnosticsEnabled':"));
+    expect(
+      settings,
+      contains("map['cloudSyncV2VerboseDiagnosticsEnabled'] ?? false"),
+    );
+    expect(
+      panel,
+      contains('ss.settings.cloudSyncV2VerboseDiagnosticsEnabled.value ='),
+    );
+    expect(panel, contains("'cloudSyncV2VerboseDiagnosticsEnabled'"));
+    expect(panel, contains('title: "Verbose CloudKit diagnostics"'));
+    expect(panel, contains('Normal logging keeps aggregate catch-up totals'));
+    expect(service, contains('ss.settings.developerEnabled.value &&'));
+    expect(
+      service,
+      contains('ss.settings.cloudSyncV2VerboseDiagnosticsEnabled.value'),
+    );
+    expect(
+      service,
+      contains('Cloud Sync V2 semantic canary passes='),
+    );
+    expect(service, contains(r'fetched=$fetched applied=$applied'));
+    expect(
+      service,
+      contains('Cloud Sync V2 verbose semantic report='),
+    );
   });
 
   test('outbound UI is gated, double-confirmed, and recovery-only', () {

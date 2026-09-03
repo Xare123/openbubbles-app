@@ -36,7 +36,7 @@ use crate::{
     cloud_sync_semantic_identity::CloudSemanticIdentifierHasher,
 };
 use flate2::bufread::GzDecoder;
-use log::warn;
+use log::{debug, warn};
 use prost::Message as _;
 use rustpush::{
     cloud_messages::{
@@ -1780,7 +1780,7 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 CloudNativeRawEnvelopeKind::MalformedMetadata => "malformed_metadata",
                 _ => unreachable!("matched chat envelope kind"),
             };
-            warn!("CloudKit V2 transient chat diagnostic stage=envelope code={code}");
+            debug!("CloudKit V2 transient chat diagnostic stage=envelope code={code}");
         }
         return CloudTransientDecodeOutcome::Quarantined(
             CloudCanonicalQuarantineReason::MalformedRecord,
@@ -1831,7 +1831,7 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
         Ok(value) => value,
         Err(reason) => {
             if request.stream == CloudNativeStream::Chats {
-                warn!(
+                debug!(
                     "CloudKit V2 transient chat diagnostic stage=raw_presence code={}",
                     reason.diagnostic_code(),
                 );
@@ -1938,7 +1938,7 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                     if let Err(reason) =
                         presence.capture_decrypted_plist_dictionary("prop", &decrypted)
                     {
-                        warn!(
+                        debug!(
                             "CloudKit V2 transient chat diagnostic stage=prop_presence code={}",
                             reason.diagnostic_code(),
                         );
@@ -1957,7 +1957,7 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
             };
             let (converted, diagnostic) = convert_chat_with_diagnostic(&context, &presence, &chat);
             if let Some(code) = diagnostic {
-                warn!(
+                debug!(
                     "CloudKit V2 transient chat diagnostic stage=conversion code={} outcome={converted:?} service_class={} chat_style={}",
                     code.as_str(),
                     cloud_service_class(Some(&chat.service_name)),
@@ -2001,7 +2001,7 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 )
             ) {
                 let diagnostic = cloud_message_unsupported_service_diagnostic(&message);
-                warn!(
+                debug!(
                     "CloudKit V2 transient message unsupported_service source={} service_class={} top_level_service_class={} msg_proto_4_service_class={} message_kind={}",
                     diagnostic.source,
                     diagnostic.service_class,

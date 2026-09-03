@@ -874,6 +874,18 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                           isThreeLine: true,
                           backgroundColor: tileColor,
                         )),
+                      if (CloudSyncDevGate.manualSemanticPullEnabled)
+                        Obx(() => SettingsSwitch(
+                          initialVal: ss.settings.cloudSyncV2VerboseDiagnosticsEnabled.value,
+                          onChanged: (bool val) async {
+                            ss.settings.cloudSyncV2VerboseDiagnosticsEnabled.value = val;
+                            await ss.settings.saveOne('cloudSyncV2VerboseDiagnosticsEnabled');
+                          },
+                          title: "Verbose CloudKit diagnostics",
+                          subtitle: "Adds content-free per-record outcomes for troubleshooting. Normal logging keeps aggregate catch-up totals only and never records message text, contacts, credentials, keys, raw records, or change tokens.",
+                          isThreeLine: true,
+                          backgroundColor: tileColor,
+                        )),
                       if (CloudSyncDevGate.manualShadowSamplerEnabled)
                         Obx(() => SettingsTile(
                         leading: const SettingsLeadingIcon(
@@ -994,8 +1006,8 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                             materialIcon: Icons.cloud_sync,
                             containerColor: Colors.teal,
                           ),
-                          title: "Catch Up Messages in iCloud (Canary)",
-                          subtitle: "Choose a bounded, resumable history batch. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. No CloudKit uploads or deletes, no local message deletes, and tombstones are retained as read-only acknowledgements.",
+                          title: "Sync Messages in iCloud (Canary)",
+                          subtitle: "Starts one resumable catch-up that continues through independently bounded batches until the current CloudKit head or a safe pause. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. No CloudKit uploads or deletes, no local message deletes, and tombstones are retained as read-only acknowledgements.",
                           trailing: cloudSyncV2Running.value
                               ? SizedBox(
                                   width: 20,
@@ -1015,54 +1027,16 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                               );
                               return;
                             }
-                            final maximumPasses = await showDialog<int>(
-                              context: context,
-                              builder: (dialogContext) => SimpleDialog(
-                                backgroundColor: context.theme.colorScheme.properSurface,
-                                title: Text(
-                                  "Choose catch-up size",
-                                  style: context.theme.textTheme.titleLarge,
-                                ),
-                                children: [
-                                  SimpleDialogOption(
-                                    onPressed: () => Navigator.of(dialogContext).pop(1),
-                                    child: const ListTile(
-                                      contentPadding: EdgeInsets.zero,
-                                      title: Text("Small"),
-                                      subtitle: Text("Up to 200 changes per CloudKit zone."),
-                                    ),
-                                  ),
-                                  SimpleDialogOption(
-                                    onPressed: () => Navigator.of(dialogContext).pop(4),
-                                    child: const ListTile(
-                                      contentPadding: EdgeInsets.zero,
-                                      title: Text("Standard"),
-                                      subtitle: Text("Up to 800 changes per zone, then pause safely."),
-                                    ),
-                                  ),
-                                  SimpleDialogOption(
-                                    onPressed: () => Navigator.of(dialogContext).pop(16),
-                                    child: const ListTile(
-                                      contentPadding: EdgeInsets.zero,
-                                      title: Text("Deep catch-up"),
-                                      subtitle: Text("Up to 3,200 changes per zone. This can take several minutes."),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                            if (maximumPasses == null) return;
-                            final maximumChangesPerZone = maximumPasses * 200;
                             final confirmed = await showDialog<bool>(
                               context: context,
                               builder: (dialogContext) => AlertDialog(
                                 backgroundColor: context.theme.colorScheme.properSurface,
                                 title: Text(
-                                  "Run bounded CloudKit catch-up?",
+                                  "Start Messages in iCloud catch-up?",
                                   style: context.theme.textTheme.titleLarge,
                                 ),
                                 content: Text(
-                                  "This reads up to $maximumChangesPerZone changes per CloudKit zone and pauses at a durable checkpoint. CloudKit change history is checkpoint-ordered rather than safely date-seekable, so each later run resumes without skipping earlier changes. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. It will not upload or delete CloudKit records, delete local messages, or apply tombstones.",
+                                  "This continues through checkpointed batches until it reaches the current CloudKit head or pauses safely at a hard session cap. CloudKit change history is checkpoint-ordered rather than safely date-seekable, so it resumes without skipping earlier changes. You can leave this screen while OpenBubbles remains running. It will not upload or delete CloudKit records, delete local messages, or apply tombstones.",
                                   style: context.theme.textTheme.bodyLarge,
                                 ),
                                 actions: [
@@ -1072,7 +1046,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                   ),
                                   TextButton(
                                     onPressed: () => Navigator.of(dialogContext).pop(true),
-                                    child: const Text("Run Once"),
+                                    child: const Text("Start Sync"),
                                   ),
                                 ],
                               ),
@@ -1081,9 +1055,8 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                             if (cloudSyncV2Running.value) return;
                             cloudSyncV2Running.value = true;
                             try {
-                              final result = await pushService.runCloudSyncV2ManualSemanticPullConfirmed(
-                                maximumPasses: maximumPasses,
-                              );
+                              final result = await pushService
+                                  .runCloudSyncV2AutomaticSemanticCatchUpConfirmed();
                               var chatListRefreshMessage =
                                   "Chat list refreshed.";
                               try {
@@ -1109,7 +1082,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                               final presentation =
                                   cloudSyncV2SemanticCanaryPresentation(result.lastReport);
                               final progress = result.reachedPassLimit
-                                  ? "Paused safely after ${result.passes} pass(es). Run catch-up again to resume from the saved checkpoint."
+                                  ? "Paused safely at the session cap after ${result.passes} pass(es). Start sync again to resume from the saved checkpoint."
                                   : result.remoteDrained
                                       ? "Remote CloudKit change history reached its current head after ${result.passes} pass(es)."
                                       : "Stopped safely after ${result.passes} pass(es).";
@@ -1517,10 +1490,12 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                         if (!val) {
                           ss.settings.faceTimeDiagnosticsEnabled.value = false;
                           ss.settings.cloudSyncV2EvidenceEnabled.value = false;
+                          ss.settings.cloudSyncV2VerboseDiagnosticsEnabled.value = false;
                           await ss.settings.saveMany([
                             'developerEnabled',
                             'faceTimeDiagnosticsEnabled',
                             'cloudSyncV2EvidenceEnabled',
+                            'cloudSyncV2VerboseDiagnosticsEnabled',
                           ]);
                         } else {
                           await ss.settings.saveOne('developerEnabled');

@@ -213,6 +213,7 @@ class Settings {
   final RxList<String> developerMode = <String>[].obs;
   final RxBool faceTimeDiagnosticsEnabled = false.obs;
   final RxBool cloudSyncV2EvidenceEnabled = false.obs;
+  final RxBool cloudSyncV2VerboseDiagnosticsEnabled = false.obs;
 
   final RxBool cloudSyncingEnabled = false.obs;
   final RxBool attachmentSyncEnabled = false.obs;
@@ -436,6 +437,7 @@ class Settings {
       'developerEnabled': developerEnabled.value,
       'faceTimeDiagnosticsEnabled': faceTimeDiagnosticsEnabled.value,
       'cloudSyncV2EvidenceEnabled': cloudSyncV2EvidenceEnabled.value,
+      'cloudSyncV2VerboseDiagnosticsEnabled': cloudSyncV2VerboseDiagnosticsEnabled.value,
       'vpnWarned': vpnWarned.value,
       'smsForwardingTargets': smsRoutingTargets,
       'developerMode': developerMode,
@@ -620,6 +622,9 @@ class Settings {
     ss.settings.cloudSyncV2EvidenceEnabled.value =
         ss.settings.developerEnabled.value &&
         (map['cloudSyncV2EvidenceEnabled'] ?? false);
+    ss.settings.cloudSyncV2VerboseDiagnosticsEnabled.value =
+        ss.settings.developerEnabled.value &&
+        (map['cloudSyncV2VerboseDiagnosticsEnabled'] ?? false);
     ss.settings.vpnWarned.value = map['vpnWarned'] ?? false;
     ss.settings.cachedCodes.value = map['cachedCodes'] ?? {};
     ss.settings.smsForwardingTargets.value = map['smsIncomingTargets'] ?? {};
@@ -801,6 +806,9 @@ class Settings {
     s.cloudSyncV2EvidenceEnabled.value =
         s.developerEnabled.value &&
         (map['cloudSyncV2EvidenceEnabled'] ?? false);
+    s.cloudSyncV2VerboseDiagnosticsEnabled.value =
+        s.developerEnabled.value &&
+        (map['cloudSyncV2VerboseDiagnosticsEnabled'] ?? false);
     s.vpnWarned.value = map['vpnWarned'] ?? false;
     s.cachedCodes.value =  map['cachedCodes'] is String ? jsonDecode(map['cachedCodes']).cast<String, String>() : <String, String>{};
     s.smsForwardingTargets.value = map['smsIncomingTargets'] is String ? jsonDecode(map['smsIncomingTargets']).cast<String, String>() : <String, String>{};
