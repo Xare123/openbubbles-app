@@ -68,6 +68,33 @@ listed falsification test before its status advances.
 | Outbound durability before live write | A read-only audit found that remote-write admission is still missing four production properties even though authority exclusion and deterministic record identity are test-proven: an expiring outbox lease has no heartbeat during a long submission; the durable result does not yet bind the complete server causality tuple; local message mutation and outbox admission are not one ObjectBox transaction; and tombstone causality has no safe anti-resurrection proof. Account/generation fencing inside admission and live legacy/V2 one-writer coexistence also remain unproven. | `NO-GO` for remote writes | Add generation-bound compare-and-swap lease renewal first, then make local mutation plus outbox admission atomic. Keep remote writes disabled until result identity, tombstones, account fencing, and coexistence pass restart and ambiguity tests. |
 | Candidate qualification | GCE run `33622711864` qualified exact source `046bea639793163e3343e67c8367c44e8a08a526`: generated bindings, full Dart, Rust, rustpush, protector, Canary APK/native-library verification, GitHub-hosted signing, runner deregistration, and VM deletion all passed. The signed artifact was installed in place without clearing Canary data. Live login, PCS, protected read, no-write tripwires, and one Chat ownership bootstrap passed. The auth-drift repair and single-use barrier migration pass 237 focused decoder, engine, and ObjectBox tests. The follow-on SMS-Chat contract repair passes the 58-test decoder/safe-code set and the exact mixed-route ObjectBox integration test; full clean qualification is pending. | Installed predecessor `LIVE-PROVEN`; current repair `TEST-PROVEN`; end-user projection incomplete | Qualify and install the repair in place without clearing Canary data, inspect a read-only post-run copy, and use visible readable UI state as the release gate. |
 
+### Investigation checkpoint: preserved retry generation after contract repair
+
+Exact source `e78eb7ab11310878758bc01dc0c1dc7fab7e2621` passed generated-
+binding drift, the full Dart suite, Rust library and production-feature tests,
+the protector harness, Canary APK/native-library verification, GitHub-hosted
+signing, runner deregistration, and VM deletion in GCE run `33720501924`. The
+signed artifact installed in place with Canary's first-install time and signing
+identity unchanged and Alpha untouched. The live Standard pull performed zero
+remote saves or deletes, but the UI still showed no chats.
+
+A stopped, read-only ObjectBox copy proved why. Chat sequence 475 remained the
+first nonterminal row: quarantined as `conflict`, with no preflight, replay, or
+record-map evidence and retry count 3. The repaired typed-SMS Chat decoder was
+therefore never reached. The original migration accepted retry count 1 only;
+two earlier signed diagnostic retries that isolated the decoder mismatch had
+preserved the row and advanced that same historical count to 3.
+
+The replacement migration admits only the non-adjacent historical counts 1 and
+3 under the existing exact scope, active-fence, first-barrier, protected-source,
+no-semantic-evidence, and fixed-cutoff constraints. Counts 2 and 4 are rejected,
+so a failed retry from either admitted state cannot re-enter. Focused and full
+ObjectBox tests prove both admitted states, both adjacent rejection states,
+idempotence, checkpoint preservation, and evidence rejection. The next
+falsification gate is a no-rebuild device replay: sequence 475 must reach the
+repaired decoder and the ordered remainder through 524 must drain before a new
+signed GCE artifact is produced.
+
 ### Investigation checkpoint: why projection worked before but not here
 
 The apparent regression is multiple distinct states behind the same “pull

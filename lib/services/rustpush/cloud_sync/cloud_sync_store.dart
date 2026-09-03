@@ -409,8 +409,9 @@ abstract interface class CloudLegacyOwnershipConflictBarrierRecoveryStore {
 /// Implementations must reopen only the first nonterminal current-generation
 /// chat save, require the active coordinator fence, reject any semantic replay
 /// or server-record mapping evidence, and leave checkpoints and protected
-/// source bytes unchanged. An exact one-attempt bound plus a fixed cutoff makes
-/// the migration single-use.
+/// source bytes unchanged. An exact, non-adjacent historical retry-count
+/// allowlist plus a fixed cutoff makes each admitted migration single-use: a
+/// failed retry advances to a count that cannot re-enter.
 abstract interface class CloudPretransactionChatConflictBarrierRecoveryStore {
   Future<bool> requeuePretransactionChatConflictBarrier(
     CloudSyncScope scope, {

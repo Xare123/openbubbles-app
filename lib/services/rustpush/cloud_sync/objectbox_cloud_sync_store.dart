@@ -61,6 +61,14 @@ class ObjectBoxCloudSyncStore
     'messageManateeZone',
     'attachmentManateeZone',
   };
+  static const Set<int> _recoverablePretransactionChatConflictRetryCounts =
+      <int>{
+        // Original auth-drift quarantine from the pretransaction decoder.
+        1,
+        // The same preserved row after the two signed diagnostic retries that
+        // isolated and repaired the mixed-route Chat decoder contract.
+        3,
+      };
 
   final Store _store;
   final CloudSyncProtector _protector;
@@ -1323,7 +1331,9 @@ class ObjectBoxCloudSyncStore
           row.changeType != CloudChangeType.save.name ||
           row.encryptedPayloadRef == null ||
           row.payloadSha256 == null ||
-          row.retryCount != 1 ||
+          !_recoverablePretransactionChatConflictRetryCounts.contains(
+            row.retryCount,
+          ) ||
           row.nextEligibleAtMs != 0 ||
           row.completedAtMs <= 0 ||
           row.completedAtMs != row.updatedAtMs ||
@@ -1341,9 +1351,9 @@ class ObjectBoxCloudSyncStore
         return false;
       }
 
-      // Preserve the protected source, checkpoint, and historical attempt.
-      // A stable-auth retry can now decode it; any real semantic conflict after
-      // the cutoff becomes terminal and cannot enter this migration again.
+      // Preserve the protected source, checkpoint, and historical attempts.
+      // The allowlist deliberately skips retry 2 and stops after retry 3: a
+      // failed migration advances to 2 or 4, neither of which can re-enter.
       row
         ..status = _inboxStatusToInt(CloudInboxStatus.pending)
         ..nextEligibleAtMs = 0

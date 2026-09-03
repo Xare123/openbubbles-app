@@ -2532,9 +2532,9 @@ void main() {
     },
   );
 
-  test(
-    'requeues one pretransaction chat conflict without projection evidence',
-    () async {
+  for (final historicalRetryCount in <int>[1, 3]) {
+    test('requeues pretransaction chat conflict at historical retry '
+        '$historicalRetryCount without projection evidence', () async {
       final scope = CloudSyncScope(
         accountFingerprint: testAccountFingerprintA,
         container: 'com.apple.messages.cloud',
@@ -2560,9 +2560,12 @@ void main() {
         leaseFence: fence,
       );
       final inboxBox = objectBox.box<CloudInboxChangeEntity>();
-      final before = inboxBox.getAll().singleWhere(
+      final seeded = inboxBox.getAll().singleWhere(
         (row) => row.fetchSequence == 1,
       );
+      seeded.retryCount = historicalRetryCount;
+      inboxBox.put(seeded);
+      final before = inboxBox.get(seeded.id)!;
       final checkpointBefore = await store.readCheckpoint(scope);
       final cutoff = testEpoch.add(const Duration(minutes: 30));
       currentTime = testEpoch.add(const Duration(hours: 1));
@@ -2579,7 +2582,7 @@ void main() {
 
       final after = inboxBox.get(before.id)!;
       expect(after.status, CloudInboxStatus.pending.index);
-      expect(after.retryCount, 1);
+      expect(after.retryCount, historicalRetryCount);
       expect(after.failureCategory, CloudFailureCategory.conflict.name);
       expect(after.completedAtMs, 0);
       expect(after.updatedAtMs, currentTime.millisecondsSinceEpoch);
@@ -2601,8 +2604,56 @@ void main() {
         ),
         isFalse,
       );
-    },
-  );
+    });
+  }
+
+  for (final rejectedRetryCount in <int>[2, 4]) {
+    test('pretransaction chat conflict recovery rejects retry '
+        '$rejectedRetryCount', () async {
+      final scope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintA,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'chatManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+      );
+      await journal(
+        batch(
+          scope,
+          batchId: 'pretransaction-rejected-$rejectedRetryCount-page',
+          token: 'pretransaction-rejected-$rejectedRetryCount-token',
+          changes: [testChange(1)],
+        ),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+      currentTime = testEpoch.add(const Duration(minutes: 20));
+      await store.quarantineInbox(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.conflict,
+        now: currentTime,
+        leaseFence: fence,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final seeded = inboxBox.getAll().single;
+      seeded.retryCount = rejectedRetryCount;
+      inboxBox.put(seeded);
+      currentTime = testEpoch.add(const Duration(hours: 1));
+
+      expect(
+        await store.requeuePretransactionChatConflictBarrier(
+          scope,
+          now: currentTime,
+          quarantinedBefore: testEpoch.add(const Duration(minutes: 30)),
+          leaseFence: fence,
+        ),
+        isFalse,
+      );
+      final after = inboxBox.get(seeded.id)!;
+      expect(after.status, CloudInboxStatus.quarantined.index);
+      expect(after.retryCount, rejectedRetryCount);
+    });
+  }
 
   test('pretransaction conflict recovery rejects semantic evidence', () async {
     final scope = CloudSyncScope(
