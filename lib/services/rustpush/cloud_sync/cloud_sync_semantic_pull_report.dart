@@ -197,6 +197,50 @@ final class CloudSyncSemanticPullReport {
     return candidate;
   }
 
+  /// A failure that is safe to resume in a new confirmed session after the
+  /// current interlock and native-writer pause have both been released.
+  ///
+  /// This deliberately excludes the broader retryable category set used by
+  /// the general scheduler. A manual semantic drain may resume automatically
+  /// only for transient transport failures and only when every other report
+  /// tripwire remains intact.
+  ({CloudFailureCategory category, String safeCode})?
+  get unambiguousTransientTransportFailure {
+    if (mode != CloudSyncSemanticReportMode.readOnlyCloudKit ||
+        !remoteWriteTripwiresIntact ||
+        !hasExactThreeZoneStructure) {
+      return null;
+    }
+
+    CloudFailureCategory? candidateCategory;
+    String? candidateSafeCode;
+    for (final zone in zones) {
+      if (_hasAcceptedDrainStatus(zone)) {
+        if (!_hasNoDrainTripwire(zone)) return null;
+        continue;
+      }
+      final category = zone.failureCategory;
+      if ((zone.status != CloudSyncRunStatus.degraded &&
+              zone.status != CloudSyncRunStatus.failed) ||
+          !_isTransientTransportCategory(category) ||
+          !_hasNoDrainTripwire(zone) ||
+          zone.observedEmptyTerminalRead) {
+        return null;
+      }
+      if (candidateCategory != null && candidateCategory != category) {
+        return null;
+      }
+      final safeCode = _transientSafeCode(category!, zone.failureSafeCode);
+      if (candidateSafeCode != null && candidateSafeCode != safeCode) {
+        return null;
+      }
+      candidateCategory = category;
+      candidateSafeCode = safeCode;
+    }
+    if (candidateCategory == null || candidateSafeCode == null) return null;
+    return (category: candidateCategory, safeCode: candidateSafeCode);
+  }
+
   /// The drain may continue only through a clean read or the one explicitly
   /// non-destructive degraded state: retained rows awaiting local projection.
   bool get safeToContinueDrain {
@@ -263,6 +307,35 @@ final class CloudSyncSemanticPullReport {
         'retained_backlog_summary_unavailable',
       ) &&
       !zone.diagnosticCounts.containsKey('retained_backlog_summary_mismatch');
+
+  static bool _isTransientTransportCategory(CloudFailureCategory? category) =>
+      category == CloudFailureCategory.network ||
+      category == CloudFailureCategory.throttled ||
+      category == CloudFailureCategory.server;
+
+  static String _transientSafeCode(
+    CloudFailureCategory category,
+    String? candidate,
+  ) => switch (category) {
+    CloudFailureCategory.network =>
+      const {
+            'network',
+            'fetch_deadline',
+            'fetch_timeout',
+            'http_timeout',
+          }.contains(candidate)
+          ? candidate!
+          : 'network',
+    CloudFailureCategory.throttled =>
+      const {'cloudkit_throttled', 'http_throttled'}.contains(candidate)
+          ? candidate!
+          : 'cloudkit_throttled',
+    CloudFailureCategory.server =>
+      const {'cloudkit_server', 'http_server'}.contains(candidate)
+          ? candidate!
+          : 'cloudkit_server',
+    _ => throw StateError('cloud_sync_transient_category_invalid'),
+  };
 
   bool get projectionComplete =>
       hasExactThreeZoneStructure &&

@@ -53,12 +53,14 @@ final class CloudSyncSemanticDrainController {
     required CloudSyncSemanticPullReportPersist persistReport,
     required CloudSyncSemanticDrainSessionRun runSession,
     CloudSyncSemanticCatchUpRun? runCatchUp,
+    void Function()? cancelCatchUp,
     int maximumPasses = defaultMaximumPasses,
   }) => CloudSyncSemanticDrainController._(
     persistReport,
     maximumPasses,
     runSession,
     runCatchUp,
+    cancelCatchUp,
   );
 
   CloudSyncSemanticDrainController._(
@@ -66,6 +68,7 @@ final class CloudSyncSemanticDrainController {
     this.maximumPasses,
     this._runSession,
     this._runCatchUp,
+    this._cancelCatchUp,
   );
 
   factory CloudSyncSemanticDrainController.production({
@@ -81,6 +84,7 @@ final class CloudSyncSemanticDrainController {
         persistReport: reportWriter.write,
         maximumRemotePasses: maximumPasses,
       ),
+      cancelCatchUp: sampler.cancelActiveCatchUp,
     );
   }
 
@@ -89,6 +93,7 @@ final class CloudSyncSemanticDrainController {
   final CloudSyncSemanticPullReportPersist _persistReport;
   final CloudSyncSemanticDrainSessionRun _runSession;
   final CloudSyncSemanticCatchUpRun? _runCatchUp;
+  final void Function()? _cancelCatchUp;
   final int maximumPasses;
   Future<CloudSyncSemanticDrainResult>? _inFlight;
   Future<void>? _disposeFuture;
@@ -190,7 +195,10 @@ final class CloudSyncSemanticDrainController {
   /// quiesce before callers dispose account credentials.
   Future<void> dispose() {
     _admissionClosed = true;
-    return _disposeFuture ??= _waitForQuiescence();
+    final existing = _disposeFuture;
+    if (existing != null) return existing;
+    _cancelCatchUp?.call();
+    return _disposeFuture = _waitForQuiescence();
   }
 
   Future<void> _waitForQuiescence() async {

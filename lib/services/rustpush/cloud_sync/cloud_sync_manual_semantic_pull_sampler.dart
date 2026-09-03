@@ -1,10 +1,12 @@
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_inbox_applier.dart';
+import 'cloud_sync_cancellation.dart';
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_engine.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_observability.dart';
+import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_semantic_pull_report.dart';
 import 'cloud_sync_shadow_transport.dart';
 import 'cloud_sync_store.dart';
@@ -43,6 +45,11 @@ typedef CloudSyncConfirmedSemanticPullSessionAction<T> =
     Future<T> Function(CloudSyncConfirmedSemanticPullPass runPass);
 typedef CloudSyncSemanticSessionReportPersist =
     Future<Object> Function(CloudSyncSemanticPullReport report);
+typedef CloudSyncSemanticRetryWait =
+    Future<void> Function(
+      Duration delay,
+      CloudSyncCancellationToken cancellationToken,
+    );
 
 final class CloudSyncConfirmedCatchUpResult {
   const CloudSyncConfirmedCatchUpResult({
@@ -115,11 +122,15 @@ final class CloudSyncManualSemanticPullSampler {
     this._readDiagnosticCounts,
     bool? compileGateOverrideForTest,
     Duration? fetchTimeoutOverrideForTest,
+    CloudSyncSemanticRetryWait? retryWaitOverrideForTest,
+    CloudSyncClock? clockOverrideForTest,
   }) : _operationInterlock = CloudKitOperationInterlock(
          privateStorageDirectory: privateStorageDirectory,
          fenceStore: operationFenceStore,
        ),
        _fetchTimeout = fetchTimeoutOverrideForTest ?? _maximumFetchTimeout,
+       _retryWait = retryWaitOverrideForTest ?? _defaultRetryWait,
+       _clock = clockOverrideForTest ?? _utcNow,
        _enabled =
            compileGateOverrideForTest ??
            CloudSyncDevGate.manualSemanticPullEnabled {
@@ -145,6 +156,8 @@ final class CloudSyncManualSemanticPullSampler {
   static const retainedProjectionSweepBatchSize = 256;
   static const maximumRetainedProjectionSweepBatches = 4096;
   static const maximumConfirmedRemotePasses = 16;
+  static const maximumTransientSessionRetries = 2;
+  static const maximumTransientRetryWait = Duration(seconds: 60);
   static const _maximumFetchTimeout = Duration(seconds: 45);
   static final _journalBudget = CloudShadowJournalBudget(
     maximumEntriesPerScope: 512,
@@ -167,10 +180,16 @@ final class CloudSyncManualSemanticPullSampler {
   final CloudSyncObserverFactory? _observerFactory;
   final CloudSyncSemanticDiagnosticSnapshotReader? _readDiagnosticCounts;
   final Duration _fetchTimeout;
+  final CloudSyncSemanticRetryWait _retryWait;
+  final CloudSyncClock _clock;
   final bool _enabled;
   bool _active = false;
+  bool _nativePauseUncertain = false;
+  CloudSyncCancellationToken? _activeCatchUpCancellation;
 
   bool get isActive => _active;
+
+  void cancelActiveCatchUp() => _activeCatchUpCancellation?.cancel();
 
   CloudSyncFeatureFlags get debugFlags => _config().flags;
 
@@ -187,7 +206,7 @@ final class CloudSyncManualSemanticPullSampler {
     required CloudSyncSemanticSessionReportPersist persistReport,
     int maximumRemotePasses = maximumConfirmedRemotePasses,
     int projectionBatchSize = retainedProjectionSweepBatchSize,
-  }) {
+  }) async {
     if (maximumRemotePasses < 1 ||
         maximumRemotePasses > maximumConfirmedRemotePasses) {
       throw ArgumentError('cloud_sync_semantic_remote_pass_limit_invalid');
@@ -195,14 +214,74 @@ final class CloudSyncManualSemanticPullSampler {
     if (projectionBatchSize < 1 || projectionBatchSize > 4096) {
       throw ArgumentError('cloud_sync_projection_sweep_batch_size_invalid');
     }
-    return _runConfirmedSessionWithContext(
-      (session) => _catchUpWithinConfirmedSession(
-        session: session,
-        persistReport: persistReport,
-        maximumRemotePasses: maximumRemotePasses,
-        projectionBatchSize: projectionBatchSize,
-      ),
-    );
+    if (!_enabled) throw StateError('cloud_sync_semantic_pull_disabled');
+    if (_active) throw StateError('cloud_sync_semantic_pull_active');
+
+    _active = true;
+    final cancellationToken = CloudSyncCancellationToken();
+    _activeCatchUpCancellation = cancellationToken;
+    var completedRemotePasses = 0;
+    var retries = 0;
+    var cumulativeWait = Duration.zero;
+    _CloudSyncSemanticRetryFence? retryFence;
+    try {
+      while (true) {
+        _throwIfCancelled(cancellationToken);
+        try {
+          final result = await _executeConfirmedSessionWithContext((
+            session,
+          ) async {
+            final expectedFence = retryFence;
+            if (expectedFence != null) {
+              await _validateRetryFence(session, expectedFence);
+            }
+            return _catchUpWithinConfirmedSession(
+              session: session,
+              persistReport: persistReport,
+              maximumRemotePasses: maximumRemotePasses - completedRemotePasses,
+              projectionBatchSize: projectionBatchSize,
+              cancellationToken: cancellationToken,
+            );
+          }, cancellationToken: cancellationToken);
+          if (completedRemotePasses == 0) return result;
+          return CloudSyncConfirmedCatchUpResult(
+            remotePasses: completedRemotePasses + result.remotePasses,
+            lastRemoteReport: result.lastRemoteReport,
+            lastRemoteReportReference: result.lastRemoteReportReference,
+            remoteDrained: result.remoteDrained,
+            reachedRemotePassLimit: result.reachedRemotePassLimit,
+            projectionReport: result.projectionReport,
+            projectionReportReference: result.projectionReportReference,
+          );
+        } on _CloudSyncSemanticTransientInterruption catch (failure) {
+          completedRemotePasses += failure.remotePasses;
+          final exhausted =
+              retries >= maximumTransientSessionRetries ||
+              completedRemotePasses >= maximumRemotePasses;
+          if (exhausted) {
+            throw CloudSyncSemanticDrainUnsafeReportException(failure.safeCode);
+          }
+
+          final now = _clock().toUtc();
+          final delay = failure.fence.nextEligibleAt.isAfter(now)
+              ? failure.fence.nextEligibleAt.difference(now)
+              : Duration.zero;
+          if (cumulativeWait + delay > maximumTransientRetryWait) {
+            throw CloudSyncSemanticDrainUnsafeReportException(failure.safeCode);
+          }
+          retries++;
+          cumulativeWait += delay;
+          retryFence = failure.fence;
+          await _retryWait(delay, cancellationToken);
+          _throwIfCancelled(cancellationToken);
+        }
+      }
+    } finally {
+      if (identical(_activeCatchUpCancellation, cancellationToken)) {
+        _activeCatchUpCancellation = null;
+      }
+      if (!_nativePauseUncertain) _active = false;
+    }
   }
 
   Future<CloudSyncConfirmedCatchUpResult> _catchUpWithinConfirmedSession({
@@ -210,15 +289,32 @@ final class CloudSyncManualSemanticPullSampler {
     required CloudSyncSemanticSessionReportPersist persistReport,
     required int maximumRemotePasses,
     required int projectionBatchSize,
+    required CloudSyncCancellationToken cancellationToken,
   }) async {
     for (var pass = 1; pass <= maximumRemotePasses; pass++) {
+      _throwIfCancelled(cancellationToken);
       final report = await session.runRemotePass();
       // Persistence deliberately precedes every safety and completion claim.
       final reportReference = await persistReport(report);
       if (!report.safeToContinueDrain) {
+        final transient = report.unambiguousTransientTransportFailure;
+        if (transient != null && !cancellationToken.isCancelled) {
+          final fence = await _captureRetryFence(
+            session: session,
+            report: report,
+            category: transient.category,
+          );
+          if (fence != null) {
+            throw _CloudSyncSemanticTransientInterruption(
+              remotePasses: pass,
+              safeCode: transient.safeCode,
+              fence: fence,
+            );
+          }
+        }
         final safeCode = report.unambiguousRejectedZoneFailureSafeCode;
         if (safeCode != null) {
-          throw StateError(safeCode);
+          throw CloudSyncSemanticDrainUnsafeReportException(safeCode);
         }
         throw StateError('cloud_sync_semantic_drain_unsafe_report');
       }
@@ -290,6 +386,17 @@ final class CloudSyncManualSemanticPullSampler {
     if (!_enabled) throw StateError('cloud_sync_semantic_pull_disabled');
     if (_active) throw StateError('cloud_sync_semantic_pull_active');
     _active = true;
+    try {
+      return await _executeConfirmedSessionWithContext(action);
+    } finally {
+      if (!_nativePauseUncertain) _active = false;
+    }
+  }
+
+  Future<T> _executeConfirmedSessionWithContext<T>(
+    Future<T> Function(_CloudSyncConfirmedSessionContext session) action, {
+    CloudSyncCancellationToken? cancellationToken,
+  }) async {
     var pauseMayRemainActive = false;
     try {
       return await _operationInterlock.runExclusive(
@@ -329,6 +436,7 @@ final class CloudSyncManualSemanticPullSampler {
                     final report = await _runConfirmedUnderInterlock(
                       pauseToken,
                       ensuredAuth,
+                      cancellationToken,
                     );
                     completedPass = true;
                     return report;
@@ -375,9 +483,7 @@ final class CloudSyncManualSemanticPullSampler {
         },
       );
     } finally {
-      if (!pauseMayRemainActive) {
-        _active = false;
-      }
+      if (pauseMayRemainActive) _nativePauseUncertain = true;
     }
   }
 
@@ -391,6 +497,7 @@ final class CloudSyncManualSemanticPullSampler {
   Future<CloudSyncSemanticPullReport> _runConfirmedUnderInterlock(
     Object pauseToken,
     CloudSyncNativeAuthSnapshot ensuredAuth,
+    CloudSyncCancellationToken? cancellationToken,
   ) async {
     await _requireSameAuth(ensuredAuth);
     final before = await _readPreflight();
@@ -454,6 +561,7 @@ final class CloudSyncManualSemanticPullSampler {
         );
         final result = await engine.synchronize(
           trigger: CloudSyncTrigger.manual,
+          cancellationToken: cancellationToken,
         );
         await _flushObserver(observer);
         if (result.counters.confirmed != 0) {
@@ -945,6 +1053,106 @@ final class CloudSyncManualSemanticPullSampler {
     }
   }
 
+  Future<_CloudSyncSemanticRetryFence?> _captureRetryFence({
+    required _CloudSyncConfirmedSessionContext session,
+    required CloudSyncSemanticPullReport report,
+    required CloudFailureCategory category,
+  }) async {
+    final reportsByLabel = {
+      for (final zoneReport in report.zones) zoneReport.zoneLabel: zoneReport,
+    };
+    final generations = <String, int>{};
+    DateTime? nextEligibleAt;
+    for (final zone in zones) {
+      final zoneReport = reportsByLabel[_zoneLabel(zone)];
+      if (zoneReport == null) return null;
+      final scope = _semanticScope(session.ensuredAuth, zone);
+      final checkpoint = await (await _createStore(
+        scope,
+      )).readCheckpoint(scope);
+      if (checkpoint.scope != scope ||
+          checkpoint.generation <= 0 ||
+          checkpoint.pendingBatchId != null ||
+          checkpoint.hasUnmarkedPendingInbox) {
+        return null;
+      }
+      generations[zone] = checkpoint.generation;
+      if (zoneReport.failureCategory == category) {
+        final eligibleAt = checkpoint.nextPullEligibleAt;
+        if (checkpoint.lastFailure != category || eligibleAt == null) {
+          return null;
+        }
+        final normalized = eligibleAt.toUtc();
+        if (nextEligibleAt == null || normalized.isAfter(nextEligibleAt)) {
+          nextEligibleAt = normalized;
+        }
+      }
+    }
+    await _requireSameAuth(session.ensuredAuth);
+    if (nextEligibleAt == null) return null;
+    return _CloudSyncSemanticRetryFence(
+      auth: session.ensuredAuth,
+      generations: generations,
+      nextEligibleAt: nextEligibleAt,
+    );
+  }
+
+  Future<void> _validateRetryFence(
+    _CloudSyncConfirmedSessionContext session,
+    _CloudSyncSemanticRetryFence fence,
+  ) async {
+    if (!fence.auth.sameIdentity(session.ensuredAuth)) {
+      throw StateError('account_changed');
+    }
+    await _requireSameAuth(fence.auth);
+    for (final zone in zones) {
+      final scope = _semanticScope(session.ensuredAuth, zone);
+      final checkpoint = await (await _createStore(
+        scope,
+      )).readCheckpoint(scope);
+      if (checkpoint.scope != scope ||
+          checkpoint.generation != fence.generations[zone] ||
+          checkpoint.pendingBatchId != null ||
+          checkpoint.hasUnmarkedPendingInbox) {
+        throw StateError('cloud_sync_remote_head_checkpoint_unstable');
+      }
+    }
+    await _requireSameAuth(fence.auth);
+  }
+
+  CloudSyncScope _semanticScope(
+    CloudSyncNativeAuthSnapshot auth,
+    String zone,
+  ) => CloudSyncScope(
+    accountFingerprint: auth.accountFingerprint,
+    container: container,
+    database: database,
+    zone: zone,
+    persistenceLane: CloudSyncPersistenceLane.semantic,
+  );
+
+  static DateTime _utcNow() => DateTime.now().toUtc();
+
+  static Future<void> _defaultRetryWait(
+    Duration delay,
+    CloudSyncCancellationToken cancellationToken,
+  ) async {
+    _throwIfCancelled(cancellationToken);
+    if (delay > Duration.zero) {
+      await Future.any<void>([
+        Future<void>.delayed(delay),
+        cancellationToken.whenCancelled,
+      ]);
+    }
+    _throwIfCancelled(cancellationToken);
+  }
+
+  static void _throwIfCancelled(CloudSyncCancellationToken cancellationToken) {
+    if (cancellationToken.isCancelled) {
+      throw StateError('cloud_sync_semantic_drain_cancelled');
+    }
+  }
+
   CloudSyncEngineConfig _config() => CloudSyncEngineConfig(
     maximumBatchSize: changeLimit,
     maximumFetchPagesPerRun: pageLimit,
@@ -1046,4 +1254,28 @@ final class _CloudSyncRemoteHeadZoneBound {
   final CloudSyncScope scope;
   final int generation;
   final int throughFetchSequence;
+}
+
+final class _CloudSyncSemanticRetryFence {
+  _CloudSyncSemanticRetryFence({
+    required this.auth,
+    required Map<String, int> generations,
+    required this.nextEligibleAt,
+  }) : generations = Map.unmodifiable(generations);
+
+  final CloudSyncNativeAuthSnapshot auth;
+  final Map<String, int> generations;
+  final DateTime nextEligibleAt;
+}
+
+final class _CloudSyncSemanticTransientInterruption implements Exception {
+  const _CloudSyncSemanticTransientInterruption({
+    required this.remotePasses,
+    required this.safeCode,
+    required this.fence,
+  });
+
+  final int remotePasses;
+  final String safeCode;
+  final _CloudSyncSemanticRetryFence fence;
 }

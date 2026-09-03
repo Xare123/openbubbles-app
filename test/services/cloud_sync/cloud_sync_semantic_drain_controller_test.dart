@@ -388,6 +388,49 @@ void main() {
     await controller.dispose();
   });
 
+  test('dispose cancels an in-flight catch-up backoff promptly', () async {
+    final enteredCatchUp = Completer<void>();
+    final cancelled = Completer<void>();
+    var cancelCalls = 0;
+    final controller = _controller(
+      runConfirmed: () async =>
+          throw StateError('legacy-confirmed-run-must-not-start'),
+      persistReport: (_) async =>
+          throw StateError('legacy-report-persist-must-not-start'),
+      runCatchUp: () async {
+        enteredCatchUp.complete();
+        await cancelled.future;
+        throw StateError('cloud_sync_semantic_drain_cancelled');
+      },
+      cancelCatchUp: () {
+        cancelCalls++;
+        if (!cancelled.isCompleted) cancelled.complete();
+      },
+    );
+
+    final running = controller.drainConfirmedAndPersist();
+    final expectedFailure = expectLater(
+      running,
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_semantic_drain_cancelled',
+        ),
+      ),
+    );
+    await enteredCatchUp.future;
+    final firstDispose = controller.dispose();
+    final repeatedDispose = controller.dispose();
+    expect(identical(firstDispose, repeatedDispose), isTrue);
+    await firstDispose;
+    await expectedFailure;
+
+    expect(cancelCalls, 1);
+    expect(controller.isActive, isFalse);
+    expect(controller.isDisposed, isTrue);
+  });
+
   test(
     'dispose never admits another pass after the active report persists',
     () async {
@@ -502,12 +545,14 @@ CloudSyncSemanticDrainController _controller({
   int maximumPasses = CloudSyncSemanticDrainController.defaultMaximumPasses,
   CloudSyncSemanticDrainSessionRun? runSession,
   CloudSyncSemanticCatchUpRun? runCatchUp,
+  void Function()? cancelCatchUp,
 }) {
   return CloudSyncSemanticDrainController(
     persistReport: persistReport,
     maximumPasses: maximumPasses,
     runSession: runSession ?? ((action) => action(runConfirmed)),
     runCatchUp: runCatchUp,
+    cancelCatchUp: cancelCatchUp,
   );
 }
 

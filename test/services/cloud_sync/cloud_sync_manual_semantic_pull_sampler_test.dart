@@ -129,6 +129,8 @@ CloudSyncManualSemanticPullSampler _sampler({
   CloudSyncNativeWriterPause? nativeWriterPause,
   bool enabled = true,
   Duration? fetchTimeout,
+  CloudSyncSemanticRetryWait? retryWait,
+  CloudSyncClock? clock,
   CloudSyncObserverFactory? observerFactory,
 }) => CloudSyncManualSemanticPullSampler(
   readPreflight: readPreflight,
@@ -150,6 +152,8 @@ CloudSyncManualSemanticPullSampler _sampler({
   buildCommit: 'test-commit',
   compileGateOverrideForTest: enabled,
   fetchTimeoutOverrideForTest: fetchTimeout,
+  retryWaitOverrideForTest: retryWait,
+  clockOverrideForTest: clock,
   observerFactory: observerFactory,
 );
 
@@ -572,6 +576,235 @@ void main() {
       expect(result.lastRemoteReportReference, 'remote-head-report');
       expect(result.projectionReport, isNotNull);
       expect(result.projectionReportReference, 'projection-sweep-report');
+      expect(sampler.isActive, isFalse);
+    },
+  );
+
+  test(
+    'transient server failure resumes writers before a fresh confirmed session',
+    () async {
+      final stores = <String, InMemoryCloudSyncStore>{
+        for (final zone in CloudSyncManualSemanticPullSampler.zones)
+          zone: InMemoryCloudSyncStore(),
+      };
+      final operationFenceStore = InMemoryCloudSyncStore();
+      final nativeWriterPause = _RecordingNativeWriterPause();
+      final persistedReports = <CloudSyncSemanticPullReport>[];
+      final waits = <Duration>[];
+      var transportFactoryCalls = 0;
+      late final CloudSyncManualSemanticPullSampler sampler;
+
+      sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async => stores[scope.zone]!,
+        createRawTransport: (auth, scope, pauseToken) async {
+          transportFactoryCalls++;
+          final transport = FakeCloudSyncTransport();
+          transport.fetchHandler =
+              (requestedScope, previousToken, generation, limit) async {
+                if (nativeWriterPause.pauseCalls == 1 &&
+                    requestedScope.zone == 'chatManateeZone') {
+                  throw CloudSyncFailure(
+                    category: CloudFailureCategory.server,
+                    safeCode: 'http_server',
+                  );
+                }
+                return CloudFetchBatch(
+                  scope: requestedScope,
+                  changes: const [],
+                  batchId:
+                      'terminal-${nativeWriterPause.pauseCalls}-${requestedScope.zone}',
+                  generation: generation,
+                  nextToken: previousToken,
+                  hasMore: false,
+                );
+              };
+          return transport;
+        },
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+        operationFenceStore: operationFenceStore,
+        nativeWriterPause: nativeWriterPause,
+        retryWait: (delay, cancellationToken) async {
+          waits.add(delay);
+          expect(cancellationToken.isCancelled, isFalse);
+          expect(nativeWriterPause.pauseCalls, 1);
+          expect(nativeWriterPause.resumeCalls, 1);
+          expect(sampler.isActive, isTrue);
+          final competingInterlock = CloudKitOperationInterlock(
+            privateStorageDirectory: privateStorageDirectory.path,
+            fenceStore: operationFenceStore,
+          );
+          await competingInterlock.runExclusive(
+            kind: CloudKitOperationKind.legacyReadWrite,
+            action: () async {},
+          );
+        },
+      );
+
+      final result = await sampler.runConfirmedCatchUpAndPersist(
+        maximumRemotePasses: 3,
+        persistReport: (report) async {
+          persistedReports.add(report);
+          return 'report-${persistedReports.length}';
+        },
+      );
+
+      expect(waits, hasLength(1));
+      expect(waits.single, lessThanOrEqualTo(const Duration(seconds: 60)));
+      expect(persistedReports, hasLength(2));
+      expect(persistedReports.first.unambiguousTransientTransportFailure, (
+        category: CloudFailureCategory.server,
+        safeCode: 'http_server',
+      ));
+      expect(result.remotePasses, 2);
+      expect(result.remoteDrained, isTrue);
+      expect(result.lastRemoteReportReference, 'report-2');
+      expect(transportFactoryCalls, 6);
+      expect(nativeWriterPause.pauseCalls, 2);
+      expect(nativeWriterPause.resumeCalls, 2);
+      expect(sampler.isActive, isFalse);
+    },
+  );
+
+  test(
+    'cancelling catch-up interrupts backoff without a new session',
+    () async {
+      final stores = <String, InMemoryCloudSyncStore>{
+        for (final zone in CloudSyncManualSemanticPullSampler.zones)
+          zone: InMemoryCloudSyncStore(),
+      };
+      final nativeWriterPause = _RecordingNativeWriterPause();
+      final waitEntered = Completer<void>();
+      var transportFactoryCalls = 0;
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async => stores[scope.zone]!,
+        createRawTransport: (auth, scope, pauseToken) async {
+          transportFactoryCalls++;
+          final transport = FakeCloudSyncTransport();
+          transport.fetchHandler =
+              (requestedScope, previousToken, generation, limit) async {
+                if (requestedScope.zone == 'chatManateeZone') {
+                  throw CloudSyncFailure(
+                    category: CloudFailureCategory.network,
+                    safeCode: 'network',
+                  );
+                }
+                return CloudFetchBatch(
+                  scope: requestedScope,
+                  changes: const [],
+                  batchId: 'terminal-${requestedScope.zone}',
+                  generation: generation,
+                  nextToken: previousToken,
+                  hasMore: false,
+                );
+              };
+          return transport;
+        },
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: nativeWriterPause,
+        retryWait: (delay, cancellationToken) async {
+          waitEntered.complete();
+          await cancellationToken.whenCancelled;
+        },
+      );
+
+      final running = sampler.runConfirmedCatchUpAndPersist(
+        maximumRemotePasses: 3,
+        persistReport: (_) async => 'report',
+      );
+      await waitEntered.future;
+      sampler.cancelActiveCatchUp();
+
+      await expectLater(
+        running,
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_semantic_drain_cancelled',
+          ),
+        ),
+      );
+      expect(transportFactoryCalls, 3);
+      expect(nativeWriterPause.pauseCalls, 1);
+      expect(nativeWriterPause.resumeCalls, 1);
+      expect(sampler.isActive, isFalse);
+    },
+  );
+
+  test(
+    'checkpoint generation change aborts retry before a new transport',
+    () async {
+      final stores = <String, InMemoryCloudSyncStore>{
+        for (final zone in CloudSyncManualSemanticPullSampler.zones)
+          zone: InMemoryCloudSyncStore(),
+      };
+      final nativeWriterPause = _RecordingNativeWriterPause();
+      var transportFactoryCalls = 0;
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async => stores[scope.zone]!,
+        createRawTransport: (auth, scope, pauseToken) async {
+          transportFactoryCalls++;
+          final transport = FakeCloudSyncTransport();
+          transport.fetchHandler =
+              (requestedScope, previousToken, generation, limit) async {
+                if (requestedScope.zone == 'chatManateeZone') {
+                  throw CloudSyncFailure(
+                    category: CloudFailureCategory.server,
+                    safeCode: 'http_server',
+                  );
+                }
+                return CloudFetchBatch(
+                  scope: requestedScope,
+                  changes: const [],
+                  batchId: 'terminal-${requestedScope.zone}',
+                  generation: generation,
+                  nextToken: previousToken,
+                  hasMore: false,
+                );
+              };
+          return transport;
+        },
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: nativeWriterPause,
+        retryWait: (delay, cancellationToken) async {
+          final scope = _semanticScope('chatManateeZone');
+          await stores[scope.zone]!.advanceOutboxGeneration(
+            scope,
+            now: DateTime.now().toUtc(),
+          );
+        },
+      );
+
+      await expectLater(
+        sampler.runConfirmedCatchUpAndPersist(
+          maximumRemotePasses: 3,
+          persistReport: (_) async => 'report',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_remote_head_checkpoint_unstable',
+          ),
+        ),
+      );
+      expect(transportFactoryCalls, 3);
+      expect(nativeWriterPause.pauseCalls, 2);
+      expect(nativeWriterPause.resumeCalls, 2);
       expect(sampler.isActive, isFalse);
     },
   );

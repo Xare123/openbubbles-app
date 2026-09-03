@@ -639,6 +639,74 @@ void main() {
     expect(invalidStructure.projectionComplete, isFalse);
   });
 
+  test('admits only clean transient transport failures for session retry', () {
+    CloudSyncSemanticPullReport transient(
+      CloudFailureCategory category,
+      String safeCode, {
+      int retried = 0,
+    }) => _report(
+      DateTime.utc(2026, 9, 3),
+      zoneReports: [
+        _cleanZone('chats'),
+        _cleanZone(
+          'messages',
+          status: CloudSyncRunStatus.degraded,
+          failureCategory: category,
+          failureSafeCode: safeCode,
+          observedEmptyTerminalRead: false,
+          retried: retried,
+        ),
+        _cleanZone('attachments'),
+      ],
+    );
+
+    expect(
+      transient(
+        CloudFailureCategory.server,
+        'native_auth_unavailable',
+      ).unambiguousTransientTransportFailure,
+      (category: CloudFailureCategory.server, safeCode: 'cloudkit_server'),
+    );
+    expect(
+      transient(
+        CloudFailureCategory.network,
+        'http_timeout',
+      ).unambiguousTransientTransportFailure,
+      (category: CloudFailureCategory.network, safeCode: 'http_timeout'),
+    );
+    expect(
+      transient(
+        CloudFailureCategory.throttled,
+        'http_throttled',
+      ).unambiguousTransientTransportFailure,
+      (category: CloudFailureCategory.throttled, safeCode: 'http_throttled'),
+    );
+
+    for (final category in CloudFailureCategory.values.where(
+      (value) =>
+          value != CloudFailureCategory.network &&
+          value != CloudFailureCategory.throttled &&
+          value != CloudFailureCategory.server,
+    )) {
+      expect(
+        transient(
+          category,
+          'cloud_sync_unknown_failure',
+        ).unambiguousTransientTransportFailure,
+        isNull,
+        reason: category.name,
+      );
+    }
+    expect(
+      transient(
+        CloudFailureCategory.server,
+        'http_server',
+        retried: 1,
+      ).unambiguousTransientTransportFailure,
+      isNull,
+    );
+  });
+
   test('rejects every unsafe zone condition independently', () {
     final unsafeZones = <String, CloudSyncSemanticPullZoneReport>{
       'completed-with-failure': _cleanZone(
