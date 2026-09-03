@@ -848,10 +848,9 @@ fn preflight_gzip_fields(
         // reaches its infallible gzip wrapper. Required fields remain strict,
         // and every non-empty non-gzip value still fails closed.
         if normalize_optional_empty_gzip_field(record, *field, &compressed) {
-            warn!(
-                "CloudKit V2 gzip preflight field={} stage=optional_empty_normalized",
-                field.name
-            );
+            // This is an expected compatibility normalization, not a record
+            // failure. Do not emit one log entry per record; malformed and
+            // decryption failures below remain observable.
             continue;
         }
         if compressed.len() < 2 || compressed[..2] != [0x1f, 0x8b] {
