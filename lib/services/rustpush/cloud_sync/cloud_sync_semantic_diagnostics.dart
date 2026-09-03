@@ -6,12 +6,17 @@ typedef CloudSyncSemanticDiagnosticRecorder = void Function(String safeCode);
 /// being syntactically tidy is not enough: account identifiers, GUIDs,
 /// protected references, and arbitrary error text must fail closed here.
 abstract final class CloudSyncSemanticDiagnosticCodes {
+  // Persist only bounded, reviewed, content-free diagnostic vocabulary.
   static const _exact = <String>{
     'active_scope_changed',
     'active_scope_revalidation_failed',
     'apply_unknown',
     'canonical_attachment_owner_conflict',
     'canonical_attachment_owner_unavailable',
+    'canonical_attachment_repair_owner_conflict',
+    'canonical_attachment_repair_provenance_conflict',
+    'canonical_attachment_repair_snapshot_mismatch',
+    'canonical_attachment_repair_target_unavailable',
     'canonical_attachment_relation_conflict',
     'canonical_attachment_size_invalid',
     'canonical_chat_alias_conflict',
@@ -83,9 +88,13 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'cloud_sync_unknown_failure',
     'decoder_attachment_shape_unsupported',
     'decoder_chat_shape_invalid',
+    'decoder_mutation_kind_mismatch',
     'decoder_message_chat_reference_invalid',
     'decoder_message_shape_unsupported',
+    'decoder_native_result_envelope_mismatch',
+    'decoder_out_of_scope_entry_mismatch',
     'decoder_payload_lane_count_invalid',
+    'decoder_payload_identity_mismatch',
     'decoder_reaction_shape_unsupported',
     'decoder_ready',
     'decoder_text_run_attachment_shape_invalid',

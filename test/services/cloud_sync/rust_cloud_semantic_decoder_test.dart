@@ -102,6 +102,27 @@ void main() {
   );
 
   test(
+    'maps exact native SMS chat metadata for mixed-route ownership',
+    () async {
+      final entry = _entry();
+      bindings.result = _readyChat(
+        entry,
+        payload: frb.CloudSyncTransientPayload(
+          chat: _chatPayload(
+            chatIdentifier: 'SMS;+;mixed-route-group',
+            service: frb.CloudSyncTransientService.sms,
+          ),
+        ),
+      );
+
+      final payload =
+          (await decoder().decode(entry)).payload! as CloudChatEntityPayload;
+      expect(payload.chatIdentifier, 'SMS;+;mixed-route-group');
+      expect(payload.service, CloudSemanticService.sms);
+    },
+  );
+
+  test(
     'maps only typed exact native SMS-family and RCS dispositions',
     () async {
       final entry = _entry();
@@ -1461,6 +1482,9 @@ frb.CloudSyncTransientMessagePayload _messagePayload({
 );
 
 frb.CloudSyncTransientChatPayload _chatPayload({
+  String chatIdentifier = 'iMessage;-;chat',
+  frb.CloudSyncTransientService service =
+      frb.CloudSyncTransientService.iMessage,
   List<String> participantHandles = const [],
   frb.CloudSyncTransientFieldState displayNameState =
       frb.CloudSyncTransientFieldState.absent,
@@ -1480,7 +1504,7 @@ frb.CloudSyncTransientChatPayload _chatPayload({
 }) => frb.CloudSyncTransientChatPayload(
   logicalEntityKeyHash: _chatHash,
   canonicalGuid: 'chat-guid',
-  chatIdentifier: 'iMessage;-;chat',
+  chatIdentifier: chatIdentifier,
   groupId: 'group-id',
   originalGroupId: 'original-group-id',
   aliases: const [
@@ -1489,7 +1513,7 @@ frb.CloudSyncTransientChatPayload _chatPayload({
       keyHash: _chatHash,
     ),
   ],
-  service: frb.CloudSyncTransientService.iMessage,
+  service: service,
   style: frb.CloudSyncTransientChatStyle.direct,
   participantHandles: participantHandles,
   displayNameState: displayNameState,

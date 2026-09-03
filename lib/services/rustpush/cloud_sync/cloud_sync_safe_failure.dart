@@ -5,11 +5,17 @@ import 'cloudkit_operation_interlock.dart';
 import 'cloudkit_writer_authority.dart';
 
 abstract final class CloudSyncV2DecoderSafeFailureCodes {
+  // Fixed codes only: never place record identifiers or message content here.
   static const attachmentShapeUnsupported =
       'decoder_attachment_shape_unsupported';
   static const chatShapeInvalid = 'decoder_chat_shape_invalid';
+  static const mutationKindMismatch = 'decoder_mutation_kind_mismatch';
   static const messageChatReferenceInvalid =
       'decoder_message_chat_reference_invalid';
+  static const nativeResultEnvelopeMismatch =
+      'decoder_native_result_envelope_mismatch';
+  static const outOfScopeEntryMismatch = 'decoder_out_of_scope_entry_mismatch';
+  static const payloadIdentityMismatch = 'decoder_payload_identity_mismatch';
   static const messageShapeUnsupported = 'decoder_message_shape_unsupported';
   static const payloadLaneCountInvalid = 'decoder_payload_lane_count_invalid';
   static const reactionShapeUnsupported = 'decoder_reaction_shape_unsupported';
@@ -19,7 +25,11 @@ abstract final class CloudSyncV2DecoderSafeFailureCodes {
   static const all = <String>{
     attachmentShapeUnsupported,
     chatShapeInvalid,
+    mutationKindMismatch,
     messageChatReferenceInvalid,
+    nativeResultEnvelopeMismatch,
+    outOfScopeEntryMismatch,
+    payloadIdentityMismatch,
     messageShapeUnsupported,
     payloadLaneCountInvalid,
     reactionShapeUnsupported,
@@ -133,6 +143,10 @@ abstract final class CloudSyncV2CanonicalProjectionSafeFailureCodes {
   static const all = <String>{
     'canonical_attachment_owner_conflict',
     'canonical_attachment_owner_unavailable',
+    'canonical_attachment_repair_owner_conflict',
+    'canonical_attachment_repair_provenance_conflict',
+    'canonical_attachment_repair_snapshot_mismatch',
+    'canonical_attachment_repair_target_unavailable',
     'canonical_attachment_relation_conflict',
     'canonical_attachment_size_invalid',
     'canonical_chat_alias_conflict',

@@ -119,6 +119,7 @@ final class FrbRustCloudSemanticDecodeBindings
 /// composition must still supply the separately reviewed canonical identity
 /// and entity adapters before semantic apply can be enabled.
 final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
+  // Keep decoder consistency failures distinct so Canary reports remain actionable.
   factory RustCloudSemanticDecoder({
     required CloudSyncNativeAuthSnapshotReader readAuthSnapshot,
     required String storageDirectory,
@@ -350,7 +351,11 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         result.generation != BigInt.from(entry.generation) ||
         result.protectedSourceReference !=
             entry.change.encryptedPayloadReference) {
-      return const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
+      return const CloudSemanticDecodeFailure(
+        CloudFailureCategory.conflict,
+        safeCode:
+            CloudSyncV2DecoderSafeFailureCodes.nativeResultEnvelopeMismatch,
+      );
     }
     final failure = result.failureCode;
     return failure == null
@@ -380,7 +385,11 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         result.generation != BigInt.from(entry.generation) ||
         result.protectedSourceReference !=
             entry.change.encryptedPayloadReference) {
-      throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.conflict,
+        safeCode:
+            CloudSyncV2DecoderSafeFailureCodes.nativeResultEnvelopeMismatch,
+      );
     }
     if (result.failureCode case final failure?) {
       throw CloudSemanticDecodeFailure(_failureCategory(failure));
@@ -388,7 +397,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     if (result.outOfScopeService case final service?) {
       if (entry.change.type != CloudChangeType.save ||
           entry.change.isTombstone) {
-        throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
+        throw const CloudSemanticDecodeFailure(
+          CloudFailureCategory.conflict,
+          safeCode: CloudSyncV2DecoderSafeFailureCodes.outOfScopeEntryMismatch,
+        );
       }
       throw CloudSemanticOutOfScopeServiceDisposition(switch (service) {
         frb_api.CloudSyncTransientOutOfScopeService.smsFamily =>
@@ -426,7 +438,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     final decodedTombstone =
         result.mutationKind == frb_api.CloudSyncTransientMutationKind.tombstone;
     if (decodedTombstone != expectedTombstone) {
-      throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.conflict,
+        safeCode: CloudSyncV2DecoderSafeFailureCodes.mutationKindMismatch,
+      );
     }
 
     if (decodedTombstone) {
@@ -477,7 +492,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     if (snapshot.kind != _entityKindFromFrb(result.entityKind!) ||
         snapshot.kind != payload.kind ||
         snapshot.logicalEntityKeyHash != payload.logicalEntityKeyHash) {
-      throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.conflict,
+        safeCode: CloudSyncV2DecoderSafeFailureCodes.payloadIdentityMismatch,
+      );
     }
     return CloudDecodedMutation.upsert(
       scope: entry.scope,
@@ -673,10 +691,9 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
 
   CloudChatEntityPayload _chatPayload(frb_api.CloudSyncTransientPayload value) {
     final payload = value.chat;
-    if (payload != null &&
-        payload.service != frb_api.CloudSyncTransientService.iMessage) {
-      throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
-    }
+    // A current SMS group can be the typed ownership dependency for its
+    // historical iMessages. Native proves this service before the DTO crosses
+    // the bridge; Message and Reaction payloads remain iMessage-only below.
     if (payload == null ||
         !_fieldStateMatches(payload.displayNameState, payload.displayName) ||
         !_fieldStateMatches(
