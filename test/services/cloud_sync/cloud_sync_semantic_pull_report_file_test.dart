@@ -28,6 +28,7 @@ CloudSyncSemanticPullZoneReport _zone(
   int semanticUnsupportedServiceQuarantined = 0,
   int semanticStageQuarantined = 1,
   int retried = 0,
+  int elapsedMilliseconds = 5,
   CloudSyncRunStatus status = CloudSyncRunStatus.completed,
   CloudFailureCategory? failureCategory,
   String? failureSafeCode,
@@ -61,7 +62,7 @@ CloudSyncSemanticPullZoneReport _zone(
   semanticUnsupportedServiceQuarantined: semanticUnsupportedServiceQuarantined,
   semanticStageQuarantined: semanticStageQuarantined,
   retried: retried,
-  elapsedMilliseconds: 5,
+  elapsedMilliseconds: elapsedMilliseconds,
   observedEmptyTerminalRead: observedEmptyTerminalRead,
   projectionExamined: projectionExamined,
   projectionRetained: projectionRetained,
@@ -97,6 +98,7 @@ CloudSyncSemanticPullZoneReport _cleanZone(
   int semanticUnsupportedServiceQuarantined = 0,
   int semanticStageQuarantined = 0,
   int retried = 0,
+  int elapsedMilliseconds = 5,
   int projectionExamined = 0,
   int projectionRetained = 0,
   int projectionBatches = 0,
@@ -123,6 +125,7 @@ CloudSyncSemanticPullZoneReport _cleanZone(
   semanticUnsupportedServiceQuarantined: semanticUnsupportedServiceQuarantined,
   semanticStageQuarantined: semanticStageQuarantined,
   retried: retried,
+  elapsedMilliseconds: elapsedMilliseconds,
   status: status,
   failureCategory: failureCategory,
   failureSafeCode: failureSafeCode,
@@ -382,6 +385,70 @@ void main() {
       }
     },
   );
+
+  test(
+    'persists a measured 40-minute projection sweep within its batch budget',
+    () async {
+      final writer = CloudSyncSemanticPullReportFileWriter(
+        privateReportDirectory: reports.path,
+        trustedStorageRoot: root.path,
+      );
+      final candidate = _report(
+        DateTime.utc(2026, 8, 29, 1, 4, 30),
+        mode: CloudSyncSemanticReportMode.retainedProjectionSweep,
+        zoneReports: [
+          _cleanZone('chats', observedEmptyTerminalRead: false),
+          _cleanZone(
+            'messages',
+            applied: 35,
+            observedEmptyTerminalRead: false,
+            projectionExamined: 35,
+            projectionBatches: 35,
+            elapsedMilliseconds: const Duration(minutes: 40).inMilliseconds,
+          ),
+          _cleanZone('attachments', observedEmptyTerminalRead: false),
+        ],
+      );
+
+      expect(candidate.safeToPersistProjectionSweep, isTrue);
+      final file = await writer.write(candidate);
+      expect(await file.exists(), isTrue);
+    },
+  );
+
+  test('rejects projection elapsed time beyond its batch budget', () async {
+    final writer = CloudSyncSemanticPullReportFileWriter(
+      privateReportDirectory: reports.path,
+      trustedStorageRoot: root.path,
+    );
+    final candidate = _report(
+      DateTime.utc(2026, 8, 29, 1, 4, 31),
+      mode: CloudSyncSemanticReportMode.retainedProjectionSweep,
+      zoneReports: [
+        _cleanZone('chats', observedEmptyTerminalRead: false),
+        _cleanZone(
+          'messages',
+          applied: 1,
+          observedEmptyTerminalRead: false,
+          projectionExamined: 1,
+          projectionBatches: 1,
+          elapsedMilliseconds: const Duration(minutes: 33).inMilliseconds,
+        ),
+        _cleanZone('attachments', observedEmptyTerminalRead: false),
+      ],
+    );
+
+    await expectLater(
+      writer.write(candidate),
+      throwsA(
+        isA<CloudSyncSemanticPullReportFileException>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'cloud_sync_semantic_report_zone_invalid',
+        ),
+      ),
+    );
+  });
 
   test(
     'projection sweep enforces examined equals applied plus retained',

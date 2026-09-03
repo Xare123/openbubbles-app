@@ -26,6 +26,10 @@ final class CloudSyncSemanticPullReportFileWriter {
 
   static const int maximumEncodedBytes = 256 * 1024;
   static const int maximumDiagnosticCount = 65535;
+  static const int _maximumReadElapsedMilliseconds = 10 * 60 * 1000;
+  static const int _projectionSweepBaseElapsedMilliseconds = 30 * 60 * 1000;
+  static const int _projectionSweepElapsedMillisecondsPerBatch =
+      2 * 60 * 1000;
   static final RegExp _ownedReportName = RegExp(
     r'^obcs2-semantic-[0-9]{1,24}\.json$',
   );
@@ -162,9 +166,14 @@ final class CloudSyncSemanticPullReportFileWriter {
       final maximumApplied = projectionSweep
           ? maximumDiagnosticCount
           : maximumZoneWorkRecords;
+      // A retained sweep is bounded by both its sequence window and batch cap,
+      // but its wall time scales with the amount of local history examined.
+      // Keep corruption detection without rejecting valid large-history runs.
       final maximumElapsedMilliseconds = projectionSweep
-          ? 30 * 60 * 1000
-          : 10 * 60 * 1000;
+          ? _projectionSweepBaseElapsedMilliseconds +
+              zone.projectionBatches *
+                  _projectionSweepElapsedMillisecondsPerBatch
+          : _maximumReadElapsedMilliseconds;
       if (!_supportedZoneLabels.contains(zone.zoneLabel) ||
           zone.fetched < 0 ||
           zone.fetched > maximumZoneRecords ||
