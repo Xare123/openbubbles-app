@@ -500,7 +500,11 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
         final latestMessageQuery = (Database.messages.query(Message_.dateDeleted.isNull())
           ..link(Message_.chat, Chat_.guid.equals(controller.chat.guid))
           ..order(Message_.dateCreated, flags: Order.descending))
-            .watch();
+            // A bulk import can finish just before this tile subscribes. In
+            // that race there is no future ObjectBox event to replace the
+            // placeholder. Reconcile only empty tiles immediately; populated
+            // tiles keep the existing no-extra-query behavior.
+            .watch(triggerImmediately: subtitle == "Empty message");
 
         sub = latestMessageQuery.listen((Query<Message> query) async {
           final message = await runAsync(() {

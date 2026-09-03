@@ -11,6 +11,21 @@ void main() {
     expect(CloudSyncDevGate.protocolEvidenceAvailable, isFalse);
   });
 
+  test('empty CloudKit chat previews reconcile after bulk projection', () {
+    final source = File(
+      'lib/app/layouts/conversation_list/widgets/tile/conversation_tile.dart',
+    ).readAsStringSync();
+
+    expect(
+      source,
+      contains('.watch(triggerImmediately: subtitle == "Empty message")'),
+    );
+    expect(
+      source,
+      contains('subtitle == "Empty message"'),
+    );
+  });
+
   test('local mutation canaries require the exact Android Canary package', () {
     expect(
       CloudSyncDevGate.isCanaryRuntime(
