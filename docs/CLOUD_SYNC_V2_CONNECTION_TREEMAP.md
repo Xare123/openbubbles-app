@@ -1032,3 +1032,206 @@ Three boundaries remain before calling this production-complete:
 3. keep malformed, unsupported SMS/RCS, unresolved ownership, and
    attachment-body backlog measured separately from the now-live iMessage text
    projection path.
+
+### Bounded Apple-transport interruption recovery candidate
+
+Two later Android catch-up runs, `obcs2-semantic-1788446032250325.json` and
+`obcs2-semantic-1788446635803393.json`, stopped safely after Apple interrupted
+an otherwise healthy protected drain. The first durable report was already
+committed, pending pages and opaque tokens remained intact, and the outbox
+stayed `0 -> 0`. The older classifier nevertheless described a server-category
+failure with the misleading `native_auth_unavailable` safe code, so the manual
+launcher could not distinguish a transient Apple transport interruption from
+an identity failure and required another user-initiated run.
+
+Exact source commit `b1de189f6499c47922ebc896465d8b753ba32bb5`
+adds a bounded continuation policy without weakening any projection or
+checkpoint gate. HTTP 408, HTTP 429, Apple 5xx responses, socket/WebSocket
+closure, and provisioning-server interruption normalize to transport,
+throttling, or server categories. After persisting the failed attempt, the
+sampler releases the native-writer pause and operation interlock before any
+wait or reconnect. It may create at most two fresh confirmed read sessions,
+with no more than 60 cumulative seconds of delay, and only while account,
+native-client, read-authentication, protected-store, checkpoint generation,
+and stable pending-page evidence remain unchanged. Cancellation stops a wait
+promptly; disposal is idempotent; a generation change aborts before a new
+transport is constructed; and uncertain native resume fails closed. Remote
+saves, remote deletes, automatic triggers, and tombstone semantic deletes
+remain disabled.
+
+The final focused sampler/controller suite passed 62 tests and the targeted
+Dart analyzer was clean. The same exact commit then passed bridge
+reproducibility, the full Dart suite, Rust library tests, rustpush production-
+feature tests, the protector harness, Canary APK/package/native-library
+verification, and GitHub-hosted signing in GCE run `33781776979`. The ARM64 APK
+build itself completed in 721 seconds. The ephemeral GCE VM and matching GitHub
+runner registration were both verified absent after cleanup. The downloaded
+signed artifact is 448,457,086 bytes with SHA-256
+`B6CCD4B9562A375DE39EC5AF3E926CCB51D64CB49DA8A19A085A447943852F22`,
+application ID `com.bluebubbles.messaging.cloudkitcanary`, the expected Canary
+certificate, APK Signature Scheme v2 and v3, and all four required ARM64 native
+libraries.
+
+Android acceptance remains intentionally separate from build qualification.
+Install this exact artifact in place without clearing Canary state or touching
+Alpha, resume the protected pending pages to a terminal empty read in all three
+zones, repeat once for zero-change idempotence, restart the process, and verify
+recent readable messages plus a recent photo in the real Messages UI. Until
+those gates pass, this commit is a qualified candidate rather than a completed
+CloudKit release.
+
+### One-action foreground catch-up qualification
+
+Exact source commit `fe05bd8536c2f589a430e9504101ea793c16c4a1`
+replaces the Small/Standard/Deep developer choices with one foreground,
+checkpoint-resumable catch-up action. One confirmation may run eight
+independently admitted units of at most 16 remote passes each. Every unit
+releases and reacquires the operation interlock and native-writer pause,
+revalidates the exact native client identity, and resumes only from durable
+per-zone checkpoints. Normal logs contain aggregate counts only; an explicit
+developer toggle adds bounded, content-free per-record disposition codes.
+Neither mode records message text, contacts, credentials, keys, raw records,
+or change tokens.
+
+GitHub Actions run `33790763306` completed both the full OpenBubbles APK job and
+the Beta Sampler APK job successfully for that exact commit. The signed Canary
+artifact is 448,452,918 bytes with SHA-256
+`7F861EA6B0F302258DD54AEB8925D237BEA5259245369D0EAFA17FAF3EA676E8`.
+It passed package-ID, stable-certificate, APK Signature Scheme v2/v3, and all
+four required ARM64 native-library checks. An in-place `adb install -r` on the
+Pixel preserved the original install identity, all 20 retained reports, login
+state, checkpoints, and visible chat database; Alpha remained separately
+installed and untouched.
+
+The first live one-action unit persisted 16 reports from
+`2026-09-03T19:32:53Z` through `2026-09-03T20:23:29Z`. It fetched 3,026 Message
+changes, projected 1,561 Messages and 278 Attachment records, reported zero
+quarantine, kept the outbox `0 -> 0`, and kept remote saves, remote deletes,
+and tombstone semantic deletes disabled. The user independently observed chats
+and messages appearing incrementally in the real UI while the run continued.
+The process remained responsive, with no observed ANR, fatal exception, or
+process restart. Losing USB monitoring did not interrupt the device-local run;
+the same PID and durable sequence continued and monitoring resumed over
+wireless ADB.
+
+The sixteenth pass ended with an Apple `http_server` result for Attachments.
+The one-action wrapper released and reacquired ownership without another tap,
+and new semantic outcomes began within approximately 20 seconds. The first
+report of the second unit restored Attachments to a terminal read, projected 48
+more Attachment records, and continued Message fetch/projection while a later
+independent Chat request received `http_server`. No checkpoint, outbox, or
+mutation invariant regressed. This is live evidence that transient per-zone
+server failures no longer collapse the complete catch-up session or require a
+new user confirmation.
+
+This qualification is still in progress. Production readiness still requires
+an all-zone terminal empty read, the exact retained-save projection sweep at
+that proven head, a second zero-change/idempotence run, cold-restart UI checks
+for readable recent messages/reactions/links/photos and duplicate absence, and
+verification that disabling verbose diagnostics returns logs to aggregate-only
+output. Newest-first history and OS background scheduling are not claimed by
+this foreground checkpoint-ordered candidate.
+
+The second independently admitted unit persisted another 16 reports from
+`2026-09-03T20:27:19Z` through `2026-09-03T21:24:55Z`. It fetched 2,953
+Message changes, projected 1,530 Messages, and linked 404 retained Attachment
+records without fetching another Attachment page. Chats reached a terminal
+empty read in 15 of 16 passes after one independently recovered Apple server
+interruption; Attachments were terminal in all 16 passes; Messages remained
+nonterminal. The final retained counts were 505 Chats, 7,612 Messages, and
+2,335 Attachments. Every report kept quarantine at zero, the outbox `0 -> 0`,
+and all remote mutation controls disabled. A third unit began automatically
+without another tap and persisted its first report at
+`2026-09-03T21:28:23Z`, directly proving a second release/revalidate/reacquire
+handoff.
+
+Content-free fixed-label diagnostics also isolated the dominant Message
+blocker. Across 11,874 logged decoder events, all had top-level service class
+`sms` and nested `msgProto4` service class `rcs`; 11,671 were normal-message
+events and 203 were reaction events. These event counts include retries and
+are not distinct-record counts, but the distribution is exact. Apple is
+retaining carrier-message records across an SMS-to-RCS route transition; both
+services remain outside this iMessage projection. Candidate commit
+`55d5786c1a447051d016a6e3e1b606f26c0ee6d2` therefore permits only SMS/RCS
+cross-carrier nested labels to become retained terminal out-of-scope rows.
+Nested iMessage, FaceTime, unknown, and case-variant labels remain strict
+quarantines, and the iMessage branch is unchanged. Cloud qualification and a
+fresh retained-projection sweep are pending before this classification can be
+called live-proven.
+
+The third independently admitted unit persisted 16 reports from
+`2026-09-03T21:28:23Z` through `2026-09-03T22:19:57Z`. It fetched 2,966
+Messages, projected 1,760 Messages, and linked 482 Attachments. Chats and
+Attachments were terminal in all 16 passes; Messages remained nonterminal.
+The final retained counts were 505 Chats, 8,818 Messages, and 1,853
+Attachments. Quarantine, outbox activity, and remote mutation again remained
+zero. A fourth unit began automatically and its first report fetched 200 and
+projected 177 Messages without an interlock error.
+
+Candidate commit `55d5786c1a447051d016a6e3e1b606f26c0ee6d2`
+passed the full 32-core GCE qualification in run `33808592803`, including
+binding reproducibility, the full Dart suite, Rust, rustpush production-feature
+tests, the protector harness, Canary APK/native-library checks, GitHub-hosted
+signing, runner deregistration, and VM deletion. Flutter APK compilation took
+approximately 805 seconds and the complete run took about 31 minutes. The
+downloaded signed artifact is 448,444,798 bytes with SHA-256
+`06B4D0DB0E55BDA86F8090F1077AACC91FF042389F9BCE6BCADA6DAA7A11534D`.
+Independent post-run checks found zero matching GCE instances and zero matching
+GitHub runner registrations. Installation remains deferred until the active
+predecessor catch-up reaches a durable natural stop.
+
+The fourth unit persisted the first all-zone terminal empty read in report
+`obcs2-semantic-1788474657661228.json` at `2026-09-03T22:30:57Z`. All three
+zones fetched and applied zero changes, no projection rows were examined in
+that remote-read report, the outbox remained `0 -> 0`, and every remote
+mutation control remained disabled. This proves that the checkpoint-ordered
+remote catch-up reached the then-current CloudKit head. It does not by itself
+prove local convergence: 8,864 retained Message rows and 1,853 retained
+Attachment rows remained, so the same confirmed session immediately entered
+the exact sequence-bounded retained-projection sweep required by
+`runConfirmedCatchUpAndPersist`. That sweep emits its separate report only
+after all bounded rows have been examined; the unchanged process remained
+alive and continued producing content-free semantic outcomes while the report
+was pending.
+
+Attachment bodies are deliberately fetched on demand rather than during the
+metadata catch-up. The on-demand CloudKit V2 body path and semantic catch-up
+share the same exclusive operation interlock and native-writer pause. The
+retained Android log contained 41 attachment-fetch error markers during the
+catch-up. At least 33 bounded error blocks directly carried `CloudKit writer
+operations are paused or pause is pending`; the same log contained no
+`cloud_attachment_source_unavailable`, `cloud_attachment_size_unavailable`,
+`cloud_attachment_final_file_missing`, or
+`cloud_attachment_native_result_invalid` marker. This proves a transient
+coordination failure for the observed batch rather than missing CloudKit asset
+bodies. The production V2 attachment path now awaits the exact active semantic
+pull future before attempting its independently validated body download. A
+failed semantic pull still releases the waiter because completion is only a
+coordination signal; source, account, size, and integrity checks remain owned
+by the attachment path. The global queue continues to admit at most one V2
+download at a time. Old assets removed from iCloud remain allowed to report
+unavailable, and a recent retained asset still requires post-install Android
+acceptance. The exact attachment coordination candidate is
+`4a14a27f7f5ebecb4bbecad51fb216e3140436ed`.
+
+The retained-projection sweep completed its row traversal at
+`2026-09-03T23:24:18Z` but then stopped safely before report persistence with
+`cloud_sync_semantic_report_zone_invalid`. Content-free timing reconstruction
+from the fixed-label outcomes isolated the mismatch: Chats spanned 0.07
+minutes, Messages spanned 39.42 minutes, and Attachments spanned 13.78 minutes.
+The report writer imposed a fixed 30-minute per-zone ceiling even though the
+sweep itself is sequence-bounded in batches and permits up to 4,096 batches.
+The Messages zone therefore became invalid solely because a valid bounded
+large-history sweep took longer than the unrelated fixed diagnostic ceiling.
+
+The report duration guard now retains the 30-minute base but adds two minutes
+for each declared projection batch. Batch count remains capped at 4,096, all
+record-count and projection-balance invariants remain unchanged, and a duration
+outside that scaled budget is still rejected. A red-green regression test
+reproduced the live 40-minute rejection before the patch, then accepted it with
+35 bounded batches; the inverse test rejects a 33-minute one-batch report. The
+failed live report did not advance or fabricate a completion marker. A fresh
+exact-build run must still persist the projection report, quantify the remaining
+typed backlog, and pass the idempotence and recent-attachment UI gates. The
+exact duration-bound candidate is
+`7bca56dc3cb1ae65914ec15596d6fc99f6532da7`.
