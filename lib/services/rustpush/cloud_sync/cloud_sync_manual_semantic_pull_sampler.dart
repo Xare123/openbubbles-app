@@ -954,7 +954,15 @@ final class CloudSyncManualSemanticPullSampler {
     unknownInboxBarrierRecoveryCutoff: DateTime.utc(2026, 8, 30, 4),
     legacyOwnershipConflictRecoveryCutoff: DateTime.utc(2026, 9, 2, 10, 30),
     pretransactionChatConflictRecoveryCutoff: DateTime.utc(2026, 9, 3, 6),
+    pretransactionAttachmentConflictRecoveryCutoff: DateTime.utc(
+      2026,
+      9,
+      3,
+      10,
+      40,
+    ),
     retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+    retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary: true,
     shadowJournalBudget: _journalBudget,
     flags: const CloudSyncFeatureFlags(
       readOnlyFetch: true,

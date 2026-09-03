@@ -1534,6 +1534,62 @@ void main() {
   );
 
   test(
+    'attachment conflict retention requires an exact reviewed safe code',
+    () async {
+      final scope = messagesCloudScope('attachmentManateeZone');
+      await journal(
+        batch(
+          scope,
+          batchId: 'attachment-conflict-retention-page',
+          token: 'attachment-conflict-retention-token',
+          changes: [testChange(1), testChange(2)],
+        ),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+
+      await expectLater(
+        store.markInboxRetainedUnprojected(
+          scope,
+          sequence: 1,
+          category: CloudFailureCategory.conflict,
+          now: testEpoch,
+          maximumDeferredAttempts: 1,
+          maximumDeferredAge: Duration.zero,
+          leaseFence: fence,
+          readOnlySemanticAttachmentConflictSafeCode:
+              'semantic_record_mapping_conflict',
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'inbox_retention_policy_rejected',
+          ),
+        ),
+      );
+
+      await store.markInboxRetainedUnprojected(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.conflict,
+        now: testEpoch,
+        maximumDeferredAttempts: 1,
+        maximumDeferredAge: Duration.zero,
+        leaseFence: fence,
+        readOnlySemanticAttachmentConflictSafeCode:
+            'legacy_ownership_canonical_row_mismatch',
+      );
+      final rows = objectBox.box<CloudInboxChangeEntity>().getAll()
+        ..sort(
+          (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+        );
+      expect(rows[0].status, CloudInboxStatus.retainedUnprojected.index);
+      expect(rows[0].failureCategory, CloudFailureCategory.conflict.name);
+      expect(rows[1].status, CloudInboxStatus.pending.index);
+    },
+  );
+
+  test(
     'retained tombstone survives reopen and promotes only a terminal page',
     () async {
       final scope = testScope(
@@ -2731,6 +2787,221 @@ void main() {
       CloudInboxStatus.quarantined.index,
     );
   });
+
+  test(
+    'requeues one pretransaction attachment conflict without projection evidence',
+    () async {
+      final scope = messagesCloudScope('attachmentManateeZone');
+      await journal(
+        batch(
+          scope,
+          batchId: 'pretransaction-attachment-conflict-page',
+          token: 'pretransaction-attachment-conflict-token',
+          changes: [testChange(1), testChange(2)],
+        ),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+      currentTime = testEpoch.add(const Duration(minutes: 20));
+      await store.quarantineInbox(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.conflict,
+        now: currentTime,
+        leaseFence: fence,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final before = inboxBox.getAll().singleWhere(
+        (row) => row.fetchSequence == 1,
+      );
+      final checkpointBefore = await store.readCheckpoint(scope);
+      final cutoff = testEpoch.add(const Duration(minutes: 30));
+      currentTime = testEpoch.add(const Duration(hours: 1));
+
+      expect(
+        await store.requeuePretransactionAttachmentConflictBarrier(
+          scope,
+          now: currentTime,
+          quarantinedBefore: cutoff,
+          leaseFence: fence,
+        ),
+        isTrue,
+      );
+
+      final after = inboxBox.get(before.id)!;
+      expect(after.status, CloudInboxStatus.pending.index);
+      expect(after.retryCount, 1);
+      expect(after.failureCategory, CloudFailureCategory.conflict.name);
+      expect(after.completedAtMs, 0);
+      expect(after.updatedAtMs, currentTime.millisecondsSinceEpoch);
+      expect(after.encryptedPayloadRef, before.encryptedPayloadRef);
+      expect(after.payloadSha256, before.payloadSha256);
+      final checkpointAfter = await store.readCheckpoint(scope);
+      expect(checkpointAfter.fetchedToken, checkpointBefore.fetchedToken);
+      expect(checkpointAfter.pendingBatchId, checkpointBefore.pendingBatchId);
+      expect(
+        checkpointAfter.lastAppliedSequence,
+        checkpointBefore.lastAppliedSequence,
+      );
+      expect(
+        await store.requeuePretransactionAttachmentConflictBarrier(
+          scope,
+          now: currentTime,
+          quarantinedBefore: cutoff,
+          leaseFence: fence,
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'pretransaction attachment recovery rejects retry two and wrong zone',
+    () async {
+      final attachmentScope = messagesCloudScope('attachmentManateeZone');
+      await journal(
+        batch(
+          attachmentScope,
+          batchId: 'pretransaction-attachment-retry-two-page',
+          token: 'pretransaction-attachment-retry-two-token',
+          changes: [testChange(1)],
+        ),
+      );
+      final attachmentFence = coordinatorFences[attachmentScope.storageKey]!;
+      currentTime = testEpoch.add(const Duration(minutes: 20));
+      await store.quarantineInbox(
+        attachmentScope,
+        sequence: 1,
+        category: CloudFailureCategory.conflict,
+        now: currentTime,
+        leaseFence: attachmentFence,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final attachmentRow = inboxBox.getAll().single;
+      attachmentRow.retryCount = 2;
+      inboxBox.put(attachmentRow);
+      currentTime = testEpoch.add(const Duration(hours: 1));
+
+      expect(
+        await store.requeuePretransactionAttachmentConflictBarrier(
+          attachmentScope,
+          now: currentTime,
+          quarantinedBefore: testEpoch.add(const Duration(minutes: 30)),
+          leaseFence: attachmentFence,
+        ),
+        isFalse,
+      );
+
+      final messageScope = messagesCloudScope(
+        'messageManateeZone',
+        account: testAccountFingerprintB,
+      );
+      await journal(
+        batch(
+          messageScope,
+          batchId: 'pretransaction-wrong-zone-page',
+          token: 'pretransaction-wrong-zone-token',
+          changes: [testChange(2)],
+        ),
+        now: currentTime,
+      );
+      final messageFence = coordinatorFences[messageScope.storageKey]!;
+      currentTime = testEpoch.add(const Duration(hours: 1, minutes: 5));
+      await store.quarantineInbox(
+        messageScope,
+        sequence: 1,
+        category: CloudFailureCategory.conflict,
+        now: currentTime,
+        leaseFence: messageFence,
+      );
+      currentTime = testEpoch.add(const Duration(hours: 2));
+
+      expect(
+        await store.requeuePretransactionAttachmentConflictBarrier(
+          messageScope,
+          now: currentTime,
+          quarantinedBefore: testEpoch.add(
+            const Duration(hours: 1, minutes: 30),
+          ),
+          leaseFence: messageFence,
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'pretransaction attachment recovery rejects replay and map evidence',
+    () async {
+      final scope = messagesCloudScope('attachmentManateeZone');
+      await journal(
+        batch(
+          scope,
+          batchId: 'pretransaction-attachment-evidence-page',
+          token: 'pretransaction-attachment-evidence-token',
+          changes: [testChange(1)],
+        ),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+      currentTime = testEpoch.add(const Duration(minutes: 20));
+      await store.quarantineInbox(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.conflict,
+        now: currentTime,
+        leaseFence: fence,
+      );
+      final row = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+      objectBox.box<CloudSemanticReplayEntity>().put(
+        CloudSemanticReplayEntity(
+          replayKey: 'pretransaction-attachment-existing-replay',
+          scopeGenerationKey: 'pretransaction-attachment-scope-generation',
+          scopeKey: row.scopeKey,
+          accountFingerprint: row.accountFingerprint,
+          container: scope.container,
+          database: scope.database,
+          zone: scope.zone,
+          streamKind: scope.streamKind.name,
+          schemaVersion: scope.schemaVersion,
+          generation: row.generation,
+          changeIdHash: row.changeIdHash,
+          serverRecordIdHash: row.serverRecordIdHash,
+          inboxSequence: row.fetchSequence,
+          changeType: row.changeType,
+          terminalOutcome: 'quarantined',
+          terminalSafeCode: 'semantic_conflict',
+          updatedAtMs: currentTime.millisecondsSinceEpoch,
+        ),
+      );
+      objectBox.box<CloudRecordMapEntity>().put(
+        CloudRecordMapEntity(
+          mapKey: 'pretransaction-attachment-existing-map',
+          scopeKey: row.scopeKey,
+          accountFingerprint: row.accountFingerprint,
+          zone: scope.zone,
+          logicalEntityKeyHash: List.filled(43, 'L').join(),
+          serverRecordIdHash: row.serverRecordIdHash,
+          generation: row.generation,
+          encryptedServerRecordId: testProtectedReference('S'),
+          updatedAtMs: currentTime.millisecondsSinceEpoch,
+        ),
+      );
+      currentTime = testEpoch.add(const Duration(hours: 1));
+
+      expect(
+        await store.requeuePretransactionAttachmentConflictBarrier(
+          scope,
+          now: currentTime,
+          quarantinedBefore: testEpoch.add(const Duration(minutes: 30)),
+          leaseFence: fence,
+        ),
+        isFalse,
+      );
+      expect(
+        objectBox.box<CloudInboxChangeEntity>().get(row.id)!.status,
+        CloudInboxStatus.quarantined.index,
+      );
+    },
+  );
 
   test('duplicate inbox sequence lookup fails closed', () async {
     final scope = testScope();
@@ -4350,41 +4621,44 @@ void main() {
     );
   });
 
-  test('coordinator lease status is visible across adapter instances', () async {
-    final scope = testScope();
-    final secondAdapter = ObjectBoxCloudSyncStore(
-      store: objectBox,
-      protector: protector,
-      clock: () => currentTime,
-    );
-    expect(
-      await secondAdapter.readActiveCoordinatorLeaseExpiry(
+  test(
+    'coordinator lease status is visible across adapter instances',
+    () async {
+      final scope = testScope();
+      final secondAdapter = ObjectBoxCloudSyncStore(
+        store: objectBox,
+        protector: protector,
+        clock: () => currentTime,
+      );
+      expect(
+        await secondAdapter.readActiveCoordinatorLeaseExpiry(
+          scope,
+          now: testEpoch,
+        ),
+        isNull,
+      );
+      await store.tryAcquireCoordinatorLease(
         scope,
+        ownerId: 'owner-a',
         now: testEpoch,
-      ),
-      isNull,
-    );
-    await store.tryAcquireCoordinatorLease(
-      scope,
-      ownerId: 'owner-a',
-      now: testEpoch,
-      leaseDuration: const Duration(minutes: 1),
-    );
-    expect(
-      await secondAdapter.readActiveCoordinatorLeaseExpiry(
-        scope,
-        now: testEpoch,
-      ),
-      testEpoch.add(const Duration(minutes: 1)),
-    );
-    expect(
-      await secondAdapter.readActiveCoordinatorLeaseExpiry(
-        scope,
-        now: testEpoch.add(const Duration(minutes: 1)),
-      ),
-      isNull,
-    );
-  });
+        leaseDuration: const Duration(minutes: 1),
+      );
+      expect(
+        await secondAdapter.readActiveCoordinatorLeaseExpiry(
+          scope,
+          now: testEpoch,
+        ),
+        testEpoch.add(const Duration(minutes: 1)),
+      );
+      expect(
+        await secondAdapter.readActiveCoordinatorLeaseExpiry(
+          scope,
+          now: testEpoch.add(const Duration(minutes: 1)),
+        ),
+        isNull,
+      );
+    },
+  );
 
   test(
     'same-owner lease ABA cannot renew or release a newer generation',

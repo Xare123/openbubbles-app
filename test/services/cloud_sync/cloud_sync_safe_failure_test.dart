@@ -310,6 +310,37 @@ void main() {
     }
   });
 
+  test('preserves reviewed semantic merge and transaction failures', () {
+    for (final code in CloudSyncV2SemanticStoreSafeFailureCodes.all) {
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code), code, reason: code);
+      expect(
+        CloudSyncSemanticDiagnosticCodes.isReviewed(code),
+        isTrue,
+        reason: code,
+      );
+    }
+  });
+
+  test('preserves every fixed legacy ownership proof failure', () {
+    final source = File(
+      'lib/services/rustpush/cloud_sync/'
+      'objectbox_canonical_semantic_entity_adapter.dart',
+    ).readAsStringSync();
+    final emitted = RegExp(
+      r"safeCode:\s*'(legacy_ownership_[a-z0-9_]+)'",
+    ).allMatches(source).map((match) => match.group(1)!).toSet();
+
+    expect(emitted, CloudSyncV2LegacyOwnershipSafeFailureCodes.all);
+    for (final code in emitted) {
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code), code, reason: code);
+      expect(
+        CloudSyncSemanticDiagnosticCodes.isReviewed(code),
+        isTrue,
+        reason: code,
+      );
+    }
+  });
+
   test('preserves every protected native transport safe code', () {
     expect(CloudSyncV2ProtectedTransportSafeFailureCodes.all, hasLength(28));
     for (final code in CloudSyncV2ProtectedTransportSafeFailureCodes.all) {

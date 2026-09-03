@@ -110,6 +110,7 @@ abstract interface class CloudSyncStore {
     required int maximumDeferredAttempts,
     required Duration maximumDeferredAge,
     required CloudCoordinatorLeaseFence leaseFence,
+    String? readOnlySemanticAttachmentConflictSafeCode,
   });
 
   /// Reconciles legacy quarantine barriers created by builds that committed a
@@ -414,6 +415,22 @@ abstract interface class CloudLegacyOwnershipConflictBarrierRecoveryStore {
 /// failed retry advances to a count that cannot re-enter.
 abstract interface class CloudPretransactionChatConflictBarrierRecoveryStore {
   Future<bool> requeuePretransactionChatConflictBarrier(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required DateTime quarantinedBefore,
+    required CloudCoordinatorLeaseFence leaseFence,
+  });
+}
+
+/// Narrow, local-only migration surface for one attachment save quarantined
+/// before a semantic transaction could persist replay or record-map evidence.
+///
+/// Implementations must admit only the first nonterminal current-generation
+/// Messages-in-iCloud attachment save at historical retry count one, require
+/// the active coordinator fence, reject semantic replay or server-record-map
+/// evidence, and preserve checkpoints plus protected source bytes unchanged.
+abstract interface class CloudPretransactionAttachmentConflictBarrierRecoveryStore {
+  Future<bool> requeuePretransactionAttachmentConflictBarrier(
     CloudSyncScope scope, {
     required DateTime now,
     required DateTime quarantinedBefore,

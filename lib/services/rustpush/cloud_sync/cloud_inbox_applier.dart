@@ -1783,12 +1783,12 @@ class TransactionalCloudInboxApplier
           CloudMergeConflict.immutableContentMismatch,
         ) ||
         decision.conflicts.contains(CloudMergeConflict.editRevisionMismatch)) {
-      transaction.quarantineChange(
-        decoded.changeId,
-        _conflictCode(decision.conflicts),
-      );
-      return const CloudInboxApplyResult.quarantined(
+      final safeCode = _conflictCode(decision.conflicts);
+      transaction.quarantineChange(decoded.changeId, safeCode);
+      _recordDiagnostic(safeCode);
+      return CloudInboxApplyResult.quarantined(
         failureCategory: CloudFailureCategory.conflict,
+        safeCode: safeCode,
         inboxStatusPersisted: true,
       );
     }
@@ -1885,12 +1885,12 @@ class TransactionalCloudInboxApplier
 
   String _conflictCode(Set<CloudMergeConflict> conflicts) {
     if (conflicts.contains(CloudMergeConflict.immutableContentMismatch)) {
-      return 'immutable_content_mismatch';
+      return CloudSyncV2SemanticStoreSafeFailureCodes.immutableContentMismatch;
     }
     if (conflicts.contains(CloudMergeConflict.editRevisionMismatch)) {
-      return 'edit_revision_mismatch';
+      return CloudSyncV2SemanticStoreSafeFailureCodes.editRevisionMismatch;
     }
-    return 'semantic_conflict';
+    return CloudSyncV2SemanticStoreSafeFailureCodes.semanticConflict;
   }
 }
 

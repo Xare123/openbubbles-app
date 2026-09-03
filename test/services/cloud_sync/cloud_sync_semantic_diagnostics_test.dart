@@ -41,10 +41,20 @@ void main() {
       'canonical_message_chat_reference_cross_service_group_id',
       'canonical_preexisting_ownership_bootstrap',
       'decoder_malformed_record',
+      'edit_revision_mismatch',
+      'immutable_content_mismatch',
+      'legacy_ownership_repair_candidate',
+      'legacy_ownership_repair_decoder_conflict',
+      'legacy_ownership_repair_decoder_unknown',
+      'legacy_ownership_repair_decoded_shape_invalid',
+      'legacy_ownership_repaired',
       'native_quarantined_malformed_record',
       'projection_repaired_attachment_capability',
       'retained_backlog_failure_dependency',
       'retained_projection_window_has_more',
+      'semantic_conflict',
+      'semantic_quarantine_after_mutation_forbidden',
+      'semantic_replay_terminal_conflict',
     ]) {
       diagnostics.record(code);
     }
@@ -57,10 +67,20 @@ void main() {
       'canonical_message_chat_reference_cross_service_group_id',
       'canonical_preexisting_ownership_bootstrap',
       'decoder_malformed_record',
+      'edit_revision_mismatch',
+      'immutable_content_mismatch',
+      'legacy_ownership_repair_candidate',
+      'legacy_ownership_repair_decoded_shape_invalid',
+      'legacy_ownership_repair_decoder_conflict',
+      'legacy_ownership_repair_decoder_unknown',
+      'legacy_ownership_repaired',
       'native_quarantined_malformed_record',
       'projection_repaired_attachment_capability',
       'retained_backlog_failure_dependency',
       'retained_projection_window_has_more',
+      'semantic_conflict',
+      'semantic_quarantine_after_mutation_forbidden',
+      'semantic_replay_terminal_conflict',
     ]);
   });
 
@@ -79,6 +99,14 @@ void main() {
     diagnostics.record(
       'canonical_message_chat_candidate_opposite_group_id_unique_style_45',
     );
+
+    expect(diagnostics.snapshot(), <String, int>{'diagnostic_code_invalid': 1});
+  });
+
+  test('rejects unbounded legacy ownership decoder suffixes', () {
+    final diagnostics = CloudSyncSemanticDiagnosticCollector();
+
+    diagnostics.record('legacy_ownership_repair_decoder_record_identifier');
 
     expect(diagnostics.snapshot(), <String, int>{'diagnostic_code_invalid': 1});
   });

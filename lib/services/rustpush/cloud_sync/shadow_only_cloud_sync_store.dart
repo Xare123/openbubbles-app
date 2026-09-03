@@ -156,6 +156,7 @@ final class ShadowOnlyCloudSyncStore
     required int maximumDeferredAttempts,
     required Duration maximumDeferredAge,
     required CloudCoordinatorLeaseFence leaseFence,
+    String? readOnlySemanticAttachmentConflictSafeCode,
   }) => _blocked();
 
   @override

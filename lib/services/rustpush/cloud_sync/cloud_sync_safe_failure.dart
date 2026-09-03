@@ -194,6 +194,67 @@ abstract final class CloudSyncV2CanonicalProjectionSafeFailureCodes {
   };
 }
 
+/// Fixed, content-free failures emitted while proving ownership of canonical
+/// rows created by the legacy projector.
+abstract final class CloudSyncV2LegacyOwnershipSafeFailureCodes {
+  static const canonicalShapeInvalid =
+      'legacy_ownership_canonical_shape_invalid';
+  static const transientOwnerInvalid =
+      'legacy_ownership_transient_owner_invalid';
+  static const chatShapeInvalid = 'legacy_ownership_chat_shape_invalid';
+  static const messageShapeInvalid = 'legacy_ownership_message_shape_invalid';
+  static const reactionShapeInvalid = 'legacy_ownership_reaction_shape_invalid';
+  static const attachmentShapeInvalid =
+      'legacy_ownership_attachment_shape_invalid';
+  static const canonicalRowAmbiguous =
+      'legacy_ownership_canonical_row_ambiguous';
+  static const canonicalRowMismatch = 'legacy_ownership_canonical_row_mismatch';
+  static const dependencyTransientOwnerInvalid =
+      'legacy_ownership_dependency_transient_owner_invalid';
+
+  static const all = <String>{
+    canonicalShapeInvalid,
+    transientOwnerInvalid,
+    chatShapeInvalid,
+    messageShapeInvalid,
+    reactionShapeInvalid,
+    attachmentShapeInvalid,
+    canonicalRowAmbiguous,
+    canonicalRowMismatch,
+    dependencyTransientOwnerInvalid,
+  };
+
+  /// These two outcomes prove only that a legacy attachment row cannot be
+  /// adopted safely. A read-only Canary may preserve the protected source and
+  /// continue; it must never replace or relink the existing canonical row.
+  static const readOnlyCanaryRetainableAttachmentConflicts = <String>{
+    canonicalRowAmbiguous,
+    canonicalRowMismatch,
+  };
+}
+
+/// Fixed, content-free failures emitted while merging or committing one
+/// decoded semantic mutation.
+///
+/// These codes identify control-flow outcomes only. They never contain a
+/// record identifier, account value, protected reference, or message content.
+abstract final class CloudSyncV2SemanticStoreSafeFailureCodes {
+  static const immutableContentMismatch = 'immutable_content_mismatch';
+  static const editRevisionMismatch = 'edit_revision_mismatch';
+  static const semanticConflict = 'semantic_conflict';
+  static const replayTerminalConflict = 'semantic_replay_terminal_conflict';
+  static const quarantineAfterMutationForbidden =
+      'semantic_quarantine_after_mutation_forbidden';
+
+  static const all = <String>{
+    immutableContentMismatch,
+    editRevisionMismatch,
+    semanticConflict,
+    replayTerminalConflict,
+    quarantineAfterMutationForbidden,
+  };
+}
+
 /// Fixed, content-free failures emitted by the same-session remote-head proof
 /// and sequence-bounded local projection sweep.
 abstract final class CloudSyncV2ProjectionSweepSafeFailureCodes {
@@ -226,6 +287,8 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   ...CloudSyncV2OutOfScopeServiceSafeFailureCodes.all,
   ...CloudSyncV2ProtectedTransportSafeFailureCodes.all,
   ...CloudSyncV2CanonicalProjectionSafeFailureCodes.all,
+  ...CloudSyncV2LegacyOwnershipSafeFailureCodes.all,
+  ...CloudSyncV2SemanticStoreSafeFailureCodes.all,
   ...CloudSyncV2ProjectionSweepSafeFailureCodes.all,
   'cloud_sync_unknown_failure',
   'apply_network',

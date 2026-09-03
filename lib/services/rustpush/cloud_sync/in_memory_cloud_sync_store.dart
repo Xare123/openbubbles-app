@@ -5,6 +5,7 @@ import 'package:synchronized/synchronized.dart';
 import 'cloud_operation_identity.dart';
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_store.dart';
 
 /// Transactional reference implementation used by unit tests and adapter
@@ -364,6 +365,7 @@ class InMemoryCloudSyncStore
     required int maximumDeferredAttempts,
     required Duration maximumDeferredAge,
     required CloudCoordinatorLeaseFence leaseFence,
+    String? readOnlySemanticAttachmentConflictSafeCode,
   }) {
     return _lock.synchronized(() async {
       _requireActiveCoordinatorLeaseLocked(scope, leaseFence, now);
@@ -393,6 +395,8 @@ class InMemoryCloudSyncStore
         maximumDeferredAttempts: maximumDeferredAttempts,
         maximumDeferredAge: maximumDeferredAge,
         includeCurrentAttempt: entry.status == CloudInboxStatus.pending,
+        readOnlySemanticAttachmentConflictSafeCode:
+            readOnlySemanticAttachmentConflictSafeCode,
       )) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.localStorage,
@@ -1600,6 +1604,7 @@ class InMemoryCloudSyncStore
     required int maximumDeferredAttempts,
     required Duration maximumDeferredAge,
     required bool includeCurrentAttempt,
+    String? readOnlySemanticAttachmentConflictSafeCode,
   }) {
     // A read-only tombstone reaches this method with no failure category.
     // Never let the tombstone shape override a conflict/unknown classification
@@ -1614,6 +1619,21 @@ class InMemoryCloudSyncStore
     if (category == CloudFailureCategory.malformedRecord ||
         category == CloudFailureCategory.unsupportedService) {
       return true;
+    }
+    if (CloudSyncV2LegacyOwnershipSafeFailureCodes
+            .readOnlyCanaryRetainableAttachmentConflicts
+            .contains(readOnlySemanticAttachmentConflictSafeCode) &&
+        category == CloudFailureCategory.conflict) {
+      return entry.scope.container == 'com.apple.messages.cloud' &&
+          entry.scope.database == 'private' &&
+          entry.scope.zone == 'attachmentManateeZone' &&
+          entry.scope.streamKind == CloudSyncStreamKind.messages &&
+          entry.scope.schemaVersion == 2 &&
+          entry.scope.persistenceLane == CloudSyncPersistenceLane.semanticV2 &&
+          entry.change.type == CloudChangeType.save &&
+          !entry.change.isTombstone &&
+          entry.change.preflightFailure == null &&
+          entry.change.preflightCode == null;
     }
     if (category != CloudFailureCategory.dependency) return false;
     final attempts = entry.attemptCount + (includeCurrentAttempt ? 1 : 0);

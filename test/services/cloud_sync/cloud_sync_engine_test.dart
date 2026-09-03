@@ -51,7 +51,10 @@ void main() {
     DateTime? unknownInboxBarrierRecoveryCutoff,
     DateTime? legacyOwnershipConflictRecoveryCutoff,
     DateTime? pretransactionChatConflictRecoveryCutoff,
+    DateTime? pretransactionAttachmentConflictRecoveryCutoff,
     bool retainKnownDependencyDeferralsForReadOnlySemanticCanary = false,
+    bool retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary =
+        false,
     bool reconcileUnknownOutcomesOnly = false,
     MemoryCloudSyncObserver? observer,
     String coordinatorId = 'coordinator-a',
@@ -96,8 +99,12 @@ void main() {
             legacyOwnershipConflictRecoveryCutoff,
         pretransactionChatConflictRecoveryCutoff:
             pretransactionChatConflictRecoveryCutoff,
+        pretransactionAttachmentConflictRecoveryCutoff:
+            pretransactionAttachmentConflictRecoveryCutoff,
         retainKnownDependencyDeferralsForReadOnlySemanticCanary:
             retainKnownDependencyDeferralsForReadOnlySemanticCanary,
+        retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary:
+            retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary,
         reconcileUnknownOutcomesOnly: reconcileUnknownOutcomesOnly,
         shadowJournalBudget: shadowJournalBudget ?? CloudShadowJournalBudget(),
         flags: flags,
@@ -2737,6 +2744,175 @@ void main() {
   );
 
   test(
+    'guarded Canary retains an exact legacy attachment conflict and continues',
+    () async {
+      scope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintA,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'attachmentManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+      );
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2)],
+          batchId: 'canary-legacy-attachment-conflict-page',
+          generation: 1,
+          nextToken: 'canary-legacy-attachment-conflict-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.quarantined(
+        failureCategory: CloudFailureCategory.conflict,
+        safeCode: 'legacy_ownership_canonical_row_mismatch',
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+        retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary: true,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.counters.retainedUnprojected, 1);
+      expect(result.counters.quarantined, 0);
+      expect(result.counters.applied, 1);
+      expect(applier.appliedSequences, [1, 2]);
+      expect((await store.readCheckpoint(scope)).pendingBatchId, isNull);
+      expect(
+        (await store.readCheckpoint(scope)).fetchedToken,
+        'canary-legacy-attachment-conflict-token',
+      );
+      final entries = await store.inboxEntries(scope);
+      expect(entries[0].status, CloudInboxStatus.retainedUnprojected);
+      expect(entries[0].lastFailure, CloudFailureCategory.conflict);
+      expect(entries[1].status, CloudInboxStatus.applied);
+    },
+  );
+
+  test(
+    'attachment conflict retention flag disabled keeps the page barrier',
+    () async {
+      scope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintA,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'attachmentManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+      );
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2)],
+          batchId: 'ordinary-legacy-attachment-conflict-page',
+          generation: 1,
+          nextToken: 'ordinary-legacy-attachment-conflict-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.quarantined(
+        failureCategory: CloudFailureCategory.conflict,
+        safeCode: 'legacy_ownership_canonical_row_mismatch',
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.counters.retainedUnprojected, 0);
+      expect(result.counters.quarantined, 1);
+      expect(applier.appliedSequences, [1]);
+      expect((await store.readCheckpoint(scope)).pendingBatchId, isNotNull);
+    },
+  );
+
+  test('Canary leaves unreviewed attachment conflicts as barriers', () async {
+    scope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: 'attachmentManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semanticV2,
+    );
+    transport.enqueueFetchBatch(
+      CloudFetchBatch(
+        scope: scope,
+        changes: [testChange(1), testChange(2)],
+        batchId: 'unreviewed-attachment-conflict-page',
+        generation: 1,
+        nextToken: 'unreviewed-attachment-conflict-token',
+        hasMore: false,
+      ),
+    );
+    applier.resultsBySequence[1] = const CloudInboxApplyResult.quarantined(
+      failureCategory: CloudFailureCategory.conflict,
+      safeCode: 'semantic_record_mapping_conflict',
+    );
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(
+        readOnlyFetch: true,
+        semanticApply: true,
+      ),
+      retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary: true,
+    ).synchronize(trigger: CloudSyncTrigger.manual);
+
+    expect(result.status, CloudSyncRunStatus.degraded);
+    expect(result.counters.retainedUnprojected, 0);
+    expect(result.counters.quarantined, 1);
+    expect(applier.appliedSequences, [1]);
+    expect((await store.readCheckpoint(scope)).pendingBatchId, isNotNull);
+  });
+
+  test(
+    'Canary attachment conflict retention rejects a different zone',
+    () async {
+      scope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintA,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'messageManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+      );
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2)],
+          batchId: 'wrong-zone-legacy-attachment-conflict-page',
+          generation: 1,
+          nextToken: 'wrong-zone-legacy-attachment-conflict-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.quarantined(
+        failureCategory: CloudFailureCategory.conflict,
+        safeCode: 'legacy_ownership_canonical_row_mismatch',
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+        retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary: true,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.counters.retainedUnprojected, 0);
+      expect(result.counters.quarantined, 1);
+      expect(applier.appliedSequences, [1]);
+      expect((await store.readCheckpoint(scope)).pendingBatchId, isNotNull);
+    },
+  );
+
+  test(
     'Canary flag disabled keeps decoder dependency as page barrier',
     () async {
       transport.enqueueFetchBatch(
@@ -3163,6 +3339,36 @@ void main() {
     );
   });
 
+  test('Canary attachment conflict retention rejects unsafe configs', () {
+    expect(
+      () => CloudSyncEngineConfig(
+        retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary: true,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary: true,
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: true,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary: true,
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+      ),
+      returnsNormally,
+    );
+  });
+
   test(
     'manual semantic run invokes fenced unknown barrier recovery before apply',
     () async {
@@ -3353,6 +3559,72 @@ void main() {
     expect(
       () => CloudSyncEngineConfig(
         pretransactionChatConflictRecoveryCutoff: DateTime(2026, 9, 3),
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test(
+    'manual semantic run invokes fenced pretransaction attachment recovery',
+    () async {
+      final recoveryStore =
+          _PretransactionAttachmentConflictRecoveryTrackingStore();
+      store = recoveryStore;
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          batchId: 'post-attachment-recovery-empty-page',
+          generation: 1,
+          changes: const [],
+          nextToken: 'post-attachment-recovery-token',
+          hasMore: false,
+        ),
+      );
+      final cutoff = testEpoch.subtract(const Duration(seconds: 1));
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+        pretransactionAttachmentConflictRecoveryCutoff: cutoff,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(recoveryStore.calls, 1);
+      expect(recoveryStore.scope, scope);
+      expect(recoveryStore.now, testEpoch);
+      expect(recoveryStore.cutoff, cutoff);
+      expect(recoveryStore.leaseFence, isNotNull);
+    },
+  );
+
+  test('pretransaction attachment recovery rejects unsafe configs', () {
+    final cutoff = DateTime.utc(2026, 9, 3, 10, 40);
+    expect(
+      () => CloudSyncEngineConfig(
+        pretransactionAttachmentConflictRecoveryCutoff: cutoff,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        pretransactionAttachmentConflictRecoveryCutoff: cutoff,
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: true,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        pretransactionAttachmentConflictRecoveryCutoff: DateTime(2026, 9, 3),
         flags: const CloudSyncFeatureFlags(
           readOnlyFetch: true,
           semanticApply: true,
@@ -4663,6 +4935,31 @@ final class _PretransactionChatConflictRecoveryTrackingStore
 
   @override
   Future<bool> requeuePretransactionChatConflictBarrier(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required DateTime quarantinedBefore,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    calls++;
+    this.scope = scope;
+    this.now = now;
+    cutoff = quarantinedBefore;
+    this.leaseFence = leaseFence;
+    return true;
+  }
+}
+
+final class _PretransactionAttachmentConflictRecoveryTrackingStore
+    extends InMemoryCloudSyncStore
+    implements CloudPretransactionAttachmentConflictBarrierRecoveryStore {
+  int calls = 0;
+  CloudSyncScope? scope;
+  DateTime? now;
+  DateTime? cutoff;
+  CloudCoordinatorLeaseFence? leaseFence;
+
+  @override
+  Future<bool> requeuePretransactionAttachmentConflictBarrier(
     CloudSyncScope scope, {
     required DateTime now,
     required DateTime quarantinedBefore,

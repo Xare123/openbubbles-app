@@ -9,6 +9,7 @@ import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_protector.dart';
+import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_store.dart';
 
 /// Durable ObjectBox implementation of the Cloud Sync V2 journal and outbox.
@@ -24,6 +25,7 @@ class ObjectBoxCloudSyncStore
         CloudUnknownInboxBarrierRecoveryStore,
         CloudLegacyOwnershipConflictBarrierRecoveryStore,
         CloudPretransactionChatConflictBarrierRecoveryStore,
+        CloudPretransactionAttachmentConflictBarrierRecoveryStore,
         CloudSyncUnknownOutcomeLeasingStore,
         CloudSyncOutboxPresenceStore,
         CloudCoordinatorLeaseStatusReader,
@@ -69,6 +71,8 @@ class ObjectBoxCloudSyncStore
         // isolated and repaired the mixed-route Chat decoder contract.
         3,
       };
+  static const Set<int>
+  _recoverablePretransactionAttachmentConflictRetryCounts = <int>{1};
 
   final Store _store;
   final CloudSyncProtector _protector;
@@ -952,6 +956,7 @@ class ObjectBoxCloudSyncStore
     required int maximumDeferredAttempts,
     required Duration maximumDeferredAge,
     required CloudCoordinatorLeaseFence leaseFence,
+    String? readOnlySemanticAttachmentConflictSafeCode,
   }) async {
     _store.runInTransaction(TxMode.write, () {
       final transactionNowMs = _nowMs();
@@ -982,6 +987,8 @@ class ObjectBoxCloudSyncStore
         maximumDeferredAttempts: maximumDeferredAttempts,
         maximumDeferredAge: maximumDeferredAge,
         includeCurrentAttempt: status == CloudInboxStatus.pending,
+        readOnlySemanticAttachmentConflictSafeCode:
+            readOnlySemanticAttachmentConflictSafeCode,
       )) {
         throw _storageFailure('inbox_retention_policy_rejected');
       }
@@ -1354,6 +1361,94 @@ class ObjectBoxCloudSyncStore
       // Preserve the protected source, checkpoint, and historical attempts.
       // The allowlist deliberately skips retry 2 and stops after retry 3: a
       // failed migration advances to 2 or 4, neither of which can re-enter.
+      row
+        ..status = _inboxStatusToInt(CloudInboxStatus.pending)
+        ..nextEligibleAtMs = 0
+        ..completedAtMs = 0
+        ..updatedAtMs = transactionNowMs;
+      _inbox.put(row);
+      return true;
+    });
+  }
+
+  @override
+  Future<bool> requeuePretransactionAttachmentConflictBarrier(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required DateTime quarantinedBefore,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    final requestedNowMs = now.toUtc().millisecondsSinceEpoch;
+    final cutoffMs = quarantinedBefore.toUtc().millisecondsSinceEpoch;
+    if (!quarantinedBefore.isUtc ||
+        cutoffMs <= 0 ||
+        requestedNowMs <= cutoffMs) {
+      throw _storageFailure(
+        'pretransaction_attachment_conflict_recovery_window_invalid',
+      );
+    }
+    if (!_isMessagesCloudSemanticScope(scope) ||
+        scope.zone != 'attachmentManateeZone') {
+      return false;
+    }
+    return _store.runInTransaction(TxMode.write, () {
+      final transactionNowMs = _nowMs();
+      if (transactionNowMs <= cutoffMs) {
+        throw _storageFailure(
+          'pretransaction_attachment_conflict_recovery_clock_invalid',
+        );
+      }
+      _requireActiveCoordinatorLeaseLocked(
+        scope,
+        leaseFence,
+        nowMs: transactionNowMs,
+      );
+      final checkpoint = _checkpointLocked(scope, nowMs: transactionNowMs);
+      if (checkpoint.appliedSequence > checkpoint.fetchedSequence) {
+        throw _storageFailure(
+          'pretransaction_attachment_conflict_recovery_checkpoint_invalid',
+        );
+      }
+      final pendingBatchId = checkpoint.pendingBatchId;
+      if (pendingBatchId == null ||
+          checkpoint.pendingFetchedTokenCiphertext == null) {
+        return false;
+      }
+      final row = _findFirstNonterminalInboxLocked(scope, checkpoint);
+      if (row == null ||
+          row.generation != checkpoint.generation ||
+          row.batchId != pendingBatchId ||
+          _inboxStatusFromInt(row.status) != CloudInboxStatus.quarantined ||
+          row.failureCategory != CloudFailureCategory.conflict.name ||
+          row.preflightCategory != null ||
+          row.preflightCode != null ||
+          row.isTombstone ||
+          row.changeType != CloudChangeType.save.name ||
+          row.encryptedPayloadRef == null ||
+          row.payloadSha256 == null ||
+          !_recoverablePretransactionAttachmentConflictRetryCounts.contains(
+            row.retryCount,
+          ) ||
+          row.nextEligibleAtMs != 0 ||
+          row.completedAtMs <= 0 ||
+          row.completedAtMs != row.updatedAtMs ||
+          row.completedAtMs > cutoffMs ||
+          _hasSemanticReplayForInboxSequenceLocked(
+            scope,
+            generation: checkpoint.generation,
+            sequence: row.fetchSequence,
+          ) ||
+          _hasRecordMapForServerRecordLocked(
+            scope,
+            generation: checkpoint.generation,
+            serverRecordIdHash: row.serverRecordIdHash,
+          )) {
+        return false;
+      }
+
+      // Preserve the protected source, checkpoint, and original failed
+      // attempt. If this retry is not one of the explicitly retainable legacy
+      // attachment conflicts, it advances to retry two and cannot re-enter.
       row
         ..status = _inboxStatusToInt(CloudInboxStatus.pending)
         ..nextEligibleAtMs = 0
@@ -3174,6 +3269,7 @@ class ObjectBoxCloudSyncStore
     required int maximumDeferredAttempts,
     required Duration maximumDeferredAge,
     required bool includeCurrentAttempt,
+    String? readOnlySemanticAttachmentConflictSafeCode,
   }) {
     // A read-only tombstone reaches this method with no failure category.
     // Never let the tombstone shape override a conflict/unknown classification
@@ -3188,6 +3284,17 @@ class ObjectBoxCloudSyncStore
     if (category == CloudFailureCategory.malformedRecord ||
         category == CloudFailureCategory.unsupportedService) {
       return true;
+    }
+    if (CloudSyncV2LegacyOwnershipSafeFailureCodes
+            .readOnlyCanaryRetainableAttachmentConflicts
+            .contains(readOnlySemanticAttachmentConflictSafeCode) &&
+        category == CloudFailureCategory.conflict) {
+      return _isMessagesCloudSemanticScope(entry.scope) &&
+          entry.scope.zone == 'attachmentManateeZone' &&
+          entry.change.type == CloudChangeType.save &&
+          !entry.change.isTombstone &&
+          entry.change.preflightFailure == null &&
+          entry.change.preflightCode == null;
     }
     if (category != CloudFailureCategory.dependency) return false;
     final attempts = entry.attemptCount + (includeCurrentAttempt ? 1 : 0);

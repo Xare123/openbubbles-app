@@ -167,6 +167,12 @@ void main() {
   test(
     'immutable content conflict is quarantined without replacing local',
     () async {
+      final diagnostics = <String>[];
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        diagnosticRecorder: diagnostics.add,
+      );
       final inbox = entry(1);
       store.transaction.put(message());
       decodeUpsert(inbox, message(content: 'content-b', etag: 'etag-b'));
@@ -174,6 +180,8 @@ void main() {
       final result = await _apply(applier, inbox);
 
       expect(result.disposition, CloudInboxApplyDisposition.quarantined);
+      expect(result.safeCode, 'immutable_content_mismatch');
+      expect(diagnostics, <String>['immutable_content_mismatch']);
       expect(
         store.transaction.snapshot('message-key')!.immutableContentDigest,
         'content-a',
@@ -260,10 +268,9 @@ void main() {
       ),
     );
 
-    expect(
-      (await _apply(applier, inbox)).disposition,
-      CloudInboxApplyDisposition.quarantined,
-    );
+    final result = await _apply(applier, inbox);
+    expect(result.disposition, CloudInboxApplyDisposition.quarantined);
+    expect(result.safeCode, 'edit_revision_mismatch');
     expect(
       store.transaction.quarantines[inbox.change.changeId],
       'edit_revision_mismatch',

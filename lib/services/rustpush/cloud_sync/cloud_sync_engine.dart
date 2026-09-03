@@ -41,6 +41,11 @@ const _readOnlyCanaryRetainableDependencySafeCodes = <String>{
   'semantic_parent_missing',
 };
 
+const _readOnlyCanaryRetainableAttachmentConflictSafeCodes = <String>{
+  ...CloudSyncV2LegacyOwnershipSafeFailureCodes
+      .readOnlyCanaryRetainableAttachmentConflicts,
+};
+
 class CloudSyncFeatureFlags {
   const CloudSyncFeatureFlags({
     this.readOnlyFetch = true,
@@ -98,7 +103,10 @@ class CloudSyncEngineConfig {
     this.unknownInboxBarrierRecoveryCutoff,
     this.legacyOwnershipConflictRecoveryCutoff,
     this.pretransactionChatConflictRecoveryCutoff,
+    this.pretransactionAttachmentConflictRecoveryCutoff,
     this.retainKnownDependencyDeferralsForReadOnlySemanticCanary = false,
+    this.retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary =
+        false,
     this.reconcileUnknownOutcomesOnly = false,
     CloudShadowJournalBudget? shadowJournalBudget,
     this.flags = const CloudSyncFeatureFlags(),
@@ -129,6 +137,7 @@ class CloudSyncEngineConfig {
   final DateTime? unknownInboxBarrierRecoveryCutoff;
   final DateTime? legacyOwnershipConflictRecoveryCutoff;
   final DateTime? pretransactionChatConflictRecoveryCutoff;
+  final DateTime? pretransactionAttachmentConflictRecoveryCutoff;
 
   /// Lets the developer-only, read-only semantic Canary preserve a known
   /// dependency-blocked source row without pinning its fetched page. Both
@@ -137,6 +146,12 @@ class CloudSyncEngineConfig {
   ///
   /// This is deliberately unavailable to ordinary or write-capable syncs.
   final bool retainKnownDependencyDeferralsForReadOnlySemanticCanary;
+
+  /// Lets the developer-only, read-only semantic Canary preserve an exact
+  /// legacy attachment-row ownership conflict without mutating or relinking
+  /// the existing canonical row. The protected CloudKit source remains
+  /// available for later repair.
+  final bool retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary;
 
   /// Restricts a write-capable engine to exact read-only reconciliation of an
   /// already-unknown outbox create. No prepare or consume phase is reachable.
@@ -252,6 +267,19 @@ class CloudSyncEngineConfig {
         );
       }
     }
+    if (pretransactionAttachmentConflictRecoveryCutoff case final cutoff?) {
+      if (!cutoff.isUtc ||
+          !flags.readOnlyFetch ||
+          !flags.semanticApply ||
+          flags.saves ||
+          flags.deletions ||
+          flags.profiles ||
+          flags.notificationHints) {
+        throw ArgumentError(
+          'cloud_sync_config_pretransaction_attachment_conflict_recovery_unsafe',
+        );
+      }
+    }
     if (retainKnownDependencyDeferralsForReadOnlySemanticCanary &&
         (!flags.readOnlyFetch ||
             !flags.semanticApply ||
@@ -261,6 +289,17 @@ class CloudSyncEngineConfig {
             flags.notificationHints)) {
       throw ArgumentError(
         'cloud_sync_config_read_only_semantic_dependency_retention_unsafe',
+      );
+    }
+    if (retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary &&
+        (!flags.readOnlyFetch ||
+            !flags.semanticApply ||
+            flags.saves ||
+            flags.deletions ||
+            flags.profiles ||
+            flags.notificationHints)) {
+      throw ArgumentError(
+        'cloud_sync_config_read_only_semantic_attachment_conflict_retention_unsafe',
       );
     }
     if (reconcileUnknownOutcomesOnly &&
@@ -601,6 +640,24 @@ class CloudSyncEngine {
             scope,
             now: _clock(),
             quarantinedBefore: pretransactionChatConflictCutoff,
+            leaseFence: _requireActiveLeaseFence(),
+          );
+        }
+      }
+
+      final pretransactionAttachmentConflictCutoff =
+          config.pretransactionAttachmentConflictRecoveryCutoff;
+      if (config.flags.semanticApply &&
+          pretransactionAttachmentConflictCutoff != null &&
+          !_isCancelled(cancellationToken)) {
+        if (_store
+            case CloudPretransactionAttachmentConflictBarrierRecoveryStore
+                recoveryStore) {
+          await _renewCoordinatorLeaseOrThrow();
+          await recoveryStore.requeuePretransactionAttachmentConflictBarrier(
+            scope,
+            now: _clock(),
+            quarantinedBefore: pretransactionAttachmentConflictCutoff,
             leaseFence: _requireActiveLeaseFence(),
           );
         }
@@ -1668,19 +1725,28 @@ class CloudSyncEngine {
         case CloudInboxApplyDisposition.quarantined:
           final category =
               result.failureCategory ?? CloudFailureCategory.unknown;
+          final immediateAttachmentConflictRetention =
+              _isKnownCanaryRetainableAttachmentConflict(entry, result);
           final retainUnprojected =
               !result.inboxStatusPersisted &&
               (category == CloudFailureCategory.malformedRecord ||
-                  category == CloudFailureCategory.unsupportedService);
+                  category == CloudFailureCategory.unsupportedService ||
+                  immediateAttachmentConflictRetention);
           if (retainUnprojected) {
             await _store.markInboxRetainedUnprojected(
               scope,
               sequence: entry.sequence,
               category: category,
               now: now,
-              maximumDeferredAttempts: config.maximumDeferredAttempts,
-              maximumDeferredAge: config.maximumDeferredAge,
+              maximumDeferredAttempts: immediateAttachmentConflictRetention
+                  ? 1
+                  : config.maximumDeferredAttempts,
+              maximumDeferredAge: immediateAttachmentConflictRetention
+                  ? Duration.zero
+                  : config.maximumDeferredAge,
               leaseFence: _requireActiveLeaseFence(),
+              readOnlySemanticAttachmentConflictSafeCode:
+                  immediateAttachmentConflictRetention ? result.safeCode : null,
             );
             counters = counters.add(retainedUnprojected: 1);
             canApplyNextSequence = true;
@@ -1793,6 +1859,29 @@ class CloudSyncEngine {
           result.disposition == CloudInboxApplyDisposition.retryable) &&
       result.failureCategory == CloudFailureCategory.dependency &&
       _readOnlyCanaryRetainableDependencySafeCodes.contains(result.safeCode);
+
+  bool _isKnownCanaryRetainableAttachmentConflict(
+    CloudInboxEntry entry,
+    CloudInboxApplyResult result,
+  ) =>
+      config
+          .retainKnownAttachmentProjectionConflictsForReadOnlySemanticCanary &&
+      result.disposition == CloudInboxApplyDisposition.quarantined &&
+      !result.inboxStatusPersisted &&
+      result.failureCategory == CloudFailureCategory.conflict &&
+      _readOnlyCanaryRetainableAttachmentConflictSafeCodes.contains(
+        result.safeCode,
+      ) &&
+      entry.scope.container == 'com.apple.messages.cloud' &&
+      entry.scope.database == 'private' &&
+      entry.scope.zone == 'attachmentManateeZone' &&
+      entry.scope.streamKind == CloudSyncStreamKind.messages &&
+      entry.scope.schemaVersion == 2 &&
+      entry.scope.persistenceLane == CloudSyncPersistenceLane.semanticV2 &&
+      entry.change.type == CloudChangeType.save &&
+      !entry.change.isTombstone &&
+      entry.change.preflightFailure == null &&
+      entry.change.preflightCode == null;
 
   Future<CloudSyncRunCounters> _flushOutbox({
     required int runNumber,
