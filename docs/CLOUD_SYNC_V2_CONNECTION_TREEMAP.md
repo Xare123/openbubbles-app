@@ -995,14 +995,40 @@ ambiguous aliases, and a missing proven alias still fail closed; the original
 `canonical_identity_owner_unproven` failure is restored if no proven route can
 be found.
 
-This repair is not yet a visible-chat proof. Its gates are:
+The bounded repair passed its first Android visible-chat proof on 2026-09-03.
+Exact source commit `fd917a3e9d5a6e77a23846885458a887a7322895`
+passed bridge reproducibility, the full Dart suite, Rust, rustpush, the
+protector harness, Canary package/native-library verification, GitHub-hosted
+signing, runner deregistration, and VM deletion in GCE run `33729517116`.
+The signed APK was installed in place without clearing the Canary profile;
+Alpha remained a separate installed package.
 
-1. focused tests must prove alias fallback, unchanged legacy state, and
-   fail-closed behavior without an alias;
-2. one exact source commit must pass the full GCE Dart/Rust/binding/native
-   qualification, GitHub-hosted Canary signing, runner deregistration, and VM
-   deletion;
-3. that exact signed Canary must project readable Messages on the Pixel while
-   the outbox and all remote-write/delete tripwires remain zero; and
-4. restart plus repeat pull must preserve chats, avoid duplicates, and make no
-   additional canonical changes when CloudKit has no new data.
+The first Small catch-up report was
+`obcs2-semantic-1788423471746064.json`. It fetched/applied 149/148 Chats,
+155/101 Messages, and 50/1 Attachments. It quarantined zero projection rows,
+kept automatic triggers, remote saves, and remote deletes disabled, and left
+the outbox `0 -> 0`. The real Android Messages screen immediately contained
+conversation rows and readable message previews. Opening one conversation
+showed readable incoming and outgoing message bodies. One list preview was
+initially stale as `Empty message`; after a cold process restart the same
+profile reopened with its chats, readable previews, and ordering intact.
+
+The next Small catch-up report was
+`obcs2-semantic-1788423853801676.json`. Its Chat stream was already at the
+current head (`fetched=0`, `applied=0`). It advanced to the next nonempty
+Message and Attachment pages, applying another 67 Messages and two Attachment
+metadata rows while again leaving the outbox `0 -> 0` and every remote writer
+disabled. Additional correctly ordered conversations became visible and no
+duplicate conversation was observed in the list. Records without sufficient
+ownership evidence remained retained instead of being guessed into a chat.
+
+Three boundaries remain before calling this production-complete:
+
+1. reach an empty terminal Message page, then repeat once more and require zero
+   canonical changes so live idempotency is proven rather than inferred from
+   the unit suite;
+2. remove or explain the one immediate post-catch-up stale-preview transition
+   so restart is a fallback, not a normal refresh requirement; and
+3. keep malformed, unsupported SMS/RCS, unresolved ownership, and
+   attachment-body backlog measured separately from the now-live iMessage text
+   projection path.
