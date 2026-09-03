@@ -2380,13 +2380,30 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       );
     }
 
-    final exactOwners = _resolveExactChatOwner(
-      scope: scope,
-      generation: generation,
-      service: service,
-      chatIdentifier: payload.chatIdentifier,
-      logicalEntityKeyHash: exactLogicalKeyHash,
-    );
+    CloudSyncFailure? unprovenExactOwnerFailure;
+    late final Map<int, _ProvenChatOwner> exactOwners;
+    try {
+      exactOwners = _resolveExactChatOwner(
+        scope: scope,
+        generation: generation,
+        service: service,
+        chatIdentifier: payload.chatIdentifier,
+        logicalEntityKeyHash: exactLogicalKeyHash,
+      );
+    } on CloudSyncFailure catch (failure) {
+      if (failure.safeCode != 'canonical_identity_owner_unproven') rethrow;
+      // A legacy Chat can use the incoming chatID as its GUID without carrying
+      // durable V2 ownership. It is only an untrusted candidate: do not adopt
+      // or mutate it, but let a distinct, durably proven V2 alias resolve the
+      // Message. Every malformed or conflicting exact owner still fails
+      // immediately, and this original failure is restored below when no
+      // proven alias can route the Message.
+      unprovenExactOwnerFailure = failure;
+      exactOwners = <int, _ProvenChatOwner>{};
+      _diagnosticRecorder?.call(
+        'canonical_message_chat_exact_guid_unproven',
+      );
+    }
     _recordChatOwnerCardinality(
       'canonical_message_chat_exact_guid',
       exactOwners,
@@ -2627,6 +2644,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       return oppositeServiceGroupChat;
     }
     _diagnosticRecorder?.call('canonical_message_chat_reference_unavailable');
+    final exactOwnerFailure = unprovenExactOwnerFailure;
+    if (exactOwnerFailure != null) throw exactOwnerFailure;
     throw CloudSyncFailure(
       category: CloudFailureCategory.dependency,
       safeCode: 'canonical_message_chat_unavailable',

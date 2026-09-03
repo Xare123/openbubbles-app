@@ -962,3 +962,47 @@ The next release gates are therefore smaller and explicit:
 5. keep the 181 unresolved routes, unpopulated link-preview payloads, and the
    remaining on-demand attachment bodies as separately measured backlog rather
    than hiding them inside a success claim.
+
+### Android fresh-profile barrier recovery and Message ownership gate
+
+The Pixel Canary replay on 2026-09-03 proved that the Chat-zone stall was a
+bounded migration barrier, not a decoder or transport failure. Sequence 475
+was a pre-transaction Chat conflict at retry count three. Every migration
+safety predicate passed except the fixed completion-time cutoff. Extending
+only that cutoff through 06:00 UTC requeued the row after hot restart and
+drained the Chat queue to 140 terminal rows: 139 canonical Chat projections
+and one read-only tombstone acknowledgement. The run retained 504 explicitly
+unsupported or dependency-limited rows, quarantined zero, kept automatic
+triggers and remote saves/deletes disabled, and left the outbox `0 -> 0`.
+
+The next contiguous barrier is Message-zone sequence 7. The checkpoint has 50
+fetched rows, 44 pending rows, six retained rows, a pending batch/token, and no
+canonical Message, Message-zone snapshot, replay, or record-map writes. Its
+decoder reaches `decoder_ready`, then canonical projection returns
+`canonical_identity_owner_unproven`. This places the failure after native
+decode and before any durable Message mutation.
+
+The current code-path audit identifies an Android fresh-profile difference
+from the successful disposable Windows replay. Message routing first treats
+the raw `chatID` as an exact Chat GUID. A preexisting legacy Chat can match that
+GUID without carrying V2 ownership, causing exact-owner validation to throw
+before the already-projected, durably proven service/group aliases are
+examined. The bounded repair under qualification treats that one shape as an
+untrusted candidate rather than an owner: it leaves the legacy row untouched,
+continues through the normal proven-alias resolver, and accepts only one
+route-compatible durable V2 owner. Conflicts, malformed exact owners,
+ambiguous aliases, and a missing proven alias still fail closed; the original
+`canonical_identity_owner_unproven` failure is restored if no proven route can
+be found.
+
+This repair is not yet a visible-chat proof. Its gates are:
+
+1. focused tests must prove alias fallback, unchanged legacy state, and
+   fail-closed behavior without an alias;
+2. one exact source commit must pass the full GCE Dart/Rust/binding/native
+   qualification, GitHub-hosted Canary signing, runner deregistration, and VM
+   deletion;
+3. that exact signed Canary must project readable Messages on the Pixel while
+   the outbox and all remote-write/delete tripwires remain zero; and
+4. restart plus repeat pull must preserve chats, avoid duplicates, and make no
+   additional canonical changes when CloudKit has no new data.

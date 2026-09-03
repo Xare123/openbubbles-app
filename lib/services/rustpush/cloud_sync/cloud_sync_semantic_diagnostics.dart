@@ -55,6 +55,7 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'canonical_message_chat_candidate_opposite_group_id_lookup_failed',
     'canonical_message_chat_candidate_opposite_service_identifier_lookup_failed',
     'canonical_message_chat_conflict',
+    'canonical_message_chat_exact_guid_unproven',
     'canonical_message_chat_reference_current_group_id',
     'canonical_message_chat_reference_cross_service_group_id',
     'canonical_message_chat_reference_exact_guid',

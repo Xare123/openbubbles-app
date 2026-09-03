@@ -1649,6 +1649,161 @@ void main() {
     );
   });
 
+  test(
+    'uses a proven service alias instead of an unproven exact legacy shadow',
+    () {
+      const route = 'iMessage;-;shadowed-service-route';
+      const shadowIdentifier = 'legacy-shadow-identifier';
+      const provenOwnerGuid = 'proven-service-owner-guid';
+      const provenOwnerIdentifier = 'proven-service-owner-identifier';
+      final exactLogicalHash = _testChatAliasHash(
+        'unproven-exact-owner-logical-hash',
+      );
+      final provenOwnerLogicalHash = _testChatAliasHash(
+        'proven-service-owner-logical-hash',
+      );
+      final routeHash = _testChatAliasHash(route);
+      final shadowId = store.box<Chat>().put(
+        Chat(
+          guid: route,
+          chatIdentifier: shadowIdentifier,
+          style: 45,
+        )..isRpSms = false,
+      );
+      final provenOwnerId = store.box<Chat>().put(
+        Chat(
+          guid: provenOwnerGuid,
+          chatIdentifier: provenOwnerIdentifier,
+          style: 45,
+        )..isRpSms = false,
+      );
+      _seedChatOwnershipAndAlias(
+        store,
+        scope: scope,
+        generation: generation,
+        logicalEntityKeyHash: provenOwnerLogicalHash,
+        canonicalGuid: provenOwnerGuid,
+        chatIdentifier: route,
+        chatId: provenOwnerId,
+      );
+      final diagnostics = <String>[];
+      final adapter = _newAdapter(
+        store: store,
+        activeScopeProvider: () => activeScope,
+        resolver: resolver,
+        diagnosticRecorder: diagnostics.add,
+        semanticApplyEnabled: true,
+        allowMessageUpserts: true,
+      );
+
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: _messagePayload(
+            logicalEntityKeyHash: messageHash,
+            canonicalGuid: 'message-guid',
+            chatIdentifier: route,
+            chatAliasKeyHash: routeHash,
+            chatIdExactGuidLogicalKeyHash: exactLogicalHash,
+            chatIdAliasCandidates: _typedMessageAliases(
+              serviceIdentifierHash: routeHash,
+            ),
+          ),
+          snapshot: _snapshot(CloudEntityKind.message, messageHash),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+
+      expect(store.box<Message>().getAll().single.chat.targetId, provenOwnerId);
+      final unchangedShadow = store.box<Chat>().get(shadowId)!;
+      expect(unchangedShadow.guid, route);
+      expect(unchangedShadow.chatIdentifier, shadowIdentifier);
+      expect(unchangedShadow.style, 45);
+      expect(store.box<Chat>().count(), 2);
+      expect(
+        diagnostics,
+        contains('canonical_message_chat_exact_guid_unproven'),
+      );
+      expect(
+        diagnostics,
+        contains('canonical_message_chat_reference_strong_service'),
+      );
+      expect(
+        diagnostics,
+        isNot(contains('canonical_message_chat_reference_exact_guid')),
+      );
+    },
+  );
+
+  test(
+    'keeps an unproven exact legacy shadow blocking without a proven alias',
+    () {
+      const route = 'iMessage;-;unproven-only-route';
+      const shadowIdentifier = 'unproven-only-shadow';
+      final exactLogicalHash = _testChatAliasHash(
+        'unproven-only-exact-logical-hash',
+      );
+      final routeHash = _testChatAliasHash(route);
+      final shadowId = store.box<Chat>().put(
+        Chat(
+          guid: route,
+          chatIdentifier: shadowIdentifier,
+          style: 45,
+        )..isRpSms = false,
+      );
+      final diagnostics = <String>[];
+      final adapter = _newAdapter(
+        store: store,
+        activeScopeProvider: () => activeScope,
+        resolver: resolver,
+        diagnosticRecorder: diagnostics.add,
+        semanticApplyEnabled: true,
+        allowMessageUpserts: true,
+      );
+
+      expect(
+        () => adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: _messagePayload(
+            logicalEntityKeyHash: messageHash,
+            canonicalGuid: 'message-guid',
+            chatIdentifier: route,
+            chatAliasKeyHash: routeHash,
+            chatIdExactGuidLogicalKeyHash: exactLogicalHash,
+            chatIdAliasCandidates: _typedMessageAliases(
+              serviceIdentifierHash: routeHash,
+            ),
+          ),
+          snapshot: _snapshot(CloudEntityKind.message, messageHash),
+        ),
+        throwsA(
+          predicate<CloudSyncFailure>(
+            (failure) =>
+                failure.safeCode == 'canonical_identity_owner_unproven',
+          ),
+        ),
+      );
+
+      expect(store.box<Message>().count(), 0);
+      expect(store.box<Handle>().count(), 0);
+      expect(store.box<CloudSemanticChatAliasEntity>().count(), 0);
+      final unchangedShadow = store.box<Chat>().get(shadowId)!;
+      expect(unchangedShadow.guid, route);
+      expect(unchangedShadow.chatIdentifier, shadowIdentifier);
+      expect(unchangedShadow.style, 45);
+      expect(
+        diagnostics,
+        contains('canonical_message_chat_exact_guid_unproven'),
+      );
+      expect(
+        diagnostics,
+        contains('canonical_message_chat_reference_unavailable'),
+      );
+    },
+  );
+
   test('accepts exact and current group-ID proof for the same group', () {
     const groupId = 'same-current-group-id';
     final ownerLogicalHash = _testChatAliasHash(
