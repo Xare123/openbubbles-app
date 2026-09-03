@@ -66,7 +66,7 @@ env:
   VALIDATION_MODE: ${{ inputs.validation_mode || 'full' }}
   OUTBOUND_WRITER: ${{ inputs.outbound_writer || false }}
   SOURCE_REF: ${{ inputs.source_ref || github.sha }}
-  TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-auth-refresh-repair
+  TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-sms-chat-contract
 
 jobs:
   create-runner:
