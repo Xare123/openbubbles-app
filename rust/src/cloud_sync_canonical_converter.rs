@@ -2327,15 +2327,21 @@ pub(crate) fn convert_message(
                 );
             }
             let expected_service = message.service.as_str();
-            if message
+            if let Some(nested_service) = message
                 .msg_proto_4
                 .as_ref()
                 .and_then(|value| value.0.service.as_deref())
-                .is_some_and(|nested| nested != expected_service)
             {
-                return CloudCanonicalConversionOutcome::Quarantined(
-                    CloudCanonicalQuarantineReason::UnsupportedService,
-                );
+                // Apple retains carrier-message records while a conversation
+                // transitions between SMS and RCS. The top-level service can
+                // therefore differ from msgProto4.service even though both
+                // routes remain deliberately outside the iMessage projection.
+                // Preserve strict quarantine for every non-carrier mismatch.
+                if !matches!(nested_service, "SMS" | "RCS") {
+                    return CloudCanonicalConversionOutcome::Quarantined(
+                        CloudCanonicalQuarantineReason::UnsupportedService,
+                    );
+                }
             }
             return CloudCanonicalConversionOutcome::OutOfScopeService(
                 if expected_service == "SMS" {
@@ -4759,7 +4765,7 @@ mod tests {
     }
 
     #[test]
-    fn message_proto4_service_must_match_the_exact_top_level_service() {
+    fn carrier_service_transitions_remain_out_of_scope_while_imessage_is_strict() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut sms = normal_message(Some("hello"));
         sms.service = "SMS".to_owned();
@@ -4785,6 +4791,33 @@ mod tests {
         assert_eq!(
             convert_message(
                 &context(&hasher, "server-sms-conflicting-proto4", None),
+                &message_presence(),
+                &sms,
+            ),
+            CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::SmsFamily
+            )
+        );
+
+        sms.msg_proto.0.associated_message_type = Some(2000);
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-sms-reaction-transition", None),
+                &message_presence(),
+                &sms,
+            ),
+            CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::SmsFamily
+            )
+        );
+
+        sms.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+            service: Some("iMessage".to_owned()),
+            ..Default::default()
+        }));
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-sms-non-carrier-proto4", None),
                 &message_presence(),
                 &sms,
             ),
@@ -4820,8 +4853,8 @@ mod tests {
                 &message_presence(),
                 &rcs,
             ),
-            CloudCanonicalConversionOutcome::Quarantined(
-                CloudCanonicalQuarantineReason::UnsupportedService
+            CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::Rcs
             )
         );
 
