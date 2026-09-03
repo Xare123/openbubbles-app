@@ -30,6 +30,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownersh
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_download_coordinator.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_production_adapter.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_sync_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
@@ -834,6 +835,9 @@ class RustPushBackend implements BackendService {
     // warming CloudKit auth. A V2-marked row never downgrades into a legacy or
     // IDS transport, even when older metadata remains on the same row.
     if (downloadLane == CloudAttachmentDownloadLane.cloudSyncV2) {
+      await waitForCloudAttachmentSyncGate(
+        pushService._cloudSyncV2SemanticPullInFlight,
+      );
       if (canonicalGuid == null || canonicalGuid.trim().isEmpty) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.dependency,
