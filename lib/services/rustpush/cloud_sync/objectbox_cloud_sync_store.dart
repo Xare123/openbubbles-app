@@ -23,6 +23,7 @@ class ObjectBoxCloudSyncStore
         CloudRetainedUnprojectedBacklogSummaryStore,
         CloudUnknownInboxBarrierRecoveryStore,
         CloudLegacyOwnershipConflictBarrierRecoveryStore,
+        CloudPretransactionChatConflictBarrierRecoveryStore,
         CloudSyncUnknownOutcomeLeasingStore,
         CloudSyncOutboxPresenceStore,
         CloudCoordinatorLeaseStatusReader,
@@ -1254,6 +1255,95 @@ class ObjectBoxCloudSyncStore
       // Preserve all protected source and retry history. If exact ownership
       // still cannot be proven, ordinary semantic handling quarantines this
       // row again after the fixed cutoff, preventing another migration retry.
+      row
+        ..status = _inboxStatusToInt(CloudInboxStatus.pending)
+        ..nextEligibleAtMs = 0
+        ..completedAtMs = 0
+        ..updatedAtMs = transactionNowMs;
+      _inbox.put(row);
+      return true;
+    });
+  }
+
+  @override
+  Future<bool> requeuePretransactionChatConflictBarrier(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required DateTime quarantinedBefore,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    final requestedNowMs = now.toUtc().millisecondsSinceEpoch;
+    final cutoffMs = quarantinedBefore.toUtc().millisecondsSinceEpoch;
+    if (!quarantinedBefore.isUtc ||
+        cutoffMs <= 0 ||
+        requestedNowMs <= cutoffMs) {
+      throw _storageFailure(
+        'pretransaction_chat_conflict_recovery_window_invalid',
+      );
+    }
+    if (scope.container != _messagesCloudContainer ||
+        scope.database != _messagesCloudDatabase ||
+        scope.zone != 'chatManateeZone' ||
+        scope.streamKind != CloudSyncStreamKind.messages ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semanticV2) {
+      return false;
+    }
+    return _store.runInTransaction(TxMode.write, () {
+      final transactionNowMs = _nowMs();
+      if (transactionNowMs <= cutoffMs) {
+        throw _storageFailure(
+          'pretransaction_chat_conflict_recovery_clock_invalid',
+        );
+      }
+      _requireActiveCoordinatorLeaseLocked(
+        scope,
+        leaseFence,
+        nowMs: transactionNowMs,
+      );
+      final checkpoint = _checkpointLocked(scope, nowMs: transactionNowMs);
+      if (checkpoint.appliedSequence > checkpoint.fetchedSequence) {
+        throw _storageFailure(
+          'pretransaction_chat_conflict_recovery_checkpoint_invalid',
+        );
+      }
+      final pendingBatchId = checkpoint.pendingBatchId;
+      if (pendingBatchId == null ||
+          checkpoint.pendingFetchedTokenCiphertext == null) {
+        return false;
+      }
+      final row = _findFirstNonterminalInboxLocked(scope, checkpoint);
+      if (row == null ||
+          row.generation != checkpoint.generation ||
+          row.batchId != pendingBatchId ||
+          _inboxStatusFromInt(row.status) != CloudInboxStatus.quarantined ||
+          row.failureCategory != CloudFailureCategory.conflict.name ||
+          row.preflightCategory != null ||
+          row.preflightCode != null ||
+          row.isTombstone ||
+          row.changeType != CloudChangeType.save.name ||
+          row.encryptedPayloadRef == null ||
+          row.payloadSha256 == null ||
+          row.retryCount != 1 ||
+          row.nextEligibleAtMs != 0 ||
+          row.completedAtMs <= 0 ||
+          row.completedAtMs != row.updatedAtMs ||
+          row.completedAtMs > cutoffMs ||
+          _hasSemanticReplayForInboxSequenceLocked(
+            scope,
+            generation: checkpoint.generation,
+            sequence: row.fetchSequence,
+          ) ||
+          _hasRecordMapForServerRecordLocked(
+            scope,
+            generation: checkpoint.generation,
+            serverRecordIdHash: row.serverRecordIdHash,
+          )) {
+        return false;
+      }
+
+      // Preserve the protected source, checkpoint, and historical attempt.
+      // A stable-auth retry can now decode it; any real semantic conflict after
+      // the cutoff becomes terminal and cannot enter this migration again.
       row
         ..status = _inboxStatusToInt(CloudInboxStatus.pending)
         ..nextEligibleAtMs = 0
@@ -3018,6 +3108,50 @@ class ObjectBoxCloudSyncStore
         .build();
     try {
       return query.find().map((row) => row.inboxSequence).toSet();
+    } finally {
+      query.close();
+    }
+  }
+
+  bool _hasSemanticReplayForInboxSequenceLocked(
+    CloudSyncScope scope, {
+    required int generation,
+    required int sequence,
+  }) {
+    final query = _semanticReplays
+        .query(
+          CloudSemanticReplayEntity_.scopeKey
+              .equals(_scopeKey(scope))
+              .and(CloudSemanticReplayEntity_.generation.equals(generation))
+              .and(CloudSemanticReplayEntity_.inboxSequence.equals(sequence)),
+        )
+        .build();
+    try {
+      return query.count() != 0;
+    } finally {
+      query.close();
+    }
+  }
+
+  bool _hasRecordMapForServerRecordLocked(
+    CloudSyncScope scope, {
+    required int generation,
+    required String serverRecordIdHash,
+  }) {
+    final query = _recordMaps
+        .query(
+          CloudRecordMapEntity_.scopeKey
+              .equals(_scopeKey(scope))
+              .and(CloudRecordMapEntity_.generation.equals(generation))
+              .and(
+                CloudRecordMapEntity_.serverRecordIdHash.equals(
+                  serverRecordIdHash,
+                ),
+              ),
+        )
+        .build();
+    try {
+      return query.count() != 0;
     } finally {
       query.close();
     }

@@ -56,12 +56,30 @@ final class CloudSyncNativeAuthSnapshot {
   final String protectedStoreIdentity;
   final Object cloudMessagesClient;
 
+  /// Returns a content-free reason when [other] is not the same authenticated
+  /// native client and protected local store.
+  ///
+  /// Keep the native-issued values ahead of Dart object identity so a single
+  /// diagnostic identifies the strongest security boundary that changed.
+  String? identityMismatchSafeCode(CloudSyncNativeAuthSnapshot? other) {
+    if (other == null) return 'cloud_sync_auth_snapshot_missing';
+    if (accountFingerprint != other.accountFingerprint) {
+      return 'cloud_sync_auth_account_changed';
+    }
+    if (protectedStoreIdentity != other.protectedStoreIdentity) {
+      return 'cloud_sync_auth_store_changed';
+    }
+    if (nativeSessionId != other.nativeSessionId) {
+      return 'cloud_sync_auth_session_changed';
+    }
+    if (!identical(cloudMessagesClient, other.cloudMessagesClient)) {
+      return 'cloud_sync_auth_client_changed';
+    }
+    return null;
+  }
+
   bool sameIdentity(CloudSyncNativeAuthSnapshot? other) =>
-      other != null &&
-      identical(cloudMessagesClient, other.cloudMessagesClient) &&
-      nativeSessionId == other.nativeSessionId &&
-      accountFingerprint == other.accountFingerprint &&
-      protectedStoreIdentity == other.protectedStoreIdentity;
+      identityMismatchSafeCode(other) == null;
 }
 
 typedef CloudSyncNativeAuthSnapshotReader =

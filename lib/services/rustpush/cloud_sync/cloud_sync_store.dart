@@ -402,6 +402,24 @@ abstract interface class CloudLegacyOwnershipConflictBarrierRecoveryStore {
   });
 }
 
+/// Narrow, local-only migration surface for one chat save that an older build
+/// quarantined before entering the semantic transaction when its post-decode
+/// authentication snapshot changed.
+///
+/// Implementations must reopen only the first nonterminal current-generation
+/// chat save, require the active coordinator fence, reject any semantic replay
+/// or server-record mapping evidence, and leave checkpoints and protected
+/// source bytes unchanged. An exact one-attempt bound plus a fixed cutoff makes
+/// the migration single-use.
+abstract interface class CloudPretransactionChatConflictBarrierRecoveryStore {
+  Future<bool> requeuePretransactionChatConflictBarrier(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required DateTime quarantinedBefore,
+    required CloudCoordinatorLeaseFence leaseFence,
+  });
+}
+
 /// Optional outbox capability used by the reconciliation worker.
 ///
 /// The read-only shadow wrapper deliberately does not expose this mutation

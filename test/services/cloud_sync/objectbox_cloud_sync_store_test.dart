@@ -2532,6 +2532,155 @@ void main() {
     },
   );
 
+  test(
+    'requeues one pretransaction chat conflict without projection evidence',
+    () async {
+      final scope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintA,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'chatManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+      );
+      await journal(
+        batch(
+          scope,
+          batchId: 'pretransaction-chat-conflict-page',
+          token: 'pretransaction-chat-conflict-token',
+          changes: [testChange(1), testChange(2)],
+        ),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+      currentTime = testEpoch.add(const Duration(minutes: 20));
+      await store.quarantineInbox(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.conflict,
+        now: currentTime,
+        leaseFence: fence,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final before = inboxBox.getAll().singleWhere(
+        (row) => row.fetchSequence == 1,
+      );
+      final checkpointBefore = await store.readCheckpoint(scope);
+      final cutoff = testEpoch.add(const Duration(minutes: 30));
+      currentTime = testEpoch.add(const Duration(hours: 1));
+
+      expect(
+        await store.requeuePretransactionChatConflictBarrier(
+          scope,
+          now: currentTime,
+          quarantinedBefore: cutoff,
+          leaseFence: fence,
+        ),
+        isTrue,
+      );
+
+      final after = inboxBox.get(before.id)!;
+      expect(after.status, CloudInboxStatus.pending.index);
+      expect(after.retryCount, 1);
+      expect(after.failureCategory, CloudFailureCategory.conflict.name);
+      expect(after.completedAtMs, 0);
+      expect(after.updatedAtMs, currentTime.millisecondsSinceEpoch);
+      expect(after.encryptedPayloadRef, before.encryptedPayloadRef);
+      expect(after.payloadSha256, before.payloadSha256);
+      final checkpointAfter = await store.readCheckpoint(scope);
+      expect(checkpointAfter.fetchedToken, checkpointBefore.fetchedToken);
+      expect(checkpointAfter.pendingBatchId, checkpointBefore.pendingBatchId);
+      expect(
+        checkpointAfter.lastAppliedSequence,
+        checkpointBefore.lastAppliedSequence,
+      );
+      expect(
+        await store.requeuePretransactionChatConflictBarrier(
+          scope,
+          now: currentTime,
+          quarantinedBefore: cutoff,
+          leaseFence: fence,
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test('pretransaction conflict recovery rejects semantic evidence', () async {
+    final scope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: 'chatManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semanticV2,
+    );
+    await journal(
+      batch(
+        scope,
+        batchId: 'pretransaction-evidence-page',
+        token: 'pretransaction-evidence-token',
+        changes: [testChange(1)],
+      ),
+    );
+    final fence = coordinatorFences[scope.storageKey]!;
+    currentTime = testEpoch.add(const Duration(minutes: 20));
+    await store.quarantineInbox(
+      scope,
+      sequence: 1,
+      category: CloudFailureCategory.conflict,
+      now: currentTime,
+      leaseFence: fence,
+    );
+    final row = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+    objectBox.box<CloudSemanticReplayEntity>().put(
+      CloudSemanticReplayEntity(
+        replayKey: 'pretransaction-existing-replay',
+        scopeGenerationKey: 'pretransaction-scope-generation',
+        scopeKey: row.scopeKey,
+        accountFingerprint: row.accountFingerprint,
+        container: scope.container,
+        database: scope.database,
+        zone: scope.zone,
+        streamKind: scope.streamKind.name,
+        schemaVersion: scope.schemaVersion,
+        generation: row.generation,
+        changeIdHash: row.changeIdHash,
+        serverRecordIdHash: row.serverRecordIdHash,
+        inboxSequence: row.fetchSequence,
+        changeType: row.changeType,
+        terminalOutcome: 'quarantined',
+        terminalSafeCode: 'semantic_conflict',
+        updatedAtMs: currentTime.millisecondsSinceEpoch,
+      ),
+    );
+    objectBox.box<CloudRecordMapEntity>().put(
+      CloudRecordMapEntity(
+        mapKey: 'pretransaction-existing-map',
+        scopeKey: row.scopeKey,
+        accountFingerprint: row.accountFingerprint,
+        zone: scope.zone,
+        logicalEntityKeyHash: List.filled(43, 'L').join(),
+        serverRecordIdHash: row.serverRecordIdHash,
+        generation: row.generation,
+        encryptedServerRecordId: testProtectedReference('S'),
+        updatedAtMs: currentTime.millisecondsSinceEpoch,
+      ),
+    );
+    currentTime = testEpoch.add(const Duration(hours: 1));
+
+    expect(
+      await store.requeuePretransactionChatConflictBarrier(
+        scope,
+        now: currentTime,
+        quarantinedBefore: testEpoch.add(const Duration(minutes: 30)),
+        leaseFence: fence,
+      ),
+      isFalse,
+    );
+    expect(
+      objectBox.box<CloudInboxChangeEntity>().get(row.id)!.status,
+      CloudInboxStatus.quarantined.index,
+    );
+  });
+
   test('duplicate inbox sequence lookup fails closed', () async {
     final scope = testScope();
     await journal(batch(scope, changes: [testChange(1)]));

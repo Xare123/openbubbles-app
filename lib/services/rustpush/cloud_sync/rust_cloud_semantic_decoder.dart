@@ -163,11 +163,25 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
   @override
   Future<CloudDecodedMutation> decode(CloudInboxEntry entry) async {
     _validateEntry(entry);
-    final auth = await _readAuthSnapshot();
-    if (auth == null ||
-        auth.accountFingerprint != entry.scope.accountFingerprint) {
+    final CloudSyncNativeAuthSnapshot? auth;
+    try {
+      auth = await _readAuthSnapshot();
+    } catch (_) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.authorization,
+        safeCode: 'cloud_sync_auth_capture_failed',
+      );
+    }
+    if (auth == null) {
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.authorization,
+        safeCode: 'cloud_sync_auth_snapshot_missing',
+      );
+    }
+    if (auth.accountFingerprint != entry.scope.accountFingerprint) {
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.authorization,
+        safeCode: 'cloud_sync_auth_scope_changed',
       );
     }
 
@@ -183,8 +197,21 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
           !_externalDigest.hasMatch(tombstoneIdentity.logicalEntityKeyHash)) {
         throw const CloudSemanticDecodeFailure(CloudFailureCategory.dependency);
       }
-      if (!auth.sameIdentity(await _readAuthSnapshot())) {
-        throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
+      final CloudSyncNativeAuthSnapshot? currentAuth;
+      try {
+        currentAuth = await _readAuthSnapshot();
+      } catch (_) {
+        throw const CloudSemanticDecodeFailure(
+          CloudFailureCategory.authorization,
+          safeCode: 'cloud_sync_auth_capture_failed',
+        );
+      }
+      final mismatch = auth.identityMismatchSafeCode(currentAuth);
+      if (mismatch != null) {
+        throw CloudSemanticDecodeFailure(
+          CloudFailureCategory.authorization,
+          safeCode: mismatch,
+        );
       }
     }
 
@@ -218,10 +245,17 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       currentAuth = await _readAuthSnapshot();
     } catch (_) {
       if (preAuthFailure != null) throw preAuthFailure;
-      rethrow;
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.authorization,
+        safeCode: 'cloud_sync_auth_capture_failed',
+      );
     }
-    if (!auth.sameIdentity(currentAuth)) {
-      throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
+    final mismatch = auth.identityMismatchSafeCode(currentAuth);
+    if (mismatch != null) {
+      throw CloudSemanticDecodeFailure(
+        CloudFailureCategory.authorization,
+        safeCode: mismatch,
+      );
     }
     if (preAuthFailure != null) throw preAuthFailure;
     final decoded = _mapResult(entry, result, tombstoneIdentity);

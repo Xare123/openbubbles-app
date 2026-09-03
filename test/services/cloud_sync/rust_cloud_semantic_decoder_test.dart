@@ -167,7 +167,8 @@ void main() {
     bindings.afterDecode = () => currentAuth = _auth(Object());
     await _expectFailure(
       decoder().decode(entry),
-      CloudFailureCategory.conflict,
+      CloudFailureCategory.authorization,
+      safeCode: 'cloud_sync_auth_client_changed',
     );
   });
 
@@ -332,14 +333,15 @@ void main() {
     );
   });
 
-  test('rejects an account session replacement after native decode', () async {
+  test('retries an account session replacement after native decode', () async {
     final entry = _entry();
     bindings.result = _readyMessage(entry);
     bindings.afterDecode = () => currentAuth = _auth(Object());
 
     await _expectFailure(
       decoder().decode(entry),
-      CloudFailureCategory.conflict,
+      CloudFailureCategory.authorization,
+      safeCode: 'cloud_sync_auth_client_changed',
     );
   });
 
@@ -453,6 +455,45 @@ void main() {
     expect(authReads, 2);
   });
 
+  test(
+    'maps an auth capture failure before native decode to retryable auth',
+    () async {
+      final entry = _entry();
+
+      await _expectFailure(
+        decoder(
+          readAuthSnapshot: () async =>
+              throw StateError('injected_auth_capture_failure'),
+        ).decode(entry),
+        CloudFailureCategory.authorization,
+        safeCode: 'cloud_sync_auth_capture_failed',
+      );
+      expect(bindings.requests, isEmpty);
+    },
+  );
+
+  test(
+    'maps an auth refresh failure after ready decode to retryable auth',
+    () async {
+      final entry = _entry();
+      bindings.result = _readyMessage(entry);
+      var authReads = 0;
+
+      await _expectFailure(
+        decoder(
+          readAuthSnapshot: () async {
+            authReads++;
+            if (authReads == 1) return auth;
+            throw StateError('injected_auth_refresh_failure');
+          },
+        ).decode(entry),
+        CloudFailureCategory.authorization,
+        safeCode: 'cloud_sync_auth_capture_failed',
+      );
+      expect(authReads, 2);
+    },
+  );
+
   test('account replacement outranks a native failure disposition', () async {
     final entry = _entry();
     bindings.result = frb.CloudSyncTransientDecodeResult(
@@ -464,7 +505,8 @@ void main() {
 
     await _expectFailure(
       decoder().decode(entry),
-      CloudFailureCategory.conflict,
+      CloudFailureCategory.authorization,
+      safeCode: 'cloud_sync_auth_client_changed',
     );
   });
 

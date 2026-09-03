@@ -97,6 +97,7 @@ class CloudSyncEngineConfig {
     this.allowManualPullBackoffOverride = false,
     this.unknownInboxBarrierRecoveryCutoff,
     this.legacyOwnershipConflictRecoveryCutoff,
+    this.pretransactionChatConflictRecoveryCutoff,
     this.retainKnownDependencyDeferralsForReadOnlySemanticCanary = false,
     this.reconcileUnknownOutcomesOnly = false,
     CloudShadowJournalBudget? shadowJournalBudget,
@@ -127,6 +128,7 @@ class CloudSyncEngineConfig {
   final bool allowManualPullBackoffOverride;
   final DateTime? unknownInboxBarrierRecoveryCutoff;
   final DateTime? legacyOwnershipConflictRecoveryCutoff;
+  final DateTime? pretransactionChatConflictRecoveryCutoff;
 
   /// Lets the developer-only, read-only semantic Canary preserve a known
   /// dependency-blocked source row without pinning its fetched page. Both
@@ -234,6 +236,19 @@ class CloudSyncEngineConfig {
           flags.notificationHints) {
         throw ArgumentError(
           'cloud_sync_config_legacy_ownership_conflict_recovery_unsafe',
+        );
+      }
+    }
+    if (pretransactionChatConflictRecoveryCutoff case final cutoff?) {
+      if (!cutoff.isUtc ||
+          !flags.readOnlyFetch ||
+          !flags.semanticApply ||
+          flags.saves ||
+          flags.deletions ||
+          flags.profiles ||
+          flags.notificationHints) {
+        throw ArgumentError(
+          'cloud_sync_config_pretransaction_chat_conflict_recovery_unsafe',
         );
       }
     }
@@ -568,6 +583,24 @@ class CloudSyncEngine {
             scope,
             now: _clock(),
             quarantinedBefore: legacyOwnershipConflictCutoff,
+            leaseFence: _requireActiveLeaseFence(),
+          );
+        }
+      }
+
+      final pretransactionChatConflictCutoff =
+          config.pretransactionChatConflictRecoveryCutoff;
+      if (config.flags.semanticApply &&
+          pretransactionChatConflictCutoff != null &&
+          !_isCancelled(cancellationToken)) {
+        if (_store
+            case CloudPretransactionChatConflictBarrierRecoveryStore
+                recoveryStore) {
+          await _renewCoordinatorLeaseOrThrow();
+          await recoveryStore.requeuePretransactionChatConflictBarrier(
+            scope,
+            now: _clock(),
+            quarantinedBefore: pretransactionChatConflictCutoff,
             leaseFence: _requireActiveLeaseFence(),
           );
         }

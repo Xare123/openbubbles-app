@@ -50,6 +50,7 @@ void main() {
     bool allowManualPullBackoffOverride = false,
     DateTime? unknownInboxBarrierRecoveryCutoff,
     DateTime? legacyOwnershipConflictRecoveryCutoff,
+    DateTime? pretransactionChatConflictRecoveryCutoff,
     bool retainKnownDependencyDeferralsForReadOnlySemanticCanary = false,
     bool reconcileUnknownOutcomesOnly = false,
     MemoryCloudSyncObserver? observer,
@@ -93,6 +94,8 @@ void main() {
         unknownInboxBarrierRecoveryCutoff: unknownInboxBarrierRecoveryCutoff,
         legacyOwnershipConflictRecoveryCutoff:
             legacyOwnershipConflictRecoveryCutoff,
+        pretransactionChatConflictRecoveryCutoff:
+            pretransactionChatConflictRecoveryCutoff,
         retainKnownDependencyDeferralsForReadOnlySemanticCanary:
             retainKnownDependencyDeferralsForReadOnlySemanticCanary,
         reconcileUnknownOutcomesOnly: reconcileUnknownOutcomesOnly,
@@ -3294,6 +3297,72 @@ void main() {
   );
 
   test(
+    'manual semantic run invokes fenced pretransaction chat conflict recovery',
+    () async {
+      final recoveryStore = _PretransactionChatConflictRecoveryTrackingStore();
+      store = recoveryStore;
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          batchId: 'post-pretransaction-recovery-empty-page',
+          generation: 1,
+          changes: const [],
+          nextToken: 'post-pretransaction-recovery-token',
+          hasMore: false,
+        ),
+      );
+      final cutoff = testEpoch.subtract(const Duration(seconds: 1));
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: false,
+        ),
+        pretransactionChatConflictRecoveryCutoff: cutoff,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(recoveryStore.calls, 1);
+      expect(recoveryStore.scope, scope);
+      expect(recoveryStore.now, testEpoch);
+      expect(recoveryStore.cutoff, cutoff);
+      expect(recoveryStore.leaseFence, isNotNull);
+    },
+  );
+
+  test('pretransaction conflict recovery rejects unsafe configs', () {
+    final cutoff = DateTime.utc(2026, 9, 3);
+    expect(
+      () => CloudSyncEngineConfig(
+        pretransactionChatConflictRecoveryCutoff: cutoff,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        pretransactionChatConflictRecoveryCutoff: cutoff,
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: true,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        pretransactionChatConflictRecoveryCutoff: DateTime(2026, 9, 3),
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test(
     'bounds a stalled read-only fetch and persists network backoff',
     () async {
       final fetchStarted = Completer<void>();
@@ -4569,6 +4638,31 @@ final class _LegacyOwnershipConflictRecoveryTrackingStore
 
   @override
   Future<bool> requeueLegacyOwnershipConflictBarrier(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required DateTime quarantinedBefore,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    calls++;
+    this.scope = scope;
+    this.now = now;
+    cutoff = quarantinedBefore;
+    this.leaseFence = leaseFence;
+    return true;
+  }
+}
+
+final class _PretransactionChatConflictRecoveryTrackingStore
+    extends InMemoryCloudSyncStore
+    implements CloudPretransactionChatConflictBarrierRecoveryStore {
+  int calls = 0;
+  CloudSyncScope? scope;
+  DateTime? now;
+  DateTime? cutoff;
+  CloudCoordinatorLeaseFence? leaseFence;
+
+  @override
+  Future<bool> requeuePretransactionChatConflictBarrier(
     CloudSyncScope scope, {
     required DateTime now,
     required DateTime quarantinedBefore,
