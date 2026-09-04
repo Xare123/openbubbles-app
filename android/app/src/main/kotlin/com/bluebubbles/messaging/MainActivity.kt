@@ -17,6 +17,7 @@ import com.bluebubbles.messaging.services.extension.MessageViewHandle
 import com.bluebubbles.messaging.services.rustpush.APNService
 import com.bluebubbles.messaging.services.system.CreateDocumentHandler
 import com.bluebubbles.messaging.services.system.EnableBTHandler
+import com.bluebubbles.messaging.services.system.EnableBtContract
 import com.rmawatson.flutterisolate.FlutterIsolatePlugin
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -131,8 +132,18 @@ class MainActivity : FlutterFragmentActivity(), ComponentCallbacks2 {
             }
         }
         if (requestCode == Constants.enableBtRequestCode) {
-            var result = EnableBTHandler.savedResult!!
-            result.success(true)
+            val pending = EnableBTHandler.savedResult
+            EnableBTHandler.savedResult = null
+            val outcome = EnableBtContract.resolveEnableResult(pending != null, resultCode)
+            if (outcome == null) {
+                Log.w(Constants.logTag, "Ignoring Bluetooth enable result with no pending callback")
+                return
+            }
+            try {
+                pending?.success(outcome)
+            } catch (e: Exception) {
+                Log.w(Constants.logTag, "Failed to deliver Bluetooth enable result")
+            }
         }
     }
 }

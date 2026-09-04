@@ -19,6 +19,7 @@ class EnableBTHandler: MethodCallHandlerImpl() {
     companion object {
         const val tag: String = "enable-bt"
 
+        @Volatile
         var savedResult: MethodChannel.Result? = null
     }
 
@@ -48,11 +49,34 @@ class EnableBTHandler: MethodCallHandlerImpl() {
         val adapter = bluetoothManager.adapter
         if (adapter?.isEnabled != true) {
             val request: Boolean = call.argument<Boolean>("request") ?: false
-            if (request) {
-                val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-                (context as MainActivity).startActivityForResult(enableBtIntent, Constants.enableBtRequestCode)
+            when (EnableBtContract.decideDisabledRequest(request, savedResult != null)) {
+                EnableBtContract.DisabledDecision.COMPLETE_FALSE -> {
+                    result.success(false)
+                    return
+                }
+                EnableBtContract.DisabledDecision.REJECT_DUPLICATE -> {
+                    result.error("ENABLE_BT_IN_PROGRESS", "Bluetooth enable request already in progress", null)
+                    return
+                }
+                EnableBtContract.DisabledDecision.LAUNCH_PROMPT -> Unit
+            }
+            if (adapter == null) {
+                result.success(false)
+                return
+            }
+            val activity = context as? MainActivity
+            if (activity == null) {
+                result.error("ENABLE_BT_NO_ACTIVITY", "Bluetooth enable request requires a foreground activity", null)
+                return
             }
             savedResult = result
+            try {
+                val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                activity.startActivityForResult(enableBtIntent, Constants.enableBtRequestCode)
+            } catch (e: Exception) {
+                savedResult = null
+                result.error("ENABLE_BT_FAILED", e.message, null)
+            }
         } else {
             result.success(adapter.isEnabled)
         }
