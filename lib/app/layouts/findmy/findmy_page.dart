@@ -59,6 +59,30 @@ String nearbyTrackerSignalLabel(Map<String, dynamic> tracker) {
 }
 
 @visibleForTesting
+String? deriveFindMyStateCode(String? administrativeArea) {
+  if (administrativeArea == null || administrativeArea.length < 2) return null;
+  return administrativeArea.substring(0, 2).toUpperCase();
+}
+
+@visibleForTesting
+bool shouldApplyLiveFriendUpdate({required LocationStatus? existingStatus, required LocationStatus? incomingStatus, required bool incomingLocatingInProgress}) {
+  if (existingStatus == null) return true;
+  if (incomingLocatingInProgress) return true;
+  final incoming = incomingStatus ?? LocationStatus.legacy;
+  return LocationStatus.values.indexOf(existingStatus) <= LocationStatus.values.indexOf(incoming);
+}
+
+@visibleForTesting
+enum LiveFriendMergeAction { append, replace, ignore }
+
+@visibleForTesting
+LiveFriendMergeAction decideLiveFriendMerge({required int existingIndex, required LocationStatus? existingStatus, required LocationStatus? incomingStatus, required bool incomingLocatingInProgress}) {
+  if (existingIndex == -1) return LiveFriendMergeAction.append;
+  final apply = shouldApplyLiveFriendUpdate(existingStatus: existingStatus, incomingStatus: incomingStatus, incomingLocatingInProgress: incomingLocatingInProgress);
+  return apply ? LiveFriendMergeAction.replace : LiveFriendMergeAction.ignore;
+}
+
+@visibleForTesting
 String findMyCloudFailureMessage(Object error) {
   final message = error.toString().toLowerCase();
   if (message.contains("relay device offline")) {
@@ -340,10 +364,15 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         Logger.info("Received new location for ${friend.handle?.address}");
         if ((friend.latitude ?? 0) == 0 && (friend.longitude ?? 0) == 0) return;
         final existingFriendIndex = friends.indexWhere((e) => e.handle?.uniqueAddressAndService == friend.handle?.uniqueAddressAndService);
-        final existingFriend = existingFriendIndex == -1 ? null : friends[existingFriendIndex];
-        if (existingFriend == null || existingFriend.status == null || friend.locatingInProgress || LocationStatus.values.indexOf(existingFriend.status!) <= LocationStatus.values.indexOf(friend.status ?? LocationStatus.legacy)) {
+        final existingStatus = existingFriendIndex == -1 ? null : friends[existingFriendIndex].status;
+        final mergeAction = decideLiveFriendMerge(existingIndex: existingFriendIndex, existingStatus: existingStatus, incomingStatus: friend.status, incomingLocatingInProgress: friend.locatingInProgress);
+        if (mergeAction != LiveFriendMergeAction.ignore) {
           Logger.info("Updating map for ${friend.handle?.address}");
-          friends[existingFriendIndex] = friend;
+          if (mergeAction == LiveFriendMergeAction.append) {
+            friends.add(friend);
+          } else {
+            friends[existingFriendIndex] = friend;
+          }
 
           friendsWithLocation = friends.where((item) => (item.latitude ?? 0) != 0 && (item.longitude ?? 0) != 0).toList();
           friendsWithoutLocation = friends.where((item) => (item.latitude ?? 0) == 0 && (item.longitude ?? 0) == 0).toList();
@@ -646,7 +675,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                   placemark.administrativeArea!,
                 ],
                 locality: placemark.locality,
-                stateCode: placemark.administrativeArea?.substring(0, 2).toUpperCase(),
+                stateCode: deriveFindMyStateCode(placemark.administrativeArea),
                 mapItemFullAddress: null,
                 fullThroroughfare: null,
                 areaOfInterest: [],
