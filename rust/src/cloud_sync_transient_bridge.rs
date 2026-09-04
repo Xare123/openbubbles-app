@@ -19,8 +19,9 @@ use crate::{
     cloud_sync_canonical_converter::{
         convert_attachment, convert_chat_with_diagnostic, convert_message, convert_tombstone,
         CloudCanonicalConversionContext, CloudCanonicalConversionOutcome,
-        CloudCanonicalOutOfScopeService, CloudCanonicalQuarantineReason, CloudChatDiagnosticCode,
-        CloudRawPresenceFailure, CloudRawRecordPresence,
+        CloudCanonicalOutOfScopeService, CloudCanonicalQuarantineReason,
+        CloudCanonicalValidationDiagnosticClass, CloudChatDiagnosticCode, CloudRawPresenceFailure,
+        CloudRawRecordPresence,
     },
     cloud_sync_canonical_dto::{
         CloudCanonicalAliasKind, CloudCanonicalEntityKind, CloudCanonicalHash,
@@ -38,7 +39,7 @@ use crate::{
 };
 use flate2::bufread::GzDecoder;
 use log::{debug, warn};
-use prost::Message as _;
+use prost::{DecodeError, Message as _};
 use rustpush::{
     cloud_messages::{
         cloudmessagesp::{ChatProto, MessageProto, MessageProto2, MessageProto3, MessageProto4},
@@ -266,6 +267,60 @@ pub(crate) enum CloudTransientDecodeOutcome {
     Failure(CloudTransientBridgeFailure),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CloudTransientChatPropertyShape {
+    Empty,
+    Gzip,
+    Zlib,
+    BinaryPlist,
+    XmlPlist,
+    Unknown,
+}
+
+impl CloudTransientChatPropertyShape {
+    fn diagnostic_code(self) -> &'static str {
+        match self {
+            Self::Empty => "empty",
+            Self::Gzip => "gzip",
+            Self::Zlib => "zlib",
+            Self::BinaryPlist => "binary_plist",
+            Self::XmlPlist => "xml_plist",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Classifies only public framing bytes. It never records a payload, length,
+/// identifier, plist key, or decrypted value.
+fn classify_chat_property_shape(value: &[u8]) -> CloudTransientChatPropertyShape {
+    if value.is_empty() {
+        return CloudTransientChatPropertyShape::Empty;
+    }
+    if value.starts_with(&[0x1f, 0x8b]) {
+        return CloudTransientChatPropertyShape::Gzip;
+    }
+    if value.len() >= 2 {
+        let cmf = value[0];
+        let flg = value[1];
+        let header = (u16::from(cmf) << 8) | u16::from(flg);
+        if cmf & 0x0f == 8 && header % 31 == 0 {
+            return CloudTransientChatPropertyShape::Zlib;
+        }
+    }
+    if value.starts_with(b"bplist00") {
+        return CloudTransientChatPropertyShape::BinaryPlist;
+    }
+    let trimmed = value
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .map(|start| &value[start..])
+        .unwrap_or_default();
+    if trimmed.starts_with(b"<?xml") || trimmed.starts_with(b"<plist") {
+        return CloudTransientChatPropertyShape::XmlPlist;
+    }
+    CloudTransientChatPropertyShape::Unknown
+}
+
 /// Closed, content-free detail for an already-quarantined chat record.
 ///
 /// This never changes projection disposition. It only preserves which strict
@@ -278,6 +333,7 @@ pub(crate) enum CloudTransientQuarantineDiagnostic {
     ChatEnvelopeMalformedMetadata,
     ChatRawPresence(CloudRawPresenceFailure),
     ChatPropertyPresence(CloudRawPresenceFailure),
+    ChatPropertyPresenceWithShape(CloudRawPresenceFailure, CloudTransientChatPropertyShape),
     ChatConversion(CloudChatDiagnosticCode),
 }
 
@@ -296,6 +352,11 @@ impl CloudTransientQuarantineDiagnostic {
             Self::ChatPropertyPresence(reason) => {
                 format!("native_chat_property_presence_{}", reason.diagnostic_code())
             }
+            Self::ChatPropertyPresenceWithShape(reason, shape) => format!(
+                "native_chat_property_presence_{}_shape_{}",
+                reason.diagnostic_code(),
+                shape.diagnostic_code()
+            ),
             Self::ChatConversion(code) => {
                 format!("native_chat_conversion_{}", code.as_str())
             }
@@ -663,14 +724,14 @@ struct GzipFieldSpec {
     name: &'static str,
     required: bool,
     decoder_stage: &'static str,
-    decode: fn(&[u8]) -> Result<(), ()>,
+    decode: fn(&[u8]) -> Result<(), DecodeError>,
 }
 
 impl GzipFieldSpec {
     const fn required(
         name: &'static str,
         decoder_stage: &'static str,
-        decode: fn(&[u8]) -> Result<(), ()>,
+        decode: fn(&[u8]) -> Result<(), DecodeError>,
     ) -> Self {
         Self {
             name,
@@ -683,7 +744,7 @@ impl GzipFieldSpec {
     const fn optional(
         name: &'static str,
         decoder_stage: &'static str,
-        decode: fn(&[u8]) -> Result<(), ()>,
+        decode: fn(&[u8]) -> Result<(), DecodeError>,
     ) -> Self {
         Self {
             name,
@@ -694,24 +755,90 @@ impl GzipFieldSpec {
     }
 }
 
-fn decode_chat_proto(value: &[u8]) -> Result<(), ()> {
-    ChatProto::decode(value).map(|_| ()).map_err(|_| ())
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CloudNestedProtobufFailure {
+    InvalidUtf8,
+    WireTypeMismatch,
+    InvalidWireType,
+    InvalidVarint,
+    InvalidKey,
+    InvalidTag,
+    BufferUnderflow,
+    DelimitedLengthExceeded,
+    UnexpectedEndGroup,
+    RecursionLimit,
+    LengthDelimiterOverflow,
+    Other,
 }
 
-fn decode_message_proto(value: &[u8]) -> Result<(), ()> {
-    MessageProto::decode(value).map(|_| ()).map_err(|_| ())
+impl CloudNestedProtobufFailure {
+    fn diagnostic_code(self) -> &'static str {
+        match self {
+            Self::InvalidUtf8 => "invalid_utf8",
+            Self::WireTypeMismatch => "wire_type_mismatch",
+            Self::InvalidWireType => "invalid_wire_type",
+            Self::InvalidVarint => "invalid_varint",
+            Self::InvalidKey => "invalid_key",
+            Self::InvalidTag => "invalid_tag",
+            Self::BufferUnderflow => "buffer_underflow",
+            Self::DelimitedLengthExceeded => "delimited_length_exceeded",
+            Self::UnexpectedEndGroup => "unexpected_end_group",
+            Self::RecursionLimit => "recursion_limit",
+            Self::LengthDelimiterOverflow => "length_delimiter_overflow",
+            Self::Other => "other",
+        }
+    }
 }
 
-fn decode_message_proto_2(value: &[u8]) -> Result<(), ()> {
-    MessageProto2::decode(value).map(|_| ()).map_err(|_| ())
+/// Reduces prost's best-effort detail to a fixed class. The original error can
+/// contain generated message and field names, so it is never logged or exposed.
+fn classify_nested_protobuf_failure(error: &DecodeError) -> CloudNestedProtobufFailure {
+    let description = error.to_string();
+    if description.contains("invalid string value: data is not UTF-8 encoded") {
+        CloudNestedProtobufFailure::InvalidUtf8
+    } else if description.contains("invalid wire type:") {
+        CloudNestedProtobufFailure::WireTypeMismatch
+    } else if description.contains("invalid wire type value:") {
+        CloudNestedProtobufFailure::InvalidWireType
+    } else if description.contains("invalid varint") {
+        CloudNestedProtobufFailure::InvalidVarint
+    } else if description.contains("invalid key value:") {
+        CloudNestedProtobufFailure::InvalidKey
+    } else if description.contains("invalid tag value:") {
+        CloudNestedProtobufFailure::InvalidTag
+    } else if description.contains("buffer underflow") {
+        CloudNestedProtobufFailure::BufferUnderflow
+    } else if description.contains("delimited length exceeded") {
+        CloudNestedProtobufFailure::DelimitedLengthExceeded
+    } else if description.contains("unexpected end group tag") {
+        CloudNestedProtobufFailure::UnexpectedEndGroup
+    } else if description.contains("recursion limit reached") {
+        CloudNestedProtobufFailure::RecursionLimit
+    } else if description.contains("length delimiter exceeds maximum usize value") {
+        CloudNestedProtobufFailure::LengthDelimiterOverflow
+    } else {
+        CloudNestedProtobufFailure::Other
+    }
 }
 
-fn decode_message_proto_3(value: &[u8]) -> Result<(), ()> {
-    MessageProto3::decode(value).map(|_| ()).map_err(|_| ())
+fn decode_chat_proto(value: &[u8]) -> Result<(), DecodeError> {
+    ChatProto::decode(value).map(|_| ())
 }
 
-fn decode_message_proto_4(value: &[u8]) -> Result<(), ()> {
-    MessageProto4::decode(value).map(|_| ()).map_err(|_| ())
+fn decode_message_proto(value: &[u8]) -> Result<(), DecodeError> {
+    MessageProto::decode(value).map(|_| ())
+}
+
+fn decode_message_proto_2(value: &[u8]) -> Result<(), DecodeError> {
+    MessageProto2::decode(value).map(|_| ())
+}
+
+fn decode_message_proto_3(value: &[u8]) -> Result<(), DecodeError> {
+    MessageProto3::decode(value).map(|_| ())
+}
+
+fn decode_message_proto_4(value: &[u8]) -> Result<(), DecodeError> {
+    MessageProto4::decode(value).map(|_| ())
 }
 
 fn validate_nested_protobuf(
@@ -720,7 +847,15 @@ fn validate_nested_protobuf(
 ) -> Result<(), CloudTransientBridgeFailure> {
     match catch_unwind(AssertUnwindSafe(|| (field.decode)(value))) {
         Ok(Ok(())) => Ok(()),
-        Ok(Err(())) => Err(malformed_record_at(field.decoder_stage)),
+        Ok(Err(error)) => {
+            let failure = classify_nested_protobuf_failure(&error);
+            warn!(
+                "CloudKit V2 nested protobuf diagnostic stage={} failure_class={}",
+                field.decoder_stage,
+                failure.diagnostic_code()
+            );
+            Err(malformed_record_at(field.decoder_stage))
+        }
         Err(_) => Err(decoder_failure_at("nested_protobuf_panic")),
     }
 }
@@ -1678,6 +1813,10 @@ fn normalize_conversion(
                     CloudTransientBridgeFailure::GenerationMismatch,
                 )
             } else if validate_canonical_identity_bindings(&mutation, hasher).is_err() {
+                debug!(
+                    "cloud canonical validation quarantined validation_diagnostic_class={}",
+                    CloudCanonicalValidationDiagnosticClass::post_build_identity_binding().label()
+                );
                 CloudTransientDecodeOutcome::Quarantined(
                     CloudCanonicalQuarantineReason::InvalidCanonicalPayload,
                 )
@@ -2001,8 +2140,15 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                     if let Err(reason) =
                         presence.capture_decrypted_plist_dictionary("prop", &decrypted)
                     {
-                        let diagnostic =
-                            CloudTransientQuarantineDiagnostic::ChatPropertyPresence(reason);
+                        let diagnostic = if reason == CloudRawPresenceFailure::MalformedNestedPlist
+                        {
+                            CloudTransientQuarantineDiagnostic::ChatPropertyPresenceWithShape(
+                                reason,
+                                classify_chat_property_shape(&decrypted),
+                            )
+                        } else {
+                            CloudTransientQuarantineDiagnostic::ChatPropertyPresence(reason)
+                        };
                         debug!(
                             "CloudKit V2 transient chat diagnostic code={}",
                             diagnostic.safe_code()
@@ -2184,6 +2330,13 @@ mod tests {
                 "native_chat_property_presence_malformed_nested_plist",
             ),
             (
+                CloudTransientQuarantineDiagnostic::ChatPropertyPresenceWithShape(
+                    CloudRawPresenceFailure::MalformedNestedPlist,
+                    CloudTransientChatPropertyShape::Gzip,
+                ),
+                "native_chat_property_presence_malformed_nested_plist_shape_gzip",
+            ),
+            (
                 CloudTransientQuarantineDiagnostic::ChatConversion(
                     CloudChatDiagnosticCode::MissingGroupIdentifierField,
                 ),
@@ -2197,6 +2350,28 @@ mod tests {
             assert!(actual
                 .chars()
                 .all(|value| value.is_ascii_lowercase() || value == '_'));
+        }
+    }
+
+    #[test]
+    fn chat_property_shape_classifier_is_bounded_and_content_free() {
+        let cases: &[(&[u8], CloudTransientChatPropertyShape)] = &[
+            (b"", CloudTransientChatPropertyShape::Empty),
+            (&[0x1f, 0x8b, 0x08], CloudTransientChatPropertyShape::Gzip),
+            (&[0x78, 0x9c, 0x00], CloudTransientChatPropertyShape::Zlib),
+            (
+                b"bplist00payload",
+                CloudTransientChatPropertyShape::BinaryPlist,
+            ),
+            (
+                b" \n<?xml version='1.0'?>",
+                CloudTransientChatPropertyShape::XmlPlist,
+            ),
+            (b"unrecognized", CloudTransientChatPropertyShape::Unknown),
+        ];
+
+        for (value, expected) in cases {
+            assert_eq!(classify_chat_property_shape(value), *expected);
         }
     }
 
@@ -2795,6 +2970,30 @@ mod tests {
             ),
             Err(CloudCanonicalValidationFailure::InvalidPayload)
         );
+    }
+
+    #[test]
+    fn post_build_identity_diagnostic_preserves_fail_closed_quarantine() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"message-identity-test").unwrap();
+        let wrong_logical_hash = CloudCanonicalHash::new(digest('m')).unwrap();
+        let outcome = normalize_conversion(
+            CloudCanonicalConversionOutcome::Ready(Box::new(message_mutation(
+                &hasher,
+                Some(wrong_logical_hash),
+                None,
+            ))),
+            &hasher,
+            &CloudCanonicalHash::new(digest('s')).unwrap(),
+            &CloudCanonicalHash::new(digest('z')).unwrap(),
+            7,
+        );
+
+        assert!(matches!(
+            outcome,
+            CloudTransientDecodeOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::InvalidCanonicalPayload
+            )
+        ));
     }
 
     #[test]
@@ -3653,6 +3852,73 @@ mod tests {
     }
 
     #[test]
+    fn v2_nested_protobuf_failure_classifier_has_a_closed_content_free_vocabulary() {
+        let cases = [
+            (
+                "invalid string value: data is not UTF-8 encoded",
+                CloudNestedProtobufFailure::InvalidUtf8,
+            ),
+            (
+                "invalid wire type: LengthDelimited (expected Varint)",
+                CloudNestedProtobufFailure::WireTypeMismatch,
+            ),
+            (
+                "invalid wire type value: 7",
+                CloudNestedProtobufFailure::InvalidWireType,
+            ),
+            ("invalid varint", CloudNestedProtobufFailure::InvalidVarint),
+            (
+                "invalid key value: 0",
+                CloudNestedProtobufFailure::InvalidKey,
+            ),
+            (
+                "invalid tag value: 0",
+                CloudNestedProtobufFailure::InvalidTag,
+            ),
+            (
+                "buffer underflow",
+                CloudNestedProtobufFailure::BufferUnderflow,
+            ),
+            (
+                "delimited length exceeded",
+                CloudNestedProtobufFailure::DelimitedLengthExceeded,
+            ),
+            (
+                "unexpected end group tag",
+                CloudNestedProtobufFailure::UnexpectedEndGroup,
+            ),
+            (
+                "recursion limit reached",
+                CloudNestedProtobufFailure::RecursionLimit,
+            ),
+            (
+                "length delimiter exceeds maximum usize value",
+                CloudNestedProtobufFailure::LengthDelimiterOverflow,
+            ),
+            (
+                "future prost failure detail with protected-looking text",
+                CloudNestedProtobufFailure::Other,
+            ),
+        ];
+
+        for (description, expected) in cases {
+            let error = DecodeError::new(description);
+            let actual = classify_nested_protobuf_failure(&error);
+            assert_eq!(actual, expected);
+            assert!(actual
+                .diagnostic_code()
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'));
+        }
+
+        let invalid_utf8 = decode_message_proto(&[0x12, 0x01, 0xff]).unwrap_err();
+        assert_eq!(
+            classify_nested_protobuf_failure(&invalid_utf8),
+            CloudNestedProtobufFailure::InvalidUtf8
+        );
+    }
+
+    #[test]
     fn v2_nested_message_proto_accepts_unknown_fields_after_bounded_gzip() {
         use flate2::{write::GzEncoder, Compression};
         use std::io::Write;
@@ -3668,7 +3934,7 @@ mod tests {
 
     #[test]
     fn v2_nested_protobuf_panic_remains_an_internal_decoder_failure() {
-        fn panic_decoder(_: &[u8]) -> Result<(), ()> {
+        fn panic_decoder(_: &[u8]) -> Result<(), DecodeError> {
             panic!("injected nested protobuf panic")
         }
 

@@ -1357,3 +1357,32 @@ owners, 61 malformed records, and six unsupported reaction shapes. Attachment
 examined 150 rows, with 144 native-ready payloads, six malformed records, and
 repeated missing-parent evidence. The force-stop ended the follow-on sweep; it
 did not invalidate this already durable report.
+
+The matching native Rust log narrows the opaque Message failure further without
+exposing message content. It contains 17,141 successful
+`optional_empty_normalized` events for `msgProto2`, 2,085 fixed-stage
+`message_proto` failures, and the same 2,085 enclosing
+`message_gzip_preflight` failures. The one-to-one count proves that the dominant
+native malformed path reaches the required `msgProto` protobuf decoder after
+bounded gzip handling. It is not evidence of a random CloudKit transport or PCS
+ciphertext failure. The next diagnostic candidate therefore keeps the strict
+failure disposition but classifies prost failures into a closed vocabulary such
+as invalid UTF-8, wire-type mismatch, invalid varint, underflow, or other. It
+never logs the prost error, bytes, identifiers, lengths, field values, or
+message text. Chat nested-property failures receive an equally content-free
+framing class: empty, gzip, zlib, binary plist, XML plist, or unknown. No shape
+is accepted merely because it is classified. The 17
+`invalid_canonical_payload` outcomes now likewise emit one fixed class for each
+canonical validation variant, while a distinct `post_build_identity_binding`
+class marks rejection after DTO construction. Both paths preserve the existing
+quarantine result.
+
+The replacement Android build initially failed before packaging because
+rustpush quota hardening declared the live `AppleAccount.spd` dictionary as a
+generic plist value and then called dictionary methods on it. This was a source
+typing regression, not a device, CloudKit, or authentication regression.
+Rustpush commit `ba17215` restores the dictionary contract and updates its
+focused tests. The parent Rust crate compiles with that correction, the
+content-free chat-shape test passes, and the new protobuf-classifier test
+passes. A full GCE build and test run remains required before installing the
+race-fixed Canary in place.

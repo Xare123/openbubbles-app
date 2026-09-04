@@ -133,4 +133,34 @@ void main() {
 
     expect(diagnostics.snapshot(), <String, int>{'diagnostic_code_invalid': 4});
   });
+
+  test('accepts only bounded native chat property shape classes', () {
+    final diagnostics = CloudSyncSemanticDiagnosticCollector();
+
+    for (final shape in const <String>[
+      'empty',
+      'gzip',
+      'zlib',
+      'binary_plist',
+      'xml_plist',
+      'unknown',
+    ]) {
+      diagnostics.record(
+        'native_chat_property_presence_malformed_nested_plist_shape_$shape',
+      );
+    }
+    diagnostics.record(
+      'native_chat_property_presence_malformed_nested_plist_shape_private',
+    );
+
+    expect(diagnostics.snapshot(), <String, int>{
+      'diagnostic_code_invalid': 1,
+      'native_chat_property_presence_malformed_nested_plist_shape_binary_plist': 1,
+      'native_chat_property_presence_malformed_nested_plist_shape_empty': 1,
+      'native_chat_property_presence_malformed_nested_plist_shape_gzip': 1,
+      'native_chat_property_presence_malformed_nested_plist_shape_unknown': 1,
+      'native_chat_property_presence_malformed_nested_plist_shape_xml_plist': 1,
+      'native_chat_property_presence_malformed_nested_plist_shape_zlib': 1,
+    });
+  });
 }

@@ -243,6 +243,12 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'field_not_present',
     'nested_payload_too_large',
     'malformed_nested_plist',
+    'malformed_nested_plist_shape_empty',
+    'malformed_nested_plist_shape_gzip',
+    'malformed_nested_plist_shape_zlib',
+    'malformed_nested_plist_shape_binary_plist',
+    'malformed_nested_plist_shape_xml_plist',
+    'malformed_nested_plist_shape_unknown',
     'nested_plist_not_dictionary',
     'explicit_clear_without_presence',
   };
