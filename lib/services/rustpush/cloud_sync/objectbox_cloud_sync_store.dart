@@ -1965,6 +1965,57 @@ class ObjectBoxCloudSyncStore
   }
 
   @override
+  Future<bool> renewOutboxLease(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required Iterable<String> operationIds,
+    required DateTime now,
+    required Duration leaseDuration,
+  }) async {
+    if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
+    if (leaseDuration.inMicroseconds <= 0) {
+      throw ArgumentError.value(leaseDuration, 'leaseDuration');
+    }
+    final ids = operationIds.toList(growable: false);
+    if (ids.isEmpty) {
+      throw ArgumentError('outbox_renewal_operation_ids_empty');
+    }
+    if (ids.toSet().length != ids.length) {
+      throw ArgumentError('outbox_renewal_operation_ids_duplicate');
+    }
+    final nowMs = now.millisecondsSinceEpoch;
+    final renewedUntilMs = now.add(leaseDuration).millisecondsSinceEpoch;
+    final scopeKey = _scopeKey(scope);
+    final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
+    return _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      final entities = <CloudOutboxOperationEntity>[];
+      for (final operationId in ids) {
+        final entity = _findOutboxByOperationIdLocked(operationId);
+        if (entity == null ||
+            entity.scopeKey != scopeKey ||
+            entity.checkpointGeneration <= 0 ||
+            entity.checkpointGeneration != checkpoint.generation ||
+            (_outboxStatusFromInt(entity.state) != CloudOutboxStatus.leased &&
+                _outboxStatusFromInt(entity.state) !=
+                    CloudOutboxStatus.unknownOutcome) ||
+            entity.leaseIdHash != leaseIdHash ||
+            entity.leaseExpiresAtMs <= nowMs) {
+          return false;
+        }
+        entities.add(entity);
+      }
+      for (final entity in entities) {
+        entity
+          ..leaseExpiresAtMs = renewedUntilMs
+          ..updatedAtMs = nowMs;
+        _outbox.put(entity);
+      }
+      return true;
+    });
+  }
+
+  @override
   Future<List<CloudOutboxOperation>> leaseUnknownOutcomes(
     CloudSyncScope scope, {
     required DateTime now,

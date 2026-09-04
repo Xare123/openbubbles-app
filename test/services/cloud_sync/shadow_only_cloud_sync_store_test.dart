@@ -145,6 +145,16 @@ void main() {
       throwsA(isA<CloudSyncShadowStoreTripwireException>()),
     );
     await expectLater(
+      store.renewOutboxLease(
+        scope,
+        leaseId: 'lease',
+        operationIds: [operation.operationId],
+        now: now,
+        leaseDuration: const Duration(minutes: 1),
+      ),
+      throwsA(isA<CloudSyncShadowStoreTripwireException>()),
+    );
+    await expectLater(
       store.recoverExpiredOutboxLeases(scope, now: now),
       throwsA(isA<CloudSyncShadowStoreTripwireException>()),
     );

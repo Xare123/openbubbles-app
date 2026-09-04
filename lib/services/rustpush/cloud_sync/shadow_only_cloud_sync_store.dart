@@ -218,6 +218,15 @@ final class ShadowOnlyCloudSyncStore
   }) => _blocked();
 
   @override
+  Future<bool> renewOutboxLease(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required Iterable<String> operationIds,
+    required DateTime now,
+    required Duration leaseDuration,
+  }) => _blocked();
+
+  @override
   Future<List<CloudOutboxOperation>> markOutboxSubmissionStarted(
     CloudSyncScope scope, {
     required String leaseId,

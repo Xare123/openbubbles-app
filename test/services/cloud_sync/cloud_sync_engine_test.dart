@@ -4439,6 +4439,80 @@ void main() {
     },
   );
 
+  test('outbox heartbeat keeps a long push lease live', () async {
+    final heartbeatStore = _CountingOutboxRenewalStore();
+    store = heartbeatStore;
+    final operation = testOutboxOperation(scope, 45);
+    await store.enqueueOutbox(operation);
+    transport.pushHandler = (scope, operations) async {
+      for (var tick = 0; tick < 4; tick++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+        clock.advance(const Duration(milliseconds: 25));
+      }
+      return CloudPushBatchResult(
+        outcomes: [
+          CloudPushOutcome(
+            operationId: operations.single.operationId,
+            disposition: CloudPushDisposition.confirmed,
+          ),
+        ],
+      );
+    };
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+      writeOperationTimeout: const Duration(seconds: 1),
+      coordinatorLeaseDuration: const Duration(seconds: 1),
+      outboxLeaseDuration: const Duration(milliseconds: 60),
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    expect(result.status, CloudSyncRunStatus.completed);
+    expect(result.counters.confirmed, 1);
+    expect(heartbeatStore.renewalCalls, greaterThan(6));
+    expect(
+      (await store.outboxEntries(scope)).single.status,
+      CloudOutboxStatus.confirmed,
+    );
+  });
+
+  test('lost outbox heartbeat after submission cannot confirm', () async {
+    final heartbeatStore = _ControlledOutboxRenewalStore();
+    store = heartbeatStore;
+    final operation = testOutboxOperation(scope, 46);
+    await store.enqueueOutbox(operation);
+    transport.pushHandler = (scope, operations) async {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      clock.advance(const Duration(milliseconds: 25));
+      heartbeatStore.rejectRenewal = true;
+      await Future<void>.delayed(const Duration(milliseconds: 55));
+      clock.advance(const Duration(milliseconds: 55));
+      return CloudPushBatchResult(
+        outcomes: [
+          CloudPushOutcome(
+            operationId: operations.single.operationId,
+            disposition: CloudPushDisposition.confirmed,
+          ),
+        ],
+      );
+    };
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+      writeOperationTimeout: const Duration(seconds: 1),
+      coordinatorLeaseDuration: const Duration(seconds: 1),
+      outboxLeaseDuration: const Duration(milliseconds: 60),
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    expect(result.status, CloudSyncRunStatus.failed);
+    expect(result.failureCategory, CloudFailureCategory.localStorage);
+    expect(transport.pushCallCount, 1);
+    final stored = (await store.outboxEntries(scope)).single;
+    expect(stored.status, CloudOutboxStatus.unknownOutcome);
+    expect(stored.confirmedAt, isNull);
+  });
+
   test('generation advance cannot overtake an in-flight remote push', () async {
     final operation = testOutboxOperation(scope, 44);
     await store.enqueueOutbox(operation);
@@ -5190,6 +5264,53 @@ class _RejectingCoordinatorRenewalStore extends InMemoryCloudSyncStore {
     return super.renewCoordinatorLease(
       scope,
       leaseFence: leaseFence,
+      now: now,
+      leaseDuration: leaseDuration,
+    );
+  }
+}
+
+class _CountingOutboxRenewalStore extends InMemoryCloudSyncStore {
+  int renewalCalls = 0;
+
+  @override
+  Future<bool> renewOutboxLease(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required Iterable<String> operationIds,
+    required DateTime now,
+    required Duration leaseDuration,
+  }) {
+    renewalCalls++;
+    return super.renewOutboxLease(
+      scope,
+      leaseId: leaseId,
+      operationIds: operationIds,
+      now: now,
+      leaseDuration: leaseDuration,
+    );
+  }
+}
+
+final class _ControlledOutboxRenewalStore extends _CountingOutboxRenewalStore {
+  bool rejectRenewal = false;
+
+  @override
+  Future<bool> renewOutboxLease(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required Iterable<String> operationIds,
+    required DateTime now,
+    required Duration leaseDuration,
+  }) {
+    if (rejectRenewal) {
+      renewalCalls++;
+      return Future.value(false);
+    }
+    return super.renewOutboxLease(
+      scope,
+      leaseId: leaseId,
+      operationIds: operationIds,
       now: now,
       leaseDuration: leaseDuration,
     );

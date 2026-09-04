@@ -1322,6 +1322,80 @@ void main() {
     ]);
   });
 
+  test('outbox lease renewal is all-or-none across leased states', () async {
+    final first = testOutboxOperation(scope, 41);
+    final second = testOutboxOperation(scope, 42);
+    await store.enqueueOutbox(first);
+    await store.enqueueOutbox(second);
+    await store.leaseEligibleOutbox(
+      scope,
+      now: testEpoch,
+      limit: 2,
+      leaseId: 'renew-batch',
+      leaseDuration: const Duration(minutes: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+    await store.markOutboxSubmissionStarted(
+      scope,
+      leaseId: 'renew-batch',
+      submissionIdentity: testSubmissionIdentity([first.operationId]),
+      now: testEpoch,
+    );
+
+    expect(
+      await store.renewOutboxLease(
+        scope,
+        leaseId: 'renew-batch',
+        operationIds: [first.operationId, 'missing-operation'],
+        now: testEpoch.add(const Duration(seconds: 30)),
+        leaseDuration: const Duration(minutes: 2),
+      ),
+      isFalse,
+    );
+    expect(
+      (await store.outboxEntries(scope)).every(
+        (operation) =>
+            operation.leaseExpiresAt ==
+            testEpoch.add(const Duration(minutes: 1)),
+      ),
+      isTrue,
+    );
+
+    expect(
+      await store.renewOutboxLease(
+        scope,
+        leaseId: 'renew-batch',
+        operationIds: [first.operationId, second.operationId],
+        now: testEpoch.add(const Duration(seconds: 30)),
+        leaseDuration: const Duration(minutes: 2),
+      ),
+      isTrue,
+    );
+    final renewed = await store.outboxEntries(scope);
+    expect(
+      renewed.map((operation) => operation.status),
+      containsAll([CloudOutboxStatus.leased, CloudOutboxStatus.unknownOutcome]),
+    );
+    expect(
+      renewed.every(
+        (operation) =>
+            operation.leaseExpiresAt ==
+            testEpoch.add(const Duration(minutes: 2, seconds: 30)),
+      ),
+      isTrue,
+    );
+    expect(
+      await store.renewOutboxLease(
+        scope,
+        leaseId: 'renew-batch',
+        operationIds: [first.operationId, second.operationId],
+        now: testEpoch.add(const Duration(minutes: 2, seconds: 30)),
+        leaseDuration: const Duration(minutes: 1),
+      ),
+      isFalse,
+    );
+  });
+
   test(
     'newer delete waits behind a leased save and the batch keeps scanning',
     () async {

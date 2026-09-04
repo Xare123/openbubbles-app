@@ -3951,6 +3951,80 @@ void main() {
     },
   );
 
+  test('outbox lease renewal is transactional and generation-bound', () async {
+    final scope = testScope();
+    final first = await store.enqueueOutboxMutation(draft(scope, 41));
+    final second = await store.enqueueOutboxMutation(draft(scope, 42));
+    await store.leaseEligibleOutbox(
+      scope,
+      now: testEpoch,
+      limit: 2,
+      leaseId: 'objectbox-renew-batch',
+      leaseDuration: const Duration(minutes: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+    await store.markOutboxSubmissionStarted(
+      scope,
+      leaseId: 'objectbox-renew-batch',
+      submissionIdentity: testSubmissionIdentity([first.operationId]),
+      now: testEpoch,
+    );
+
+    expect(
+      await store.renewOutboxLease(
+        scope,
+        leaseId: 'objectbox-renew-batch',
+        operationIds: [first.operationId, 'missing-operation'],
+        now: testEpoch.add(const Duration(seconds: 30)),
+        leaseDuration: const Duration(minutes: 2),
+      ),
+      isFalse,
+    );
+    expect(
+      objectBox.box<CloudOutboxOperationEntity>().getAll().every(
+        (entity) =>
+            entity.leaseExpiresAtMs ==
+            testEpoch.add(const Duration(minutes: 1)).millisecondsSinceEpoch,
+      ),
+      isTrue,
+    );
+
+    expect(
+      await store.renewOutboxLease(
+        scope,
+        leaseId: 'objectbox-renew-batch',
+        operationIds: [first.operationId, second.operationId],
+        now: testEpoch.add(const Duration(seconds: 30)),
+        leaseDuration: const Duration(minutes: 2),
+      ),
+      isTrue,
+    );
+    final renewedUntil = testEpoch
+        .add(const Duration(minutes: 2, seconds: 30))
+        .millisecondsSinceEpoch;
+    expect(
+      objectBox.box<CloudOutboxOperationEntity>().getAll().every(
+        (entity) => entity.leaseExpiresAtMs == renewedUntil,
+      ),
+      isTrue,
+    );
+
+    await store.advanceOutboxGeneration(
+      scope,
+      now: testEpoch.add(const Duration(seconds: 45)),
+    );
+    expect(
+      await store.renewOutboxLease(
+        scope,
+        leaseId: 'objectbox-renew-batch',
+        operationIds: [first.operationId, second.operationId],
+        now: testEpoch.add(const Duration(seconds: 45)),
+        leaseDuration: const Duration(minutes: 1),
+      ),
+      isFalse,
+    );
+  });
+
   test(
     'expired outbox lease can recover but old owner cannot confirm',
     () async {

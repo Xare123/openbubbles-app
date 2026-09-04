@@ -789,6 +789,53 @@ class InMemoryCloudSyncStore
   }
 
   @override
+  Future<bool> renewOutboxLease(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required Iterable<String> operationIds,
+    required DateTime now,
+    required Duration leaseDuration,
+  }) {
+    if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
+    if (leaseDuration.inMicroseconds <= 0) {
+      throw ArgumentError.value(leaseDuration, 'leaseDuration');
+    }
+    final ids = operationIds.toList(growable: false);
+    if (ids.isEmpty) {
+      throw ArgumentError('outbox_renewal_operation_ids_empty');
+    }
+    if (ids.toSet().length != ids.length) {
+      throw ArgumentError('outbox_renewal_operation_ids_duplicate');
+    }
+    return _lock.synchronized(() async {
+      final checkpoint = _checkpoint(scope);
+      final entries = _outbox[scope.storageKey];
+      final operations = <CloudOutboxOperation>[];
+      for (final operationId in ids) {
+        final operation = entries?[operationId];
+        if (operation == null ||
+            operation.checkpointGeneration <= 0 ||
+            operation.checkpointGeneration != checkpoint.generation ||
+            (operation.status != CloudOutboxStatus.leased &&
+                operation.status != CloudOutboxStatus.unknownOutcome) ||
+            operation.leaseId != leaseId ||
+            operation.leaseExpiresAt == null ||
+            !operation.leaseExpiresAt!.isAfter(now)) {
+          return false;
+        }
+        operations.add(operation);
+      }
+      final renewedUntil = now.add(leaseDuration);
+      for (final operation in operations) {
+        entries![operation.operationId] = operation.copyWith(
+          leaseExpiresAt: renewedUntil,
+        );
+      }
+      return true;
+    });
+  }
+
+  @override
   Future<List<CloudOutboxOperation>> leaseUnknownOutcomes(
     CloudSyncScope scope, {
     required DateTime now,

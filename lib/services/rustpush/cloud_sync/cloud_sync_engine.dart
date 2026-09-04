@@ -1992,7 +1992,11 @@ class CloudSyncEngine {
       );
       if (leased.isEmpty) break;
 
-      final preparation = await _prepareOutboxMappings(leased, leaseId);
+      final preparation = await _withOutboxLeaseHeartbeat(
+        leaseId: leaseId,
+        operations: leased,
+        action: () => _prepareOutboxMappings(leased, leaseId),
+      );
       final transitions = <CloudOutboxTransition>[...preparation.transitions];
       for (final transition in preparation.transitions) {
         counters = _countOutboxTransition(counters, transition);
@@ -2011,21 +2015,28 @@ class CloudSyncEngine {
         CloudSyncPreparedSubmission? preparedSubmission;
         List<CloudSyncProtectedWriteOperation>? protectedOperations;
         try {
-          protectedOperations = List.unmodifiable(
-            await _protectedWriteOperationsFor(ready),
-          );
-          preparedSubmission = await _withCoordinatorLeaseHeartbeat(
-            () => _withWriteOperationTimeout(
-              operationName: 'write_preflight',
-              action: () => _writeTransport!.prepareSubmission(
-                scope,
-                submissionIdentity: submissionIdentity,
-                operations: protectedOperations!,
-              ),
-            ),
+          preparedSubmission = await _withWriteLeaseHeartbeats(
+            leaseId: leaseId,
+            operations: leased,
+            action: () async {
+              protectedOperations = List.unmodifiable(
+                await _protectedWriteOperationsFor(ready),
+              );
+              return _withWriteOperationTimeout(
+                operationName: 'write_preflight',
+                action: () => _writeTransport!.prepareSubmission(
+                  scope,
+                  submissionIdentity: submissionIdentity,
+                  operations: protectedOperations!,
+                ),
+              );
+            },
           );
         } on CloudSyncFailure catch (error) {
-          if (_isCoordinatorLeaseFailure(error)) rethrow;
+          if (_isCoordinatorLeaseFailure(error) ||
+              _isOutboxLeaseFailure(error)) {
+            rethrow;
+          }
           for (final operation in ready) {
             final transition = _transitionForFailure(operation, error);
             transitions.add(transition);
@@ -2046,6 +2057,7 @@ class CloudSyncEngine {
           ready = const [];
         } else {
           await _verifyWriterPermit();
+          await _renewOutboxLeaseOrThrow(leaseId: leaseId, operations: leased);
           // Persist the ambiguity boundary only after native authentication,
           // PCS lookup, protected payload compilation, and request creation
           // have completed without sending a remote mutation.
@@ -2063,8 +2075,10 @@ class CloudSyncEngine {
             },
           );
           try {
-            final result = await _withCoordinatorLeaseHeartbeat(
-              () => _withWriteOperationTimeout(
+            final result = await _withWriteLeaseHeartbeats(
+              leaseId: leaseId,
+              operations: leased,
+              action: () => _withWriteOperationTimeout(
                 operationName: 'push',
                 action: () async {
                   await _verifyWriterPermit();
@@ -2081,7 +2095,10 @@ class CloudSyncEngine {
             await _verifyWriterPermitAfterRemote();
             outcomes = _requireExactPushOutcomes(ready, result);
           } on CloudSyncFailure catch (error) {
-            if (_isCoordinatorLeaseFailure(error)) rethrow;
+            if (_isCoordinatorLeaseFailure(error) ||
+                _isOutboxLeaseFailure(error)) {
+              rethrow;
+            }
             for (final operation in ready) {
               outcomes[operation.operationId] = _outcomeForThrownFailure(
                 operation.operationId,
@@ -2179,6 +2196,7 @@ class CloudSyncEngine {
       }
 
       // Outcomes are durable even if cancellation arrives during upload.
+      await _renewOutboxLeaseOrThrow(leaseId: leaseId, operations: leased);
       await _store.applyOutboxTransitions(
         scope,
         leaseId: leaseId,
@@ -2230,41 +2248,48 @@ class CloudSyncEngine {
       if (operations.isEmpty) break;
 
       final transitions = <CloudOutboxTransition>[];
-      for (final operation in operations) {
-        CloudOutboxTransition transition;
-        try {
-          final resolution = await _withCoordinatorLeaseHeartbeat(
-            () => _withWriteOperationTimeout(
-              operationName: 'reconcile',
-              action: () => _transport.reconcileUnknownOutcome(
-                scope,
-                operation: operation,
-              ),
-            ),
-          );
-          transition = await _transitionForUnknownResolution(
-            operation,
-            resolution,
-          );
-        } on CloudSyncFailure catch (error) {
-          if (_isCoordinatorLeaseFailure(error)) rethrow;
-          transition = _unresolvedUnknownTransition(operation, error);
-        } catch (_) {
-          transition = _unresolvedUnknownTransition(
-            operation,
-            CloudSyncFailure(
-              category: CloudFailureCategory.unknown,
-              safeCode: 'unknown_outcome_reconciliation_failed',
-            ),
-          );
-        }
-        transitions.add(transition);
-        requiresNewSubmissionDecision |=
-            transition.type == CloudOutboxTransitionType.retryable &&
-            transition.clearSubmissionIdentity;
-        counters = _countOutboxTransition(counters, transition);
-      }
+      await _withOutboxLeaseHeartbeat(
+        leaseId: leaseId,
+        operations: operations,
+        action: () async {
+          for (final operation in operations) {
+            CloudOutboxTransition transition;
+            try {
+              final resolution = await _withCoordinatorLeaseHeartbeat(
+                () => _withWriteOperationTimeout(
+                  operationName: 'reconcile',
+                  action: () => _transport.reconcileUnknownOutcome(
+                    scope,
+                    operation: operation,
+                  ),
+                ),
+              );
+              transition = await _transitionForUnknownResolution(
+                operation,
+                resolution,
+              );
+            } on CloudSyncFailure catch (error) {
+              if (_isCoordinatorLeaseFailure(error)) rethrow;
+              transition = _unresolvedUnknownTransition(operation, error);
+            } catch (_) {
+              transition = _unresolvedUnknownTransition(
+                operation,
+                CloudSyncFailure(
+                  category: CloudFailureCategory.unknown,
+                  safeCode: 'unknown_outcome_reconciliation_failed',
+                ),
+              );
+            }
+            transitions.add(transition);
+            requiresNewSubmissionDecision |=
+                transition.type == CloudOutboxTransitionType.retryable &&
+                transition.clearSubmissionIdentity;
+            counters = _countOutboxTransition(counters, transition);
+          }
+        },
+      );
 
+      await _renewOutboxLeaseOrThrow(leaseId: leaseId, operations: operations);
       await _store.applyOutboxTransitions(
         scope,
         leaseId: leaseId,
@@ -2786,6 +2811,85 @@ class CloudSyncEngine {
     }
   }
 
+  Future<void> _renewOutboxLeaseOrThrow({
+    required String leaseId,
+    required Iterable<CloudOutboxOperation> operations,
+  }) async {
+    final operationIds = operations
+        .map((operation) => operation.operationId)
+        .toList(growable: false);
+    final renewed = await _store.renewOutboxLease(
+      scope,
+      leaseId: leaseId,
+      operationIds: operationIds,
+      now: _clock(),
+      leaseDuration: config.outboxLeaseDuration,
+    );
+    if (!renewed) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'outbox_lease_lost',
+      );
+    }
+  }
+
+  Future<T> _withOutboxLeaseHeartbeat<T>({
+    required String leaseId,
+    required List<CloudOutboxOperation> operations,
+    required Future<T> Function() action,
+  }) async {
+    await _renewOutboxLeaseOrThrow(leaseId: leaseId, operations: operations);
+    final heartbeatInterval = Duration(
+      microseconds: max(1, config.outboxLeaseDuration.inMicroseconds ~/ 3),
+    );
+    Object? renewalFailure;
+    StackTrace? renewalFailureStack;
+    Future<void>? renewalInFlight;
+    late final Timer heartbeat;
+    heartbeat = Timer.periodic(heartbeatInterval, (_) {
+      if (renewalInFlight != null || renewalFailure != null) return;
+      final renewal = _renewOutboxLeaseOrThrow(
+        leaseId: leaseId,
+        operations: operations,
+      );
+      renewalInFlight = renewal
+          .then<void>((_) {})
+          .catchError((Object error, StackTrace stack) {
+            renewalFailure = error;
+            renewalFailureStack = stack;
+          })
+          .whenComplete(() {
+            renewalInFlight = null;
+          });
+    });
+    try {
+      final result = await action();
+      heartbeat.cancel();
+      await renewalInFlight;
+      final failure = renewalFailure;
+      if (failure != null) {
+        Error.throwWithStackTrace(failure, renewalFailureStack!);
+      }
+      await _renewOutboxLeaseOrThrow(leaseId: leaseId, operations: operations);
+      return result;
+    } finally {
+      heartbeat.cancel();
+      await renewalInFlight;
+    }
+  }
+
+  Future<T> _withWriteLeaseHeartbeats<T>({
+    required String leaseId,
+    required List<CloudOutboxOperation> operations,
+    required Future<T> Function() action,
+  }) => _withCoordinatorLeaseHeartbeat(
+    () => _withOutboxLeaseHeartbeat(
+      leaseId: leaseId,
+      operations: operations,
+      action: action,
+    ),
+  );
+
   Future<T> _withWriteOperationTimeout<T>({
     required String operationName,
     required Future<T> Function() action,
@@ -2816,6 +2920,9 @@ class CloudSyncEngine {
   bool _isCoordinatorLeaseFailure(CloudSyncFailure error) =>
       error.safeCode == 'coordinator_lease_fence_missing' ||
       error.safeCode == 'coordinator_lease_lost';
+
+  bool _isOutboxLeaseFailure(CloudSyncFailure error) =>
+      error.safeCode == 'outbox_lease_lost';
 
   Future<void> _verifyWriterPermit() async {
     if (!config.flags.saves) return;

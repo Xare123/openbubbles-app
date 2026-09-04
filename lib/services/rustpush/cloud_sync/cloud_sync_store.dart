@@ -201,6 +201,20 @@ abstract interface class CloudSyncStore {
     required Set<CloudOutboxAction> allowedActions,
   });
 
+  /// Atomically extends the exact live lease for every requested operation.
+  ///
+  /// Renewal is all-or-none and returns false if any row is missing, belongs
+  /// to another scope or checkpoint generation, has a different lease, is in
+  /// a non-leased state, or has already expired. Implementations must not
+  /// revive an expired lease or partially renew a batch.
+  Future<bool> renewOutboxLease(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required Iterable<String> operationIds,
+    required DateTime now,
+    required Duration leaseDuration,
+  });
+
   /// Marks rows as having been submitted before the remote request begins.
   ///
   /// This is a crash-safety boundary: the rows become non-leasable while the
