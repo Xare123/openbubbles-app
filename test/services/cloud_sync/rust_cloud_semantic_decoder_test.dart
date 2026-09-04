@@ -591,26 +591,30 @@ void main() {
     });
   });
 
-  test('chat quarantine detail fails closed without changing disposition', () async {
-    final diagnostics = CloudSyncSemanticDiagnosticCollector();
-    final entry = _entry();
-    bindings.result = frb.CloudSyncTransientDecodeResult(
-      protectedSourceReference: _sourceReference,
-      generation: BigInt.from(entry.generation),
-      quarantineReason: frb.CloudSyncTransientQuarantineReason.malformedRecord,
-      quarantineDiagnosticSafeCode: 'record-body-or-identifier',
-    );
+  test(
+    'chat quarantine detail fails closed without changing disposition',
+    () async {
+      final diagnostics = CloudSyncSemanticDiagnosticCollector();
+      final entry = _entry();
+      bindings.result = frb.CloudSyncTransientDecodeResult(
+        protectedSourceReference: _sourceReference,
+        generation: BigInt.from(entry.generation),
+        quarantineReason:
+            frb.CloudSyncTransientQuarantineReason.malformedRecord,
+        quarantineDiagnosticSafeCode: 'record-body-or-identifier',
+      );
 
-    await _expectFailure(
-      decoder(diagnosticRecorder: diagnostics.record).decode(entry),
-      CloudFailureCategory.malformedRecord,
-    );
+      await _expectFailure(
+        decoder(diagnosticRecorder: diagnostics.record).decode(entry),
+        CloudFailureCategory.malformedRecord,
+      );
 
-    expect(diagnostics.snapshot(), <String, int>{
-      'diagnostic_code_invalid': 1,
-      'native_quarantined_malformed_record': 1,
-    });
-  });
+      expect(diagnostics.snapshot(), <String, int>{
+        'diagnostic_code_invalid': 1,
+        'native_quarantined_malformed_record': 1,
+      });
+    },
+  );
 
   test('verbose logging emits only the bounded native disposition', () async {
     final output = _CapturingLogOutput();

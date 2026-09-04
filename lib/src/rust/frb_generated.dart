@@ -17019,8 +17019,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 12)
-      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
+    if (arr.length != 13)
+      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
     return CloudSyncTransientDecodeResult(
       protectedSourceReference: dco_decode_opt_String(arr[0]),
       generation: dco_decode_u_64(arr[1]),
@@ -17049,8 +17049,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           dco_decode_opt_box_autoadd_cloud_sync_transient_quarantine_reason(
             arr[10],
           ),
+      quarantineDiagnosticSafeCode: dco_decode_opt_String(arr[11]),
       failureCode: dco_decode_opt_box_autoadd_cloud_sync_transient_failure_code(
-        arr[11],
+        arr[12],
       ),
     );
   }
@@ -26682,6 +26683,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_decode_opt_box_autoadd_cloud_sync_transient_quarantine_reason(
           deserializer,
         );
+    var var_quarantineDiagnosticSafeCode = sse_decode_opt_String(deserializer);
     var var_failureCode =
         sse_decode_opt_box_autoadd_cloud_sync_transient_failure_code(
           deserializer,
@@ -26698,6 +26700,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       outOfScopeService: var_outOfScopeService,
       deferredReason: var_deferredReason,
       quarantineReason: var_quarantineReason,
+      quarantineDiagnosticSafeCode: var_quarantineDiagnosticSafeCode,
       failureCode: var_failureCode,
     );
   }
@@ -37865,6 +37868,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       self.quarantineReason,
       serializer,
     );
+    sse_encode_opt_String(self.quarantineDiagnosticSafeCode, serializer);
     sse_encode_opt_box_autoadd_cloud_sync_transient_failure_code(
       self.failureCode,
       serializer,

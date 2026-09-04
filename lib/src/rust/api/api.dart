@@ -3917,6 +3917,9 @@ enum CloudSyncTransientChatStyle { direct, group }
 /// A bounded, single-record D1 result. Exactly one of `mutation`,
 /// `out_of_scope_service`, `deferred_reason`, `quarantine_reason`, and
 /// `failure_code` is populated.
+/// `quarantine_diagnostic_safe_code` is optional secondary metadata drawn
+/// only from a closed native vocabulary and never contains record content or
+/// identifiers.
 /// The optional source capability is echoed only after it passes the native
 /// protected-reference grammar.
 class CloudSyncTransientDecodeResult {
@@ -3931,6 +3934,7 @@ class CloudSyncTransientDecodeResult {
   final CloudSyncTransientOutOfScopeService? outOfScopeService;
   final CloudSyncTransientDeferredReason? deferredReason;
   final CloudSyncTransientQuarantineReason? quarantineReason;
+  final String? quarantineDiagnosticSafeCode;
   final CloudSyncTransientFailureCode? failureCode;
 
   const CloudSyncTransientDecodeResult({
@@ -3945,6 +3949,7 @@ class CloudSyncTransientDecodeResult {
     this.outOfScopeService,
     this.deferredReason,
     this.quarantineReason,
+    this.quarantineDiagnosticSafeCode,
     this.failureCode,
   });
 
@@ -3961,6 +3966,7 @@ class CloudSyncTransientDecodeResult {
       outOfScopeService.hashCode ^
       deferredReason.hashCode ^
       quarantineReason.hashCode ^
+      quarantineDiagnosticSafeCode.hashCode ^
       failureCode.hashCode;
 
   @override
@@ -3979,6 +3985,7 @@ class CloudSyncTransientDecodeResult {
           outOfScopeService == other.outOfScopeService &&
           deferredReason == other.deferredReason &&
           quarantineReason == other.quarantineReason &&
+          quarantineDiagnosticSafeCode == other.quarantineDiagnosticSafeCode &&
           failureCode == other.failureCode;
 }
 

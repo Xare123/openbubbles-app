@@ -20393,6 +20393,7 @@ impl SseDecode for crate::api::api::CloudSyncTransientDecodeResult {
             <Option<crate::api::api::CloudSyncTransientDeferredReason>>::sse_decode(deserializer);
         let mut var_quarantineReason =
             <Option<crate::api::api::CloudSyncTransientQuarantineReason>>::sse_decode(deserializer);
+        let mut var_quarantineDiagnosticSafeCode = <Option<String>>::sse_decode(deserializer);
         let mut var_failureCode =
             <Option<crate::api::api::CloudSyncTransientFailureCode>>::sse_decode(deserializer);
         return crate::api::api::CloudSyncTransientDecodeResult {
@@ -20407,6 +20408,7 @@ impl SseDecode for crate::api::api::CloudSyncTransientDecodeResult {
             out_of_scope_service: var_outOfScopeService,
             deferred_reason: var_deferredReason,
             quarantine_reason: var_quarantineReason,
+            quarantine_diagnostic_safe_code: var_quarantineDiagnosticSafeCode,
             failure_code: var_failureCode,
         };
     }
@@ -29735,6 +29737,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientDecode
             self.out_of_scope_service.into_into_dart().into_dart(),
             self.deferred_reason.into_into_dart().into_dart(),
             self.quarantine_reason.into_into_dart().into_dart(),
+            self.quarantine_diagnostic_safe_code
+                .into_into_dart()
+                .into_dart(),
             self.failure_code.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -36377,6 +36382,7 @@ impl SseEncode for crate::api::api::CloudSyncTransientDecodeResult {
             self.quarantine_reason,
             serializer,
         );
+        <Option<String>>::sse_encode(self.quarantine_diagnostic_safe_code, serializer);
         <Option<crate::api::api::CloudSyncTransientFailureCode>>::sse_encode(
             self.failure_code,
             serializer,
