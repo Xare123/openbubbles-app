@@ -1648,7 +1648,106 @@ fn protected_reference(
         .map_err(|_| CloudCanonicalQuarantineReason::MalformedRecord)
 }
 
-fn validation_quarantine(_: CloudCanonicalValidationFailure) -> CloudCanonicalConversionOutcome {
+/// Closed, content-free diagnostic class for a collapsed validation failure.
+///
+/// `validation_quarantine` collapses every `CloudCanonicalValidationFailure`
+/// into `CloudCanonicalQuarantineReason::InvalidCanonicalPayload`. The class
+/// below recovers which cause class (or post-build stage) was collapsed
+/// without touching content: `label` returns only string literals, so
+/// identifiers, lengths, hashes, raw errors, and message data can never enter
+/// logs through this path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CloudCanonicalValidationDiagnosticClass {
+    UnsupportedSchema,
+    InvalidHash,
+    InvalidProtectedReference,
+    InvalidIdentifier,
+    InvalidText,
+    CollectionLimit,
+    InvalidRange,
+    InvalidPayload,
+    InvalidEnvelope,
+    InvalidSnapshot,
+    InvalidTombstone,
+    ScopeMismatch,
+    MalformedAssociatedParent,
+    MalformedAttachmentOwner,
+    MalformedReplyParent,
+    AmbiguousReplyParent,
+    /// Post-build identity-binding rejection. The transient bridge's
+    /// `normalize_conversion` collapses identity-binding failures into the
+    /// same quarantine reason from a different stage; this marker keeps that
+    /// stage distinguishable once the bridge emits it.
+    PostBuildIdentityBinding,
+}
+
+impl CloudCanonicalValidationDiagnosticClass {
+    pub(crate) fn from_failure(failure: &CloudCanonicalValidationFailure) -> Self {
+        match failure {
+            CloudCanonicalValidationFailure::UnsupportedSchema => Self::UnsupportedSchema,
+            CloudCanonicalValidationFailure::InvalidHash => Self::InvalidHash,
+            CloudCanonicalValidationFailure::InvalidProtectedReference => {
+                Self::InvalidProtectedReference
+            }
+            CloudCanonicalValidationFailure::InvalidIdentifier => Self::InvalidIdentifier,
+            CloudCanonicalValidationFailure::InvalidText => Self::InvalidText,
+            CloudCanonicalValidationFailure::CollectionLimit => Self::CollectionLimit,
+            CloudCanonicalValidationFailure::InvalidRange => Self::InvalidRange,
+            CloudCanonicalValidationFailure::InvalidPayload => Self::InvalidPayload,
+            CloudCanonicalValidationFailure::InvalidEnvelope => Self::InvalidEnvelope,
+            CloudCanonicalValidationFailure::InvalidSnapshot => Self::InvalidSnapshot,
+            CloudCanonicalValidationFailure::InvalidTombstone => Self::InvalidTombstone,
+            CloudCanonicalValidationFailure::ScopeMismatch => Self::ScopeMismatch,
+            CloudCanonicalValidationFailure::MalformedAssociatedParent => {
+                Self::MalformedAssociatedParent
+            }
+            CloudCanonicalValidationFailure::MalformedAttachmentOwner => {
+                Self::MalformedAttachmentOwner
+            }
+            CloudCanonicalValidationFailure::MalformedReplyParent => Self::MalformedReplyParent,
+            CloudCanonicalValidationFailure::AmbiguousReplyParent => Self::AmbiguousReplyParent,
+        }
+    }
+
+    /// Closed vocabulary for the post-build identity-binding stage.
+    pub(crate) fn post_build_identity_binding() -> Self {
+        Self::PostBuildIdentityBinding
+    }
+
+    /// Fixed, content-free label. Every arm returns a string literal.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::UnsupportedSchema => "unsupported_schema",
+            Self::InvalidHash => "invalid_hash",
+            Self::InvalidProtectedReference => "invalid_protected_reference",
+            Self::InvalidIdentifier => "invalid_identifier",
+            Self::InvalidText => "invalid_text",
+            Self::CollectionLimit => "collection_limit",
+            Self::InvalidRange => "invalid_range",
+            Self::InvalidPayload => "invalid_payload",
+            Self::InvalidEnvelope => "invalid_envelope",
+            Self::InvalidSnapshot => "invalid_snapshot",
+            Self::InvalidTombstone => "invalid_tombstone",
+            Self::ScopeMismatch => "scope_mismatch",
+            Self::MalformedAssociatedParent => "malformed_associated_parent",
+            Self::MalformedAttachmentOwner => "malformed_attachment_owner",
+            Self::MalformedReplyParent => "malformed_reply_parent",
+            Self::AmbiguousReplyParent => "ambiguous_reply_parent",
+            Self::PostBuildIdentityBinding => "post_build_identity_binding",
+        }
+    }
+}
+
+fn validation_quarantine(
+    failure: CloudCanonicalValidationFailure,
+) -> CloudCanonicalConversionOutcome {
+    // Closed-vocabulary telemetry only: the label is a string literal, so no
+    // content, identifier, length, hash, raw error, or message data is logged.
+    // The quarantine outcome below is unchanged (fail-closed).
+    log::debug!(
+        "cloud canonical validation quarantined validation_diagnostic_class={}",
+        CloudCanonicalValidationDiagnosticClass::from_failure(&failure).label()
+    );
     CloudCanonicalConversionOutcome::Quarantined(
         CloudCanonicalQuarantineReason::InvalidCanonicalPayload,
     )
@@ -5463,6 +5562,152 @@ mod tests {
     }
 
     #[test]
+    fn validation_diagnostic_class_maps_every_failure_to_a_fixed_label() {
+        let cases = [
+            (
+                CloudCanonicalValidationFailure::UnsupportedSchema,
+                "unsupported_schema",
+            ),
+            (CloudCanonicalValidationFailure::InvalidHash, "invalid_hash"),
+            (
+                CloudCanonicalValidationFailure::InvalidProtectedReference,
+                "invalid_protected_reference",
+            ),
+            (
+                CloudCanonicalValidationFailure::InvalidIdentifier,
+                "invalid_identifier",
+            ),
+            (CloudCanonicalValidationFailure::InvalidText, "invalid_text"),
+            (
+                CloudCanonicalValidationFailure::CollectionLimit,
+                "collection_limit",
+            ),
+            (
+                CloudCanonicalValidationFailure::InvalidRange,
+                "invalid_range",
+            ),
+            (
+                CloudCanonicalValidationFailure::InvalidPayload,
+                "invalid_payload",
+            ),
+            (
+                CloudCanonicalValidationFailure::InvalidEnvelope,
+                "invalid_envelope",
+            ),
+            (
+                CloudCanonicalValidationFailure::InvalidSnapshot,
+                "invalid_snapshot",
+            ),
+            (
+                CloudCanonicalValidationFailure::InvalidTombstone,
+                "invalid_tombstone",
+            ),
+            (
+                CloudCanonicalValidationFailure::ScopeMismatch,
+                "scope_mismatch",
+            ),
+            (
+                CloudCanonicalValidationFailure::MalformedAssociatedParent,
+                "malformed_associated_parent",
+            ),
+            (
+                CloudCanonicalValidationFailure::MalformedAttachmentOwner,
+                "malformed_attachment_owner",
+            ),
+            (
+                CloudCanonicalValidationFailure::MalformedReplyParent,
+                "malformed_reply_parent",
+            ),
+            (
+                CloudCanonicalValidationFailure::AmbiguousReplyParent,
+                "ambiguous_reply_parent",
+            ),
+        ];
+        // Enumerating every variant keeps the mapping exhaustive: a new
+        // failure variant fails to compile in `from_failure` first, and the
+        // missing row here documents the label it must receive.
+        assert_eq!(cases.len(), 16);
+        for (failure, expected) in cases {
+            assert_eq!(
+                CloudCanonicalValidationDiagnosticClass::from_failure(&failure).label(),
+                expected,
+                "diagnostic class must stay fixed for {failure:?}"
+            );
+        }
+        assert_eq!(
+            CloudCanonicalValidationDiagnosticClass::post_build_identity_binding().label(),
+            "post_build_identity_binding"
+        );
+    }
+
+    #[test]
+    fn validation_diagnostic_labels_form_a_closed_vocabulary() {
+        let labels = [
+            CloudCanonicalValidationDiagnosticClass::UnsupportedSchema.label(),
+            CloudCanonicalValidationDiagnosticClass::InvalidHash.label(),
+            CloudCanonicalValidationDiagnosticClass::InvalidProtectedReference.label(),
+            CloudCanonicalValidationDiagnosticClass::InvalidIdentifier.label(),
+            CloudCanonicalValidationDiagnosticClass::InvalidText.label(),
+            CloudCanonicalValidationDiagnosticClass::CollectionLimit.label(),
+            CloudCanonicalValidationDiagnosticClass::InvalidRange.label(),
+            CloudCanonicalValidationDiagnosticClass::InvalidPayload.label(),
+            CloudCanonicalValidationDiagnosticClass::InvalidEnvelope.label(),
+            CloudCanonicalValidationDiagnosticClass::InvalidSnapshot.label(),
+            CloudCanonicalValidationDiagnosticClass::InvalidTombstone.label(),
+            CloudCanonicalValidationDiagnosticClass::ScopeMismatch.label(),
+            CloudCanonicalValidationDiagnosticClass::MalformedAssociatedParent.label(),
+            CloudCanonicalValidationDiagnosticClass::MalformedAttachmentOwner.label(),
+            CloudCanonicalValidationDiagnosticClass::MalformedReplyParent.label(),
+            CloudCanonicalValidationDiagnosticClass::AmbiguousReplyParent.label(),
+            CloudCanonicalValidationDiagnosticClass::PostBuildIdentityBinding.label(),
+        ];
+        assert_eq!(labels.len(), 17);
+        let mut distinct = labels.to_vec();
+        distinct.sort_unstable();
+        distinct.dedup();
+        // Distinctness keeps the post-build stage marker separable from every
+        // cause class.
+        assert_eq!(distinct.len(), labels.len());
+        for label in labels {
+            assert!(
+                label
+                    .chars()
+                    .all(|character| character.is_ascii_lowercase() || character == '_'),
+                "label {label} must be a fixed snake_case token"
+            );
+        }
+    }
+
+    #[test]
+    fn validation_quarantine_outcome_is_unchanged_by_diagnostics() {
+        for failure in [
+            CloudCanonicalValidationFailure::UnsupportedSchema,
+            CloudCanonicalValidationFailure::InvalidHash,
+            CloudCanonicalValidationFailure::InvalidProtectedReference,
+            CloudCanonicalValidationFailure::InvalidIdentifier,
+            CloudCanonicalValidationFailure::InvalidText,
+            CloudCanonicalValidationFailure::CollectionLimit,
+            CloudCanonicalValidationFailure::InvalidRange,
+            CloudCanonicalValidationFailure::InvalidPayload,
+            CloudCanonicalValidationFailure::InvalidEnvelope,
+            CloudCanonicalValidationFailure::InvalidSnapshot,
+            CloudCanonicalValidationFailure::InvalidTombstone,
+            CloudCanonicalValidationFailure::ScopeMismatch,
+            CloudCanonicalValidationFailure::MalformedAssociatedParent,
+            CloudCanonicalValidationFailure::MalformedAttachmentOwner,
+            CloudCanonicalValidationFailure::MalformedReplyParent,
+            CloudCanonicalValidationFailure::AmbiguousReplyParent,
+        ] {
+            assert_eq!(
+                validation_quarantine(failure),
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::InvalidCanonicalPayload
+                )
+            );
+        }
+    }
+
+    #[test]
     fn source_remains_private_and_unwired() {
         let source = concat!(
             include_str!("cloud_sync_canonical_converter.rs"),
@@ -5477,7 +5722,6 @@ mod tests {
             concat!("print", "ln!"),
             concat!("eprint", "ln!"),
             concat!("db", "g!"),
-            concat!("log", "::"),
             concat!("tracing", "::"),
         ] {
             assert!(
@@ -5485,5 +5729,9 @@ mod tests {
                 "private converter must not contain {forbidden}"
             );
         }
+        // The validation diagnostic above is the only logging surface. Its
+        // sole call emits the fixed class label, never content or credentials.
+        assert_eq!(source.matches(concat!("log", "::")).count(), 1);
+        assert!(source.contains("validation_diagnostic_class="));
     }
 }
