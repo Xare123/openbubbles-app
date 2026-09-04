@@ -1465,3 +1465,26 @@ null-size progress fallback. The post-sync chat refresh also receives a bounded
 30-second presentation timeout so durable completion cannot leave the UI
 spinner indefinitely. Thirty-six focused Dart tests pass. Contact-profile
 download, GIF playback, and spinner completion remain signed-Canary gates.
+
+### Investigation checkpoint: unified attachment presentation qualified
+
+Exact source `eb70c9733511463ec5b305ead899151ec5aceeac` passed the complete
+32-core GCE Canary qualification in run `33852183295`. Bridge regeneration and
+drift checks, 1,501 Dart tests, 282 parent Rust tests, 198 production-feature
+rustpush tests, and 30 protector-harness tests passed. The producer package and
+required ARM64 Flutter and rustpush libraries passed inspection. GitHub-hosted
+signing verified APK Signature Schemes v2 and v3 with the expected dedicated
+Canary certificate. Runner deregistration and VM deletion both passed, and
+repository runner readback found no runner retained for the run.
+
+The signed APK is 448,498,046 bytes with SHA-256
+`1DCBE28FD862F4140646416DAF1B783DFAF5628EA41A9F7D1D9633DC7AA8532A`.
+It was installed in place with `adb install -r -d` over only
+`com.bluebubbles.messaging.cloudkitcanary`. Android retained the original
+`2026-08-23T06:15:18-07:00` first-install time and the existing nonempty
+CloudKit, Keychain, hardware-identity, and install-secret files. The upgraded
+ARM64 process started with its foreground services active and no observed
+Android, Flutter, or Rust fatal error. The device was then blocked at Android's
+secure unlock screen. Retrying the exact GIF, a contact-profile shared-photo
+download, and the bounded post-sync spinner are therefore the remaining live
+presentation gates; none is claimed passed from CI alone.
