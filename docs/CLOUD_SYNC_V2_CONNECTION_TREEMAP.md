@@ -1510,3 +1510,23 @@ including active-transfer joining, target preservation during fullscreen
 redownload, and temporary-row queue drainage. The exact contact-profile photo
 tap, GIF playback, and bounded spinner still require signed-Canary acceptance;
 these tests do not claim that user-facing gate.
+
+Exact source `e62a73297f026f3f97ea1a3161bba798dbf91c22` then passed the
+complete 32-core GCE Canary qualification in run `33856585608`: generated
+binding checks, 1,504 Dart tests, 282 parent Rust tests, 198 production-feature
+rustpush tests, 30 protector-harness tests, producer package and ARM64 native-
+library inspection, GitHub-hosted signing, runner deregistration, and VM
+deletion all passed. The signed APK is 448,502,142 bytes with SHA-256
+`55538370916DF76C15AF1C19A4B54DA3A2D62A4C48EED63ED8F4CF637210344B`.
+Local verification confirmed package
+`com.bluebubbles.messaging.cloudkitcanary`, version `1.15.0` (`20002227`), the
+dedicated Canary certificate, APK Signature Schemes v2 and v3, and the ARM64
+rustpush library.
+
+The artifact was installed in place with `adb install -r -d`. Android retained
+the original `2026-08-23 06:15:18` first-install time and nonempty CloudKit,
+Keychain, hardware-identity, and install-secret files; Alpha remained installed.
+The upgraded process started without an observed Android, Flutter, Rust,
+CloudKit, or MMCS fatal error. The device remained at its secure lock screen, so
+the contact-profile photo tap and exact GIF retry remain deliberately unclaimed
+live gates.
