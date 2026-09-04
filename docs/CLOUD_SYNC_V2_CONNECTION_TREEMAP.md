@@ -1355,8 +1355,17 @@ Message examined 150 retained rows; its overlapping counters included 65
 native-ready payloads, 40 invalid canonical senders, 25 unavailable chat
 owners, 61 malformed records, and six unsupported reaction shapes. Attachment
 examined 150 rows, with 144 native-ready payloads, six malformed records, and
-repeated missing-parent evidence. The force-stop ended the follow-on sweep; it
-did not invalidate this already durable report.
+repeated missing-parent evidence. The force-stop did not invalidate this
+already durable report. A newer schema-v6 local-projection report,
+`obcs2-semantic-1788498328390583.json`, persisted at
+`2026-09-04T05:05:28Z` and proves that the follow-on sweep also finished before
+the process was stopped. It examined and retained all 32 currently blocking
+Chat saves in one batch, 2,937 blocking Message saves in 12 batches, and 1,734
+blocking Attachment saves in seven batches. It applied zero rows, left the
+outbox at `0 -> 0`, and kept remote saves and deletes disabled. The force-stop
+therefore did not interrupt an in-flight projection transaction; the visible
+empty result is the current decoder, ownership, and dependency backlog rather
+than lost progress.
 
 The matching native Rust log narrows the opaque Message failure further without
 exposing message content. It contains 17,141 successful
@@ -1386,3 +1395,73 @@ focused tests. The parent Rust crate compiles with that correction, the
 content-free chat-shape test passes, and the new protobuf-classifier test
 passes. A full GCE build and test run remains required before installing the
 race-fixed Canary in place.
+
+Exact source `87a026b0e196f412e7e55b3bfb53039e6a5080e8` passed the complete
+32-core GCE Canary qualification in run `33842234699`, including bridge drift,
+the full Dart and Rust suites, production-feature rustpush tests, native-library
+verification, GitHub-hosted signing, runner deregistration, and VM deletion.
+The signed APK was installed in place without changing Canary's first-install
+time, signing identity, retained reports, ObjectBox store, protected native
+store, profile, hardware identity, or CloudKit credentials. Alpha remained
+untouched.
+
+The resulting catch-up first persisted all-zone terminal-empty report
+`obcs2-semantic-1788503467147086.json` at `2026-09-04T06:31:07Z`, then
+completed the exact retained-projection sweep and persisted
+`obcs2-semantic-1788504605483791.json` at `2026-09-04T06:50:05Z`. The sweep
+took about 19 minutes: 6.8 seconds for Chat, 680.6 seconds for Message, and
+450.2 seconds for Attachment. It examined and retained all 32 eligible Chat
+saves, 2,937 Message saves, and 1,734 Attachment saves. No row was applied,
+the outbox remained `0 -> 0`, and every remote-save, remote-delete, and
+tombstone-semantic-delete switch remained false. CPU fell from more than one
+core during the sweep to 0.3 percent after report persistence, proving the long
+foreground indicator represented bounded work and then became stale UI state,
+not a continuing sync.
+
+This complete sweep converts two hypotheses into exact decoder work. All 29
+blocking Chat property failures decrypted to zero bytes. `CloudChat.properties`
+is optional, and the legacy `CloudKitBytes` decoder maps decrypted empty bytes
+to `None`; V2 alone attempted to parse those bytes as a plist. The pending
+compatibility candidate removes only an empty decrypted optional `prop` from
+the locally decoded record, rebuilds effective raw presence so canonical
+conversion sees absence, and leaves nonempty malformed properties fail-closed.
+It never mutates the protected envelope or broadens any required field.
+
+The first sampled pass emitted 16 fixed `message_proto` wire-type mismatches;
+the complete sweep added 189, exactly matching its 189
+`native_failure_malformed_record` outcomes. These failures occur after valid
+PCS decryption and bounded gzip inflation, so changing transport or retry policy
+cannot resolve them. The pending diagnostic candidate walks only top-level
+protobuf tags, skips unknown fields by their actual wire type, and reports the
+first schema-known mismatch as fixed stage, field number, expected wire type,
+and actual wire type. It emits no values, bytes, lengths, identifiers, raw
+errors, or message text and leaves the malformed disposition unchanged. The
+protobuf schema will not change until this metadata identifies the exact live
+field.
+
+User validation on the exact `87a026b0e196f412e7e55b3bfb53039e6a5080e8`
+Canary then passed the first Android attachment-body presentation gate: still
+photos downloaded and rendered in message threads. One GIF failed before
+Flutter rendering. The native log fixed the failure at
+`requested-file-match` inside preauthorized MMCS response validation. CloudKit
+had returned the explicitly requested checksum together with an unrequested
+sibling asset reference in the same authorization response. The legacy matcher
+already selects only requested files, but the closed V2 prevalidator rejected
+the sibling before reaching the requested reference.
+
+The pending rustpush compatibility patch now shape-validates every bundled
+reference, ignores only structurally valid unrequested siblings, still requires
+every requested checksum exactly once, preserves Ford-key binding, and reduces
+network source chunks to the requested chunk-ID set. Three focused Rust tests
+pass, including a distinct sibling chunk and malformed sibling Ford index. A
+signed Android retry of that exact GIF remains the live acceptance gate.
+
+The contact-details media gallery was a separate presentation fork. Unlike the
+in-thread attachment holder, it treated only in-memory bytes as local, force-
+unwrapped optional CloudKit filename and size metadata, and did not reuse the
+shared prioritized retry queue. The pending Dart patch gives both paths the
+same nonempty-file gate, safe metadata fallbacks, failed-controller retry, and
+null-size progress fallback. The post-sync chat refresh also receives a bounded
+30-second presentation timeout so durable completion cannot leave the UI
+spinner indefinitely. Thirty-six focused Dart tests pass. Contact-profile
+download, GIF playback, and spinner completion remain signed-Canary gates.

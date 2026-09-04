@@ -412,12 +412,12 @@ void main() {
       'runCloudSyncV2AutomaticSemanticCatchUpConfirmed()',
     );
     final chatOrderRepair = semantic.indexOf(
-      'await repairCloudSyncChatLatestMessageDates();',
+      'repairCloudSyncChatLatestMessageDates()',
       semanticRun,
     );
     final chatRefresh = semantic.indexOf(
-      'await chats.init(force: true);',
-      semanticRun,
+      '.init(force: true)',
+      chatOrderRepair,
     );
     final semanticPresentation = semantic.indexOf(
       'cloudSyncV2SemanticCanaryPresentation(',
@@ -427,6 +427,14 @@ void main() {
     expect(chatOrderRepair, greaterThan(semanticRun));
     expect(chatRefresh, greaterThan(chatOrderRepair));
     expect(semanticPresentation, greaterThan(chatRefresh));
+    expect(
+      semantic.substring(chatOrderRepair, chatRefresh),
+      contains('.timeout(const Duration(seconds: 30))'),
+    );
+    expect(
+      semantic.substring(chatRefresh, semanticPresentation),
+      contains('.timeout(const Duration(seconds: 30))'),
+    );
     expect(semantic, contains('Chat list refreshed.'));
     expect(
       semantic,

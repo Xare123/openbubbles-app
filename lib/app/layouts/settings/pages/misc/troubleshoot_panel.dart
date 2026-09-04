@@ -1061,7 +1061,8 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                   "Chat list refreshed.";
                               try {
                                 final repairedChatOrderRows =
-                                    await repairCloudSyncChatLatestMessageDates();
+                                    await repairCloudSyncChatLatestMessageDates()
+                                        .timeout(const Duration(seconds: 30));
                                 Logger.info(
                                   "Cloud Sync V2 local chat ordering cache repaired rows=$repairedChatOrderRows",
                                 );
@@ -1070,7 +1071,9 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                 // for a multi-chat transaction. A semantic pull can make
                                 // exactly that transition, so refresh the presentation
                                 // once after the durable pull has completed.
-                                await chats.init(force: true);
+                                await chats
+                                    .init(force: true)
+                                    .timeout(const Duration(seconds: 30));
                               } catch (error) {
                                 final safeCode = cloudSyncV2SafeFailureCode(error);
                                 Logger.warn(
