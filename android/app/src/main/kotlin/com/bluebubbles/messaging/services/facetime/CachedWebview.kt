@@ -74,6 +74,20 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             }
             append('"')
         }
+        /**
+         * True when the parsed URL path last segment is exactly main.js.
+         *
+         * Query and fragment suffixes are stripped before comparison so
+         * versioned URLs (main.js?v=...) stay intercepted, while hashed or
+         * unrelated scripts (main.abc123.js, main.js.map) stay untouched.
+         */
+        internal fun isMainJsUrl(url: String?): Boolean {
+            if (url.isNullOrEmpty()) return false
+            val withoutFragment = url.substringBefore('#')
+            val withoutQuery = withoutFragment.substringBefore('?')
+            val lastSegment = withoutQuery.substringAfterLast('/')
+            return lastSegment == "main.js"
+        }
     }
 
     val webView = WebView(context)
@@ -316,7 +330,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 if (request == null) return null
-                if (!request.url.toString().endsWith("main.js")) {
+                if (!CachedWebview.isMainJsUrl(request.url.toString())) {
                     if (diagnosticsEnabled() && request.url.lastPathSegment == "main.js") {
                         Log.w(diagnosticTag, "main.js candidate was not intercepted because its URL has a suffix")
                     }
