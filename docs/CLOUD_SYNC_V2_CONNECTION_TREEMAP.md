@@ -1270,3 +1270,90 @@ semantic reader, while IDS does not. The attachment synchronization gate now
 waits for the exact active semantic pull for `cloudSyncV2` and
 `legacyCloudKit`; IDS and unavailable lanes remain independent. Cloud
 qualification and a fresh in-pull attachment acceptance check remain pending.
+
+The replacement attachment-coordination source
+`5bc55262a881d8a1923a717c3773b8130a7c094b` passed the full GCE Canary
+qualification in run `33821744950`. The 32-core build job completed in 22
+minutes 39 seconds, GitHub-hosted signing and verification completed in 54
+seconds, and runner deletion completed in 1 minute 51 seconds. Independent
+post-run readback found zero registered repository runners and zero GCE
+instances. The signed APK is 448,444,798 bytes with SHA-256
+`405E65D98392D83ACF8BEB5C8EBFBF74B08D0933912A899CC3FB03965C05532C` and
+contains the required ARM64 Flutter, ObjectBox, and rustpush libraries.
+
+The exact installed `447b513ac142ab3e142ca6946129fcaffaa4d86f`
+device run first persisted an all-zone terminal-empty remote report at
+`2026-09-04T00:15:22.232604Z`. It reported 505 retained Chat records, 8,864
+retained Message records, and 1,853 retained Attachment records while keeping
+the outbox `0 -> 0` and every remote save, delete, and tombstone-semantic-delete
+switch false. Its local retained-projection report then persisted successfully
+at `2026-09-04T01:01:15.950030Z`, proving that the batch-scaled duration guard
+accepts a real large-history sweep without weakening any count or tripwire
+invariant. The report retained exact three-zone structure and every zone
+satisfied `projectionExamined == applied + projectionRetained`.
+
+That sweep did not newly apply a canonical row. Chats examined and retained 32
+blocking saves in one batch; Messages examined and retained 6,003 rows in 24
+batches; Attachments examined and retained 1,734 rows in seven batches. The
+typed backlog summary now separates 5,825 durable out-of-scope SMS/RCS-family
+records from 4,703 blocking iMessage-relevant saves: 32 Chats, 2,937 Messages,
+and 1,734 Attachments. This makes the next critical path local and explicit.
+Transport is at the CloudKit head; projection must resolve the remaining
+malformed Chat shapes, Message chat/sender ownership failures, and Attachment
+parent/legacy-ownership failures before another full sweep can materially
+reduce debt.
+
+The signed `5bc55262a881d8a1923a717c3773b8130a7c094b` APK was then installed
+in place over Canary with `adb install -r -d`. Android preserved the original
+first-install time and signing identity, all 20 retained reports, the
+109,051,904-byte ObjectBox store, all 47,361 protected native-store files, and
+the nonempty profile, hardware identity, read-authentication, CloudKit, and
+keychain files. Alpha's install/update times and signing identity remained
+unchanged. Fresh startup reached the Messages route with no observed crash,
+ANR, `not yet implemented`, unique-violation, interlock-busy, attachment-fetch,
+or native writer-pause marker. A recent-photo retry and an attachment request
+held across an active semantic pull remain the user-facing acceptance gates.
+
+### Investigation checkpoint: identity maintenance interrupted projection
+
+The next diagnostic run proved that the apparent semantic stall was not a
+decoder deadlock. Chat completed normally, Message records continued decoding,
+and then the troubleshooting UI invoked IDS reregistration while the semantic
+session was still active. Registration failed with Apple status 6005. That
+failure entered account teardown from another Flutter engine in the same
+Android process, nulled the account state, and disposed shared Rust resources
+under the protected read. The resulting `Resource has been closed` and writer-
+pause errors were consequences of that teardown, not malformed CloudKit data.
+That first interrupted run persisted no completion report and issued no CloudKit
+save, delete, or local message deletion.
+
+The original teardown guard tracked only futures owned by one
+`RustPushService` instance, so it could not see work owned by another Dart
+isolate. Identity-cache clear, peer-cache invalidation, manual and relay-health
+reregistration, explicit account reset, and service-close disposal now share
+the existing profile-wide operation interlock. Active semantic work and
+identity maintenance
+exclude each other in both directions across isolates; account reset acquires
+the destructive-reset lease before detaching state; a registration failure
+during protected work defers teardown instead of releasing native handles.
+All profile and troubleshooting UI entry points route through those guarded
+service methods and display only allowlisted failure codes. The focused
+two-isolate and production-composition suite passes 39 tests. A signed Android
+rerun remains required to prove that an accidental identity action reports
+busy while the pull completes and persists its diagnostic report.
+
+A subsequent resync on the same installed build persisted schema-v6 report
+`obcs2-semantic-1788497098780904.json` at `2026-09-04T04:44:58Z` before the
+operator force-stopped the app. All three zones again recorded terminal empty
+server reads, the outbox remained `0 -> 0`, and remote saves and deletes stayed
+disabled. The report was correctly degraded rather than successful because
+local retained projection is incomplete: 505 Chats, 8,864 Messages, and 1,853
+Attachments remain retained. Its bounded diagnostic sample isolated the next
+work without recording content. Chat examined 32 blocking saves and classified
+29 as malformed nested property plists plus three unsupported services.
+Message examined 150 retained rows; its overlapping counters included 65
+native-ready payloads, 40 invalid canonical senders, 25 unavailable chat
+owners, 61 malformed records, and six unsupported reaction shapes. Attachment
+examined 150 rows, with 144 native-ready payloads, six malformed records, and
+repeated missing-parent evidence. The force-stop ended the follow-on sweep; it
+did not invalidate this already durable report.
