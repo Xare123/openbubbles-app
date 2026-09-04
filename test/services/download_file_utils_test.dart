@@ -79,4 +79,30 @@ void main() {
     );
     expect(await target.exists(), isFalse);
   });
+
+  test('promotes a backend-written source file to the destination', () async {
+    final source = File(
+      '${tempDirectory.path}${Platform.pathSeparator}staging${Platform.pathSeparator}photo.jpg',
+    );
+    await source.create(recursive: true);
+    await source.writeAsBytes(<int>[7, 7, 7, 7], flush: true);
+    final target = File(
+      '${tempDirectory.path}${Platform.pathSeparator}attachments${Platform.pathSeparator}photo.jpg',
+    );
+
+    final result = await materializeDownloadedFile(
+      targetPath: target.path,
+      sourcePath: source.path,
+    );
+
+    expect(result.path, target.path);
+    expect(await target.readAsBytes(), <int>[7, 7, 7, 7]);
+    expect(
+      tempDirectory
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.part')),
+      isEmpty,
+    );
+  });
 }
