@@ -28,6 +28,20 @@ import 'package:video_thumbnail/video_thumbnail.dart';
 AttachmentsService as =
     Get.isRegistered<AttachmentsService>() ? Get.find<AttachmentsService>() : Get.put(AttachmentsService());
 
+// Local-file gate for AttachmentsService.getContent.
+// A zero-byte (or missing/unreadable) path must not count as downloaded;
+// otherwise the UI would render an empty file as complete and never offer
+// retry or auto-download.
+bool isUsableDownloadedAttachmentFile(String? path) {
+  if (path == null || path.isEmpty) return false;
+  try {
+    final file = File(path);
+    return file.existsSync() && file.lengthSync() > 0;
+  } catch (_) {
+    return false;
+  }
+}
+
 class AttachmentsService extends GetxService {
   dynamic getContent(Attachment attachment,
       {String? path, bool? autoDownload, Function(PlatformFile)? onComplete, bool forExtension = false}) {
@@ -65,7 +79,7 @@ class AttachmentsService extends GetxService {
       var controller = attachmentDownloader.getController(attachment.guid)!;
       if (onComplete != null) controller.completeFuncs.add(onComplete);
       return controller;
-    } else if (File(pathName).existsSync()) {
+    } else if (isUsableDownloadedAttachmentFile(pathName)) {
       return PlatformFile(
         name: attachment.transferName!,
         path: pathName,

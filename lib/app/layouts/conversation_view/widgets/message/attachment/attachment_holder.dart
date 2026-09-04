@@ -21,6 +21,13 @@ import 'package:intl/intl.dart';
 import 'package:tuple/tuple.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 
+// Attachment-holder download-controller policy.
+// AttachmentDownloadController.error is an RxBool, so testing
+// content.error != null is always true. Inspect error.value instead:
+// an active controller stays attached, while a failed controller is
+// re-resolved once without auto-starting another download.
+bool shouldKeepAttachmentDownloadController({required bool hasError}) => !hasError;
+
 class AttachmentHolder extends CustomStateful<MessageWidgetController> {
   AttachmentHolder({
     super.key,
@@ -75,7 +82,23 @@ class _AttachmentHolderState extends CustomState<AttachmentHolder, void, Message
 
   void updateContent() async {
     try {
-      if (content is AttachmentDownloadController && content.error != null) return;
+      if (content is AttachmentDownloadController) {
+        final AttachmentDownloadController current = content;
+        if (shouldKeepAttachmentDownloadController(hasError: current.error.value)) return;
+        // Failed controller: re-resolve once without auto-starting a new
+        // download. A newly materialized file surfaces as PlatformFile;
+        // otherwise the holder falls back to Attachment and retry stays
+        // explicit via tap-to-retry.
+        final resolved = as.getContent(attachment, onComplete: onComplete, autoDownload: false);
+        if (mounted) {
+          setState(() {
+            content = resolved;
+          });
+        } else {
+          content = resolved;
+        }
+        return;
+      }
     } catch (ex) { /* lateInitializationException */ }
     content = as.getContent(attachment, onComplete: onComplete);
     // If we can download it, do so
