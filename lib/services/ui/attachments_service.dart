@@ -80,7 +80,7 @@ class AttachmentsService extends GetxService {
     }
     if (kIsWeb || (attachment.guid == null && attachment.bytes != null)) {
       if (attachment.bytes == null && (autoDownload ?? ss.settings.autoDownload.value)) {
-        return attachmentDownloader.startDownload(attachment, onComplete: onComplete);
+        return attachmentDownloader.getOrStartDownload(attachment, onComplete: onComplete);
       } else {
         return PlatformFile(
           name: safeAttachmentTransferName(attachment),
@@ -94,7 +94,9 @@ class AttachmentsService extends GetxService {
     final pathName = path ?? attachment.path;
     if (attachmentDownloader.getController(attachment.guid) != null) {
       var controller = attachmentDownloader.getController(attachment.guid)!;
-      if (onComplete != null) controller.completeFuncs.add(onComplete);
+      if (onComplete != null && !controller.completeFuncs.contains(onComplete)) {
+        controller.completeFuncs.add(onComplete);
+      }
       return controller;
     } else if (isUsableDownloadedAttachmentFile(pathName)) {
       return PlatformFile(
@@ -103,7 +105,7 @@ class AttachmentsService extends GetxService {
         size: attachment.totalBytes ?? 0,
       );
     } else if (autoDownload ?? ss.settings.autoDownload.value) {
-      return attachmentDownloader.startDownload(attachment, onComplete: onComplete);
+      return attachmentDownloader.getOrStartDownload(attachment, onComplete: onComplete);
     } else {
       return attachment;
     }
@@ -329,6 +331,17 @@ class AttachmentsService extends GetxService {
 
   Future<void> redownloadAttachment(Attachment attachment,
       {Function(PlatformFile)? onComplete, Function()? onError}) async {
+    final active = attachmentDownloader.getController(attachment.guid);
+    if (active != null && !active.error.value) {
+      attachmentDownloader.getOrStartDownload(
+        attachment,
+        onComplete: onComplete,
+        onError: onError,
+        prioritized: true,
+      );
+      return;
+    }
+
     if (!kIsWeb) {
       final file = File(attachment.path);
       final pngFile = File(attachment.convertedPath);
@@ -345,10 +358,17 @@ class AttachmentsService extends GetxService {
       } catch (_) {}
     }
 
-    Get.put(
-        AttachmentDownloadController(
-            attachment: attachment, onComplete: (file) => onComplete?.call(file), onError: onError),
-        tag: attachment.guid);
+    try {
+      attachmentDownloader.getOrStartDownload(
+        attachment,
+        onComplete: onComplete,
+        onError: onError,
+        prioritized: true,
+      );
+    } catch (error, trace) {
+      Logger.error("Unable to start attachment redownload", error: error, trace: trace);
+      onError?.call();
+    }
   }
 
   Future<Size> getImageSizing(String filePath, Attachment attachment) async {

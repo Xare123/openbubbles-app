@@ -26,12 +26,38 @@ class AttachmentDownloadService extends GetxService {
 
   AttachmentDownloadController startDownload(Attachment a,
       {Function(PlatformFile)? onComplete, Function? onError, bool prioritized = false}) {
+    final guid = a.guid;
+    if (guid == null || guid.isEmpty) {
+      throw ArgumentError.value(guid, 'attachment.guid', 'A download requires a stable attachment GUID');
+    }
     return Get.put(AttachmentDownloadController(
       attachment: a,
       onComplete: onComplete,
       onError: onError,
       prioritized: prioritized,
-    ), tag: a.guid!);
+    ), tag: guid);
+  }
+
+  AttachmentDownloadController getOrStartDownload(Attachment attachment,
+      {Function(PlatformFile)? onComplete, Function? onError, bool prioritized = false}) {
+    final existing = getController(attachment.guid);
+    if (existing == null) {
+      return startDownload(
+        attachment,
+        onComplete: onComplete,
+        onError: onError,
+        prioritized: prioritized,
+      );
+    }
+
+    if (onComplete != null && !existing.completeFuncs.contains(onComplete)) {
+      existing.completeFuncs.add(onComplete);
+    }
+    if (onError != null && !existing.errorFuncs.contains(onError)) {
+      existing.errorFuncs.add(onError);
+    }
+    if (prioritized) prioritize(existing);
+    return existing;
   }
 
   void _addToQueue(AttachmentDownloadController downloader) {
@@ -125,7 +151,20 @@ class AttachmentDownloadController extends GetxController {
   }
 
   Future<void> fetchAttachment() async {
-    if (attachment.guid == null || attachment.guid!.contains("temp")) return;
+    if (attachment.guid!.contains("temp")) {
+      // onInit runs while Get.put is registering this controller. Defer its
+      // removal so a temporary row cannot corrupt GetX state or remain queued.
+      await Future<void>.delayed(Duration.zero);
+      error.value = true;
+      try {
+        for (Function f in List<Function>.of(errorFuncs)) {
+          f.call();
+        }
+      } finally {
+        attachmentDownloader._removeFromQueue(this);
+      }
+      return;
+    }
     isFetching = true;
     stopwatch.start();
     PlatformFile response;
@@ -181,13 +220,15 @@ class AttachmentDownloadController extends GetxController {
       // So what if it crashes here.... I don't care...
     }
 
-    // Finish the downloader
-    attachmentDownloader._removeFromQueue(this);
-    // Add attachment to sink based on if we got data
-
+    // Notify every view sharing this download before GetX disposes the
+    // controller, so late subscribers receive the materialized local path.
     file.value = response;
-    for (Function f in completeFuncs) {
-      f.call(file.value);
+    try {
+      for (Function f in List<Function(PlatformFile)>.of(completeFuncs)) {
+        f.call(response);
+      }
+    } finally {
+      attachmentDownloader._removeFromQueue(this);
     }
     if (ss.settings.autoSave.value
         && !kIsWeb

@@ -216,12 +216,16 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
                   return IconButton(
                     icon: Icon(iOS ? CupertinoIcons.cloud_download : Icons.file_download,
                         color: context.theme.colorScheme.onBackground),
-                    onPressed: () {
+                    onPressed: () async {
                       final attachments = media.where((e) => selected.contains(e.guid!));
                       for (Attachment a in attachments) {
-                        final file = as.getContent(a, autoDownload: false);
+                        final file = as.getContent(a, autoDownload: true, onComplete: (downloaded) {
+                          unawaited(as.saveToDisk(downloaded));
+                        });
                         if (file is PlatformFile) {
-                          as.saveToDisk(file);
+                          await as.saveToDisk(file);
+                        } else if (file is AttachmentDownloadController) {
+                          attachmentDownloader.prioritize(file);
                         }
                       }
                     },

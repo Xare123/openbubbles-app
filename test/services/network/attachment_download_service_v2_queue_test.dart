@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bluebubbles/database/models.dart';
-import 'package:bluebubbles/services/backend/filesystem/filesystem_service.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
-import 'package:bluebubbles/services/network/downloads_service.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
+import 'package:bluebubbles/services/services.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
@@ -18,6 +18,8 @@ void main() {
   setUp(() async {
     Get.testMode = true;
     Get.reset();
+    ss.settings = Settings();
+    ss.settings.autoSave.value = false;
     testRoot = await Directory.systemTemp.createTemp(
       'attachment-download-service-v2-queue-',
     );
@@ -70,6 +72,62 @@ void main() {
     expect(controller.progress.value, 0.5);
     fakeBackend.failCall(0);
     await _waitUntil(() => service.downloaders.isEmpty);
+  });
+
+  test('a profile gallery can join one in-flight download', () async {
+    final attachment = _attachment('v2-profile-shared-download', _v2Metadata());
+    final original = service.getOrStartDownload(attachment);
+    PlatformFile? completed;
+
+    final joined = service.getOrStartDownload(
+      attachment,
+      onComplete: (file) => completed = file,
+      prioritized: true,
+    );
+
+    expect(identical(joined, original), isTrue);
+    expect(fakeBackend.calledGuids, <String>['v2-profile-shared-download']);
+
+    fakeBackend.succeedCall(0, <int>[1, 2, 3, 4]);
+    await _waitUntil(() => completed != null);
+    await _waitUntil(() => service.downloaders.isEmpty);
+
+    expect(completed!.path, attachment.path);
+    expect(await File(attachment.path).readAsBytes(), <int>[1, 2, 3, 4]);
+    expect(service.getController(attachment.guid), isNull);
+  });
+
+  test('fullscreen redownload joins the active transfer without deleting its target', () async {
+    final attachment = _attachment('v2-fullscreen-redownload', _v2Metadata());
+    final target = File(attachment.path);
+    await target.create(recursive: true);
+    await target.writeAsBytes(<int>[9, 9, 9], flush: true);
+    service.startDownload(attachment);
+    PlatformFile? completed;
+
+    await AttachmentsService().redownloadAttachment(
+      attachment,
+      onComplete: (file) => completed = file,
+    );
+
+    expect(fakeBackend.calledGuids, <String>['v2-fullscreen-redownload']);
+    expect(await target.readAsBytes(), <int>[9, 9, 9]);
+    fakeBackend.succeedCall(0, <int>[4, 3, 2, 1]);
+    await _waitUntil(() => completed != null);
+    await _waitUntil(() => service.downloaders.isEmpty);
+    expect(await target.readAsBytes(), <int>[4, 3, 2, 1]);
+  });
+
+  test('a temporary attachment cannot strand the shared queue', () async {
+    final attachment = _attachment('temp-profile-download', _v2Metadata());
+    var failed = false;
+
+    service.startDownload(attachment, onError: () => failed = true);
+    await _waitUntil(() => service.downloaders.isEmpty);
+
+    expect(failed, isTrue);
+    expect(fakeBackend.calledGuids, isEmpty);
+    expect(service.getController(attachment.guid), isNull);
   });
 
   test('legacy download can run beside one active V2 download', () async {
@@ -244,6 +302,17 @@ final class _ControlledBackend implements BackendService {
     final call = _calls[index];
     if (!call.isCompleted) {
       call.completeError(StateError('synthetic download failure'));
+    }
+  }
+
+  void succeedCall(int index, List<int> bytes) {
+    final call = _calls[index];
+    if (!call.isCompleted) {
+      call.complete(PlatformFile(
+        name: 'attachment.bin',
+        size: bytes.length,
+        bytes: Uint8List.fromList(bytes),
+      ));
     }
   }
 

@@ -32,6 +32,8 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
   AttachmentDownloadController? controller;
   bool localFileAvailable = false;
   String? galleryThumbnailPath;
+  late final void Function(PlatformFile) _downloadComplete;
+  late final void Function() _downloadFailed;
   late PlatformFile attachmentFile = PlatformFile(
     name: safeAttachmentTransferName(attachment),
     path: kIsWeb ? null : attachment.path,
@@ -44,6 +46,8 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
   @override
   void initState() {
     super.initState();
+    _downloadComplete = _handleDownloadComplete;
+    _downloadFailed = _handleDownloadFailed;
     bool usableFile = false;
     try {
       usableFile = !kIsWeb && isUsableDownloadedAttachmentFile(attachment.path);
@@ -53,69 +57,56 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
     // check active downloader otherwise check file exists
     if (attachmentDownloader.getController(attachment.guid) != null) {
       controller = attachmentDownloader.getController(attachment.guid);
-      controller!.completeFuncs.add((file) {
-        if (!mounted) return;
-        setState(() {
-          controller = null;
-          attachmentFile = file;
-          localFileAvailable = isUsableDownloadedPlatformFile(file);
-        });
-        if (attachment.mimeType?.contains("video") ?? false) {
-          getVideoPreview(file);
-        } else if (attachment.mimeStart == 'image') {
-          getBytes();
-        }
-      });
-      controller!.errorFuncs.add(() {
-        if (!mounted) return;
-        setState(() {
-          controller = null;
-        });
-      });
+      _subscribeTo(controller!);
     } else if (!kIsWeb) {
       getBytes();
     }
   }
 
+  void _subscribeTo(AttachmentDownloadController target) {
+    if (!target.completeFuncs.contains(_downloadComplete)) {
+      target.completeFuncs.add(_downloadComplete);
+    }
+    if (!target.errorFuncs.contains(_downloadFailed)) {
+      target.errorFuncs.add(_downloadFailed);
+    }
+  }
+
+  void _handleDownloadComplete(PlatformFile file) {
+    if (!mounted) return;
+    setState(() {
+      controller = null;
+      attachmentFile = file;
+      localFileAvailable = isUsableDownloadedPlatformFile(file);
+    });
+    if (attachment.mimeType?.contains("video") ?? false) {
+      getVideoPreview(file);
+    } else if (attachment.mimeStart == 'image') {
+      getBytes();
+    }
+  }
+
+  void _handleDownloadFailed() {
+    if (!mounted) return;
+    setState(() {
+      controller = null;
+    });
+    showSnackbar("Error", "Failed to download attachment!");
+  }
+
   void downloadAttachment() {
-    final active = controller ?? attachmentDownloader.getController(attachment.guid);
-    if (active != null) {
-      if (!active.error.value) {
-        if (controller == null && mounted) {
-          setState(() {
-            controller = active;
-          });
-        }
-        attachmentDownloader.prioritize(active);
-        return;
-      }
+    if (controller?.error.value ?? false) {
+      controller = null;
       Get.delete<AttachmentDownloadController>(tag: attachment.guid);
     }
+    final next = attachmentDownloader.getOrStartDownload(
+      attachment,
+      onComplete: _downloadComplete,
+      onError: _downloadFailed,
+      prioritized: true,
+    );
     setState(() {
-      controller = attachmentDownloader.startDownload(
-        attachment,
-        onComplete: (file) {
-          if (!mounted) return;
-          setState(() {
-            controller = null;
-            attachmentFile = file;
-            localFileAvailable = isUsableDownloadedPlatformFile(file);
-          });
-          if (attachment.mimeType?.contains("video") ?? false) {
-            getVideoPreview(file);
-          } else if (attachment.mimeStart == 'image') {
-            getBytes();
-          }
-        },
-        onError: () {
-          if (!mounted) return;
-          setState(() {
-            controller = null;
-          });
-          showSnackbar("Error", "Failed to download attachment!");
-        },
-        prioritized: true,
-      );
+      controller = next;
     });
   }
 
