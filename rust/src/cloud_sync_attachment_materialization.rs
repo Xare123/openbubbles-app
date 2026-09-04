@@ -17,6 +17,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+#[cfg(any(target_os = "android", target_os = "linux"))]
+use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
+
 use futures::FutureExt as _;
 use prost::Message as _;
 use rustpush::{
@@ -214,6 +217,73 @@ impl Drop for TemporaryAttachmentFile {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TemporaryFilePromotion {
+    Promoted,
+    DestinationExists,
+}
+
+/// Atomically moves one fully verified temporary file into place without
+/// replacing an existing destination.
+///
+/// Android app-data policies can reject hard links even between directories
+/// owned by the same application. Linux and Android therefore use
+/// `renameat2(RENAME_NOREPLACE)`, which preserves the original no-overwrite
+/// contract without depending on hard-link support. Other platforms retain
+/// the link-and-unlink implementation used before this Android repair.
+fn promote_temporary_file_without_overwrite(
+    source: &Path,
+    destination: &Path,
+) -> Result<TemporaryFilePromotion, CloudNativeAttachmentMaterializationFailure> {
+    #[cfg(any(target_os = "android", target_os = "linux"))]
+    {
+        let source = CString::new(source.as_os_str().as_bytes())
+            .map_err(|_| CloudNativeAttachmentMaterializationFailure::LocalStorage)?;
+        let destination = CString::new(destination.as_os_str().as_bytes())
+            .map_err(|_| CloudNativeAttachmentMaterializationFailure::LocalStorage)?;
+        // SAFETY: both C strings are owned for the duration of the call. The
+        // directory descriptors are fixed `AT_FDCWD` values, and
+        // `RENAME_NOREPLACE` prevents replacement of an existing path.
+        // Android's libc `renameat2` wrapper is API 30+, while OpenBubbles
+        // supports API 24. Calling the Linux syscall directly avoids raising
+        // the app minimum and remains available on the supported kernels.
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_renameat2 as libc::c_long,
+                libc::AT_FDCWD,
+                source.as_ptr(),
+                libc::AT_FDCWD,
+                destination.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if result == 0 {
+            return Ok(TemporaryFilePromotion::Promoted);
+        }
+        let error = io::Error::last_os_error();
+        return if error.kind() == io::ErrorKind::AlreadyExists {
+            Ok(TemporaryFilePromotion::DestinationExists)
+        } else {
+            Err(CloudNativeAttachmentMaterializationFailure::LocalStorage)
+        };
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "linux")))]
+    {
+        match fs::hard_link(source, destination) {
+            Ok(()) => {
+                fs::remove_file(source)
+                    .map_err(|_| CloudNativeAttachmentMaterializationFailure::LocalStorage)?;
+                Ok(TemporaryFilePromotion::Promoted)
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                Ok(TemporaryFilePromotion::DestinationExists)
+            }
+            Err(_) => Err(CloudNativeAttachmentMaterializationFailure::LocalStorage),
+        }
+    }
+}
+
 fn attachment_root(
     storage_directory: &Path,
 ) -> Result<PathBuf, CloudNativeAttachmentMaterializationFailure> {
@@ -320,17 +390,14 @@ fn ensure_app_attachment_file(
 
     let created_destination = match fs::hard_link(verified_cache_body, &destination) {
         Ok(()) => true,
-        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
-            copy_app_attachment_file_without_overwrite(
-                verified_cache_body,
-                &destination,
-                &attachment_directory,
-                expected_bytes,
-                &verified_sha256,
-            )?
-        }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
-        Err(_) => return Err(CloudNativeAttachmentMaterializationFailure::LocalStorage),
+        Err(_) => copy_app_attachment_file_without_overwrite(
+            verified_cache_body,
+            &destination,
+            &attachment_directory,
+            expected_bytes,
+            &verified_sha256,
+        )?,
     };
     sync_directory(&attachment_directory)?;
     let verified = regular_cache_file_metadata(&destination)?
@@ -392,14 +459,19 @@ fn copy_app_attachment_file_without_overwrite(
         return Err(CloudNativeAttachmentMaterializationFailure::IntegrityMismatch);
     }
 
-    let created_destination = match fs::hard_link(&temporary, destination) {
-        Ok(()) => true,
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
-        Err(_) => return Err(CloudNativeAttachmentMaterializationFailure::LocalStorage),
-    };
-    fs::remove_file(&temporary)
-        .map_err(|_| CloudNativeAttachmentMaterializationFailure::LocalStorage)?;
-    temporary_guard.commit();
+    let created_destination =
+        match promote_temporary_file_without_overwrite(&temporary, destination)? {
+            TemporaryFilePromotion::Promoted => {
+                temporary_guard.commit();
+                true
+            }
+            TemporaryFilePromotion::DestinationExists => {
+                fs::remove_file(&temporary)
+                    .map_err(|_| CloudNativeAttachmentMaterializationFailure::LocalStorage)?;
+                temporary_guard.commit();
+                false
+            }
+        };
     sync_directory(attachment_directory)?;
     Ok(created_destination)
 }
@@ -810,6 +882,28 @@ fn reclaim_source_partials(
     Ok(())
 }
 
+fn verify_existing_cache_and_discard_temporaries(
+    temporary: &Path,
+    temporary_manifest: &Path,
+    final_body: &Path,
+    final_manifest: &Path,
+    source_version_hash: &str,
+    expected_bytes: u64,
+) -> Result<u64, CloudNativeAttachmentMaterializationFailure> {
+    let bytes = verify_cached_body(
+        final_body,
+        final_manifest,
+        source_version_hash,
+        expected_bytes,
+    )?
+    .ok_or(CloudNativeAttachmentMaterializationFailure::IntegrityMismatch)?;
+    // Successful reuse must consume the fresh deterministic partials before
+    // the caller commits their guards. Otherwise every cache race or restart
+    // recovery leaves a `.partial` pair behind until the next invocation.
+    remove_completed_cache_pair(temporary, temporary_manifest)?;
+    Ok(bytes)
+}
+
 fn verify_or_place_temp(
     temporary: &Path,
     temporary_manifest: &Path,
@@ -841,13 +935,14 @@ fn verify_or_place_temp(
     let final_manifest_metadata = regular_cache_file_metadata(final_manifest)?;
     match (final_body_metadata, final_manifest_metadata) {
         (Some(_), Some(_)) => {
-            return verify_cached_body(
+            return verify_existing_cache_and_discard_temporaries(
+                temporary,
+                temporary_manifest,
                 final_body,
                 final_manifest,
                 source_version_hash,
                 expected_bytes,
-            )?
-            .ok_or(CloudNativeAttachmentMaterializationFailure::IntegrityMismatch)
+            )
         }
         (Some(metadata), None) => {
             // Crash recovery: the body link was made only after MMCS integrity
@@ -857,53 +952,56 @@ fn verify_or_place_temp(
             let matches_fresh_body =
                 metadata.len() == expected_bytes && sha256_file(final_body)? == body_sha256;
             if matches_fresh_body {
-                fs::hard_link(temporary_manifest, final_manifest)
-                    .map_err(|_| CloudNativeAttachmentMaterializationFailure::LocalStorage)?;
-                fs::remove_file(temporary)
-                    .and_then(|()| fs::remove_file(temporary_manifest))
-                    .map_err(|_| CloudNativeAttachmentMaterializationFailure::LocalStorage)?;
-                sync_directory(
-                    final_body
-                        .parent()
-                        .ok_or(CloudNativeAttachmentMaterializationFailure::LocalStorage)?,
-                )?;
-                return verify_cached_body(
+                if promote_temporary_file_without_overwrite(temporary_manifest, final_manifest)?
+                    == TemporaryFilePromotion::DestinationExists
+                {
+                    return verify_existing_cache_and_discard_temporaries(
+                        temporary,
+                        temporary_manifest,
+                        final_body,
+                        final_manifest,
+                        source_version_hash,
+                        expected_bytes,
+                    );
+                }
+                return verify_existing_cache_and_discard_temporaries(
+                    temporary,
+                    temporary_manifest,
                     final_body,
                     final_manifest,
                     source_version_hash,
                     expected_bytes,
-                )?
-                .ok_or(CloudNativeAttachmentMaterializationFailure::IntegrityMismatch);
+                );
             }
             remove_incomplete_cache_file(final_body)?;
         }
         (None, Some(_)) => remove_incomplete_cache_file(final_manifest)?,
         (None, None) => {}
     }
-    // `rename` replaces an existing target on Unix. A second materializer
-    // could create the final file after the check above, so use a hard link in
-    // the same native directory instead: it makes the completed body visible
-    // atomically and never overwrites another materializer's final file.
-    match fs::hard_link(temporary, final_body) {
-        Ok(()) => {}
-        Err(_) if final_body.exists() => {
-            return verify_cached_body(
+    match promote_temporary_file_without_overwrite(temporary, final_body)? {
+        TemporaryFilePromotion::Promoted => {}
+        TemporaryFilePromotion::DestinationExists => {
+            return verify_existing_cache_and_discard_temporaries(
+                temporary,
+                temporary_manifest,
                 final_body,
                 final_manifest,
                 source_version_hash,
                 expected_bytes,
-            )?
-            .ok_or(CloudNativeAttachmentMaterializationFailure::IntegrityMismatch)
+            )
         }
-        Err(_) => return Err(CloudNativeAttachmentMaterializationFailure::LocalStorage),
     }
-    if fs::hard_link(temporary_manifest, final_manifest).is_err() {
-        let _ = fs::remove_file(final_body);
-        return Err(CloudNativeAttachmentMaterializationFailure::LocalStorage);
+    match promote_temporary_file_without_overwrite(temporary_manifest, final_manifest) {
+        Ok(TemporaryFilePromotion::Promoted) => {}
+        Ok(TemporaryFilePromotion::DestinationExists) => {
+            let _ = fs::remove_file(final_body);
+            return Err(CloudNativeAttachmentMaterializationFailure::IntegrityMismatch);
+        }
+        Err(failure) => {
+            let _ = fs::remove_file(final_body);
+            return Err(failure);
+        }
     }
-    fs::remove_file(temporary)
-        .and_then(|()| fs::remove_file(temporary_manifest))
-        .map_err(|_| CloudNativeAttachmentMaterializationFailure::LocalStorage)?;
     let parent = final_body
         .parent()
         .ok_or(CloudNativeAttachmentMaterializationFailure::LocalStorage)?;
@@ -1629,6 +1727,67 @@ mod tests {
             ),
             Ok(false)
         );
+        assert_eq!(fs::read(destination).unwrap(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn existing_verified_pair_is_reused_without_leaving_fresh_partials() {
+        let directory = tempdir().unwrap();
+        let temporary = directory.path().join("incoming.partial");
+        let temporary_manifest = directory.path().join("incoming.manifest.partial");
+        let final_path = directory.path().join("final.body");
+        let final_manifest = directory.path().join("final.manifest");
+        let bytes = [1_u8, 2, 3, 4];
+        fs::write(&temporary, bytes).unwrap();
+        fs::write(&final_path, bytes).unwrap();
+        fs::write(
+            &final_manifest,
+            cache_manifest(
+                "source-version",
+                &sha256_hex_reader(bytes.as_slice()).unwrap(),
+                4,
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            verify_or_place_temp(
+                &temporary,
+                &temporary_manifest,
+                &final_path,
+                &final_manifest,
+                "source-version",
+                4,
+            ),
+            Ok(4)
+        );
+        assert!(!temporary.exists());
+        assert!(!temporary_manifest.exists());
+        assert_eq!(fs::read(&final_path).unwrap(), bytes);
+        assert!(final_manifest.exists());
+    }
+
+    #[test]
+    fn temporary_promotion_is_atomic_and_never_replaces_an_existing_file() {
+        let directory = tempdir().unwrap();
+        let first = directory.path().join("first.partial");
+        let second = directory.path().join("second.partial");
+        let destination = directory.path().join("final.body");
+        fs::write(&first, [1_u8, 2, 3, 4]).unwrap();
+        fs::write(&second, [9_u8, 8, 7, 6]).unwrap();
+
+        assert_eq!(
+            promote_temporary_file_without_overwrite(&first, &destination),
+            Ok(TemporaryFilePromotion::Promoted)
+        );
+        assert!(!first.exists());
+        assert_eq!(fs::read(&destination).unwrap(), vec![1, 2, 3, 4]);
+
+        assert_eq!(
+            promote_temporary_file_without_overwrite(&second, &destination),
+            Ok(TemporaryFilePromotion::DestinationExists)
+        );
+        assert!(second.exists());
         assert_eq!(fs::read(destination).unwrap(), vec![1, 2, 3, 4]);
     }
 

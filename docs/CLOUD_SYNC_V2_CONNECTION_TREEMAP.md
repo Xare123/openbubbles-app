@@ -4,7 +4,7 @@ title: Cloud Sync V2 Connection Treemap and Recovery State Machine
 description: Source-linked end-to-end model for safely authenticating, fetching, decoding, journaling, projecting, recovering, and validating Messages in iCloud data.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-02
+timestamp: 2026-09-04
 ---
 
 # Cloud Sync V2 connection treemap and recovery state machine
@@ -1530,3 +1530,41 @@ The upgraded process started without an observed Android, Flutter, Rust,
 CloudKit, or MMCS fatal error. The device remained at its secure lock screen, so
 the contact-profile photo tap and exact GIF retry remain deliberately unclaimed
 live gates.
+
+### Investigation checkpoint: Android attachment promotion policy
+
+Two unlocked contact-profile gallery taps reached the V2 attachment download
+coordinator and failed at native materialization with the closed
+`local-storage` category. The Canary documents root and attachment directory
+both existed, the protected cache root existed, and Android reported about
+25.8 GB free. No body, manifest, or partial file survived either failed
+attempt, so low storage, a missing Flutter documents directory, and a stale
+partial were ruled out.
+
+An isolated `run-as` probe then reproduced the boundary without reading or
+changing message content. Android rejected a hard link from the protected cache
+to the application attachment directory with `Permission denied`. It also
+rejected a hard link created entirely inside the application attachment
+directory, while an ordinary same-directory rename succeeded. The failure is
+therefore the Pixel app-data policy, not CloudKit authorization, MMCS bytes,
+HEIC decoding, or the profile-gallery tap route.
+
+`rust/src/cloud_sync_attachment_materialization.rs` now treats every
+non-`AlreadyExists` cache-to-documents hard-link failure as a request for the
+existing bounded, hash-verified copy fallback. Fully verified temporary files
+are promoted without replacement through the Linux `renameat2` syscall. The
+syscall path avoids Android's API-30 libc wrapper because OpenBubbles supports
+API 24, while preserving atomic visibility and the no-overwrite contract.
+Successful cache reuse and recovery also consume deterministic partials before
+their guards are committed.
+
+The Windows fast loop passed all 20 focused native materialization tests,
+including atomic no-replace promotion, existing-target preservation, crash
+recovery, oversized-source rejection, and successful-reuse partial cleanup.
+That proves the shared byte and filesystem state machine. Android compilation
+and a signed in-place Canary retry remain required because Windows cannot prove
+Android syscall availability, app-sandbox policy, HEIC/GIF rendering, or
+touch-to-fullscreen behavior. The acceptance sequence is one profile HEIC tap,
+the exact previously missing GIF, a second tap proving cache reuse, and a check
+that no `.partial` file or `local-storage` failure remains. Alpha is outside
+this gate and remains untouched.
