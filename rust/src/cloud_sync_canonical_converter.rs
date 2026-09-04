@@ -1743,8 +1743,10 @@ fn validation_quarantine(
 ) -> CloudCanonicalConversionOutcome {
     // Closed-vocabulary telemetry only: the label is a string literal, so no
     // content, identifier, length, hash, raw error, or message data is logged.
-    // The quarantine outcome below is unchanged (fail-closed).
-    log::debug!(
+    // Warn level so the fixed class is captured in production diagnostics
+    // (debug is below the Android Rust logger threshold). The quarantine
+    // outcome below is unchanged (fail-closed).
+    log::warn!(
         "cloud canonical validation quarantined validation_diagnostic_class={}",
         CloudCanonicalValidationDiagnosticClass::from_failure(&failure).label()
     );
@@ -5729,9 +5731,45 @@ mod tests {
                 "private converter must not contain {forbidden}"
             );
         }
-        // The validation diagnostic above is the only logging surface. Its
-        // sole call emits the fixed class label, never content or credentials.
+        // The validation diagnostic above is the only logging surface: exactly
+        // one warn call emitting the fixed class label, never content,
+        // credentials, payloads, errors, values, or identifiers.
         assert_eq!(source.matches(concat!("log", "::")).count(), 1);
+        assert_eq!(source.matches(concat!("log", "::warn!")).count(), 1);
+        for silent_level in [
+            concat!("log", "::debug!"),
+            concat!("log", "::info!"),
+            concat!("log", "::error!"),
+            concat!("log", "::trace!"),
+        ] {
+            assert!(
+                !source.contains(silent_level),
+                "private converter must not contain {silent_level}"
+            );
+        }
         assert!(source.contains("validation_diagnostic_class="));
+        // The single warning interpolates only the fixed class label: one
+        // placeholder, no payload/error/value/id interpolation.
+        let warn_site = source
+            .find(concat!("log", "::warn!"))
+            .expect("warn surface");
+        let warn_window = &source[warn_site..warn_site.saturating_add(320).min(source.len())];
+        assert!(
+            warn_window.contains("validation_diagnostic_class={}"),
+            "warn surface must emit the fixed class label"
+        );
+        assert_eq!(
+            warn_window.matches("{}").count(),
+            1,
+            "warn surface must interpolate exactly one fixed label"
+        );
+        for interpolation in [
+            "{:?}", "{:#", "{payload", "{error", "{value", "{failure", "{record", "{etag", "{id",
+        ] {
+            assert!(
+                !warn_window.contains(interpolation),
+                "warn surface must not interpolate {interpolation}"
+            );
+        }
     }
 }
