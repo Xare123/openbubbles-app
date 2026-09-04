@@ -1235,3 +1235,38 @@ exact-build run must still persist the projection report, quantify the remaining
 typed backlog, and pass the idempotence and recent-attachment UI gates. The
 exact duration-bound candidate is
 `7bca56dc3cb1ae65914ec15596d6fc99f6532da7`.
+
+Exact combined source `447b513ac142ab3e142ca6946129fcaffaa4d86f`
+passed the full 32-core GCE qualification in run `33818489639`. Bridge
+reproducibility, the full Dart suite, Rust library tests, rustpush production-
+feature tests, the protector harness, Canary package/native-library checks,
+GitHub-hosted signing, runner deregistration, and VM deletion all passed. The
+GCE build job completed in 21 minutes 16 seconds. Independent post-run
+readback found zero registered repository runners and zero GCE instances. The
+signed APK is 448,448,894 bytes with SHA-256
+`40BB9EC1DB089E20CDC1DC002CC4C380FFA4E092ECB7261058EF7B0E9C85DF71` and
+contains the ARM64 Flutter, ObjectBox, and rustpush libraries.
+
+The signed APK was installed in place on the Pixel at
+`2026-09-03T17:08:49-07:00`. Android preserved the Canary first-install time
+(`2026-08-23T06:15:18-07:00`) and signing identity. All 20 semantic reports,
+the 109,051,904-byte ObjectBox store, 47,361 native-store files, and the
+nonempty profile, hardware-identity, read-authentication, CloudKit, and
+keychain files remained present. Alpha's install/update times and signing
+identity were unchanged. The fresh Canary process opened the Messages route
+with zero observed crash, ANR, native-fatal, `not yet implemented`,
+`cloudkit_interlock_busy`, or attachment-fetch-error markers. Live catch-up,
+projection-report persistence, idempotence, and recent-attachment acceptance
+remain the next device gates.
+
+The first exact-build device sweep exposed a second attachment coordination
+case without stopping projection. Five attachment-fetch errors between
+`2026-09-04T00:17:02Z` and `2026-09-04T00:17:17Z` paired with ten native
+writer-pause markers. Their production stack entered
+`api.downloadCloudAttachments` from the `legacyCloudKit` branch, not the V2
+body downloader, and no V2 source, size, final-file, or integrity failure was
+present. Both CloudKit attachment lanes use the native client paused by the
+semantic reader, while IDS does not. The attachment synchronization gate now
+waits for the exact active semantic pull for `cloudSyncV2` and
+`legacyCloudKit`; IDS and unavailable lanes remain independent. Cloud
+qualification and a fresh in-pull attachment acceptance check remain pending.

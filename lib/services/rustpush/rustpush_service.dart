@@ -830,14 +830,20 @@ class RustPushBackend implements BackendService {
     final expectedBytes = attachment.totalBytes;
     final downloadLane = cloudAttachmentDownloadLaneFor(metadata);
 
+    // Both CloudKit attachment lanes use the native client whose writers are
+    // paused by a semantic pull. Wait for that exact pull before entering
+    // either lane; IDS downloads remain independent.
+    if (cloudAttachmentLaneWaitsForSemanticPull(downloadLane)) {
+      await waitForCloudAttachmentSyncGate(
+        pushService._cloudSyncV2SemanticPullInFlight,
+      );
+    }
+
     // Semantic V2 projections deliberately retain no raw CloudKit record ID.
     // Probe their exact durable source locally before pausing writers or
     // warming CloudKit auth. A V2-marked row never downgrades into a legacy or
     // IDS transport, even when older metadata remains on the same row.
     if (downloadLane == CloudAttachmentDownloadLane.cloudSyncV2) {
-      await waitForCloudAttachmentSyncGate(
-        pushService._cloudSyncV2SemanticPullInFlight,
-      );
       if (canonicalGuid == null || canonicalGuid.trim().isEmpty) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.dependency,

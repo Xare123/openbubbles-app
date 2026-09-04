@@ -1,9 +1,37 @@
 import 'dart:async';
 
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_sync_gate.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('only CloudKit lanes wait for a semantic pull', () {
+    expect(
+      cloudAttachmentLaneWaitsForSemanticPull(
+        CloudAttachmentDownloadLane.cloudSyncV2,
+      ),
+      isTrue,
+    );
+    expect(
+      cloudAttachmentLaneWaitsForSemanticPull(
+        CloudAttachmentDownloadLane.legacyCloudKit,
+      ),
+      isTrue,
+    );
+    expect(
+      cloudAttachmentLaneWaitsForSemanticPull(
+        CloudAttachmentDownloadLane.ids,
+      ),
+      isFalse,
+    );
+    expect(
+      cloudAttachmentLaneWaitsForSemanticPull(
+        CloudAttachmentDownloadLane.unavailable,
+      ),
+      isFalse,
+    );
+  });
+
   test('returns immediately when no semantic pull is active', () async {
     await waitForCloudAttachmentSyncGate(null);
   });
