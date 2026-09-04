@@ -1488,3 +1488,25 @@ Android, Flutter, or Rust fatal error. The device was then blocked at Android's
 secure unlock screen. Retrying the exact GIF, a contact-profile shared-photo
 download, and the bounded post-sync spinner are therefore the remaining live
 presentation gates; none is claimed passed from CI alone.
+
+### Investigation checkpoint: shared-media retry ownership
+
+The contact-profile report exposed one more split in attachment ownership.
+When a profile gallery joined an already-running transfer, it could display
+that controller without subscribing to its completion. The downloader then
+removed the shared controller before publishing the final local path. The
+profile's bulk-download action also ignored every attachment that was not
+already local, and fullscreen refresh created a second GetX controller instead
+of joining the active transfer. Those paths could respectively leave a spinner,
+silently do nothing, or wedge refresh after deleting the old cached file.
+
+Source `24638c963` gives all three surfaces one get-or-start operation. A late
+gallery or fullscreen subscriber now receives the same materialized local path
+before controller disposal, explicit profile downloads enter the prioritized
+queue, and an active fullscreen transfer is joined before any cached file is
+removed. Invalid temporary rows fail and leave the queue instead of occupying a
+zero-progress slot indefinitely. Sixteen focused attachment tests pass,
+including active-transfer joining, target preservation during fullscreen
+redownload, and temporary-row queue drainage. The exact contact-profile photo
+tap, GIF playback, and bounded spinner still require signed-Canary acceptance;
+these tests do not claim that user-facing gate.
