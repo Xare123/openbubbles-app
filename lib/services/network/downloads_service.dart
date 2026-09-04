@@ -132,9 +132,12 @@ class AttachmentDownloadController extends GetxController {
     try {
       response = await backend.downloadAttachment(
         attachment,
-        onReceiveProgress: (count, total) => setProgress(
-          kIsWeb ? (count / total) : (count / attachment.totalBytes!),
-        ),
+        onReceiveProgress: (count, total) {
+          final expectedTotal = kIsWeb
+              ? total
+              : ((attachment.totalBytes ?? 0) > 0 ? attachment.totalBytes! : total);
+          setProgress(expectedTotal > 0 ? count / expectedTotal : 0);
+        },
       );
       if (!kIsWeb) {
         final file = await materializeDownloadedFile(

@@ -42,6 +42,23 @@ bool isUsableDownloadedAttachmentFile(String? path) {
   }
 }
 
+bool isUsableDownloadedPlatformFile(PlatformFile file) {
+  if (file.bytes?.isNotEmpty ?? false) return true;
+  return !kIsWeb && isUsableDownloadedAttachmentFile(file.path);
+}
+
+String safeAttachmentTransferName(Attachment attachment) {
+  final name = attachment.transferName;
+  if (name != null && name.isNotEmpty) return name;
+  final guid = attachment.guid;
+  if (guid != null && guid.isNotEmpty) return guid;
+  return 'attachment';
+}
+
+int safeAttachmentTotalBytes(Attachment attachment) {
+  return attachment.totalBytes ?? attachment.bytes?.length ?? 0;
+}
+
 class AttachmentsService extends GetxService {
   dynamic getContent(Attachment attachment,
       {String? path, bool? autoDownload, Function(PlatformFile)? onComplete, bool forExtension = false}) {
@@ -55,7 +72,7 @@ class AttachmentsService extends GetxService {
     }
     if (attachment.guid?.contains("demo") ?? false) {
       return PlatformFile(
-        name: attachment.transferName!,
+        name: safeAttachmentTransferName(attachment),
         path: null,
         size: attachment.totalBytes ?? 0,
         bytes: Uint8List.fromList([]),
@@ -66,7 +83,7 @@ class AttachmentsService extends GetxService {
         return attachmentDownloader.startDownload(attachment, onComplete: onComplete);
       } else {
         return PlatformFile(
-          name: attachment.transferName!,
+          name: safeAttachmentTransferName(attachment),
           path: null,
           size: attachment.totalBytes ?? 0,
           bytes: attachment.bytes,
@@ -81,7 +98,7 @@ class AttachmentsService extends GetxService {
       return controller;
     } else if (isUsableDownloadedAttachmentFile(pathName)) {
       return PlatformFile(
-        name: attachment.transferName!,
+        name: safeAttachmentTransferName(attachment),
         path: pathName,
         size: attachment.totalBytes ?? 0,
       );

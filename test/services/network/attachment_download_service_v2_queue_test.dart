@@ -59,6 +59,19 @@ void main() {
     await _waitUntil(() => service.downloaders.isEmpty);
   });
 
+  test('missing projected size uses the transport progress total', () async {
+    final attachment = _attachment('v2-progress-without-size', _v2Metadata())
+      ..totalBytes = null;
+    final controller = service.startDownload(attachment);
+
+    await _waitUntil(() => fakeBackend.calledGuids.isNotEmpty);
+    fakeBackend.reportProgress(0, 4, 8);
+
+    expect(controller.progress.value, 0.5);
+    fakeBackend.failCall(0);
+    await _waitUntil(() => service.downloaders.isEmpty);
+  });
+
   test('legacy download can run beside one active V2 download', () async {
     final v2 = _attachment('v2-with-legacy', _v2Metadata());
     final legacy = _attachment('legacy-with-v2', <String, dynamic>{
@@ -207,6 +220,7 @@ Future<void> _waitUntil(bool Function() condition) async {
 final class _ControlledBackend implements BackendService {
   final List<String> calledGuids = <String>[];
   final List<Completer<PlatformFile>> _calls = <Completer<PlatformFile>>[];
+  final List<void Function(int, int)?> _progressCallbacks = <void Function(int, int)?>[];
 
   @override
   Future<PlatformFile> downloadAttachment(
@@ -218,7 +232,12 @@ final class _ControlledBackend implements BackendService {
     calledGuids.add(attachment.guid!);
     final completer = Completer<PlatformFile>();
     _calls.add(completer);
+    _progressCallbacks.add(onReceiveProgress);
     return completer.future;
+  }
+
+  void reportProgress(int index, int received, int total) {
+    _progressCallbacks[index]?.call(received, total);
   }
 
   void failCall(int index) {

@@ -33,10 +33,10 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
   bool localFileAvailable = false;
   String? galleryThumbnailPath;
   late PlatformFile attachmentFile = PlatformFile(
-    name: attachment.transferName!,
+    name: safeAttachmentTransferName(attachment),
     path: kIsWeb ? null : attachment.path,
     bytes: attachment.bytes,
-    size: attachment.totalBytes!,
+    size: safeAttachmentTotalBytes(attachment),
   );
 
   Attachment get attachment => widget.attachment;
@@ -44,7 +44,11 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
   @override
   void initState() {
     super.initState();
-    localFileAvailable = attachment.bytes != null;
+    bool usableFile = false;
+    try {
+      usableFile = !kIsWeb && isUsableDownloadedAttachmentFile(attachment.path);
+    } catch (_) {}
+    localFileAvailable = (attachment.bytes?.isNotEmpty ?? false) || usableFile;
 
     // check active downloader otherwise check file exists
     if (attachmentDownloader.getController(attachment.guid) != null) {
@@ -54,7 +58,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
         setState(() {
           controller = null;
           attachmentFile = file;
-          localFileAvailable = file.bytes != null || file.path != null;
+          localFileAvailable = isUsableDownloadedPlatformFile(file);
         });
         if (attachment.mimeType?.contains("video") ?? false) {
           getVideoPreview(file);
@@ -74,47 +78,64 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
   }
 
   void downloadAttachment() {
+    final active = controller ?? attachmentDownloader.getController(attachment.guid);
+    if (active != null) {
+      if (!active.error.value) {
+        if (controller == null && mounted) {
+          setState(() {
+            controller = active;
+          });
+        }
+        attachmentDownloader.prioritize(active);
+        return;
+      }
+      Get.delete<AttachmentDownloadController>(tag: attachment.guid);
+    }
     setState(() {
-      controller = Get.put(
-        AttachmentDownloadController(
-          attachment: attachment,
-          onComplete: (file) {
-            if (!mounted) return;
-            setState(() {
-              controller = null;
-              attachmentFile = file;
-              localFileAvailable = file.bytes != null || file.path != null;
-            });
-            if (attachment.mimeType?.contains("video") ?? false) {
-              getVideoPreview(file);
-            } else if (attachment.mimeStart == 'image') {
-              getBytes();
-            }
-          },
-          onError: () {
-            if (!mounted) return;
-            setState(() {
-              controller = null;
-            });
-            showSnackbar("Error", "Failed to download attachment!");
-          },
-        ),
-        tag: attachment.guid,
+      controller = attachmentDownloader.startDownload(
+        attachment,
+        onComplete: (file) {
+          if (!mounted) return;
+          setState(() {
+            controller = null;
+            attachmentFile = file;
+            localFileAvailable = isUsableDownloadedPlatformFile(file);
+          });
+          if (attachment.mimeType?.contains("video") ?? false) {
+            getVideoPreview(file);
+          } else if (attachment.mimeStart == 'image') {
+            getBytes();
+          }
+        },
+        onError: () {
+          if (!mounted) return;
+          setState(() {
+            controller = null;
+          });
+          showSnackbar("Error", "Failed to download attachment!");
+        },
+        prioritized: true,
       );
     });
   }
 
   Future<void> getBytes() async {
-    final file = File(attachment.path);
-    if (await file.exists() && mounted) {
+    final String pathName;
+    try {
+      pathName = attachment.path;
+    } catch (_) {
+      return;
+    }
+    if (isUsableDownloadedAttachmentFile(pathName) && mounted) {
+      final file = File(pathName);
       if (attachment.mimeStart == 'image') {
-        final thumbnail = await as.getImageGalleryThumbnail(attachment.path);
+        final thumbnail = await as.getImageGalleryThumbnail(pathName);
         if (!mounted) return;
         setState(() {
           attachmentFile = PlatformFile(
-            name: attachment.transferName!,
-            path: attachment.path,
-            size: attachment.totalBytes!,
+            name: safeAttachmentTransferName(attachment),
+            path: pathName,
+            size: safeAttachmentTotalBytes(attachment),
           );
           galleryThumbnailPath = thumbnail;
           localFileAvailable = true;
@@ -124,9 +145,9 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
       if (attachment.mimeStart == 'video') {
         setState(() {
           attachmentFile = PlatformFile(
-            name: attachment.transferName!,
-            path: attachment.path,
-            size: attachment.totalBytes!,
+            name: safeAttachmentTransferName(attachment),
+            path: pathName,
+            size: safeAttachmentTotalBytes(attachment),
           );
           localFileAvailable = true;
         });
@@ -139,10 +160,10 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
       if (!mounted) return;
       setState(() {
         attachmentFile = PlatformFile(
-          name: attachment.transferName!,
-          path: attachment.path,
+          name: safeAttachmentTransferName(attachment),
+          path: pathName,
           bytes: bytes,
-          size: attachment.totalBytes!,
+          size: safeAttachmentTotalBytes(attachment),
         );
         localFileAvailable = true;
       });
