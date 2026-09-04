@@ -156,22 +156,37 @@ jobs:
         if: matrix.arch == 'arm64'
         shell: pwsh
         run: |
-          $flutterRoot = "${{ steps.flutter.outputs['cache-path'] }}"
+          # $env:FLUTTER_ROOT is the SDK root; the action's cache-path output
+          # points one directory deeper, so it must not be used here.
+          $flutterRoot = "$env:FLUTTER_ROOT"
+          if (-not (Test-Path "$flutterRoot\bin\internal\update_dart_sdk.ps1")) {
+            throw "Flutter SDK layout changed: no bin\internal\update_dart_sdk.ps1 under $flutterRoot"
+          }
           Remove-Item -Force `
             "$flutterRoot\bin\cache\engine-dart-sdk.stamp" `
             -ErrorAction SilentlyContinue
           & "$flutterRoot\bin\internal\update_dart_sdk.ps1"
+          # The archive's flutter_tools snapshot was compiled by its x64 VM.
+          # Rebuild it after replacing that VM with the native ARM64 SDK.
+          Remove-Item -Force `
+            "$flutterRoot\bin\cache\flutter_tools.snapshot" `
+            -ErrorAction SilentlyContinue
+          Remove-Item -Force `
+            "$flutterRoot\bin\cache\flutter_tools.stamp" `
+            -ErrorAction SilentlyContinue
           $dartVersion = & "$flutterRoot\bin\dart.bat" --version 2>&1 |
             Out-String
           if ($dartVersion -notmatch "windows_arm64") {
             throw "Expected native ARM64 Dart; got: $dartVersion"
           }
           & "$flutterRoot\bin\flutter.bat" precache --windows
+          # precache fetches only the host debug engine ("windows-arm64");
+          # the profile and release engines download on demand during the build.
           if (-not (Test-Path (
             Join-Path $flutterRoot `
-              "bin/cache/artifacts/engine/windows-arm64-release"
+              "bin/cache/artifacts/engine/windows-arm64"
           ))) {
-            throw "Flutter did not install its Windows ARM64 release engine."
+            throw "Flutter did not install its Windows ARM64 engine."
           }
 
       - name: Set up Rust target
@@ -261,7 +276,7 @@ jobs:
             -Architecture $architecture `
             -AngleBundleRoot $angle `
             -LibmpvArchivePath $resolution.libmpv.archive_path `
-            -FlutterRoot "${{ steps.flutter.outputs['cache-path'] }}" `
+            -FlutterRoot $env:FLUTTER_ROOT `
             -RepoRoot $shortWorkspace `
             -Configuration release
           if ($LASTEXITCODE -ne 0) {
