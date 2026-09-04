@@ -258,6 +258,14 @@ final class ShadowOnlyCloudSyncStore
   }) => _blocked();
 
   @override
+  Future<void> commitOutboxCreateReceipt(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required CloudOutboxCreateReceipt receipt,
+    required DateTime now,
+  }) => _blocked();
+
+  @override
   Future<int> resumePausedOutbox(
     CloudSyncScope scope, {
     required Set<CloudFailureCategory> categories,

@@ -2290,6 +2290,98 @@ class ObjectBoxCloudSyncStore
   }
 
   @override
+  Future<void> commitOutboxCreateReceipt(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required CloudOutboxCreateReceipt receipt,
+    required DateTime now,
+  }) async {
+    if (receipt.operationId.isEmpty ||
+        receipt.logicalEntityKeyHash.isEmpty ||
+        receipt.serverRecordIdHash.isEmpty ||
+        receipt.etagHash.isEmpty) {
+      throw _storageFailure('outbox_receipt_field_missing');
+    }
+    final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
+    final nowMs = now.millisecondsSinceEpoch;
+    _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      if (checkpoint.generation <= 0) {
+        throw _storageFailure('stale_outbox_generation');
+      }
+      final entity = _findOutboxByOperationIdLocked(receipt.operationId);
+      if (entity != null &&
+          (entity.checkpointGeneration <= 0 ||
+              entity.checkpointGeneration != checkpoint.generation)) {
+        throw _storageFailure('stale_outbox_generation');
+      }
+      if (entity == null ||
+          entity.scopeKey != _scopeKey(scope) ||
+          (_outboxStatusFromInt(entity.state) != CloudOutboxStatus.leased &&
+              _outboxStatusFromInt(entity.state) !=
+                  CloudOutboxStatus.unknownOutcome) ||
+          entity.leaseIdHash != leaseIdHash ||
+          entity.leaseExpiresAtMs <= nowMs) {
+        throw _storageFailure('stale_outbox_lease');
+      }
+      if (_actionFromInt(entity.action) != CloudOutboxAction.save) {
+        throw _storageFailure('outbox_receipt_action_unsupported');
+      }
+      if (entity.logicalEntityKeyHash != receipt.logicalEntityKeyHash) {
+        throw _storageFailure('outbox_receipt_logical_key_mismatch');
+      }
+      // A null operation hash never matches: the exact operation/server
+      // binding must already be recorded before the receipt can commit.
+      if (entity.serverRecordIdHash != receipt.serverRecordIdHash) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'server_mapping_changed',
+        );
+      }
+      final mapKey = _scopedDigest(
+        scope,
+        'record-map',
+        receipt.logicalEntityKeyHash,
+      );
+      final mapping = _findRecordMapByKeyLocked(mapKey);
+      if (mapping == null ||
+          mapping.generation != checkpoint.generation ||
+          mapping.scopeKey != _scopeKey(scope) ||
+          mapping.logicalEntityKeyHash != receipt.logicalEntityKeyHash ||
+          mapping.encryptedServerRecordId.isEmpty) {
+        throw _storageFailure('outbox_receipt_map_missing');
+      }
+      if (mapping.serverRecordIdHash != receipt.serverRecordIdHash) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'server_mapping_changed',
+        );
+      }
+      if (mapping.etagHash != null && mapping.etagHash != receipt.etagHash) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'outbox_receipt_changed',
+        );
+      }
+      mapping
+        ..etagHash = receipt.etagHash
+        ..updatedAtMs = nowMs;
+      _recordMaps.put(mapping);
+      entity
+        ..serverRecordIdHash = receipt.serverRecordIdHash
+        ..state = _outboxStatusToInt(CloudOutboxStatus.confirmed)
+        ..confirmedAtMs = nowMs
+        ..lastErrorCategory = null
+        ..nextEligibleAtMs = 0
+        ..protectedLeaseReference = null
+        ..leaseIdHash = null
+        ..leaseExpiresAtMs = 0
+        ..updatedAtMs = nowMs;
+      _outbox.put(entity);
+    });
+  }
+
+  @override
   Future<int> resumePausedOutbox(
     CloudSyncScope scope, {
     required Set<CloudFailureCategory> categories,

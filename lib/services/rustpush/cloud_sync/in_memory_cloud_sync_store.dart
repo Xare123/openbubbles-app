@@ -1150,6 +1150,122 @@ class InMemoryCloudSyncStore
   }
 
   @override
+  Future<void> commitOutboxCreateReceipt(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required CloudOutboxCreateReceipt receipt,
+    required DateTime now,
+  }) {
+    return _lock.synchronized(() async {
+      if (receipt.operationId.isEmpty ||
+          receipt.logicalEntityKeyHash.isEmpty ||
+          receipt.serverRecordIdHash.isEmpty ||
+          receipt.etagHash.isEmpty) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'outbox_receipt_field_missing',
+        );
+      }
+      final checkpoint = _checkpoint(scope);
+      if (checkpoint.generation <= 0) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'stale_outbox_generation',
+        );
+      }
+      final entries = _outbox[scope.storageKey];
+      final operation = entries?[receipt.operationId];
+      if (operation != null &&
+          (operation.checkpointGeneration <= 0 ||
+              operation.checkpointGeneration != checkpoint.generation)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'stale_outbox_generation',
+        );
+      }
+      if (operation == null ||
+          operation.scope != scope ||
+          (operation.status != CloudOutboxStatus.leased &&
+              operation.status != CloudOutboxStatus.unknownOutcome) ||
+          operation.leaseId != leaseId ||
+          operation.leaseExpiresAt == null ||
+          !operation.leaseExpiresAt!.isAfter(now)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'stale_outbox_lease',
+        );
+      }
+      if (operation.action != CloudOutboxAction.save) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'outbox_receipt_action_unsupported',
+        );
+      }
+      if (operation.logicalEntityKeyHash != receipt.logicalEntityKeyHash) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'outbox_receipt_logical_key_mismatch',
+        );
+      }
+      // A null operation hash never matches: the exact operation/server
+      // binding must already be recorded before the receipt can commit.
+      if (operation.serverRecordIdHash != receipt.serverRecordIdHash) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'server_mapping_changed',
+        );
+      }
+      final key = _recordMapKey(scope, receipt.logicalEntityKeyHash);
+      final bound = _recordMaps[key];
+      if (bound == null ||
+          bound.generation != checkpoint.generation ||
+          bound.value.scope != scope ||
+          bound.value.logicalEntityKeyHash != receipt.logicalEntityKeyHash ||
+          bound.value.encryptedServerRecordId.isEmpty) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'outbox_receipt_map_missing',
+        );
+      }
+      if (bound.value.serverRecordIdHash != receipt.serverRecordIdHash) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'server_mapping_changed',
+        );
+      }
+      if (bound.value.etagHash != null &&
+          bound.value.etagHash != receipt.etagHash) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'outbox_receipt_changed',
+        );
+      }
+      _recordMaps[key] = _GenerationBoundRecordMap(
+        checkpoint.generation,
+        CloudRecordMapEntry(
+          scope: scope,
+          logicalEntityKeyHash: receipt.logicalEntityKeyHash,
+          serverRecordIdHash: receipt.serverRecordIdHash,
+          encryptedServerRecordId: bound.value.encryptedServerRecordId,
+          etagHash: receipt.etagHash,
+          encryptedRawRecordReference: bound.value.encryptedRawRecordReference,
+          updatedAt: now,
+        ),
+      );
+      entries![receipt.operationId] = operation.copyWith(
+        status: CloudOutboxStatus.confirmed,
+        confirmedAt: now,
+        serverRecordIdHash: receipt.serverRecordIdHash,
+        clearLeaseId: true,
+        clearLeaseExpiresAt: true,
+        clearLastFailure: true,
+        clearNextEligibleAt: true,
+        clearProtectedLeaseReference: true,
+      );
+    });
+  }
+
+  @override
   Future<int> resumePausedOutbox(
     CloudSyncScope scope, {
     required Set<CloudFailureCategory> categories,

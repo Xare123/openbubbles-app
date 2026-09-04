@@ -251,6 +251,37 @@ abstract interface class CloudSyncStore {
     required DateTime now,
   });
 
+  /// Atomically commits one successful V2 outbound CREATE against an
+  /// existing current-generation record mapping.
+  ///
+  /// The commit validates the exact scope, the live outbox lease id and
+  /// expiry, the current positive checkpoint generation, the save action,
+  /// the logical entity key, the exact bound server record hash (a null
+  /// operation hash never matches), and a nonempty etag hash. Leased and
+  /// submission-started (`unknownOutcome`) rows are accepted. The mapping
+  /// must already exist for the current generation
+  /// with the same scope, logical key, and server hash plus a protected
+  /// server-record reference; a missing map or tombstone fails closed so a
+  /// late receipt can never resurrect it, and no missing map is created.
+  ///
+  /// In the same transaction (or synchronized critical section) only the
+  /// existing mapping's etag hash and timestamp are updated and the exact
+  /// outbox row moves to confirmed with lease, failure, and retry fields
+  /// cleared. The existing encrypted server-record reference is preserved
+  /// and the protected lease marker is released, matching a confirmed
+  /// transition. Stale generation or lease, mismatched mapping, a
+  /// duplicate or changed receipt, a non-save operation, an empty etag, and
+  /// a missing mapping fail with content-free safe codes and no mutation.
+  /// A retry after success fails closed with `stale_outbox_lease` because
+  /// the lease is already cleared; exact already-confirmed receipts are
+  /// therefore never re-applied.
+  Future<void> commitOutboxCreateReceipt(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required CloudOutboxCreateReceipt receipt,
+    required DateTime now,
+  });
+
   /// Resumes deliberately paused authorization or PCS operations only after
   /// the owning subsystem has signaled that access is healthy again.
   Future<int> resumePausedOutbox(
@@ -662,4 +693,24 @@ class CloudOutboxTransition {
   final String? serverRecordIdHash;
   final bool clearSubmissionIdentity;
   final bool retainProtectedLeaseReference;
+}
+
+/// Strongly typed receipt for one successful V2 outbound CREATE.
+///
+/// Every value is an opaque hash or correlation key. No record identifier,
+/// etag, account value, or message content crosses this boundary. Empty
+/// values are rejected by the store with a content-free safe code rather
+/// than here so every rejection path stays uniform.
+class CloudOutboxCreateReceipt {
+  const CloudOutboxCreateReceipt({
+    required this.operationId,
+    required this.logicalEntityKeyHash,
+    required this.serverRecordIdHash,
+    required this.etagHash,
+  });
+
+  final String operationId;
+  final String logicalEntityKeyHash;
+  final String serverRecordIdHash;
+  final String etagHash;
 }
