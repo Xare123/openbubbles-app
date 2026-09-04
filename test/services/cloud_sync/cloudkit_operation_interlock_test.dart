@@ -98,6 +98,47 @@ void main() {
     expect(await _attemptIsolateOperation(temporaryDirectory.path), 'entered');
   });
 
+  test(
+    'semantic reads and identity maintenance exclude each other across isolates',
+    () async {
+      Future<void> expectBlockedBy(
+        CloudKitOperationKind activeKind,
+        CloudKitOperationKind attemptedKind,
+      ) async {
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        final active = interlock.runExclusive(
+          kind: activeKind,
+          action: () async {
+            entered.complete();
+            await release.future;
+          },
+        );
+        await entered.future;
+
+        expect(
+          await _attemptIsolateOperation(
+            temporaryDirectory.path,
+            kind: attemptedKind,
+          ),
+          'cloudkit_interlock_busy',
+        );
+
+        release.complete();
+        await active;
+      }
+
+      await expectBlockedBy(
+        CloudKitOperationKind.v2SemanticRead,
+        CloudKitOperationKind.identityMaintenance,
+      );
+      await expectBlockedBy(
+        CloudKitOperationKind.identityMaintenance,
+        CloudKitOperationKind.v2SemanticRead,
+      );
+    },
+  );
+
   test('same-kind nested work reuses the active lease', () async {
     final result = await interlock.runExclusive(
       kind: CloudKitOperationKind.legacyReadWrite,
@@ -454,22 +495,21 @@ void main() {
   });
 }
 
-Future<String> _attemptIsolateOperation(String lockDirectory) =>
-    Isolate.run<String>(() async {
-      final isolateInterlock = CloudKitOperationInterlock(
-        privateStorageDirectory: lockDirectory,
-        fenceStore: InMemoryCloudSyncStore(),
-      );
-      try {
-        await isolateInterlock.runExclusive(
-          kind: CloudKitOperationKind.v2SemanticRead,
-          action: () async {},
-        );
-        return 'entered';
-      } on CloudKitOperationInterlockException catch (error) {
-        return error.safeCode;
-      }
-    });
+Future<String> _attemptIsolateOperation(
+  String lockDirectory, {
+  CloudKitOperationKind kind = CloudKitOperationKind.v2SemanticRead,
+}) => Isolate.run<String>(() async {
+  final isolateInterlock = CloudKitOperationInterlock(
+    privateStorageDirectory: lockDirectory,
+    fenceStore: InMemoryCloudSyncStore(),
+  );
+  try {
+    await isolateInterlock.runExclusive(kind: kind, action: () async {});
+    return 'entered';
+  } on CloudKitOperationInterlockException catch (error) {
+    return error.safeCode;
+  }
+});
 
 final class _RejectingRenewalStore extends InMemoryCloudSyncStore {
   @override

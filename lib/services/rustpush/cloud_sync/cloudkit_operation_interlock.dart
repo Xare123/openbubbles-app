@@ -17,6 +17,7 @@ enum CloudKitOperationKind {
   v2ReadWrite,
   v2ShadowRead,
   v2SemanticRead,
+  identityMaintenance,
   writerTransition,
   destructiveReset,
 }

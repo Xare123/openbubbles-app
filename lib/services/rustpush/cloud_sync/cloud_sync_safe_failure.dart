@@ -513,6 +513,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'http-authorization',
   'http-server',
   'http-throttled',
+  'identity_maintenance_account_unavailable',
   'http-timeout',
   'http-unknown',
   'cloudkit_writer_authority_requires_manual_recovery',

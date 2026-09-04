@@ -1323,8 +1323,17 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                       title: "Clear identity cache",
                       subtitle: "Run this troubleshooter if you're having trouble sending messages.",
                       onTap: () async {
-                        await api.invalidateIdCache(client: pushService.state!.client);
-                        showSnackbar("Success", "Identity cache cleared! Try re-sending any messages.");
+                        if (reregisteringIds.value ?? false) return;
+                        try {
+                          reregisteringIds.value = true;
+                          await pushService.clearIdentityCache();
+                          showSnackbar("Success", "Identity cache cleared! Try re-sending any messages.");
+                        } catch (error) {
+                          if (_showCloudSyncV2Busy(error)) return;
+                          showSnackbar("Failure", cloudSyncV2SafeFailureCode(error));
+                        } finally {
+                          reregisteringIds.value = false;
+                        }
                       }),
                     SettingsTile(
                       title: "Clear peer caches",
@@ -1335,9 +1344,9 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                           reregisteringIds.value = true;
                           await pushService.invalidatePeerCaches();
                           showSnackbar("Success", "Cleared peer caches");
-                        } catch (e) {
-                          showSnackbar("Failure", e.toString());
-                          rethrow;
+                        } catch (error) {
+                          if (_showCloudSyncV2Busy(error)) return;
+                          showSnackbar("Failure", cloudSyncV2SafeFailureCode(error));
                         } finally {
                           reregisteringIds.value = false;
                         }
@@ -1361,11 +1370,11 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                         if (reregisteringIds.value ?? false) return;
                         try {
                           reregisteringIds.value = true;
-                          await api.doReregister(state: pushService.state!.client);
+                          await pushService.reregisterIdentity();
                           showSnackbar("Success", "Registered");
-                        } catch (e) {
-                          showSnackbar("Failure", e.toString());
-                          rethrow;
+                        } catch (error) {
+                          if (_showCloudSyncV2Busy(error)) return;
+                          showSnackbar("Failure", cloudSyncV2SafeFailureCode(error));
                         } finally {
                           reregisteringIds.value = false;
                         }

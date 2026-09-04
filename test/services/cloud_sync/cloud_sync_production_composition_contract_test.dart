@@ -499,7 +499,6 @@ void main() {
     final panel = File(
       'lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart',
     ).readAsStringSync();
-
     expect(
       settings,
       contains('final RxBool cloudSyncV2EvidenceEnabled = false.obs;'),
@@ -859,6 +858,10 @@ void main() {
     final provisioningWait = reset.indexOf(
       'await outboundProvisioning.timeout(',
     );
+    final relayHealthWait = reset.indexOf('await relayHealthCheck;');
+    final destructiveBoundary = reset.indexOf(
+      'await _runCloudKitDestructiveReset(() async {',
+    );
     final nativeReset = reset.indexOf('api.resetState(');
     final resume = reset.indexOf('resumeAfterAccountTransition()');
 
@@ -872,10 +875,76 @@ void main() {
     expect(safeAbort, greaterThan(boundedWait));
     expect(provisioningWait, greaterThan(safeAbort));
     expect(outboundWait, greaterThan(provisioningWait));
+    expect(relayHealthWait, greaterThan(outboundWait));
+    expect(destructiveBoundary, greaterThan(relayHealthWait));
+    expect(detachState, greaterThan(destructiveBoundary));
     expect(detachState, greaterThan(outboundWait));
     expect(nativeReset, greaterThan(detachState));
     expect(resume, greaterThan(nativeReset));
     expect(reset, contains('finally'));
+  });
+
+  test('identity troubleshooting cannot bypass the CloudKit interlock', () {
+    final service = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final panel = File(
+      'lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart',
+    ).readAsStringSync();
+    final profile = File(
+      'lib/app/layouts/settings/pages/profile/profile_panel.dart',
+    ).readAsStringSync();
+
+    expect(
+      service,
+      contains('kind: CloudKitOperationKind.identityMaintenance'),
+    );
+    expect(service, contains('Future<void> clearIdentityCache()'));
+    expect(service, contains('Future<void> reregisterIdentity()'));
+    expect(service, contains('Future<void> invalidatePeerCaches()'));
+    expect(service, contains('await reregisterIdentity();'));
+    expect(service, contains('await invalidatePeerCaches();'));
+    expect(
+      service,
+      contains('await _invalidatePeerCachesUnlocked(currentState);'),
+    );
+    expect(service, contains('_deferPeerCacheInvalidation();'));
+    expect(
+      service,
+      contains('Peer cache invalidation deferred while protected CloudKit work is active'),
+    );
+    expect(
+      service,
+      contains('Account repair was not applied. Wait for the active sync to finish'),
+    );
+    expect(panel, contains('await pushService.clearIdentityCache();'));
+    expect(panel, contains('await pushService.reregisterIdentity();'));
+    expect(panel, contains('await pushService.invalidatePeerCaches();'));
+    expect(panel, isNot(contains('api.invalidateIdCache(')));
+    expect(panel, isNot(contains('api.doReregister(')));
+    expect(profile, contains('await pushService.reregisterIdentity();'));
+    expect(profile, isNot(contains('api.doReregister(')));
+    expect(profile, contains('void showIdentityMaintenanceFailure('));
+    expect(profile, contains('Wait for the active sync to finish'));
+  });
+
+  test('service close cannot synchronously dispose active Rust state', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final helperStart = source.indexOf('_disposeStateAfterServiceClose(');
+    final closeStart = source.indexOf('void onClose()', helperStart);
+    final closeEnd = source.indexOf('super.onClose();', closeStart);
+    expect(helperStart, greaterThanOrEqualTo(0));
+    expect(closeStart, greaterThan(helperStart));
+    expect(closeEnd, greaterThan(closeStart));
+
+    final helper = source.substring(helperStart, closeStart);
+    final close = source.substring(closeStart, closeEnd);
+    expect(helper, contains('_runCloudKitDestructiveReset(() async {'));
+    expect(helper, contains('disposeState(closingState, true, false);'));
+    expect(close, contains('unawaited(_disposeStateAfterServiceClose('));
+    expect(close, isNot(contains('disposeState(')));
   });
 
   test('production composition has no automatic V2 trigger wiring', () {

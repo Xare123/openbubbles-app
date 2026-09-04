@@ -2062,6 +2062,8 @@ class RustPushService extends GetxService {
   }
 
   api.SharedPushState? state;
+  Future<void>? _deferredPeerCacheInvalidation;
+  bool _serviceClosing = false;
 
   Mixpanel? mixpanel;
 
@@ -2241,7 +2243,7 @@ class RustPushService extends GetxService {
           final registrationState =
               await api.getRegstate(state: currentState.client);
           if (registrationState is api.RegisterState_Failed) {
-            await api.doReregister(state: currentState.client);
+            await reregisterIdentity();
           }
         } catch (e, s) {
           Logger.warn("Relay reachable but registration retry failed",
@@ -5049,8 +5051,40 @@ class RustPushService extends GetxService {
     return "$appDocPath/avatars/you/poster-$number";
   }
 
-  Future invalidatePeerCaches() async {
-    var myHandles = (await api.getHandles(state: pushService.state!.client));
+  Future<void> clearIdentityCache() => _runCloudKitIdentityMaintenance(
+        () async {
+          final currentState = state;
+          if (currentState == null) {
+            throw StateError('identity_maintenance_account_unavailable');
+          }
+          await api.invalidateIdCache(client: currentState.client);
+        },
+      );
+
+  Future<void> reregisterIdentity() => _runCloudKitIdentityMaintenance(
+        () async {
+          final currentState = state;
+          if (currentState == null) {
+            throw StateError('identity_maintenance_account_unavailable');
+          }
+          await api.doReregister(state: currentState.client);
+        },
+      );
+
+  Future<void> invalidatePeerCaches() => _runCloudKitIdentityMaintenance(
+        () async {
+          final currentState = state;
+          if (currentState == null) {
+            throw StateError('identity_maintenance_account_unavailable');
+          }
+          await _invalidatePeerCachesUnlocked(currentState);
+        },
+      );
+
+  Future<void> _invalidatePeerCachesUnlocked(
+    api.SharedPushState currentState,
+  ) async {
+    var myHandles = (await api.getHandles(state: currentState.client));
     // loop through recent chats (1 day or newer)
     Query<Chat> query = Database.chats
         .query(Chat_.dateDeleted.isNull().and(Chat_.dbOnlyLatestMessageDate
@@ -5088,6 +5122,44 @@ class RustPushService extends GetxService {
       );
       await (backend as RustPushBackend).sendMsg(msg);
     }
+  }
+
+  void _deferPeerCacheInvalidation() {
+    if (_deferredPeerCacheInvalidation != null || _serviceClosing) return;
+    final deferred = Zone.root.run(_retryDeferredPeerCacheInvalidation);
+    _deferredPeerCacheInvalidation = deferred;
+    unawaited(deferred.whenComplete(() {
+      if (identical(_deferredPeerCacheInvalidation, deferred)) {
+        _deferredPeerCacheInvalidation = null;
+      }
+    }));
+  }
+
+  Future<void> _retryDeferredPeerCacheInvalidation() async {
+    const retryDelay = Duration(minutes: 1);
+    const maxAttempts = 60;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      await Future<void>.delayed(retryDelay);
+      if (_serviceClosing || state == null) return;
+      try {
+        await invalidatePeerCaches();
+        Logger.info("Deferred peer cache invalidation completed");
+        return;
+      } on CloudKitOperationInterlockException catch (error) {
+        if (error.safeCode == 'cloudkit_interlock_busy' ||
+            error.safeCode == 'cloudkit_interlock_mode_violation') {
+          continue;
+        }
+        Logger.warn(
+          "Deferred peer cache invalidation stopped code=${error.safeCode}",
+        );
+        return;
+      } catch (_) {
+        Logger.warn("Deferred peer cache invalidation stopped safely");
+        return;
+      }
+    }
+    Logger.warn("Deferred peer cache invalidation expired safely");
   }
 
   void wantAddNumber() {
@@ -5764,7 +5836,18 @@ class RustPushService extends GetxService {
       return;
     }
     if (myMsg.message is api.Message_PeerCacheInvalidate) {
-      invalidatePeerCaches();
+      try {
+        await invalidatePeerCaches();
+      } on CloudKitOperationInterlockException catch (error) {
+        if (error.safeCode != 'cloudkit_interlock_busy' &&
+            error.safeCode != 'cloudkit_interlock_mode_violation') {
+          rethrow;
+        }
+        Logger.warn(
+          "Peer cache invalidation deferred while protected CloudKit work is active code=${error.safeCode}",
+        );
+        _deferPeerCacheInvalidation();
+      }
       return;
     }
     if (myMsg.message is api.Message_SmsConfirmSent) {
@@ -8339,6 +8422,14 @@ class RustPushService extends GetxService {
         action: action,
       );
 
+  Future<T> _runCloudKitIdentityMaintenance<T>(
+    Future<T> Function() action,
+  ) =>
+      _runCloudKitOperation(
+        kind: CloudKitOperationKind.identityMaintenance,
+        action: action,
+      );
+
   Future<T> _runCloudKitOperation<T>({
     required CloudKitOperationKind kind,
     required Future<T> Function() action,
@@ -8373,6 +8464,21 @@ class RustPushService extends GetxService {
       } else {
         await reset(hw, logout, true);
       }
+    } on CloudKitOperationInterlockException catch (error) {
+      if (error.safeCode == 'cloudkit_interlock_busy' ||
+          error.safeCode == 'cloudkit_interlock_mode_violation') {
+        Logger.warn(
+          "Account reset deferred while protected CloudKit work is active code=${error.safeCode}",
+        );
+        if (ui) {
+          showSnackbar(
+            "Cloud Sync Is Busy",
+            "Account repair was not applied. Wait for the active sync to finish, then try again.",
+          );
+        }
+        return;
+      }
+      rethrow;
     } finally {
       loggingOut = false;
     }
@@ -8448,34 +8554,36 @@ class RustPushService extends GetxService {
               "Cloud Sync V2 outbound canary stopped during account transition");
         }
       }
-      _cloudSyncV2OutboundAdapter = null;
-      var thisState = state;
-      state = null;
-
       final relayHealthCheck = _relayHealthInFlight;
       if (relayHealthCheck != null) {
         await relayHealthCheck;
       }
-      await cancelRelayHealthReminder();
-      if (hw || logout) {
-        await clearRelayHealthState();
-      }
-      if (thisState == null) return;
+      await _runCloudKitDestructiveReset(() async {
+        _cloudSyncV2OutboundAdapter = null;
+        final thisState = state;
+        state = null;
 
-      if (logout) {
-        ss.settings.cloudSyncingEnabled.value = false;
-        ss.settings.keychainDefaultPassword.value = null;
-        ss.saveSettings();
-      }
-      await api.resetState(
-          cancel: thisState.cancelPoll,
-          path: statePath,
-          config: thisState.osConfig,
-          aps: thisState.conn,
-          account: thisState.icloudServices?.account,
-          resetHw: hw,
-          logout: logout);
-      disposeState(thisState, hw, setup);
+        await cancelRelayHealthReminder();
+        if (hw || logout) {
+          await clearRelayHealthState();
+        }
+        if (thisState == null) return;
+
+        if (logout) {
+          ss.settings.cloudSyncingEnabled.value = false;
+          ss.settings.keychainDefaultPassword.value = null;
+          ss.saveSettings();
+        }
+        await api.resetState(
+            cancel: thisState.cancelPoll,
+            path: statePath,
+            config: thisState.osConfig,
+            aps: thisState.conn,
+            account: thisState.icloudServices?.account,
+            resetHw: hw,
+            logout: logout);
+        disposeState(thisState, hw, setup);
+      });
     } finally {
       await shadowOwner?.resumeAfterAccountTransition();
       _cloudSyncV2PcsPreparationQuiescing = false;
@@ -8560,8 +8668,29 @@ class RustPushService extends GetxService {
     }
   }
 
+  Future<void> _disposeStateAfterServiceClose(
+    api.SharedPushState closingState,
+  ) async {
+    try {
+      await _runCloudKitDestructiveReset(() async {
+        if (!identical(state, closingState)) return;
+        state = null;
+        disposeState(closingState, true, false);
+      });
+    } on CloudKitOperationInterlockException catch (error) {
+      Logger.warn(
+        "Skipping explicit RustPush disposal while protected CloudKit work is active code=${error.safeCode}",
+      );
+    } catch (_) {
+      Logger.warn(
+        "Skipping explicit RustPush disposal because protected teardown was unavailable",
+      );
+    }
+  }
+
   @override
   void onClose() {
+    _serviceClosing = true;
     _networkRefreshTimer?.cancel();
     _networkSubscription?.cancel();
     for (final timer in _profileRetryTimers.values) {
@@ -8576,14 +8705,13 @@ class RustPushService extends GetxService {
       _cloudSyncV2OutboundAdapter?.canary.disarm(outboundConfirmation);
       _cloudSyncV2OutboundConfirmation = null;
     }
-    if (_cloudSyncV2OutboundProvisioningInFlight == null &&
-        _cloudSyncV2OutboundInFlight == null) {
-      if (state != null) disposeState(state!, true, false);
-    } else {
-      // onClose is synchronous. Do not dispose native handles underneath a
-      // protected CloudKit write; process teardown will reclaim them.
-      Logger.warn(
-          "Skipping explicit RustPush disposal while Cloud Sync V2 write is active");
+    final closingState = state;
+    if (closingState != null) {
+      // onClose is synchronous, so teardown must run asynchronously behind the
+      // same process-wide boundary as every CloudKit reader and writer. If the
+      // boundary is busy, process teardown or the native finalizers reclaim
+      // this instance without releasing handles underneath active work.
+      unawaited(_disposeStateAfterServiceClose(closingState));
     }
     super.onClose();
   }

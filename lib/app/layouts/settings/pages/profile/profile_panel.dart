@@ -19,6 +19,7 @@ import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
@@ -86,6 +87,19 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
     return "Not checked yet. Tap to verify the iPhone is online before registration renewal.";
   }
 
+  void showIdentityMaintenanceFailure(Object error) {
+    final safeCode = cloudSyncV2SafeFailureCode(error);
+    if (safeCode == 'cloudkit_interlock_busy' ||
+        safeCode == 'cloudkit_interlock_mode_violation') {
+      showSnackbar(
+        "Cloud Sync Is Busy",
+        "Wait for the active sync to finish, then try registration again.",
+      );
+      return;
+    }
+    showSnackbar("Failure", safeCode);
+  }
+
   Future<void> handleSubscriptionToken(String subscription) async {
     var activated = await http.dio.post("https://hw.openbubbles.app/ticket/${ticket!}/activate", data: {"purchase_token": subscription});
     var useTicket = activated.data["ticket"];
@@ -95,12 +109,11 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
     (() async {
       try {
         reregisteringIds.value = true;
-        await api.doReregister(state: pushService.state!.client);
+        await pushService.reregisterIdentity();
         getDetails();
         showSnackbar("Success", "Registered");
-      } catch (e) {
-        showSnackbar("Failure", e.toString());
-        rethrow;
+      } catch (error) {
+        showIdentityMaintenanceFailure(error);
       } finally {
         reregisteringIds.value = false;
       }
@@ -835,12 +848,11 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                           }
                           try {
                             reregisteringIds.value = true;
-                            await api.doReregister(state: pushService.state!.client);
+                            await pushService.reregisterIdentity();
                             getDetails();
                             showSnackbar("Success", "Registered");
-                          } catch (e) {
-                            showSnackbar("Failure", e.toString());
-                            rethrow;
+                          } catch (error) {
+                            showIdentityMaintenanceFailure(error);
                           } finally {
                             reregisteringIds.value = false;
                           }

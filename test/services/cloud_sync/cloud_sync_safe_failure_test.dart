@@ -21,6 +21,12 @@ void main() {
       ),
       'cloud_sync_canary_package_required',
     );
+    expect(
+      cloudSyncV2SafeFailureCode(
+        StateError('identity_maintenance_account_unavailable'),
+      ),
+      'identity_maintenance_account_unavailable',
+    );
     const pcsCodes = <String>{
       'cloud_sync_v2_pcs_account_changed',
       'cloud_sync_v2_pcs_client_unavailable',
