@@ -67,9 +67,9 @@ class Annotation {
     if (mentionedAddress != null) map["mentionedAddress"] = mentionedAddress;
     if (textEffect != null) map["textEffect"] = textEffect;
     if (bold ?? false) map["bold"] = bold;
-    if (italic ?? false) map["italic"] = bold;
-    if (strikethrough ?? false) map["strikethrough"] = bold;
-    if (underline ?? false) map["underline"] = bold;
+    if (italic ?? false) map["italic"] = italic;
+    if (strikethrough ?? false) map["strikethrough"] = strikethrough;
+    if (underline ?? false) map["underline"] = underline;
     map["range"] = range;
     return map;
   }
