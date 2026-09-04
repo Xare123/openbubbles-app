@@ -48,6 +48,10 @@ void main() {
       'legacy_ownership_repair_decoder_unknown',
       'legacy_ownership_repair_decoded_shape_invalid',
       'legacy_ownership_repaired',
+      'native_chat_conversion_missing_group_identifier_field',
+      'native_chat_envelope_malformed_metadata',
+      'native_chat_property_presence_malformed_nested_plist',
+      'native_chat_raw_presence_duplicate_field_identifier',
       'native_quarantined_malformed_record',
       'projection_repaired_attachment_capability',
       'retained_backlog_failure_dependency',
@@ -74,6 +78,10 @@ void main() {
       'legacy_ownership_repair_decoder_conflict',
       'legacy_ownership_repair_decoder_unknown',
       'legacy_ownership_repaired',
+      'native_chat_conversion_missing_group_identifier_field',
+      'native_chat_envelope_malformed_metadata',
+      'native_chat_property_presence_malformed_nested_plist',
+      'native_chat_raw_presence_duplicate_field_identifier',
       'native_quarantined_malformed_record',
       'projection_repaired_attachment_capability',
       'retained_backlog_failure_dependency',
@@ -109,5 +117,20 @@ void main() {
     diagnostics.record('legacy_ownership_repair_decoder_record_identifier');
 
     expect(diagnostics.snapshot(), <String, int>{'diagnostic_code_invalid': 1});
+  });
+
+  test('rejects unreviewed native chat diagnostic suffixes', () {
+    final diagnostics = CloudSyncSemanticDiagnosticCollector();
+
+    for (final candidate in const <String>[
+      'native_chat_envelope_record_identifier',
+      'native_chat_raw_presence_private_value',
+      'native_chat_property_presence_server_body',
+      'native_chat_conversion_future_unreviewed_branch',
+    ]) {
+      diagnostics.record(candidate);
+    }
+
+    expect(diagnostics.snapshot(), <String, int>{'diagnostic_code_invalid': 4});
   });
 }

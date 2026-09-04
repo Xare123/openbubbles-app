@@ -1593,6 +1593,9 @@ pub struct CloudSyncTransientTombstone {
 /// A bounded, single-record D1 result. Exactly one of `mutation`,
 /// `out_of_scope_service`, `deferred_reason`, `quarantine_reason`, and
 /// `failure_code` is populated.
+/// `quarantine_diagnostic_safe_code` is optional secondary metadata drawn
+/// only from a closed native vocabulary and never contains record content or
+/// identifiers.
 /// The optional source capability is echoed only after it passes the native
 /// protected-reference grammar.
 #[derive(Clone)]
@@ -1608,6 +1611,7 @@ pub struct CloudSyncTransientDecodeResult {
     pub out_of_scope_service: Option<CloudSyncTransientOutOfScopeService>,
     pub deferred_reason: Option<CloudSyncTransientDeferredReason>,
     pub quarantine_reason: Option<CloudSyncTransientQuarantineReason>,
+    pub quarantine_diagnostic_safe_code: Option<String>,
     pub failure_code: Option<CloudSyncTransientFailureCode>,
 }
 // CLOUD_SYNC_TRANSIENT_DTO_END
@@ -4466,6 +4470,7 @@ fn cloud_sync_transient_empty_result(
         out_of_scope_service: None,
         deferred_reason: None,
         quarantine_reason: None,
+        quarantine_diagnostic_safe_code: None,
         failure_code: None,
     }
 }
@@ -4654,6 +4659,7 @@ pub async fn cloud_sync_decode_protected_change(
                 out_of_scope_service: None,
                 deferred_reason: None,
                 quarantine_reason: None,
+                quarantine_diagnostic_safe_code: None,
                 failure_code: None,
             }
         }
@@ -4680,6 +4686,13 @@ pub async fn cloud_sync_decode_protected_change(
             let mut result =
                 cloud_sync_transient_empty_result(protected_source_reference, generation);
             result.quarantine_reason = Some(map_cloud_sync_transient_quarantine(reason));
+            result
+        }
+        CloudTransientDecodeOutcome::QuarantinedWithDiagnostic(reason, diagnostic) => {
+            let mut result =
+                cloud_sync_transient_empty_result(protected_source_reference, generation);
+            result.quarantine_reason = Some(map_cloud_sync_transient_quarantine(reason));
+            result.quarantine_diagnostic_safe_code = Some(diagnostic.safe_code());
             result
         }
         CloudTransientDecodeOutcome::Failure(failure) => {
@@ -4933,6 +4946,7 @@ mod cloud_sync_protected_bridge_contract_tests {
         assert!(result.tombstone.is_none());
         assert!(result.deferred_reason.is_none());
         assert!(result.quarantine_reason.is_none());
+        assert!(result.quarantine_diagnostic_safe_code.is_none());
         assert_eq!(
             result.failure_code,
             Some(CloudSyncTransientFailureCode::ScopeMismatch)

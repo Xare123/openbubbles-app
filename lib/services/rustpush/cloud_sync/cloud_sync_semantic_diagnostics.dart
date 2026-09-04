@@ -231,6 +231,56 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'decoder_failure',
   };
 
+  static const _nativeChatEnvelopeSegments = <String>{
+    'unsupported_record_type',
+    'malformed_metadata',
+  };
+
+  static const _nativeChatPresenceSegments = <String>{
+    'too_many_fields',
+    'malformed_field_identifier',
+    'duplicate_field_identifier',
+    'field_not_present',
+    'nested_payload_too_large',
+    'malformed_nested_plist',
+    'nested_plist_not_dictionary',
+    'explicit_clear_without_presence',
+  };
+
+  static const _nativeChatConversionSegments = <String>{
+    'missing_required_field',
+    'missing_guid_field',
+    'missing_chat_identifier_field',
+    'missing_group_identifier_field',
+    'missing_original_group_identifier_field',
+    'missing_service_field',
+    'missing_style_field',
+    'missing_participants_field',
+    'unsupported_service',
+    'unsupported_chat_style',
+    'empty_required_identity',
+    'empty_guid',
+    'empty_chat_identifier',
+    'empty_group_identifier',
+    'empty_original_group_identifier',
+    'group_photo_missing_stable_guid',
+    'direct_chat_group_photo_asset',
+    'group_photo_present_without_value',
+    'group_photo_presence_mismatch',
+    'display_name_field',
+    'last_addressed_handle_field',
+    'last_addressed_handle_ignored_unproven',
+    'group_version_field',
+    'last_seen_message_field',
+    'group_photo_guid_field',
+    'direct_chat_group_photo_guid',
+    'empty_legacy_group_identifier',
+    'logical_identity_hash',
+    'alias_hash',
+    'canonical_payload',
+    'canonical_build',
+  };
+
   static const _chatCardinalityPrefixes = <String>{
     'canonical_message_chat_exact_guid_',
     'canonical_message_chat_candidate_service_identifier_',
@@ -272,7 +322,27 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
           'native_quarantined_',
           _nativeQuarantineSegments,
         ) ||
-        _matchesPrefix(code, 'native_failure_', _nativeFailureSegments)) {
+        _matchesPrefix(code, 'native_failure_', _nativeFailureSegments) ||
+        _matchesPrefix(
+          code,
+          'native_chat_envelope_',
+          _nativeChatEnvelopeSegments,
+        ) ||
+        _matchesPrefix(
+          code,
+          'native_chat_raw_presence_',
+          _nativeChatPresenceSegments,
+        ) ||
+        _matchesPrefix(
+          code,
+          'native_chat_property_presence_',
+          _nativeChatPresenceSegments,
+        ) ||
+        _matchesPrefix(
+          code,
+          'native_chat_conversion_',
+          _nativeChatConversionSegments,
+        )) {
       return true;
     }
     return _matchesAnyPrefix(

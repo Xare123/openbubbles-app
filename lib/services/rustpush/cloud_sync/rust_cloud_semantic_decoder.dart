@@ -275,6 +275,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
   static String _nativeDisposition(
     frb_api.CloudSyncTransientDecodeResult result,
   ) {
+    if (result.quarantineDiagnosticSafeCode != null &&
+        result.quarantineReason == null) {
+      return 'invalid_disposition_shape';
+    }
     final hasReadyField =
         result.changeId != null ||
         result.entityKind != null ||
@@ -437,6 +441,13 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       );
     }
     if (result.quarantineReason != null) {
+      if (result.quarantineDiagnosticSafeCode case final diagnostic?) {
+        _recordDiagnostic(
+          CloudSyncSemanticDiagnosticCodes.isReviewed(diagnostic)
+              ? diagnostic
+              : 'diagnostic_code_invalid',
+        );
+      }
       throw CloudSemanticDecodeFailure(switch (result.quarantineReason!) {
         frb_api.CloudSyncTransientQuarantineReason.unsupportedService =>
           CloudFailureCategory.unsupportedService,

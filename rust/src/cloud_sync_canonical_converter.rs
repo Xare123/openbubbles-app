@@ -824,9 +824,20 @@ pub(crate) enum CloudCanonicalConversionOutcome {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CloudChatDiagnosticCode {
     MissingRequiredField,
+    MissingGuidField,
+    MissingChatIdentifierField,
+    MissingGroupIdentifierField,
+    MissingOriginalGroupIdentifierField,
+    MissingServiceField,
+    MissingStyleField,
+    MissingParticipantsField,
     UnsupportedService,
     UnsupportedChatStyle,
     EmptyRequiredIdentity,
+    EmptyGuid,
+    EmptyChatIdentifier,
+    EmptyGroupIdentifier,
+    EmptyOriginalGroupIdentifier,
     GroupPhotoMissingStableGuid,
     DirectChatGroupPhotoAsset,
     GroupPhotoPresentWithoutValue,
@@ -849,9 +860,20 @@ impl CloudChatDiagnosticCode {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::MissingRequiredField => "missing_required_field",
+            Self::MissingGuidField => "missing_guid_field",
+            Self::MissingChatIdentifierField => "missing_chat_identifier_field",
+            Self::MissingGroupIdentifierField => "missing_group_identifier_field",
+            Self::MissingOriginalGroupIdentifierField => "missing_original_group_identifier_field",
+            Self::MissingServiceField => "missing_service_field",
+            Self::MissingStyleField => "missing_style_field",
+            Self::MissingParticipantsField => "missing_participants_field",
             Self::UnsupportedService => "unsupported_service",
             Self::UnsupportedChatStyle => "unsupported_chat_style",
             Self::EmptyRequiredIdentity => "empty_required_identity",
+            Self::EmptyGuid => "empty_guid",
+            Self::EmptyChatIdentifier => "empty_chat_identifier",
+            Self::EmptyGroupIdentifier => "empty_group_identifier",
+            Self::EmptyOriginalGroupIdentifier => "empty_original_group_identifier",
             Self::GroupPhotoMissingStableGuid => "group_photo_missing_stable_guid",
             Self::DirectChatGroupPhotoAsset => "direct_chat_group_photo_asset",
             Self::GroupPhotoPresentWithoutValue => "group_photo_present_without_value",
@@ -1737,20 +1759,60 @@ fn chat_diagnostic(
     outcome
 }
 
+fn missing_chat_required_field(
+    presence: &CloudRawRecordPresence,
+) -> Option<CloudChatDiagnosticCode> {
+    [
+        ("guid", CloudChatDiagnosticCode::MissingGuidField),
+        ("cid", CloudChatDiagnosticCode::MissingChatIdentifierField),
+        ("gid", CloudChatDiagnosticCode::MissingGroupIdentifierField),
+        (
+            "ogid",
+            CloudChatDiagnosticCode::MissingOriginalGroupIdentifierField,
+        ),
+        ("svc", CloudChatDiagnosticCode::MissingServiceField),
+        ("stl", CloudChatDiagnosticCode::MissingStyleField),
+        ("ptcpts", CloudChatDiagnosticCode::MissingParticipantsField),
+    ]
+    .into_iter()
+    .find_map(|(field, code)| {
+        (presence.field(field) != CloudRawFieldPresence::PresentWithValue).then_some(code)
+    })
+}
+
+fn empty_chat_required_identity(chat: &CloudChat) -> Option<CloudChatDiagnosticCode> {
+    [
+        (&chat.guid, CloudChatDiagnosticCode::EmptyGuid),
+        (
+            &chat.chat_identifier,
+            CloudChatDiagnosticCode::EmptyChatIdentifier,
+        ),
+        (
+            &chat.group_id,
+            CloudChatDiagnosticCode::EmptyGroupIdentifier,
+        ),
+        (
+            &chat.original_group_id,
+            CloudChatDiagnosticCode::EmptyOriginalGroupIdentifier,
+        ),
+    ]
+    .into_iter()
+    .find_map(|(value, code)| value.is_empty().then_some(code))
+}
+
 fn convert_chat_internal(
     context: &CloudCanonicalConversionContext<'_>,
     presence: &CloudRawRecordPresence,
     chat: &CloudChat,
     diagnostic: &mut Option<CloudChatDiagnosticCode>,
 ) -> CloudCanonicalConversionOutcome {
-    if let Err(reason) = require_present(
-        presence,
-        &["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts"],
-    ) {
+    if let Some(code) = missing_chat_required_field(presence) {
         return chat_diagnostic(
             diagnostic,
-            CloudChatDiagnosticCode::MissingRequiredField,
-            CloudCanonicalConversionOutcome::Quarantined(reason),
+            code,
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+            ),
         );
     }
     let service = match chat.service_name.as_str() {
@@ -1761,18 +1823,10 @@ fn convert_chat_internal(
         // SMS message bodies remain explicitly outside this projection.
         "SMS" => CloudCanonicalService::Sms,
         "RCS" => {
-            if [
-                &chat.guid,
-                &chat.chat_identifier,
-                &chat.group_id,
-                &chat.original_group_id,
-            ]
-            .iter()
-            .any(|value| value.is_empty())
-            {
+            if let Some(code) = empty_chat_required_identity(chat) {
                 return chat_diagnostic(
                     diagnostic,
-                    CloudChatDiagnosticCode::EmptyRequiredIdentity,
+                    code,
                     CloudCanonicalConversionOutcome::Quarantined(
                         CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
                     ),
@@ -1805,18 +1859,10 @@ fn convert_chat_internal(
             )
         }
     };
-    if [
-        &chat.guid,
-        &chat.chat_identifier,
-        &chat.group_id,
-        &chat.original_group_id,
-    ]
-    .iter()
-    .any(|value| value.is_empty())
-    {
+    if let Some(code) = empty_chat_required_identity(chat) {
         return chat_diagnostic(
             diagnostic,
-            CloudChatDiagnosticCode::EmptyRequiredIdentity,
+            code,
             CloudCanonicalConversionOutcome::Quarantined(
                 CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
             ),
@@ -3130,6 +3176,34 @@ mod tests {
                 "missing_required_field",
             ),
             (
+                CloudChatDiagnosticCode::MissingGuidField,
+                "missing_guid_field",
+            ),
+            (
+                CloudChatDiagnosticCode::MissingChatIdentifierField,
+                "missing_chat_identifier_field",
+            ),
+            (
+                CloudChatDiagnosticCode::MissingGroupIdentifierField,
+                "missing_group_identifier_field",
+            ),
+            (
+                CloudChatDiagnosticCode::MissingOriginalGroupIdentifierField,
+                "missing_original_group_identifier_field",
+            ),
+            (
+                CloudChatDiagnosticCode::MissingServiceField,
+                "missing_service_field",
+            ),
+            (
+                CloudChatDiagnosticCode::MissingStyleField,
+                "missing_style_field",
+            ),
+            (
+                CloudChatDiagnosticCode::MissingParticipantsField,
+                "missing_participants_field",
+            ),
+            (
                 CloudChatDiagnosticCode::UnsupportedService,
                 "unsupported_service",
             ),
@@ -3140,6 +3214,19 @@ mod tests {
             (
                 CloudChatDiagnosticCode::EmptyRequiredIdentity,
                 "empty_required_identity",
+            ),
+            (CloudChatDiagnosticCode::EmptyGuid, "empty_guid"),
+            (
+                CloudChatDiagnosticCode::EmptyChatIdentifier,
+                "empty_chat_identifier",
+            ),
+            (
+                CloudChatDiagnosticCode::EmptyGroupIdentifier,
+                "empty_group_identifier",
+            ),
+            (
+                CloudChatDiagnosticCode::EmptyOriginalGroupIdentifier,
+                "empty_original_group_identifier",
             ),
             (
                 CloudChatDiagnosticCode::GroupPhotoMissingStableGuid,
@@ -3275,7 +3362,7 @@ mod tests {
         assert_eq!(instrumented, expected);
         assert_eq!(
             diagnostic,
-            Some(CloudChatDiagnosticCode::MissingRequiredField)
+            Some(CloudChatDiagnosticCode::MissingServiceField)
         );
     }
 
@@ -4116,7 +4203,7 @@ mod tests {
         );
         assert_eq!(
             diagnostic,
-            Some(CloudChatDiagnosticCode::MissingRequiredField)
+            Some(CloudChatDiagnosticCode::MissingParticipantsField)
         );
 
         let mut present_nonempty_chat = direct_chat();
