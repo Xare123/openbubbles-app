@@ -3799,21 +3799,22 @@ mod tests {
     fn nonempty_or_missing_chat_property_does_not_gain_an_absence_exception() {
         use rustpush::cloudkit_proto::record::field::value::Type;
 
-        let mut malformed =
+        let mut non_dictionary =
             gzip_test_record("prop", Type::EncryptedBytesType as i32, Some(vec![1, 2, 3]));
-        let mut malformed_presence = CloudRawRecordPresence::extract(&malformed).unwrap();
+        let mut non_dictionary_presence =
+            CloudRawRecordPresence::extract(&non_dictionary).unwrap();
         assert_eq!(
             normalize_empty_optional_chat_property(
-                &mut malformed,
-                &mut malformed_presence,
+                &mut non_dictionary,
+                &mut non_dictionary_presence,
                 b"not-a-plist",
             ),
             Ok(false)
         );
-        assert_eq!(malformed.record_field.len(), 1);
+        assert_eq!(non_dictionary.record_field.len(), 1);
         assert_eq!(
-            malformed_presence.capture_decrypted_plist_dictionary("prop", b"not-a-plist"),
-            Err(CloudRawPresenceFailure::MalformedNestedPlist)
+            non_dictionary_presence.capture_decrypted_plist_dictionary("prop", b"not-a-plist"),
+            Err(CloudRawPresenceFailure::NestedPlistIsNotDictionary)
         );
 
         let mut missing = Record::default();
@@ -4193,7 +4194,11 @@ mod tests {
     #[test]
     fn nested_wire_mismatch_log_surface_is_metadata_only() {
         let source = include_str!("cloud_sync_transient_bridge.rs");
-        let marker = "CloudKit V2 nested protobuf diagnostic stage={} failure_class={} field_number={} expected_wire_type={} actual_wire_type={}";
+        let marker = concat!(
+            "CloudKit V2 nested protobuf diagnostic ",
+            "stage={} failure_class={} field_number={} ",
+            "expected_wire_type={} actual_wire_type={}"
+        );
         assert_eq!(source.matches(marker).count(), 1);
         let marker_offset = source.find(marker).expect("nested diagnostic marker");
         let warning_start = source[..marker_offset]
