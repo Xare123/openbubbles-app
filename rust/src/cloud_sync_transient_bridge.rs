@@ -771,6 +771,13 @@ enum CloudNestedProtobufFailure {
     Other,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CloudNestedWireTypeMismatch {
+    field_number: u64,
+    expected_wire_type: u8,
+    actual_wire_type: u8,
+}
+
 impl CloudNestedProtobufFailure {
     fn diagnostic_code(self) -> &'static str {
         match self {
@@ -841,6 +848,83 @@ fn decode_message_proto_4(value: &[u8]) -> Result<(), DecodeError> {
     MessageProto4::decode(value).map(|_| ())
 }
 
+fn expected_nested_wire_type(decoder_stage: &str, field_number: u64) -> Option<u8> {
+    match decoder_stage {
+        "chat_proto" => (field_number == 2).then_some(0),
+        "message_proto" => {
+            if matches!(field_number, 1 | 9 | 10 | 11 | 13 | 14 | 15 | 17 | 18) {
+                Some(0)
+            } else if matches!(field_number, 2 | 3 | 4 | 5 | 6 | 7 | 8 | 16) {
+                Some(2)
+            } else {
+                None
+            }
+        }
+        "message_proto_2" => (field_number == 2).then_some(2),
+        "message_proto_3" => matches!(field_number, 2 | 3).then_some(0),
+        "message_proto_4" => {
+            if matches!(field_number, 2 | 4 | 7) {
+                Some(2)
+            } else if matches!(field_number, 5 | 6 | 8) {
+                Some(0)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Finds only a schema-known top-level field whose encoded wire type differs
+/// from the compiled schema. Unknown fields are skipped using their actual wire
+/// type. Malformed framing, groups, and truncation yield no metadata so this
+/// diagnostic can never turn uncertain bytes into a schema claim.
+fn first_nested_wire_type_mismatch(
+    value: &[u8],
+    decoder_stage: &str,
+) -> Option<CloudNestedWireTypeMismatch> {
+    let mut position = 0usize;
+    let mut field_occurrences = 0usize;
+    while position < value.len() {
+        field_occurrences = field_occurrences.checked_add(1)?;
+        if field_occurrences > MAX_PROTOBUF_FIELD_OCCURRENCES {
+            return None;
+        }
+        let key = read_wire_varint(value, &mut position).ok()?;
+        let field_number = key >> 3;
+        if field_number == 0 {
+            return None;
+        }
+        let actual_wire_type = (key & 0x07) as u8;
+        let mismatch = expected_nested_wire_type(decoder_stage, field_number)
+            .filter(|expected_wire_type| *expected_wire_type != actual_wire_type)
+            .map(|expected_wire_type| CloudNestedWireTypeMismatch {
+                field_number,
+                expected_wire_type,
+                actual_wire_type,
+            });
+        match actual_wire_type {
+            0 => {
+                read_wire_varint(value, &mut position).ok()?;
+            }
+            1 => {
+                position = position.checked_add(8).filter(|end| *end <= value.len())?;
+            }
+            2 => {
+                read_wire_bytes(value, &mut position).ok()?;
+            }
+            5 => {
+                position = position.checked_add(4).filter(|end| *end <= value.len())?;
+            }
+            _ => return None,
+        }
+        if mismatch.is_some() {
+            return mismatch;
+        }
+    }
+    None
+}
+
 fn validate_nested_protobuf(
     value: &[u8],
     field: GzipFieldSpec,
@@ -849,11 +933,31 @@ fn validate_nested_protobuf(
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => {
             let failure = classify_nested_protobuf_failure(&error);
-            warn!(
-                "CloudKit V2 nested protobuf diagnostic stage={} failure_class={}",
-                field.decoder_stage,
-                failure.diagnostic_code()
-            );
+            if failure == CloudNestedProtobufFailure::WireTypeMismatch {
+                if let Some(mismatch) = first_nested_wire_type_mismatch(value, field.decoder_stage)
+                {
+                    warn!(
+                        "CloudKit V2 nested protobuf diagnostic stage={} failure_class={} field_number={} expected_wire_type={} actual_wire_type={}",
+                        field.decoder_stage,
+                        failure.diagnostic_code(),
+                        mismatch.field_number,
+                        mismatch.expected_wire_type,
+                        mismatch.actual_wire_type,
+                    );
+                } else {
+                    warn!(
+                        "CloudKit V2 nested protobuf diagnostic stage={} failure_class={}",
+                        field.decoder_stage,
+                        failure.diagnostic_code()
+                    );
+                }
+            } else {
+                warn!(
+                    "CloudKit V2 nested protobuf diagnostic stage={} failure_class={}",
+                    field.decoder_stage,
+                    failure.diagnostic_code()
+                );
+            }
             Err(malformed_record_at(field.decoder_stage))
         }
         Err(_) => Err(decoder_failure_at("nested_protobuf_panic")),
@@ -928,6 +1032,31 @@ fn normalize_optional_empty_gzip_field(
         .record_field
         .retain(|candidate| field_name(candidate) != Some(field.name));
     true
+}
+
+/// The legacy decoder treats decrypted empty bytes for optional `CloudKitBytes`
+/// fields as absence. Live Messages in iCloud records prove that optional chat
+/// `prop` uses this representation. Normalize only that schema-known field on
+/// the locally decoded record and rebuild presence so canonical conversion sees
+/// absence. The protected raw envelope remains unchanged.
+fn normalize_empty_optional_chat_property(
+    record: &mut Record,
+    presence: &mut CloudRawRecordPresence,
+    decrypted: &[u8],
+) -> Result<bool, CloudTransientBridgeFailure> {
+    if !decrypted.is_empty() {
+        return Ok(false);
+    }
+    let previous_length = record.record_field.len();
+    record
+        .record_field
+        .retain(|candidate| field_name(candidate) != Some("prop"));
+    if record.record_field.len() == previous_length {
+        return Err(CloudTransientBridgeFailure::MalformedRecord);
+    }
+    *presence = CloudRawRecordPresence::extract(record)
+        .map_err(|_| CloudTransientBridgeFailure::MalformedRecord)?;
+    Ok(true)
 }
 
 fn empty_list_value_is_payload_free(value: &Value) -> bool {
@@ -2112,6 +2241,48 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
 
     let converted = match request.stream {
         CloudNativeStream::Chats => {
+            if !presence.was_sent_as_empty_list("prop") {
+                match encrypted_field_bytes(&record, &record_key, "prop") {
+                    Ok(Some(decrypted)) => {
+                        match normalize_empty_optional_chat_property(
+                            &mut record,
+                            &mut presence,
+                            &decrypted,
+                        ) {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                if let Err(reason) =
+                                    presence.capture_decrypted_plist_dictionary("prop", &decrypted)
+                                {
+                                    let diagnostic = if reason
+                                        == CloudRawPresenceFailure::MalformedNestedPlist
+                                    {
+                                        CloudTransientQuarantineDiagnostic::ChatPropertyPresenceWithShape(
+                                            reason,
+                                            classify_chat_property_shape(&decrypted),
+                                        )
+                                    } else {
+                                        CloudTransientQuarantineDiagnostic::ChatPropertyPresence(
+                                            reason,
+                                        )
+                                    };
+                                    debug!(
+                                        "CloudKit V2 transient chat diagnostic code={}",
+                                        diagnostic.safe_code()
+                                    );
+                                    return CloudTransientDecodeOutcome::QuarantinedWithDiagnostic(
+                                        CloudCanonicalQuarantineReason::MalformedRecord,
+                                        diagnostic,
+                                    );
+                                }
+                            }
+                            Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
+                }
+            }
             if let Err(failure) = preflight_gzip_fields(
                 &mut record,
                 &record_key,
@@ -2134,33 +2305,6 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
             }
             if let Err(failure) = preflight_chat_participant_list(&record, &record_key) {
                 return CloudTransientDecodeOutcome::Failure(failure);
-            }
-            match encrypted_field_bytes(&record, &record_key, "prop") {
-                Ok(Some(decrypted)) => {
-                    if let Err(reason) =
-                        presence.capture_decrypted_plist_dictionary("prop", &decrypted)
-                    {
-                        let diagnostic = if reason == CloudRawPresenceFailure::MalformedNestedPlist
-                        {
-                            CloudTransientQuarantineDiagnostic::ChatPropertyPresenceWithShape(
-                                reason,
-                                classify_chat_property_shape(&decrypted),
-                            )
-                        } else {
-                            CloudTransientQuarantineDiagnostic::ChatPropertyPresence(reason)
-                        };
-                        debug!(
-                            "CloudKit V2 transient chat diagnostic code={}",
-                            diagnostic.safe_code()
-                        );
-                        return CloudTransientDecodeOutcome::QuarantinedWithDiagnostic(
-                            CloudCanonicalQuarantineReason::MalformedRecord,
-                            diagnostic,
-                        );
-                    }
-                }
-                Ok(None) => {}
-                Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             }
             let strict_record_key = StrictCloudKitV2Decryptor { inner: &record_key };
             let chat = match decode_cloud_chat_record(&record, &strict_record_key) {
@@ -3613,6 +3757,74 @@ mod tests {
     }
 
     #[test]
+    fn empty_optional_chat_property_normalizes_only_the_local_record_to_absence() {
+        use rustpush::cloudkit_proto::record::field;
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        let mut decoded =
+            gzip_test_record("prop", Type::EncryptedBytesType as i32, Some(vec![1, 2, 3]));
+        decoded.record_field.push(Field {
+            identifier: Some(field::Identifier {
+                name: Some("guid".to_owned()),
+            }),
+            value: Some(Value {
+                r#type: Some(Type::EncryptedBytesType as i32),
+                bytes_value: Some(vec![4, 5, 6]),
+                ..Default::default()
+            }),
+        });
+        let protected_input = decoded.clone();
+        let mut presence = CloudRawRecordPresence::extract(&decoded).unwrap();
+
+        assert_eq!(
+            normalize_empty_optional_chat_property(&mut decoded, &mut presence, &[]),
+            Ok(true)
+        );
+        assert_eq!(decoded.record_field.len(), 1);
+        assert_eq!(field_name(&decoded.record_field[0]), Some("guid"));
+        assert_eq!(presence.field("prop"), presence.field("missing"));
+
+        assert_eq!(protected_input.record_field.len(), 2);
+        assert!(protected_input
+            .record_field
+            .iter()
+            .any(|candidate| field_name(candidate) == Some("prop")));
+        assert!(protected_input
+            .record_field
+            .iter()
+            .any(|candidate| field_name(candidate) == Some("guid")));
+    }
+
+    #[test]
+    fn nonempty_or_missing_chat_property_does_not_gain_an_absence_exception() {
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        let mut malformed =
+            gzip_test_record("prop", Type::EncryptedBytesType as i32, Some(vec![1, 2, 3]));
+        let mut malformed_presence = CloudRawRecordPresence::extract(&malformed).unwrap();
+        assert_eq!(
+            normalize_empty_optional_chat_property(
+                &mut malformed,
+                &mut malformed_presence,
+                b"not-a-plist",
+            ),
+            Ok(false)
+        );
+        assert_eq!(malformed.record_field.len(), 1);
+        assert_eq!(
+            malformed_presence.capture_decrypted_plist_dictionary("prop", b"not-a-plist"),
+            Err(CloudRawPresenceFailure::MalformedNestedPlist)
+        );
+
+        let mut missing = Record::default();
+        let mut missing_presence = CloudRawRecordPresence::extract(&missing).unwrap();
+        assert_eq!(
+            normalize_empty_optional_chat_property(&mut missing, &mut missing_presence, &[]),
+            Err(CloudTransientBridgeFailure::MalformedRecord)
+        );
+    }
+
+    #[test]
     fn non_gzip_header_diagnostics_are_bounded_categories() {
         assert_eq!(non_gzip_header_stage(&[]), "header_empty");
         assert_eq!(non_gzip_header_stage(&[0x08]), "header_single_byte");
@@ -3916,6 +4128,106 @@ mod tests {
             classify_nested_protobuf_failure(&invalid_utf8),
             CloudNestedProtobufFailure::InvalidUtf8
         );
+    }
+
+    #[test]
+    fn nested_wire_scanner_identifies_known_mismatches_after_safe_skips() {
+        assert_eq!(
+            first_nested_wire_type_mismatch(&[0x18, 0x01], "message_proto"),
+            Some(CloudNestedWireTypeMismatch {
+                field_number: 3,
+                expected_wire_type: 2,
+                actual_wire_type: 0,
+            })
+        );
+
+        let mut encoded = vec![0x12, 0x02, b'o', b'k'];
+        append_test_wire_varint(&mut encoded, (100 << 3) | 1);
+        encoded.extend_from_slice(&[0; 8]);
+        encoded.extend_from_slice(&[0x4a, 0x01, 0x01]);
+        assert_eq!(
+            first_nested_wire_type_mismatch(&encoded, "message_proto"),
+            Some(CloudNestedWireTypeMismatch {
+                field_number: 9,
+                expected_wire_type: 0,
+                actual_wire_type: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn nested_wire_scanner_ignores_valid_unknown_and_uncertain_frames() {
+        let valid = [0x08, 0x01, 0x12, 0x01, b'x'];
+        assert_eq!(
+            first_nested_wire_type_mismatch(&valid, "message_proto"),
+            None
+        );
+
+        let mut unknown = Vec::new();
+        append_test_wire_varint(&mut unknown, (100 << 3) | 1);
+        unknown.extend_from_slice(&[0; 8]);
+        assert_eq!(
+            first_nested_wire_type_mismatch(&unknown, "message_proto"),
+            None
+        );
+
+        for malformed in [&[0x80][..], &[0x12, 0x80][..], &[0x18][..], &[0x1b][..]] {
+            assert_eq!(
+                first_nested_wire_type_mismatch(malformed, "message_proto"),
+                None
+            );
+        }
+
+        let mut over_budget = Vec::new();
+        for _ in 0..=MAX_PROTOBUF_FIELD_OCCURRENCES {
+            append_test_wire_varint(&mut over_budget, 100 << 3);
+            over_budget.push(0);
+        }
+        over_budget.extend_from_slice(&[0x18, 0x01]);
+        assert_eq!(
+            first_nested_wire_type_mismatch(&over_budget, "message_proto"),
+            None
+        );
+    }
+
+    #[test]
+    fn nested_wire_mismatch_log_surface_is_metadata_only() {
+        let source = include_str!("cloud_sync_transient_bridge.rs");
+        let marker = "CloudKit V2 nested protobuf diagnostic stage={} failure_class={} field_number={} expected_wire_type={} actual_wire_type={}";
+        assert_eq!(source.matches(marker).count(), 1);
+        let marker_offset = source.find(marker).expect("nested diagnostic marker");
+        let warning_start = source[..marker_offset]
+            .rfind("warn!(")
+            .expect("nested diagnostic warning");
+        let warning_end = marker_offset
+            + source[marker_offset..]
+                .find("\n                    );")
+                .expect("nested diagnostic warning end");
+        let warning = &source[warning_start..warning_end];
+        for fixed_metadata in [
+            "field.decoder_stage",
+            "failure.diagnostic_code()",
+            "mismatch.field_number",
+            "mismatch.expected_wire_type",
+            "mismatch.actual_wire_type",
+        ] {
+            assert!(warning.contains(fixed_metadata));
+        }
+        for forbidden in [
+            "payload={",
+            "value={",
+            "bytes={",
+            "error={",
+            "record={",
+            "identifier={",
+            "{:?}",
+            "{:#",
+        ] {
+            assert!(
+                !warning.contains(forbidden),
+                "nested wire diagnostic must not expose {forbidden}"
+            );
+        }
     }
 
     #[test]
