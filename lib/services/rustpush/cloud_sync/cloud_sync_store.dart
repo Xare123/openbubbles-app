@@ -267,9 +267,10 @@ abstract interface class CloudSyncStore {
   /// In the same transaction (or synchronized critical section) only the
   /// existing mapping's etag hash and timestamp are updated and the exact
   /// outbox row moves to confirmed with lease, failure, and retry fields
-  /// cleared. The existing encrypted server-record reference is preserved
-  /// and the protected lease marker is released, matching a confirmed
-  /// transition. Stale generation or lease, mismatched mapping, a
+  /// cleared. The existing encrypted server-record reference is preserved.
+  /// The protected lease marker is normally released, but a manual
+  /// confirmed-replay Canary may retain it until a no-save readback releases
+  /// the receipt. Stale generation or lease, mismatched mapping, a
   /// duplicate or changed receipt, a non-save operation, an empty etag, and
   /// a missing mapping fail with content-free safe codes and no mutation.
   /// A retry after success fails closed with `stale_outbox_lease` because
@@ -279,6 +280,7 @@ abstract interface class CloudSyncStore {
     CloudSyncScope scope, {
     required String leaseId,
     required CloudOutboxCreateReceipt receipt,
+    bool retainProtectedLeaseReference = false,
     required DateTime now,
   });
 
@@ -693,24 +695,4 @@ class CloudOutboxTransition {
   final String? serverRecordIdHash;
   final bool clearSubmissionIdentity;
   final bool retainProtectedLeaseReference;
-}
-
-/// Strongly typed receipt for one successful V2 outbound CREATE.
-///
-/// Every value is an opaque hash or correlation key. No record identifier,
-/// etag, account value, or message content crosses this boundary. Empty
-/// values are rejected by the store with a content-free safe code rather
-/// than here so every rejection path stays uniform.
-class CloudOutboxCreateReceipt {
-  const CloudOutboxCreateReceipt({
-    required this.operationId,
-    required this.logicalEntityKeyHash,
-    required this.serverRecordIdHash,
-    required this.etagHash,
-  });
-
-  final String operationId;
-  final String logicalEntityKeyHash;
-  final String serverRecordIdHash;
-  final String etagHash;
 }

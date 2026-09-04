@@ -2294,6 +2294,7 @@ class ObjectBoxCloudSyncStore
     CloudSyncScope scope, {
     required String leaseId,
     required CloudOutboxCreateReceipt receipt,
+    bool retainProtectedLeaseReference = false,
     required DateTime now,
   }) async {
     if (receipt.operationId.isEmpty ||
@@ -2373,7 +2374,9 @@ class ObjectBoxCloudSyncStore
         ..confirmedAtMs = nowMs
         ..lastErrorCategory = null
         ..nextEligibleAtMs = 0
-        ..protectedLeaseReference = null
+        ..protectedLeaseReference = retainProtectedLeaseReference
+            ? entity.protectedLeaseReference
+            : null
         ..leaseIdHash = null
         ..leaseExpiresAtMs = 0
         ..updatedAtMs = nowMs;

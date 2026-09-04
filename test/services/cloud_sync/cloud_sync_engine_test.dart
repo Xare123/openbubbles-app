@@ -222,6 +222,36 @@ void main() {
     return (await store.outboxEntries(scope)).single;
   }
 
+  String nativeDigest(String marker) => List.filled(43, marker).join();
+
+  CloudOutboxCreateReceipt createReceiptFor(
+    CloudOutboxOperation operation, {
+    int mappingOrdinal = 1,
+  }) {
+    return CloudOutboxCreateReceipt(
+      operationId: operation.operationId,
+      logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      serverRecordIdHash:
+          operation.serverRecordIdHash ??
+          nativeDigest((mappingOrdinal % 10).toString()),
+      etagHash: nativeDigest('E'),
+    );
+  }
+
+  CloudPushOutcome confirmedOutcomeFor(
+    CloudOutboxOperation operation, {
+    int mappingOrdinal = 1,
+  }) {
+    return CloudPushOutcome(
+      operationId: operation.operationId,
+      disposition: CloudPushDisposition.confirmed,
+      createReceipt: createReceiptFor(
+        operation,
+        mappingOrdinal: mappingOrdinal,
+      ),
+    );
+  }
+
   test('fetches, journals, applies, and advances checkpoint', () async {
     transport.enqueueFetchBatch(
       CloudFetchBatch(
@@ -380,12 +410,7 @@ void main() {
           (_, preparedSubmission, persistedIdentity) async {
             expect(writerExclusion.isActive, isTrue);
             return CloudPushBatchResult(
-              outcomes: [
-                CloudPushOutcome(
-                  operationId: preparedSubmission.operationIds.single,
-                  disposition: CloudPushDisposition.confirmed,
-                ),
-              ],
+              outcomes: [confirmedOutcomeFor(operation)],
             );
           };
 
@@ -414,14 +439,7 @@ void main() {
       final operation = testOutboxOperation(scope, 991);
       await store.enqueueOutbox(operation);
       transport.enqueuePushResult(
-        CloudPushBatchResult(
-          outcomes: [
-            CloudPushOutcome(
-              operationId: operation.operationId,
-              disposition: CloudPushDisposition.confirmed,
-            ),
-          ],
-        ),
+        CloudPushBatchResult(outcomes: [confirmedOutcomeFor(operation)]),
       );
 
       final result = await engine(
@@ -1938,14 +1956,7 @@ void main() {
         if (call == 5) writerAuthority.allowVerify = false;
       };
       transport.enqueuePushResult(
-        CloudPushBatchResult(
-          outcomes: [
-            CloudPushOutcome(
-              operationId: operation.operationId,
-              disposition: CloudPushDisposition.confirmed,
-            ),
-          ],
-        ),
+        CloudPushBatchResult(outcomes: [confirmedOutcomeFor(operation)]),
       );
 
       final result = await engine(
@@ -3843,14 +3854,7 @@ void main() {
     await store.enqueueOutbox(confirmed);
     await store.enqueueOutbox(omitted);
     transport.enqueuePushResult(
-      CloudPushBatchResult(
-        outcomes: [
-          CloudPushOutcome(
-            operationId: confirmed.operationId,
-            disposition: CloudPushDisposition.confirmed,
-          ),
-        ],
-      ),
+      CloudPushBatchResult(outcomes: [confirmedOutcomeFor(confirmed)]),
     );
 
     final result = await engine(
@@ -3867,6 +3871,77 @@ void main() {
       expect(operation.lastFailure, CloudFailureCategory.unknown);
     }
   });
+
+  test('receiptless confirmed outcome remains reconciliation-only', () async {
+    final operation = testOutboxOperation(scope, 3);
+    await store.enqueueOutbox(operation);
+    transport.enqueuePushResult(
+      CloudPushBatchResult(
+        outcomes: [
+          CloudPushOutcome(
+            operationId: operation.operationId,
+            disposition: CloudPushDisposition.confirmed,
+          ),
+        ],
+      ),
+    );
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    final stored = (await store.outboxEntries(scope)).single;
+    expect(result.counters.confirmed, 0);
+    expect(stored.status, CloudOutboxStatus.unknownOutcome);
+    expect(stored.lastFailure, CloudFailureCategory.unknown);
+    expect(stored.appleRequestUuid, isNotNull);
+    expect(stored.appleOperationUuid, isNotNull);
+    expect(stored.nextEligibleAt, testEpoch.add(const Duration(seconds: 10)));
+    expect(transport.pushCallCount, 1);
+  });
+
+  test(
+    'finalizes a committed receipt prefix when a later commit fails',
+    () async {
+      final failingStore = _FailingSecondReceiptCommitStore();
+      store = failingStore;
+      final trackingTransport = _ReceiptTrackingFakeCloudSyncTransport();
+      transport = trackingTransport;
+      final first = testOutboxOperation(scope, 911);
+      final second = testOutboxOperation(scope, 912);
+      await store.enqueueOutbox(first);
+      await store.enqueueOutbox(second);
+      transport.pushHandler = (_, operations) async =>
+          CloudPushBatchResult(outcomes: operations.map(confirmedOutcomeFor));
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        batchSize: 2,
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      expect(result.status, CloudSyncRunStatus.failed);
+      expect(result.failureSafeCode, 'cloud_sync_unknown_failure');
+
+      final storedById = {
+        for (final operation in await store.outboxEntries(scope))
+          operation.operationId: operation,
+      };
+      expect(failingStore.receiptCommitCalls, 2);
+      final committedId = failingStore.committedOperationIds.single;
+      final unresolvedId = {
+        first.operationId,
+        second.operationId,
+      }.singleWhere((operationId) => operationId != committedId);
+      expect(storedById[committedId]!.status, CloudOutboxStatus.confirmed);
+      expect(
+        storedById[unresolvedId]!.status,
+        CloudOutboxStatus.unknownOutcome,
+      );
+      expect(trackingTransport.acknowledgedOperationIds, [committedId]);
+    },
+  );
 
   test(
     'timed-out push remains unknown until native operations quiesce',
@@ -3907,14 +3982,7 @@ void main() {
       );
 
       nativePushResult.complete(
-        CloudPushBatchResult(
-          outcomes: [
-            CloudPushOutcome(
-              operationId: operation.operationId,
-              disposition: CloudPushDisposition.confirmed,
-            ),
-          ],
-        ),
+        CloudPushBatchResult(outcomes: [confirmedOutcomeFor(operation)]),
       );
       await completion;
       expect(
@@ -4068,18 +4136,9 @@ void main() {
     transport.enqueuePushResult(
       CloudPushBatchResult(
         outcomes: [
-          CloudPushOutcome(
-            operationId: first.operationId,
-            disposition: CloudPushDisposition.confirmed,
-          ),
-          CloudPushOutcome(
-            operationId: second.operationId,
-            disposition: CloudPushDisposition.confirmed,
-          ),
-          CloudPushOutcome(
-            operationId: unknown.operationId,
-            disposition: CloudPushDisposition.confirmed,
-          ),
+          confirmedOutcomeFor(first),
+          confirmedOutcomeFor(second, mappingOrdinal: 2),
+          confirmedOutcomeFor(unknown, mappingOrdinal: 3),
         ],
       ),
     );
@@ -4101,7 +4160,9 @@ void main() {
   test('server read confirms an ambiguous write without replay', () async {
     await seedAmbiguousOutbox(801);
     transport.unknownOutcomeHandler = (_, operation) async =>
-        const CloudUnknownOutcomeResolution.committed();
+        CloudUnknownOutcomeResolution.committed(
+          createReceipt: createReceiptFor(operation),
+        );
 
     final result = await engine(
       flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
@@ -4118,7 +4179,7 @@ void main() {
   });
 
   test('reconciliation timeout never replays the write', () async {
-    await seedAmbiguousOutbox(808);
+    final operation = await seedAmbiguousOutbox(808);
     final nativeResolution = Completer<CloudUnknownOutcomeResolution>();
     final quiescenceStarted = Completer<void>();
     transport.unknownOutcomeHandler = (_, _) => nativeResolution.future;
@@ -4142,7 +4203,11 @@ void main() {
     expect(runReturned, isFalse);
     expect(transport.pushCallCount, 1);
 
-    nativeResolution.complete(const CloudUnknownOutcomeResolution.committed());
+    nativeResolution.complete(
+      CloudUnknownOutcomeResolution.committed(
+        createReceipt: createReceiptFor(operation),
+      ),
+    );
     await completion;
     expect(transport.unknownOutcomeCallCount, 1);
     expect(transport.pushCallCount, 1);
@@ -4176,14 +4241,7 @@ void main() {
       transport.unknownOutcomeHandler = (_, operation) async =>
           const CloudUnknownOutcomeResolution.notApplied();
       transport.enqueuePushResult(
-        CloudPushBatchResult(
-          outcomes: [
-            CloudPushOutcome(
-              operationId: operation.operationId,
-              disposition: CloudPushDisposition.confirmed,
-            ),
-          ],
-        ),
+        CloudPushBatchResult(outcomes: [confirmedOutcomeFor(operation)]),
       );
 
       final first = await engine(
@@ -4273,14 +4331,7 @@ void main() {
         );
       };
       transport.enqueuePushResult(
-        CloudPushBatchResult(
-          outcomes: [
-            CloudPushOutcome(
-              operationId: operation.operationId,
-              disposition: CloudPushDisposition.confirmed,
-            ),
-          ],
-        ),
+        CloudPushBatchResult(outcomes: [confirmedOutcomeFor(operation)]),
       );
 
       await engine(
@@ -4415,12 +4466,7 @@ void main() {
       transport.pushHandler = (scope, operations) async {
         await Future<void>.delayed(const Duration(milliseconds: 80));
         return CloudPushBatchResult(
-          outcomes: [
-            CloudPushOutcome(
-              operationId: operations.single.operationId,
-              disposition: CloudPushDisposition.confirmed,
-            ),
-          ],
+          outcomes: [confirmedOutcomeFor(operations.single)],
         );
       };
 
@@ -4450,12 +4496,7 @@ void main() {
         clock.advance(const Duration(milliseconds: 25));
       }
       return CloudPushBatchResult(
-        outcomes: [
-          CloudPushOutcome(
-            operationId: operations.single.operationId,
-            disposition: CloudPushDisposition.confirmed,
-          ),
-        ],
+        outcomes: [confirmedOutcomeFor(operations.single)],
       );
     };
 
@@ -4488,12 +4529,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 55));
       clock.advance(const Duration(milliseconds: 55));
       return CloudPushBatchResult(
-        outcomes: [
-          CloudPushOutcome(
-            operationId: operations.single.operationId,
-            disposition: CloudPushDisposition.confirmed,
-          ),
-        ],
+        outcomes: [confirmedOutcomeFor(operations.single)],
       );
     };
 
@@ -4522,12 +4558,7 @@ void main() {
       pushStarted.complete();
       await releasePush.future;
       return CloudPushBatchResult(
-        outcomes: [
-          CloudPushOutcome(
-            operationId: operations.single.operationId,
-            disposition: CloudPushDisposition.confirmed,
-          ),
-        ],
+        outcomes: [confirmedOutcomeFor(operations.single)],
       );
     };
 
@@ -4577,14 +4608,7 @@ void main() {
         ),
       );
       transport.enqueuePushResult(
-        CloudPushBatchResult(
-          outcomes: [
-            CloudPushOutcome(
-              operationId: operation.operationId,
-              disposition: CloudPushDisposition.confirmed,
-            ),
-          ],
-        ),
+        CloudPushBatchResult(outcomes: [confirmedOutcomeFor(operation)]),
       );
       transport.authenticationRefreshHandler = (_) async => true;
 
@@ -4667,12 +4691,7 @@ void main() {
     await store.enqueueOutbox(attachment);
     transport.pushHandler = (requestedScope, operations) async {
       return CloudPushBatchResult(
-        outcomes: operations.map(
-          (operation) => CloudPushOutcome(
-            operationId: operation.operationId,
-            disposition: CloudPushDisposition.confirmed,
-          ),
-        ),
+        outcomes: operations.map((operation) => confirmedOutcomeFor(operation)),
       );
     };
 
@@ -4693,12 +4712,7 @@ void main() {
     }
     transport.pushHandler = (requestedScope, operations) async {
       return CloudPushBatchResult(
-        outcomes: operations.map(
-          (operation) => CloudPushOutcome(
-            operationId: operation.operationId,
-            disposition: CloudPushDisposition.confirmed,
-          ),
-        ),
+        outcomes: operations.map((operation) => confirmedOutcomeFor(operation)),
       );
     };
 
@@ -4730,14 +4744,7 @@ void main() {
         category: CloudFailureCategory.authorization,
       );
       transport.enqueuePushResult(
-        CloudPushBatchResult(
-          outcomes: [
-            CloudPushOutcome(
-              operationId: paused.operationId,
-              disposition: CloudPushDisposition.confirmed,
-            ),
-          ],
-        ),
+        CloudPushBatchResult(outcomes: [confirmedOutcomeFor(paused)]),
       );
       transport.authenticationRefreshHandler = (_) async => true;
 
@@ -4761,14 +4768,7 @@ void main() {
       category: CloudFailureCategory.pcsUnavailable,
     );
     transport.enqueuePushResult(
-      CloudPushBatchResult(
-        outcomes: [
-          CloudPushOutcome(
-            operationId: paused.operationId,
-            disposition: CloudPushDisposition.confirmed,
-          ),
-        ],
-      ),
+      CloudPushBatchResult(outcomes: [confirmedOutcomeFor(paused)]),
     );
     transport.pcsRefreshHandler = (_) async => true;
 
@@ -4858,14 +4858,7 @@ void main() {
       ),
     );
     transport.enqueuePushResult(
-      CloudPushBatchResult(
-        outcomes: [
-          CloudPushOutcome(
-            operationId: operation.operationId,
-            disposition: CloudPushDisposition.confirmed,
-          ),
-        ],
-      ),
+      CloudPushBatchResult(outcomes: [confirmedOutcomeFor(operation)]),
     );
     transport.conflictHandler = (requestedScope, leasedOperation) async {
       return CloudServerConflictResolution.mergedForRetry(
@@ -4873,7 +4866,7 @@ void main() {
         payloadSha256: testSha256('b'),
         serverRecordIdHash: leasedOperation.serverRecordIdHash!,
         encryptedRawRecordReference: 'protected:merged-raw-record',
-        etagHash: 'merged-etag-digest',
+        etagHash: nativeDigest('E'),
       );
     };
 
@@ -5112,6 +5105,58 @@ final class _RetainingFakeCloudSyncTransport extends FakeCloudSyncTransport
     implements CloudSyncConfirmedReceiptRetentionPolicy {
   @override
   bool get retainConfirmedReceiptsForReplay => true;
+}
+
+final class _ReceiptTrackingFakeCloudSyncTransport
+    extends FakeCloudSyncTransport
+    implements CloudSyncWriteReceiptFinalizer {
+  final List<String> acknowledgedOperationIds = [];
+
+  @override
+  Future<void> acknowledgeDurableTerminalOperations(
+    CloudSyncScope scope, {
+    required List<CloudOutboxOperation> operations,
+    required List<CloudOutboxTransition> transitions,
+  }) async {
+    acknowledgedOperationIds.addAll(
+      transitions
+          .where(
+            (transition) =>
+                transition.type == CloudOutboxTransitionType.confirmed,
+          )
+          .map((transition) => transition.operationId),
+    );
+  }
+}
+
+final class _FailingSecondReceiptCommitStore extends InMemoryCloudSyncStore {
+  int receiptCommitCalls = 0;
+  final List<String> committedOperationIds = [];
+
+  @override
+  Future<void> commitOutboxCreateReceipt(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required CloudOutboxCreateReceipt receipt,
+    bool retainProtectedLeaseReference = false,
+    required DateTime now,
+  }) async {
+    receiptCommitCalls++;
+    if (receiptCommitCalls == 2) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'simulated_second_receipt_commit_failure',
+      );
+    }
+    await super.commitOutboxCreateReceipt(
+      scope,
+      leaseId: leaseId,
+      receipt: receipt,
+      retainProtectedLeaseReference: retainProtectedLeaseReference,
+      now: now,
+    );
+    committedOperationIds.add(receipt.operationId);
+  }
 }
 
 class _ProtectedRecoveryTrackingStore extends InMemoryCloudSyncStore

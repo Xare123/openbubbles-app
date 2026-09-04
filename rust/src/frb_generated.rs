@@ -19647,6 +19647,8 @@ impl SseDecode for crate::api::api::CloudSyncOutboundReconcileResult {
         let mut var_failureClass =
             <Option<crate::api::api::CloudSyncOutboundFailureClass>>::sse_decode(deserializer);
         let mut var_retryAfterSeconds = <Option<u64>>::sse_decode(deserializer);
+        let mut var_serverRecordIdHash = <Option<String>>::sse_decode(deserializer);
+        let mut var_etagHash = <Option<String>>::sse_decode(deserializer);
         let mut var_failure =
             <Option<crate::api::api::CloudSyncOutboundSafeCode>>::sse_decode(deserializer);
         return crate::api::api::CloudSyncOutboundReconcileResult {
@@ -19654,6 +19656,8 @@ impl SseDecode for crate::api::api::CloudSyncOutboundReconcileResult {
             protected_proof_reference: var_protectedProofReference,
             failure_class: var_failureClass,
             retry_after_seconds: var_retryAfterSeconds,
+            server_record_id_hash: var_serverRecordIdHash,
+            etag_hash: var_etagHash,
             failure: var_failure,
         };
     }
@@ -19707,12 +19711,16 @@ impl SseDecode for crate::api::api::CloudSyncOutboundSaveOutcome {
         let mut var_failureClass =
             <Option<crate::api::api::CloudSyncOutboundFailureClass>>::sse_decode(deserializer);
         let mut var_retryAfterSeconds = <Option<u64>>::sse_decode(deserializer);
+        let mut var_serverRecordIdHash = <Option<String>>::sse_decode(deserializer);
+        let mut var_etagHash = <Option<String>>::sse_decode(deserializer);
         return crate::api::api::CloudSyncOutboundSaveOutcome {
             local_operation_id: var_localOperationId,
             apple_operation_uuid: var_appleOperationUuid,
             disposition: var_disposition,
             failure_class: var_failureClass,
             retry_after_seconds: var_retryAfterSeconds,
+            server_record_id_hash: var_serverRecordIdHash,
+            etag_hash: var_etagHash,
         };
     }
 }
@@ -28780,6 +28788,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncOutboundReconci
             self.protected_proof_reference.into_into_dart().into_dart(),
             self.failure_class.into_into_dart().into_dart(),
             self.retry_after_seconds.into_into_dart().into_dart(),
+            self.server_record_id_hash.into_into_dart().into_dart(),
+            self.etag_hash.into_into_dart().into_dart(),
             self.failure.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -28858,6 +28868,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncOutboundSaveOut
             self.disposition.into_into_dart().into_dart(),
             self.failure_class.into_into_dart().into_dart(),
             self.retry_after_seconds.into_into_dart().into_dart(),
+            self.server_record_id_hash.into_into_dart().into_dart(),
+            self.etag_hash.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -35774,6 +35786,8 @@ impl SseEncode for crate::api::api::CloudSyncOutboundReconcileResult {
             serializer,
         );
         <Option<u64>>::sse_encode(self.retry_after_seconds, serializer);
+        <Option<String>>::sse_encode(self.server_record_id_hash, serializer);
+        <Option<String>>::sse_encode(self.etag_hash, serializer);
         <Option<crate::api::api::CloudSyncOutboundSafeCode>>::sse_encode(self.failure, serializer);
     }
 }
@@ -35835,6 +35849,8 @@ impl SseEncode for crate::api::api::CloudSyncOutboundSaveOutcome {
             serializer,
         );
         <Option<u64>>::sse_encode(self.retry_after_seconds, serializer);
+        <Option<String>>::sse_encode(self.server_record_id_hash, serializer);
+        <Option<String>>::sse_encode(self.etag_hash, serializer);
     }
 }
 

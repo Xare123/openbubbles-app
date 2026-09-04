@@ -345,12 +345,13 @@ final class CloudKitWriterMutationGuard
     );
     switch (disposition) {
       case frb_api.CloudSyncOutboundReconcileDisposition.committed:
+        final receipt = _requireCommittedCreateReceipt(result, operation);
         await _completeReconciliationAfterExactReadback(
           owner: owner,
           expectedClient: expectedClient,
           operation: operation,
         );
-        return const CloudUnknownOutcomeResolution.committed();
+        return CloudUnknownOutcomeResolution.committed(createReceipt: receipt);
       case frb_api.CloudSyncOutboundReconcileDisposition.notApplied:
         await _completeReconciliationAfterExactReadback(
           owner: owner,
@@ -370,6 +371,40 @@ final class CloudKitWriterMutationGuard
           ),
         );
     }
+  }
+
+  /// Binds a committed readback to an exact create receipt before the mutation
+  /// fence may be cleared. A missing, malformed, or mismatched receipt fails
+  /// closed as an unknown outcome so the fence stays armed for a later retry.
+  /// All failures use content-free safe codes and carry no raw identifiers.
+  CloudOutboxCreateReceipt _requireCommittedCreateReceipt(
+    frb_api.CloudSyncOutboundReconcileResult result,
+    CloudOutboxOperation operation,
+  ) {
+    final serverRecordIdHash = result.serverRecordIdHash;
+    final etagHash = result.etagHash;
+    if (serverRecordIdHash == null ||
+        etagHash == null ||
+        !_cloudKitWriterNativeDigestPattern.hasMatch(serverRecordIdHash) ||
+        !_cloudKitWriterNativeDigestPattern.hasMatch(etagHash) ||
+        !_cloudKitWriterNativeDigestPattern.hasMatch(
+          operation.logicalEntityKeyHash,
+        )) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_reconciliation_receipt_invalid',
+      );
+    }
+    if (serverRecordIdHash != operation.serverRecordIdHash) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_reconciliation_receipt_mismatch',
+      );
+    }
+    return CloudOutboxCreateReceipt(
+      operationId: operation.operationId,
+      logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      serverRecordIdHash: serverRecordIdHash,
+      etagHash: etagHash,
+    );
   }
 
   Future<void> _completeReconciliationAfterExactReadback({

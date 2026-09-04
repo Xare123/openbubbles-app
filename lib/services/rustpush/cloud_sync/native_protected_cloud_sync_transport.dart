@@ -383,9 +383,9 @@ final class _NativeCloudSyncPreparedSubmission
     required this.handle,
     required this.handleBindingSha256,
     required Iterable<String> remoteOperationIds,
-    required Iterable<String> preconfirmedOperationIds,
+    required Iterable<CloudOutboxCreateReceipt> preconfirmedReceipts,
   }) : remoteOperationIds = List.unmodifiable(remoteOperationIds),
-       preconfirmedOperationIds = List.unmodifiable(preconfirmedOperationIds),
+       preconfirmedReceipts = List.unmodifiable(preconfirmedReceipts),
        super.fromProtectedPreflight(
          scope: scope,
          identity: identity,
@@ -393,9 +393,11 @@ final class _NativeCloudSyncPreparedSubmission
        ) {
     final expected = operationIds.toSet();
     final remote = this.remoteOperationIds.toSet();
-    final preconfirmed = this.preconfirmedOperationIds.toSet();
+    final preconfirmed = this.preconfirmedReceipts
+        .map((receipt) => receipt.operationId)
+        .toSet();
     if (remote.length != this.remoteOperationIds.length ||
-        preconfirmed.length != this.preconfirmedOperationIds.length ||
+        preconfirmed.length != this.preconfirmedReceipts.length ||
         remote.intersection(preconfirmed).isNotEmpty ||
         remote.union(preconfirmed).length != expected.length ||
         !remote.union(preconfirmed).containsAll(expected) ||
@@ -410,7 +412,7 @@ final class _NativeCloudSyncPreparedSubmission
   final frb_api.CloudSyncPreparedMessageCreateHandle? handle;
   final String? handleBindingSha256;
   final List<String> remoteOperationIds;
-  final List<String> preconfirmedOperationIds;
+  final List<CloudOutboxCreateReceipt> preconfirmedReceipts;
 }
 
 final class _NativeConfirmedReplayProof
@@ -669,7 +671,7 @@ final class NativeProtectedCloudSyncTransport
     final bindings = _requireWriteBindings();
     final preparation = await _runProtectedStoreOperation(() async {
       final remoteInputs = <frb_api.CloudSyncPreparedMessageCreateInput>[];
-      final preconfirmedOperationIds = <String>[];
+      final preconfirmedReceipts = <CloudOutboxCreateReceipt>[];
       for (final input in inputs) {
         final lookup = await bindings.reconcileMessageCreate(
           cloudMessagesClient: _cloudMessagesClient,
@@ -686,7 +688,9 @@ final class NativeProtectedCloudSyncTransport
           case _CreatePreflightDisposition.absent:
             remoteInputs.add(input);
           case _CreatePreflightDisposition.alreadyPresent:
-            preconfirmedOperationIds.add(input.localOperationId);
+            preconfirmedReceipts.add(
+              _createReceiptFromPreflight(result: lookup, input: input),
+            );
         }
       }
       final result = remoteInputs.isEmpty
@@ -705,7 +709,7 @@ final class NativeProtectedCloudSyncTransport
         remoteOperationIds: remoteInputs
             .map((input) => input.localOperationId)
             .toList(growable: false),
-        preconfirmedOperationIds: preconfirmedOperationIds,
+        preconfirmedReceipts: preconfirmedReceipts,
       );
     });
     final result = preparation.result;
@@ -731,7 +735,7 @@ final class NativeProtectedCloudSyncTransport
       handle: result?.handle,
       handleBindingSha256: result?.handleBindingSha256,
       remoteOperationIds: preparation.remoteOperationIds,
-      preconfirmedOperationIds: preparation.preconfirmedOperationIds,
+      preconfirmedReceipts: preparation.preconfirmedReceipts,
     );
   }
 
@@ -749,10 +753,11 @@ final class NativeProtectedCloudSyncTransport
       throw ArgumentError('cloud_sync_native_prepared_submission_required');
     }
     final outcomes = <CloudPushOutcome>[
-      for (final operationId in preparedSubmission.preconfirmedOperationIds)
+      for (final receipt in preparedSubmission.preconfirmedReceipts)
         CloudPushOutcome(
-          operationId: operationId,
+          operationId: receipt.operationId,
           disposition: CloudPushDisposition.confirmed,
+          createReceipt: receipt,
         ),
     ];
     final expectedRemote = preparedSubmission.remoteOperationIds.toSet();
@@ -837,7 +842,10 @@ final class NativeProtectedCloudSyncTransport
                     safeCode: 'cloud_sync_outbound_correlation_mismatch',
                   );
                 }
-                final mappedOutcome = _mapOutboundOutcome(outcome);
+                final mappedOutcome = _mapOutboundOutcome(
+                  outcome,
+                  remoteOperations.single,
+                );
                 mapped.add(mappedOutcome);
               }
               if (mapped.any(
@@ -950,6 +958,36 @@ final class NativeProtectedCloudSyncTransport
     };
   }
 
+  CloudOutboxCreateReceipt _createReceiptFromPreflight({
+    required frb_api.CloudSyncOutboundReconcileResult result,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) {
+    final serverRecordIdHash = result.serverRecordIdHash;
+    final etagHash = result.etagHash;
+    if (serverRecordIdHash == null ||
+        etagHash == null ||
+        !_nativeDigestPattern.hasMatch(input.logicalEntityKeyHash) ||
+        !_nativeDigestPattern.hasMatch(serverRecordIdHash) ||
+        !_nativeDigestPattern.hasMatch(etagHash)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.unknown,
+        safeCode: 'cloud_sync_outbound_create_preflight_receipt_invalid',
+      );
+    }
+    if (serverRecordIdHash != input.serverRecordIdHash) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'cloud_sync_outbound_create_preflight_receipt_mismatch',
+      );
+    }
+    return CloudOutboxCreateReceipt(
+      operationId: input.localOperationId,
+      logicalEntityKeyHash: input.logicalEntityKeyHash,
+      serverRecordIdHash: serverRecordIdHash,
+      etagHash: etagHash,
+    );
+  }
+
   frb_api.CloudSyncOutboundReconcileDisposition
   _requireOutboundReconcileDisposition(
     frb_api.CloudSyncOutboundReconcileResult result, {
@@ -960,7 +998,9 @@ final class NativeProtectedCloudSyncTransport
       if (result.disposition != null ||
           result.protectedProofReference != null ||
           result.failureClass != null ||
-          result.retryAfterSeconds != null) {
+          result.retryAfterSeconds != null ||
+          result.serverRecordIdHash != null ||
+          result.etagHash != null) {
         throw _localStorage(invalidEnvelopeCode);
       }
       throw _mapOutboundFailure(failure);
@@ -971,10 +1011,15 @@ final class NativeProtectedCloudSyncTransport
     }
     final decisive =
         disposition != frb_api.CloudSyncOutboundReconcileDisposition.unresolved;
+    final hasReceiptField =
+        result.serverRecordIdHash != null || result.etagHash != null;
     if ((decisive &&
             result.protectedProofReference !=
                 expectedProtectedProofReference) ||
         (!decisive && result.protectedProofReference != null) ||
+        (disposition !=
+                frb_api.CloudSyncOutboundReconcileDisposition.committed &&
+            hasReceiptField) ||
         (disposition !=
                 frb_api.CloudSyncOutboundReconcileDisposition.unresolved &&
             result.retryAfterSeconds != null) ||
@@ -1031,13 +1076,12 @@ final class NativeProtectedCloudSyncTransport
 
   CloudPushOutcome _mapOutboundOutcome(
     frb_api.CloudSyncOutboundSaveOutcome outcome,
+    CloudOutboxOperation expectedOperation,
   ) {
     final retryAfter = _boundedRetryAfter(outcome.retryAfterSeconds);
     return switch (outcome.disposition) {
-      frb_api.CloudSyncOutboundSaveDisposition.succeeded => CloudPushOutcome(
-        operationId: outcome.localOperationId,
-        disposition: CloudPushDisposition.confirmed,
-      ),
+      frb_api.CloudSyncOutboundSaveDisposition.succeeded =>
+        _mapConfirmedOutboundOutcome(outcome, expectedOperation, retryAfter),
       frb_api.CloudSyncOutboundSaveDisposition.unknownOutcome =>
         CloudPushOutcome(
           operationId: outcome.localOperationId,
@@ -1058,6 +1102,47 @@ final class NativeProtectedCloudSyncTransport
     final maximum = BigInt.from(_maximumRetryAfterSeconds);
     final bounded = seconds > maximum ? maximum : seconds;
     return Duration(seconds: bounded.toInt());
+  }
+
+  /// Accepts a native success only with a bound create receipt.
+  ///
+  /// The native save must echo both opaque digests and the server digest must
+  /// exactly match the expected operation. Anything else is not proof of a
+  /// commit: the consumed mutation stays reconciliation-only so the exact
+  /// readback path must still prove the remote state.
+  CloudPushOutcome _mapConfirmedOutboundOutcome(
+    frb_api.CloudSyncOutboundSaveOutcome outcome,
+    CloudOutboxOperation expectedOperation,
+    Duration? retryAfter,
+  ) {
+    final serverRecordIdHash = outcome.serverRecordIdHash;
+    final etagHash = outcome.etagHash;
+    if (serverRecordIdHash == null ||
+        etagHash == null ||
+        expectedOperation.serverRecordIdHash == null ||
+        !_nativeDigestPattern.hasMatch(serverRecordIdHash) ||
+        !_nativeDigestPattern.hasMatch(etagHash) ||
+        !_nativeDigestPattern.hasMatch(
+          expectedOperation.logicalEntityKeyHash,
+        ) ||
+        serverRecordIdHash != expectedOperation.serverRecordIdHash) {
+      return CloudPushOutcome(
+        operationId: outcome.localOperationId,
+        disposition: CloudPushDisposition.unknownOutcome,
+        failureCategory: CloudFailureCategory.unknown,
+        retryAfter: retryAfter,
+      );
+    }
+    return CloudPushOutcome(
+      operationId: outcome.localOperationId,
+      disposition: CloudPushDisposition.confirmed,
+      createReceipt: CloudOutboxCreateReceipt(
+        operationId: outcome.localOperationId,
+        logicalEntityKeyHash: expectedOperation.logicalEntityKeyHash,
+        serverRecordIdHash: serverRecordIdHash,
+        etagHash: etagHash,
+      ),
+    );
   }
 
   CloudPushOutcome _mapProvenFailedOutboundOutcome(
@@ -1868,7 +1953,7 @@ final class NativeProtectedCloudSyncTransport
 
     return switch (disposition) {
       frb_api.CloudSyncOutboundReconcileDisposition.committed =>
-        const CloudUnknownOutcomeResolution.committed(),
+        _requireReplayCommittedReceipt(result, operation),
       frb_api.CloudSyncOutboundReconcileDisposition.notApplied =>
         const CloudUnknownOutcomeResolution.notApplied(),
       frb_api.CloudSyncOutboundReconcileDisposition.diverged =>
@@ -1888,6 +1973,43 @@ final class NativeProtectedCloudSyncTransport
     CloudSyncScope scope, {
     required String logicalEntityKeyHash,
   }) => throw _readOnlyFailure();
+
+  /// Binds a committed replay readback to an exact create receipt.
+  ///
+  /// A missing, malformed, or mismatched receipt fails closed: no proof is
+  /// issued and the retained local receipt stays in place for a later retry.
+  /// All failures use content-free safe codes and carry no identifiers.
+  CloudUnknownOutcomeResolution _requireReplayCommittedReceipt(
+    frb_api.CloudSyncOutboundReconcileResult result,
+    CloudOutboxOperation operation,
+  ) {
+    final serverRecordIdHash = result.serverRecordIdHash;
+    final etagHash = result.etagHash;
+    if (serverRecordIdHash == null ||
+        etagHash == null ||
+        !_nativeDigestPattern.hasMatch(serverRecordIdHash) ||
+        !_nativeDigestPattern.hasMatch(etagHash) ||
+        !_nativeDigestPattern.hasMatch(operation.logicalEntityKeyHash)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.unknown,
+        safeCode: 'cloud_sync_outbound_replay_receipt_invalid',
+      );
+    }
+    if (serverRecordIdHash != operation.serverRecordIdHash) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.unknown,
+        safeCode: 'cloud_sync_outbound_replay_receipt_mismatch',
+      );
+    }
+    return CloudUnknownOutcomeResolution.committed(
+      createReceipt: CloudOutboxCreateReceipt(
+        operationId: operation.operationId,
+        logicalEntityKeyHash: operation.logicalEntityKeyHash,
+        serverRecordIdHash: serverRecordIdHash,
+        etagHash: etagHash,
+      ),
+    );
+  }
 
   @override
   Future<CloudServerConflictResolution> reconcileServerRecordChanged(

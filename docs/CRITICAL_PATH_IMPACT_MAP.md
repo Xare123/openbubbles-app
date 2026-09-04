@@ -31,6 +31,7 @@ or account-reset code.
 | Live delivery vs cloud archive | A successful IDS/APNs send or local reflection does not prove that a Messages in iCloud record exists. |
 | Legacy CloudKit | A failed page does not advance its token or issue destructive duplicate cleanup. |
 | V2 semantic pull | Checkpoints represent a contiguous durable terminal prefix; retained-unprojected rows remain replayable. |
+| V2 outbound create | Confirmation requires an exact server-record and ETag receipt committed atomically with the existing current-generation mapping; missing proof remains outcome-unknown and is never replayed blindly. |
 | Account transition | Old-account work is quiescent before state is replaced or disposed. |
 | Canary | Semantic pull performs no remote content write, delete, subscription, or PCS creation. |
 
@@ -150,7 +151,10 @@ OpenBubbles send
 
 separate CloudKit archival path
   -> explicit legacy or V2 CloudKit save
-  -> remote record confirmation
+  -> exact native record-identity plus ETag receipt
+  -> atomic record-map and outbox confirmation
+       -> missing or mismatched receipt: retain submission identity
+       -> exact receipt: terminal local confirmation
   -> later semantic pull observes the record
 ```
 
@@ -321,6 +325,9 @@ reporting a clean reset.
 10. Canary device probes prove APK and trigger identity, select one report from
     the current invocation, validate its entire redacted schema, and never
     accept another package name.
+11. A V2 create can become confirmed only with an exact receipt; injected
+    receipt loss, mismatch, restart, and mid-batch local failure retain every
+    uncommitted operation for readback without a duplicate save.
 
 ## CI routing policy
 

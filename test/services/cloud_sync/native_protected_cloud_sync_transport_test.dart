@@ -1014,6 +1014,8 @@ void main() {
       bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
         disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
         protectedProofReference: protectedOperation.protectedPayloadReference,
+        serverRecordIdHash: _hash('S'),
+        etagHash: _hash('E'),
       );
 
       final prepared = await runV2(
@@ -1037,10 +1039,82 @@ void main() {
         result.outcomes.values.single.disposition,
         CloudPushDisposition.confirmed,
       );
+      final receipt = result.outcomes.values.single.createReceipt;
+      expect(receipt, isNotNull);
+      expect(receipt!.operationId, operation.operationId);
+      expect(receipt.logicalEntityKeyHash, operation.logicalEntityKeyHash);
+      expect(receipt.serverRecordIdHash, operation.serverRecordIdHash);
+      expect(receipt.etagHash, _hash('E'));
       expect(bindings.reconcileCalls, 1);
       expect(bindings.prepareCalls, 0);
       expect(bindings.consumeCalls, 0);
       expect(bindings.preparedInputs, isEmpty);
+    },
+  );
+
+  test(
+    'existing create preflight without receipt hashes fails closed',
+    () async {
+      final operation = _writeOperation(scope);
+      final protectedOperation = _protectedWriteOperation(operation);
+      final identity = _submissionIdentity(operation.operationId);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: protectedOperation.protectedPayloadReference,
+      );
+
+      await expectLater(
+        runV2(
+          () => transport.prepareSubmission(
+            scope,
+            submissionIdentity: identity,
+            operations: [protectedOperation],
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloud_sync_outbound_create_preflight_receipt_invalid',
+          ),
+        ),
+      );
+      expect(bindings.prepareCalls, 0);
+      expect(bindings.consumeCalls, 0);
+    },
+  );
+
+  test(
+    'existing create preflight with a swapped server hash fails closed',
+    () async {
+      final operation = _writeOperation(scope);
+      final protectedOperation = _protectedWriteOperation(operation);
+      final identity = _submissionIdentity(operation.operationId);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: protectedOperation.protectedPayloadReference,
+        serverRecordIdHash: _hash('T'),
+        etagHash: _hash('E'),
+      );
+
+      await expectLater(
+        runV2(
+          () => transport.prepareSubmission(
+            scope,
+            submissionIdentity: identity,
+            operations: [protectedOperation],
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloud_sync_outbound_create_preflight_receipt_mismatch',
+          ),
+        ),
+      );
+      expect(bindings.prepareCalls, 0);
+      expect(bindings.consumeCalls, 0);
     },
   );
 
@@ -1261,6 +1335,8 @@ void main() {
             localOperationId: operation.operationId,
             appleOperationUuid: identity.operationUuids[operation.operationId]!,
             disposition: frb_api.CloudSyncOutboundSaveDisposition.succeeded,
+            serverRecordIdHash: _hash('S'),
+            etagHash: _hash('E'),
           ),
         ],
       );
@@ -1316,6 +1392,21 @@ void main() {
       );
       expect(bindings.consumeCalls, 1);
       expect(fence.existsSync(), isFalse);
+      final confirmedOutcome = result.outcomes.values.single;
+      expect(confirmedOutcome.createReceipt, isNotNull);
+      expect(
+        confirmedOutcome.createReceipt!.operationId,
+        operation.operationId,
+      );
+      expect(
+        confirmedOutcome.createReceipt!.logicalEntityKeyHash,
+        operation.logicalEntityKeyHash,
+      );
+      expect(
+        confirmedOutcome.createReceipt!.serverRecordIdHash,
+        operation.serverRecordIdHash,
+      );
+      expect(confirmedOutcome.createReceipt!.etagHash, _hash('E'));
       expect(
         writerAuthority().read(writerScope())!.state,
         CloudKitWriterAuthorityState.stable,
@@ -1708,6 +1799,8 @@ void main() {
       bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
         disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
         protectedProofReference: operation.encryptedPayloadReference,
+        serverRecordIdHash: _hash('S'),
+        etagHash: _hash('E'),
       );
       final resolution = await runV2(
         () => transport.reconcileUnknownOutcome(
@@ -1795,6 +1888,8 @@ void main() {
     bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
       disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
       protectedProofReference: operation.encryptedPayloadReference,
+      serverRecordIdHash: _hash('S'),
+      etagHash: _hash('E'),
     );
 
     final resolution = await runV2(
@@ -1807,6 +1902,17 @@ void main() {
     expect(resolution.disposition, CloudUnknownOutcomeDisposition.committed);
     expect(resolution.failureCategory, isNull);
     expect(resolution.retryAfter, isNull);
+    expect(resolution.createReceipt, isNotNull);
+    expect(resolution.createReceipt!.operationId, operation.operationId);
+    expect(
+      resolution.createReceipt!.logicalEntityKeyHash,
+      operation.logicalEntityKeyHash,
+    );
+    expect(
+      resolution.createReceipt!.serverRecordIdHash,
+      operation.serverRecordIdHash,
+    );
+    expect(resolution.createReceipt!.etagHash, _hash('E'));
     _expectReconcileCall(
       bindings,
       operation,
@@ -1825,6 +1931,8 @@ void main() {
       bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
         disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
         protectedProofReference: operation.encryptedPayloadReference,
+        serverRecordIdHash: _hash('S'),
+        etagHash: _hash('E'),
       );
 
       await runV2(
@@ -2222,6 +2330,8 @@ void main() {
       bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
         disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
         protectedProofReference: operation.encryptedPayloadReference,
+        serverRecordIdHash: _hash('S'),
+        etagHash: _hash('E'),
       );
 
       final proof = await runV2(
@@ -2260,6 +2370,8 @@ void main() {
     bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
       disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
       protectedProofReference: operation.encryptedPayloadReference,
+      serverRecordIdHash: _hash('S'),
+      etagHash: _hash('E'),
     );
     final proof = await runV2(
       () => transport.verifyConfirmedMessageCreateNoSave(
@@ -2299,6 +2411,8 @@ void main() {
       bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
         disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
         protectedProofReference: operation.encryptedPayloadReference,
+        serverRecordIdHash: _hash('S'),
+        etagHash: _hash('E'),
       );
       final proof = await runV2(
         () => transport.verifyConfirmedMessageCreateNoSave(
@@ -2390,6 +2504,365 @@ void main() {
       ),
     );
   });
+
+  test('create receipt rejects malformed values without leaking them', () {
+    final operationId = 'op1:${_sha('a')}';
+    final receipt = CloudOutboxCreateReceipt(
+      operationId: operationId,
+      logicalEntityKeyHash: _hash('L'),
+      serverRecordIdHash: _hash('S'),
+      etagHash: _hash('E'),
+    );
+    expect(receipt.operationId, operationId);
+    expect(receipt.toString(), 'CloudOutboxCreateReceipt(redacted)');
+
+    final malformed = <CloudOutboxCreateReceipt Function()>[
+      () => CloudOutboxCreateReceipt(
+        operationId: 'LEAK-OPERATION-ID',
+        logicalEntityKeyHash: _hash('L'),
+        serverRecordIdHash: _hash('S'),
+        etagHash: _hash('E'),
+      ),
+      () => CloudOutboxCreateReceipt(
+        operationId: operationId,
+        logicalEntityKeyHash: 'LEAK-LOGICAL',
+        serverRecordIdHash: _hash('S'),
+        etagHash: _hash('E'),
+      ),
+      () => CloudOutboxCreateReceipt(
+        operationId: operationId,
+        logicalEntityKeyHash: _hash('L'),
+        serverRecordIdHash: 'LEAK-SERVER',
+        etagHash: _hash('E'),
+      ),
+      () => CloudOutboxCreateReceipt(
+        operationId: operationId,
+        logicalEntityKeyHash: _hash('L'),
+        serverRecordIdHash: _hash('S'),
+        etagHash: 'LEAK-ETAG',
+      ),
+    ];
+    for (final make in malformed) {
+      try {
+        make();
+        fail('malformed receipt must throw ArgumentError');
+      } on ArgumentError catch (error) {
+        expect(error.message, isNot(contains('LEAK')));
+        expect(error.toString(), isNot(contains('LEAK')));
+      }
+    }
+  });
+
+  test('confirmed outcomes carry receipts only for their own operation', () {
+    final operationId = 'op1:${_sha('a')}';
+    final otherOperationId = 'op1:${_sha('b')}';
+    CloudOutboxCreateReceipt receiptFor(String operation) =>
+        CloudOutboxCreateReceipt(
+          operationId: operation,
+          logicalEntityKeyHash: _hash('L'),
+          serverRecordIdHash: _hash('S'),
+          etagHash: _hash('E'),
+        );
+
+    // Existing confirmed fakes without a receipt keep compiling; the parent
+    // engine fails closed for the protected production lane.
+    expect(
+      CloudPushOutcome(
+        operationId: operationId,
+        disposition: CloudPushDisposition.confirmed,
+      ).createReceipt,
+      isNull,
+    );
+    final withReceipt = CloudPushOutcome(
+      operationId: operationId,
+      disposition: CloudPushDisposition.confirmed,
+      createReceipt: receiptFor(operationId),
+    );
+    expect(withReceipt.createReceipt!.etagHash, _hash('E'));
+    expect(
+      () => CloudPushOutcome(
+        operationId: operationId,
+        disposition: CloudPushDisposition.confirmed,
+        createReceipt: receiptFor(otherOperationId),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudPushOutcome(
+        operationId: operationId,
+        disposition: CloudPushDisposition.retryable,
+        failureCategory: CloudFailureCategory.throttled,
+        createReceipt: receiptFor(operationId),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('only committed resolutions carry a create receipt', () {
+    final receipt = CloudOutboxCreateReceipt(
+      operationId: 'op1:${_sha('a')}',
+      logicalEntityKeyHash: _hash('L'),
+      serverRecordIdHash: _hash('S'),
+      etagHash: _hash('E'),
+    );
+    final committed = CloudUnknownOutcomeResolution.committed(
+      createReceipt: receipt,
+    );
+    expect(committed.disposition, CloudUnknownOutcomeDisposition.committed);
+    expect(committed.createReceipt, same(receipt));
+    expect(
+      const CloudUnknownOutcomeResolution.notApplied().createReceipt,
+      isNull,
+    );
+    expect(
+      const CloudUnknownOutcomeResolution.serverRecordChanged().createReceipt,
+      isNull,
+    );
+    expect(
+      const CloudUnknownOutcomeResolution.unresolved(
+        failureCategory: CloudFailureCategory.unknown,
+      ).createReceipt,
+      isNull,
+    );
+    expect(
+      const CloudUnknownOutcomeResolution.quarantined(
+        failureCategory: CloudFailureCategory.conflict,
+      ).createReceipt,
+      isNull,
+    );
+  });
+
+  test(
+    'succeeded save without receipt hashes stays reconciliation-only',
+    () async {
+      final operation = _writeOperation(scope);
+      final protectedOperation = _protectedWriteOperation(operation);
+      final identity = _submissionIdentity(operation.operationId);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: protectedOperation.protectedPayloadReference,
+      );
+      bindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: _FakePreparedHandle(),
+        handleBindingSha256: _preparedHandleBindingSha256,
+      );
+      bindings.consumeResult = frb_api.CloudSyncOutboundConsumeResult(
+        outcomes: [
+          frb_api.CloudSyncOutboundSaveOutcome(
+            localOperationId: operation.operationId,
+            appleOperationUuid: identity.operationUuids[operation.operationId]!,
+            disposition: frb_api.CloudSyncOutboundSaveDisposition.succeeded,
+          ),
+        ],
+      );
+
+      final result = await runV2(() async {
+        final prepared = await transport.prepareSubmission(
+          scope,
+          submissionIdentity: identity,
+          operations: [protectedOperation],
+        );
+        return transport.consumePreparedSubmission(
+          scope,
+          preparedSubmission: prepared,
+          persistedIdentity: identity,
+          protectedOperations: [protectedOperation],
+          operations: [operation],
+        );
+      });
+
+      final outcome = result.outcomes.values.single;
+      expect(outcome.disposition, CloudPushDisposition.unknownOutcome);
+      expect(outcome.failureCategory, CloudFailureCategory.unknown);
+      expect(outcome.createReceipt, isNull);
+      expect(bindings.consumeCalls, 1);
+      expect(
+        File(
+          '${writerDirectory.path}${Platform.pathSeparator}'
+          '.openbubbles-cloudkit-writer-mutation-v1.fence',
+        ).existsSync(),
+        isTrue,
+      );
+      expect(
+        writerAuthority().read(writerScope())!.state,
+        CloudKitWriterAuthorityState.mutationUnknown,
+      );
+    },
+  );
+
+  test(
+    'succeeded save with malformed receipt hashes stays reconciliation-only',
+    () async {
+      final operation = _writeOperation(scope);
+      final protectedOperation = _protectedWriteOperation(operation);
+      final identity = _submissionIdentity(operation.operationId);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: protectedOperation.protectedPayloadReference,
+      );
+      bindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: _FakePreparedHandle(),
+        handleBindingSha256: _preparedHandleBindingSha256,
+      );
+      bindings.consumeResult = frb_api.CloudSyncOutboundConsumeResult(
+        outcomes: [
+          frb_api.CloudSyncOutboundSaveOutcome(
+            localOperationId: operation.operationId,
+            appleOperationUuid: identity.operationUuids[operation.operationId]!,
+            disposition: frb_api.CloudSyncOutboundSaveDisposition.succeeded,
+            serverRecordIdHash: 'not-a-native-digest',
+            etagHash: 'also-not-a-native-digest',
+          ),
+        ],
+      );
+
+      final result = await runV2(() async {
+        final prepared = await transport.prepareSubmission(
+          scope,
+          submissionIdentity: identity,
+          operations: [protectedOperation],
+        );
+        return transport.consumePreparedSubmission(
+          scope,
+          preparedSubmission: prepared,
+          persistedIdentity: identity,
+          protectedOperations: [protectedOperation],
+          operations: [operation],
+        );
+      });
+
+      final outcome = result.outcomes.values.single;
+      expect(outcome.disposition, CloudPushDisposition.unknownOutcome);
+      expect(outcome.failureCategory, CloudFailureCategory.unknown);
+      expect(outcome.createReceipt, isNull);
+      expect(
+        File(
+          '${writerDirectory.path}${Platform.pathSeparator}'
+          '.openbubbles-cloudkit-writer-mutation-v1.fence',
+        ).existsSync(),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'succeeded save with a swapped server hash stays reconciliation-only',
+    () async {
+      final operation = _writeOperation(scope);
+      final protectedOperation = _protectedWriteOperation(operation);
+      final identity = _submissionIdentity(operation.operationId);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: protectedOperation.protectedPayloadReference,
+      );
+      bindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: _FakePreparedHandle(),
+        handleBindingSha256: _preparedHandleBindingSha256,
+      );
+      bindings.consumeResult = frb_api.CloudSyncOutboundConsumeResult(
+        outcomes: [
+          frb_api.CloudSyncOutboundSaveOutcome(
+            localOperationId: operation.operationId,
+            appleOperationUuid: identity.operationUuids[operation.operationId]!,
+            disposition: frb_api.CloudSyncOutboundSaveDisposition.succeeded,
+            serverRecordIdHash: _hash('T'),
+            etagHash: _hash('E'),
+          ),
+        ],
+      );
+
+      final result = await runV2(() async {
+        final prepared = await transport.prepareSubmission(
+          scope,
+          submissionIdentity: identity,
+          operations: [protectedOperation],
+        );
+        return transport.consumePreparedSubmission(
+          scope,
+          preparedSubmission: prepared,
+          persistedIdentity: identity,
+          protectedOperations: [protectedOperation],
+          operations: [operation],
+        );
+      });
+
+      final outcome = result.outcomes.values.single;
+      expect(outcome.disposition, CloudPushDisposition.unknownOutcome);
+      expect(outcome.failureCategory, CloudFailureCategory.unknown);
+      expect(outcome.createReceipt, isNull);
+      expect(
+        File(
+          '${writerDirectory.path}${Platform.pathSeparator}'
+          '.openbubbles-cloudkit-writer-mutation-v1.fence',
+        ).existsSync(),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'committed reconciliation without receipt hashes fails closed',
+    () async {
+      final semanticScope = _semanticScope();
+      final operation = _unknownOutcomeOperation(semanticScope);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: operation.encryptedPayloadReference,
+      );
+
+      await expectLater(
+        runV2(
+          () => transport.reconcileUnknownOutcome(
+            semanticScope,
+            operation: operation,
+          ),
+        ),
+        throwsA(
+          isA<CloudKitWriterAuthorityFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloudkit_writer_reconciliation_receipt_invalid',
+          ),
+        ),
+      );
+      expect(bindings.reconcileCalls, 1);
+      expect(bindings.prepareCalls, 0);
+      expect(bindings.consumeCalls, 0);
+    },
+  );
+
+  test(
+    'committed reconciliation with a swapped server hash fails closed',
+    () async {
+      final semanticScope = _semanticScope();
+      final operation = _unknownOutcomeOperation(semanticScope);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: operation.encryptedPayloadReference,
+        serverRecordIdHash: _hash('T'),
+        etagHash: _hash('E'),
+      );
+
+      await expectLater(
+        runV2(
+          () => transport.reconcileUnknownOutcome(
+            semanticScope,
+            operation: operation,
+          ),
+        ),
+        throwsA(
+          isA<CloudKitWriterAuthorityFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloudkit_writer_reconciliation_receipt_mismatch',
+          ),
+        ),
+      );
+      expect(bindings.reconcileCalls, 1);
+      expect(bindings.prepareCalls, 0);
+      expect(bindings.consumeCalls, 0);
+    },
+  );
 }
 
 CloudOutboxOperation _writeOperation(CloudSyncScope scope) {

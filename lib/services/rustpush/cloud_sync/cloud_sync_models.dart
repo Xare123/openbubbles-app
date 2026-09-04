@@ -942,6 +942,49 @@ class CloudOutboxDraft {
   final String? protectedLeaseReference;
 }
 
+/// Strongly typed receipt for one successful V2 outbound CREATE.
+///
+/// Every value is an opaque hash or correlation key. No record identifier,
+/// etag, account value, or message content crosses this boundary. Malformed
+/// values are rejected with content-free safe codes; neither exceptions nor
+/// [toString] include the rejected values.
+class CloudOutboxCreateReceipt {
+  CloudOutboxCreateReceipt({
+    required this.operationId,
+    required this.logicalEntityKeyHash,
+    required this.serverRecordIdHash,
+    required this.etagHash,
+  }) {
+    final operationIdMatch = _operationIdPattern.matchAsPrefix(operationId);
+    if (operationIdMatch == null ||
+        operationIdMatch.end != operationId.length) {
+      // Keep the rejected value out of the exception. Operation IDs are
+      // correlation keys and must not become a diagnostic data-leak path.
+      throw ArgumentError('cloud_outbox_create_receipt_operation_id_invalid');
+    }
+    if (!_nativeDigestPattern.hasMatch(logicalEntityKeyHash)) {
+      throw ArgumentError('cloud_outbox_create_receipt_logical_key_invalid');
+    }
+    if (!_nativeDigestPattern.hasMatch(serverRecordIdHash)) {
+      throw ArgumentError('cloud_outbox_create_receipt_server_hash_invalid');
+    }
+    if (!_nativeDigestPattern.hasMatch(etagHash)) {
+      throw ArgumentError('cloud_outbox_create_receipt_etag_invalid');
+    }
+  }
+
+  static final RegExp _operationIdPattern = RegExp(r'op1:[0-9a-f]{64}');
+  static final RegExp _nativeDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
+
+  final String operationId;
+  final String logicalEntityKeyHash;
+  final String serverRecordIdHash;
+  final String etagHash;
+
+  @override
+  String toString() => 'CloudOutboxCreateReceipt(redacted)';
+}
+
 enum CloudPushDisposition {
   confirmed,
   retryable,
@@ -958,6 +1001,7 @@ class CloudPushOutcome {
     required this.disposition,
     this.failureCategory,
     this.retryAfter,
+    this.createReceipt,
   }) {
     final operationIdMatch = _operationIdPattern.matchAsPrefix(operationId);
     if (operationIdMatch == null ||
@@ -973,6 +1017,19 @@ class CloudPushOutcome {
         failureCategory == null) {
       throw ArgumentError('cloud_push_unknown_outcome_requires_category');
     }
+    final receipt = createReceipt;
+    if (receipt != null) {
+      if (disposition != CloudPushDisposition.confirmed) {
+        // A receipt is proof of a committed create and must never ride along
+        // on any other disposition.
+        throw ArgumentError('cloud_push_outcome_receipt_disposition_invalid');
+      }
+      if (receipt.operationId != operationId) {
+        // Keep both values out of the exception; correlation keys must not
+        // become a diagnostic data-leak path.
+        throw ArgumentError('cloud_push_outcome_receipt_operation_mismatch');
+      }
+    }
   }
 
   static final RegExp _operationIdPattern = RegExp(r'op1:[0-9a-f]{64}');
@@ -981,6 +1038,7 @@ class CloudPushOutcome {
   final CloudPushDisposition disposition;
   final CloudFailureCategory? failureCategory;
   final Duration? retryAfter;
+  final CloudOutboxCreateReceipt? createReceipt;
 
   @override
   String toString() => 'CloudPushOutcome(${disposition.name}, redacted)';
@@ -1034,10 +1092,15 @@ class CloudUnknownOutcomeResolution {
     required this.disposition,
     this.failureCategory,
     this.retryAfter,
+    this.createReceipt,
   });
 
-  const CloudUnknownOutcomeResolution.committed()
-    : this._(disposition: CloudUnknownOutcomeDisposition.committed);
+  const CloudUnknownOutcomeResolution.committed({
+    required CloudOutboxCreateReceipt createReceipt,
+  }) : this._(
+         disposition: CloudUnknownOutcomeDisposition.committed,
+         createReceipt: createReceipt,
+       );
 
   const CloudUnknownOutcomeResolution.notApplied()
     : this._(disposition: CloudUnknownOutcomeDisposition.notApplied);
@@ -1067,6 +1130,7 @@ class CloudUnknownOutcomeResolution {
   final CloudUnknownOutcomeDisposition disposition;
   final CloudFailureCategory? failureCategory;
   final Duration? retryAfter;
+  final CloudOutboxCreateReceipt? createReceipt;
 
   @override
   String toString() =>

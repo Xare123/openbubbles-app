@@ -368,6 +368,114 @@ void main() {
     expect(unchanged.state, CloudKitWriterAuthorityState.stable);
     expect(unchanged.epoch, stable.epoch);
   });
+
+  test(
+    'committed reconciliation returns a bound receipt and clears poison',
+    () async {
+      provision(CloudKitWriterOwner.v2);
+      final operation = _unknownOutcomeOperation();
+      await armUnknownV2Fence(operation);
+      binding.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: operation.encryptedPayloadReference,
+        serverRecordIdHash: _hash('S'),
+        etagHash: _hash('E'),
+      );
+
+      final resolution = await runV2(
+        () => guard(owner: CloudKitWriterOwner.v2).reconcileUnknownOutcome(
+          owner: CloudKitWriterOwner.v2,
+          expectedClient: activeClient,
+          operation: operation,
+        ),
+      );
+
+      expect(resolution.disposition, CloudUnknownOutcomeDisposition.committed);
+      expect(resolution.failureCategory, isNull);
+      expect(resolution.retryAfter, isNull);
+      expect(resolution.createReceipt, isNotNull);
+      expect(resolution.createReceipt!.operationId, operation.operationId);
+      expect(
+        resolution.createReceipt!.logicalEntityKeyHash,
+        operation.logicalEntityKeyHash,
+      );
+      expect(
+        resolution.createReceipt!.serverRecordIdHash,
+        operation.serverRecordIdHash,
+      );
+      expect(resolution.createReceipt!.etagHash, _hash('E'));
+      expect(binding.reconcileCalls, 1);
+      expect(_persistentFence(directory).existsSync(), isFalse);
+      final stable = authority(CloudKitWriterOwner.v2).read(_scope)!;
+      expect(stable.state, CloudKitWriterAuthorityState.stable);
+    },
+  );
+
+  test(
+    'committed reconciliation without receipt hashes keeps poison',
+    () async {
+      provision(CloudKitWriterOwner.v2);
+      final operation = _unknownOutcomeOperation();
+      await armUnknownV2Fence(operation);
+      final unknown = authority(CloudKitWriterOwner.v2).read(_scope)!;
+      expect(unknown.state, CloudKitWriterAuthorityState.mutationUnknown);
+      binding.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: operation.encryptedPayloadReference,
+      );
+
+      await expectLater(
+        runV2(
+          () => guard(owner: CloudKitWriterOwner.v2).reconcileUnknownOutcome(
+            owner: CloudKitWriterOwner.v2,
+            expectedClient: activeClient,
+            operation: operation,
+          ),
+        ),
+        throwsA(_failure('cloudkit_writer_reconciliation_receipt_invalid')),
+      );
+
+      expect(binding.reconcileCalls, 1);
+      expect(_persistentFence(directory).existsSync(), isTrue);
+      final stillUnknown = authority(CloudKitWriterOwner.v2).read(_scope)!;
+      expect(stillUnknown.state, CloudKitWriterAuthorityState.mutationUnknown);
+      expect(stillUnknown.epoch, unknown.epoch);
+    },
+  );
+
+  test(
+    'committed reconciliation with a swapped server hash keeps poison',
+    () async {
+      provision(CloudKitWriterOwner.v2);
+      final operation = _unknownOutcomeOperation();
+      await armUnknownV2Fence(operation);
+      final unknown = authority(CloudKitWriterOwner.v2).read(_scope)!;
+      expect(unknown.state, CloudKitWriterAuthorityState.mutationUnknown);
+      binding.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: operation.encryptedPayloadReference,
+        serverRecordIdHash: _hash('T'),
+        etagHash: _hash('E'),
+      );
+
+      await expectLater(
+        runV2(
+          () => guard(owner: CloudKitWriterOwner.v2).reconcileUnknownOutcome(
+            owner: CloudKitWriterOwner.v2,
+            expectedClient: activeClient,
+            operation: operation,
+          ),
+        ),
+        throwsA(_failure('cloudkit_writer_reconciliation_receipt_mismatch')),
+      );
+
+      expect(binding.reconcileCalls, 1);
+      expect(_persistentFence(directory).existsSync(), isTrue);
+      final stillUnknown = authority(CloudKitWriterOwner.v2).read(_scope)!;
+      expect(stillUnknown.state, CloudKitWriterAuthorityState.mutationUnknown);
+      expect(stillUnknown.epoch, unknown.epoch);
+    },
+  );
 }
 
 final class _FakeAuthBinding

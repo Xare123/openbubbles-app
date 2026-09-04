@@ -1154,6 +1154,7 @@ class InMemoryCloudSyncStore
     CloudSyncScope scope, {
     required String leaseId,
     required CloudOutboxCreateReceipt receipt,
+    bool retainProtectedLeaseReference = false,
     required DateTime now,
   }) {
     return _lock.synchronized(() async {
@@ -1260,7 +1261,7 @@ class InMemoryCloudSyncStore
         clearLeaseExpiresAt: true,
         clearLastFailure: true,
         clearNextEligibleAt: true,
-        clearProtectedLeaseReference: true,
+        clearProtectedLeaseReference: !retainProtectedLeaseReference,
       );
     });
   }

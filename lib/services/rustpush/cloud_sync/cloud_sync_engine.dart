@@ -1998,6 +1998,7 @@ class CloudSyncEngine {
         action: () => _prepareOutboxMappings(leased, leaseId),
       );
       final transitions = <CloudOutboxTransition>[...preparation.transitions];
+      final confirmedCreateReceipts = <CloudOutboxCreateReceipt>[];
       for (final transition in preparation.transitions) {
         counters = _countOutboxTransition(counters, transition);
       }
@@ -2128,14 +2129,22 @@ class CloudSyncEngine {
         }
         switch (outcome.disposition) {
           case CloudPushDisposition.confirmed:
-            transitions.add(
-              CloudOutboxTransition.confirmed(
+            final receipt = outcome.createReceipt;
+            if (receipt == null) {
+              final transition = CloudOutboxTransition.unknownOutcome(
                 operation.operationId,
-                retainProtectedLeaseReference:
-                    _retainConfirmedReceiptsForReplay,
-              ),
-            );
-            counters = counters.add(confirmed: 1);
+                nextEligibleAt: _backoff.nextEligibleAt(
+                  now: _clock(),
+                  attempt: operation.attemptCount + 1,
+                  category: CloudFailureCategory.unknown,
+                ),
+              );
+              transitions.add(transition);
+              counters = _countOutboxTransition(counters, transition);
+            } else {
+              confirmedCreateReceipts.add(receipt);
+              counters = counters.add(confirmed: 1);
+            }
             break;
           case CloudPushDisposition.retryable:
             final transition = CloudOutboxTransition.unknownOutcome(
@@ -2197,15 +2206,19 @@ class CloudSyncEngine {
 
       // Outcomes are durable even if cancellation arrives during upload.
       await _renewOutboxLeaseOrThrow(leaseId: leaseId, operations: leased);
-      await _store.applyOutboxTransitions(
-        scope,
+      if (transitions.isNotEmpty) {
+        await _store.applyOutboxTransitions(
+          scope,
+          leaseId: leaseId,
+          transitions: transitions,
+          now: _clock(),
+        );
+      }
+      await _commitConfirmedCreateReceipts(
         leaseId: leaseId,
-        transitions: transitions,
-        now: _clock(),
-      );
-      await _acknowledgeDurableTerminalOutboxReceipts(
         operations: leased,
-        transitions: transitions,
+        durableTransitions: transitions,
+        receipts: confirmedCreateReceipts,
       );
       _emit(
         CloudSyncEventType.outboxFlushed,
@@ -2248,12 +2261,14 @@ class CloudSyncEngine {
       if (operations.isEmpty) break;
 
       final transitions = <CloudOutboxTransition>[];
+      final confirmedCreateReceipts = <CloudOutboxCreateReceipt>[];
       await _withOutboxLeaseHeartbeat(
         leaseId: leaseId,
         operations: operations,
         action: () async {
           for (final operation in operations) {
             CloudOutboxTransition transition;
+            CloudOutboxCreateReceipt? confirmedReceipt;
             try {
               final resolution = await _withCoordinatorLeaseHeartbeat(
                 () => _withWriteOperationTimeout(
@@ -2264,6 +2279,16 @@ class CloudSyncEngine {
                   ),
                 ),
               );
+              if (resolution.disposition ==
+                  CloudUnknownOutcomeDisposition.committed) {
+                confirmedReceipt = resolution.createReceipt;
+                if (confirmedReceipt == null) {
+                  throw CloudSyncFailure(
+                    category: CloudFailureCategory.unknown,
+                    safeCode: 'unknown_outcome_committed_receipt_missing',
+                  );
+                }
+              }
               transition = await _transitionForUnknownResolution(
                 operation,
                 resolution,
@@ -2280,7 +2305,12 @@ class CloudSyncEngine {
                 ),
               );
             }
-            transitions.add(transition);
+            if (transition.type == CloudOutboxTransitionType.confirmed &&
+                confirmedReceipt != null) {
+              confirmedCreateReceipts.add(confirmedReceipt);
+            } else {
+              transitions.add(transition);
+            }
             requiresNewSubmissionDecision |=
                 transition.type == CloudOutboxTransitionType.retryable &&
                 transition.clearSubmissionIdentity;
@@ -2290,21 +2320,59 @@ class CloudSyncEngine {
       );
 
       await _renewOutboxLeaseOrThrow(leaseId: leaseId, operations: operations);
-      await _store.applyOutboxTransitions(
-        scope,
+      if (transitions.isNotEmpty) {
+        await _store.applyOutboxTransitions(
+          scope,
+          leaseId: leaseId,
+          transitions: transitions,
+          now: _clock(),
+        );
+      }
+      await _commitConfirmedCreateReceipts(
         leaseId: leaseId,
-        transitions: transitions,
-        now: _clock(),
-      );
-      await _acknowledgeDurableTerminalOutboxReceipts(
         operations: operations,
-        transitions: transitions,
+        durableTransitions: transitions,
+        receipts: confirmedCreateReceipts,
       );
     }
     return (
       counters: counters,
       requiresNewSubmissionDecision: requiresNewSubmissionDecision,
     );
+  }
+
+  Future<void> _commitConfirmedCreateReceipts({
+    required String leaseId,
+    required List<CloudOutboxOperation> operations,
+    required List<CloudOutboxTransition> durableTransitions,
+    required List<CloudOutboxCreateReceipt> receipts,
+  }) async {
+    final terminalTransitions = <CloudOutboxTransition>[...durableTransitions];
+    try {
+      for (final receipt in receipts) {
+        await _store.commitOutboxCreateReceipt(
+          scope,
+          leaseId: leaseId,
+          receipt: receipt,
+          retainProtectedLeaseReference: _retainConfirmedReceiptsForReplay,
+          now: _clock(),
+        );
+        terminalTransitions.add(
+          CloudOutboxTransition.confirmed(
+            receipt.operationId,
+            retainProtectedLeaseReference: _retainConfirmedReceiptsForReplay,
+          ),
+        );
+      }
+    } finally {
+      // A later receipt may fail validation after an earlier one committed.
+      // Always finalize the durable prefix; the remaining rows retain their
+      // submission identities and converge through exact readback.
+      await _acknowledgeDurableTerminalOutboxReceipts(
+        operations: operations,
+        transitions: terminalTransitions,
+      );
+    }
   }
 
   Future<void> _acknowledgeDurableTerminalOutboxReceipts({

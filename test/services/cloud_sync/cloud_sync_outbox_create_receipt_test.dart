@@ -14,10 +14,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'cloud_sync_test_helpers.dart';
 
 const _leaseId = 'create-receipt-lease';
-const _serverHash = 'server-record-hash-receipt';
-const _otherServerHash = 'server-record-hash-other';
-const _etag = 'etag-hash-receipt';
-const _otherEtag = 'etag-hash-other';
+const _serverHash = 'SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS';
+const _otherServerHash = 'TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT';
+const _etag = 'EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE';
+const _otherEtag = 'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF';
+const _otherLogicalHash = 'MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM';
 
 void main() {
   group('InMemoryCloudSyncStore create receipt', () {
@@ -67,9 +68,10 @@ void main() {
       store.commitOutboxCreateReceipt(
         scope,
         leaseId: _leaseId,
-        receipt: const CloudOutboxCreateReceipt(
-          operationId: 'op1:deadbeef',
-          logicalEntityKeyHash: 'logical',
+        receipt: CloudOutboxCreateReceipt(
+          operationId:
+              'op1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          logicalEntityKeyHash: 'LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL',
           serverRecordIdHash: _serverHash,
           etagHash: _etag,
         ),
@@ -238,6 +240,32 @@ void _defineCreateReceiptTests({
     expect(map.updatedAt, testEpoch);
   });
 
+  test('retains the protected receipt only for confirmed replay', () async {
+    final store = load();
+    final operation = await leasedSave(101);
+    await bindServerHash(operation);
+    await putMap(logical: operation.logicalEntityKeyHash, server: _serverHash);
+
+    await store.commitOutboxCreateReceipt(
+      scope,
+      leaseId: _leaseId,
+      receipt: receiptFor(operation),
+      retainProtectedLeaseReference: true,
+      now: testEpoch,
+    );
+
+    final confirmed = (await readOutbox(
+      scope,
+    )).singleWhere((row) => row.operationId == operation.operationId);
+    expect(confirmed.status, CloudOutboxStatus.confirmed);
+    expect(
+      confirmed.protectedLeaseReference,
+      operation.protectedLeaseReference,
+    );
+    expect(confirmed.leaseId, isNull);
+    expect(confirmed.leaseExpiresAt, isNull);
+  });
+
   test(
     'commits after submission started without replaying the create',
     () async {
@@ -349,47 +377,21 @@ void _defineCreateReceiptTests({
     );
   });
 
-  test('rejects an empty etag without mutation', () async {
-    final operation = await leasedSave(5);
-    await putMap(logical: operation.logicalEntityKeyHash, server: _serverHash);
-    await expectRejectedUnchanged(
-      operation: operation,
-      receipt: receiptFor(operation, etag: ''),
-      leaseId: _leaseId,
-      now: testEpoch,
-      safeCode: 'outbox_receipt_field_missing',
-    );
+  test('receipt value rejects an empty etag before store access', () {
+    final operation = testOutboxOperation(scope, 5);
+    expect(() => receiptFor(operation, etag: ''), throwsArgumentError);
   });
 
-  test('rejects an empty operation id without mutation', () async {
-    final operation = await leasedSave(6);
-    await putMap(logical: operation.logicalEntityKeyHash, server: _serverHash);
-    final store = load();
-    await expectLater(
-      store.commitOutboxCreateReceipt(
-        scope,
-        leaseId: _leaseId,
-        receipt: CloudOutboxCreateReceipt(
-          operationId: '',
-          logicalEntityKeyHash: operation.logicalEntityKeyHash,
-          serverRecordIdHash: _serverHash,
-          etagHash: _etag,
-        ),
-        now: testEpoch,
-      ),
-      throwsA(
-        isA<CloudSyncFailure>().having(
-          (failure) => failure.safeCode,
-          'safeCode',
-          'outbox_receipt_field_missing',
-        ),
-      ),
-    );
+  test('receipt value rejects an empty operation id before store access', () {
+    final operation = testOutboxOperation(scope, 6);
     expect(
-      (await readOutbox(
-        scope,
-      )).singleWhere((row) => row.operationId == operation.operationId).status,
-      CloudOutboxStatus.leased,
+      () => CloudOutboxCreateReceipt(
+        operationId: '',
+        logicalEntityKeyHash: operation.logicalEntityKeyHash,
+        serverRecordIdHash: _serverHash,
+        etagHash: _etag,
+      ),
+      throwsArgumentError,
     );
   });
 
@@ -501,7 +503,7 @@ void _defineCreateReceiptTests({
     await putMap(logical: operation.logicalEntityKeyHash, server: _serverHash);
     await expectRejectedUnchanged(
       operation: operation,
-      receipt: receiptFor(operation, logical: 'mismatched-logical-key'),
+      receipt: receiptFor(operation, logical: _otherLogicalHash),
       leaseId: _leaseId,
       now: testEpoch,
       safeCode: 'outbox_receipt_logical_key_mismatch',

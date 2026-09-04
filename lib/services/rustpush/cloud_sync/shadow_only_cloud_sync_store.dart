@@ -262,6 +262,7 @@ final class ShadowOnlyCloudSyncStore
     CloudSyncScope scope, {
     required String leaseId,
     required CloudOutboxCreateReceipt receipt,
+    bool retainProtectedLeaseReference = false,
     required DateTime now,
   }) => _blocked();
 

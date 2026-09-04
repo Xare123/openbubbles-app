@@ -16489,8 +16489,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   dco_decode_cloud_sync_outbound_reconcile_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return CloudSyncOutboundReconcileResult(
       disposition:
           dco_decode_opt_box_autoadd_cloud_sync_outbound_reconcile_disposition(
@@ -16500,7 +16500,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       failureClass:
           dco_decode_opt_box_autoadd_cloud_sync_outbound_failure_class(arr[2]),
       retryAfterSeconds: dco_decode_opt_box_autoadd_u_64(arr[3]),
-      failure: dco_decode_opt_box_autoadd_cloud_sync_outbound_safe_code(arr[4]),
+      serverRecordIdHash: dco_decode_opt_String(arr[4]),
+      etagHash: dco_decode_opt_String(arr[5]),
+      failure: dco_decode_opt_box_autoadd_cloud_sync_outbound_safe_code(arr[6]),
     );
   }
 
@@ -16525,8 +16527,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return CloudSyncOutboundSaveOutcome(
       localOperationId: dco_decode_String(arr[0]),
       appleOperationUuid: dco_decode_String(arr[1]),
@@ -16534,6 +16536,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       failureClass:
           dco_decode_opt_box_autoadd_cloud_sync_outbound_failure_class(arr[3]),
       retryAfterSeconds: dco_decode_opt_box_autoadd_u_64(arr[4]),
+      serverRecordIdHash: dco_decode_opt_String(arr[5]),
+      etagHash: dco_decode_opt_String(arr[6]),
     );
   }
 
@@ -25985,6 +25989,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           deserializer,
         );
     var var_retryAfterSeconds = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_serverRecordIdHash = sse_decode_opt_String(deserializer);
+    var var_etagHash = sse_decode_opt_String(deserializer);
     var var_failure = sse_decode_opt_box_autoadd_cloud_sync_outbound_safe_code(
       deserializer,
     );
@@ -25993,6 +25999,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       protectedProofReference: var_protectedProofReference,
       failureClass: var_failureClass,
       retryAfterSeconds: var_retryAfterSeconds,
+      serverRecordIdHash: var_serverRecordIdHash,
+      etagHash: var_etagHash,
       failure: var_failure,
     );
   }
@@ -26031,12 +26039,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           deserializer,
         );
     var var_retryAfterSeconds = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_serverRecordIdHash = sse_decode_opt_String(deserializer);
+    var var_etagHash = sse_decode_opt_String(deserializer);
     return CloudSyncOutboundSaveOutcome(
       localOperationId: var_localOperationId,
       appleOperationUuid: var_appleOperationUuid,
       disposition: var_disposition,
       failureClass: var_failureClass,
       retryAfterSeconds: var_retryAfterSeconds,
+      serverRecordIdHash: var_serverRecordIdHash,
+      etagHash: var_etagHash,
     );
   }
 
@@ -37322,6 +37334,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       serializer,
     );
     sse_encode_opt_box_autoadd_u_64(self.retryAfterSeconds, serializer);
+    sse_encode_opt_String(self.serverRecordIdHash, serializer);
+    sse_encode_opt_String(self.etagHash, serializer);
     sse_encode_opt_box_autoadd_cloud_sync_outbound_safe_code(
       self.failure,
       serializer,
@@ -37363,6 +37377,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       serializer,
     );
     sse_encode_opt_box_autoadd_u_64(self.retryAfterSeconds, serializer);
+    sse_encode_opt_String(self.serverRecordIdHash, serializer);
+    sse_encode_opt_String(self.etagHash, serializer);
   }
 
   @protected

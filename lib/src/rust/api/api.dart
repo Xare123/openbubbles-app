@@ -2911,6 +2911,10 @@ class CloudSyncOutboundReconcileResult {
   final String? protectedProofReference;
   final CloudSyncOutboundFailureClass? failureClass;
   final BigInt? retryAfterSeconds;
+
+  /// Receipt hashes are emitted only for an exact committed readback.
+  final String? serverRecordIdHash;
+  final String? etagHash;
   final CloudSyncOutboundSafeCode? failure;
 
   const CloudSyncOutboundReconcileResult({
@@ -2918,6 +2922,8 @@ class CloudSyncOutboundReconcileResult {
     this.protectedProofReference,
     this.failureClass,
     this.retryAfterSeconds,
+    this.serverRecordIdHash,
+    this.etagHash,
     this.failure,
   });
 
@@ -2927,6 +2933,8 @@ class CloudSyncOutboundReconcileResult {
       protectedProofReference.hashCode ^
       failureClass.hashCode ^
       retryAfterSeconds.hashCode ^
+      serverRecordIdHash.hashCode ^
+      etagHash.hashCode ^
       failure.hashCode;
 
   @override
@@ -2938,6 +2946,8 @@ class CloudSyncOutboundReconcileResult {
           protectedProofReference == other.protectedProofReference &&
           failureClass == other.failureClass &&
           retryAfterSeconds == other.retryAfterSeconds &&
+          serverRecordIdHash == other.serverRecordIdHash &&
+          etagHash == other.etagHash &&
           failure == other.failure;
 }
 
@@ -2965,12 +2975,22 @@ class CloudSyncOutboundSaveOutcome {
   final CloudSyncOutboundFailureClass? failureClass;
   final BigInt? retryAfterSeconds;
 
+  /// Per-install HMAC of the validated CloudKit record name. Present only
+  /// when [disposition] is [CloudSyncOutboundSaveDisposition::Succeeded].
+  final String? serverRecordIdHash;
+
+  /// Per-install HMAC of the nonempty ETag from the same validated server
+  /// response. Present only for a proven success.
+  final String? etagHash;
+
   const CloudSyncOutboundSaveOutcome({
     required this.localOperationId,
     required this.appleOperationUuid,
     required this.disposition,
     this.failureClass,
     this.retryAfterSeconds,
+    this.serverRecordIdHash,
+    this.etagHash,
   });
 
   @override
@@ -2979,7 +2999,9 @@ class CloudSyncOutboundSaveOutcome {
       appleOperationUuid.hashCode ^
       disposition.hashCode ^
       failureClass.hashCode ^
-      retryAfterSeconds.hashCode;
+      retryAfterSeconds.hashCode ^
+      serverRecordIdHash.hashCode ^
+      etagHash.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2990,7 +3012,9 @@ class CloudSyncOutboundSaveOutcome {
           appleOperationUuid == other.appleOperationUuid &&
           disposition == other.disposition &&
           failureClass == other.failureClass &&
-          retryAfterSeconds == other.retryAfterSeconds;
+          retryAfterSeconds == other.retryAfterSeconds &&
+          serverRecordIdHash == other.serverRecordIdHash &&
+          etagHash == other.etagHash;
 }
 
 class CloudSyncPreparedMessageCreateInput {

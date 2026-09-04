@@ -1028,15 +1028,20 @@ enum CloudSyncPreparedMessageCreateOwner {
     Test {
         remote_call_count: Arc<std::sync::atomic::AtomicUsize>,
         after_remote_call: Option<Box<dyn FnOnce() + Send>>,
-        outcomes: Vec<rustpush::cloud_messages::CloudMessagesSaveOutcome>,
+        outcomes: Vec<CloudSyncOutboundSaveOutcome>,
     },
+}
+
+enum CloudSyncPreparedMessageCreateConsumption {
+    Native(Vec<rustpush::cloud_messages::CloudMessagesSaveOutcome>),
+    #[cfg(test)]
+    Test(Vec<CloudSyncOutboundSaveOutcome>),
 }
 
 impl CloudSyncPreparedMessageCreateOwner {
     async fn consume_once(
         self,
-    ) -> Result<Vec<rustpush::cloud_messages::CloudMessagesSaveOutcome>, CloudSyncOutboundSafeCode>
-    {
+    ) -> Result<CloudSyncPreparedMessageCreateConsumption, CloudSyncOutboundSafeCode> {
         match self {
             Self::Native {
                 prepared,
@@ -1056,7 +1061,7 @@ impl CloudSyncPreparedMessageCreateOwner {
                     .validate_writer_preparation_binding(&writer_binding)
                     .await
                     .map_err(|_| CloudSyncOutboundSafeCode::InvalidScope)?;
-                Ok(outcomes)
+                Ok(CloudSyncPreparedMessageCreateConsumption::Native(outcomes))
             }
             #[cfg(test)]
             Self::Test {
@@ -1068,7 +1073,7 @@ impl CloudSyncPreparedMessageCreateOwner {
                 if let Some(after_remote_call) = after_remote_call {
                     after_remote_call();
                 }
-                Ok(outcomes)
+                Ok(CloudSyncPreparedMessageCreateConsumption::Test(outcomes))
             }
         }
     }
@@ -1203,6 +1208,12 @@ pub struct CloudSyncOutboundSaveOutcome {
     pub disposition: CloudSyncOutboundSaveDisposition,
     pub failure_class: Option<CloudSyncOutboundFailureClass>,
     pub retry_after_seconds: Option<u64>,
+    /// Per-install HMAC of the validated CloudKit record name. Present only
+    /// when [disposition] is [CloudSyncOutboundSaveDisposition::Succeeded].
+    pub server_record_id_hash: Option<String>,
+    /// Per-install HMAC of the nonempty ETag from the same validated server
+    /// response. Present only for a proven success.
+    pub etag_hash: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1225,6 +1236,9 @@ pub struct CloudSyncOutboundReconcileResult {
     pub protected_proof_reference: Option<String>,
     pub failure_class: Option<CloudSyncOutboundFailureClass>,
     pub retry_after_seconds: Option<u64>,
+    /// Receipt hashes are emitted only for an exact committed readback.
+    pub server_record_id_hash: Option<String>,
+    pub etag_hash: Option<String>,
     pub failure: Option<CloudSyncOutboundSafeCode>,
 }
 // CLOUD_SYNC_OUTBOUND_DTO_END
@@ -2056,6 +2070,20 @@ pub async fn cloud_sync_consume_prepared_message_create(
             failure: Some(CloudSyncOutboundSafeCode::MutationCapabilityInvalid),
         };
     }
+    // Load the per-install hash key before taking the single-use owner. A
+    // protected-storage failure must leave the prepared handle unconsumed and
+    // cannot be discovered only after a remote mutation has crossed the wire.
+    let hasher = match crate::cloud_sync_protector::semantic_identifier_hasher(
+        handle.storage_directory.clone(),
+    ) {
+        Ok(hasher) => hasher,
+        Err(_) => {
+            return CloudSyncOutboundConsumeResult {
+                outcomes: vec![],
+                failure: Some(CloudSyncOutboundSafeCode::ProtectedStorage),
+            }
+        }
+    };
     let prepared = {
         let mut guard = handle.prepared.lock().await;
         guard.take()
@@ -2066,7 +2094,7 @@ pub async fn cloud_sync_consume_prepared_message_create(
             failure: Some(CloudSyncOutboundSafeCode::AlreadyConsumed),
         };
     };
-    let outcomes = match owner.consume_once().await {
+    let consumed = match owner.consume_once().await {
         Ok(outcomes) => outcomes,
         Err(failure) => {
             return CloudSyncOutboundConsumeResult {
@@ -2081,43 +2109,77 @@ pub async fn cloud_sync_consume_prepared_message_create(
             failure: Some(CloudSyncOutboundSafeCode::MutationCapabilityInvalid),
         };
     }
-    CloudSyncOutboundConsumeResult {
-        outcomes: outcomes
+    let outcomes = match consumed {
+        CloudSyncPreparedMessageCreateConsumption::Native(outcomes) => outcomes
             .into_iter()
-            .map(|outcome| {
-                use rustpush::cloud_messages::CloudMessagesSaveResult as NativeResult;
-                let (disposition, failure_class, retry_after_seconds) = match outcome.result {
-                    NativeResult::Succeeded => {
-                        (CloudSyncOutboundSaveDisposition::Succeeded, None, None)
-                    }
-                    NativeResult::UnknownOutcome {
-                        failure_class,
-                        retry_after,
-                    } => (
-                        CloudSyncOutboundSaveDisposition::UnknownOutcome,
-                        failure_class.map(map_cloud_sync_outbound_failure_class),
-                        retry_after.map(|value| value.as_secs()),
-                    ),
-                    NativeResult::Failed {
-                        failure_class,
-                        retry_after,
-                        ..
-                    } => (
-                        CloudSyncOutboundSaveDisposition::Failed,
-                        failure_class.map(map_cloud_sync_outbound_failure_class),
-                        retry_after.map(|value| value.as_secs()),
-                    ),
-                };
-                CloudSyncOutboundSaveOutcome {
-                    local_operation_id: outcome.local_operation_id,
-                    apple_operation_uuid: outcome.apple_operation_uuid,
-                    disposition,
-                    failure_class,
-                    retry_after_seconds,
-                }
-            })
+            .map(|outcome| map_cloud_sync_native_save_outcome(outcome, &hasher))
             .collect(),
+        #[cfg(test)]
+        CloudSyncPreparedMessageCreateConsumption::Test(outcomes) => outcomes,
+    };
+    CloudSyncOutboundConsumeResult {
+        outcomes,
         failure: None,
+    }
+}
+
+fn map_cloud_sync_native_save_outcome(
+    outcome: rustpush::cloud_messages::CloudMessagesSaveOutcome,
+    hasher: &crate::cloud_sync_semantic_identity::CloudSemanticIdentifierHasher,
+) -> CloudSyncOutboundSaveOutcome {
+    use rustpush::cloud_messages::CloudMessagesSaveResult as NativeResult;
+
+    let (disposition, failure_class, retry_after_seconds, server_record_id_hash, etag_hash) =
+        match outcome.result {
+            NativeResult::Succeeded(receipt) => {
+                let server_record_id_hash = hasher.server_record_id_hash(receipt.record_name());
+                match hasher.canonical_etag_hash(receipt.etag()) {
+                    Ok(etag_hash) => (
+                        CloudSyncOutboundSaveDisposition::Succeeded,
+                        None,
+                        None,
+                        Some(server_record_id_hash),
+                        Some(etag_hash.value().to_owned()),
+                    ),
+                    Err(_) => (
+                        CloudSyncOutboundSaveDisposition::UnknownOutcome,
+                        Some(CloudSyncOutboundFailureClass::Unknown),
+                        None,
+                        None,
+                        None,
+                    ),
+                }
+            }
+            NativeResult::UnknownOutcome {
+                failure_class,
+                retry_after,
+            } => (
+                CloudSyncOutboundSaveDisposition::UnknownOutcome,
+                failure_class.map(map_cloud_sync_outbound_failure_class),
+                retry_after.map(|value| value.as_secs()),
+                None,
+                None,
+            ),
+            NativeResult::Failed {
+                failure_class,
+                retry_after,
+                ..
+            } => (
+                CloudSyncOutboundSaveDisposition::Failed,
+                failure_class.map(map_cloud_sync_outbound_failure_class),
+                retry_after.map(|value| value.as_secs()),
+                None,
+                None,
+            ),
+        };
+    CloudSyncOutboundSaveOutcome {
+        local_operation_id: outcome.local_operation_id,
+        apple_operation_uuid: outcome.apple_operation_uuid,
+        disposition,
+        failure_class,
+        retry_after_seconds,
+        server_record_id_hash,
+        etag_hash,
     }
 }
 
@@ -2199,10 +2261,14 @@ mod cloud_sync_writer_mutation_capability_tests {
             prepared: tokio::sync::Mutex::new(Some(CloudSyncPreparedMessageCreateOwner::Test {
                 remote_call_count,
                 after_remote_call,
-                outcomes: vec![rustpush::cloud_messages::CloudMessagesSaveOutcome {
+                outcomes: vec![CloudSyncOutboundSaveOutcome {
                     local_operation_id: LOCAL_OPERATION_ID.to_owned(),
                     apple_operation_uuid: APPLE_OPERATION_UUID.to_owned(),
-                    result: rustpush::cloud_messages::CloudMessagesSaveResult::Succeeded,
+                    disposition: CloudSyncOutboundSaveDisposition::Succeeded,
+                    failure_class: None,
+                    retry_after_seconds: None,
+                    server_record_id_hash: Some("S".repeat(43)),
+                    etag_hash: Some("E".repeat(43)),
                 }],
             })),
             storage_directory: directory.to_string_lossy().into_owned(),
@@ -2313,6 +2379,14 @@ mod cloud_sync_writer_mutation_capability_tests {
             accepted.outcomes[0].disposition,
             CloudSyncOutboundSaveDisposition::Succeeded
         );
+        assert_eq!(
+            accepted.outcomes[0].server_record_id_hash.as_deref(),
+            Some("SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS")
+        );
+        assert_eq!(
+            accepted.outcomes[0].etag_hash.as_deref(),
+            Some("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
+        );
         assert_eq!(remote_call_count.load(Ordering::SeqCst), 1);
         assert!(handle.prepared.lock().await.is_none());
     }
@@ -2401,6 +2475,8 @@ fn cloud_sync_reconcile_failure(
         protected_proof_reference: None,
         failure_class: None,
         retry_after_seconds: None,
+        server_record_id_hash: None,
+        etag_hash: None,
         failure: Some(failure),
     }
 }
@@ -2433,7 +2509,11 @@ fn is_valid_cloud_sync_reconcile_message_create_input(
 }
 
 enum CloudSyncReconcileObservation {
-    FoundPayloadDigest(String),
+    FoundPayloadDigest {
+        payload_sha256: String,
+        server_record_id_hash: String,
+        etag_hash: String,
+    },
     DivergedRecord,
     NotFound,
     Unresolved {
@@ -2448,29 +2528,42 @@ fn classify_cloud_sync_reconcile_observation(
     expected_payload_sha256: &str,
     protected_proof_reference: String,
 ) -> CloudSyncOutboundReconcileResult {
-    let (disposition, failure_class, retry_after_seconds, decisive) = match observation {
-        CloudSyncReconcileObservation::FoundPayloadDigest(observed_digest)
-            if observed_digest == expected_payload_sha256 =>
-        {
-            (
-                CloudSyncOutboundReconcileDisposition::Committed,
-                None,
-                None,
-                true,
-            )
-        }
-        CloudSyncReconcileObservation::FoundPayloadDigest(_)
+    let (
+        disposition,
+        failure_class,
+        retry_after_seconds,
+        decisive,
+        server_record_id_hash,
+        etag_hash,
+    ) = match observation {
+        CloudSyncReconcileObservation::FoundPayloadDigest {
+            payload_sha256,
+            server_record_id_hash,
+            etag_hash,
+        } if payload_sha256 == expected_payload_sha256 => (
+            CloudSyncOutboundReconcileDisposition::Committed,
+            None,
+            None,
+            true,
+            Some(server_record_id_hash),
+            Some(etag_hash),
+        ),
+        CloudSyncReconcileObservation::FoundPayloadDigest { .. }
         | CloudSyncReconcileObservation::DivergedRecord => (
             CloudSyncOutboundReconcileDisposition::Diverged,
             Some(CloudSyncOutboundFailureClass::Conflict),
             None,
             true,
+            None,
+            None,
         ),
         CloudSyncReconcileObservation::NotFound => (
             CloudSyncOutboundReconcileDisposition::NotApplied,
             None,
             None,
             true,
+            None,
+            None,
         ),
         CloudSyncReconcileObservation::Unresolved {
             failure_class,
@@ -2480,12 +2573,16 @@ fn classify_cloud_sync_reconcile_observation(
             failure_class.map(map_cloud_sync_outbound_failure_class),
             retry_after.map(|value| value.as_secs()),
             false,
+            None,
+            None,
         ),
         CloudSyncReconcileObservation::UnknownFailure => (
             CloudSyncOutboundReconcileDisposition::Unresolved,
             Some(CloudSyncOutboundFailureClass::Unknown),
             None,
             false,
+            None,
+            None,
         ),
     };
     CloudSyncOutboundReconcileResult {
@@ -2493,6 +2590,8 @@ fn classify_cloud_sync_reconcile_observation(
         protected_proof_reference: decisive.then_some(protected_proof_reference),
         failure_class,
         retry_after_seconds,
+        server_record_id_hash,
+        etag_hash,
         failure: None,
     }
 }
@@ -2631,13 +2730,30 @@ pub async fn cloud_sync_reconcile_message_create(
         .lookup_message_record(&writer_binding, &server_record_name)
         .await
     {
-        Ok(CloudMessageRecordLookup::Found(message)) => {
-            match crate::cloud_sync_outbound::outbound_message_payload_sha256(
-                message,
-                &server_record_name,
-            ) {
-                Ok(digest) => CloudSyncReconcileObservation::FoundPayloadDigest(digest),
-                Err(_) => CloudSyncReconcileObservation::DivergedRecord,
+        Ok(CloudMessageRecordLookup::Found(message, receipt)) => {
+            let receipt_server_record_id_hash = hasher.server_record_id_hash(receipt.record_name());
+            let receipt_etag_hash = hasher
+                .canonical_etag_hash(receipt.etag())
+                .map(|hash| hash.value().to_owned());
+            if receipt_server_record_id_hash != input.server_record_id_hash {
+                CloudSyncReconcileObservation::DivergedRecord
+            } else {
+                match (
+                    crate::cloud_sync_outbound::outbound_message_payload_sha256(
+                        message,
+                        &server_record_name,
+                    ),
+                    receipt_etag_hash,
+                ) {
+                    (Ok(payload_sha256), Ok(etag_hash)) => {
+                        CloudSyncReconcileObservation::FoundPayloadDigest {
+                            payload_sha256,
+                            server_record_id_hash: receipt_server_record_id_hash,
+                            etag_hash,
+                        }
+                    }
+                    _ => CloudSyncReconcileObservation::DivergedRecord,
+                }
             }
         }
         Ok(CloudMessageRecordLookup::NotFound) => CloudSyncReconcileObservation::NotFound,
@@ -2744,8 +2860,14 @@ mod cloud_sync_outbound_reconcile_contract_tests {
     fn exact_digest_commits_and_explicit_absence_is_the_only_replay_proof() {
         let protected_reference = format!("obcs2.ref.{}", "P".repeat(43));
         let expected_digest = "b".repeat(64);
+        let server_record_id_hash = "S".repeat(43);
+        let etag_hash = "E".repeat(43);
         let committed = classify_cloud_sync_reconcile_observation(
-            CloudSyncReconcileObservation::FoundPayloadDigest(expected_digest.clone()),
+            CloudSyncReconcileObservation::FoundPayloadDigest {
+                payload_sha256: expected_digest.clone(),
+                server_record_id_hash: server_record_id_hash.clone(),
+                etag_hash: etag_hash.clone(),
+            },
             &expected_digest,
             protected_reference.clone(),
         );
@@ -2758,6 +2880,8 @@ mod cloud_sync_outbound_reconcile_contract_tests {
             Some(protected_reference.clone())
         );
         assert_eq!(committed.failure_class, None);
+        assert_eq!(committed.server_record_id_hash, Some(server_record_id_hash));
+        assert_eq!(committed.etag_hash, Some(etag_hash));
 
         let absent = classify_cloud_sync_reconcile_observation(
             CloudSyncReconcileObservation::NotFound,
@@ -2770,12 +2894,18 @@ mod cloud_sync_outbound_reconcile_contract_tests {
         );
         assert_eq!(absent.protected_proof_reference, Some(protected_reference));
         assert_eq!(absent.failure_class, None);
+        assert_eq!(absent.server_record_id_hash, None);
+        assert_eq!(absent.etag_hash, None);
     }
 
     #[test]
     fn divergent_or_malformed_found_records_quarantine_as_conflicts() {
         for observation in [
-            CloudSyncReconcileObservation::FoundPayloadDigest("c".repeat(64)),
+            CloudSyncReconcileObservation::FoundPayloadDigest {
+                payload_sha256: "c".repeat(64),
+                server_record_id_hash: "S".repeat(43),
+                etag_hash: "E".repeat(43),
+            },
             CloudSyncReconcileObservation::DivergedRecord,
         ] {
             let result = classify_cloud_sync_reconcile_observation(
@@ -2793,6 +2923,8 @@ mod cloud_sync_outbound_reconcile_contract_tests {
             );
             assert!(result.protected_proof_reference.is_some());
             assert_eq!(result.retry_after_seconds, None);
+            assert_eq!(result.server_record_id_hash, None);
+            assert_eq!(result.etag_hash, None);
         }
     }
 
@@ -2816,6 +2948,8 @@ mod cloud_sync_outbound_reconcile_contract_tests {
         );
         assert_eq!(transient.retry_after_seconds, Some(901));
         assert_eq!(transient.protected_proof_reference, None);
+        assert_eq!(transient.server_record_id_hash, None);
+        assert_eq!(transient.etag_hash, None);
 
         let failed = classify_cloud_sync_reconcile_observation(
             CloudSyncReconcileObservation::UnknownFailure,
@@ -2831,6 +2965,8 @@ mod cloud_sync_outbound_reconcile_contract_tests {
             Some(CloudSyncOutboundFailureClass::Unknown)
         );
         assert_eq!(failed.protected_proof_reference, None);
+        assert_eq!(failed.server_record_id_hash, None);
+        assert_eq!(failed.etag_hash, None);
     }
 }
 
