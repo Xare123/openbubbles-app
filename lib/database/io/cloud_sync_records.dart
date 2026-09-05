@@ -39,6 +39,10 @@ class CloudSyncLocalSendIntentEntity {
   /// Digest of immutable operation/payload metadata, not mutable receipts.
   String? admittedBindingSha256;
 
+  /// Versioned restored-chat dependency: scoped hashes and local row ID only.
+  /// Null on pre-binding records. Missing proof never authorizes dispatch.
+  String? admittedChatBinding;
+
   int createdAtMs;
   int updatedAtMs;
 
@@ -53,6 +57,7 @@ class CloudSyncLocalSendIntentEntity {
     this.state = 0,
     this.admittedOperationId,
     this.admittedBindingSha256,
+    this.admittedChatBinding,
     required this.createdAtMs,
     required this.updatedAtMs,
   });

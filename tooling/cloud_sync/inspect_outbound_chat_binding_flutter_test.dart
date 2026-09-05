@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_binding.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -12,6 +13,7 @@ void main() {
     expect(source, isNotNull, reason: 'offline inspection directory required');
     final sourceData = File('$source/data.mdb');
     expect(sourceData.existsSync(), isTrue);
+    final sourceDigest = await sha256.bind(sourceData.openRead()).first;
     final scratch = Directory(r'C:\Codex\OpenBubblesReview\scratch');
     final staging = await scratch.createTemp('outbound-chat-check-');
     Store? store;
@@ -44,6 +46,7 @@ void main() {
       var candidates = 0;
       var ready = 0;
       var notReady = 0;
+      final bindings = <String>[];
       store.runInTransaction(TxMode.read, () {
         for (final chat in store!.box<Chat>().getAll()) {
           if (chat.style != 45 || chat.isRpSms || chat.isRoutingStub) continue;
@@ -51,11 +54,12 @@ void main() {
           // No body or address is read into the synthetic message or emitted.
           final message = Message()..chat.targetId = chat.id!;
           try {
-            requireCloudSyncRestoredDirectChat(
+            final binding = requireCloudSyncRestoredDirectChat(
               store: store,
               messageScope: scope,
               message: message,
             );
+            bindings.add(binding);
             ready++;
           } on CloudSyncFailure catch (failure) {
             expect(failure.safeCode, 'cloud_sync_local_send_chat_not_ready');
@@ -63,9 +67,25 @@ void main() {
           }
         }
       });
+      store.close();
+      store = await openStore(directory: staging.path);
+      var restartReady = 0;
+      store.runInTransaction(TxMode.read, () {
+        for (final binding in bindings) {
+          requireCloudSyncAdoptedChatDependency(
+            store: store!,
+            messageScope: scope,
+            binding: binding,
+          );
+          restartReady++;
+        }
+      });
+      final sourceUnchanged =
+          (await sha256.bind(sourceData.openRead()).first) == sourceDigest;
+      expect(sourceUnchanged, isTrue);
       // ignore: avoid_print
       print(
-        'OUTBOUND_CHAT_BINDING_REPORT=${jsonEncode({'directChatCandidates': candidates, 'restoredChatReady': ready, 'chatDependencyNotReady': notReady, 'remoteCalls': 0, 'sourceOpenedAsDatabase': false})}',
+        'OUTBOUND_CHAT_BINDING_REPORT=${jsonEncode({'directChatCandidates': candidates, 'restoredChatReady': ready, 'restartChatReady': restartReady, 'chatDependencyNotReady': notReady, 'remoteCalls': 0, 'sourceOpenedAsDatabase': false, 'sourceUnchanged': sourceUnchanged})}',
       );
       expect(
         ready,

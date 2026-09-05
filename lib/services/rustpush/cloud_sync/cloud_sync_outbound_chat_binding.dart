@@ -7,23 +7,71 @@ import 'cloud_sync_models.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 
-/// Admission-only dependency check for a fresh direct iMessage create.
+/// Capture the exact restored-chat dependency for a fresh direct iMessage create.
 ///
 /// Runs inside the caller's ObjectBox transaction, before staging and again
 /// before adopting the envelope. A local Chat (including a legacy row) is not
 /// evidence that the corresponding chatEncryptedv2 record exists in iCloud.
-/// This does not grant transmission permission or create missing remote chats.
-void requireCloudSyncRestoredDirectChat({
+/// The caller persists this binding atomically with protected admission. It
+/// contains no raw GUID, recipient, or message body and grants no write permit.
+String requireCloudSyncRestoredDirectChat({
   required Store store,
   required CloudSyncScope messageScope,
   required Message message,
+}) => _requireRestoredChatById(
+  store: store,
+  messageScope: messageScope,
+  chatId: message.chat.targetId,
+);
+
+/// Revalidate an admitted dependency without consulting the mutable Message.
+/// Used in the same transaction as leasing/submission, including after restart.
+/// ETags are deliberately not frozen: a fully projected update of the same
+/// remote chat is valid, while a remap, deletion or stale generation is not.
+void requireCloudSyncAdoptedChatDependency({
+  required Store store,
+  required CloudSyncScope messageScope,
+  required String? binding,
+}) {
+  Never reject() => throw CloudSyncFailure(
+    category: CloudFailureCategory.dependency,
+    safeCode: 'cloud_sync_local_send_chat_not_ready',
+  );
+  if (binding == null || binding.length > 1024) reject();
+  final dynamic decoded;
+  try {
+    decoded = jsonDecode(binding);
+  } on FormatException {
+    reject();
+  }
+  if (decoded is! List ||
+      decoded.length != 9 ||
+      decoded[0] != 1 ||
+      decoded[3] is! int ||
+      (decoded[3] as int) <= 0) {
+    reject();
+  }
+  if (_requireRestoredChatById(
+        store: store,
+        messageScope: messageScope,
+        chatId: decoded[3] as int,
+      ) !=
+      binding) {
+    reject();
+  }
+}
+
+String _requireRestoredChatById({
+  required Store store,
+  required CloudSyncScope messageScope,
+  required int chatId,
 }) {
   Never reject() => throw CloudSyncFailure(
     category: CloudFailureCategory.dependency,
     safeCode: 'cloud_sync_local_send_chat_not_ready',
   );
 
-  final chat = store.box<Chat>().get(message.chat.targetId);
+  final chat = chatId > 0 ? store.box<Chat>().get(chatId) : null;
   if (chat == null ||
       chat.id == null ||
       chat.id! <= 0 ||
@@ -176,6 +224,17 @@ void requireCloudSyncRestoredDirectChat({
   } finally {
     latestQuery.close();
   }
+  return jsonEncode([
+    1, // Stable dependency serialization version; do not reorder fields.
+    scopeKey,
+    generation,
+    chat.id,
+    lookup,
+    canonicalHash,
+    snapshot.logicalEntityKeyHash,
+    mapping.serverRecordIdHash,
+    alias.aliasKeyHash,
+  ]);
 }
 
 T? _unique<T>(QueryBuilder<T> builder) {

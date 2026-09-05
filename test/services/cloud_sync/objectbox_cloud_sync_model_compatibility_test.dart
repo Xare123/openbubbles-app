@@ -135,6 +135,7 @@ void main() {
         (property) => [
           'admittedOperationId',
           'admittedBindingSha256',
+          'admittedChatBinding',
         ].contains(property['name']),
       );
       intentModel['lastPropertyId'] = '10:3816774319385985138';
@@ -176,6 +177,7 @@ void main() {
             expect(intent.state, state);
             expect(intent.admittedOperationId, isNull);
             expect(intent.admittedBindingSha256, isNull);
+            expect(intent.admittedChatBinding, isNull);
             expect(intent.intentKey, 'synthetic-intent-$state');
             expect(intent.writerEpoch, 3);
             expect(intent.sourceSha256, 'C' * 64);
@@ -187,6 +189,66 @@ void main() {
       }
     },
   );
+
+  test('chat binding upgrade preserves older admitted envelopes', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'cloud-sync-chat-binding-upgrade-',
+    );
+    addTearDown(() async {
+      if (directory.existsSync()) await directory.delete(recursive: true);
+    });
+    final current = getObjectBoxModel();
+    final previousMap = current.model.toMap();
+    final intentModel = (previousMap['entities'] as List)
+        .cast<Map>()
+        .singleWhere(
+          (entity) => entity['name'] == 'CloudSyncLocalSendIntentEntity',
+        );
+    (intentModel['properties'] as List).removeWhere(
+      (property) => property['name'] == 'admittedChatBinding',
+    );
+    intentModel['lastPropertyId'] = '12:8651771725641056063';
+    final previous = obx.ModelDefinition(
+      obx.ModelInfo.fromMap(previousMap),
+      current.bindings,
+    );
+    final oldStore = Store(previous, directory: directory.path);
+    late final int id;
+    try {
+      id = oldStore.box<CloudSyncLocalSendIntentEntity>().put(
+        CloudSyncLocalSendIntentEntity(
+          intentKey: 'synthetic-adopted-intent',
+          accountFingerprint: 'A' * 43,
+          writerEpoch: 7,
+          localMessageId: 42,
+          messageGuidHash: 'B' * 64,
+          sourceSha256: 'C' * 64,
+          state: 2,
+          admittedOperationId: 'synthetic-existing-envelope',
+          admittedBindingSha256: 'd' * 64,
+          createdAtMs: 1000,
+          updatedAtMs: 2000,
+        ),
+      );
+    } finally {
+      oldStore.close();
+    }
+    for (var restart = 0; restart < 2; restart++) {
+      final upgraded = await openStore(directory: directory.path);
+      try {
+        final intent = upgraded.box<CloudSyncLocalSendIntentEntity>().get(id)!;
+        expect(intent.state, 2);
+        expect(intent.admittedOperationId, 'synthetic-existing-envelope');
+        expect(intent.admittedBindingSha256, 'd' * 64);
+        expect(intent.admittedChatBinding, isNull);
+        expect(intent.sourceSha256, 'C' * 64);
+        expect(intent.localMessageId, 42);
+        expect(intent.writerEpoch, 7);
+      } finally {
+        upgraded.close();
+      }
+    }
+  });
 
   test(
     'Cloud Sync entities extend rather than renumber the canonical model',

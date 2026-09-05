@@ -9,6 +9,7 @@ import 'package:crypto/crypto.dart';
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_outbound_chat_binding.dart';
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
 
@@ -445,8 +446,11 @@ final class CloudSyncLocalSendJournal {
       throw StateError('cloud_sync_local_send_adoption_store_mismatch');
     }
     final query = _intents
-        .query(CloudSyncLocalSendIntentEntity_.admittedOperationId
-            .equals(operation.operationId))
+        .query(
+          CloudSyncLocalSendIntentEntity_.admittedOperationId.equals(
+            operation.operationId,
+          ),
+        )
         .build();
     final CloudSyncLocalSendIntentEntity? intent;
     try {
@@ -525,11 +529,19 @@ final class CloudSyncLocalSendJournal {
         operation.createdAt.millisecondsSinceEpoch != intent.createdAtMs) {
       throw StateError('cloud_sync_local_send_adoption_changed');
     }
-    _validatedMessage(intent);
+    final chatBinding = requireCloudSyncRestoredDirectChat(
+      store: _store,
+      messageScope: operation.scope,
+      message: _validatedMessage(intent),
+    );
     intent
       ..state = 2
       ..admittedOperationId = operation.operationId
-      ..admittedBindingSha256 = _operationBinding(operation);
+      ..admittedChatBinding = chatBinding
+      ..admittedBindingSha256 = _operationBinding(
+        operation,
+        chatBinding: chatBinding,
+      );
     _intents.put(intent);
   }
 
@@ -554,7 +566,11 @@ final class CloudSyncLocalSendJournal {
         operation.scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
         operation.action != CloudOutboxAction.save ||
         operation.payloadVersion != cloudSyncOutboundPayloadVersion ||
-        intent.admittedBindingSha256 != _operationBinding(operation) ||
+        intent.admittedBindingSha256 !=
+            _operationBinding(
+              operation,
+              chatBinding: intent.admittedChatBinding,
+            ) ||
         operation.createdAt.millisecondsSinceEpoch != intent.createdAtMs) {
       throw StateError('cloud_sync_local_send_adopted_operation_missing');
     }
@@ -586,21 +602,29 @@ final class CloudSyncLocalSendJournal {
               r'^[0-9a-f]{64}$',
             ).hasMatch(intent.admittedBindingSha256 ?? '')
       : intent.admittedOperationId == null &&
-            intent.admittedBindingSha256 == null;
+            intent.admittedBindingSha256 == null &&
+            intent.admittedChatBinding == null;
 
-  static String _operationBinding(CloudOutboxOperation operation) =>
-      CloudSyncLocalSendIdentity._digest([
-        'cloud-sync-local-send-adoption-v1',
-        operation.scope.storageKey, operation.operationId,
-        operation.logicalEntityKeyHash, operation.action.name,
-        operation.payloadVersion, operation.mutationRevision,
-        operation.checkpointGeneration, operation.encryptedPayloadReference,
-        operation.payloadSha256, operation.serverRecordIdHash,
-        operation.dependencyOperationIds.toList()..sort(),
-        operation.createdAt.millisecondsSinceEpoch,
-        // Lease/receipt/status fields legitimately change on confirmation.
-        // Native recovery and submission still validate the live lease itself.
-      ]);
+  static String _operationBinding(
+    CloudOutboxOperation operation, {
+    String? chatBinding,
+  }) => CloudSyncLocalSendIdentity._digest([
+    // Keep old envelopes readable for recovery, but dispatch separately
+    // requires the new dependency. Never retrofit proof from Message rows.
+    chatBinding == null
+        ? 'cloud-sync-local-send-adoption-v1'
+        : 'cloud-sync-local-send-adoption-v2',
+    operation.scope.storageKey, operation.operationId,
+    operation.logicalEntityKeyHash, operation.action.name,
+    operation.payloadVersion, operation.mutationRevision,
+    operation.checkpointGeneration, operation.encryptedPayloadReference,
+    operation.payloadSha256, operation.serverRecordIdHash,
+    operation.dependencyOperationIds.toList()..sort(),
+    operation.createdAt.millisecondsSinceEpoch,
+    if (chatBinding != null) chatBinding,
+    // Lease/receipt/status fields legitimately change on confirmation.
+    // Native recovery and submission still validate the live lease itself.
+  ]);
 
   Message _validatedMessage(CloudSyncLocalSendIntentEntity intent) {
     final message = _messages.get(intent.localMessageId);
@@ -654,6 +678,7 @@ final class CloudSyncLocalSendAdmissionSource {
       messageGuidHash = intent.messageGuidHash,
       admittedOperationId = intent.admittedOperationId,
       admittedBindingSha256 = intent.admittedBindingSha256,
+      admittedChatBinding = intent.admittedChatBinding,
       state = intent.state,
       createdAtUtc = DateTime.fromMillisecondsSinceEpoch(
         intent.createdAtMs,
@@ -669,6 +694,7 @@ final class CloudSyncLocalSendAdmissionSource {
   final String messageGuidHash;
   final String? admittedOperationId;
   final String? admittedBindingSha256;
+  final String? admittedChatBinding;
   final int state;
   final DateTime createdAtUtc;
   final Message? message;
@@ -684,6 +710,7 @@ final class CloudSyncLocalSendAdmissionSource {
       state == intent.state &&
       admittedOperationId == intent.admittedOperationId &&
       admittedBindingSha256 == intent.admittedBindingSha256 &&
+      admittedChatBinding == intent.admittedChatBinding &&
       createdAtUtc.millisecondsSinceEpoch == intent.createdAtMs;
 
   @override

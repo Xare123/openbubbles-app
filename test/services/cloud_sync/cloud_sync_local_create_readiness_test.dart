@@ -450,6 +450,263 @@ void main() {
   );
 
   test(
+    'adopted chat proof is rechecked after restart before leasing',
+    () async {
+      for (final missing in ['snapshot', 'alias', 'record map']) {
+        final fixture = await _Fixture.create();
+        try {
+          await fixture.seedAccount();
+          fixture.transport.stages.add(_stage());
+          await fixture.admitLocal();
+          await fixture.reopenConfigured();
+          fixture.removeRestoredChatProof(missing);
+
+          await expectLater(
+            fixture.store.leaseEligibleOutbox(
+              fixture.scope(),
+              now: testEpoch,
+              limit: 1,
+              leaseId: 'missing-chat-proof',
+              leaseDuration: const Duration(minutes: 1),
+              allowedActions: const {CloudOutboxAction.save},
+            ),
+            throwsA(_chatNotReady()),
+            reason: missing,
+          );
+          expect(fixture.outboxRow.state, CloudOutboxStatus.pending.index);
+          expect(fixture.outboxRow.leaseIdHash, isNull);
+          expect(fixture.transport.stageCalls, 1);
+        } finally {
+          await fixture.close();
+        }
+      }
+    },
+  );
+
+  test(
+    'adopted chat deletion after lease blocks submission atomically',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        final admitted = await fixture.admitLocal();
+        await fixture.store.leaseEligibleOutbox(
+          fixture.scope(),
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'deleted-chat',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        );
+        await fixture.addPage(
+          zone: 'chatManateeZone',
+          terminal: _Terminal.applied,
+          tombstone: true,
+          serverRecordIdHash: _restoredChatServerRecordIdHash,
+        );
+        await expectLater(
+          fixture.store.markOutboxSubmissionStarted(
+            fixture.scope(),
+            leaseId: 'deleted-chat',
+            submissionIdentity: testSubmissionIdentity([admitted.operationId]),
+            now: testEpoch,
+          ),
+          throwsA(_chatNotReady()),
+        );
+        expect(fixture.outboxRow.state, CloudOutboxStatus.leased.index);
+        expect(fixture.outboxRow.appleRequestUuid, isNull);
+        expect(fixture.outboxRow.appleOperationUuid, isNull);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  test(
+    'adopted chat binding permits a newer applied save without Message',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        final admitted = await fixture.admitLocal();
+        final binding = fixture.intent.admittedChatBinding!;
+        expect(binding, isNot(contains(_chatIdentifier)));
+        expect(binding, isNot(contains(_localGuid)));
+        expect(binding, isNot(contains(fixture.local.text!)));
+        final updatedEtag = 'U' * 43;
+        await fixture.seedZone(
+          zone: 'chatManateeZone',
+          terminal: _Terminal.applied,
+          serverRecordIdHash: _restoredChatServerRecordIdHash,
+          etagHash: updatedEtag,
+        );
+        final mapping = fixture.objectBox
+            .box<CloudRecordMapEntity>()
+            .getAll()
+            .singleWhere((row) => row.zone == 'chatManateeZone');
+        fixture.objectBox.box<CloudRecordMapEntity>().put(
+          mapping..etagHash = updatedEtag,
+        );
+        final snapshot = fixture.objectBox
+            .box<CloudSemanticSnapshotEntity>()
+            .getAll()
+            .single;
+        fixture.objectBox.box<CloudSemanticSnapshotEntity>().put(
+          snapshot..etagHash = updatedEtag,
+        );
+        fixture.objectBox.box<Message>().remove(fixture.local.id!);
+        await fixture.reopenConfigured();
+        final recovered = await fixture.admitLocal(
+          encoder: (_) =>
+              throw StateError('must not read or re-encode Message'),
+        );
+        final leased = await fixture.store.leaseEligibleOutbox(
+          fixture.scope(),
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'current-chat',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        );
+        expect(leased.single.operationId, admitted.operationId);
+        expect(
+          recovered.encryptedPayloadReference,
+          admitted.encryptedPayloadReference,
+        );
+        expect(fixture.intent.admittedChatBinding, binding);
+        expect(fixture.transport.stageCalls, 1);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  test(
+    'adopted chat cannot follow a locally consistent remote remap',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        await fixture.admitLocal();
+        final mapping = fixture.objectBox
+            .box<CloudRecordMapEntity>()
+            .getAll()
+            .singleWhere((row) => row.zone == 'chatManateeZone');
+        final source = fixture.objectBox
+            .box<CloudInboxChangeEntity>()
+            .getAll()
+            .singleWhere((row) => row.zone == 'chatManateeZone');
+        fixture.objectBox.box<CloudRecordMapEntity>().put(
+          mapping..serverRecordIdHash = 'W' * 43,
+        );
+        fixture.objectBox.box<CloudInboxChangeEntity>().put(
+          source..serverRecordIdHash = 'W' * 43,
+        );
+        await fixture.reopenConfigured();
+        await expectLater(
+          fixture.store.leaseEligibleOutbox(
+            fixture.scope(),
+            now: testEpoch,
+            limit: 1,
+            leaseId: 'remapped-chat',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save},
+          ),
+          throwsA(_chatNotReady()),
+        );
+        expect(fixture.outboxRow.state, CloudOutboxStatus.pending.index);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  test(
+    'legacy adopted envelope is recoverable but cannot fabricate chat proof',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        final admitted = await fixture.admitLocal();
+        // Exact predecessor format, before the dependency column existed.
+        final legacyDigest = sha256
+            .convert(
+              utf8.encode(
+                jsonEncode([
+                  'cloud-sync-local-send-adoption-v1',
+                  admitted.scope.storageKey,
+                  admitted.operationId,
+                  admitted.logicalEntityKeyHash,
+                  admitted.action.name,
+                  admitted.payloadVersion,
+                  admitted.mutationRevision,
+                  admitted.checkpointGeneration,
+                  admitted.encryptedPayloadReference,
+                  admitted.payloadSha256,
+                  admitted.serverRecordIdHash,
+                  admitted.dependencyOperationIds.toList()..sort(),
+                  admitted.createdAt.millisecondsSinceEpoch,
+                ]),
+              ),
+            )
+            .toString();
+        fixture.objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+          fixture.intent
+            ..admittedChatBinding = null
+            ..admittedBindingSha256 = legacyDigest,
+        );
+        await fixture.reopenConfigured();
+        final recovered = await fixture.admitLocal(
+          encoder: (_) => throw StateError('must not re-encode'),
+        );
+        expect(
+          recovered.encryptedPayloadReference,
+          admitted.encryptedPayloadReference,
+        );
+        await expectLater(
+          fixture.store.leaseEligibleOutbox(
+            fixture.scope(),
+            now: testEpoch,
+            limit: 1,
+            leaseId: 'old-no-proof',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save},
+          ),
+          throwsA(_chatNotReady()),
+        );
+        expect(fixture.intent.admittedChatBinding, isNull);
+        expect(fixture.transport.stageCalls, 1);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  test(
+    'adopted chat binding is part of the immutable envelope digest',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        await fixture.admitLocal();
+        fixture.objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+          fixture.intent..admittedChatBinding = '[1, "changed"]',
+        );
+        await expectLater(fixture.admitLocal(), throwsA(isA<StateError>()));
+        expect(fixture.outboxRow.state, CloudOutboxStatus.pending.index);
+        expect(fixture.transport.stageCalls, 1);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  test(
     'default store and generic admissions retain the fully applied guard',
     () async {
       final fallback = await _Fixture.create();
@@ -634,6 +891,7 @@ void main() {
           serverRecordIdHash: _targetServerRecordIdHash,
         );
 
+        fixture.removeRestoredChatProof('snapshot');
         final reconciliation = await fixture.store.leaseUnknownOutcomes(
           fixture.scope(),
           now: testEpoch.add(const Duration(seconds: 2)),

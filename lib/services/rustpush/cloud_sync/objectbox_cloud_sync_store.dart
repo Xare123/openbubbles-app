@@ -3411,6 +3411,11 @@ class ObjectBoxCloudSyncStore
     // Validate mapping, original protected envelope and current generation in
     // this same transaction, including after restart and after lease changes.
     readAdoptedLocalSendOperation(scope, journal: journal, source: source);
+    requireCloudSyncAdoptedChatDependency(
+      store: _store,
+      messageScope: scope,
+      binding: source.admittedChatBinding,
+    );
     _requireMessagesCloudAccountProjectionReadyLocked(
       scope,
       allowRetainedForFreshCreate: true,

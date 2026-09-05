@@ -42,6 +42,27 @@ continue under a new account.
 | `IN REPAIR` | A concrete counterexample invalidated the prior candidate and the replacement has not passed every gate yet. |
 | `GAP / POLICY DECISION` | The safe behavior is not wired end to end or needs an explicit product decision. |
 
+## Latest integration checkpoint, 2026-09-05
+
+- Installed Canary remains `317adb489`: the user confirms working photos, but
+  current IDS registration repair still needs completed sign-in and an ordinary
+  send. Alpha and the source inspection databases are untouched.
+- Reviewed gallery/document, recipient-validation, FaceTime and Find My fixes
+  are frozen at `d5413ec9c` for GCE run `33981816999`. Local checks pass 107 Dart
+  and 10 JavaScript tests. This APK candidate does not include the later
+  immutable chat-dependency repair below.
+- The later writer patch passes 311 focused Dart persistence, admission,
+  receipt, transport, ownership and model-upgrade tests. An offline copy of the
+  preserved September 5 Canary database validates all 133 direct-chat bindings
+  both before and after Store restart, without opening the source as a database
+  or making any remote call. Its source hash is unchanged. The first probe was
+  pointed at the older September 2 pre-chat capture, found zero candidates and
+  failed its nonempty gate; that result is not evidence against the newer data.
+- Automatic uploading is still not wired. Remaining work is durable handling
+  of origin-capture failures, initial-message capture, account-scoped recovery
+  and scheduling, then an exact live create/readback and restart qualification.
+  Do not equate these local tests with production synchronization.
+
 ## Live investigation board: personal integration review, 2026-09-04
 
 This board supersedes the historical board below. Reviewed baseline:
@@ -551,6 +572,37 @@ independently, retains last-good data on failure, and does not mark a failed
 Items fetch fresh. Parent verification passes 41 focused Dart tests and 10
 JavaScript tests; the worker also reports 39 host Kotlin tests passed. These
 do not prove a working live FaceTime handshake or a location-sharing record.
+
+#### Immutable restored-chat dependency, 2026-09-05
+
+Two negative controls failed on the predecessor: a queued local create could
+lease after its chat snapshot disappeared across restart, and could enter
+submission after an applied tombstone for that chat. The journal now captures
+the restored chat's exact scope/generation, local row, canonical identity,
+logical/server identity and service-alias hashes in the same transaction as
+protected outbox adoption. No message body, address or raw GUID is added.
+
+```text
+confirmed local origin -> protected message envelope
+  -> one transaction: outbox + record map + immutable chat binding
+  -> lease: revalidate exact binding and current applied chat evidence
+  -> submission: revalidate again before recording request identity
+  -> unknown outcome: reconcile original envelope, even if chat proof changed
+```
+
+The optional `admittedChatBinding` is property 13 of entity 33. Existing entity
+and property UIDs are unchanged. The v2 admission digest includes the binding.
+Old v1 envelopes remain readable for recovery, but their missing dependency
+cannot be manufactured from a current Message or used for dispatch. A newer
+fully applied save of the same chat is allowed; the ETag is checked against
+current evidence but is not frozen in the binding. A changed remote mapping,
+missing/stale/conflicting proof or observed deletion blocks sending. Recovery
+does not read or re-encode a subsequently edited/deleted local Message.
+
+The 311-test set includes the two repaired negative controls, a consistent but
+different remote-chat remap, tampered binding, older-envelope recovery, a newer
+valid ETag, and database upgrade/reopen. Targeted analysis is clean. This patch
+is not in GCE run `33981816999` and does not enable an automatic consumer.
 
 ### Installed Canary and VM observation follow-up
 
