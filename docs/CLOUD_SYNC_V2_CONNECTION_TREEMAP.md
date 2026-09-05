@@ -4,7 +4,7 @@ title: Cloud Sync V2 Connection Treemap and Recovery State Machine
 description: Source-linked end-to-end model for safely authenticating, fetching, decoding, journaling, projecting, recovering, and validating Messages in iCloud data.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-04
+timestamp: 2026-09-05
 ---
 
 # Cloud Sync V2 connection treemap and recovery state machine
@@ -83,9 +83,9 @@ Relay identity -> Apple account -> Keychain clique / PCS -> CloudMessagesClient
 | Read after write | The reader now distinguishes completely settled, confirmed rows from blocking work in one ObjectBox snapshot. The semantic sampler compares fingerprints of every durable outbox column before/after its paused read; receipts are not deleted. Pending, leased, paused, quarantined, unknown, invalid states and unacknowledged protected receipts still block. Shadow reads retain their zero-row rule. Schema 7 reports only counts and the equality result, never the fingerprint; the device reader preserves schema 6's zero-row gate. | **TEST-PROVEN on Windows ObjectBox.** The test performs an initial read, exact receipt commit, restart, blocked unreconciled read, durable receipt acknowledgement, restart, then two successful reads with zero transport saves. Same-count mutation is rejected. Restoring the original guard makes this regression test fail with `outbox_not_empty`. This is synthetic Apple transport evidence, not a live upload claim. |
 | Final native admission | The unfinished generation-fence patch moved `claimForConsumption` inside the armed mutation action. A wrong persisted UUID returned an unknown-outcome result without a native call. | **Reproduced and repaired locally.** Claim validation now follows the durable generation recheck but precedes fence arming. The regression test proves rejection, zero native calls, no fence, reuse with the correct identity, and harmless rejection of repeated consumption. The focused Dart set passes 107 tests. |
 | Rust CI capability tests | Runs `33930475652` and `33930441506` exposed a test-keystore dependency, not a demonstrated parallelism failure. The replacement injects only key loading into the same private consume implementation; the public entry point always uses protected storage. Run `33936071705` on exact `7db9ed89b` passed 285 app Rust tests, 203 rustpush tests, and 30 protector tests. | **TEST-PROVEN on GCE Linux.** Failure, retry and single-use assertions now run through the production consume logic. Do not confuse these passing code gates with the separate failed APK packaging gate. |
-| Media responsiveness during catch-up | Both CloudKit media lanes and each semantic batch now share a FIFO in-isolate gate on V2 Canary. Queued media runs after the active batch releases its native pause and before the next batch starts. The original durable interlock and native authentication remain authoritative. Alpha and IDS scheduling are unchanged. | **TEST-PROVEN; device qualification pending.** Six scheduling tests and the broader 101-test attachment/drain/interlock set pass. A tap still waits for the current bounded batch, not necessarily instantly. Windows tests cannot prove Android HEIC decoding or filesystem promotion. |
+| Media responsiveness during catch-up | Both CloudKit media lanes and native semantic sessions share a FIFO gate on V2 Canary. The final retained-record sweep now yields after at most 32 candidates, reacquiring native permission and validating account, all zone generations/sequences/tokens, and the settled outbox before continuing. Alpha and IDS scheduling are unchanged. | **TEST-PROVEN; new APK qualification pending.** The 210-test sampler/adapter/report/media/drain/interlock set passes. The installed build's completed sweep took 23.7 minutes and applied zero records. A fresh HEIC then downloaded and opened full-screen in the gallery. The remaining multi-pass remote session can still delay media; unchanged failed rows can still be retried on a later invocation. |
 | Remote deletion and message operations | `applyTombstone` intentionally returns `canonical_tombstone_dto_incomplete`. Edit/retracted-part fields have projection code, but outgoing transport supports initial create only. | Do not promise deletion propagation or write-side edit/unsend parity. Preserve history while establishing exact causality and ownership. These are separate capabilities, not automatically provided by a successful text create. |
-| Test versus installed build | GCE run `33943836515` passed full Dart/native validation, APK verification, signing, and runner cleanup for exact `6517f86612a0cf229f2ab8dbc56cf9b70928e182`. Runner registration and GCE instance readbacks were empty. The exact signed artifact was then installed in place on Pixel with first-install time and existing reports preserved. | **Installed, current read proof pending.** The device probe timed out without a new report. It does not include local follow-up `648730b80` or journal commit `107700e94`. Those changes need their own frozen-source qualification. A signed APK is not live Apple upload proof. |
+| Test versus installed build | GCE run `33943836515` qualified exact `6517f86612a0cf229f2ab8dbc56cf9b70928e182`; it remains installed in place with history preserved. The later user-started pull produced fresh remote-head and final projection reports, unlike the initial timed-out VM probe. | **Current read and specific gallery HEIC proven; production integration incomplete.** The installed build excludes the local settled-outbox boundary, local-send journal, VM observation, and scheduling follow-ups. Those changes require their own frozen-source qualification. No live Apple upload claim. |
 | Later cleanup | The user requested cleanup of unnecessary or disorganized code after correctness work. | Keep cleanup in separate commits: remove proven dead/duplicate paths, superseded diagnostics and misleading documentation, with tests unchanged or stronger. Do not combine a broad refactor with protocol or persistence changes. |
 
 ### Review scope and restraint
@@ -249,7 +249,7 @@ protobuf field-2 wire-type mismatches. No photo contents or message text belong
 in this report. One private temporary UI capture was discarded from the PC;
 no phone image, message, account data or app package was deleted or reset.
 
-This observation exposes a remaining limit of the new scheduling patch:
+This observation exposed a remaining limit of the first scheduling patch:
 `_catchUpWithinConfirmedSession` runs the entire `_sweepRetainedSavesAtHead`
 inside the same confirmed native pause. That sweep restarts its cursor at zero
 for every run and retries windows of retained saves. Yielding between outer
@@ -261,6 +261,61 @@ unresolved records and distinguish known unchanged conversion failures from
 records whose dependencies or converter have changed. Simply dropping the
 session-proof or native-pause checks is not a repair. Verify the same gallery
 request after that handoff before diagnosing asset absence or HEIC decoding.
+
+### Bounded projection handoffs and completed device evidence, 2026-09-05 UTC
+
+Final installed-build report `obcs2-semantic-1788591977487853.json`, timestamp
+`2026-09-05T07:06:17.487853Z`, confirms the retry sweep finished. It examined
+3 chat, 2,937 message, and 1,734 attachment saves, retained every candidate,
+and applied zero. Zone elapsed times were 1,007, 816,869, and 604,042 ms.
+The settled outbox remained `0 -> 0`; retained totals remained 476, 8,864,
+and 1,853. The content-free report is kept with the previous device evidence;
+SHA-256: `d01728ef62f292209adf247d9a9898d7d8cfb25553f5d9013b38d2a0757beb88`.
+The long work was local retry debt, not further network history retrieval.
+
+After the sweep, a previously undownloaded 244.46 KB HEIC in the authorized
+conversation gallery changed from cloud icon to rendered photo after a tap.
+A second tap opened the full-screen viewer (5 of 24); a horizontal swipe
+displayed the adjacent image (4 of 24). This is installed-build
+evidence for that gallery item and decoder, not proof for every old asset,
+GIF, source lane, or concurrent-sync behavior. Private photo contents are not
+included in source or reports.
+
+The follow-up changes the actual native session boundary:
+
+```text
+persist terminal remote-head report under the read pause
+  -> capture account + every zone generation/sequence/token + settled outbox
+  -> release native pause and durable interlock
+  -> FIFO admission (queued media may acquire its own native session)
+  -> fresh native pause + auth preparation + exact captured-state validation
+  -> acquire a fresh zone lease, project at most 32 retained candidates
+  -> verify lease and captured state, release lease/pause/interlock
+  -> advance in-memory cursor; repeat, allowing queued media between windows
+  -> final fresh admission, recount all zones, persist aggregate evidence
+```
+
+The old session-bound proof is not reused as permission. Each applier is
+created inside the new session with its new pause token. The immutable head
+snapshot only bounds local work and must match at every handoff. Neither a
+changed token with unchanged sequence nor a same-count outbox mutation may
+pass. No transport is created during projection. Cancellation or a changed
+fence returns no completed sweep; already committed rows remain durable.
+Uncertain native release retains the sampler's fail-closed latch.
+
+Validation: 54 sampler tests and the combined 210-test production-adapter,
+report, attachment, drain and interlock set pass. A media handoff test acquires
+a different operation kind and native pause between windows, not just a Dart
+callback. Tests cover account/session replacement, another zone's generation
+or token change, outbox mutation, cancellation, lease loss, final evidence
+revalidation, and the 32-candidate cap. Targeted analysis is clean; the service
+still has four preexisting informational braces lints. A bounded independent
+read-only audit found no additional actionable issue and the agent was closed.
+
+Still open: the remote multi-pass phase is one session, not a strict latency
+bound; projection cursors are in-memory, so an interrupted invocation may
+replay failed rows; a later pull can repeat unchanged conversion failures.
+Do not claim durable failure scheduling or new Pixel concurrency proof yet.
 
 ## Historical investigation board
 

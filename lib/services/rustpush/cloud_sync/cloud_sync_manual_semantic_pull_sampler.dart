@@ -45,6 +45,11 @@ typedef CloudSyncConfirmedSemanticPullSessionAction<T> =
     Future<T> Function(CloudSyncConfirmedSemanticPullPass runPass);
 typedef CloudSyncSemanticSessionReportPersist =
     Future<Object> Function(CloudSyncSemanticPullReport report);
+
+/// Schedules a complete native session, including confirmed pause release.
+/// The scheduler must await [action] and must not release it on a timeout.
+typedef CloudSyncSemanticSessionScheduler =
+    Future<T> Function<T>(Future<T> Function() action);
 typedef CloudSyncSemanticRetryWait =
     Future<void> Function(
       Duration delay,
@@ -120,6 +125,7 @@ final class CloudSyncManualSemanticPullSampler {
     required this.buildCommit,
     this._observerFactory,
     this._readDiagnosticCounts,
+    CloudSyncSemanticSessionScheduler? scheduleSession,
     bool? compileGateOverrideForTest,
     Duration? fetchTimeoutOverrideForTest,
     CloudSyncSemanticRetryWait? retryWaitOverrideForTest,
@@ -131,6 +137,7 @@ final class CloudSyncManualSemanticPullSampler {
        _fetchTimeout = fetchTimeoutOverrideForTest ?? _maximumFetchTimeout,
        _retryWait = retryWaitOverrideForTest ?? _defaultRetryWait,
        _clock = clockOverrideForTest ?? _utcNow,
+       _scheduleSession = scheduleSession ?? _runSessionImmediately,
        _enabled =
            compileGateOverrideForTest ??
            CloudSyncDevGate.manualSemanticPullEnabled {
@@ -153,7 +160,7 @@ final class CloudSyncManualSemanticPullSampler {
       pageLimit * changeLimit - changeLimit;
   static const projectionRepairLimit = 256;
   static const maximumLegacyOwnershipRepairCandidates = 4096;
-  static const retainedProjectionSweepBatchSize = 256;
+  static const retainedProjectionSweepBatchSize = 32;
   static const maximumRetainedProjectionSweepBatches = 4096;
   static const maximumConfirmedRemotePasses = 16;
   static const maximumTransientSessionRetries = 2;
@@ -182,6 +189,7 @@ final class CloudSyncManualSemanticPullSampler {
   final Duration _fetchTimeout;
   final CloudSyncSemanticRetryWait _retryWait;
   final CloudSyncClock _clock;
+  final CloudSyncSemanticSessionScheduler _scheduleSession;
   final bool _enabled;
   bool _active = false;
   bool _nativePauseUncertain = false;
@@ -199,9 +207,11 @@ final class CloudSyncManualSemanticPullSampler {
   /// Proves remote head, persists that proof, and then performs one exact
   /// local-only sweep of every retained save that existed at the proof bound.
   ///
-  /// The complete operation uses one auth admission, one operation interlock,
-  /// and one native-writer pause. The sweep never constructs a CloudKit
-  /// transport and never enters [CloudSyncEngine.synchronize].
+  /// Remote head is captured under the read session. Each subsequent local
+  /// projection window reacquires its own interlock and native pause, then
+  /// revalidates the captured account, checkpoints and settled outbox. Queued
+  /// media may run between windows. A head proof is not a native permission.
+  /// The sweep never constructs transport or calls CloudSyncEngine.synchronize.
   Future<CloudSyncConfirmedCatchUpResult> runConfirmedCatchUpAndPersist({
     required CloudSyncSemanticSessionReportPersist persistReport,
     int maximumRemotePasses = maximumConfirmedRemotePasses,
@@ -228,7 +238,7 @@ final class CloudSyncManualSemanticPullSampler {
       while (true) {
         _throwIfCancelled(cancellationToken);
         try {
-          final result = await _executeConfirmedSessionWithContext((
+          final (result, proof) = await _executeConfirmedSessionWithContext((
             session,
           ) async {
             final expectedFence = retryFence;
@@ -239,19 +249,29 @@ final class CloudSyncManualSemanticPullSampler {
               session: session,
               persistReport: persistReport,
               maximumRemotePasses: maximumRemotePasses - completedRemotePasses,
-              projectionBatchSize: projectionBatchSize,
               cancellationToken: cancellationToken,
             );
           }, cancellationToken: cancellationToken);
-          if (completedRemotePasses == 0) return result;
+          _throwIfCancelled(cancellationToken);
+          final projection = proof == null
+              ? null
+              : await _sweepRetainedSavesAtHead(
+                  proof: proof,
+                  batchSize:
+                      projectionBatchSize > retainedProjectionSweepBatchSize
+                      ? retainedProjectionSweepBatchSize
+                      : projectionBatchSize,
+                  cancellationToken: cancellationToken,
+                  persistReport: persistReport,
+                );
           return CloudSyncConfirmedCatchUpResult(
             remotePasses: completedRemotePasses + result.remotePasses,
             lastRemoteReport: result.lastRemoteReport,
             lastRemoteReportReference: result.lastRemoteReportReference,
             remoteDrained: result.remoteDrained,
             reachedRemotePassLimit: result.reachedRemotePassLimit,
-            projectionReport: result.projectionReport,
-            projectionReportReference: result.projectionReportReference,
+            projectionReport: projection?.$1,
+            projectionReportReference: projection?.$2,
           );
         } on _CloudSyncSemanticTransientInterruption catch (failure) {
           completedRemotePasses += failure.remotePasses;
@@ -284,11 +304,11 @@ final class CloudSyncManualSemanticPullSampler {
     }
   }
 
-  Future<CloudSyncConfirmedCatchUpResult> _catchUpWithinConfirmedSession({
+  Future<(CloudSyncConfirmedCatchUpResult, _CloudSyncPersistedRemoteHeadProof?)>
+  _catchUpWithinConfirmedSession({
     required _CloudSyncConfirmedSessionContext session,
     required CloudSyncSemanticSessionReportPersist persistReport,
     required int maximumRemotePasses,
-    required int projectionBatchSize,
     required CloudSyncCancellationToken cancellationToken,
   }) async {
     for (var pass = 1; pass <= maximumRemotePasses; pass++) {
@@ -320,24 +340,30 @@ final class CloudSyncManualSemanticPullSampler {
       }
       if (!report.allZonesObservedEmptyTerminalRead) {
         if (pass == maximumRemotePasses) {
-          return CloudSyncConfirmedCatchUpResult(
-            remotePasses: pass,
-            lastRemoteReport: report,
-            lastRemoteReportReference: reportReference,
-            remoteDrained: false,
-            reachedRemotePassLimit: true,
+          return (
+            CloudSyncConfirmedCatchUpResult(
+              remotePasses: pass,
+              lastRemoteReport: report,
+              lastRemoteReportReference: reportReference,
+              remoteDrained: false,
+              reachedRemotePassLimit: true,
+            ),
+            null,
           );
         }
         continue;
       }
 
       if (!report.hasRetainedSaveBacklog) {
-        return CloudSyncConfirmedCatchUpResult(
-          remotePasses: pass,
-          lastRemoteReport: report,
-          lastRemoteReportReference: reportReference,
-          remoteDrained: true,
-          reachedRemotePassLimit: false,
+        return (
+          CloudSyncConfirmedCatchUpResult(
+            remotePasses: pass,
+            lastRemoteReport: report,
+            lastRemoteReportReference: reportReference,
+            remoteDrained: true,
+            reachedRemotePassLimit: false,
+          ),
+          null,
         );
       }
 
@@ -345,23 +371,15 @@ final class CloudSyncManualSemanticPullSampler {
         session: session,
         report: report,
       );
-      final projectionReport = await _sweepRetainedSavesAtHead(
-        session: session,
-        proof: proof,
-        batchSize: projectionBatchSize,
-      );
-      final projectionReference = await persistReport(projectionReport);
-      if (!projectionReport.safeToPersistProjectionSweep) {
-        throw StateError('cloud_sync_projection_sweep_unsafe_report');
-      }
-      return CloudSyncConfirmedCatchUpResult(
-        remotePasses: pass,
-        lastRemoteReport: report,
-        lastRemoteReportReference: reportReference,
-        remoteDrained: true,
-        reachedRemotePassLimit: false,
-        projectionReport: projectionReport,
-        projectionReportReference: projectionReference,
+      return (
+        CloudSyncConfirmedCatchUpResult(
+          remotePasses: pass,
+          lastRemoteReport: report,
+          lastRemoteReportReference: reportReference,
+          remoteDrained: true,
+          reachedRemotePassLimit: false,
+        ),
+        proof,
       );
     }
     throw StateError('cloud_sync_semantic_remote_pass_limit_unreachable');
@@ -394,6 +412,21 @@ final class CloudSyncManualSemanticPullSampler {
   }
 
   Future<T> _executeConfirmedSessionWithContext<T>(
+    Future<T> Function(_CloudSyncConfirmedSessionContext session) action, {
+    CloudSyncCancellationToken? cancellationToken,
+  }) => _scheduleSession<T>(() async {
+    // Cancellation may occur while waiting behind a media operation.
+    if (cancellationToken != null) _throwIfCancelled(cancellationToken);
+    return _executeAdmittedSessionWithContext(
+      action,
+      cancellationToken: cancellationToken,
+    );
+  });
+
+  static Future<T> _runSessionImmediately<T>(Future<T> Function() action) =>
+      action();
+
+  Future<T> _executeAdmittedSessionWithContext<T>(
     Future<T> Function(_CloudSyncConfirmedSessionContext session) action, {
     CloudSyncCancellationToken? cancellationToken,
   }) async {
@@ -649,6 +682,8 @@ final class CloudSyncManualSemanticPullSampler {
       throw StateError('cloud_sync_remote_head_proof_unavailable');
     }
     await _requireSameAuth(session.ensuredAuth);
+    final preflight = await _readPreflight();
+    _validatePreflight(preflight);
     final bounds = <String, _CloudSyncRemoteHeadZoneBound>{};
     for (final zone in zones) {
       final scope = CloudSyncScope(
@@ -671,88 +706,115 @@ final class CloudSyncManualSemanticPullSampler {
         scope: scope,
         generation: checkpoint.generation,
         throughFetchSequence: checkpoint.fetchedSequence,
+        fetchedToken: checkpoint.fetchedToken,
       );
     }
     await _requireSameAuth(session.ensuredAuth);
     return _CloudSyncPersistedRemoteHeadProof(
-      sessionNonce: session.nonce,
-      pauseToken: session.pauseToken,
       auth: session.ensuredAuth,
       bounds: bounds,
+      preflight: preflight,
     );
   }
 
-  Future<CloudSyncSemanticPullReport> _sweepRetainedSavesAtHead({
-    required _CloudSyncConfirmedSessionContext session,
+  Future<(CloudSyncSemanticPullReport, Object)> _sweepRetainedSavesAtHead({
     required _CloudSyncPersistedRemoteHeadProof proof,
     required int batchSize,
+    required CloudSyncCancellationToken cancellationToken,
+    required CloudSyncSemanticSessionReportPersist persistReport,
   }) async {
-    if (!identical(proof.sessionNonce, session.nonce) ||
-        proof.pauseToken != session.pauseToken ||
-        !proof.auth.sameIdentity(session.ensuredAuth) ||
-        proof.bounds.length != zones.length) {
-      throw StateError('cloud_sync_projection_sweep_proof_invalid');
-    }
-    await _requireSameAuth(proof.auth);
-    final before = await _readPreflight();
-    _validatePreflight(before);
-    final reports = <CloudSyncSemanticPullZoneReport>[];
-
+    final progress = <String, _CloudSyncProjectionSweepProgress>{};
     for (final zone in zones) {
       final bound = proof.bounds[zone];
       if (bound == null || bound.scope.zone != zone) {
         throw StateError('cloud_sync_projection_sweep_bound_missing');
       }
-      await _requireSameAuth(proof.auth);
-      final startedAt = DateTime.now().toUtc();
-      final store = await _createStore(bound.scope);
-      await _validateProjectionSweepCheckpoint(store, bound);
-      final inboxApplier = await _createInboxApplier(
-        proof.auth,
-        bound.scope,
-        bound.generation,
-        session.pauseToken,
-      );
-      if (inboxApplier is! CloudRetainedProjectionWindowReprocessor) {
-        throw StateError('cloud_sync_projection_sweep_applier_unavailable');
-      }
-      final projectionSweeper =
-          inboxApplier as CloudRetainedProjectionWindowReprocessor;
-      final diagnosticsBefore =
-          _readDiagnosticCounts?.call(bound.scope) ?? const <String, int>{};
-      final leaseFence = await store.tryAcquireCoordinatorLease(
-        bound.scope,
-        ownerId:
-            'manual-semantic-sweep-${proof.auth.nativeSessionId}-${identityHashCode(session.nonce)}-$zone',
-        now: DateTime.now().toUtc(),
-        leaseDuration: _config().coordinatorLeaseDuration,
-      );
-      if (leaseFence == null) {
-        throw StateError('cloud_sync_projection_sweep_lease_unavailable');
-      }
-
-      var cursor = 0;
-      var batches = 0;
-      var examined = 0;
-      var reprojected = 0;
-      var retained = 0;
-      try {
-        while (cursor < bound.throughFetchSequence) {
-          if (batches >= maximumRetainedProjectionSweepBatches) {
-            throw StateError('cloud_sync_projection_sweep_batch_limit');
-          }
-          await _requireSameAuth(proof.auth);
-          await _validateProjectionSweepCheckpoint(store, bound);
-          final renewed = await store.renewCoordinatorLease(
-            bound.scope,
-            leaseFence: leaseFence,
-            now: DateTime.now().toUtc(),
-            leaseDuration: _config().coordinatorLeaseDuration,
+      final state = progress[zone] = _CloudSyncProjectionSweepProgress();
+      while (state.cursor < bound.throughFetchSequence) {
+        _throwIfCancelled(cancellationToken);
+        if (state.batches >= maximumRetainedProjectionSweepBatches) {
+          throw StateError('cloud_sync_projection_sweep_batch_limit');
+        }
+        final (result, diagnostics) = await _executeConfirmedSessionWithContext(
+          (session) => _projectRetainedWindow(
+            session: session,
+            proof: proof,
+            bound: bound,
+            cursor: state.cursor,
+            batchSize: batchSize,
+          ),
+          cancellationToken: cancellationToken,
+        );
+        // The cursor is progress, not authority. Advance only after the
+        // window's lease and native pause have both been released. A process
+        // restart may safely replay retained rows; it cannot skip them.
+        state.batches++;
+        state.examined += result.examined;
+        state.reprojected += result.reprojected;
+        state.retained += result.retained;
+        state.cursor = result.lastExaminedSequence;
+        for (final entry in diagnostics.entries) {
+          state.diagnostics.update(
+            entry.key,
+            (value) => value + entry.value,
+            ifAbsent: () => entry.value,
           );
-          if (!renewed) {
-            throw StateError('cloud_sync_projection_sweep_lease_lost');
-          }
-          final result = await projectionSweeper.reprojectRetainedSaveWindow(
+        }
+        if (!result.hasMoreWithinBound) break;
+      }
+    }
+
+    // Read all final backlog counts and persist the aggregate while holding a
+    // fresh validated session. Never report an interrupted prefix as a sweep.
+    return _executeConfirmedSessionWithContext((session) async {
+      await _admitProjectionSession(session, proof);
+      final report = await _projectionSweepReport(proof, progress);
+      await _validateProjectionProofState(proof);
+      final reference = await persistReport(report);
+      if (!report.safeToPersistProjectionSweep) {
+        throw StateError('cloud_sync_projection_sweep_unsafe_report');
+      }
+      return (report, reference);
+    }, cancellationToken: cancellationToken);
+  }
+
+  Future<(CloudRetainedProjectionWindowResult, Map<String, int>)>
+  _projectRetainedWindow({
+    required _CloudSyncConfirmedSessionContext session,
+    required _CloudSyncPersistedRemoteHeadProof proof,
+    required _CloudSyncRemoteHeadZoneBound bound,
+    required int cursor,
+    required int batchSize,
+  }) async {
+    await _admitProjectionSession(session, proof);
+    final store = await _createStore(bound.scope);
+    // A decoder/applier never outlives this session and receives only this
+    // session's pause token. The earlier head proof cannot authorize native IO.
+    final inboxApplier = await _createInboxApplier(
+      session.ensuredAuth,
+      bound.scope,
+      bound.generation,
+      session.pauseToken,
+    );
+    if (inboxApplier is! CloudRetainedProjectionWindowReprocessor) {
+      throw StateError('cloud_sync_projection_sweep_applier_unavailable');
+    }
+    final diagnosticsBefore =
+        _readDiagnosticCounts?.call(bound.scope) ?? const <String, int>{};
+    final leaseFence = await store.tryAcquireCoordinatorLease(
+      bound.scope,
+      ownerId:
+          'manual-semantic-sweep-${proof.auth.nativeSessionId}-${identityHashCode(session.nonce)}-${bound.scope.zone}',
+      now: DateTime.now().toUtc(),
+      leaseDuration: _config().coordinatorLeaseDuration,
+    );
+    if (leaseFence == null) {
+      throw StateError('cloud_sync_projection_sweep_lease_unavailable');
+    }
+    late final CloudRetainedProjectionWindowResult result;
+    try {
+      result = await (inboxApplier as CloudRetainedProjectionWindowReprocessor)
+          .reprojectRetainedSaveWindow(
             scope: bound.scope,
             generation: bound.generation,
             leaseFence: leaseFence,
@@ -760,36 +822,94 @@ final class CloudSyncManualSemanticPullSampler {
             throughFetchSequence: bound.throughFetchSequence,
             limit: batchSize,
           );
-          batches++;
-          if (result.examined < 0 ||
-              result.examined > batchSize ||
-              result.reprojected < 0 ||
-              result.retained < 0 ||
-              result.examined != result.reprojected + result.retained ||
-              result.lastExaminedSequence < cursor ||
-              result.lastExaminedSequence > bound.throughFetchSequence ||
-              (result.examined == 0 &&
-                  (result.lastExaminedSequence != cursor ||
-                      result.hasMoreWithinBound)) ||
-              (result.examined > 0 && result.lastExaminedSequence <= cursor)) {
-            throw StateError('cloud_sync_projection_sweep_result_invalid');
-          }
-          examined += result.examined;
-          reprojected += result.reprojected;
-          retained += result.retained;
-          cursor = result.lastExaminedSequence;
-          if (!result.hasMoreWithinBound) break;
-        }
-      } finally {
-        await store.releaseCoordinatorLease(
-          bound.scope,
-          leaseFence: leaseFence,
-        );
+      // Reacquiring a new lease on the next window must not conceal loss of
+      // this window's lease, even when the applier reports success.
+      if (!await store.renewCoordinatorLease(
+        bound.scope,
+        leaseFence: leaseFence,
+        now: DateTime.now().toUtc(),
+        leaseDuration: _config().coordinatorLeaseDuration,
+      )) {
+        throw StateError('cloud_sync_projection_sweep_lease_lost');
       }
-      await _requireSameAuth(proof.auth);
-      await _validateProjectionSweepCheckpoint(store, bound);
-      final diagnosticsAfter =
-          _readDiagnosticCounts?.call(bound.scope) ?? const <String, int>{};
+      if (result.examined < 0 ||
+          result.examined > batchSize ||
+          result.reprojected < 0 ||
+          result.retained < 0 ||
+          result.examined != result.reprojected + result.retained ||
+          result.lastExaminedSequence < cursor ||
+          result.lastExaminedSequence > bound.throughFetchSequence ||
+          (result.examined == 0 &&
+              (result.lastExaminedSequence != cursor ||
+                  result.hasMoreWithinBound)) ||
+          (result.examined > 0 && result.lastExaminedSequence <= cursor) ||
+          (result.hasMoreWithinBound &&
+              result.lastExaminedSequence == bound.throughFetchSequence)) {
+        throw StateError('cloud_sync_projection_sweep_result_invalid');
+      }
+    } finally {
+      await store.releaseCoordinatorLease(bound.scope, leaseFence: leaseFence);
+    }
+    await _validateProjectionProofState(proof);
+    final diagnosticsAfter =
+        _readDiagnosticCounts?.call(bound.scope) ?? const <String, int>{};
+    return (
+      result,
+      _positiveDiagnosticDelta(diagnosticsBefore, diagnosticsAfter),
+    );
+  }
+
+  Future<void> _admitProjectionSession(
+    _CloudSyncConfirmedSessionContext session,
+    _CloudSyncPersistedRemoteHeadProof proof,
+  ) async {
+    if (!proof.auth.sameIdentity(session.ensuredAuth)) {
+      throw StateError('account_changed');
+    }
+    await _validateProjectionProofState(proof);
+    final prepared = await _prepareAuthSnapshot(
+      session.pauseToken,
+      session.ensuredAuth,
+    );
+    if (!proof.auth.sameIdentity(prepared)) throw StateError('account_changed');
+    await _validateProjectionProofState(proof);
+  }
+
+  Future<void> _validateProjectionProofState(
+    _CloudSyncPersistedRemoteHeadProof proof,
+  ) async {
+    if (proof.bounds.length != zones.length) {
+      throw StateError('cloud_sync_projection_sweep_proof_invalid');
+    }
+    await _requireSameAuth(proof.auth);
+    final preflight = await _readPreflight();
+    _validatePreflight(preflight);
+    if (!proof.preflight.hasSameSettledOutboxAs(preflight)) {
+      throw StateError('cloud_sync_semantic_remote_write_tripwire');
+    }
+    for (final zone in zones) {
+      final bound = proof.bounds[zone];
+      if (bound == null || bound.scope != _semanticScope(proof.auth, zone)) {
+        throw StateError('cloud_sync_projection_sweep_bound_missing');
+      }
+      await _validateProjectionSweepCheckpoint(
+        await _createStore(bound.scope),
+        bound,
+      );
+    }
+    await _requireSameAuth(proof.auth);
+  }
+
+  Future<CloudSyncSemanticPullReport> _projectionSweepReport(
+    _CloudSyncPersistedRemoteHeadProof proof,
+    Map<String, _CloudSyncProjectionSweepProgress> progress,
+  ) async {
+    final before = proof.preflight;
+    final reports = <CloudSyncSemanticPullZoneReport>[];
+    for (final zone in zones) {
+      final bound = proof.bounds[zone]!;
+      final state = progress[zone]!;
+      final store = await _createStore(bound.scope);
       final backlogStore = store is CloudRetainedUnprojectedBacklogStore
           ? store as CloudRetainedUnprojectedBacklogStore
           : null;
@@ -800,10 +920,7 @@ final class CloudSyncManualSemanticPullSampler {
         scope: bound.scope,
         store: store,
         retainedBacklog: retainedBacklog,
-        projectionDiagnosticsOverride: _positiveDiagnosticDelta(
-          diagnosticsBefore,
-          diagnosticsAfter,
-        ),
+        projectionDiagnosticsOverride: state.diagnostics,
       );
       // If the typed summary cannot be read, every retained row remains
       // blocking. Only an exact durable out-of-scope count may be subtracted.
@@ -824,7 +941,7 @@ final class CloudSyncManualSemanticPullSampler {
               ? CloudSyncRunStatus.degraded
               : CloudSyncRunStatus.completed,
           fetched: 0,
-          applied: reprojected,
+          applied: state.reprojected,
           deferred: 0,
           quarantined: 0,
           preflightQuarantined: 0,
@@ -843,11 +960,11 @@ final class CloudSyncManualSemanticPullSampler {
           retried: 0,
           elapsedMilliseconds: DateTime.now()
               .toUtc()
-              .difference(startedAt)
+              .difference(state.startedAt)
               .inMilliseconds,
-          projectionExamined: examined,
-          projectionRetained: retained,
-          projectionBatches: batches,
+          projectionExamined: state.examined,
+          projectionRetained: state.retained,
+          projectionBatches: state.batches,
           diagnosticCounts: diagnosticCounts,
           failureCategory: incomplete ? CloudFailureCategory.dependency : null,
           failureSafeCode: incomplete ? 'retained_projection_incomplete' : null,
@@ -884,6 +1001,7 @@ final class CloudSyncManualSemanticPullSampler {
     if (checkpoint.scope != bound.scope ||
         checkpoint.generation != bound.generation ||
         checkpoint.fetchedSequence != bound.throughFetchSequence ||
+        checkpoint.fetchedToken != bound.fetchedToken ||
         checkpoint.pendingBatchId != null ||
         checkpoint.hasUnmarkedPendingInbox) {
       throw StateError('cloud_sync_projection_sweep_checkpoint_changed');
@@ -1234,16 +1352,15 @@ final class _CloudSyncConfirmedSessionContext {
 
 final class _CloudSyncPersistedRemoteHeadProof {
   _CloudSyncPersistedRemoteHeadProof({
-    required this.sessionNonce,
-    required this.pauseToken,
     required this.auth,
     required Map<String, _CloudSyncRemoteHeadZoneBound> bounds,
+    required this.preflight,
   }) : bounds = Map.unmodifiable(bounds);
 
-  final Object sessionNonce;
-  final Object pauseToken;
+  // Binds local projection to persisted head, never to a stale pause token.
   final CloudSyncNativeAuthSnapshot auth;
   final Map<String, _CloudSyncRemoteHeadZoneBound> bounds;
+  final CloudSyncShadowPreflightState preflight;
 }
 
 final class _CloudSyncRemoteHeadZoneBound {
@@ -1251,11 +1368,23 @@ final class _CloudSyncRemoteHeadZoneBound {
     required this.scope,
     required this.generation,
     required this.throughFetchSequence,
+    required this.fetchedToken,
   });
 
   final CloudSyncScope scope;
   final int generation;
   final int throughFetchSequence;
+  final String? fetchedToken;
+}
+
+final class _CloudSyncProjectionSweepProgress {
+  final DateTime startedAt = DateTime.now().toUtc();
+  final Map<String, int> diagnostics = {};
+  int cursor = 0;
+  int batches = 0;
+  int examined = 0;
+  int reprojected = 0;
+  int retained = 0;
 }
 
 final class _CloudSyncSemanticRetryFence {

@@ -502,6 +502,7 @@ final class CloudSyncProductionSemanticPullAdapter {
     NativeProtectedCloudSyncBindings? transportBindings,
     RustCloudSemanticDecodeBindings? semanticDecodeBindings,
     CloudSyncNativeWriterPause? nativeWriterPause,
+    CloudSyncSemanticSessionScheduler? scheduleSession,
     CloudSyncVerboseDiagnosticsEnabled? verboseDiagnosticsEnabled,
     bool? compileGateOverrideForTest,
   }) {
@@ -605,6 +606,7 @@ final class CloudSyncProductionSemanticPullAdapter {
         );
       },
       nativeWriterPause: nativeWriterPause ?? FrbCloudSyncNativeWriterPause(),
+      scheduleSession: scheduleSession,
       readDiagnosticCounts: (scope) =>
           diagnosticCollectors[scope.zone]?.snapshot() ?? const <String, int>{},
       operationFenceStore: durableStore,

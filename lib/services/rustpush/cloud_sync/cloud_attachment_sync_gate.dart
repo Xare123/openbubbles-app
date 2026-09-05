@@ -9,7 +9,8 @@ bool cloudAttachmentLaneWaitsForSemanticPull(
     lane == CloudAttachmentDownloadLane.cloudSyncV2 ||
     lane == CloudAttachmentDownloadLane.legacyCloudKit;
 
-/// Gives on-demand media a turn between semantic catch-up batches.
+/// Gives on-demand media a turn between native semantic sessions, including
+/// the bounded windows of the retained-record projection sweep.
 ///
 /// This is only in-isolate scheduling. The operation's durable interlock,
 /// native writer pause and authentication checks remain authoritative. Never

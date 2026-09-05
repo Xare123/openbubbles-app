@@ -8062,14 +8062,14 @@ class RustPushService extends GetxService {
   _runCloudSyncV2ManualSemanticPull({required int maximumPasses}) {
     final expectedClient = state?.icloudServices?.cloudMessagesClient;
     final expectedStorage = statePath;
-    return _cloudSyncV2AttachmentGate.run(
-      validate: () => _validateCloudSyncV2QueuedRead(
-        expectedClient: expectedClient,
-        expectedStorage: expectedStorage,
-      ),
-      action: () => _runCloudSyncV2ManualSemanticPullUnderGate(
-        maximumPasses: maximumPasses,
-      ),
+    _validateCloudSyncV2QueuedRead(
+      expectedClient: expectedClient,
+      expectedStorage: expectedStorage,
+    );
+    return _runCloudSyncV2ManualSemanticPullWithScheduledSessions(
+      maximumPasses: maximumPasses,
+      expectedClient: expectedClient,
+      expectedStorage: expectedStorage,
     );
   }
 
@@ -8090,7 +8090,11 @@ class RustPushService extends GetxService {
   }
 
   Future<CloudSyncSemanticDrainResult>
-  _runCloudSyncV2ManualSemanticPullUnderGate({required int maximumPasses}) async {
+  _runCloudSyncV2ManualSemanticPullWithScheduledSessions({
+    required int maximumPasses,
+    required Object? expectedClient,
+    required String expectedStorage,
+  }) async {
     if (statePath.isEmpty || !Directory(statePath).existsSync()) {
       throw StateError('cloud_sync_private_storage_unavailable');
     }
@@ -8120,6 +8124,14 @@ class RustPushService extends GetxService {
             CloudSyncProtectorHealthProbe(protector: protector).read,
       );
       final adapter = CloudSyncProductionSemanticPullAdapter(
+        scheduleSession: <T>(Future<T> Function() action) =>
+            _cloudSyncV2AttachmentGate.run<T>(
+          validate: () => _validateCloudSyncV2QueuedRead(
+            expectedClient: expectedClient,
+            expectedStorage: expectedStorage,
+          ),
+          action: action,
+        ),
         readActiveClient: () =>
             state?.icloudServices?.cloudMessagesClient,
         readPreflight: preflight.read,

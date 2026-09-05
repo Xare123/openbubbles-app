@@ -4,7 +4,7 @@ title: OpenBubbles Critical-Path Impact Map
 description: Operational dependency map for live messaging, startup, CloudKit, outbound sends, and account transitions.
 resource: openbubbles-app
 tags: [openbubbles, architecture, messaging, cloudkit, regression-prevention]
-timestamp: 2026-08-30
+timestamp: 2026-09-05
 ---
 
 # OpenBubbles critical-path impact map
@@ -186,6 +186,17 @@ from tombstones or issue remote duplicate deletion. A single failed item must
 hold the page checkpoint.
 
 ## 5. V2 semantic pull
+
+As of 2026-09-05, catch-up has two distinct native-session lifetimes. The
+remote phase retains its confirmed read session through terminal-head report
+persistence. Retained-save projection then uses one fresh session per window
+of at most 32 candidates, with FIFO media admission between windows. The head
+snapshot is only a local-work bound, never a reusable native pause capability.
+Every projection handoff rechecks the exact account, all zone generations,
+fetched sequences and tokens, and the complete settled-outbox fingerprint.
+The cursor advances only after confirmed native release. Final backlog counts
+and projection report persistence require another validated session. Unresolved
+rows are preserved; process restart can replay them, not silently skip them.
 
 ```text
 manual confirmed pull
