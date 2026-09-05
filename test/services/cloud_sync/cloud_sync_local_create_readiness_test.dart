@@ -11,6 +11,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'cloud_sync_test_helpers.dart';
+import 'cloud_sync_restored_chat_test_fixture.dart';
 
 void main() {
   test(
@@ -179,6 +180,204 @@ void main() {
     },
   );
 
+  test(
+    'missing restored-chat proof fails before encoding or native staging',
+    () async {
+      for (final missing in const ['snapshot', 'alias', 'record map']) {
+        final fixture = await _Fixture.create();
+        try {
+          await fixture.seedAccount();
+          fixture.removeRestoredChatProof(missing);
+          fixture.transport.stages.add(_stage());
+
+          await expectLater(
+            fixture.admitLocal(),
+            throwsA(_chatNotReady()),
+            reason: missing,
+          );
+
+          expect(fixture.encodes, 0, reason: missing);
+          expect(fixture.transport.stageCalls, 0, reason: missing);
+          expect(fixture.transport.rolledBack, isEmpty, reason: missing);
+          expect(fixture.intent.state, 1, reason: missing);
+          expect(
+            fixture.objectBox.box<CloudOutboxOperationEntity>().count(),
+            0,
+            reason: missing,
+          );
+          expect(fixture.messageRecordMapCount, 0, reason: missing);
+        } finally {
+          await fixture.close();
+        }
+      }
+    },
+  );
+
+  test('stale restored-chat generation fails closed before encoding', () async {
+    final fixture = await _Fixture.create();
+    try {
+      await fixture.seedAccount();
+      fixture.makeRestoredChatProofStale();
+      fixture.transport.stages.add(_stage());
+
+      await expectLater(fixture.admitLocal(), throwsA(_chatNotReady()));
+
+      expect(fixture.encodes, 0);
+      expect(fixture.transport.stageCalls, 0);
+      expect(fixture.intent.state, 1);
+      expect(fixture.objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(fixture.messageRecordMapCount, 0);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test(
+    'conflicting restored-chat owner fails closed before encoding',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        await fixture.seedAccount();
+        fixture.addConflictingRestoredChatOwner();
+        fixture.transport.stages.add(_stage());
+
+        await expectLater(fixture.admitLocal(), throwsA(_chatNotReady()));
+
+        expect(fixture.encodes, 0);
+        expect(fixture.transport.stageCalls, 0);
+        expect(fixture.intent.state, 1);
+        expect(fixture.objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(fixture.messageRecordMapCount, 0);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  test('altered restored-chat alias fails closed before encoding', () async {
+    final fixture = await _Fixture.create();
+    try {
+      await fixture.seedAccount();
+      fixture.alterRestoredChatAlias();
+      fixture.transport.stages.add(_stage());
+
+      await expectLater(fixture.admitLocal(), throwsA(_chatNotReady()));
+
+      expect(fixture.encodes, 0);
+      expect(fixture.transport.stageCalls, 0);
+      expect(fixture.intent.state, 1);
+      expect(fixture.objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(fixture.messageRecordMapCount, 0);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test(
+    'restored chat now tombstoned or unprojected fails closed before encoding',
+    () async {
+      for (final defect in const ['tombstoned', 'unprojected']) {
+        final fixture = await _Fixture.create();
+        try {
+          await fixture.seedAccount();
+          await fixture.addPage(
+            zone: 'chatManateeZone',
+            terminal: defect == 'tombstoned'
+                ? _Terminal.applied
+                : _Terminal.retained,
+            tombstone: defect == 'tombstoned',
+            serverRecordIdHash: _restoredChatServerRecordIdHash,
+          );
+          fixture.transport.stages.add(_stage());
+
+          await expectLater(
+            fixture.admitLocal(),
+            throwsA(_chatNotReady()),
+            reason: defect,
+          );
+
+          expect(fixture.encodes, 0, reason: defect);
+          expect(fixture.transport.stageCalls, 0, reason: defect);
+          expect(fixture.intent.state, 1, reason: defect);
+          expect(
+            fixture.objectBox.box<CloudOutboxOperationEntity>().count(),
+            0,
+            reason: defect,
+          );
+          expect(fixture.messageRecordMapCount, 0, reason: defect);
+        } finally {
+          await fixture.close();
+        }
+      }
+    },
+  );
+
+  test(
+    'restored-chat proof is rechecked during adoption and staging rolls back',
+    () async {
+      for (final defect in const ['proof removed', 'proof identity changed']) {
+        final fixture = await _Fixture.create();
+        try {
+          await fixture.seedAccount();
+          final entered = Completer<void>();
+          final release = Completer<void>();
+          fixture.transport
+            ..stages.add(_stage())
+            ..stageEntered = entered
+            ..releaseStage = release;
+
+          final admission = fixture.admitLocal();
+          final rejected = expectLater(admission, throwsA(_chatNotReady()));
+          await entered.future;
+          if (defect == 'proof removed') {
+            fixture.removeRestoredChatProof('snapshot');
+          } else {
+            fixture.changeRestoredChatProofIdentity();
+          }
+          release.complete();
+          await rejected;
+
+          expect(fixture.encodes, 1, reason: defect);
+          expect(fixture.transport.stageCalls, 1, reason: defect);
+          expect(fixture.transport.rolledBack, [
+            testProtectedLeaseReference('a'),
+          ], reason: defect);
+          expect(fixture.intent.state, 1, reason: defect);
+          expect(
+            fixture.objectBox.box<CloudOutboxOperationEntity>().count(),
+            0,
+            reason: defect,
+          );
+          expect(fixture.messageRecordMapCount, 0, reason: defect);
+        } finally {
+          await fixture.close();
+        }
+      }
+    },
+  );
+
+  test(
+    'local-only new chat remains a ready intent with no staged state',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        await fixture.seedAccount(seedRestoredChatProof: false);
+        fixture.transport.stages.add(_stage());
+
+        await expectLater(fixture.admitLocal(), throwsA(_chatNotReady()));
+
+        expect(fixture.encodes, 0);
+        expect(fixture.transport.stageCalls, 0);
+        expect(fixture.transport.rolledBack, isEmpty);
+        expect(fixture.intent.state, 1);
+        expect(fixture.objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(fixture.objectBox.box<CloudRecordMapEntity>().count(), 0);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
   test('history is rechecked inside adoption after native staging', () async {
     final fixture = await _Fixture.create();
     try {
@@ -202,7 +401,7 @@ void main() {
       expect(fixture.transport.rolledBack, [testProtectedLeaseReference('a')]);
       expect(fixture.intent.state, 1);
       expect(fixture.objectBox.box<CloudOutboxOperationEntity>().count(), 0);
-      expect(fixture.objectBox.box<CloudRecordMapEntity>().count(), 0);
+      expect(fixture.messageRecordMapCount, 0);
     } finally {
       await fixture.close();
     }
@@ -457,6 +656,10 @@ void main() {
 enum _Terminal { applied, retained }
 
 const _localGuid = '11111111-1111-4111-8111-111111111111';
+const _chatGuid = 'iMessage;-;recipient@example.com';
+const _chatIdentifier = 'recipient@example.com';
+final _restoredChatServerRecordIdHash = syntheticRestoredChatServerRecordIdHash;
+final _restoredChatEtagHash = syntheticRestoredChatEtagHash;
 const _targetServerRecordIdHash = 'SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS';
 const _zones = <String>[
   'chatManateeZone',
@@ -523,6 +726,9 @@ final class _Fixture {
   CloudOutboxOperationEntity get outboxRow =>
       objectBox.box<CloudOutboxOperationEntity>().getAll().single;
 
+  int get messageRecordMapCount =>
+      recordMapCountForZone(objectBox, 'messageManateeZone');
+
   void _bindRuntime() {
     authority = ObjectBoxCloudKitWriterAuthority.forTest(
       store: objectBox,
@@ -584,8 +790,8 @@ final class _Fixture {
     );
     objectBox.box<Handle>().put(handle);
     final chat = Chat(
-      guid: 'iMessage;-;recipient@example.com',
-      chatIdentifier: 'recipient@example.com',
+      guid: _chatGuid,
+      chatIdentifier: _chatIdentifier,
       usingHandle: 'mailto:sender@example.com',
       style: 45,
       participants: [handle],
@@ -646,16 +852,158 @@ final class _Fixture {
     Map<String, bool> tombstoneByZone = const {},
     Map<String, String> serverHashByZone = const {},
     Map<String, int> rowCountByZone = const {},
+    bool seedRestoredChatProof = true,
   }) async {
     for (final zone in _zones) {
+      final terminal = terminalByZone[zone] ?? _Terminal.applied;
+      final tombstone = tombstoneByZone[zone] ?? false;
+      final isRestoredChatSource =
+          zone == 'chatManateeZone' &&
+          seedRestoredChatProof &&
+          terminal == _Terminal.applied &&
+          !tombstone;
       await seedZone(
         zone: zone,
-        terminal: terminalByZone[zone] ?? _Terminal.applied,
-        tombstone: tombstoneByZone[zone] ?? false,
-        serverRecordIdHash: serverHashByZone[zone],
+        terminal: terminal,
+        tombstone: tombstone,
+        serverRecordIdHash:
+            serverHashByZone[zone] ??
+            (isRestoredChatSource ? _restoredChatServerRecordIdHash : null),
+        etagHash: isRestoredChatSource ? _restoredChatEtagHash : null,
         rowCount: rowCountByZone[zone] ?? 1,
       );
     }
+    if (seedRestoredChatProof) {
+      final hasRestoredSource = objectBox
+          .box<CloudInboxChangeEntity>()
+          .getAll()
+          .any(
+            (row) =>
+                row.zone == 'chatManateeZone' &&
+                row.serverRecordIdHash == _restoredChatServerRecordIdHash &&
+                row.status == CloudInboxStatus.applied.index &&
+                !row.isTombstone,
+          );
+      if (!hasRestoredSource) {
+        await seedZone(
+          zone: 'chatManateeZone',
+          terminal: _Terminal.applied,
+          serverRecordIdHash: _restoredChatServerRecordIdHash,
+          etagHash: _restoredChatEtagHash,
+        );
+      }
+      await _seedRestoredChatProof();
+    }
+  }
+
+  Future<void> _seedRestoredChatProof() async {
+    final chatScope = scope(zone: 'chatManateeZone');
+    final checkpoint = await store.readCheckpoint(chatScope);
+    final source = objectBox
+        .box<CloudInboxChangeEntity>()
+        .getAll()
+        .where(
+          (row) =>
+              row.accountFingerprint == chatScope.accountFingerprint &&
+              row.zone == chatScope.zone &&
+              row.generation == checkpoint.generation &&
+              row.serverRecordIdHash == _restoredChatServerRecordIdHash,
+        )
+        .reduce(
+          (latest, candidate) => candidate.fetchSequence > latest.fetchSequence
+              ? candidate
+              : latest,
+        );
+    await seedSyntheticRestoredChatProof(
+      objectBox: objectBox,
+      store: store,
+      chatScope: chatScope,
+      chat: local.chat.target!,
+      appliedSource: source,
+      now: testEpoch,
+    );
+  }
+
+  void removeRestoredChatProof(String missing) {
+    switch (missing) {
+      case 'snapshot':
+        objectBox.box<CloudSemanticSnapshotEntity>().removeAll();
+      case 'alias':
+        objectBox.box<CloudSemanticChatAliasEntity>().removeAll();
+      case 'record map':
+        final box = objectBox.box<CloudRecordMapEntity>();
+        for (final row in box.getAll().where(
+          (row) => row.zone == 'chatManateeZone',
+        )) {
+          box.remove(row.id);
+        }
+      default:
+        throw ArgumentError.value(missing, 'missing');
+    }
+  }
+
+  void makeRestoredChatProofStale() {
+    final snapshot =
+        objectBox.box<CloudSemanticSnapshotEntity>().getAll().single
+          ..generation = 0
+          ..scopeGenerationKey = 'semantic-generation4:${testSha256('0')}';
+    objectBox.box<CloudSemanticSnapshotEntity>().put(snapshot);
+    final alias = objectBox.box<CloudSemanticChatAliasEntity>().getAll().single
+      ..generation = 0
+      ..scopeGenerationKey = snapshot.scopeGenerationKey;
+    objectBox.box<CloudSemanticChatAliasEntity>().put(alias);
+  }
+
+  void addConflictingRestoredChatOwner() {
+    final chatScope = scope(zone: 'chatManateeZone');
+    final existing = objectBox
+        .box<CloudSemanticSnapshotEntity>()
+        .getAll()
+        .single;
+    final conflictingLogicalOwner = syntheticRestoredChatLogicalEntityKeyHash(
+      'iMessage;-;conflicting-synthetic-owner',
+    );
+    objectBox.box<CloudSemanticSnapshotEntity>().put(
+      CloudSemanticSnapshotEntity(
+        snapshotKey:
+            'semantic-snapshot4:${existing.scopeGenerationKey}:${CloudEntityKind.chat.name}:$conflictingLogicalOwner',
+        scopeGenerationKey: existing.scopeGenerationKey,
+        scopeKey: existing.scopeKey,
+        accountFingerprint: existing.accountFingerprint,
+        container: existing.container,
+        database: existing.database,
+        zone: existing.zone,
+        streamKind: existing.streamKind,
+        schemaVersion: existing.schemaVersion,
+        generation: existing.generation,
+        entityKind: CloudEntityKind.chat.name,
+        logicalEntityKeyHash: conflictingLogicalOwner,
+        canonicalGuidHash: CloudCanonicalIdentityDigest.forCanonicalGuid(
+          scope: chatScope,
+          generation: existing.generation,
+          kind: CloudEntityKind.chat,
+          logicalEntityKeyHash: conflictingLogicalOwner,
+          canonicalGuid: local.chat.target!.guid,
+        ),
+        canonicalGuidLookupHash: existing.canonicalGuidLookupHash,
+        updatedAtMs: testEpoch.millisecondsSinceEpoch,
+      ),
+    );
+  }
+
+  void alterRestoredChatAlias() {
+    final alias = objectBox.box<CloudSemanticChatAliasEntity>().getAll().single
+      ..aliasKeyHash = syntheticRestoredChatAliasKeyHash(
+        'altered-synthetic-alias',
+      );
+    objectBox.box<CloudSemanticChatAliasEntity>().put(alias);
+  }
+
+  void changeRestoredChatProofIdentity() {
+    final snapshot =
+        objectBox.box<CloudSemanticSnapshotEntity>().getAll().single
+          ..canonicalGuidHash = testSha256('c');
+    objectBox.box<CloudSemanticSnapshotEntity>().put(snapshot);
   }
 
   Future<void> seedZone({
@@ -663,6 +1011,7 @@ final class _Fixture {
     required _Terminal terminal,
     bool tombstone = false,
     String? serverRecordIdHash,
+    String? etagHash,
     int rowCount = 1,
   }) async {
     final targetScope = scope(zone: zone);
@@ -679,6 +1028,7 @@ final class _Fixture {
               batchNumber * 10 + offset,
               tombstone: tombstone,
               serverRecordIdHash: serverRecordIdHash,
+              etagHash: etagHash,
             ),
         ],
         batchId: 'readiness-batch-$batchNumber-$zone',
@@ -817,7 +1167,9 @@ final class _Fixture {
       case 'missing source':
         objectBox.box<CloudSyncLocalSendIntentEntity>().remove(intentId);
       case 'missing map':
-        final row = objectBox.box<CloudRecordMapEntity>().getAll().single;
+        final row = objectBox.box<CloudRecordMapEntity>().getAll().singleWhere(
+          (row) => row.zone == 'messageManateeZone',
+        );
         objectBox.box<CloudRecordMapEntity>().remove(row.id);
       default:
         throw ArgumentError.value(defect, 'defect');
@@ -847,14 +1199,21 @@ final class _Fixture {
   }
 }
 
+Matcher _chatNotReady() => isA<CloudSyncFailure>().having(
+  (failure) => failure.safeCode,
+  'safeCode',
+  'cloud_sync_local_send_chat_not_ready',
+);
+
 CloudFetchedChange _change(
   int index, {
   bool tombstone = false,
   String? serverRecordIdHash,
+  String? etagHash,
 }) => CloudFetchedChange(
   changeId: 'C${index.toString().padLeft(42, '0')}',
   recordIdHash: serverRecordIdHash ?? 'record-digest-$index',
-  etagHash: tombstone ? null : 'etag-digest-$index',
+  etagHash: tombstone ? null : etagHash ?? 'etag-digest-$index',
   type: tombstone ? CloudChangeType.delete : CloudChangeType.save,
   encryptedServerRecordId: 'protected:server-record-$index',
   protectedSystemFieldsReference: 'protected:system-fields-$index',

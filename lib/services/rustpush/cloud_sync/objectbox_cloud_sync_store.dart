@@ -8,6 +8,7 @@ import 'cloud_operation_identity.dart';
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_outbound_chat_binding.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_protector.dart';
 import 'cloud_sync_safe_failure.dart';
@@ -1626,19 +1627,33 @@ class ObjectBoxCloudSyncStore
   void requireFreshOutboundProjectionReady(
     CloudSyncScope scope, {
     CloudSyncLocalSendAdmissionSource? localSendSource,
-  }) =>
-      _store.runInTransaction(TxMode.read, () {
-        final journal = _localSendJournal;
-        if (journal != null && localSendSource != null) {
-          journal.validateReadyForCreate(_store, scope, localSendSource);
-          _requireMessagesCloudAccountProjectionReadyLocked(
-            scope,
-            allowRetainedForFreshCreate: true,
-          );
-        } else {
-          _requireMessagesCloudAccountProjectionReadyLocked(scope);
-        }
-      });
+    CloudSyncLocalSendJournal? localSendJournal,
+  }) => _store.runInTransaction(TxMode.read, () {
+    final journal = _localSendJournal;
+    if (journal != null && localSendSource != null) {
+      journal.validateReadyForCreate(_store, scope, localSendSource);
+      _requireMessagesCloudAccountProjectionReadyLocked(
+        scope,
+        allowRetainedForFreshCreate: true,
+      );
+    } else {
+      _requireMessagesCloudAccountProjectionReadyLocked(scope);
+    }
+    if (localSendSource != null) {
+      if (localSendJournal == null) {
+        throw StateError('cloud_sync_local_send_adoption_store_mismatch');
+      }
+      requireCloudSyncRestoredDirectChat(
+        store: _store,
+        messageScope: scope,
+        message: localSendJournal.validateReadyForCreate(
+          _store,
+          scope,
+          localSendSource,
+        ),
+      );
+    }
+  });
 
   /// Synchronous so the native auth revalidation and this write transaction
   /// have no intervening await. The journal is adopted in this exact Store,
@@ -1654,6 +1669,16 @@ class ObjectBoxCloudSyncStore
     onAdopt: (operation) =>
         journal.adoptInOutboxTransaction(_store, source, operation),
     localSendSource: source,
+    validateFreshDependency: () => requireCloudSyncRestoredDirectChat(
+      store: _store,
+      messageScope: draft.scope,
+      message: journal.validateReadyForCreate(
+        _store,
+        draft.scope,
+        source,
+        adopting: true,
+      ),
+    ),
   );
 
   CloudOutboxOperation _admitProtectedOutboundCreate(
@@ -1661,6 +1686,7 @@ class ObjectBoxCloudSyncStore
     CloudRecordMapEntry recordMapping, {
     void Function(CloudOutboxOperation)? onAdopt,
     CloudSyncLocalSendAdmissionSource? localSendSource,
+    void Function()? validateFreshDependency,
   }) {
     if (draft.action != CloudOutboxAction.save ||
         draft.payloadVersion != cloudSyncOutboundPayloadVersion ||
@@ -1765,7 +1791,12 @@ class ObjectBoxCloudSyncStore
       // after later history debt; leasing/submission retain their own checks.
       final journal = _localSendJournal;
       if (journal != null && localSendSource != null) {
-        journal.validateReadyForCreate(_store, draft.scope, localSendSource);
+        journal.validateReadyForCreate(
+          _store,
+          draft.scope,
+          localSendSource,
+          adopting: true,
+        );
         _requireMessagesCloudAccountProjectionReadyLocked(
           draft.scope,
           allowRetainedForFreshCreate: true,
@@ -1774,6 +1805,7 @@ class ObjectBoxCloudSyncStore
       } else {
         _requireMessagesCloudAccountProjectionReadyLocked(draft.scope);
       }
+      validateFreshDependency?.call();
 
       final mapKey = _scopedDigest(
         draft.scope,

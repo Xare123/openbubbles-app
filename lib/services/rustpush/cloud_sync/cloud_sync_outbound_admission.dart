@@ -63,7 +63,11 @@ final class CloudSyncOutboundAdmissionCoordinator {
         throw StateError('cloud_sync_local_send_identity_changed');
       }
       if (source.admittedOperationId == null) {
-        _store.requireFreshOutboundProjectionReady(scope, localSendSource: source);
+        _store.requireFreshOutboundProjectionReady(
+          scope,
+          localSendSource: source,
+          localSendJournal: journal,
+        );
       }
       final local = source.message;
       // Encoding is synchronous with source revalidation. Native staging may

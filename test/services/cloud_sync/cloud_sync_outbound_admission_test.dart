@@ -11,6 +11,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'cloud_sync_test_helpers.dart';
+import 'cloud_sync_restored_chat_test_fixture.dart';
 
 void main() {
   late Directory directory;
@@ -356,6 +357,21 @@ void main() {
           .single
           .id;
       confirm();
+      final chatScope = siblingScope('chatManateeZone');
+      final restoredSource = await seedSyntheticRestoredChatAppliedSource(
+        objectBox: objectBox,
+        store: store,
+        chatScope: chatScope,
+        now: testEpoch,
+      );
+      await seedSyntheticRestoredChatProof(
+        objectBox: objectBox,
+        store: store,
+        chatScope: chatScope,
+        chat: chat,
+        appliedSource: restoredSource,
+        now: testEpoch,
+      );
     });
 
     for (final debt in const [
@@ -404,7 +420,7 @@ void main() {
         expect(intent().admittedOperationId, isNull);
         expect(await store.hasNonterminalOutbox(scope), isFalse);
         expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
-        expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+        expect(recordMapCountForZone(objectBox, scope.zone), 0);
         expect((await store.readCheckpoint(scope)).mutationRevisionCounter, 0);
       });
     }
@@ -434,7 +450,7 @@ void main() {
         expect(intent().state, 1);
         expect(intent().admittedOperationId, isNull);
         expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
-        expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+        expect(recordMapCountForZone(objectBox, scope.zone), 0);
         expect((await store.readCheckpoint(scope)).mutationRevisionCounter, 0);
         final sibling = await store.readCheckpoint(
           siblingScope('attachmentManateeZone'),
@@ -462,7 +478,7 @@ void main() {
         expect(transport.committed, isEmpty);
         expect(transport.rolledBack, [stage.leaseReference]);
         expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
-        expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+        expect(recordMapCountForZone(objectBox, scope.zone), 0);
         expect(intent().state, 1);
       },
     );
@@ -543,7 +559,7 @@ void main() {
           expect(intent().state, 2);
           expect(intent().admittedOperationId, isNotNull);
           expect(objectBox.box<CloudOutboxOperationEntity>().count(), 1);
-          expect(objectBox.box<CloudRecordMapEntity>().count(), 1);
+          expect(recordMapCountForZone(objectBox, scope.zone), 1);
         };
         final operation = await admit();
         expect(intent().admittedOperationId, operation.operationId);
@@ -672,7 +688,7 @@ void main() {
           expect(intent().state, 1);
           expect(intent().admittedOperationId, isNull);
           expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
-          expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+          expect(recordMapCountForZone(objectBox, scope.zone), 0);
           final checkpoints = objectBox
               .box<CloudSyncCheckpointEntity>()
               .getAll();
@@ -765,7 +781,7 @@ void main() {
               final mapping = objectBox
                   .box<CloudRecordMapEntity>()
                   .getAll()
-                  .single;
+                  .singleWhere((row) => row.zone == scope.zone);
               objectBox.box<CloudRecordMapEntity>().remove(mapping.id);
             case 'envelope':
               row.encryptedPayloadRef = testProtectedReference('Q');
@@ -819,9 +835,12 @@ void main() {
           ..attemptCount = 1
           ..protectedLeaseReference = null;
         objectBox.box<CloudOutboxOperationEntity>().put(row);
-        final mapping = objectBox.box<CloudRecordMapEntity>().getAll().single
-          ..etagHash = 'E' * 43
-          ..encryptedServerRecordId = testProtectedReference('Q');
+        final mapping =
+            objectBox.box<CloudRecordMapEntity>().getAll().singleWhere(
+                (row) => row.zone == scope.zone,
+              )
+              ..etagHash = 'E' * 43
+              ..encryptedServerRecordId = testProtectedReference('Q');
         objectBox.box<CloudRecordMapEntity>().put(mapping);
         final settled = await admit();
         expect(settled.operationId, initial.operationId);

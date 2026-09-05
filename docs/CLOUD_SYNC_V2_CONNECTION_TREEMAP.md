@@ -404,8 +404,8 @@ Profile still has five pre-existing unused/duplicate warnings.
 
 At the subsequent USB check the Pixel remained on `6517f8661`, at 36 percent
 and charging. No registration-success evidence appeared after the recorded
-failure. No phone reset, install, send or writer retry was performed. Integrated
-APK qualification and live registration recovery remain required.
+failure. No phone reset, install, send or writer retry was performed at that
+check. Integrated APK qualification and live recovery were still required.
 
 The same integration candidate adds a closed-set attachment-transfer diagnostic:
 HTTP status, numeric CloudKit client/server code, I/O kind, or an existing safe
@@ -420,7 +420,47 @@ compile check with E0308: the new diagnostic combined `DoNotRetry(Box<_>)` and
 not a device or Apple protocol failure. Split arms preserve both concrete
 types, and the redaction test now includes both wrappers. No APK was produced;
 cleanup completed and both live runner and VM inventories were empty. The
-integration still needs a successful full rerun.
+replacement full run is qualified below.
+
+### Qualified integrated repair and restored-chat admission, 2026-09-05
+
+[Run 33972171533](https://github.com/Xare123/openbubbles-app/actions/runs/33972171533)
+at exact `317adb4891805a059dd37fa2ae7413724a09548c` passed **1,688 Dart,
+287 app Rust, 209 rustpush and 30 protector tests**. APK compilation took
+423 seconds; total through cleanup was 24 minutes 16 seconds. Its own VM
+`gce-33972171533-1` and GitHub runner were deleted. An unrelated CYTV VM
+remained and was not modified. Production credentials were not added to GCE.
+
+The signed Canary APK passed local signature, package and four ARM64 ELF
+checks before wireless `install -r` at 08:07:50 PDT. First-install time and
+the complete ObjectBox database hash stayed unchanged. Alpha was untouched.
+Local artifact qualification is retained with the APK in
+`artifacts/gce-33972171533-signed-317adb489/qualification.json`. No live
+registration repair or photo retry was attempted; installation is not proof
+of either recovery.
+This supersedes the historical installed-build references above for source
+identity only, not their live-protocol findings.
+
+The next, separate source patch binds fresh local-create admission to the
+restored remote chat. `cloud_sync_outbound_chat_binding.dart` verifies the
+current Chat-zone generation, canonical snapshot, unique service alias, exact
+record map and latest applied save. It rejects missing, conflicting, stale,
+tombstoned or retained dependencies without staging or introducing an outbox
+blocker. After staging, the same check runs inside atomic adoption; failure
+rolls back the new protected lease and retains the ready local intent.
+
+The combined focused suite passes **283 tests**. An offline diagnostic on a
+disposable copy of the preserved Canary database accepted **133 of 133 direct
+iMessage chats**, with zero remote calls and no message content emitted. The
+copy was removed after closing it; the source snapshot was preserved.
+
+This admission patch is **not included in the installed 317adb489 APK** and
+does not enable an automatic writer. Remaining work is to carry immutable chat
+dependency proof through dispatch/restart, handle genuinely new remote chats,
+connect the account-scoped runtime and prove a live write/readback cycle.
+Existing adopted envelopes remain recoverable without re-encoding mutable
+messages. This is not a permanent restriction of production scope to restored
+direct chats.
 
 ### Installed Canary and VM observation follow-up
 

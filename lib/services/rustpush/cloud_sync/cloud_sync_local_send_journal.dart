@@ -416,17 +416,22 @@ final class CloudSyncLocalSendJournal {
   /// A fresh-create scheduling exception needs both durable origin and a
   /// currently stable V2 owner. Journaling itself intentionally needs less:
   /// an earlier unknown write must not prevent recording a new IDS send.
-  void validateReadyForCreate(
+  Message validateReadyForCreate(
     Store transactionStore,
     CloudSyncScope scope,
-    CloudSyncLocalSendAdmissionSource expected,
-  ) => _store.runInTransaction(TxMode.read, () {
+    CloudSyncLocalSendAdmissionSource expected, {
+    bool adopting = false,
+  }) => _store.runInTransaction(TxMode.read, () {
     _requireCreateAuthority(transactionStore, scope);
     final intent = _readBoundIntent(expected.intentId);
     if (intent.state != 1 || !expected._matches(intent)) {
-      throw StateError('cloud_sync_local_send_not_ready');
+      throw StateError(
+        adopting
+            ? 'cloud_sync_local_send_adoption_changed'
+            : 'cloud_sync_local_send_not_ready',
+      );
     }
-    _validatedMessage(intent);
+    return _validatedMessage(intent);
   });
 
   /// Resolve explicit adoption, never origin inferred from an outgoing row.
