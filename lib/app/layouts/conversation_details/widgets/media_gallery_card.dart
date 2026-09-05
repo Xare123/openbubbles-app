@@ -10,6 +10,7 @@ import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/attachment_mime_utils.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -30,6 +31,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
   Uint8List? videoPreview;
   Duration? duration;
   AttachmentDownloadController? controller;
+  AttachmentDownloadController? _subscribedController;
   bool localFileAvailable = false;
   String? galleryThumbnailPath;
   late final void Function(PlatformFile) _downloadComplete;
@@ -42,6 +44,13 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
   );
 
   Attachment get attachment => widget.attachment;
+
+  String? get resolvedMimeType => resolveAttachmentMimeType(
+    attachmentFile.name,
+    attachmentFile.path,
+    uti: attachment.uti,
+    declaredMimeType: attachment.mimeType,
+  );
 
   @override
   void initState() {
@@ -64,12 +73,29 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
   }
 
   void _subscribeTo(AttachmentDownloadController target) {
+    if (!identical(_subscribedController, target)) {
+      _unsubscribe();
+      _subscribedController = target;
+    }
     if (!target.completeFuncs.contains(_downloadComplete)) {
       target.completeFuncs.add(_downloadComplete);
     }
     if (!target.errorFuncs.contains(_downloadFailed)) {
       target.errorFuncs.add(_downloadFailed);
     }
+    updateKeepAlive();
+  }
+
+  void _unsubscribe() {
+    _subscribedController?.completeFuncs.remove(_downloadComplete);
+    _subscribedController?.errorFuncs.remove(_downloadFailed);
+    _subscribedController = null;
+  }
+
+  @override
+  void dispose() {
+    _unsubscribe();
+    super.dispose();
   }
 
   void _handleDownloadComplete(PlatformFile file) {
@@ -79,6 +105,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
       attachmentFile = file;
       localFileAvailable = isUsableDownloadedPlatformFile(file);
     });
+    updateKeepAlive();
     if (attachment.mimeType?.contains("video") ?? false) {
       getVideoPreview(file);
     } else if (attachment.mimeStart == 'image') {
@@ -91,6 +118,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
     setState(() {
       controller = null;
     });
+    updateKeepAlive();
     showSnackbar("Error", "Failed to download attachment!");
   }
 
@@ -108,6 +136,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
     setState(() {
       controller = next;
     });
+    _subscribeTo(next);
   }
 
   Future<void> getBytes() async {
@@ -118,7 +147,6 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
       return;
     }
     if (isUsableDownloadedAttachmentFile(pathName) && mounted) {
-      final file = File(pathName);
       if (attachment.mimeStart == 'image') {
         final thumbnail = await as.getImageGalleryThumbnail(pathName);
         if (!mounted) return;
@@ -147,13 +175,10 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
         }
         return;
       }
-      final bytes = await file.readAsBytes();
-      if (!mounted) return;
       setState(() {
         attachmentFile = PlatformFile(
           name: safeAttachmentTransferName(attachment),
           path: pathName,
-          bytes: bytes,
           size: safeAttachmentTotalBytes(attachment),
         );
         localFileAvailable = true;
@@ -203,7 +228,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
 
     if (hideAttachments) {
       child = Text(
-        attachment.mimeType ?? "Unknown",
+        resolvedMimeType ?? "Unknown",
         textAlign: TextAlign.center,
       );
     } else if (controller != null) {
@@ -218,24 +243,31 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
     } else if (!localFileAvailable) {
       child = InkWell(
         onTap: downloadAttachment,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              attachment.getFriendlySize(),
-              style: Theme.of(context).textTheme.bodyLarge,
-            ),
-            const SizedBox(height: 5),
-            Icon(ss.settings.skin.value == Skins.iOS ? CupertinoIcons.cloud_download : Icons.cloud_download,
-                size: 28.0, color: context.theme.colorScheme.properOnSurface),
-            const SizedBox(height: 5),
-            Text(
-              attachment.mimeType ?? "Unknown File Type",
-              style: Theme.of(context).textTheme.bodyLarge,
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
+        child: resolvedMimeType?.split('/').first == 'image' ||
+                resolvedMimeType?.split('/').first == 'video'
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    attachment.getFriendlySize(),
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                  const SizedBox(height: 5),
+                  Icon(ss.settings.skin.value == Skins.iOS ? CupertinoIcons.cloud_download : Icons.cloud_download,
+                      size: 28.0, color: context.theme.colorScheme.properOnSurface),
+                  const SizedBox(height: 5),
+                  Text(
+                    attachment.mimeType ?? "Unknown File Type",
+                    style: Theme.of(context).textTheme.bodyLarge,
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              )
+            : DocumentDownloadPrompt(
+                name: attachmentFile.name,
+                typeLabel: conciseAttachmentTypeLabel(attachmentFile.name, resolvedMimeType),
+                sizeLabel: attachment.getFriendlySize(),
+              ),
       );
     } else if (attachment.mimeType?.startsWith("image") ?? false) {
       child = ImageDisplay(
@@ -260,13 +292,11 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
           textAlign: TextAlign.center,
         );
       }
-    } else if (attachmentFile.bytes != null) {
-      child = OtherFile(
+    } else {
+      child = buildOtherFileIfAvailable(
         file: attachmentFile,
         attachment: attachment,
       );
-    } else {
-      child = const SizedBox.shrink();
     }
 
     return ClipRRect(
@@ -282,7 +312,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
   }
 
   @override
-  bool get wantKeepAlive => true;
+  bool get wantKeepAlive => controller != null;
 }
 
 class ImageDisplay extends StatelessWidget {

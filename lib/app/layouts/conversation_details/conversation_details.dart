@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:bluebubbles/app/layouts/conversation_details/dialogs/add_participant.dart';
 import 'package:bluebubbles/app/layouts/conversation_details/widgets/chat_info.dart';
 import 'package:bluebubbles/app/layouts/conversation_details/widgets/chat_options.dart';
+import 'package:bluebubbles/app/layouts/conversation_details/widgets/conversation_media_section.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/interactive/url_preview.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/profile_scaffold.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -169,6 +170,44 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
     query.limit = 20;
     links = query.find();
     query.close();
+  }
+
+  Widget _buildMediaTile(BuildContext context, Attachment attachment) {
+    return Obx(() => AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          margin: EdgeInsets.all(selected.contains(attachment.guid) ? 10 : 0),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(20)),
+          clipBehavior: Clip.antiAlias,
+          child: GestureDetector(
+            onTap: selected.isNotEmpty ? () => _toggleSelected(attachment) : null,
+            onLongPress: () => _toggleSelected(attachment),
+            child: AbsorbPointer(
+              absorbing: selected.isNotEmpty,
+              child: Stack(alignment: Alignment.center, children: [
+                MediaGalleryCard(attachment: attachment, mediaPager: mediaPager),
+                if (selected.contains(attachment.guid))
+                  Container(
+                    decoration: BoxDecoration(shape: BoxShape.circle, color: context.theme.colorScheme.primary),
+                    child: Padding(
+                      padding: const EdgeInsets.all(5),
+                      child: Icon(iOS ? CupertinoIcons.check_mark : Icons.check,
+                          color: context.theme.colorScheme.onPrimary, size: 18),
+                    ),
+                  ),
+              ]),
+            ),
+          ),
+        ));
+  }
+
+  void _toggleSelected(Attachment attachment) {
+    final guid = attachment.guid;
+    if (guid == null) return;
+    if (selected.contains(guid)) {
+      selected.remove(guid);
+    } else {
+      selected.add(guid);
+    }
   }
 
   @override
@@ -369,80 +408,46 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
                 padding: EdgeInsets.symmetric(vertical: 10),
               ),
               ChatOptions(chat: chat),
-              if (!kIsWeb && media.isNotEmpty)
+              if (!kIsWeb)
+                ConversationMediaPreview(
+                  items: media,
+                  hasOlder: mediaPager.hasOlder,
+                  itemBuilder: _buildMediaTile,
+                  onSeeAll: () {
+                    Navigator.of(context).push(MaterialPageRoute<void>(
+                      builder: (_) => Theme(
+                        data: Theme.of(context),
+                        child: ConversationMediaGallery(
+                          pager: mediaPager,
+                          itemBuilder: _buildMediaTile,
+                          actions: actions,
+                        ),
+                      ),
+                    ));
+                  },
+                ),
+              if (!kIsWeb && docs.isNotEmpty)
                 SliverPadding(
                   padding: const EdgeInsets.only(top: 20, bottom: 10, left: 15),
                   sliver: SliverToBoxAdapter(
-                    child: Text("IMAGES & VIDEOS",
+                    child: Text("DOCUMENTS & FILES",
                         style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.outline)),
                   ),
                 ),
-              if (!kIsWeb && media.isNotEmpty)
+              if (!kIsWeb && docs.isNotEmpty)
                 SliverPadding(
                   padding: const EdgeInsets.all(10),
-                  sliver: SliverGrid(
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: max(2, ns.width(context) ~/ 200), mainAxisSpacing: 10, crossAxisSpacing: 10),
+                  sliver: SliverList(
                     delegate: SliverChildBuilderDelegate(
-                      (context, int index) {
-                        if (index >= media.length - 4 && mediaPager.hasOlder && !mediaPager.loadingOlder) {
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            mediaPager.loadOlder();
-                          });
-                        }
-                        return Obx(() => AnimatedContainer(
-                              duration: const Duration(milliseconds: 250),
-                              margin: EdgeInsets.all(selected.contains(media[index].guid) ? 10 : 0),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              clipBehavior: Clip.antiAlias,
-                              child: GestureDetector(
-                                onTap: selected.isNotEmpty
-                                    ? () {
-                                        if (selected.contains(media[index].guid)) {
-                                          selected.remove(media[index].guid!);
-                                        } else {
-                                          selected.add(media[index].guid!);
-                                        }
-                                      }
-                                    : null,
-                                onLongPress: () {
-                                  if (selected.contains(media[index].guid)) {
-                                    selected.remove(media[index].guid!);
-                                  } else {
-                                    selected.add(media[index].guid!);
-                                  }
-                                },
-                                child: AbsorbPointer(
-                                  absorbing: selected.isNotEmpty,
-                                  child: Stack(
-                                    alignment: Alignment.center,
-                                    children: [
-                                      MediaGalleryCard(
-                                        attachment: media[index],
-                                        mediaPager: mediaPager,
-                                      ),
-                                      if (selected.contains(media[index].guid))
-                                        Container(
-                                          decoration: BoxDecoration(
-                                              shape: BoxShape.circle, color: context.theme.colorScheme.primary),
-                                          child: Padding(
-                                            padding: const EdgeInsets.all(5.0),
-                                            child: Icon(
-                                              iOS ? CupertinoIcons.check_mark : Icons.check,
-                                              color: context.theme.colorScheme.onPrimary,
-                                              size: 18,
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ));
-                      },
-                      childCount: media.length,
+                      (context, int index) => Padding(
+                        key: ValueKey(docs[index].guid ?? docs[index]),
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(minHeight: 88),
+                          child: MediaGalleryCard(attachment: docs[index]),
+                        ),
+                      ),
+                      childCount: docs.length,
                     ),
                   ),
                 ),
@@ -542,34 +547,6 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
                         );
                       },
                       itemCount: locations.length,
-                    ),
-                  ),
-                ),
-              if (!kIsWeb && docs.isNotEmpty)
-                SliverPadding(
-                  padding: const EdgeInsets.only(top: 20, bottom: 10, left: 15),
-                  sliver: SliverToBoxAdapter(
-                    child: Text("OTHER FILES",
-                        style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.outline)),
-                  ),
-                ),
-              if (!kIsWeb && docs.isNotEmpty)
-                SliverPadding(
-                  padding: const EdgeInsets.all(10),
-                  sliver: SliverGrid(
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: max(2, ns.width(context) ~/ 200),
-                      mainAxisSpacing: 10,
-                      crossAxisSpacing: 10,
-                      childAspectRatio: 1.75,
-                    ),
-                    delegate: SliverChildBuilderDelegate(
-                      (context, int index) {
-                        return MediaGalleryCard(
-                          attachment: docs[index],
-                        );
-                      },
-                      childCount: docs.length,
                     ),
                   ),
                 ),

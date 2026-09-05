@@ -14,6 +14,7 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/helpers/ui/attributed_body_helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/attachment_mime_utils.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -27,6 +28,13 @@ import 'package:bluebubbles/services/network/backend_service.dart';
 // an active controller stays attached, while a failed controller is
 // re-resolved once without auto-starting another download.
 bool shouldKeepAttachmentDownloadController({required bool hasError}) => !hasError;
+
+String? resolveMessageAttachmentMimeType(Attachment attachment, PlatformFile file) => resolveAttachmentMimeType(
+  file.name,
+  file.path,
+  uti: attachment.uti,
+  declaredMimeType: attachment.mimeType,
+);
 
 class AttachmentHolder extends CustomStateful<MessageWidgetController> {
   AttachmentHolder({
@@ -286,6 +294,7 @@ class _AttachmentHolderState extends CustomState<AttachmentHolder, void, Message
                             );
                           } else if (content is PlatformFile) {
                             final PlatformFile _content = content;
+                            final resolvedMimeType = resolveMessageAttachmentMimeType(attachment, _content);
                             if (attachment.mimeStart == "image" && !ss.settings.highPerfMode.value) {
                               return OpenContainer(
                                 tappable: false,
@@ -374,7 +383,7 @@ class _AttachmentHolderState extends CustomState<AttachmentHolder, void, Message
                                   file: _content,
                                 ),
                               );
-                            } else if (attachment.mimeType == null) {
+                            } else if (resolvedMimeType == null) {
                               return Padding(
                                 padding: showTail ? EdgeInsets.only(left: message.isFromMe! ? 0 : 10, right: message.isFromMe! ? 10 : 0) : EdgeInsets.zero,
                                 child: SizedBox(
