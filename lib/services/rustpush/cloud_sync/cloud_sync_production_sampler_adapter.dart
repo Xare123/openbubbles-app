@@ -15,6 +15,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
 import 'cloud_inbox_applier.dart';
 import 'cloud_protected_page_lease_lifecycle.dart';
 import 'cloud_sync_engine.dart';
+import 'cloud_sync_dev_gate.dart';
+import 'cloud_sync_local_send_consumer.dart';
+import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_manual_outbound_canary.dart';
 import 'cloud_sync_manual_semantic_pull_sampler.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
@@ -33,6 +36,7 @@ import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_mutation_guard.dart';
 import 'cloudkit_writer_ownership.dart';
 import 'objectbox_cloud_sync_store.dart';
+import 'objectbox_cloud_sync_preflight.dart';
 import 'cloud_sync_shadow_transport.dart';
 import 'rust_cloud_semantic_decoder.dart';
 import 'transient_cloud_canonical_identity_registry.dart';
@@ -622,8 +626,215 @@ final class CloudSyncProductionSemanticPullAdapter {
   late final CloudSyncManualSemanticPullSampler sampler;
 }
 
+/// Concrete consumer of the ordinary-send journal. Unlike the manual sample
+/// writer, it cannot select arbitrary Message rows or restage restored history.
+/// Runtime scheduling is a separate caller; construction does not enable it.
+final class CloudSyncProductionLocalSendAdapter {
+  CloudSyncProductionLocalSendAdapter({
+    required ActiveCloudMessagesClientReader readActiveClient,
+    required String privateStorageDirectory,
+    required bool Function() stillCurrent,
+  }) : _readActiveClient = readActiveClient,
+       _privateStorageDirectory = privateStorageDirectory,
+       _stillCurrent = stillCurrent;
+
+  final ActiveCloudMessagesClientReader _readActiveClient;
+  final String _privateStorageDirectory;
+  final bool Function() _stillCurrent;
+  Future<CloudSyncLocalSendConsumerResult>? _running;
+  CloudSyncNativeAuthSnapshot? _boundAuth;
+  int? _boundWriterEpoch;
+
+  Future<CloudSyncLocalSendConsumerResult> runOnce() =>
+      _running ??= _run().whenComplete(() => _running = null);
+
+  Future<CloudSyncLocalSendConsumerResult> _run() async {
+    if (!CloudKitWriterOwnership.v2MutationsEnabled ||
+        !CloudSyncDevGate.manualOutboundCanaryEnabled ||
+        !CloudSyncDevGate.localSendRuntimeEnabled || !_stillCurrent()) {
+      throw StateError('cloud_sync_local_send_consumer_disabled');
+    }
+    final objectBox = Database.store;
+    final authProvider = CloudSyncProductionAuthSnapshotProvider(
+      readActiveClient: _readActiveClient,
+      nativeAuthBinding: FrbCloudSyncNativeAuthBinding(),
+      privateStorageDirectory: _privateStorageDirectory,
+    );
+    final auth = await authProvider.capture();
+    if (auth == null || !_stillCurrent() ||
+        !identical(objectBox, Database.store)) {
+      throw StateError('cloud_sync_local_send_identity_changed');
+    }
+    if (_boundAuth != null && !_boundAuth!.sameIdentity(auth)) {
+      throw StateError('cloud_sync_local_send_identity_changed');
+    }
+    _boundAuth ??= auth;
+    final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
+    final writerScope = CloudKitWriterScope(
+      accountFingerprint: auth.accountFingerprint,
+    );
+    final owner = authority.read(writerScope);
+    if (owner == null || owner.owner != CloudKitWriterOwner.v2) {
+      // A worker may use an explicitly provisioned owner, never silently
+      // migrate a user's legacy account or quarantine legacy writes itself.
+      throw StateError('cloud_sync_local_send_owner_required');
+    }
+    if (_boundWriterEpoch != null && _boundWriterEpoch != owner.epoch) {
+      throw StateError('cloud_sync_local_send_owner_changed');
+    }
+    _boundWriterEpoch ??= owner.epoch;
+    final journal = CloudSyncLocalSendJournal(
+      store: objectBox, authority: authority, authoritySnapshot: owner,
+    );
+    final durable = ObjectBoxCloudSyncStore(
+      store: objectBox,
+      protector: RustCloudSyncProtector(storageDirectory: _privateStorageDirectory),
+      localSendJournal: journal,
+    );
+    final interlock = CloudKitOperationInterlock(
+      privateStorageDirectory: _privateStorageDirectory, fenceStore: durable,
+    );
+    final scope = CloudSyncScope(
+      accountFingerprint: auth.accountFingerprint,
+      container: writerScope.container, database: writerScope.database,
+      zone: 'messageManateeZone', streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: 2,
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final fence = CloudSyncLocalSendAuthFence(
+      expected: auth, capture: authProvider.capture,
+      stillCurrent: () => _stillCurrent() && !objectBox.isClosed() &&
+          identical(objectBox, Database.store) &&
+          identical(auth.cloudMessagesClient, _readActiveClient()) &&
+          authority.read(writerScope)?.epoch == owner.epoch,
+    );
+    final bindings = FrbNativeProtectedCloudSyncBindings();
+    final guard = CloudKitWriterMutationGuard(
+      store: objectBox, readActiveClient: _readActiveClient,
+      privateStorageDirectory: _privateStorageDirectory,
+      reconciliationBinding: bindings,
+    );
+    final transport = NativeProtectedCloudSyncTransport(
+      cloudMessagesClient: auth.cloudMessagesClient,
+      storageDirectory: _privateStorageDirectory,
+      protectedStoreIdentity: auth.protectedStoreIdentity,
+      bindings: bindings, writerMutationGuard: guard,
+      readCheckpointGeneration: (scope) async =>
+          (await durable.readCheckpoint(scope)).generation,
+      retainConfirmedReceiptsForReplay: true,
+    );
+    final lifecycle = CloudProtectedPageLeaseLifecycle(
+      store: durable, transport: transport,
+    );
+    final admission = CloudSyncOutboundAdmissionCoordinator(
+      store: durable, transport: transport,
+      ensureProtectedStoreRecovered: lifecycle.ensureRecoveredBeforeWrite,
+    );
+    final engine = CloudSyncEngine(
+      scope: scope,
+      coordinatorId: 'local-send-${auth.nativeSessionId}',
+      store: durable, transport: transport,
+      inboxApplier: const RejectingShadowInboxApplier(),
+      writerAuthority: ObjectBoxCloudSyncWriterAuthority(store: objectBox),
+      writerExclusion: interlock,
+      config: CloudSyncEngineConfig(
+        maximumBatchSize: 1, maximumOutboxBatchesPerRun: 1,
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: false, semanticApply: false, saves: true,
+          deletions: false, profiles: false, notificationHints: false,
+        ),
+      ),
+    );
+
+    Future<bool> drainExisting() async {
+      await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
+      await lifecycle.ensureRecoveredBeforeWrite();
+      await durable.recoverExpiredOutboxLeases(scope, now: DateTime.now().toUtc());
+      final before = await durable.readOutboxEntries(scope);
+      final unknown = before.where((op) => op.status == CloudOutboxStatus.unknownOutcome).toList();
+      if (unknown.isNotEmpty) {
+        // The native mutation fence identifies at most one interrupted save.
+        // A mismatching/multiple-unknown state is evidence for recovery, not
+        // permission to choose a different record or submit another request.
+        if (unknown.length != 1) return false;
+        final operation = unknown.single;
+        await guard.requireReconciliationAllowed(
+          owner: CloudKitWriterOwner.v2,
+          expectedClient: auth.cloudMessagesClient, operation: operation,
+        );
+        final recovery = _ProductionUnknownOutcomeCanarySession(
+          scope: scope, expectedOperation: operation,
+          readOutbox: () => durable.readOutboxEntries(scope),
+          leaseUnknown: ({required now, required leaseId, required leaseDuration}) =>
+              durable.leaseUnknownOutcomes(scope, now: now, limit: 1,
+                leaseId: leaseId, leaseDuration: leaseDuration),
+          applyTransition: ({required leaseId, required transition, required now}) =>
+              durable.applyOutboxTransitions(scope, leaseId: leaseId,
+                transitions: [transition], now: now),
+          commitCreateReceipt: ({required leaseId, required receipt, required now}) =>
+              durable.commitOutboxCreateReceipt(scope, leaseId: leaseId,
+                receipt: receipt, retainProtectedLeaseReference: true, now: now),
+          reconcile: (op) => guard.reconcileUnknownOutcome(
+            owner: CloudKitWriterOwner.v2,
+            expectedClient: auth.cloudMessagesClient, operation: op),
+          quiesce: transport.quiesceNativeOperations,
+        );
+        await recovery.reconcileUnknownOutcome(operation: operation);
+        // Reconciliation and a fresh submission are separate decisions,
+        // including when exact readback proves that the first save was absent.
+        return false;
+      }
+      guard.requireClear();
+      if (before.any((op) => op.status != CloudOutboxStatus.confirmed &&
+          op.status != CloudOutboxStatus.quarantined)) {
+        await engine.synchronize(trigger: CloudSyncTrigger.localOutbox);
+      }
+      await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
+      final after = await durable.readOutboxEntries(scope);
+      for (final operation in after) {
+        if (operation.status != CloudOutboxStatus.confirmed) return false;
+        if (operation.protectedLeaseReference == null) continue;
+        final proof = await transport.verifyConfirmedMessageCreateNoSave(
+          scope, operation: operation,
+        );
+        await transport.releaseConfirmedReplayReceipt(
+          scope, operation: operation, proof: proof,
+          clearDurableAdoptionMarker: () =>
+              durable.clearConfirmedProtectedOutboundLeaseReference(
+                expectedOperation: operation),
+        );
+      }
+      // Use the same durable quiescence evidence as semantic reads. A bare
+      // confirmed status must not hide malformed or unacknowledged receipts.
+      final local = ObjectBoxCloudSyncPreflightReader(store: objectBox).read();
+      if (!local.objectBoxReady || local.coordinatorLeaseActive ||
+          (local.outboxCount != 0 && local.settledOutboxFingerprint == null)) {
+        return false;
+      }
+      await fence.run(() {
+        for (final intent in journal.readIdsConfirmedDeferred(currentAuth: auth)) {
+          journal.promoteIdsConfirmedDeferred(
+            intentId: intent.id, currentAuth: auth, now: DateTime.now().toUtc(),
+          );
+        }
+      }, accountFingerprint: scope.accountFingerprint);
+      return true;
+    }
+
+    try {
+      return await CloudSyncLocalSendConsumer(
+        scope: scope, journal: journal, authFence: fence, exclusion: interlock,
+        admit: (id) => admission.admitLocalSend(scope,
+          intentId: id, journal: journal, authFence: fence),
+        drainExisting: drainExisting,
+      ).runOnce();
+    } finally {
+      await transport.quiesceNativeOperations();
+    }
+  }
+}
+
 /// Production composition for the separately gated one-text outbound canary.
-///
 /// Constructing this adapter performs no network access and admits no work.
 /// The durable writer authority must already be stable and owned by V2 before
 /// [CloudSyncManualOutboundCanary.runDoubleConfirmed] can flush an operation.

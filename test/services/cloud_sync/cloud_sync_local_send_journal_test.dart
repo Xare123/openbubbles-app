@@ -64,6 +64,31 @@ void main() {
     provisionJournal();
   }
 
+  CloudSyncLocalSendIntentEntity saveDeferredIdsSuccess({
+    CloudSyncNativeAuthSnapshot? capturedAuth,
+    String stableGuid = _guidA,
+  }) {
+    final message = _message(chat: chat, stagingGuid: stableGuid);
+    final identity = _identity(message, chat, stableGuid);
+    journal.saveSubmission(
+      identity: identity,
+      newlyGeneratedGuid: true,
+      persistMessage: () => store.box<Message>().put(message),
+      now: _time(2),
+    );
+    message
+      ..guid = stableGuid
+      ..stagingGuid = null;
+    final intentId = journal.saveIdsConfirmedDeferredSubmission(
+      identity: identity,
+      capturedAuth: capturedAuth ?? _auth(Object()),
+      stillCurrent: () => true,
+      persistMessage: () => store.box<Message>().put(message),
+      now: _time(3),
+    );
+    return store.box<CloudSyncLocalSendIntentEntity>().get(intentId)!;
+  }
+
   test(
     'callback failure rolls back the local message and intent atomically',
     () {
@@ -209,6 +234,297 @@ void main() {
         store.box<Message>().get(ready.single.localMessageId)?.guid,
         _guidB,
       );
+    },
+  );
+
+  test(
+    'completed IDS with unavailable post-auth capture stays deferred across restart',
+    () async {
+      final intent = saveDeferredIdsSuccess();
+      expect(intent.state, 3);
+      expect(intent.admittedOperationId, isNull);
+      expect(intent.admittedBindingSha256, matches(r'^[0-9a-f]{64}$'));
+      expect(intent.admittedChatBinding, isNull);
+      expect(journal.readReady(), isEmpty);
+      expect(
+        () => journal.readForAdmission(intent.id),
+        throwsA(_stateFailure('cloud_sync_local_send_not_ready')),
+      );
+      final pending = _message(
+        chat: chat,
+        guid: 'pending-local-row',
+        text: 'pending text',
+        stagingGuid: _guidB,
+      );
+      journal.saveSubmission(
+        identity: _identity(pending, chat, _guidB),
+        newlyGeneratedGuid: true,
+        persistMessage: () => store.box<Message>().put(pending),
+        now: _time(4),
+      );
+      expect(
+        journal
+            .readIdsConfirmedDeferred(currentAuth: _auth(Object()))
+            .map((row) => row.id),
+        [intent.id],
+      );
+
+      await reopen();
+
+      final durable = store.box<CloudSyncLocalSendIntentEntity>().get(
+        intent.id,
+      )!;
+      expect(durable.state, 3);
+      expect(durable.admittedBindingSha256, intent.admittedBindingSha256);
+      expect(journal.readReady(), isEmpty);
+      expect(
+        journal
+            .readIdsConfirmedDeferred(currentAuth: _auth(Object()))
+            .map((row) => row.id),
+        [intent.id],
+      );
+      expect(
+        () => journal.readForAdmission(intent.id),
+        throwsA(_stateFailure('cloud_sync_local_send_not_ready')),
+      );
+    },
+  );
+
+  test('generic confirmation cannot promote auth-deferred state', () {
+    final intent = saveDeferredIdsSuccess();
+    final message = store.box<Message>().get(intent.localMessageId)!;
+    final identity = _identity(message, message.chat.target!, _guidA);
+
+    journal.saveConfirmedSubmission(
+      identity: identity,
+      persistMessage: () => store.box<Message>().put(message),
+      now: _time(4),
+    );
+
+    final retained = store.box<CloudSyncLocalSendIntentEntity>().get(
+      intent.id,
+    )!;
+    expect(retained.state, 3);
+    expect(retained.admittedBindingSha256, intent.admittedBindingSha256);
+    expect(journal.readReady(), isEmpty);
+  });
+
+  test(
+    'unmatched durable identity cannot starve matching deferred evidence',
+    () {
+      final auth = _auth(Object());
+      final retained = saveDeferredIdsSuccess(
+        capturedAuth: _auth(Object(), store: 'obcs2.store.$_otherAccount'),
+      );
+      final eligible = saveDeferredIdsSuccess(
+        capturedAuth: auth,
+        stableGuid: _guidB,
+      );
+
+      expect(
+        journal
+            .readIdsConfirmedDeferred(currentAuth: auth, limit: 1)
+            .map((row) => row.id),
+        [eligible.id],
+      );
+      expect(
+        store.box<CloudSyncLocalSendIntentEntity>().get(retained.id)!.state,
+        3,
+      );
+    },
+  );
+
+  test('matching full auth identity promotes deferred IDS success once', () {
+    final client = Object();
+    final auth = _auth(client);
+    final intent = saveDeferredIdsSuccess(capturedAuth: auth);
+
+    journal.promoteIdsConfirmedDeferred(
+      intentId: intent.id,
+      currentAuth: auth,
+      now: _time(4),
+    );
+
+    final ready = journal.readReady().single;
+    expect(ready.id, intent.id);
+    expect(ready.state, 1);
+    expect(ready.admittedBindingSha256, isNull);
+    expect(
+      () => journal.promoteIdsConfirmedDeferred(
+        intentId: intent.id,
+        currentAuth: auth,
+        now: _time(5),
+      ),
+      throwsA(_stateFailure('cloud_sync_local_send_not_deferred')),
+    );
+  });
+
+  test(
+    'restarted client can recover confirmed IDS evidence for the same durable identity',
+    () async {
+      final intent = saveDeferredIdsSuccess(capturedAuth: _auth(Object()));
+      await reopen();
+
+      journal.promoteIdsConfirmedDeferred(
+        intentId: intent.id,
+        currentAuth: _auth(Object(), session: 'restarted-native-client'),
+        now: _time(4),
+      );
+
+      expect(journal.readReady().single.id, intent.id);
+    },
+  );
+
+  for (final change in <String, CloudSyncNativeAuthSnapshot Function(Object)>{
+    'account': (client) => _auth(client, account: _otherAccount),
+    'protected store': (client) =>
+        _auth(client, store: 'obcs2.store.$_otherAccount'),
+  }.entries) {
+    test('changed ${change.key} cannot promote deferred IDS success', () {
+      final client = Object();
+      final intent = saveDeferredIdsSuccess(capturedAuth: _auth(client));
+
+      expect(
+        () => journal.promoteIdsConfirmedDeferred(
+          intentId: intent.id,
+          currentAuth: change.value(client),
+          now: _time(4),
+        ),
+        throwsA(_stateFailure('cloud_sync_local_send_auth_changed')),
+      );
+      expect(
+        store.box<CloudSyncLocalSendIntentEntity>().get(intent.id)!.state,
+        3,
+      );
+      expect(journal.readReady(), isEmpty);
+    });
+  }
+
+  test('changed writer owner cannot promote deferred IDS success', () {
+    final auth = _auth(Object());
+    final intent = saveDeferredIdsSuccess(capturedAuth: auth);
+    final authorityBox = store.box<CloudKitWriterAuthorityEntity>();
+    final durable = authorityBox.getAll().single..owner = 1;
+    authorityBox.put(durable);
+
+    expect(
+      () => journal.promoteIdsConfirmedDeferred(
+        intentId: intent.id,
+        currentAuth: auth,
+        now: _time(4),
+      ),
+      throwsA(_stateFailure('cloud_sync_local_send_owner_changed')),
+    );
+    expect(
+      store.box<CloudSyncLocalSendIntentEntity>().get(intent.id)!.state,
+      3,
+    );
+  });
+
+  test('changed writer epoch cannot promote deferred IDS success', () {
+    final auth = _auth(Object());
+    final intent = saveDeferredIdsSuccess(capturedAuth: auth);
+    final authorityBox = store.box<CloudKitWriterAuthorityEntity>();
+    final durable = authorityBox.getAll().single..epoch += 1;
+    authorityBox.put(durable);
+
+    expect(
+      () => journal.promoteIdsConfirmedDeferred(
+        intentId: intent.id,
+        currentAuth: auth,
+        now: _time(4),
+      ),
+      throwsA(_stateFailure('cloud_sync_local_send_owner_changed')),
+    );
+    expect(
+      store.box<CloudSyncLocalSendIntentEntity>().get(intent.id)!.state,
+      3,
+    );
+  });
+
+  test(
+    'readReady rotates a considered ready row by updated time then id',
+    () async {
+      CloudSyncLocalSendIntentEntity saveReady(
+        String stableGuid,
+        String text,
+        DateTime submittedAt,
+      ) {
+        final message = _message(
+          chat: chat,
+          guid: 'local-$text',
+          text: text,
+          stagingGuid: stableGuid,
+        );
+        final identity = _identity(message, chat, stableGuid);
+        journal.saveSubmission(
+          identity: identity,
+          newlyGeneratedGuid: true,
+          persistMessage: () => store.box<Message>().put(message),
+          now: submittedAt,
+        );
+        message
+          ..guid = stableGuid
+          ..stagingGuid = null;
+        journal.saveConfirmedSubmission(
+          identity: identity,
+          persistMessage: () => store.box<Message>().put(message),
+          now: _time(4),
+        );
+        return journal.readReady().singleWhere(
+          (intent) => intent.messageGuidHash == identity.guidHash,
+        );
+      }
+
+      final first = saveReady(_guidA, 'first ready', _time(2));
+      final second = saveReady(_guidB, 'second ready', _time(3));
+      expect(journal.readReady().map((intent) => intent.id), [
+        first.id,
+        second.id,
+      ]);
+      final immutable = (
+        intentKey: first.intentKey,
+        accountFingerprint: first.accountFingerprint,
+        writerEpoch: first.writerEpoch,
+        localMessageId: first.localMessageId,
+        messageGuidHash: first.messageGuidHash,
+        sourceSha256: first.sourceSha256,
+        state: first.state,
+        admittedOperationId: first.admittedOperationId,
+        admittedBindingSha256: first.admittedBindingSha256,
+        admittedChatBinding: first.admittedChatBinding,
+        createdAtMs: first.createdAtMs,
+      );
+
+      journal.markAdmissionConsidered(first.id, now: _time(5));
+      expect(journal.readReady().map((intent) => intent.id), [
+        second.id,
+        first.id,
+      ]);
+
+      await reopen();
+
+      expect(journal.readReady().map((intent) => intent.id), [
+        second.id,
+        first.id,
+      ]);
+      final rotated = store.box<CloudSyncLocalSendIntentEntity>().get(
+        first.id,
+      )!;
+      expect((
+        intentKey: rotated.intentKey,
+        accountFingerprint: rotated.accountFingerprint,
+        writerEpoch: rotated.writerEpoch,
+        localMessageId: rotated.localMessageId,
+        messageGuidHash: rotated.messageGuidHash,
+        sourceSha256: rotated.sourceSha256,
+        state: rotated.state,
+        admittedOperationId: rotated.admittedOperationId,
+        admittedBindingSha256: rotated.admittedBindingSha256,
+        admittedChatBinding: rotated.admittedChatBinding,
+        createdAtMs: rotated.createdAtMs,
+      ), immutable);
+      expect(rotated.updatedAtMs, _time(5).millisecondsSinceEpoch);
     },
   );
 
@@ -412,23 +728,24 @@ void main() {
       ),
     ),
     'formatted text': (wire) {
-      (wire.message as api.Message_Message).field0.parts = const api.MessageParts(
-        field0: [
-          api.IndexedMessagePart(
-            part_: api.MessagePart.text(
-              'ordinary text',
-              api.TextFormat.flags(
-                api.TextFlags(
-                  bold: true,
-                  italic: false,
-                  underline: false,
-                  strikethrough: false,
+      (wire.message as api.Message_Message).field0.parts =
+          const api.MessageParts(
+            field0: [
+              api.IndexedMessagePart(
+                part_: api.MessagePart.text(
+                  'ordinary text',
+                  api.TextFormat.flags(
+                    api.TextFlags(
+                      bold: true,
+                      italic: false,
+                      underline: false,
+                      strikethrough: false,
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
-        ],
-      );
+            ],
+          );
     },
     'reply': (wire) =>
         (wire.message as api.Message_Message).field0.replyGuid = _guidB,

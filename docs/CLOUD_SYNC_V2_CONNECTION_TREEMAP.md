@@ -63,10 +63,25 @@ continue under a new account.
   or making any remote call. Its source hash is unchanged. The first probe was
   pointed at the older September 2 pre-chat capture, found zero candidates and
   failed its nonempty gate; that result is not evidence against the newer data.
-- Automatic uploading is still not wired. Remaining work is durable handling
-  of origin-capture failures, initial-message capture, account-scoped recovery
-  and scheduling, then an exact live create/readback and restart qualification.
-  Do not equate these local tests with production synchronization.
+- An account-bound foreground journal consumer is now wired behind the new,
+  independently default-off `OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME` flag.
+  Startup, connection recovery, ordinary-send completion and semantic catch-up
+  enqueue work without awaiting CloudKit in live delivery. Current APKs and
+  workflows do not enable this flag. Full production background/read scheduling,
+  origin-capture failures and initial-message capture remain open.
+- Confirmed IDS completion is now a durable deferred state before the next
+  awaited auth check. Recovery binds the account, protected store and writer
+  epoch, not the native process pointer. A newly added Store-restart test
+  reproduced the rejected session-bound design, then passed after repair;
+  in-flight account/session/client changes still stop work. The expanded
+  12-file persistence, admission, scheduler, ownership, interlock and composition
+  run passed 258 tests. Seven runtime tests also passed with the existing manual
+  writer flags enabled, proving those flags alone cannot activate this consumer.
+  Analysis reports only four preexisting brace-style infos in `rustpush_service.dart`,
+  not a clean analyzer exit. These synthetic/offline tests are not live-upload proof.
+- Next device gate: complete Canary registration and prove ordinary IDS
+  sending, then qualify one exact CloudKit create/readback and interruption
+  recovery. No automatic upload is enabled by these local results.
 
 ## Live investigation board: personal integration review, 2026-09-04
 
@@ -91,10 +106,10 @@ Relay identity -> Apple account -> Keychain clique / PCS -> CloudMessagesClient
   |
   +-- normal composer -> IDS live delivery -> local Message save
   |     +-- local-origin intent + Message saved in one transaction
-  |           pending -> ready only after matching IDS success / identity proof
+  |           pending -> IDS-confirmed/deferred -> ready after identity proof
   |           +-- protected stage -> atomic outbox/map/intent adoption
   |           +-- restart resolves exact adopted envelope, never re-encodes
-  |           +-- automatic admission / upload consumer NOT wired yet
+  |           +-- foreground consumer wired; independent rollout flag OFF
   |
   +-- developer one-message writer -> protected outbox -> create-only CloudKit
         -> exact receipt -> confirmed-only readback -> retained terminal row
@@ -107,7 +122,7 @@ Relay identity -> Apple account -> Keychain clique / PCS -> CloudMessagesClient
 | Identity and read prerequisites | Ordinary Apple login and Keychain clique preparation are separate. The dedicated V2 preparation path exists; historical live read and the user's restored messages prove the private read protocol is reachable. | Preserve the working identity. Do not reset Alpha, copy platform-bound keys, or reopen a solved login investigation without fresh evidence. Fresh-device setup remains a separate qualification gate. |
 | Read and visible projection | `RustPushService.runCloudSyncV2AutomaticSemanticCatchUpConfirmed` loops bounded semantic batches. `ObjectBoxCanonicalSemanticEntityAdapter` projects owned records. The user has confirmed readable chats and working photos. | Useful restore exists. Requalify the exact current build and specific gallery/GIF case; do not report all media as broken or all media as proven. |
 | Persistent automatic sync | The automatic catch-up method is called by `troubleshoot_panel.dart`, not startup, reconnect, or a background worker. `CloudSyncShadowRuntime` is shadow-only. The Android scheduling worker is explicitly dormant. | **Production gap.** One-click foreground catch-up is not continuous cross-device sync. Compose one durable account-scoped runtime before enabling background scheduling. |
-| Outgoing integration | The gated normal-send path journals supported fresh local sends with the Message transaction. Actual IDS text/route and native account/session/store identity are checked; interrupted sends remain pending. `admitLocalSend` now atomically links an existing ready intent to its protected outbox and record map. Restart uses the original envelope. The automatic consumer is not connected. | **Partial integration, not automatic upload.** Add durable handling of capture failures, scheduling/lease policy for independently owned creates, and a recovery consumer. Do not enqueue restored history or make CloudKit availability determine live-send success. |
+| Outgoing integration | The gated normal-send path journals supported fresh local sends with the Message transaction. Actual IDS text/route and native account/session/store identity are checked; interrupted sends remain pending. Confirmed IDS success is separately durable even if the next auth check fails. `admitLocalSend` atomically binds the intent to its protected outbox and record map. The new foreground consumer recovers old outcomes before admission and verifies/acknowledges receipts before more work. | **Wired behind a separate default-off flag, not live-qualified automatic upload.** Initial `createChat` messages and capture failure remain gaps. Restarts reuse exact adopted envelopes; do not enqueue restored history or make CloudKit availability determine live-send success. |
 | Read after write | The reader now distinguishes completely settled, confirmed rows from blocking work in one ObjectBox snapshot. The semantic sampler compares fingerprints of every durable outbox column before/after its paused read; receipts are not deleted. Pending, leased, paused, quarantined, unknown, invalid states and unacknowledged protected receipts still block. Shadow reads retain their zero-row rule. Schema 7 reports only counts and the equality result, never the fingerprint; the device reader preserves schema 6's zero-row gate. | **TEST-PROVEN on Windows ObjectBox.** The test performs an initial read, exact receipt commit, restart, blocked unreconciled read, durable receipt acknowledgement, restart, then two successful reads with zero transport saves. Same-count mutation is rejected. Restoring the original guard makes this regression test fail with `outbox_not_empty`. This is synthetic Apple transport evidence, not a live upload claim. |
 | Final native admission | The unfinished generation-fence patch moved `claimForConsumption` inside the armed mutation action. A wrong persisted UUID returned an unknown-outcome result without a native call. | **Reproduced and repaired locally.** Claim validation now follows the durable generation recheck but precedes fence arming. The regression test proves rejection, zero native calls, no fence, reuse with the correct identity, and harmless rejection of repeated consumption. The focused Dart set passes 107 tests. |
 | Rust CI capability tests | Runs `33930475652` and `33930441506` exposed a test-keystore dependency, not a demonstrated parallelism failure. The replacement injects only key loading into the same private consume implementation; the public entry point always uses protected storage. Run `33936071705` on exact `7db9ed89b` passed 285 app Rust tests, 203 rustpush tests, and 30 protector tests. | **TEST-PROVEN on GCE Linux.** Failure, retry and single-use assertions now run through the production consume logic. Do not confuse these passing code gates with the separate failed APK packaging gate. |
@@ -162,7 +177,10 @@ property UIDs are unchanged. The real ObjectBox upgrade test opens the old
 model whose last entity ID was 32, saves synthetic message/attachment/chat/checkpoint sentinels,
 then upgrades and reopens without losing them. State 0 is awaiting IDS success;
 state 1 is ready for protected admission; state 2 links the exact adopted
-operation. The table holds only hashes, local row ID, account scope, epoch,
+operation; state 3 records actual IDS completion awaiting authorization for
+upload. State 3 uses the existing binding column for a discriminated digest
+of account/protected-store identity, not a new schema field. The table holds
+only hashes, local row ID, account scope, epoch,
 timestamps, the opaque operation ID and its immutable payload-binding digest,
 not raw GUIDs, bodies or recipients. The two optional fields are additive;
 upgrading existing pending
@@ -189,13 +207,18 @@ suite passes 280 tests. A direct model comparison confirms all 24 existing
 entity definitions are unchanged (the highest entity ID was 32). These tests use synthetic data and
 do not claim a real IDS send. The audit agent is closed; its report is retained.
 
-One P2 durability finding remains open: the one-second native capture timeout
-or a missing V2 authority allows live sending but can leave no journal row. A
-later confirmed send whose auth recheck fails can remain pending. Do not infer
-success after restart or reconstruct origin from arbitrary messages. Before
-enabling automatic admission, add a durable provisional-send/recovery design
-with exact account provenance and a visible unresolved state. An unbound row
-alone cannot prove which Apple account may upload it.
+Two origin gaps remain open: the one-second initial native capture timeout or
+missing V2 authority can leave no journal row, and the initial `createChat`
+send bypasses this producer. Post-IDS auth failure is no longer conflated with
+an interrupted send: the synchronous completion transaction records state 3
+before awaiting native auth. Only matching account/store/epoch proof promotes
+it. A native client-generation tag is derived from `Arc::as_ptr` in
+`cloud_sync_capture_auth_snapshot`, so it remains an in-flight fence and must
+not be used as a durable restart identity. Unmatched deferred evidence is
+retained and excluded from the matching bounded recovery query. State 0 is
+never promoted by inspecting a Message GUID. Before rollout, handle the two
+remaining origin gaps with exact account provenance and visible unresolved
+status; an unbound row cannot prove which Apple account may upload it.
 
 Local verification also caught `build_runner` deleting the unrelated generated
 `lib/src/rust/api/api.freezed.dart`. Only that unchanged tracked generated file

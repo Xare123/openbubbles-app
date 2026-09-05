@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:crypto/crypto.dart';
@@ -14,6 +16,261 @@ import 'cloud_sync_test_helpers.dart';
 import 'cloud_sync_restored_chat_test_fixture.dart';
 
 void main() {
+  test(
+    'consumer recovers durable adoption even when native lease commit throws',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        await fixture.seedAccount();
+        fixture.transport
+          ..stages.add(_stage())
+          ..commitFailure = StateError('synthetic commit uncertainty');
+        var drains = 0;
+        final consumer = CloudSyncLocalSendConsumer(
+          scope: fixture.scope(),
+          journal: fixture.journal,
+          authFence: fixture.authFence,
+          exclusion: _ConsumerExclusion(),
+          clock: () => testEpoch,
+          drainExisting: () async {
+            if (++drains == 1) return true;
+            expect(fixture.intent.state, 2);
+            expect(
+              fixture.objectBox.box<CloudOutboxOperationEntity>().count(),
+              1,
+            );
+            fixture.transport.commitFailure = null;
+            await fixture.admitLocal(
+              encoder: (_) => throw StateError('must not re-encode'),
+            );
+            return false;
+          },
+          admit: (_) => fixture.admitLocal(),
+        );
+
+        final result = await consumer.runOnce();
+        expect(drains, 2);
+        expect(result.admitted, 0);
+        expect(result.deferred, 1);
+        expect(result.outboxBlocked, true);
+        expect(fixture.transport.stageCalls, 1);
+        expect(fixture.encodes, 1);
+        expect(fixture.objectBox.box<CloudOutboxOperationEntity>().count(), 1);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  test(
+    'consumer rechecks identity after admission before invoking any flush',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        var current = true;
+        var drains = 0;
+        final auth = CloudSyncNativeAuthSnapshot.fromNative(
+          nativeSessionId: 'synthetic-session',
+          accountFingerprint: testAccountFingerprintA,
+          protectedStoreIdentity: 'obcs2.store.$testAccountFingerprintA',
+          cloudMessagesClient: Object(),
+        );
+        final consumer = CloudSyncLocalSendConsumer(
+          scope: fixture.scope(),
+          journal: fixture.journal,
+          authFence: CloudSyncLocalSendAuthFence(
+            expected: auth,
+            capture: () async => auth,
+            stillCurrent: () => current,
+          ),
+          exclusion: _ConsumerExclusion(),
+          clock: () => testEpoch,
+          drainExisting: () async {
+            drains++;
+            return true;
+          },
+          admit: (_) async {
+            final operation = await fixture.admitLocal();
+            current = false;
+            return operation;
+          },
+        );
+
+        await expectLater(consumer.runOnce(), throwsStateError);
+        expect(drains, 1);
+        expect(fixture.intent.state, 2);
+        expect(fixture.objectBox.box<CloudOutboxOperationEntity>().count(), 1);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  test(
+    'consumer does not stage behind unresolved previous remote work',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        var admits = 0;
+        final result = await CloudSyncLocalSendConsumer(
+          scope: fixture.scope(),
+          journal: fixture.journal,
+          authFence: fixture.authFence,
+          exclusion: _ConsumerExclusion(),
+          drainExisting: () async => false,
+          admit: (_) {
+            admits++;
+            return fixture.admitLocal();
+          },
+        ).runOnce();
+        expect(result.outboxBlocked, true);
+        expect(admits, 0);
+        expect(fixture.transport.stageCalls, 0);
+        expect(fixture.intent.state, 1);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  test(
+    'consumer invokes protected admission only after recovery then drains its result',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        final order = <String>[];
+        final result = await CloudSyncLocalSendConsumer(
+          scope: fixture.scope(),
+          journal: fixture.journal,
+          authFence: fixture.authFence,
+          exclusion: _ConsumerExclusion(),
+          drainExisting: () async {
+            order.add('drain');
+            return order.length == 1;
+          },
+          admit: (_) {
+            order.add('admit');
+            return fixture.admitLocal();
+          },
+          clock: () => testEpoch,
+        ).runOnce();
+        expect(order, ['drain', 'admit', 'drain']);
+        expect(result.admitted, 1);
+        expect(result.outboxBlocked, true);
+        expect(fixture.intent.state, 2);
+        expect(fixture.transport.stageCalls, 1);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  test(
+    'consumer retains blocked dependency locally without creating an outbox',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        var drains = 0;
+        final previousSource = fixture.intent.sourceSha256;
+        final result = await CloudSyncLocalSendConsumer(
+          scope: fixture.scope(),
+          journal: fixture.journal,
+          authFence: fixture.authFence,
+          exclusion: _ConsumerExclusion(),
+          drainExisting: () async {
+            drains++;
+            return true;
+          },
+          admit: (_) => fixture.admitLocal(),
+          clock: () => testEpoch.add(const Duration(seconds: 1)),
+        ).runOnce();
+        expect(result.deferred, 1);
+        expect(drains, 2);
+        expect(fixture.intent.state, 1);
+        expect(fixture.intent.sourceSha256, previousSource);
+        expect(
+          fixture.intent.updatedAtMs,
+          greaterThan(testEpoch.millisecondsSinceEpoch),
+        );
+        expect(fixture.transport.stageCalls, 0);
+        expect(fixture.objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  test(
+    'consumer joins concurrent triggers and releases its running future',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        final release = Completer<bool>();
+        var drains = 0;
+        final consumer = CloudSyncLocalSendConsumer(
+          scope: fixture.scope(),
+          journal: fixture.journal,
+          authFence: fixture.authFence,
+          exclusion: _ConsumerExclusion(),
+          drainExisting: () {
+            drains++;
+            return release.future;
+          },
+          admit: (_) => fixture.admitLocal(),
+        );
+        final first = consumer.runOnce();
+        final second = consumer.runOnce();
+        expect(identical(first, second), true);
+        release.complete(false);
+        await first;
+        expect(drains, 1);
+        await consumer.runOnce();
+        expect(drains, 2);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  test(
+    'consumer checks native account before attempting old outcome recovery',
+    () async {
+      final fixture = await _Fixture.create();
+      try {
+        var drains = 0;
+        final auth = CloudSyncNativeAuthSnapshot.fromNative(
+          nativeSessionId: 'synthetic-session',
+          accountFingerprint: testAccountFingerprintA,
+          protectedStoreIdentity: 'obcs2.store.$testAccountFingerprintA',
+          cloudMessagesClient: Object(),
+        );
+        final consumer = CloudSyncLocalSendConsumer(
+          scope: fixture.scope(),
+          journal: fixture.journal,
+          authFence: CloudSyncLocalSendAuthFence(
+            expected: auth,
+            capture: () async => auth,
+            stillCurrent: () => false,
+          ),
+          exclusion: _ConsumerExclusion(),
+          drainExisting: () async {
+            drains++;
+            return true;
+          },
+          admit: (_) => fixture.admitLocal(),
+        );
+        await expectLater(consumer.runOnce(), throwsStateError);
+        expect(drains, 0);
+        expect(fixture.intent.state, 1);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
   test(
     'proven local create crosses unrelated terminal save and deletion debt',
     () async {
@@ -924,6 +1181,21 @@ const _zones = <String>[
   'messageManateeZone',
   'attachmentManateeZone',
 ];
+
+final class _ConsumerExclusion implements CloudKitOperationExclusion {
+  @override
+  Future<T> runExclusive<T>({
+    required CloudKitOperationKind kind,
+    required CloudKitOperationBody<T> action,
+  }) {
+    expect(kind, CloudKitOperationKind.v2ReadWrite);
+    return action();
+  }
+
+  @override
+  void poisonUntilProcessRestart() =>
+      throw StateError('unexpected poisoned test interlock');
+}
 
 final class _Fixture {
   _Fixture._(this.directory, this.protector, this.objectBox, this.transport);

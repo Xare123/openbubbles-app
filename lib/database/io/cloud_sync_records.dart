@@ -27,8 +27,9 @@ class CloudSyncLocalSendIntentEntity {
   String sourceSha256;
 
   /// Stable codes: 0 awaiting IDS success, 1 ready for protected admission,
-  /// 2 atomically adopted by the protected outbox. Never downgrade state 2.
-  /// Interrupted submission remains 0; restart is not proof of delivery.
+  /// 2 atomically adopted by the protected outbox, 3 IDS success recorded but
+  /// auth/owner promotion deferred. Never downgrade state 2. Interrupted
+  /// submission remains 0; restart or a stable GUID is not proof of delivery.
   @Index()
   int state;
 
@@ -36,7 +37,9 @@ class CloudSyncLocalSendIntentEntity {
   /// adoption; recovery must use its existing envelope, never re-encode.
   String? admittedOperationId;
 
-  /// Digest of immutable operation/payload metadata, not mutable receipts.
+  /// State 2: digest of immutable operation/payload metadata, not mutable
+  /// receipts. State 3: digest of the captured account/protected-store
+  /// auth binding. Null in states 0 and 1.
   String? admittedBindingSha256;
 
   /// Versioned restored-chat dependency: scoped hashes and local row ID only.

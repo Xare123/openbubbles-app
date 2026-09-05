@@ -180,7 +180,8 @@ it; otherwise retain an audited explicit CloudKit writer.
 
 ```text
 fresh local IDS send -> joint Message + origin-intent save
-  -> matching IDS success -> ready intent (state 1)
+  -> matching IDS success -> synchronous durable completion (state 3)
+  -> current matching account/store/epoch proof -> ready intent (state 1)
   -> same native account/session/store -> synchronous first encoding
   -> protected native stage
   -> native auth recheck -> one ObjectBox transaction:
@@ -203,8 +204,23 @@ the journal link, immutable binding and record mapping in one transaction.
 Mutable receipt fields are excluded from the payload binding so receipt
 acknowledgement cannot invalidate a successfully adopted operation.
 Admission itself is local and cannot authorize a CloudKit request.
-The automatic consumer is not wired; existing projection, tombstone,
-unknown-outcome, writer-permit and submission guards remain unchanged.
+The foreground consumer is wired behind the independently default-off
+`OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME` flag. Existing workflows and
+installed APKs do not enable it. It recovers previous outcomes before new
+admission, revalidates identity after admission, drains one remote save at a
+time, then verifies and acknowledges receipts using the same settled-outbox
+evidence as semantic reads. A staging exception is not proof that no adoption
+committed. Bounded passes rotate blocked ready rows durably; unsupported rows
+cannot monopolize the first page. Existing tombstone, unknown-outcome,
+writer-permit and submission guards remain unchanged.
+
+Restart identity and run identity are different: completed local IDS evidence
+binds the durable account/protected store plus writer epoch. The native session
+tag changes with the process and must not strand that evidence after restart.
+Every active pass still checks the full account/client/session/store tuple.
+Logout disposes the worker and awaits native quiescence before Store teardown.
+The first native-auth timeout, missing writer owner, initial `createChat`
+producer, full background integration and live create/readback remain open.
 
 ### Profile documents and compact media, 2026-09-05
 

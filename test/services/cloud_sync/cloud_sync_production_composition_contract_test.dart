@@ -8,6 +8,7 @@ void main() {
     expect(CloudSyncDevGate.manualShadowSamplerEnabled, isFalse);
     expect(CloudSyncDevGate.manualSemanticPullEnabled, isFalse);
     expect(CloudSyncDevGate.manualOutboundCanaryEnabled, isFalse);
+    expect(CloudSyncDevGate.localSendRuntimeEnabled, isFalse);
     expect(CloudSyncDevGate.protocolEvidenceAvailable, isFalse);
   });
 

@@ -300,6 +300,159 @@ final class CloudSyncLocalSendJournal {
     confirmed: true,
   );
 
+  /// Records a completed IDS send without awaiting native auth again. The
+  /// caller must invoke this only after the matching send future succeeds and
+  /// provide the original captured auth plus a bounded synchronous proof that
+  /// its in-memory client/session is still current. State 3 is durable but is
+  /// never eligible for admission until [promoteIdsConfirmedDeferred] succeeds.
+  int saveIdsConfirmedDeferredSubmission({
+    required CloudSyncLocalSendIdentity identity,
+    required CloudSyncNativeAuthSnapshot capturedAuth,
+    required bool Function() stillCurrent,
+    required int Function() persistMessage,
+    required DateTime now,
+  }) {
+    return _store.runInTransaction(TxMode.write, () {
+      if (!stillCurrent()) {
+        throw StateError('cloud_sync_local_send_identity_changed');
+      }
+      if (!now.isUtc || now.millisecondsSinceEpoch <= 0) {
+        throw StateError('cloud_sync_local_send_time_invalid');
+      }
+      if (capturedAuth.accountFingerprint !=
+          _binding.scope.accountFingerprint) {
+        throw StateError('cloud_sync_local_send_auth_changed');
+      }
+      final key = CloudSyncLocalSendIdentity._digest([
+        'cloud-sync-local-send-intent-v1',
+        _binding.scope.accountFingerprint,
+        identity.guidHash,
+      ]);
+      final query = _intents
+          .query(CloudSyncLocalSendIntentEntity_.intentKey.equals(key))
+          .build();
+      final CloudSyncLocalSendIntentEntity? intent;
+      try {
+        intent = query.findUnique();
+      } finally {
+        query.close();
+      }
+      if (intent == null) {
+        throw StateError('cloud_sync_local_send_origin_missing');
+      }
+      if (intent.accountFingerprint != _binding.scope.accountFingerprint ||
+          intent.writerEpoch != _binding.epoch ||
+          intent.messageGuidHash != identity.guidHash ||
+          intent.sourceSha256 != identity.sourceSha256 ||
+          (intent.state != 0 && intent.state != 3) ||
+          !_hasConsistentAdoption(intent)) {
+        throw StateError('cloud_sync_local_send_intent_changed');
+      }
+      final authBinding = _authBinding(capturedAuth);
+      if (intent.state == 3 && intent.admittedBindingSha256 != authBinding) {
+        throw StateError('cloud_sync_local_send_auth_changed');
+      }
+      final messageId = persistMessage();
+      final saved = messageId > 0 ? _messages.get(messageId) : null;
+      final chat = saved?.chat.target;
+      final actual = saved == null || chat == null
+          ? null
+          : CloudSyncLocalSendIdentity.capture(saved, chat, identity._guid);
+      if (actual == null ||
+          actual.sourceSha256 != identity.sourceSha256 ||
+          saved!.guid != identity._guid ||
+          saved.stagingGuid != null) {
+        throw StateError('cloud_sync_local_send_source_changed');
+      }
+      intent
+        ..localMessageId = messageId
+        ..state = 3
+        ..admittedBindingSha256 = authBinding
+        ..updatedAtMs = now.millisecondsSinceEpoch;
+      return _intents.put(intent);
+    });
+  }
+
+  /// Bounded restart recovery for explicit IDS-confirmed/auth-deferred rows.
+  /// Awaiting-IDS state 0 is intentionally excluded and cannot be inferred
+  /// from the current Message or a stable GUID.
+  List<CloudSyncLocalSendIntentEntity> readIdsConfirmedDeferred({
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    int limit = 50,
+  }) {
+    if (limit < 1 || limit > 50) {
+      throw ArgumentError('cloud_sync_local_send_limit_invalid');
+    }
+    if (currentAuth.accountFingerprint != _binding.scope.accountFingerprint) {
+      throw StateError('cloud_sync_local_send_auth_changed');
+    }
+    return _store.runInTransaction(TxMode.read, () {
+      final query =
+          _intents
+              .query(
+                CloudSyncLocalSendIntentEntity_.accountFingerprint
+                    .equals(_binding.scope.accountFingerprint)
+                    .and(
+                      CloudSyncLocalSendIntentEntity_.writerEpoch.equals(
+                        _binding.epoch,
+                      ),
+                    )
+                    .and(CloudSyncLocalSendIntentEntity_.state.equals(3))
+                    .and(
+                      CloudSyncLocalSendIntentEntity_.admittedBindingSha256
+                          .equals(_authBinding(currentAuth)),
+                    ),
+              )
+              .order(CloudSyncLocalSendIntentEntity_.updatedAtMs)
+              .order(CloudSyncLocalSendIntentEntity_.id)
+              .build()
+            ..limit = limit;
+      try {
+        return query.find();
+      } finally {
+        query.close();
+      }
+    });
+  }
+
+  /// Promotes only explicit state-3 IDS evidence. The persisted auth binding,
+  /// active V2 owner and exact writer epoch must all still match. A new process
+  /// may recover this durable evidence; the native client generation is only
+  /// an in-flight fence, not a persistent identity. No Message field or GUID
+  /// is consulted as evidence that IDS succeeded.
+  void promoteIdsConfirmedDeferred({
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required DateTime now,
+  }) {
+    _store.runInTransaction(TxMode.write, () {
+      if (!now.isUtc || now.millisecondsSinceEpoch <= 0) {
+        throw StateError('cloud_sync_local_send_time_invalid');
+      }
+      _verifyLocalOwnership();
+      final permit = _authority.issuePermit(
+        _binding.scope,
+        expectedOwner: CloudKitWriterOwner.v2,
+      );
+      if (permit.epoch != _binding.epoch) {
+        throw StateError('cloud_sync_local_send_owner_changed');
+      }
+      final intent = _readBoundIntent(intentId);
+      if (intent.state != 3) {
+        throw StateError('cloud_sync_local_send_not_deferred');
+      }
+      if (currentAuth.accountFingerprint != intent.accountFingerprint ||
+          intent.admittedBindingSha256 != _authBinding(currentAuth)) {
+        throw StateError('cloud_sync_local_send_auth_changed');
+      }
+      intent
+        ..state = 1
+        ..admittedBindingSha256 = null
+        ..updatedAtMs = now.millisecondsSinceEpoch;
+      _intents.put(intent);
+    });
+  }
+
   void _save(
     CloudSyncLocalSendIdentity identity,
     int Function() persistMessage,
@@ -335,7 +488,7 @@ final class CloudSyncLocalSendJournal {
               previous.messageGuidHash != identity.guidHash ||
               previous.sourceSha256 != identity.sourceSha256 ||
               previous.state < 0 ||
-              previous.state > 2 ||
+              previous.state > 3 ||
               !_hasConsistentAdoption(previous))) {
         throw StateError('cloud_sync_local_send_intent_changed');
       }
@@ -389,6 +542,7 @@ final class CloudSyncLocalSendJournal {
                     )
                     .and(CloudSyncLocalSendIntentEntity_.state.equals(1)),
               )
+              .order(CloudSyncLocalSendIntentEntity_.updatedAtMs)
               .order(CloudSyncLocalSendIntentEntity_.id)
               .build()
             ..limit = limit;
@@ -412,6 +566,26 @@ final class CloudSyncLocalSendJournal {
         }
         final message = intent.state == 1 ? _validatedMessage(intent) : null;
         return CloudSyncLocalSendAdmissionSource._(intent, message);
+      });
+
+  /// Durable round-robin selection, without changing immutable origin or
+  /// adopting an upload. Blocked rows stay ready and can be retried after a
+  /// pull repairs their dependency; they cannot monopolize a bounded worker.
+  void markAdmissionConsidered(int intentId, {required DateTime now}) =>
+      _store.runInTransaction(TxMode.write, () {
+        _verifyLocalOwnership();
+        if (!now.isUtc || now.millisecondsSinceEpoch <= 0) {
+          throw StateError('cloud_sync_local_send_time_invalid');
+        }
+        final intent = _readBoundIntent(intentId);
+        if (intent.state != 1) {
+          throw StateError('cloud_sync_local_send_not_ready');
+        }
+        final observed = now.millisecondsSinceEpoch;
+        intent.updatedAtMs = observed > intent.updatedAtMs
+            ? observed
+            : intent.updatedAtMs + 1;
+        _intents.put(intent);
       });
 
   /// A fresh-create scheduling exception needs both durable origin and a
@@ -582,7 +756,7 @@ final class CloudSyncLocalSendJournal {
         intent.accountFingerprint != _binding.scope.accountFingerprint ||
         intent.writerEpoch != _binding.epoch ||
         intent.state < 0 ||
-        intent.state > 2 ||
+        intent.state > 3 ||
         !_hasConsistentAdoption(intent) ||
         intent.intentKey !=
             CloudSyncLocalSendIdentity._digest([
@@ -601,9 +775,22 @@ final class CloudSyncLocalSendJournal {
             RegExp(
               r'^[0-9a-f]{64}$',
             ).hasMatch(intent.admittedBindingSha256 ?? '')
+      : intent.state == 3
+      ? intent.admittedOperationId == null &&
+            RegExp(
+              r'^[0-9a-f]{64}$',
+            ).hasMatch(intent.admittedBindingSha256 ?? '') &&
+            intent.admittedChatBinding == null
       : intent.admittedOperationId == null &&
             intent.admittedBindingSha256 == null &&
             intent.admittedChatBinding == null;
+
+  static String _authBinding(CloudSyncNativeAuthSnapshot auth) =>
+      CloudSyncLocalSendIdentity._digest([
+        'cloud-sync-local-send-durable-auth-v1',
+        auth.accountFingerprint,
+        auth.protectedStoreIdentity,
+      ]);
 
   static String _operationBinding(
     CloudOutboxOperation operation, {

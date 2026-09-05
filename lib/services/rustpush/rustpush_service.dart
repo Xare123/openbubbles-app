@@ -34,6 +34,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_produc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_sync_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_runtime.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_canary_candidate.dart';
@@ -1573,12 +1574,20 @@ class RustPushBackend implements BackendService {
       m.stagingGuid = null;
       m.guid = msg.id;
     }
-    await m.forwardIfNessesary(chat);
-    await pushService._saveCloudSyncV2LocalSend(
-      localCloudIntent, m, chat,
-      confirmed: true,
-      newlyGeneratedGuid: false,
-    );
+    if (localCloudIntent != null) {
+      // Persist the observed IDS completion before awaiting unrelated
+      // forwarding. Alpha and non-journaled sends keep their original order.
+      await pushService._saveCloudSyncV2LocalSend(
+        localCloudIntent, m, chat,
+        confirmed: true, newlyGeneratedGuid: false,
+      );
+      await m.forwardIfNessesary(chat);
+    } else {
+      await m.forwardIfNessesary(chat);
+      await pushService._saveCloudSyncV2LocalSend(
+        null, m, chat, confirmed: true, newlyGeneratedGuid: false,
+      );
+    }
     msg.sentTimestamp = DateTime.now().millisecondsSinceEpoch;
     if (m.hasBeenForwarded) {
       return m; // do not reflect back, it will just send it out again
@@ -2080,6 +2089,7 @@ class RustPushService extends GetxService {
         appleNetworkDetail.value = status.activePort == 443
             ? "Connected through TCP 443 fallback"
             : null;
+        _queueCloudSyncV2LocalSends(CloudSyncTrigger.networkReconnect);
         return;
       case AppleNetworkHealth.reconnecting:
         appleNetworkDetail.value = "Reconnecting to Apple messaging...";
@@ -7447,6 +7457,7 @@ class RustPushService extends GetxService {
     }
     if (ls.isUiThread) await cs.refreshContacts();
     Logger.info("finishInit");
+    _queueCloudSyncV2LocalSends(CloudSyncTrigger.startup);
   }
 
   void checkIncident() {
@@ -7513,6 +7524,7 @@ class RustPushService extends GetxService {
   static const Duration _cloudSyncV2AutomaticCatchUpYield =
       Duration(milliseconds: 250);
   CloudSyncProductionOutboundCanaryAdapter? _cloudSyncV2OutboundAdapter;
+  CloudSyncLocalSendRuntime? _cloudSyncV2LocalSendRuntime;
   CloudSyncOutboundCanaryConfirmation? _cloudSyncV2OutboundConfirmation;
   Future<CloudKitV2WriterProvisioningResult>?
       _cloudSyncV2OutboundProvisioningInFlight;
@@ -7529,12 +7541,63 @@ class RustPushService extends GetxService {
         packageName: fs.packageInfo.packageName,
       );
 
+  void _queueCloudSyncV2LocalSends(CloudSyncTrigger trigger) {
+    if (!CloudSyncDevGate.localSendRuntimeEnabled ||
+        !CloudSyncDevGate.manualOutboundCanaryEnabled ||
+        !CloudKitWriterOwnership.v2MutationsEnabled ||
+        !_cloudSyncV2CanaryRuntimeAllowed || !_cloudSyncV2DeveloperRuntimeAllowed ||
+        !ls.isUiThread || loggingOut || _cloudSyncV2OutboundQuiescing ||
+        _cloudSyncV2SemanticPullInFlight != null ||
+        _cloudSyncV2OutboundConfirmation != null ||
+        _cloudSyncV2OutboundProvisioningInFlight != null ||
+        _cloudSyncV2OutboundInFlight != null ||
+        ss.settings.cloudSyncingEnabled.value || isSyncing.value != null ||
+        statePath.isEmpty || state?.icloudServices?.cloudMessagesClient == null) {
+      return;
+    }
+    if (_cloudSyncV2LocalSendRuntime == null) {
+      final expectedState = state;
+      final expectedClient = state!.icloudServices!.cloudMessagesClient;
+      final expectedStorage = statePath;
+      final expectedStore = Database.store;
+      bool stillCurrent() => !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+          identical(expectedState, state) && statePath == expectedStorage &&
+          identical(expectedClient, state?.icloudServices?.cloudMessagesClient) &&
+          identical(expectedStore, Database.store) && !expectedStore.isClosed() &&
+          !ss.settings.cloudSyncingEnabled.value &&
+          _cloudSyncV2DeveloperRuntimeAllowed;
+      final adapter = CloudSyncProductionLocalSendAdapter(
+        readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+        privateStorageDirectory: expectedStorage, stillCurrent: stillCurrent,
+      );
+      _cloudSyncV2LocalSendRuntime = CloudSyncLocalSendRuntime(
+        drain: () => _cloudSyncV2AttachmentGate.run(
+          validate: () {
+            if (!stillCurrent() || _cloudSyncV2SemanticPullInFlight != null ||
+                _cloudSyncV2OutboundConfirmation != null ||
+                _cloudSyncV2OutboundProvisioningInFlight != null ||
+                _cloudSyncV2OutboundInFlight != null || isSyncing.value != null) {
+              throw StateError('cloud_sync_local_send_runtime_unavailable');
+            }
+          },
+          action: adapter.runOnce,
+        ),
+        onError: (_, __) => Logger.warn(
+          'Cloud Sync V2 local-send worker deferred; journal retained',
+        ),
+      );
+    }
+    _cloudSyncV2LocalSendRuntime!.request(trigger);
+  }
+
   // Local intent capture only. This does not schedule or authorize a CloudKit
   // save; protected admission and the create-only writer remain separate.
   Future<({
     CloudSyncLocalSendJournal journal,
     CloudSyncLocalSendIdentity identity,
     CloudSyncLocalSendAuthFence authFence,
+    CloudSyncNativeAuthSnapshot capturedAuth,
+    bool Function() stillCurrent,
   })?> _captureCloudSyncV2LocalSend({
     required Message message,
     required Chat chat,
@@ -7556,7 +7619,10 @@ class RustPushService extends GetxService {
       final client = currentState?.icloudServices?.cloudMessagesClient;
       if (client == null) return null;
       final storagePath = statePath;
-      bool stillCurrent() => !loggingOut && identical(currentState, state) &&
+      final objectBox = Database.store;
+      bool stillCurrent() => !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+          !objectBox.isClosed() && identical(objectBox, Database.store) &&
+          identical(currentState, state) &&
           identical(client, state?.icloudServices?.cloudMessagesClient) &&
           storagePath == statePath && !ss.settings.cloudSyncingEnabled.value;
       // This captures local account/keystore identity only, not network auth.
@@ -7581,7 +7647,7 @@ class RustPushService extends GetxService {
               identity.sourceSha256) {
         return null;
       }
-      final authority = ObjectBoxCloudKitWriterAuthority(store: Database.store);
+      final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
       final authoritySnapshot = authority.read(
         CloudKitWriterScope(accountFingerprint: auth.accountFingerprint),
       );
@@ -7590,9 +7656,11 @@ class RustPushService extends GetxService {
       }
       return (
         journal: CloudSyncLocalSendJournal(
-          store: Database.store, authority: authority, authoritySnapshot: authoritySnapshot,
+          store: objectBox, authority: authority, authoritySnapshot: authoritySnapshot,
         ),
         identity: identity,
+        capturedAuth: auth,
+        stillCurrent: stillCurrent,
         authFence: CloudSyncLocalSendAuthFence(
           expected: auth,
           capture: () => captureAuth().timeout(const Duration(seconds: 1)),
@@ -7607,7 +7675,8 @@ class RustPushService extends GetxService {
 
   Future<void> _saveCloudSyncV2LocalSend(
     ({CloudSyncLocalSendJournal journal, CloudSyncLocalSendIdentity identity,
-      CloudSyncLocalSendAuthFence authFence})? context,
+      CloudSyncLocalSendAuthFence authFence,
+      CloudSyncNativeAuthSnapshot capturedAuth, bool Function() stillCurrent})? context,
     Message message,
     Chat chat, {
     required bool confirmed,
@@ -7618,27 +7687,52 @@ class RustPushService extends GetxService {
       return;
     }
     final previousId = message.id;
+    var savedWithIntent = false;
     try {
-      await context.authFence.run(() {
-        int persist() => message.save(chat: chat, throwOnUniqueViolation: true).id ?? 0;
-        if (confirmed) {
-          context.journal.saveConfirmedSubmission(
-            identity: context.identity, persistMessage: persist, now: DateTime.now().toUtc(),
+      int persist() => message.save(chat: chat, throwOnUniqueViolation: true).id ?? 0;
+      if (confirmed) {
+        // Record the actual successful IDS completion before the next awaited
+        // auth capture. A slow keystore must not erase this distinct evidence.
+        final intentId = context.journal.saveIdsConfirmedDeferredSubmission(
+          identity: context.identity, capturedAuth: context.capturedAuth,
+          stillCurrent: context.stillCurrent, persistMessage: persist,
+          now: DateTime.now().toUtc(),
+        );
+        savedWithIntent = true;
+        await context.authFence.run(() {
+          context.journal.promoteIdsConfirmedDeferred(
+            intentId: intentId, currentAuth: context.capturedAuth,
+            now: DateTime.now().toUtc(),
           );
-        } else {
+        });
+      } else {
+        await context.authFence.run(() {
           context.journal.saveSubmission(
             identity: context.identity, newlyGeneratedGuid: newlyGeneratedGuid,
             persistMessage: persist, now: DateTime.now().toUtc(),
           );
-        }
-      });
+          savedWithIntent = true;
+        });
+      }
     } catch (_) {
-      // The joint transaction rolled back. Restore the in-memory ObjectBox ID
-      // before the existing local-save fallback. Never report an IDS failure
-      // merely because the CloudKit journal was unavailable or superseded.
-      message.id = previousId;
-      message.save(chat: chat);
-      Logger.warn('Cloud Sync V2 local send intent was not advanced; live sending remains independent');
+      if (!savedWithIntent) {
+        // Only a rolled-back message/intent transaction needs the fallback.
+        // Re-saving after a successful state-3 commit could duplicate the row.
+        message.id = previousId;
+        if (!context.stillCurrent()) {
+          // Never run the global Message.save fallback in a replacement
+          // account's Store. The original pending intent remains retained.
+          Logger.warn('Cloud Sync V2 send identity changed; original journal retained');
+          return;
+        }
+        message.save(chat: chat);
+      }
+      Logger.warn(savedWithIntent && confirmed
+          ? 'Cloud Sync V2 IDS success retained; upload authorization deferred'
+          : 'Cloud Sync V2 local send intent was not advanced; live sending remains independent');
+    }
+    if (confirmed && savedWithIntent) {
+      _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
     }
   }
 
@@ -7975,6 +8069,7 @@ class RustPushService extends GetxService {
     return future.whenComplete(() {
       if (identical(_cloudSyncV2SemanticPullInFlight, future)) {
         _cloudSyncV2SemanticPullInFlight = null;
+        _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
       }
     });
   }
@@ -8685,6 +8780,11 @@ class RustPushService extends GetxService {
     _cloudSyncV2SemanticPullQuiescing = true;
     _cloudSyncV2OutboundQuiescing = true;
     try {
+      final localSendRuntime = _cloudSyncV2LocalSendRuntime;
+      if (localSendRuntime != null) {
+        await localSendRuntime.dispose().timeout(_cloudSyncV2OutboundQuiescenceTimeout);
+        _cloudSyncV2LocalSendRuntime = null;
+      }
       await shadowOwner?.quiesceForAccountTransition();
       final pcsPreparation = _cloudSyncV2PcsPreparationInFlight;
       if (pcsPreparation != null) {
@@ -8867,6 +8967,9 @@ class RustPushService extends GetxService {
     api.SharedPushState closingState,
   ) async {
     try {
+      await _cloudSyncV2LocalSendRuntime?.dispose()
+          .timeout(_cloudSyncV2OutboundQuiescenceTimeout);
+      _cloudSyncV2LocalSendRuntime = null;
       await _runCloudKitDestructiveReset(() async {
         if (!identical(state, closingState)) return;
         state = null;
