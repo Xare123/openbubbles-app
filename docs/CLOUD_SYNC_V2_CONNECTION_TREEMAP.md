@@ -48,9 +48,14 @@ continue under a new account.
   current IDS registration repair still needs completed sign-in and an ordinary
   send. Alpha and the source inspection databases are untouched.
 - Reviewed gallery/document, recipient-validation, FaceTime and Find My fixes
-  are frozen at `d5413ec9c` for GCE run `33981816999`. Local checks pass 107 Dart
-  and 10 JavaScript tests. This APK candidate does not include the later
-  immutable chat-dependency repair below.
+  passed full GCE run `33981816999` at exact `d5413ec9c`: complete Dart suite,
+  287 app Rust, 209 rustpush and 30 protector tests, bridge-drift checks, Android
+  build and separate signing. APK compilation took 424 seconds; total run time
+  was 24 minutes 16 seconds. The runner VM and GitHub registration are absent
+  after successful cleanup. The downloaded APK's expected Canary signer and
+  four required ARM64 ELF libraries are verified. It is not installed yet and
+  does not include the later immutable chat-dependency repair below. Local
+  checks additionally pass 107 Dart and 10 JavaScript tests.
 - The later writer patch passes 311 focused Dart persistence, admission,
   receipt, transport, ownership and model-upgrade tests. An offline copy of the
   preserved September 5 Canary database validates all 133 direct-chat bindings

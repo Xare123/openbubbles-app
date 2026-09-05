@@ -58,8 +58,9 @@ void main() {
           );
           if (mime?.startsWith('image/') == true ||
               mime?.startsWith('video/') == true ||
-              mime?.startsWith('audio/') == true)
+              mime?.startsWith('audio/') == true) {
             continue;
+          }
           documents++;
           final type = switch (mime) {
             'application/pdf' => 'pdf',
