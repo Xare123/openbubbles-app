@@ -28,6 +28,7 @@ $cases = @(
     @{ Version = 6; Before = 1; After = 1; Proof = $true; Pass = $false },
     @{ Version = 7; Before = 0; After = 0; Proof = $false; Pass = $true },
     @{ Version = 7; Before = 1; After = 1; Proof = $true; Pass = $true },
+    @{ Version = 7; Before = 65535; After = 65535; Proof = $true; Pass = $true },
     @{ Version = 7; Before = 1; After = 1; Proof = $false; Pass = $false },
     @{ Version = 7; Before = 1; After = 2; Proof = $true; Pass = $false },
     @{ Version = 7; Before = 1; After = 0; Proof = $true; Pass = $false },
@@ -50,4 +51,25 @@ foreach ($case in $cases) {
     catch { $passed = $false }
     if ($passed -ne $case.Pass) { throw 'Semantic outbox contract case failed.' }
 }
-Write-Output "$($cases.Count) semantic outbox contract cases passed. No device operations."
+# Evaluate only the successful evidence line, not its surrounding ADB workflow.
+$passCommand = $tree.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and
+        $node.GetCommandName() -eq 'Write-Output' -and
+        $node.Extent.Text.StartsWith('Write-Output "PASS report_exported=true')
+}, $true)
+if ($null -eq $passCommand) { throw 'Missing successful report evidence line.' }
+foreach ($count in @(0, 1, 65535)) {
+    $report = [pscustomobject]@{
+        schemaVersion = 7
+        outboxCountBefore = $count
+        outboxCountAfter = $count
+        settledOutboxUnchanged = $true
+    }
+    Assert-SemanticOutboxContract -Report $report
+    $diagnosticCodeCount = 2
+    $actual = & ([scriptblock]::Create($passCommand.Extent.Text))
+    $expected = "PASS report_exported=true build_commit_verified=true safety_verified=true outbox=$count->$count report_diagnostic_codes=2"
+    if ($actual -cne $expected) { throw 'Successful probe output misstates the outbox counts.' }
+}
+Write-Output "$($cases.Count) semantic outbox contract cases and 3 evidence-output cases passed. No device operations."

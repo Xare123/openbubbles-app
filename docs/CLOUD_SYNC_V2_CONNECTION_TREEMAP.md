@@ -98,6 +98,50 @@ modified. The follow-up expands only the semantic report's settled-outbox
 contract and its readers/tests. Broad runtime and tombstone changes remain
 outside these narrowly reproduced repairs.
 
+### Settled-outbox audit follow-up, 2026-09-04
+
+The bounded Sol audit of `6517f8661` found two contract mismatches, not a
+receipt bypass. Preflight now rejects counts above the schema-7 report limit
+of 65,535 before store/transport creation. The successful device probe prints
+the validated before/after counts instead of claiming `0 -> 0` unconditionally.
+Both new tests failed on the prior source. After repair, 91 focused Dart tests,
+14 PowerShell contract cases and three evidence-output cases pass; targeted
+analysis is clean. This report-size limit is a Canary limitation, not a
+production receipt-retention strategy.
+
+GCE run `33943836515` qualifies the earlier exact `6517f8661` source, not this
+follow-up. Do not cancel it or call its artifact the follow-up build. The two
+review agents are closed; their read-only reports remain audit provenance.
+No dedicated build worktree was created for either review. Platform-supported
+session deletion is unavailable in this session, so transcripts are retained.
+
+### Ordinary-send integration decision
+
+`RustPushBackend.sendMessage` persists a stable staging GUID before IDS and
+the final message after IDS. `ActionHandler.sendMessage` then reconciles the
+returned message. None of these transactions writes a V2 upload intent.
+`CloudSyncOutboundAdmissionCoordinator` first awaits native protected staging,
+then atomically commits only the outbox and record map. Calling it unawaited
+after `Message.save` would leave a crash window, not solve durable admission.
+
+The smallest safe integration needs a durable, explicitly local-origin intent
+in the same transaction as local send state, followed by asynchronous protected
+staging. Preserve the intent until outbox adoption commits, and distinguish
+confirmed IDS submission from an interrupted or failed send. CloudKit being
+offline must not turn a delivered iMessage into a failed live send. Do not
+derive intent from `ckSyncState == false`: V2 restored messages also retain
+that default. Do not use `Message.metadata`, which belongs to link previews
+and can be replaced independently. No new entity or column has been added yet.
+
+Before wiring automatic admission, resolve its scheduling dependency:
+semantic reads still block on pending/unknown outbox work, while
+`_requireMessagesCloudAccountProjectionReadyLocked` requires all three zones
+fully projected and rejects retained tombstones before leasing writes. Simply
+hooking sends into the existing queue can strand both lanes. Keep local intents
+distinct from prepared remote mutations, prove recovery ordering, and establish
+new-create ownership/tombstone handling before relaxing any gate. A one-message
+manual upload is not evidence that this production integration exists.
+
 ## Historical investigation board
 
 The following table preserves evidence and prior decisions. Its references to

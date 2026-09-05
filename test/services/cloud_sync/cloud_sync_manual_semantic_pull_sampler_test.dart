@@ -38,20 +38,23 @@ typedef _RetainedProjectionWindowCallback =
       int limit,
     );
 
-CloudSyncShadowPreflightState _readyState({int outboxCount = 0}) =>
-    CloudSyncShadowPreflightState(
-      platformSupported: true,
-      uiIsolate: true,
-      rustPushReady: true,
-      objectBoxReady: true,
-      privateStorageExists: true,
-      logoutActive: false,
-      legacySyncEnabled: false,
-      legacySyncActive: false,
-      coordinatorLeaseActive: false,
-      outboxCount: outboxCount,
-      protectorSentinelValid: true,
-    );
+CloudSyncShadowPreflightState _readyState({
+  int outboxCount = 0,
+  String? settledOutboxFingerprint,
+}) => CloudSyncShadowPreflightState(
+  platformSupported: true,
+  uiIsolate: true,
+  rustPushReady: true,
+  objectBoxReady: true,
+  privateStorageExists: true,
+  logoutActive: false,
+  legacySyncEnabled: false,
+  legacySyncActive: false,
+  coordinatorLeaseActive: false,
+  outboxCount: outboxCount,
+  protectorSentinelValid: true,
+  settledOutboxFingerprint: settledOutboxFingerprint,
+);
 
 CloudSyncNativeAuthSnapshot _auth({
   String session = 'session-a',
@@ -275,6 +278,62 @@ void main() {
   tearDown(() {
     privateStorageDirectory.deleteSync(recursive: true);
   });
+
+  test('settled outbox admission respects the report count boundary', () {
+    final fingerprint = 'a' * 64;
+    for (final count in [-1, 0, 1, 65535, 65536]) {
+      final state = _readyState(
+        outboxCount: count,
+        settledOutboxFingerprint: fingerprint,
+      );
+      expect(state.allowsSemanticRead, count >= 0 && count <= 65535);
+    }
+    expect(_readyState(outboxCount: 1).allowsSemanticRead, isFalse);
+    expect(
+      _readyState(
+        outboxCount: 1,
+        settledOutboxFingerprint: 'invalid',
+      ).allowsSemanticRead,
+      isFalse,
+    );
+  });
+
+  test(
+    'oversized settled outbox stops before store or transport creation',
+    () async {
+      var storeCalls = 0;
+      var transportCalls = 0;
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        readPreflight: () async =>
+            _readyState(outboxCount: 65536, settledOutboxFingerprint: 'a' * 64),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async {
+          storeCalls++;
+          return InMemoryCloudSyncStore();
+        },
+        createRawTransport: (auth, scope, pauseToken) async {
+          transportCalls++;
+          return FakeCloudSyncTransport();
+        },
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+      );
+      await expectLater(
+        sampler.runConfirmed(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'safeCode',
+            'outbox_not_empty',
+          ),
+        ),
+      );
+      expect(storeCalls, 0);
+      expect(transportCalls, 0);
+    },
+  );
 
   test('native writer pause encloses the complete semantic run', () async {
     final events = <String>[];

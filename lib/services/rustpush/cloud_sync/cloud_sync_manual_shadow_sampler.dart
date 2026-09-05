@@ -130,6 +130,9 @@ class CloudSyncShadowPreflightState {
   bool get allowsSemanticRead =>
       outboxCount == 0 ||
       (outboxCount > 0 &&
+          // The semantic report writer and schema-7 device reader use this
+          // bound. Reject an unreportable snapshot before creating transport.
+          outboxCount <= 65535 &&
           settledOutboxFingerprint != null &&
           RegExp(r'^[0-9a-f]{64}$').hasMatch(settledOutboxFingerprint!));
 

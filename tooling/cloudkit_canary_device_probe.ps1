@@ -772,7 +772,7 @@ try {
         Fail-Probe 'forward_cleanup_unverified'
     }
     $script:ForwardCreated = $false
-    Write-Output "PASS report_exported=true build_commit_verified=true safety_verified=true outbox=0->0 report_diagnostic_codes=$diagnosticCodeCount"
+    Write-Output "PASS report_exported=true build_commit_verified=true safety_verified=true outbox=$($report.outboxCountBefore)->$($report.outboxCountAfter) report_diagnostic_codes=$diagnosticCodeCount"
 }
 catch {
     $safeFailure = if ($_.Exception.Message -match '^probe_[a-z0-9_]+$') {
