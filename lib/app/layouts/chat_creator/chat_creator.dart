@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:bluebubbles/app/components/custom_text_editing_controllers.dart';
+import 'package:bluebubbles/app/layouts/chat_creator/chat_recipient_validation.dart';
 import 'package:bluebubbles/app/layouts/chat_creator/widgets/chat_creator_tile.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/pages/conversation_view.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/text_field/conversation_text_field.dart';
@@ -32,9 +33,16 @@ class SelectedContact {
   final String displayName;
   final String address;
   late final RxnBool iMessage;
+  late final Rx<ChatRecipientValidationState> validation;
+  late final ChatRecipientValidationGate validationGate;
 
   SelectedContact({required this.displayName, required this.address, bool? isIMessage}) {
     iMessage = RxnBool(isIMessage);
+    validationGate = ChatRecipientValidationGate(
+      address: address,
+      knownEligibility: isIMessage,
+    );
+    validation = validationGate.state.obs;
   }
 }
 
@@ -73,6 +81,9 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
   ConversationViewController? oldController;
   Timer? _debounce;
   Completer<void>? createCompleter;
+  final Rxn<ChatRecipientValidationFailure> recipientValidationFailure = Rxn();
+  int _addressRevision = 0;
+  String _observedAddressText = "";
   int selectedSuggestionIndex = -1;
   int previousSuggestionIndex = -1;
   final Map<int, GlobalKey> suggestionKeys = {};
@@ -92,6 +103,11 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
 
     addressController.addListener(() {
       _debounce?.cancel();
+      if (addressController.text != _observedAddressText) {
+        _observedAddressText = addressController.text;
+        _addressRevision++;
+        recipientValidationFailure.value = null;
+      }
       Logger.debug("right app");
       _debounce = Timer(const Duration(milliseconds: 250), () async {
         final tuple = await SchedulerBinding.instance.scheduleTask(() async {
@@ -166,7 +182,7 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
       }
       setState(() {});
       if (widget.initialSelected.isNotEmpty) {
-        findExistingChat();
+        unawaited(_validateInitialSelected());
       }
     });
 
@@ -175,9 +191,52 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
 
   Future<void> addSelected(SelectedContact c) async {
     selectedContacts.add(c);
+    await _validateSelectedContact(c);
+  }
+
+  Future<void> _validateInitialSelected() async {
+    final pending = selectedContacts
+        .where((contact) =>
+            contact.validation.value.status ==
+            ChatRecipientValidationStatus.pending)
+        .toList();
+    if (pending.isNotEmpty) {
+      await Future.wait(
+        pending.map(
+          (contact) => _validateSelectedContact(
+            contact,
+            clearAddressWhenResolved: false,
+            refreshChatWhenResolved: false,
+          ),
+        ),
+      );
+    }
+    if (mounted) await findExistingChat();
+  }
+
+  Future<void> _validateSelectedContact(
+    SelectedContact c, {
+    bool clearAddressWhenResolved = true,
+    bool refreshChatWhenResolved = true,
+  }) async {
+    final addressRevision = _addressRevision;
+    final addressText = addressController.text;
+    final request = c.validationGate.begin();
+    c.validation.value = c.validationGate.state;
+    c.iMessage.value = null;
+    recipientValidationFailure.value = null;
+    var accepted = false;
     try {
-      c.iMessage.value = await backend.handleiMessageState(c.address);
-      if (!c.iMessage.value! && !ss.settings.nonIMessageWarning.value) {
+      final supported = await backend.handleiMessageState(c.address);
+      if (!mounted || !selectedContacts.contains(c)) return;
+      final resolved = supported
+          ? const ChatRecipientValidationState.supported()
+          : const ChatRecipientValidationState.unsupported();
+      if (!c.validationGate.accept(request, resolved)) return;
+      accepted = true;
+      c.validation.value = resolved;
+      c.iMessage.value = resolved.isIMessage;
+      if (!supported && !ss.settings.nonIMessageWarning.value) {
         await showDialog(
           context: Get.context!,
           barrierDismissible: false,
@@ -209,20 +268,104 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
           },
         );
       }
-    } catch (_) {}
-    addressController.text = "";
-    findExistingChat();
+    } catch (error) {
+      if (!mounted || !selectedContacts.contains(c)) return;
+      final failure = ChatRecipientValidationFailure.fromError(error);
+      final failed = ChatRecipientValidationState.failed(failure);
+      if (!c.validationGate.accept(request, failed)) return;
+      accepted = true;
+      c.validation.value = failed;
+      c.iMessage.value = null;
+      if (_addressRevision == addressRevision) {
+        recipientValidationFailure.value = failure;
+        showSnackbar(failure.title, failure.message);
+      }
+    } finally {
+      if (accepted && mounted && selectedContacts.contains(c)) {
+        if (clearAddressWhenResolved &&
+            c.validation.value.status != ChatRecipientValidationStatus.failed &&
+            _addressRevision == addressRevision &&
+            addressController.text == addressText) {
+          addressController.text = "";
+        }
+        if (refreshChatWhenResolved) await findExistingChat();
+      }
+    }
   }
 
   void addSelectedList(Iterable<SelectedContact> c) {
-    selectedContacts.addAll(c);
+    final additions = c.toList();
+    selectedContacts.addAll(additions);
+    recipientValidationFailure.value = null;
     addressController.text = "";
-    findExistingChat();
+    final pending = additions
+        .where((contact) =>
+            contact.validation.value.status ==
+            ChatRecipientValidationStatus.pending)
+        .toList();
+    if (pending.isEmpty) {
+      findExistingChat();
+    } else {
+      unawaited(Future.wait(pending.map(_validateSelectedContact)));
+    }
   }
 
   void removeSelected(SelectedContact c) {
+    c.validationGate.invalidate();
     selectedContacts.remove(c);
+    recipientValidationFailure.value = null;
     findExistingChat();
+  }
+
+  void _clearSelectedContacts() {
+    for (final contact in selectedContacts) {
+      contact.validationGate.invalidate();
+    }
+    selectedContacts.clear();
+    recipientValidationFailure.value = null;
+  }
+
+  SelectedContact? get _blockingRecipientValidation {
+    for (final contact in selectedContacts) {
+      if (contact.validation.value.blocksSend) return contact;
+    }
+    return null;
+  }
+
+  SelectedContact? get _failedRecipientValidation {
+    for (final contact in selectedContacts) {
+      if (contact.validation.value.status ==
+          ChatRecipientValidationStatus.failed) {
+        return contact;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _retryFailedRecipientValidation() async {
+    final contact = _failedRecipientValidation;
+    if (contact == null) return;
+    await _validateSelectedContact(
+      contact,
+      clearAddressWhenResolved: false,
+    );
+  }
+
+  bool _showBlockingRecipientValidation() {
+    final contact = _blockingRecipientValidation;
+    if (contact == null) return false;
+    final validation = contact.validation.value;
+    final failure = validation.failure;
+    if (failure == null) {
+      showSnackbar(
+        "Checking recipient",
+        "Wait for recipient validation to finish before sending.",
+      );
+    } else {
+      recipientValidationFailure.value = failure;
+      showSnackbar(failure.title, failure.message);
+    }
+    return true;
   }
 
   GlobalKey _suggestionKey(int index) => suggestionKeys.putIfAbsent(index, () => GlobalKey());
@@ -293,6 +436,9 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
     if (selectedContacts.isEmpty) {
       await cm.setAllInactive();
       fakeController.value = null;
+      return null;
+    }
+    if (_blockingRecipientValidation != null) {
       return null;
     }
     if (selectedContacts.any((element) => element.iMessage.value == false)) {
@@ -639,6 +785,29 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
                   ],
                 ),
               ),
+              Obx(() {
+                final failure = recipientValidationFailure.value;
+                if (failure == null) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(15, 0, 15, 5),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          "${failure.title}: ${failure.message}",
+                          style: context.theme.textTheme.bodySmall?.copyWith(
+                            color: context.theme.colorScheme.error,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _retryFailedRecipientValidation,
+                        child: const Text("Retry validation"),
+                      ),
+                    ],
+                  ),
+                );
+              }),
               if (backend.supportsSmsForwarding())
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 15.0).add(const EdgeInsets.only(bottom: 5.0)),
@@ -671,7 +840,7 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
                     selectedColor: context.theme.colorScheme.bubble(context, iMessage),
                     isSelected: [iMessage, sms],
                     onPressed: (index) async {
-                      selectedContacts.clear();
+                      _clearSelectedContacts();
                       addressController.text = "";
                       if (index == 0) {
                         setState(() {
@@ -916,6 +1085,7 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
                             await addressOnSubmitted();
                             Get.back(closeOverlays: true);
                           }
+                          if (_showBlockingRecipientValidation()) return;
                           final chat = fakeController.value?.chat ?? await findExistingChat(checkDeleted: true, update: false);
                           bool existsOnServer = true; // if there is no remote, we exist on the "server"
                           if (chat != null && backend.getRemoteService() != null) {
@@ -1101,7 +1271,7 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
                               cvc(newChat).close();
 
                               // Let awaiters know we completed
-                              createCompleter?.complete();
+                              completeChatCreationGate(createCompleter);
 
                               // Navigate to the new chat
                               Get.back(closeOverlays: true);
@@ -1149,9 +1319,7 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
                                       ],
                                     );
                                   });
-                              if (!createCompleter!.isCompleted) {
-                                createCompleter?.completeError(error);
-                              }
+                              completeChatCreationGate(createCompleter);
                             });
                           }
                         })),
