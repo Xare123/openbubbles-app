@@ -454,6 +454,7 @@ final class NativeProtectedCloudSyncTransport
     BigInt? nativeWriterPauseToken,
     NativeProtectedCloudSyncBindings? bindings,
     this._writerMutationGuard,
+    this._readCheckpointGeneration,
     this._refreshAuthentication,
     this._refreshPcsAccess,
     this._retainConfirmedReceiptsForReplay = false,
@@ -472,6 +473,9 @@ final class NativeProtectedCloudSyncTransport
             nativeWriterPauseToken.bitLength > 64)) {
       throw ArgumentError('native_writer_pause_token_invalid');
     }
+    if ((_writerMutationGuard == null) != (_readCheckpointGeneration == null)) {
+      throw ArgumentError('cloud_sync_writer_generation_fence_invalid');
+    }
   }
 
   final Object _cloudMessagesClient;
@@ -480,6 +484,7 @@ final class NativeProtectedCloudSyncTransport
   final BigInt? _nativeWriterPauseToken;
   final NativeProtectedCloudSyncBindings _bindings;
   final CloudKitWriterMutationRunner? _writerMutationGuard;
+  final Future<int> Function(CloudSyncScope scope)? _readCheckpointGeneration;
   final Future<bool> Function(CloudSyncScope scope)? _refreshAuthentication;
   final Future<bool> Function(CloudSyncScope scope)? _refreshPcsAccess;
   final bool _retainConfirmedReceiptsForReplay;
@@ -793,26 +798,52 @@ final class NativeProtectedCloudSyncTransport
                 .operationUuids[remoteOperations.single.operationId],
           );
       final bindings = _requireWriteBindings();
+      final readCheckpointGeneration = _readCheckpointGeneration;
+      if (readCheckpointGeneration == null) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.authorization,
+          safeCode: 'cloud_sync_writer_generation_fence_required',
+        );
+      }
       final remoteOutcomes = await _runProtectedStoreOperation(() async {
         // The queue may have waited long enough for the cross-process lease to
         // be lost. Recheck it at the final admission point, before claiming
         // the single-use submission or arming any mutation state.
         _requireMutationAdmission();
         mutationGuard.requireClear();
-        preparedSubmission.claimForConsumption(
-          scope,
-          persistedIdentity: persistedIdentity,
-          protectedOperations: protectedOperations,
-        );
         CloudFailureCategory? ambiguousFailureCategory;
         Duration? ambiguousRetryAfter;
         try {
           return await mutationGuard.runAuthorized(
             owner: CloudKitWriterOwner.v2,
             expectedClient: _cloudMessagesClient,
+            expectedAccountFingerprint: scope.accountFingerprint,
             preparedHandleBindingSha256: preparedSubmission.handleBindingSha256,
             reconciliationBindingSha256: reconciliationBindingSha256,
             requireAdmission: _requireMutationAdmission,
+            requireDurableAdmission: () async {
+              _requireMutationAdmission();
+              final currentGeneration = await readCheckpointGeneration(scope);
+              _requireMutationAdmission();
+              if (currentGeneration <= 0 ||
+                  remoteOperations.any(
+                    (operation) =>
+                        operation.checkpointGeneration != currentGeneration,
+                  )) {
+                throw CloudSyncFailure(
+                  category: CloudFailureCategory.cancelled,
+                  safeCode: 'cloud_sync_outbound_stale_checkpoint_generation',
+                );
+              }
+              // A bad UUID, changed binding, or repeated local claim has not
+              // sent anything. Reject it before the guard arms its durable
+              // ambiguity fence, while preserving the generation recheck.
+              preparedSubmission.claimForConsumption(
+                scope,
+                persistedIdentity: persistedIdentity,
+                protectedOperations: protectedOperations,
+              );
+            },
             action: (capability) async {
               _requireV2WriterInterlock();
               final result = await bindings.consumePreparedMessageCreate(

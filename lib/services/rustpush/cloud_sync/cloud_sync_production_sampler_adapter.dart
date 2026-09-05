@@ -776,6 +776,8 @@ final class CloudSyncProductionOutboundCanaryAdapter {
           protectedStoreIdentity: snapshot.protectedStoreIdentity,
           bindings: resolvedTransportBindings,
           writerMutationGuard: mutationGuard,
+          readCheckpointGeneration: (scope) async =>
+              (await durableStore.readCheckpoint(scope)).generation,
           retainConfirmedReceiptsForReplay: true,
         );
 

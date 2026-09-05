@@ -82,9 +82,11 @@ abstract interface class CloudKitWriterMutationRunner {
   Future<T> runAuthorized<T>({
     required CloudKitWriterOwner owner,
     required Object expectedClient,
+    String? expectedAccountFingerprint,
     required String? preparedHandleBindingSha256,
     String? reconciliationBindingSha256,
     required void Function() requireAdmission,
+    required Future<void> Function() requireDurableAdmission,
     required Future<T> Function(CloudKitWriterMutationCapability capability)
     action,
   });
@@ -222,9 +224,11 @@ final class CloudKitWriterMutationGuard
     return runAuthorized(
       owner: owner,
       expectedClient: expectedClient,
+      expectedAccountFingerprint: null,
       preparedHandleBindingSha256: null,
       reconciliationBindingSha256: null,
       requireAdmission: () {},
+      requireDurableAdmission: () async {},
       action: (_) => action(),
     );
   }
@@ -660,9 +664,11 @@ final class CloudKitWriterMutationGuard
   Future<T> runAuthorized<T>({
     required CloudKitWriterOwner owner,
     required Object expectedClient,
+    String? expectedAccountFingerprint,
     required String? preparedHandleBindingSha256,
     String? reconciliationBindingSha256,
     required void Function() requireAdmission,
+    required Future<void> Function() requireDurableAdmission,
     required Future<T> Function(CloudKitWriterMutationCapability capability)
     action,
   }) async {
@@ -688,7 +694,11 @@ final class CloudKitWriterMutationGuard
       );
     }
     if (owner == CloudKitWriterOwner.v2 &&
-        (preparedHandleBindingSha256 == null ||
+        (expectedAccountFingerprint == null ||
+            !_cloudKitWriterNativeDigestPattern.hasMatch(
+              expectedAccountFingerprint,
+            ) ||
+            preparedHandleBindingSha256 == null ||
             !_cloudKitWriterSha256Pattern.hasMatch(
               preparedHandleBindingSha256,
             ) ||
@@ -701,9 +711,17 @@ final class CloudKitWriterMutationGuard
       );
     }
     final before = await _capture(client);
+    if (expectedAccountFingerprint != null &&
+        before.accountFingerprint != expectedAccountFingerprint) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_account_scope_mismatch',
+      );
+    }
+    await requireDurableAdmission();
     // A timeout can poison admission while native identity capture is pending.
-    // Recheck before arming the fence; after this point no await occurs until
-    // [_activeMutation] is installed, so late timeout poisoning is observable.
+    // Durable admission may also await a checkpoint read. Recheck immediately
+    // before arming the fence; after this point no await occurs until
+    // [_activeMutation] is installed, so late poisoning is observable.
     requireAdmission();
     if (!identical(client, _readActiveClient())) {
       throw const CloudKitWriterAuthorityFailure(

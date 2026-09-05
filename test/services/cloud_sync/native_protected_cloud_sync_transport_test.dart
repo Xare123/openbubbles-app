@@ -18,6 +18,7 @@ void main() {
   late Directory writerDirectory;
   late Store writerStore;
   late Object activeClient;
+  late int activeCheckpointGeneration;
 
   NativeProtectedCloudSyncTransport buildTransport({
     bool retainConfirmedReceiptsForReplay = false,
@@ -26,6 +27,7 @@ void main() {
     storageDirectory: 'private-storage',
     protectedStoreIdentity: _storeIdentity,
     bindings: bindings,
+    readCheckpointGeneration: (_) async => activeCheckpointGeneration,
     retainConfirmedReceiptsForReplay: retainConfirmedReceiptsForReplay,
     writerMutationGuard: CloudKitWriterMutationGuard.forTest(
       store: writerStore,
@@ -50,6 +52,7 @@ void main() {
     writerStore = await openStore(directory: writerDirectory.path);
     bindings = _FakeBindings();
     activeClient = Object();
+    activeCheckpointGeneration = 1;
     scope = CloudSyncScope(
       accountFingerprint: _hash('A'),
       container: 'com.apple.messages.cloud',
@@ -1316,6 +1319,94 @@ void main() {
   });
 
   test(
+    'invalid local claim never arms a mutation fence and preserves the handle',
+    () async {
+      final operation = _writeOperation(scope);
+      final protectedOperation = _protectedWriteOperation(operation);
+      final identity = _submissionIdentity(operation.operationId);
+      final wrongIdentity = CloudOutboxSubmissionIdentity(
+        requestUuid: '99999999-9999-4999-8999-999999999999',
+        operationUuids: identity.operationUuids,
+      );
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: protectedOperation.protectedPayloadReference,
+      );
+      bindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: _FakePreparedHandle(),
+        handleBindingSha256: _preparedHandleBindingSha256,
+      );
+      bindings.consumeResult = frb_api.CloudSyncOutboundConsumeResult(
+        outcomes: [
+          frb_api.CloudSyncOutboundSaveOutcome(
+            localOperationId: operation.operationId,
+            appleOperationUuid: identity.operationUuids[operation.operationId]!,
+            disposition: frb_api.CloudSyncOutboundSaveDisposition.succeeded,
+            serverRecordIdHash: operation.serverRecordIdHash,
+            etagHash: _hash('E'),
+          ),
+        ],
+      );
+      final fence = File(
+        '${writerDirectory.path}${Platform.pathSeparator}'
+        '.openbubbles-cloudkit-writer-mutation-v1.fence',
+      );
+
+      await runV2(() async {
+        final prepared = await transport.prepareSubmission(
+          scope,
+          submissionIdentity: identity,
+          operations: [protectedOperation],
+        );
+        await expectLater(
+          transport.consumePreparedSubmission(
+            scope,
+            preparedSubmission: prepared,
+            persistedIdentity: wrongIdentity,
+            protectedOperations: [protectedOperation],
+            operations: [operation],
+          ),
+          throwsA(isA<ArgumentError>()),
+        );
+        expect(bindings.consumeCalls, 0);
+        expect(fence.existsSync(), isFalse);
+        expect(
+          writerAuthority().read(writerScope())!.state,
+          CloudKitWriterAuthorityState.stable,
+        );
+
+        final result = await transport.consumePreparedSubmission(
+          scope,
+          preparedSubmission: prepared,
+          persistedIdentity: identity,
+          protectedOperations: [protectedOperation],
+          operations: [operation],
+        );
+        expect(
+          result.outcomes.values.single.disposition,
+          CloudPushDisposition.confirmed,
+        );
+        await expectLater(
+          transport.consumePreparedSubmission(
+            scope,
+            preparedSubmission: prepared,
+            persistedIdentity: identity,
+            protectedOperations: [protectedOperation],
+            operations: [operation],
+          ),
+          throwsA(isA<StateError>()),
+        );
+        expect(bindings.consumeCalls, 1);
+        expect(fence.existsSync(), isFalse);
+        expect(
+          writerAuthority().read(writerScope())!.state,
+          CloudKitWriterAuthorityState.stable,
+        );
+      });
+    },
+  );
+
+  test(
     'confirmed mutation passes one digest-only capability and releases its fence',
     () async {
       final operation = _writeOperation(scope);
@@ -1465,6 +1556,85 @@ void main() {
   );
 
   test(
+    'checkpoint generation change after prepare blocks and preserves handle',
+    () async {
+      final operation = _writeOperation(scope);
+      final protectedOperation = _protectedWriteOperation(operation);
+      final identity = _submissionIdentity(operation.operationId);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: protectedOperation.protectedPayloadReference,
+      );
+      bindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: _FakePreparedHandle(),
+        handleBindingSha256: _preparedHandleBindingSha256,
+      );
+      bindings.consumeResult = frb_api.CloudSyncOutboundConsumeResult(
+        outcomes: [
+          frb_api.CloudSyncOutboundSaveOutcome(
+            localOperationId: operation.operationId,
+            appleOperationUuid: identity.operationUuids[operation.operationId]!,
+            disposition: frb_api.CloudSyncOutboundSaveDisposition.succeeded,
+            serverRecordIdHash: operation.serverRecordIdHash,
+            etagHash: _hash('E'),
+          ),
+        ],
+      );
+      final prepared = await runV2(
+        () => transport.prepareSubmission(
+          scope,
+          submissionIdentity: identity,
+          operations: [protectedOperation],
+        ),
+      );
+
+      activeCheckpointGeneration = 2;
+      await expectLater(
+        runV2(
+          () => transport.consumePreparedSubmission(
+            scope,
+            preparedSubmission: prepared,
+            persistedIdentity: identity,
+            protectedOperations: [protectedOperation],
+            operations: [operation],
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloud_sync_outbound_stale_checkpoint_generation',
+          ),
+        ),
+      );
+      expect(bindings.consumeCalls, 0);
+      expect(
+        File(
+          '${writerDirectory.path}${Platform.pathSeparator}'
+          '.openbubbles-cloudkit-writer-mutation-v1.fence',
+        ).existsSync(),
+        isFalse,
+      );
+
+      activeCheckpointGeneration = 1;
+      final result = await runV2(
+        () => transport.consumePreparedSubmission(
+          scope,
+          preparedSubmission: prepared,
+          persistedIdentity: identity,
+          protectedOperations: [protectedOperation],
+          operations: [operation],
+        ),
+      );
+      expect(bindings.consumeCalls, 1);
+      expect(
+        result.outcomes.values.single.disposition,
+        CloudPushDisposition.confirmed,
+      );
+    },
+  );
+
+  test(
     'timeout poison during identity capture prevents late submission',
     () async {
       final captureEntered = Completer<void>();
@@ -1474,6 +1644,7 @@ void main() {
         storageDirectory: 'private-storage',
         protectedStoreIdentity: _storeIdentity,
         bindings: bindings,
+        readCheckpointGeneration: (_) async => activeCheckpointGeneration,
         writerMutationGuard: CloudKitWriterMutationGuard.forTest(
           store: writerStore,
           readActiveClient: () => activeClient,

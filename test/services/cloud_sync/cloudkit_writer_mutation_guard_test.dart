@@ -96,10 +96,12 @@ void main() {
         () => guard(owner: CloudKitWriterOwner.v2).runAuthorized<void>(
           owner: CloudKitWriterOwner.v2,
           expectedClient: activeClient,
+          expectedAccountFingerprint: _cloudScope.accountFingerprint,
           preparedHandleBindingSha256: _sha('a'),
           reconciliationBindingSha256:
               cloudKitWriterReconciliationBindingSha256(operation),
           requireAdmission: () {},
+          requireDurableAdmission: () async {},
           action: (capability) async {
             capability.consumeForNative();
             throw StateError('response_lost');
@@ -185,6 +187,39 @@ void main() {
       throwsA(_failure('cloudkit_writer_identity_changed_before_mutation')),
     );
     expect(actionCalls, 0);
+  });
+
+  test('v2 account mismatch blocks the action before arming a fence', () async {
+    provision(CloudKitWriterOwner.v2);
+    var actionCalls = 0;
+    binding.metadataForCall = (_) => const CloudSyncNativeAuthMetadata(
+      nativeSessionId: _digestB,
+      accountFingerprint: _fingerprintB,
+      protectedStoreIdentity: 'obcs2.store.$_digestB',
+    );
+
+    await expectLater(
+      runV2(
+        () => guard(owner: CloudKitWriterOwner.v2).runAuthorized<void>(
+          owner: CloudKitWriterOwner.v2,
+          expectedClient: activeClient,
+          expectedAccountFingerprint: _cloudScope.accountFingerprint,
+          preparedHandleBindingSha256: _sha('a'),
+          reconciliationBindingSha256: _sha('b'),
+          requireAdmission: () {},
+          requireDurableAdmission: () async {},
+          action: (_) async => actionCalls++,
+        ),
+      ),
+      throwsA(_failure('cloudkit_writer_account_scope_mismatch')),
+    );
+
+    expect(actionCalls, 0);
+    expect(_persistentFence(directory).existsSync(), isFalse);
+    expect(
+      authority(CloudKitWriterOwner.v2).read(_scope)!.state,
+      CloudKitWriterAuthorityState.stable,
+    );
   });
 
   test('client replacement after action becomes an unknown outcome', () async {

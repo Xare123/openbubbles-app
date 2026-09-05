@@ -2064,6 +2064,29 @@ pub async fn cloud_sync_consume_prepared_message_create(
     handle: &CloudSyncPreparedMessageCreateHandle,
     mutation_capability_token: String,
 ) -> CloudSyncOutboundConsumeResult {
+    cloud_sync_consume_prepared_message_create_with_hasher(
+        handle,
+        mutation_capability_token,
+        |directory| {
+            crate::cloud_sync_protector::semantic_identifier_hasher(directory).map_err(|_| ())
+        },
+    )
+    .await
+}
+
+// Keep capability, keystore, single-use, and post-submit checks on one path.
+// Tests inject only the platform keystore boundary, never a different consume
+// implementation. The exported entry point always uses protected storage.
+async fn cloud_sync_consume_prepared_message_create_with_hasher(
+    handle: &CloudSyncPreparedMessageCreateHandle,
+    mutation_capability_token: String,
+    load_hasher: impl FnOnce(
+        String,
+    ) -> Result<
+        crate::cloud_sync_semantic_identity::CloudSemanticIdentifierHasher,
+        (),
+    >,
+) -> CloudSyncOutboundConsumeResult {
     if !cloud_sync_writer_mutation_capability_is_valid(handle, &mutation_capability_token) {
         return CloudSyncOutboundConsumeResult {
             outcomes: vec![],
@@ -2073,9 +2096,7 @@ pub async fn cloud_sync_consume_prepared_message_create(
     // Load the per-install hash key before taking the single-use owner. A
     // protected-storage failure must leave the prepared handle unconsumed and
     // cannot be discovered only after a remote mutation has crossed the wire.
-    let hasher = match crate::cloud_sync_protector::semantic_identifier_hasher(
-        handle.storage_directory.clone(),
-    ) {
+    let hasher = match load_hasher(handle.storage_directory.clone()) {
         Ok(hasher) => hasher,
         Err(_) => {
             return CloudSyncOutboundConsumeResult {
@@ -2190,6 +2211,19 @@ mod cloud_sync_writer_mutation_capability_tests {
 
     const LOCAL_OPERATION_ID: &str = "obcs2.op.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const APPLE_OPERATION_UUID: &str = "AAAAAAAA-BBBB-4CCC-8DDD-000000000001";
+
+    async fn consume_test_handle(
+        handle: &CloudSyncPreparedMessageCreateHandle,
+        token: String,
+    ) -> CloudSyncOutboundConsumeResult {
+        cloud_sync_consume_prepared_message_create_with_hasher(handle, token, |_| {
+            crate::cloud_sync_semantic_identity::CloudSemanticIdentifierHasher::new(
+                b"capability-test-only-install-key",
+            )
+            .map_err(|_| ())
+        })
+        .await
+    }
 
     #[test]
     fn native_owner_revalidates_exact_container_around_submission() {
@@ -2361,7 +2395,11 @@ mod cloud_sync_writer_mutation_capability_tests {
             &handle_binding_sha256,
         );
 
-        let rejected = cloud_sync_consume_prepared_message_create(&handle, random_token).await;
+        let rejected =
+            cloud_sync_consume_prepared_message_create_with_hasher(&handle, random_token, |_| {
+                panic!("invalid capability must not reach protected storage")
+            })
+            .await;
 
         assert_eq!(
             rejected.failure,
@@ -2371,7 +2409,7 @@ mod cloud_sync_writer_mutation_capability_tests {
         assert_eq!(remote_call_count.load(Ordering::SeqCst), 0);
         assert!(handle.prepared.lock().await.is_some());
 
-        let accepted = cloud_sync_consume_prepared_message_create(&handle, valid_token).await;
+        let accepted = consume_test_handle(&handle, valid_token).await;
 
         assert_eq!(accepted.failure, None);
         assert_eq!(accepted.outcomes.len(), 1);
@@ -2411,7 +2449,7 @@ mod cloud_sync_writer_mutation_capability_tests {
             &handle_binding_sha256,
         );
 
-        let result = cloud_sync_consume_prepared_message_create(&handle, valid_token).await;
+        let result = consume_test_handle(&handle, valid_token).await;
 
         assert_eq!(remote_call_count.load(Ordering::SeqCst), 1);
         assert_eq!(
@@ -2443,8 +2481,7 @@ mod cloud_sync_writer_mutation_capability_tests {
             &binding_b,
         );
 
-        let rejected =
-            cloud_sync_consume_prepared_message_create(&handle_b, valid_token.clone()).await;
+        let rejected = consume_test_handle(&handle_b, valid_token.clone()).await;
 
         assert_eq!(
             rejected.failure,
@@ -2460,10 +2497,48 @@ mod cloud_sync_writer_mutation_capability_tests {
             None,
             &binding_a,
         );
-        let accepted = cloud_sync_consume_prepared_message_create(&handle_a, valid_token).await;
+        let accepted = consume_test_handle(&handle_a, valid_token).await;
         assert_eq!(accepted.failure, None);
         assert_eq!(accepted.outcomes.len(), 1);
         assert_eq!(remote_call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn protected_storage_failure_preserves_owner_without_remote_submission() {
+        let directory = tempfile::tempdir().unwrap();
+        let valid_token = "a".repeat(64);
+        let binding = "d".repeat(64);
+        write_valid_fence(
+            directory.path(),
+            &valid_token,
+            "account-fingerprint",
+            "protected-store",
+            &binding,
+        );
+        let remote_calls = Arc::new(AtomicUsize::new(0));
+        let handle = test_handle(directory.path(), remote_calls.clone(), None, &binding);
+        let rejected = cloud_sync_consume_prepared_message_create_with_hasher(
+            &handle,
+            valid_token.clone(),
+            |_| Err(()),
+        )
+        .await;
+        assert_eq!(
+            rejected.failure,
+            Some(CloudSyncOutboundSafeCode::ProtectedStorage)
+        );
+        assert!(rejected.outcomes.is_empty());
+        assert_eq!(remote_calls.load(Ordering::SeqCst), 0);
+        assert!(handle.prepared.lock().await.is_some());
+
+        let accepted = consume_test_handle(&handle, valid_token.clone()).await;
+        assert_eq!(accepted.failure, None);
+        let repeated = consume_test_handle(&handle, valid_token).await;
+        assert_eq!(
+            repeated.failure,
+            Some(CloudSyncOutboundSafeCode::AlreadyConsumed)
+        );
+        assert_eq!(remote_calls.load(Ordering::SeqCst), 1);
     }
 }
 
