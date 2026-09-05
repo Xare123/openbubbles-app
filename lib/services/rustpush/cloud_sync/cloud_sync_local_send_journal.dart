@@ -268,6 +268,8 @@ final class CloudSyncLocalSendJournal {
   final Box<CloudSyncLocalSendIntentEntity> _intents;
   final Box<Message> _messages;
 
+  bool isBoundToStore(Store store) => identical(store, _store);
+
   /// A retry may re-use an existing intent, but cannot invent local origin for
   /// a GUID that predated this journal. Only the fresh IDS GUID path may create.
   void saveSubmission({
@@ -410,6 +412,81 @@ final class CloudSyncLocalSendJournal {
         final message = intent.state == 1 ? _validatedMessage(intent) : null;
         return CloudSyncLocalSendAdmissionSource._(intent, message);
       });
+
+  /// A fresh-create scheduling exception needs both durable origin and a
+  /// currently stable V2 owner. Journaling itself intentionally needs less:
+  /// an earlier unknown write must not prevent recording a new IDS send.
+  void validateReadyForCreate(
+    Store transactionStore,
+    CloudSyncScope scope,
+    CloudSyncLocalSendAdmissionSource expected,
+  ) => _store.runInTransaction(TxMode.read, () {
+    _requireCreateAuthority(transactionStore, scope);
+    final intent = _readBoundIntent(expected.intentId);
+    if (intent.state != 1 || !expected._matches(intent)) {
+      throw StateError('cloud_sync_local_send_not_ready');
+    }
+    _validatedMessage(intent);
+  });
+
+  /// Resolve explicit adoption, never origin inferred from an outgoing row.
+  /// The immutable envelope binding survives restart and receipt transitions.
+  /// No match means the ordinary, fully-projected writer gate still applies.
+  CloudSyncLocalSendAdmissionSource? readAdoptedCreateSource(
+    Store transactionStore,
+    CloudOutboxOperation operation,
+  ) => _store.runInTransaction(TxMode.read, () {
+    if (!identical(transactionStore, _store)) {
+      throw StateError('cloud_sync_local_send_adoption_store_mismatch');
+    }
+    final query = _intents
+        .query(CloudSyncLocalSendIntentEntity_.admittedOperationId
+            .equals(operation.operationId))
+        .build();
+    final CloudSyncLocalSendIntentEntity? intent;
+    try {
+      intent = query.findUnique();
+    } finally {
+      query.close();
+    }
+    if (intent == null) return null;
+    _requireCreateAuthority(transactionStore, operation.scope);
+    final source = CloudSyncLocalSendAdmissionSource._(intent, null);
+    validateAdoptedOperation(transactionStore, source, operation);
+    if (operation.operationId !=
+            CloudOperationIdentity.forInitialCreate(
+              scope: operation.scope,
+              logicalEntityKeyHash: operation.logicalEntityKeyHash,
+              payloadVersion: operation.payloadVersion,
+            ) ||
+        operation.dependencyOperationIds.isNotEmpty) {
+      throw StateError('cloud_sync_local_send_adopted_operation_missing');
+    }
+    return source;
+  });
+
+  void _requireCreateAuthority(Store transactionStore, CloudSyncScope scope) {
+    if (!identical(transactionStore, _store)) {
+      throw StateError('cloud_sync_local_send_adoption_store_mismatch');
+    }
+    if (scope.accountFingerprint != _binding.scope.accountFingerprint ||
+        scope.container != _binding.scope.container ||
+        scope.database != _binding.scope.database ||
+        scope.zone != 'messageManateeZone' ||
+        scope.streamKind != CloudSyncStreamKind.messages ||
+        scope.schemaVersion != cloudSyncSchemaVersion ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semantic) {
+      throw StateError('cloud_sync_local_send_scope_invalid');
+    }
+    _verifyLocalOwnership();
+    final permit = _authority.issuePermit(
+      _binding.scope,
+      expectedOwner: CloudKitWriterOwner.v2,
+    );
+    if (permit.epoch != _binding.epoch) {
+      throw StateError('cloud_sync_local_send_owner_changed');
+    }
+  }
 
   /// Called synchronously inside this exact Store's outbox write transaction.
   /// Throwing rejects both adoption and the journal transition together.

@@ -37,7 +37,9 @@ class ObjectBoxCloudSyncStore
     required Store store,
     required this._protector,
     DateTime Function()? clock,
+    CloudSyncLocalSendJournal? localSendJournal,
   }) : _store = store,
+       _localSendJournal = localSendJournal,
        _clock = clock ?? DateTime.now,
        _checkpoints = store.box<CloudSyncCheckpointEntity>(),
        _inbox = store.box<CloudInboxChangeEntity>(),
@@ -48,7 +50,11 @@ class ObjectBoxCloudSyncStore
        _attachmentMaterializations = store
            .box<CloudAttachmentMaterializationEntity>(),
        _semanticReplays = store.box<CloudSemanticReplayEntity>(),
-       _runs = store.box<CloudSyncRunEntity>();
+       _runs = store.box<CloudSyncRunEntity>() {
+    if (localSendJournal != null && !localSendJournal.isBoundToStore(store)) {
+      throw StateError('cloud_sync_local_send_adoption_store_mismatch');
+    }
+  }
 
   factory ObjectBoxCloudSyncStore.fromDatabase({
     required CloudSyncProtector protector,
@@ -76,6 +82,9 @@ class ObjectBoxCloudSyncStore
   _recoverablePretransactionAttachmentConflictRetryCounts = <int>{1};
 
   final Store _store;
+  // Explicitly scoped by the production local-send session. Generic/legacy
+  // stores never infer local origin or relax their existing projection gate.
+  final CloudSyncLocalSendJournal? _localSendJournal;
   final CloudSyncProtector _protector;
   final DateTime Function() _clock;
   final Box<CloudSyncCheckpointEntity> _checkpoints;
@@ -1614,9 +1623,21 @@ class ObjectBoxCloudSyncStore
   /// blocks semantic reads, so admitting a write behind an unmet projection
   /// prerequisite can strand both lanes. This is an optimization, not a
   /// permission: new adoption rechecks inside its write transaction below.
-  void requireFreshOutboundProjectionReady(CloudSyncScope scope) =>
+  void requireFreshOutboundProjectionReady(
+    CloudSyncScope scope, {
+    CloudSyncLocalSendAdmissionSource? localSendSource,
+  }) =>
       _store.runInTransaction(TxMode.read, () {
-        _requireMessagesCloudAccountProjectionReadyLocked(scope);
+        final journal = _localSendJournal;
+        if (journal != null && localSendSource != null) {
+          journal.validateReadyForCreate(_store, scope, localSendSource);
+          _requireMessagesCloudAccountProjectionReadyLocked(
+            scope,
+            allowRetainedForFreshCreate: true,
+          );
+        } else {
+          _requireMessagesCloudAccountProjectionReadyLocked(scope);
+        }
       });
 
   /// Synchronous so the native auth revalidation and this write transaction
@@ -1632,12 +1653,14 @@ class ObjectBoxCloudSyncStore
     recordMapping,
     onAdopt: (operation) =>
         journal.adoptInOutboxTransaction(_store, source, operation),
+    localSendSource: source,
   );
 
   CloudOutboxOperation _admitProtectedOutboundCreate(
     CloudOutboxDraft draft,
     CloudRecordMapEntry recordMapping, {
     void Function(CloudOutboxOperation)? onAdopt,
+    CloudSyncLocalSendAdmissionSource? localSendSource,
   }) {
     if (draft.action != CloudOutboxAction.save ||
         draft.payloadVersion != cloudSyncOutboundPayloadVersion ||
@@ -1740,7 +1763,17 @@ class ObjectBoxCloudSyncStore
       // eligible remain unfinished. A local send stays in its durable ready
       // journal instead. Existing-envelope recovery above must remain possible
       // after later history debt; leasing/submission retain their own checks.
-      _requireMessagesCloudAccountProjectionReadyLocked(draft.scope);
+      final journal = _localSendJournal;
+      if (journal != null && localSendSource != null) {
+        journal.validateReadyForCreate(_store, draft.scope, localSendSource);
+        _requireMessagesCloudAccountProjectionReadyLocked(
+          draft.scope,
+          allowRetainedForFreshCreate: true,
+          freshRecordIdHash: draft.serverRecordIdHash,
+        );
+      } else {
+        _requireMessagesCloudAccountProjectionReadyLocked(draft.scope);
+      }
 
       final mapKey = _scopedDigest(
         draft.scope,
@@ -1935,7 +1968,9 @@ class ObjectBoxCloudSyncStore
             _hasUnmarkedPendingInboxLocked(scope, checkpoint)) {
           throw _storageFailure('checkpoint_pending_page_unresolved');
         }
-        _requireMessagesCloudAccountProjectionReadyLocked(scope);
+        if (_localSendJournal == null) {
+          _requireMessagesCloudAccountProjectionReadyLocked(scope);
+        }
       }
       _fenceStaleOutboxLocked(scope, checkpoint: checkpoint, nowMs: nowMs);
       _recoverExpiredOutboxLeasesLocked(scope, nowMs);
@@ -1990,6 +2025,10 @@ class ObjectBoxCloudSyncStore
                   CloudOutboxStatus.confirmed;
         });
         if (!dependenciesConfirmed) continue;
+
+        if (_localSendJournal != null) {
+          _requireOperationProjectionReadyLocked(scope, entity);
+        }
 
         entity
           ..state = _outboxStatusToInt(CloudOutboxStatus.leased)
@@ -2122,7 +2161,9 @@ class ObjectBoxCloudSyncStore
     return _store.runInTransaction(TxMode.write, () {
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
       _fenceUnsupportedOutboundVersionsLocked(scope, nowMs: nowMs);
-      _requireMessagesCloudAccountProjectionReadyLocked(scope);
+      if (_localSendJournal == null) {
+        _requireMessagesCloudAccountProjectionReadyLocked(scope);
+      }
       final entities = <String, CloudOutboxOperationEntity>{};
       for (final operationId in ids) {
         if (entities.containsKey(operationId)) {
@@ -2143,6 +2184,9 @@ class ObjectBoxCloudSyncStore
         if (entity.appleRequestUuid != null ||
             entity.appleOperationUuid != null) {
           throw _storageFailure('outbox_submission_identity_already_assigned');
+        }
+        if (_localSendJournal != null) {
+          _requireOperationProjectionReadyLocked(scope, entity);
         }
         entities[operationId] = entity;
       }
@@ -3321,7 +3365,32 @@ class ObjectBoxCloudSyncStore
     return true;
   }
 
-  void _requireMessagesCloudAccountProjectionReadyLocked(CloudSyncScope scope) {
+  void _requireOperationProjectionReadyLocked(
+    CloudSyncScope scope,
+    CloudOutboxOperationEntity entity,
+  ) {
+    final operation = _outboxFromEntity(scope, entity);
+    final journal = _localSendJournal;
+    final source = journal?.readAdoptedCreateSource(_store, operation);
+    if (journal == null || source == null) {
+      _requireMessagesCloudAccountProjectionReadyLocked(scope);
+      return;
+    }
+    // Validate mapping, original protected envelope and current generation in
+    // this same transaction, including after restart and after lease changes.
+    readAdoptedLocalSendOperation(scope, journal: journal, source: source);
+    _requireMessagesCloudAccountProjectionReadyLocked(
+      scope,
+      allowRetainedForFreshCreate: true,
+      freshRecordIdHash: operation.serverRecordIdHash,
+    );
+  }
+
+  void _requireMessagesCloudAccountProjectionReadyLocked(
+    CloudSyncScope scope, {
+    bool allowRetainedForFreshCreate = false,
+    String? freshRecordIdHash,
+  }) {
     if (!_isMessagesCloudSemanticScope(scope)) return;
 
     for (final zone in _messagesCloudSemanticZones) {
@@ -3339,11 +3408,22 @@ class ObjectBoxCloudSyncStore
         throw _storageFailure('messages_cloud_account_projection_incomplete');
       }
       _validateCheckpointScope(checkpoint, siblingScope);
-      // A read-only tombstone is durable evidence, not a completed local
-      // projection. Never weaken this gate or relabel it as applied. A future
-      // ownership-capable tombstone adapter must prove and commit the exact
-      // bounded deletion before this account may write to CloudKit.
-      if (_hasRetainedTombstoneLocked(siblingScope, checkpoint)) {
+      // Retention is not completed projection. Only a journal-proven initial
+      // create may be independent of unrelated history. It still cannot
+      // recreate a record with an observed deletion; all other writes keep
+      // the original full-projection requirement.
+      if ((!allowRetainedForFreshCreate &&
+              _hasRetainedTombstoneLocked(siblingScope, checkpoint)) ||
+          (allowRetainedForFreshCreate &&
+              freshRecordIdHash != null &&
+              siblingScope == scope &&
+              _findInboxForScopeLocked(scope).any(
+                (row) =>
+                    row.generation == checkpoint.generation &&
+                    row.isTombstone &&
+                    row.changeType == CloudChangeType.delete.name &&
+                    row.serverRecordIdHash == freshRecordIdHash,
+              ))) {
         throw _storageFailure(
           'messages_cloud_tombstone_projection_unavailable',
         );
@@ -3355,8 +3435,15 @@ class ObjectBoxCloudSyncStore
           checkpoint.nextEligibleAtMs != 0 ||
           checkpoint.pendingBatchId != null ||
           checkpoint.pendingFetchedTokenCiphertext != null ||
-          checkpoint.appliedSequence != checkpoint.fetchedSequence ||
-          !_isCompleteAppliedInboxJournalLocked(siblingScope, checkpoint)) {
+          checkpoint.appliedSequence < 0 ||
+          checkpoint.appliedSequence > checkpoint.fetchedSequence ||
+          (allowRetainedForFreshCreate
+              ? !_isCompleteTerminalInboxJournalLocked(siblingScope, checkpoint)
+              : (checkpoint.appliedSequence != checkpoint.fetchedSequence ||
+                  !_isCompleteAppliedInboxJournalLocked(
+                    siblingScope,
+                    checkpoint,
+                  )))) {
         throw _storageFailure('messages_cloud_account_projection_incomplete');
       }
     }
