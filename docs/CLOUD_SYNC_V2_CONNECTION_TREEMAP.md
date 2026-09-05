@@ -250,6 +250,31 @@ to pass these checks. Runner deletion succeeded and live inventories confirmed
 zero GCE instances and zero GitHub runners. This failed run produced no
 qualified APK; the scheduling patch still needs a new full qualification.
 
+### Qualified media-handoff build, 2026-09-05
+
+The replacement run `33962908484` qualified exact source
+`a5f84f30a12c2123759eb8b98e4ff2bffa1b1d3a`: 1,638 Dart tests, 285 app Rust
+tests, 203 rustpush tests and 30 protector tests passed, followed by APK
+compilation, native-library verification, GitHub-hosted signing and cleanup.
+Live GCE and GitHub inventories both confirmed zero remaining runners.
+
+The downloaded APK is 448,551,294 bytes, SHA-256
+`BA6D6F74433A6E9DE0A01015B80E830E4A6955A269208DA0DE0A06B3EFD96298`.
+Local signature verification passed v2/v3 with the established Canary signer
+`0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79`.
+The manifest is `com.bluebubbles.messaging.cloudkitcanary`, version code
+20002227 / 1.15.0, and the embedded Rust ARM64 library is ELF64/AArch64
+(machine 183). This is not an Alpha package.
+
+Installation and live concurrent-media verification were deferred: the Pixel
+was reachable wirelessly but at 7 percent, unplugged. No package update,
+force-stop, message deletion or new pull was performed during that check.
+The separately committed local-send adoption patch `f0cfa5eb2` passes 239
+focused local tests and clean analysis but is **not in this qualified APK**.
+It grants no automatic upload capability. Keep those two qualification states
+separate; the installed device remains on `6517f8661` until an explicit
+in-place update is verified.
+
 ### On-demand media handoff
 
 The previous media wait observed `_cloudSyncV2SemanticPullInFlight`, which
