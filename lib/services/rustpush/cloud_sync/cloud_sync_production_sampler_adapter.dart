@@ -8,6 +8,7 @@ import 'package:bluebubbles/src/rust/frb_generated.dart' as frb_generated;
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     as frb;
 
@@ -748,6 +749,18 @@ final class CloudSyncProductionOutboundCanaryAdapter {
                   transitions: [transition],
                   now: now,
                 ),
+            commitCreateReceipt:
+                ({
+                  required String leaseId,
+                  required CloudOutboxCreateReceipt receipt,
+                  required DateTime now,
+                }) => durableStore.commitOutboxCreateReceipt(
+                  scope,
+                  leaseId: leaseId,
+                  receipt: receipt,
+                  retainProtectedLeaseReference: true,
+                  now: now,
+                ),
             reconcile: (operation) => mutationGuard.reconcileUnknownOutcome(
               owner: CloudKitWriterOwner.v2,
               expectedClient: snapshot.cloudMessagesClient,
@@ -862,6 +875,46 @@ final class CloudSyncProductionOutboundCanaryAdapter {
     }
     return writerProvisioner.ensureV2Owned(expectedAuth: auth);
   }
+
+  @visibleForTesting
+  static CloudSyncOutboundCanaryUnknownRecoverySession
+  createUnknownOutcomeSessionForTest({
+    required CloudSyncScope scope,
+    required CloudOutboxOperation expectedOperation,
+    required Future<List<CloudOutboxOperation>> Function() readOutbox,
+    required Future<List<CloudOutboxOperation>> Function({
+      required DateTime now,
+      required String leaseId,
+      required Duration leaseDuration,
+    })
+    leaseUnknown,
+    required Future<void> Function({
+      required String leaseId,
+      required CloudOutboxTransition transition,
+      required DateTime now,
+    })
+    applyTransition,
+    required Future<void> Function({
+      required String leaseId,
+      required CloudOutboxCreateReceipt receipt,
+      required DateTime now,
+    })
+    commitCreateReceipt,
+    required Future<CloudUnknownOutcomeResolution> Function(
+      CloudOutboxOperation operation,
+    )
+    reconcile,
+    required Future<void> Function() quiesce,
+  }) => _ProductionUnknownOutcomeCanarySession(
+    scope: scope,
+    expectedOperation: expectedOperation,
+    readOutbox: readOutbox,
+    leaseUnknown: leaseUnknown,
+    applyTransition: applyTransition,
+    commitCreateReceipt: commitCreateReceipt,
+    reconcile: reconcile,
+    quiesce: quiesce,
+  );
 }
 
 typedef _CanaryOutboxRead = Future<List<CloudOutboxOperation>> Function();
@@ -882,6 +935,12 @@ typedef _CanaryApplyUnknownTransition =
     Future<void> Function({
       required String leaseId,
       required CloudOutboxTransition transition,
+      required DateTime now,
+    });
+typedef _CanaryCommitCreateReceipt =
+    Future<void> Function({
+      required String leaseId,
+      required CloudOutboxCreateReceipt receipt,
       required DateTime now,
     });
 typedef _CanaryReconcileUnknown =
@@ -963,11 +1022,13 @@ final class _ProductionUnknownOutcomeCanarySession
     required _CanaryOutboxRead readOutbox,
     required _CanaryLeaseUnknown leaseUnknown,
     required _CanaryApplyUnknownTransition applyTransition,
+    required _CanaryCommitCreateReceipt commitCreateReceipt,
     required _CanaryReconcileUnknown reconcile,
     required _CanaryQuiesce quiesce,
   }) : _readOutbox = readOutbox,
        _leaseUnknown = leaseUnknown,
        _applyTransition = applyTransition,
+       _commitCreateReceipt = commitCreateReceipt,
        _reconcile = reconcile,
        _quiesce = quiesce;
 
@@ -979,6 +1040,7 @@ final class _ProductionUnknownOutcomeCanarySession
   final _CanaryOutboxRead _readOutbox;
   final _CanaryLeaseUnknown _leaseUnknown;
   final _CanaryApplyUnknownTransition _applyTransition;
+  final _CanaryCommitCreateReceipt _commitCreateReceipt;
   final _CanaryReconcileUnknown _reconcile;
   final _CanaryQuiesce _quiesce;
 
@@ -1032,14 +1094,18 @@ final class _ProductionUnknownOutcomeCanarySession
       // protected receipt, and durable mutation fence for another readback.
     }
     final now = DateTime.now().toUtc();
-    final CloudOutboxTransition transition;
+    CloudOutboxTransition? transition;
+    CloudOutboxCreateReceipt? committedReceipt;
     final CloudSyncRunCounters counters;
     switch (resolution?.disposition) {
       case CloudUnknownOutcomeDisposition.committed:
-        transition = CloudOutboxTransition.confirmed(
-          operation.operationId,
-          retainProtectedLeaseReference: true,
-        );
+        committedReceipt = resolution?.createReceipt;
+        if (committedReceipt == null) {
+          transition = CloudOutboxTransition.unknownOutcome(
+            operation.operationId,
+            nextEligibleAt: now.add(_defaultRetryDelay),
+          );
+        }
         counters = const CloudSyncRunCounters(confirmed: 1);
         break;
       case CloudUnknownOutcomeDisposition.notApplied:
@@ -1062,7 +1128,34 @@ final class _ProductionUnknownOutcomeCanarySession
         counters = const CloudSyncRunCounters();
         break;
     }
-    await _applyTransition(leaseId: leaseId, transition: transition, now: now);
+    if (committedReceipt != null) {
+      try {
+        await _commitCreateReceipt(
+          leaseId: leaseId,
+          receipt: committedReceipt,
+          now: now,
+        );
+      } catch (error, stackTrace) {
+        await _applyTransition(
+          leaseId: leaseId,
+          transition: CloudOutboxTransition.unknownOutcome(
+            operation.operationId,
+            nextEligibleAt: now.add(_defaultRetryDelay),
+          ),
+          now: now,
+        );
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+    } else {
+      await _applyTransition(
+        leaseId: leaseId,
+        transition: transition!,
+        now: now,
+      );
+      if (resolution?.disposition == CloudUnknownOutcomeDisposition.committed) {
+        throw StateError('cloud_sync_unknown_recovery_receipt_missing');
+      }
+    }
     return CloudSyncRunResult(
       status: CloudSyncRunStatus.completed,
       counters: counters,

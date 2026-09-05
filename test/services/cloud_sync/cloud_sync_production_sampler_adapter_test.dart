@@ -4,6 +4,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_seman
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
@@ -11,6 +12,8 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     as frb;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:universal_io/io.dart';
+
+import 'cloud_sync_test_helpers.dart';
 
 void main() {
   late Directory temporaryDirectory;
@@ -28,6 +31,172 @@ void main() {
 
   tearDown(() {
     temporaryDirectory.deleteSync(recursive: true);
+  });
+
+  group('production unknown-outcome recovery', () {
+    late InMemoryCloudSyncStore store;
+    late CloudSyncScope scope;
+    late CloudOutboxOperation expectedOperation;
+
+    setUp(() async {
+      store = InMemoryCloudSyncStore();
+      scope = testScope(persistenceLane: CloudSyncPersistenceLane.semantic);
+      expectedOperation = await _prepareUnknownCreate(store, scope);
+    });
+
+    test(
+      'commits the exact create receipt instead of a generic confirmation',
+      () async {
+        var genericTransitionCalls = 0;
+        var receiptCommitCalls = 0;
+        final receipt = _receiptFor(expectedOperation);
+        final session =
+            CloudSyncProductionOutboundCanaryAdapter.createUnknownOutcomeSessionForTest(
+              scope: scope,
+              expectedOperation: expectedOperation,
+              readOutbox: () => store.outboxEntries(scope),
+              leaseUnknown:
+                  ({required now, required leaseId, required leaseDuration}) =>
+                      store.leaseUnknownOutcomes(
+                        scope,
+                        now: now,
+                        limit: 1,
+                        leaseId: leaseId,
+                        leaseDuration: leaseDuration,
+                      ),
+              applyTransition:
+                  ({required leaseId, required transition, required now}) {
+                    genericTransitionCalls++;
+                    return store.applyOutboxTransitions(
+                      scope,
+                      leaseId: leaseId,
+                      transitions: [transition],
+                      now: now,
+                    );
+                  },
+              commitCreateReceipt:
+                  ({required leaseId, required receipt, required now}) {
+                    receiptCommitCalls++;
+                    return store.commitOutboxCreateReceipt(
+                      scope,
+                      leaseId: leaseId,
+                      receipt: receipt,
+                      retainProtectedLeaseReference: true,
+                      now: now,
+                    );
+                  },
+              reconcile: (operation) async {
+                expect(operation.status, CloudOutboxStatus.unknownOutcome);
+                expect(operation.leaseId, isNotNull);
+                return CloudUnknownOutcomeResolution.committed(
+                  createReceipt: receipt,
+                );
+              },
+              quiesce: () async {},
+            );
+
+        final result = await session.reconcileUnknownOutcome(
+          operation: expectedOperation,
+        );
+
+        expect(result.counters.confirmed, 1);
+        expect(genericTransitionCalls, 0);
+        expect(receiptCommitCalls, 1);
+        final confirmed = (await store.outboxEntries(scope)).single;
+        expect(confirmed.status, CloudOutboxStatus.confirmed);
+        expect(confirmed.leaseId, isNull);
+        expect(
+          confirmed.protectedLeaseReference,
+          expectedOperation.protectedLeaseReference,
+        );
+        final mapping = await store.readRecordMap(
+          scope,
+          logicalEntityKeyHash: expectedOperation.logicalEntityKeyHash,
+          generation: expectedOperation.checkpointGeneration,
+        );
+        expect(mapping?.etagHash, _receiptEtagHash);
+      },
+    );
+
+    test(
+      'receipt mismatch stays unknown with backoff and surfaces the error',
+      () async {
+        var genericTransitionCalls = 0;
+        final badReceipt = CloudOutboxCreateReceipt(
+          operationId: expectedOperation.operationId,
+          logicalEntityKeyHash: expectedOperation.logicalEntityKeyHash,
+          serverRecordIdHash: _digest('T'),
+          etagHash: _receiptEtagHash,
+        );
+        final session =
+            CloudSyncProductionOutboundCanaryAdapter.createUnknownOutcomeSessionForTest(
+              scope: scope,
+              expectedOperation: expectedOperation,
+              readOutbox: () => store.outboxEntries(scope),
+              leaseUnknown:
+                  ({required now, required leaseId, required leaseDuration}) =>
+                      store.leaseUnknownOutcomes(
+                        scope,
+                        now: now,
+                        limit: 1,
+                        leaseId: leaseId,
+                        leaseDuration: leaseDuration,
+                      ),
+              applyTransition:
+                  ({required leaseId, required transition, required now}) {
+                    genericTransitionCalls++;
+                    return store.applyOutboxTransitions(
+                      scope,
+                      leaseId: leaseId,
+                      transitions: [transition],
+                      now: now,
+                    );
+                  },
+              commitCreateReceipt:
+                  ({required leaseId, required receipt, required now}) =>
+                      store.commitOutboxCreateReceipt(
+                        scope,
+                        leaseId: leaseId,
+                        receipt: receipt,
+                        retainProtectedLeaseReference: true,
+                        now: now,
+                      ),
+              reconcile: (_) async => CloudUnknownOutcomeResolution.committed(
+                createReceipt: badReceipt,
+              ),
+              quiesce: () async {},
+            );
+
+        await expectLater(
+          session.reconcileUnknownOutcome(operation: expectedOperation),
+          throwsA(
+            isA<CloudSyncFailure>().having(
+              (failure) => failure.safeCode,
+              'safeCode',
+            'server_mapping_changed',
+            ),
+          ),
+        );
+
+        expect(genericTransitionCalls, 1);
+        final retained = (await store.outboxEntries(scope)).single;
+        expect(retained.status, CloudOutboxStatus.unknownOutcome);
+        expect(retained.leaseId, isNull);
+        expect(retained.nextEligibleAt, isNotNull);
+        expect(retained.attemptCount, expectedOperation.attemptCount + 1);
+        expect(retained.appleRequestUuid, expectedOperation.appleRequestUuid);
+        expect(
+          retained.appleOperationUuid,
+          expectedOperation.appleOperationUuid,
+        );
+        final mapping = await store.readRecordMap(
+          scope,
+          logicalEntityKeyHash: expectedOperation.logicalEntityKeyHash,
+          generation: expectedOperation.checkpointGeneration,
+        );
+        expect(mapping?.etagHash, isNull);
+      },
+    );
   });
 
   test(
@@ -899,3 +1068,66 @@ CloudSyncNativeAuthSnapshot _authSnapshot(Object client) =>
 const _nativeSession = 'NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN';
 const _accountFingerprint = 'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF';
 String _digest(String character) => List<String>.filled(43, character).join();
+
+const _submissionLeaseId = 'unknown-recovery-submission';
+const _receiptEtagHash = 'EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE';
+
+Future<CloudOutboxOperation> _prepareUnknownCreate(
+  InMemoryCloudSyncStore store,
+  CloudSyncScope scope,
+) async {
+  final operation = testOutboxOperation(scope, 18);
+  await store.enqueueOutbox(operation);
+  await store.leaseEligibleOutbox(
+    scope,
+    now: testEpoch,
+    limit: 1,
+    leaseId: _submissionLeaseId,
+    leaseDuration: const Duration(minutes: 5),
+    allowedActions: const {CloudOutboxAction.save},
+  );
+  await store.attachOutboxRecordMapping(
+    scope,
+    leaseId: _submissionLeaseId,
+    operationId: operation.operationId,
+    serverRecordIdHash: _digest('S'),
+    now: testEpoch,
+  );
+  await store.markOutboxSubmissionStarted(
+    scope,
+    leaseId: _submissionLeaseId,
+    submissionIdentity: testSubmissionIdentity([operation.operationId]),
+    now: testEpoch,
+  );
+  await store.upsertRecordMap(
+    CloudRecordMapEntry(
+      scope: scope,
+      logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      serverRecordIdHash: _digest('S'),
+      encryptedServerRecordId: testProtectedReference('R'),
+      etagHash: null,
+      updatedAt: testEpoch,
+    ),
+    generation: operation.checkpointGeneration,
+  );
+  await store.applyOutboxTransitions(
+    scope,
+    leaseId: _submissionLeaseId,
+    transitions: [
+      CloudOutboxTransition.unknownOutcome(
+        operation.operationId,
+        nextEligibleAt: testEpoch,
+      ),
+    ],
+    now: testEpoch,
+  );
+  return (await store.outboxEntries(scope)).single;
+}
+
+CloudOutboxCreateReceipt _receiptFor(CloudOutboxOperation operation) =>
+    CloudOutboxCreateReceipt(
+      operationId: operation.operationId,
+      logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      serverRecordIdHash: _digest('S'),
+      etagHash: _receiptEtagHash,
+    );

@@ -32,6 +32,7 @@ or account-reset code.
 | Legacy CloudKit | A failed page does not advance its token or issue destructive duplicate cleanup. |
 | V2 semantic pull | Checkpoints represent a contiguous durable terminal prefix; retained-unprojected rows remain replayable. |
 | V2 outbound create | Confirmation requires an exact server-record and ETag receipt committed atomically with the existing current-generation mapping; missing proof remains outcome-unknown and is never replayed blindly. |
+| V2 interrupted-create recovery | Exact readback confirmation must use the same atomic create-receipt commit as the ordinary write path. Generic confirmation is forbidden; receipt mismatch keeps the operation unknown and retry-fenced. |
 | Account transition | Old-account work is quiescent before state is replaced or disposed. |
 | Canary | Semantic pull performs no remote content write, delete, subscription, or PCS creation. |
 

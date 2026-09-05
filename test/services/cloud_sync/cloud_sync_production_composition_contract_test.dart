@@ -752,6 +752,8 @@ void main() {
     final unknownLane = session.substring(unknownLaneStart, transportStart);
     expect(unknownLane, contains('_ProductionUnknownOutcomeCanarySession'));
     expect(unknownLane, contains('mutationGuard.reconcileUnknownOutcome('));
+    expect(unknownLane, contains('durableStore.commitOutboxCreateReceipt('));
+    expect(unknownLane, contains('retainProtectedLeaseReference: true'));
     for (final forbidden in const [
       'CloudSyncEngine',
       'CloudSyncOutboundAdmissionCoordinator',
@@ -765,6 +767,25 @@ void main() {
       expect(unknownLane, isNot(contains(forbidden)), reason: forbidden);
     }
     expect(session, isNot(contains('reconcileUnknownOutcomesOnly')));
+
+    final recoverySessionStart = adapter.indexOf(
+      'final class _ProductionUnknownOutcomeCanarySession',
+    );
+    final recoverySessionEnd = adapter.indexOf(
+      'final class _ProductionConfirmedReplayCanarySession',
+      recoverySessionStart,
+    );
+    expect(recoverySessionStart, greaterThanOrEqualTo(0));
+    expect(recoverySessionEnd, greaterThan(recoverySessionStart));
+    final recoverySession = adapter.substring(
+      recoverySessionStart,
+      recoverySessionEnd,
+    );
+    expect(recoverySession, contains('await _commitCreateReceipt('));
+    expect(
+      recoverySession,
+      isNot(contains('CloudOutboxTransition.confirmed(')),
+    );
 
     final manual = File(
       'lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart',
