@@ -604,6 +604,21 @@ different remote-chat remap, tampered binding, older-envelope recovery, a newer
 valid ETag, and database upgrade/reopen. Targeted analysis is clean. This patch
 is not in GCE run `33981816999` and does not enable an automatic consumer.
 
+#### Offline document-source check
+
+The preserved September 5 Canary database contains 46 V2 PDFs and four Word
+documents with positive sizes, materializable capability and an exact resolved
+source chain. Another eight PDFs use the legacy CloudKit lane. This rules out
+a universal PDF/Word provenance or file-type ban; it does not establish a live
+download. There are also 114 other-type V2 rows with missing/zero size and the
+explicit unsupported-media-credentials capability. Their protected source
+chains resolve, but current policy deliberately cannot download those bodies.
+Do not silently route those rows through IDS/legacy or infer that Apple deleted
+them. The tooling-only aggregate probe emits no filenames, identifiers, bodies
+or credentials, makes zero remote calls, deletes its disposable copy and checks
+the source database hash remains unchanged. An initial nullable-filename compile
+error in the probe was corrected before this passing inspection.
+
 ### Installed Canary and VM observation follow-up
 
 The signed `6517f8661` APK passed application-ID, native-library, signing and
