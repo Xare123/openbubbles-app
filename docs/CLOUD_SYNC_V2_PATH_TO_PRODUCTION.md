@@ -4,10 +4,20 @@ title: OpenBubbles Cloud Sync V2 Path to Production
 description: Dependency-ordered sequence from the current verified state to a production rollout, separating code work from work that needs live Apple access, hardware, or a licensing decision.
 resource: openbubbles-app
 tags: [cloudkit, sync, rollout, validation, android, windows, arm64, x64]
-timestamp: 2026-08-22
+timestamp: 2026-09-05
 ---
 
 # Cloud Sync V2 path to production
+
+## Current status supersedes the historical roadmap
+
+The August 22 measurements and "no live CloudKit fetch" statement below are
+historical, not current readiness. Live V2 read/projection and still-photo
+presentation have since been exercised. Use the
+[connection treemap's latest integration checkpoint](CLOUD_SYNC_V2_CONNECTION_TREEMAP.md#latest-integration-checkpoint-2026-09-05)
+and [critical-path review](CLOUD_SYNC_V2_CONNECTION_TREEMAP.md#critical-path-review-2026-09-05)
+for installed source, remaining write gates and the next experiment. Retain the
+older sections as provenance; do not restart already-proven read work from them.
 
 ## Purpose
 

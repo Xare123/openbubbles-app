@@ -175,8 +175,93 @@ continue under a new account.
   counts, reference/key lengths and equality booleans. Size/integrity acceptance
   is unchanged. New diagnostic tests and a cold Chat transport test are added;
   execution of the new compiled source remains pending. Existing prebuilt test
-  passes do not qualify these changes. Astra remains available for focused CI
-  follow-up rather than spawning a replacement or accumulating idle workers.
+  passes do not qualify these changes. The reusable Astra worker was retained
+  for follow-up, but the supported agent control now returns `not_found` for
+  its ID. Do not claim that it is active or that shutdown was independently
+  verified; no replacement was spawned for this focused parent review.
+- Qualification of exact `b6bdb70498f75dc28cc60f0252ce451822c39e4c`
+  (rustpush `07b1afb`), full GCE run `33990146275` on `t2d-standard-60`,
+  failed before tests/APK packaging during bridge generation. Rust reported
+  E0616: the new Chat module accessed private `PCSZoneConfig.identifier`.
+  This is a parent-introduced source compile error, not an Apple/phone failure.
+  The pending correction uses a crate-private exact-zone predicate, keeps key
+  fields private, and gives cross-module tests a test-only fixture constructor.
+  It also checks a same-name zone with a different owner. No acceptance check
+  is removed. Run lifetime was 10 minutes 13 seconds; cleanup succeeded and
+  live project/repository readback returned zero instances and zero runners.
+  No APK was produced or installed. The correction still needs compiled tests.
+  The local protector-harness attempt did not run tests: the transitive
+  OpenSSL build failed under MSVC ARM64. Do not repeat that cold local build
+  as a supposedly lightweight check. Resolver-only Cargo.lock drift was
+  reversed and content verified unchanged. Its newly created 345,739,064-byte
+  target directory is recorded in the external cleanup manifest; execution
+  policy rejected removal, so no bypass or deletion occurred.
+
+### Critical-path review, 2026-09-05
+
+**Decision: keep the existing tests and full release qualification; change the
+order of product proof.** The two most recent successful full qualifications
+took 24m05s and 24m16s, while APK compilation itself took 422s and 424s. More
+compute does not connect an unwired coordinator. Avoid another full APK cycle
+unless the source changes a named device acceptance result.
+
+| Previous next step | Next evidence-driven step | Boundary retained |
+| --- | --- | --- |
+| Finish Chat creation before any live Message write | First preflight an already-restored direct chat with a previously authorized recipient | No participant-only adoption or invented binding |
+| Build disconnected primitives and infer progress from test counts | One fresh message: ordinary delivery, exact CloudKit create/readback, semantic presentation, restart and duplicate check | IDS success alone is not CloudKit proof |
+| Full APK iteration for every source check | Existing `rustpush-only` or `bindings-only` modes where applicable, then full qualification for an integrated candidate | No reduced release suite; native-only result cannot qualify parent Rust or Android |
+| Reopen broad audits and parallel features | Parent owns one write milestone; delegate bounded independent defects only | Video/GIF work stays in the next APK; no Alpha changes |
+
+The installed `ad204c0d7` already has the manual Message writer. One read-only
+preflight must establish that an authorized recipient really has a restored
+binding; the 133/133 offline result does not establish that any particular
+recipient is included. Never replay the user-unsent test. If no authorized
+restored conversation is available, the new-chat work is genuinely on the
+critical path and resumes; do not spend repeated cycles searching or ask for
+unnecessary login/reset/builds.
+
+New-chat support is **deferred behind the first write proof, not removed from
+production scope**. Its new native foundation remains preserved. Inspection
+also found that `CloudSyncLocalSendIdentity.capture` requires style 45, a
+canonical direct GUID and a matching nonempty identifier; its source digest
+includes that identity. A provisional first send cannot enter the current
+journal. The diagram below is therefore a target design, not current behavior.
+Origin capture, canonical adoption and recovery must be designed together;
+relaxing the selector alone cannot fix this.
+
+After the initial write proof, qualify new-chat/first-message adoption and then
+enable automatic foreground/background consumption in Canary with offline,
+process-restart, account-change and duplicate/replay coverage. Keep production
+off until the supported feature set, edits/undo/reaction and attachment-write
+behavior, two-client convergence, rollback and soak criteria are explicitly
+met or accurately declared unsupported. A text-only proof is a milestone, not
+"full CloudKit". Broader refactoring, new CI infrastructure and feature work
+outside this critical path do not advance the current gate.
+
+### New-chat write dependency, next integration slice
+
+```text
+Ordinary IDS send succeeds and its local origin is durably recorded
+  -> No restored Chat binding? Defer the Message; do not weaken its check
+  -> Capture exact local Chat row ID + provisional GUID + account/store epoch
+  -> Stage one protected Chat payload and original random server record name
+  -> Atomically adopt that same envelope into the Chat-zone outbox
+  -> Prepare and consume one create-only request
+       uncertain outcome -> lookup the ORIGINAL name; never allocate a retry name
+  -> Validate exact save receipt and read back the same Chat
+  -> Project into the captured local row, with canonical GUID/aliases atomically
+       reject a competing canonical/alias owner or a changed participant/source
+  -> Existing strict restored-Chat check now admits the dependent Message
+```
+
+Native preparation, lookup and payload protection above are the current
+qualification batch. The bridge and durable coordinator are not wired yet.
+The local-origin proof must survive restart; participant-only lookup is not a
+substitute for it. Do not repurpose Message dependency JSON or add unreviewed
+cross-zone outbox dependency IDs. Chat readback must enter the normal semantic
+transaction so snapshot, aliases, record map, inbox outcome and checkpoint
+remain coherent. Tests must prove one Chat row and preserved Message relations
+before and after restart, not merely a successful CloudKit HTTP response.
 
 ## Live investigation board: personal integration review, 2026-09-04
 
