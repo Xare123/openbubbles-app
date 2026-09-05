@@ -44,8 +44,30 @@ continue under a new account.
 
 ## Latest integration checkpoint, 2026-09-05
 
-- Installed Canary remains `317adb489`: the user confirms working photos and
-  completed sign-in. At 19:11 UTC on September 5, a fresh ordinary test send
+- Installed Canary is now `ad204c0d7`, updated in place over USB on September 5.
+  Full run `33986853124` passed 1,771 Dart tests, 287 app Rust, 209 rustpush,
+  30 protector tests, 14 semantic outbox contracts and three evidence-output
+  cases, bridge drift, packaging and signing. Compilation took 422 seconds;
+  total run time was 24 minutes 5 seconds. GCE instances and GitHub runner
+  registrations are empty after cleanup. Local package, expected signer and
+  four required ARM64 ELF libraries were verified before installation. The
+  post-install keystore, keychain, CloudKit state and install-secret hashes
+  match; Alpha's package/version/update timestamp is unchanged. The hardware
+  state file is not byte-identical: unchanged startup code rewrites APS state
+  and re-encrypts the restored IDS identity. A raw-file hash is not a semantic
+  hardware-identity comparison; no plaintext baseline was captured.
+- A fresh ordinary send on `ad204c0d7` at 19:54 UTC completed and displayed
+  Delivered. The subsequent manual CloudKit candidate was not selected for
+  confirmation. A read-only `Database.chats.get` through the installed VM
+  confirmed that this new conversation has a provisional UUID, null
+  `chatIdentifier`, null style and no CloudKit record. These fields explicitly
+  fail the candidate's canonical direct-chat check. No CloudKit create was
+  confirmed or admitted by this attempt. This is live proof of the new-chat
+  integration gap, not a new Apple authentication or upload-protocol failure.
+  The standalone VM has no expression compiler; `vm_read_canary_chat.dart`
+  uses the compiled read-only Box getter and emits only structural metadata.
+- Previously on `317adb489`, the user confirmed working photos and completed
+  sign-in. At 19:11 UTC on September 5, a fresh ordinary test send
   completed and the log recorded delivered status. The user then unsent that
   test; it is excluded from any CloudKit create experiment. Alpha and the source
   inspection databases are untouched. The first attempt at 19:08 UTC failed
@@ -55,7 +77,8 @@ continue under a new account.
   optional to queue admission, defers scroll-controller disposal until active
   scrolls settle, and rejects sends from closed routes. Ten controller tests
   and a combined 66-test controller/transport-gate/runtime/candidate run pass.
-  The new code still needs full GCE and Pixel qualification.
+  The new code has now passed full GCE and a fresh ordinary Pixel send; the
+  specific scrolling-under-disposal device reproduction remains separate.
 - Reviewed gallery/document, recipient-validation, FaceTime and Find My fixes
   passed full GCE run `33981816999` at exact `d5413ec9c`: complete Dart suite,
   287 app Rust, 209 rustpush and 30 protector tests, bridge-drift checks, Android
@@ -95,10 +118,65 @@ continue under a new account.
   before construction. Eleven focused tests pass with default flags and again
   with the manual-writer flags enabled. VM cleanup succeeded; project instances
   and repository runner registrations are empty. This is not a qualified APK.
-- Next device gate: qualify the corrected build, then one fresh exact CloudKit
-  create/readback and interruption recovery using the designated test account.
-  Ordinary IDS sending now has fresh device evidence. No automatic upload is
-  enabled by these local results.
+- Next write gate: complete new-chat support or qualify a fresh authorized
+  send in an already-restored direct chat, then exact CloudKit create/readback
+  and interruption recovery. Ordinary IDS sending has fresh current-build
+  device evidence. Automatic upload remains off.
+- Build `33986853124` is frozen at installed `ad204c0d7`. Video/GIF profile
+  findings belong only to the next implementation batch; the installed APK
+  has not been rebuilt or replaced to include the following work.
+- Fresh profile-media attempts on installed `317adb489` at 12:32 PDT produced
+  `cloud_attachment_size_mismatch`, followed by the native Ford-key-binding
+  rejection and `cloud_attachment_integrity_mismatch`. Two subsequent transfers
+  succeeded. These errors precede rendering; the content-free trace cannot
+  identify which failure belongs to the video versus GIF. No fresh missing-asset
+  evidence was reported. The expected-size check in
+  `cloud_sync_attachment_materialization.rs::verify_or_place_temp`, `lqa`
+  selection in `CloudMessagesClient` and Ford binding check in
+  `mmcs.rs::validate_preauthorized_download_response` are unchanged in `ad204c0d7`.
+  The media review remains open for a narrow next-iteration fix; neither removing
+  integrity checks nor assuming every size difference is a valid rendition is
+  justified by this evidence. A static JPEG gallery preview is a separate issue
+  from failure to retrieve original GIF bytes.
+  The follow-up review found that the positive Ford fixture derives its
+  `keys_container` using the same `ford_key_signature` as the validator; it
+  cannot independently prove Apple's binding contract. Before changing
+  acceptance, compare the authenticated asset reference with the authorization
+  reference and capture only expected/asset/actual lengths, completion status
+  and equality booleans. Never log keys, hashes, URLs, identifiers or media.
+  Parent review accepts this evidence gap, not a proposed size/integrity bypass.
+- The first-message source review confirms a separate new-chat dependency gap.
+  `RustPushBackend.createChat` saves a provisional UUID Chat without identifier
+  or style; `_applyChatUpsert` requires the canonical identity and does not
+  adopt that row by participant matching. Calling legacy `Chat.toCloud` first
+  does not repair this: it retains the UUID and can create an alias conflict.
+  The installed protected outbound boundary supports Message records only.
+  Parent source review accepted these findings; a Chat create plus exact
+  same-row adoption is new work, not a relaxed Message admission check.
+- Next-iteration source now contains the first native Chat-create boundary in
+  `rustpush/src/imessage/cloud_messages/chat_create.rs`: a validated direct
+  iMessage Chat, one persisted random record name and operation UUID, only
+  `chatManateeZone`, exact warmed writer-container/PCS binding, create-only
+  semantics and the existing single-use/no-replay submission owner. Exact-name
+  lookup requires an etag-bearing receipt and fallible typed decoding; only
+  explicit server NotFound proves absence. No legacy save/update method is
+  called. `rust/src/cloud_sync_outbound_chat.rs` stages the original Chat and
+  record name together under a separate `outboundChat` protection purpose and
+  Chat zone. Existing Message envelope version and context are unchanged.
+  New tests cover identity/correlation rejection, cold prepare/lookup making
+  zero transport calls, PCS encode/decode identity, envelope round-trip and
+  tamper/domain separation. Compilation/execution is pending qualification.
+  This is **not yet an enabled upload path**: the bridge, durable Chat admission,
+  same-row canonical adoption and dependent first-message capture remain to be
+  implemented before any device/Apple create. Keep strict Message dependency
+  checks and automatic upload off.
+- Astra's next-iteration media diagnostics were reviewed against the actual
+  ordered asset/download tuples. They record only canonical/asset/actual byte
+  counts, reference/key lengths and equality booleans. Size/integrity acceptance
+  is unchanged. New diagnostic tests and a cold Chat transport test are added;
+  execution of the new compiled source remains pending. Existing prebuilt test
+  passes do not qualify these changes. Astra remains available for focused CI
+  follow-up rather than spawning a replacement or accumulating idle workers.
 
 ## Live investigation board: personal integration review, 2026-09-04
 

@@ -25,3 +25,11 @@ message CloudSyncOutboundMessageV1 {
   optional bytes msg_proto_4 = 17;
   string server_record_name = 18;
 }
+
+// Separate type AND protected-store purpose/zone from message envelopes. The
+// original randomly allocated chat record name is immutable across retries.
+message CloudSyncOutboundChatV1 {
+  uint32 schema_version = 1;
+  string server_record_name = 2;
+  bytes chat_plist = 3;
+}

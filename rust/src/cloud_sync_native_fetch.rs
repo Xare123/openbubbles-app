@@ -294,6 +294,7 @@ enum CloudNativeProtectionPurpose {
     CheckpointToken,
     ServerRecordId,
     OutboundMessage,
+    OutboundChat,
     RawRecord,
 }
 
@@ -303,6 +304,7 @@ impl CloudNativeProtectionPurpose {
             Self::CheckpointToken => "checkpointToken",
             Self::ServerRecordId => "serverRecordId",
             Self::OutboundMessage => "outboundMessage",
+            Self::OutboundChat => "outboundChat",
             Self::RawRecord => "rawRecord",
         }
     }
@@ -3463,6 +3465,36 @@ pub(crate) fn cloud_sync_stage_protected_outbound_envelope(
     account_fingerprint: String,
     outbound_envelope: String,
 ) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
+    stage_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        outbound_envelope,
+        CloudNativeStream::Messages,
+        CloudNativeProtectionPurpose::OutboundMessage,
+    )
+}
+
+pub(crate) fn cloud_sync_stage_protected_outbound_chat_envelope(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    outbound_envelope: String,
+) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
+    stage_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        outbound_envelope,
+        CloudNativeStream::Chats,
+        CloudNativeProtectionPurpose::OutboundChat,
+    )
+}
+
+fn stage_protected_outbound_value(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    outbound_envelope: String,
+    stream: CloudNativeStream,
+    purpose: CloudNativeProtectionPurpose,
+) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
     if outbound_envelope.is_empty() {
         return Err(CloudNativeFetchFailure::new(
             CloudNativeFailureCategory::MalformedRecord,
@@ -3470,13 +3502,13 @@ pub(crate) fn cloud_sync_stage_protected_outbound_envelope(
             None,
         ));
     }
-    let scope = CloudNativeProtectionScope::new(account_fingerprint, CloudNativeStream::Messages)?;
+    let scope = CloudNativeProtectionScope::new(account_fingerprint, stream)?;
     let store = PlatformCloudNativeProtectedStore::new(storage_directory);
     let batch = store
         .protect_batch(
             &scope,
             &[CloudNativePlaintext {
-                purpose: CloudNativeProtectionPurpose::OutboundMessage,
+                purpose,
                 value: outbound_envelope,
             }],
         )
@@ -3504,7 +3536,22 @@ pub(crate) fn cloud_sync_open_protected_outbound_message(
         storage_directory,
         account_fingerprint,
         protected_reference,
+        CloudNativeStream::Messages,
         CloudNativeProtectionPurpose::OutboundMessage,
+    )
+}
+
+pub(crate) fn cloud_sync_open_protected_outbound_chat(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+) -> Result<String, CloudNativeFetchFailure> {
+    cloud_sync_open_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        protected_reference,
+        CloudNativeStream::Chats,
+        CloudNativeProtectionPurpose::OutboundChat,
     )
 }
 
@@ -3512,9 +3559,10 @@ fn cloud_sync_open_protected_outbound_value(
     storage_directory: PathBuf,
     account_fingerprint: String,
     protected_reference: &str,
+    stream: CloudNativeStream,
     purpose: CloudNativeProtectionPurpose,
 ) -> Result<String, CloudNativeFetchFailure> {
-    let scope = CloudNativeProtectionScope::new(account_fingerprint, CloudNativeStream::Messages)?;
+    let scope = CloudNativeProtectionScope::new(account_fingerprint, stream)?;
     let reference =
         CloudCanonicalProtectedReference::new(protected_reference.to_owned()).map_err(|_| {
             CloudNativeFetchFailure::new(

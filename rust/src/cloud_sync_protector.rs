@@ -129,6 +129,7 @@ impl CloudSyncProtectionContext {
                 "checkpointToken"
                     | "serverRecordId"
                     | "outboundMessage"
+                    | "outboundChat"
                     | "systemFields"
                     | "payloadReference"
                     | "rawRecord"
@@ -844,6 +845,17 @@ mod tests {
         )
         .expect("second context");
         assert!(decoded != different_scope);
+    }
+
+    #[test]
+    fn outbound_chat_purpose_does_not_alias_existing_message_envelopes() {
+        let chat_context = context("outboundChat");
+        let encoded = encode_inner(&chat_context, b"chat envelope").unwrap();
+        let (decoded, plaintext) = decode_inner(&encoded).unwrap();
+        assert!(decoded == chat_context);
+        assert_eq!(plaintext, b"chat envelope");
+        assert!(decoded != context("outboundMessage"));
+        assert!(decoded != context("rawRecord"));
     }
 
     #[test]
