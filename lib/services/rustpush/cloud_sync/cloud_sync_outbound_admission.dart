@@ -62,6 +62,9 @@ final class CloudSyncOutboundAdmissionCoordinator {
       if (source.accountFingerprint != scope.accountFingerprint) {
         throw StateError('cloud_sync_local_send_identity_changed');
       }
+      if (source.admittedOperationId == null) {
+        _store.requireFreshOutboundProjectionReady(scope);
+      }
       final local = source.message;
       // Encoding is synchronous with source revalidation. Native staging may
       // await, so the persisted source is checked again inside adoption.

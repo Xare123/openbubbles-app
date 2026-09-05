@@ -32,6 +32,7 @@ or account-reset code.
 | Legacy CloudKit | A failed page does not advance its token or issue destructive duplicate cleanup. |
 | V2 semantic pull | Checkpoints represent a contiguous durable terminal prefix; retained-unprojected rows remain replayable. |
 | V2 outbound create | Confirmation requires an exact server-record and ETag receipt committed atomically with the existing current-generation mapping; missing proof remains outcome-unknown and is never replayed blindly. |
+| V2 fresh-create admission | Check projection prerequisites before encoding a ready local intent and again in the adoption transaction. If history is not ready, preserve the intent without creating outbox work that would block further reads. Existing-envelope recovery remains possible; submission readiness is not waived. |
 | V2 interrupted-create recovery | Exact readback confirmation must use the same atomic create-receipt commit as the ordinary write path. Generic confirmation is forbidden; receipt mismatch keeps the operation unknown and retry-fenced. |
 | Account transition | Old-account work is quiescent before state is replaced or disposed. |
 | Canary | Semantic pull performs no remote content write, delete, subscription, or PCS creation. |
@@ -52,6 +53,7 @@ treated as in scope even when the requested feature belongs to only one column.
 | Account and cached identity selection | X | X | X | X | X | Exact-account binding tests plus mismatch fail-closed tests |
 | Canonical conversion and associated-parent parsing | X | X | X | X |  | Rust converter tests plus Dart association and reaction tests |
 | Page journal, inbox applier, and checkpoint store |  |  | X | X | X | Crash-boundary replay and contiguous-prefix checkpoint tests |
+| Local-send journal and protected admission |  | X |  | X | X | Account/epoch/source validation, pre-stage readiness, sibling-history race rollback, and original-envelope restart recovery; no implicit remote write |
 | Semantic replay, projection repair, and ObjectBox candidate queries | X | X |  | X | X | Bounded native queries, cooperative-yield tests, and device ANR validation |
 | Canary artifact identity, VM trigger, and report export |  |  |  | X |  | Exact-source CI plus separate signer verification, followed by APK package, trigger hash, unique report, and full redacted-schema validation |
 | Attachment materialization and file ownership | X | X | X | X | X | Attachment store tests plus account-reset cleanup tests |

@@ -173,6 +173,77 @@ void main() {
       accountFingerprint: testAccountFingerprintA,
     );
 
+    CloudSyncScope siblingScope(String zone) => CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: zone,
+      streamKind: scope.streamKind,
+      schemaVersion: scope.schemaVersion,
+      persistenceLane: scope.persistenceLane,
+    );
+
+    Future<void> seedCompleteAccount() async {
+      for (final zone in const [
+        'chatManateeZone',
+        'messageManateeZone',
+        'attachmentManateeZone',
+      ]) {
+        // Synthetic successful empty-zone baseline. Non-empty and unsafe
+        // journals are installed through the production journal API below.
+        await store.recordPullSuccess(siblingScope(zone), now: testEpoch);
+      }
+    }
+
+    Future<void> addSiblingDebt({
+      bool tombstone = false,
+      bool retain = true,
+    }) async {
+      final sibling = siblingScope('attachmentManateeZone');
+      final checkpoint = await store.readCheckpoint(sibling);
+      final fence = (await store.tryAcquireCoordinatorLease(
+        sibling,
+        ownerId: 'admission-history-fixture',
+        now: testEpoch,
+        leaseDuration: const Duration(minutes: 1),
+      ))!;
+      await store.journalFetchedBatch(
+        CloudFetchBatch(
+          scope: sibling,
+          changes: [testChange(1, tombstone: tombstone)],
+          batchId: 'admission-history-batch',
+          generation: checkpoint.generation,
+          nextToken: 'admission-history-token',
+          hasMore: false,
+        ),
+        now: testEpoch,
+        leaseFence: fence,
+        expectedGeneration: checkpoint.generation,
+        expectedFetchedToken: checkpoint.fetchedToken,
+      );
+      if (retain) {
+        await store.markInboxRetainedUnprojected(
+          sibling,
+          sequence: 1,
+          category: CloudFailureCategory.malformedRecord,
+          now: testEpoch,
+          maximumDeferredAttempts: 8,
+          maximumDeferredAge: const Duration(days: 3),
+          leaseFence: fence,
+        );
+      }
+    }
+
+    Matcher projectionFailure({bool tombstone = false}) => throwsA(
+      isA<CloudSyncFailure>().having(
+        (error) => error.safeCode,
+        'safe code',
+        tombstone
+            ? 'messages_cloud_tombstone_projection_unavailable'
+            : 'messages_cloud_account_projection_incomplete',
+      ),
+    );
+
     void bindJournal() {
       authority = ObjectBoxCloudKitWriterAuthority.forTest(
         store: objectBox,
@@ -236,7 +307,8 @@ void main() {
           },
     );
 
-    setUp(() {
+    setUp(() async {
+      await seedCompleteAccount();
       bindJournal();
       encodes = 0;
       currentAuth = CloudSyncNativeAuthSnapshot.fromNative(
@@ -285,6 +357,182 @@ void main() {
           .id;
       confirm();
     });
+
+    for (final debt in const [
+      'missing sibling',
+      'retained save',
+      'retained tombstone',
+      'pending page',
+      'backoff',
+    ]) {
+      test('keeps a ready local send outside the outbox with $debt', () async {
+        final sibling = siblingScope('attachmentManateeZone');
+        switch (debt) {
+          case 'missing sibling':
+            final row = objectBox
+                .box<CloudSyncCheckpointEntity>()
+                .getAll()
+                .singleWhere((row) => row.zone == sibling.zone);
+            objectBox.box<CloudSyncCheckpointEntity>().remove(row.id);
+          case 'retained save':
+            await addSiblingDebt();
+          case 'retained tombstone':
+            await addSiblingDebt(tombstone: true);
+          case 'pending page':
+            await addSiblingDebt(retain: false);
+          case 'backoff':
+            await store.recordPullFailure(
+              sibling,
+              category: CloudFailureCategory.network,
+              nextEligibleAt: testEpoch.add(const Duration(minutes: 1)),
+            );
+        }
+        transport.stages.add(_stage('a', 'P', 'L', 'S'));
+        final original = intent();
+
+        await expectLater(
+          admit(),
+          projectionFailure(tombstone: debt == 'retained tombstone'),
+        );
+
+        expect(encodes, 0);
+        expect(timeline, ['recover']);
+        expect(transport.committed, isEmpty);
+        expect(transport.rolledBack, isEmpty);
+        expect(intent().state, 1);
+        expect(intent().sourceSha256, original.sourceSha256);
+        expect(intent().admittedOperationId, isNull);
+        expect(await store.hasNonterminalOutbox(scope), isFalse);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+        expect((await store.readCheckpoint(scope)).mutationRevisionCounter, 0);
+      });
+    }
+
+    test(
+      'rechecks sibling projection atomically after native staging',
+      () async {
+        final stage = _stage('a', 'P', 'L', 'S');
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        transport
+          ..stages.add(stage)
+          ..stageEntered = entered
+          ..releaseStage = release;
+        final admission = admit();
+        final rejected = expectLater(
+          admission,
+          projectionFailure(tombstone: true),
+        );
+        await entered.future;
+        await addSiblingDebt(tombstone: true);
+        release.complete();
+        await rejected;
+
+        expect(transport.committed, isEmpty);
+        expect(transport.rolledBack, [stage.leaseReference]);
+        expect(intent().state, 1);
+        expect(intent().admittedOperationId, isNull);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+        expect((await store.readCheckpoint(scope)).mutationRevisionCounter, 0);
+        final sibling = await store.readCheckpoint(
+          siblingScope('attachmentManateeZone'),
+        );
+        expect(sibling.fetchedSequence, 1);
+        expect(sibling.lastAppliedSequence, 0);
+        expect(sibling.hasUnmarkedPendingInbox, isFalse);
+      },
+    );
+
+    test(
+      'direct protected admission cannot strand a new outbox behind history',
+      () async {
+        await addSiblingDebt(tombstone: true);
+        final stage = _stage('a', 'P', 'L', 'S');
+        transport.stages.add(stage);
+        await expectLater(
+          coordinator.admitMessage(
+            scope,
+            message: _FakeCloudMessage(),
+            createdAt: testEpoch,
+          ),
+          projectionFailure(tombstone: true),
+        );
+        expect(transport.committed, isEmpty);
+        expect(transport.rolledBack, [stage.leaseReference]);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+        expect(intent().state, 1);
+      },
+    );
+
+    test(
+      'ready send survives restart and admits once after read backoff clears',
+      () async {
+        final sibling = siblingScope('attachmentManateeZone');
+        transport.stages.add(_stage('a', 'P', 'L', 'S'));
+        await store.recordPullFailure(
+          sibling,
+          category: CloudFailureCategory.network,
+          nextEligibleAt: testEpoch.add(const Duration(minutes: 1)),
+        );
+        await expectLater(admit(), projectionFailure());
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        store = ObjectBoxCloudSyncStore(
+          store: objectBox,
+          protector: _Protector(),
+          clock: () => testEpoch,
+        );
+        bindJournal();
+        coordinator = CloudSyncOutboundAdmissionCoordinator(
+          store: store,
+          transport: transport,
+          ensureProtectedStoreRecovered: () async {
+            timeline.add('recover');
+          },
+        );
+        expect(intent().state, 1);
+        expect(await store.hasNonterminalOutbox(scope), isFalse);
+        await store.recordPullSuccess(
+          sibling,
+          now: testEpoch.add(const Duration(minutes: 2)),
+        );
+        final first = await admit();
+        final replay = await admit();
+        expect(replay.operationId, first.operationId);
+        expect(encodes, 1);
+        expect(transport.committed, hasLength(1));
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 1);
+      },
+    );
+
+    test(
+      'later projection debt does not prevent exact adopted-envelope recovery',
+      () async {
+        transport.stages.add(_stage('a', 'P', 'L', 'S'));
+        final first = await admit();
+        await addSiblingDebt(tombstone: true);
+        objectBox.box<Message>().remove(local.id!);
+        final recovered = await admit();
+        expect(recovered.operationId, first.operationId);
+        expect(encodes, 1);
+        expect(transport.committed, hasLength(1));
+        expect(intent().state, 2);
+        await expectLater(
+          store.leaseEligibleOutbox(
+            scope,
+            now: testEpoch,
+            limit: 1,
+            leaseId: 'projection-remains-required',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save},
+          ),
+          projectionFailure(tombstone: true),
+        );
+      },
+    );
 
     test(
       'adopts the journal, mapping and outbox before native commit',
@@ -425,7 +673,14 @@ void main() {
           expect(intent().admittedOperationId, isNull);
           expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
           expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
-          expect(objectBox.box<CloudSyncCheckpointEntity>().count(), 0);
+          final checkpoints = objectBox
+              .box<CloudSyncCheckpointEntity>()
+              .getAll();
+          expect(checkpoints, hasLength(3));
+          expect(
+            checkpoints.every((row) => row.mutationRevisionCounter == 0),
+            isTrue,
+          );
           expect(transport.rolledBack, [stage.leaseReference]);
           expect(transport.committed, isEmpty);
         },

@@ -85,7 +85,7 @@ Relay identity -> Apple account -> Keychain clique / PCS -> CloudMessagesClient
 | Read after write | The reader now distinguishes completely settled, confirmed rows from blocking work in one ObjectBox snapshot. The semantic sampler compares fingerprints of every durable outbox column before/after its paused read; receipts are not deleted. Pending, leased, paused, quarantined, unknown, invalid states and unacknowledged protected receipts still block. Shadow reads retain their zero-row rule. Schema 7 reports only counts and the equality result, never the fingerprint; the device reader preserves schema 6's zero-row gate. | **TEST-PROVEN on Windows ObjectBox.** The test performs an initial read, exact receipt commit, restart, blocked unreconciled read, durable receipt acknowledgement, restart, then two successful reads with zero transport saves. Same-count mutation is rejected. Restoring the original guard makes this regression test fail with `outbox_not_empty`. This is synthetic Apple transport evidence, not a live upload claim. |
 | Final native admission | The unfinished generation-fence patch moved `claimForConsumption` inside the armed mutation action. A wrong persisted UUID returned an unknown-outcome result without a native call. | **Reproduced and repaired locally.** Claim validation now follows the durable generation recheck but precedes fence arming. The regression test proves rejection, zero native calls, no fence, reuse with the correct identity, and harmless rejection of repeated consumption. The focused Dart set passes 107 tests. |
 | Rust CI capability tests | Runs `33930475652` and `33930441506` exposed a test-keystore dependency, not a demonstrated parallelism failure. The replacement injects only key loading into the same private consume implementation; the public entry point always uses protected storage. Run `33936071705` on exact `7db9ed89b` passed 285 app Rust tests, 203 rustpush tests, and 30 protector tests. | **TEST-PROVEN on GCE Linux.** Failure, retry and single-use assertions now run through the production consume logic. Do not confuse these passing code gates with the separate failed APK packaging gate. |
-| Media responsiveness during catch-up | Both CloudKit media lanes and native semantic sessions share a FIFO gate on V2 Canary. The final retained-record sweep now yields after at most 32 candidates, reacquiring native permission and validating account, all zone generations/sequences/tokens, and the settled outbox before continuing. Alpha and IDS scheduling are unchanged. | **TEST-PROVEN; new APK qualification pending.** The 210-test sampler/adapter/report/media/drain/interlock set passes. The installed build's completed sweep took 23.7 minutes and applied zero records. A fresh HEIC then downloaded and opened full-screen in the gallery. The remaining multi-pass remote session can still delay media; unchanged failed rows can still be retried on a later invocation. |
+| Media responsiveness during catch-up | Both CloudKit media lanes and native semantic sessions share a FIFO gate on V2 Canary. The final retained-record sweep now yields after at most 32 candidates, reacquiring native permission and validating account, all zone generations/sequences/tokens, and the settled outbox before continuing. Alpha and IDS scheduling are unchanged. | **GCE-QUALIFIED at `a5f84f30a`; Pixel installation/concurrency proof pending.** The 210-test sampler/adapter/report/media/drain/interlock set passes. The installed build's completed sweep took 23.7 minutes and applied zero records. A fresh HEIC then downloaded and opened full-screen in the gallery. The remaining multi-pass remote session can still delay media; unchanged failed rows can still be retried on a later invocation. |
 | Remote deletion and message operations | `applyTombstone` intentionally returns `canonical_tombstone_dto_incomplete`. Edit/retracted-part fields have projection code, but outgoing transport supports initial create only. | Do not promise deletion propagation or write-side edit/unsend parity. Preserve history while establishing exact causality and ownership. These are separate capabilities, not automatically provided by a successful text create. |
 | Test versus installed build | GCE run `33943836515` qualified exact `6517f86612a0cf229f2ab8dbc56cf9b70928e182`; it remains installed in place with history preserved. The later user-started pull produced fresh remote-head and final projection reports, unlike the initial timed-out VM probe. | **Current read and specific gallery HEIC proven; production integration incomplete.** The installed build excludes the local settled-outbox boundary, local-send journal, VM observation, and scheduling follow-ups. Those changes require their own frozen-source qualification. No live Apple upload claim. |
 | Later cleanup | The user requested cleanup of unnecessary or disorganized code after correctness work. | Keep cleanup in separate commits: remove proven dead/duplicate paths, superseded diagnostics and misleading documentation, with tests unchanged or stronger. Do not combine a broad refactor with protocol or persistence changes. |
@@ -177,14 +177,16 @@ was restored from HEAD and its zero diff verified. Preserve the generated Rust
 API when doing another filtered ObjectBox generation; no bridge behavior was
 intentionally changed by the entity addition.
 
-Before wiring automatic admission, resolve its scheduling dependency:
+Before wiring automatic admission, resolve its remaining scheduling dependency:
 semantic reads still block on pending/unknown outbox work, while
 `_requireMessagesCloudAccountProjectionReadyLocked` requires all three zones
 fully projected and rejects retained tombstones before leasing writes. Simply
 hooking sends into the existing queue can strand both lanes. Keep local intents
 distinct from prepared remote mutations, prove recovery ordering, and establish
-new-create ownership/tombstone handling before relaxing any gate. A one-message
-manual upload is not evidence that this production integration exists.
+new-create ownership/tombstone handling before relaxing any gate. Fresh protected
+admission now checks this prerequisite before creating a blocking outbox row;
+the ordering repair below does not relax the writer's projection requirement.
+A one-message manual upload is not evidence that this production integration exists.
 
 The protected admission boundary now has 22 focused tests, including native
 commit failure followed by database reopen and replay with the local Message
@@ -210,6 +212,72 @@ snapshot remains authoritative, while text/routing or unsupported semantic
 changes still reject admission. A regression pins that distinction. Later
 metadata-update support requires its own ordered mutation, not a replacement
 initial create.
+
+### Admission ordering and native evidence review, 2026-09-05
+
+The completed Pixel report `obcs2-semantic-1788591977487853.json` retains
+694 deletion markers: 81 Chat, 494 Message and 119 Attachment records.
+They are not failed message sends. Allowing only non-tombstone projection debt
+would therefore still block this account's writes. Do not label these markers
+applied or remove their evidence to obtain an artificial green state.
+
+The reproduced ordering defect was earlier than submission: new protected
+admission accepted an outbox row even when the unchanged lease/submission
+guard could already prove it ineligible. Semantic reads then saw that blocking
+row. Seven negative controls reproduced this acceptance before the repair.
+
+```text
+IDS-confirmed local intent (ready, no remote work yet)
+  -> read-only projection preflight before encoding / native staging
+     -> not ready: preserve intent, create no outbox/map/revision
+                   do not introduce an outbox blocker for future reads
+     -> ready: stage the protected original payload
+               -> one write transaction rechecks all sibling checkpoints
+                  -> changed: roll back new lease; keep intent ready
+                  -> unchanged: atomically adopt outbox/map/intent
+  -> already adopted: recover exact existing envelope without re-encoding
+                      leasing/submission still enforce current readiness
+```
+
+The final check also protects direct protected admission, not just the ordinary
+send coordinator. No automatic caller or remote operation was enabled. The
+production runtime must still serialize reads and admissions, reconcile unknown
+outcomes first, and decide when a fresh create can be independent of unrelated
+history. The repair prevents admission behind already-known debt; it is not a
+claim that every future ordering dependency is solved.
+
+Verification: 31 admission tests and the combined 248-test journal, ObjectBox,
+model-upgrade, writer-authority and production-adapter set pass; targeted
+analysis is clean. New tests cover missing sibling checkpoints, retained saves
+and tombstones, pending pages, backoff, history arriving during native staging,
+direct admission, restart after read recovery, and exact adopted-envelope
+recovery despite later debt. The actual leasing guard still rejects that last
+case. Alpha and the Pixel were not modified by these tests.
+
+Two native release questions remain distinct from this local ordering fix:
+
+- The pinned writer saves only `MessageEncryptedV3` in `messageManateeZone`.
+  Its local Chat/routing validation is not evidence of a remote
+  `chatEncryptedv2` record. There is no Chat-zone lookup/save in
+  `prepare_message_save_submission`; do not promise discovery of a brand-new
+  conversation on another Apple device without a Chat dependency or observed
+  synthesis. The bounded Sol lookup was independently checked and closed.
+- The builder selects `save_semantics = 2` with the update flag false.
+  Its unit test verifies this encoded number, not a server-side collision.
+  Apple's public [recordID documentation](https://developer.apple.com/documentation/cloudkit/ckrecord/recordid)
+  confirms that rejecting an existing ID depends on save policy; other policies
+  can overwrite it. That public contract does not establish the private
+  numeric mapping. Preserve the exact-absence and ambiguity protections, and
+  require authoritative mapping or a controlled collision fixture before using
+  the intended create-only behavior to relax account-wide projection gates.
+
+The documentation lookup used Apple's current page directly after the Agent
+Reach reader rejected anonymous access. No credentials were sent to a research
+service. The 04:59 PDT device check found the same installed `6517f8661` package
+at 6 percent, unplugged, and the latest persisted report still ended at 00:06
+PDT. VM status discovery was unavailable, so this is not proof that no pull was
+in flight. No update, force-stop or new pull was performed. The signed
+`a5f84f30a` media APK remains a separate, not-yet-installed artifact.
 
 ### Installed Canary and VM observation follow-up
 

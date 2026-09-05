@@ -1610,6 +1610,15 @@ class ObjectBoxCloudSyncStore
     required CloudRecordMapEntry recordMapping,
   }) async => _admitProtectedOutboundCreate(draft, recordMapping);
 
+  /// Check before encoding/staging a fresh local intent. Pending outbox work
+  /// blocks semantic reads, so admitting a write behind an unmet projection
+  /// prerequisite can strand both lanes. This is an optimization, not a
+  /// permission: new adoption rechecks inside its write transaction below.
+  void requireFreshOutboundProjectionReady(CloudSyncScope scope) =>
+      _store.runInTransaction(TxMode.read, () {
+        _requireMessagesCloudAccountProjectionReadyLocked(scope);
+      });
+
   /// Synchronous so the native auth revalidation and this write transaction
   /// have no intervening await. The journal is adopted in this exact Store,
   /// not through a separately committed callback or an async transaction hook.
@@ -1726,6 +1735,12 @@ class ObjectBoxCloudSyncStore
         onAdopt?.call(existing);
         return existing;
       }
+
+      // Do not create blocking outbox work while the reads needed to make it
+      // eligible remain unfinished. A local send stays in its durable ready
+      // journal instead. Existing-envelope recovery above must remain possible
+      // after later history debt; leasing/submission retain their own checks.
+      _requireMessagesCloudAccountProjectionReadyLocked(draft.scope);
 
       final mapKey = _scopedDigest(
         draft.scope,
