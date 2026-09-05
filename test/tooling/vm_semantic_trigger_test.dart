@@ -9,6 +9,26 @@ import 'package:vm_service/vm_service_io.dart';
 
 import '../../tooling/vm_trigger_semantic.dart' as trigger;
 
+Future<String> _waitForServiceUri(File info) async {
+  final watch = Stopwatch()..start();
+  while (watch.elapsed < const Duration(seconds: 20)) {
+    // Fixture main and VM-service startup run independently. The readiness
+    // marker does not guarantee that this file exists or is fully written.
+    try {
+      final decoded = jsonDecode(await info.readAsString());
+      if (decoded is Map && decoded['uri'] is String) {
+        return decoded['uri'] as String;
+      }
+    } on PathNotFoundException {
+      // VM-service startup has not created the file yet.
+    } on FormatException {
+      // The service may still be writing its JSON document.
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+  }
+  throw StateError('fixture_vm_service_not_ready');
+}
+
 void main() {
   Directory? temporary;
   Process? child;
@@ -59,7 +79,7 @@ void main() {
     // Consume output without exposing the ephemeral VM credential or details.
     process.stderr.listen((_) {});
     await ready.future.timeout(const Duration(seconds: 20));
-    final uri = (jsonDecode(await info.readAsString()) as Map)['uri'] as String;
+    final uri = await _waitForServiceUri(info);
     service = await vmServiceConnectUri(
       '${uri.replaceFirst('http:', 'ws:')}ws',
     );
@@ -124,6 +144,31 @@ void main() {
     await run('success');
     expect(watch.elapsedMilliseconds, greaterThanOrEqualTo(150));
   });
+
+  test('unsupported CLI mode is rejected before connection', () async {
+    await expectLater(
+      trigger.main(['not-a-vm-uri', '--unsupported']),
+      throwsArgumentError,
+    );
+    await expectLater(
+      trigger.main(['not-a-vm-uri', '--catch-up', 'unexpected']),
+      throwsArgumentError,
+    );
+  });
+
+  for (final partial in [false, true]) {
+    test(
+      'VM readiness waits for ${partial ? 'partial' : 'missing'} info',
+      () async {
+        final info = File(p.join(temporary!.path, 'readiness-$partial.json'));
+        if (partial) await info.writeAsString('{');
+        final observed = _waitForServiceUri(info);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await info.writeAsString('{"uri":"http://127.0.0.1:1/synthetic/"}');
+        expect(await observed, 'http://127.0.0.1:1/synthetic/');
+      },
+    );
+  }
 
   test(
     'catch-up uses the same completion protocol',

@@ -208,6 +208,17 @@ probe gives this observer its own 240-second budget instead of the ordinary
 60-second child-process budget. These are tooling repairs, not new APK or live
 Apple protocol proof. Recover current read-only status before another pull.
 
+The `8d430e032` qualification run `33952316640` stopped before APK compilation:
+1,629 Dart tests passed and two tooling tests failed. The command-line contract
+still expected the pre-`--status` spelling, and the child-VM fixture printed
+its readiness marker before the separate VM-service process wrote its
+connection file. The fixture now waits, bounded to 20 seconds, for complete
+service JSON. Missing/partial-file and invalid-mode regressions are covered;
+all 31 VM/composition checks pass locally. No runtime sync logic was weakened
+to pass these checks. Runner deletion succeeded and live inventories confirmed
+zero GCE instances and zero GitHub runners. This failed run produced no
+qualified APK; the scheduling patch still needs a new full qualification.
+
 ### On-demand media handoff
 
 The previous media wait observed `_cloudSyncV2SemanticPullInFlight`, which

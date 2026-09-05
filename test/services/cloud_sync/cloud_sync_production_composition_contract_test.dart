@@ -267,7 +267,7 @@ void main() {
 
   test('VM trigger preserves one-pass mode and exposes bounded catch-up', () {
     final source = File('tooling/vm_trigger_semantic.dart').readAsStringSync();
-    expect(source, contains("args[1] != '--catch-up'"));
+    expect(source, contains("!['--catch-up', '--status'].contains(args[1])"));
     expect(source, contains("args.first"));
     expect(source, isNot(contains('args.single')));
     expect(source, contains("'runCloudSyncV2ManualSemanticPullConfirmed'"));
