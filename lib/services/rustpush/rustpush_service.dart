@@ -826,19 +826,48 @@ class RustPushBackend implements BackendService {
       {void Function(int p1, int p2)? onReceiveProgress,
       bool original = false,
       CancelToken? cancelToken}) async {
+    final lane = cloudAttachmentDownloadLaneFor(attachment.metadata);
+    Future<PlatformFile> download() => _downloadAttachmentBody(
+          attachment,
+          onReceiveProgress: onReceiveProgress,
+          original: original,
+          cancelToken: cancelToken,
+        );
+    if (!cloudAttachmentLaneWaitsForSemanticPull(lane) ||
+        !CloudSyncDevGate.manualSemanticPullEnabled ||
+        !pushService._cloudSyncV2CanaryRuntimeAllowed) {
+      // Alpha and IDS retain their existing scheduling.
+      return download();
+    }
+    final expectedClient =
+        pushService.state?.icloudServices?.cloudMessagesClient;
+    final expectedStorage = pushService.statePath;
+    final expectedGuid = attachment.guid;
+    return pushService._cloudSyncV2AttachmentGate.run(
+      validate: () {
+        final cancellation = cancelToken?.cancelError;
+        if (cancellation != null) throw cancellation;
+        pushService._validateCloudSyncV2QueuedRead(
+          expectedClient: expectedClient,
+          expectedStorage: expectedStorage,
+        );
+        if (attachment.guid != expectedGuid ||
+            cloudAttachmentDownloadLaneFor(attachment.metadata) != lane) {
+          throw StateError('cloud_sync_attachment_source_changed');
+        }
+      },
+      action: download,
+    );
+  }
+
+  Future<PlatformFile> _downloadAttachmentBody(Attachment attachment,
+      {void Function(int p1, int p2)? onReceiveProgress,
+      bool original = false,
+      CancelToken? cancelToken}) async {
     final metadata = attachment.metadata ?? const <String, dynamic>{};
     final canonicalGuid = attachment.guid;
     final expectedBytes = attachment.totalBytes;
     final downloadLane = cloudAttachmentDownloadLaneFor(metadata);
-
-    // Both CloudKit attachment lanes use the native client whose writers are
-    // paused by a semantic pull. Wait for that exact pull before entering
-    // either lane; IDS downloads remain independent.
-    if (cloudAttachmentLaneWaitsForSemanticPull(downloadLane)) {
-      await waitForCloudAttachmentSyncGate(
-        pushService._cloudSyncV2SemanticPullInFlight,
-      );
-    }
 
     // Semantic V2 projections deliberately retain no raw CloudKit record ID.
     // Probe their exact durable source locally before pausing writers or
@@ -7506,6 +7535,7 @@ class RustPushService extends GetxService {
       _cloudSyncV2PcsPreparationInFlight;
   bool _cloudSyncV2PcsPreparationQuiescing = false;
   Future<CloudSyncSemanticDrainResult>? _cloudSyncV2SemanticPullInFlight;
+  final _cloudSyncV2AttachmentGate = CloudAttachmentSyncGate();
   bool _cloudSyncV2SemanticPullQuiescing = false;
   static const int _cloudSyncV2AutomaticCatchUpMaximumBatches = 8;
   static const Duration _cloudSyncV2AutomaticCatchUpYield =
@@ -8029,7 +8059,38 @@ class RustPushService extends GetxService {
   }
 
   Future<CloudSyncSemanticDrainResult>
-  _runCloudSyncV2ManualSemanticPull({required int maximumPasses}) async {
+  _runCloudSyncV2ManualSemanticPull({required int maximumPasses}) {
+    final expectedClient = state?.icloudServices?.cloudMessagesClient;
+    final expectedStorage = statePath;
+    return _cloudSyncV2AttachmentGate.run(
+      validate: () => _validateCloudSyncV2QueuedRead(
+        expectedClient: expectedClient,
+        expectedStorage: expectedStorage,
+      ),
+      action: () => _runCloudSyncV2ManualSemanticPullUnderGate(
+        maximumPasses: maximumPasses,
+      ),
+    );
+  }
+
+  void _validateCloudSyncV2QueuedRead({
+    required Object? expectedClient,
+    required String expectedStorage,
+  }) {
+    if (_serviceClosing || loggingOut || _cloudSyncV2SemanticPullQuiescing) {
+      throw StateError('cloud_sync_semantic_pull_quiescing');
+    }
+    if (expectedClient == null) {
+      throw StateError('cloud_sync_native_auth_account_unavailable');
+    }
+    if (!identical(state?.icloudServices?.cloudMessagesClient, expectedClient) ||
+        statePath != expectedStorage) {
+      throw StateError('cloud_sync_native_auth_account_changed');
+    }
+  }
+
+  Future<CloudSyncSemanticDrainResult>
+  _runCloudSyncV2ManualSemanticPullUnderGate({required int maximumPasses}) async {
     if (statePath.isEmpty || !Directory(statePath).existsSync()) {
       throw StateError('cloud_sync_private_storage_unavailable');
     }
@@ -8555,11 +8616,22 @@ class RustPushService extends GetxService {
 
   Future<T> _runCloudKitDestructiveReset<T>(
     Future<T> Function() action,
-  ) =>
-      _runCloudKitOperation(
-        kind: CloudKitOperationKind.destructiveReset,
-        action: action,
+  ) async {
+    // Both callers quiesce admission before arriving here. Drain media as
+    // well as semantic work before disposing its native client. A timed-out
+    // drain is only a barrier, never a queued destructive action.
+    try {
+      await _cloudSyncV2AttachmentGate.drain().timeout(
+        _cloudSyncV2SemanticPullQuiescenceTimeout,
       );
+    } on TimeoutException {
+      throw StateError('cloud_sync_attachment_quiescence_timeout');
+    }
+    return _runCloudKitOperation(
+      kind: CloudKitOperationKind.destructiveReset,
+      action: action,
+    );
+  }
 
   Future<T> _runCloudKitIdentityMaintenance<T>(
     Future<T> Function() action,

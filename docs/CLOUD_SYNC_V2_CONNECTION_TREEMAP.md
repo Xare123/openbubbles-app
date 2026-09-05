@@ -83,7 +83,7 @@ Relay identity -> Apple account -> Keychain clique / PCS -> CloudMessagesClient
 | Read after write | The reader now distinguishes completely settled, confirmed rows from blocking work in one ObjectBox snapshot. The semantic sampler compares fingerprints of every durable outbox column before/after its paused read; receipts are not deleted. Pending, leased, paused, quarantined, unknown, invalid states and unacknowledged protected receipts still block. Shadow reads retain their zero-row rule. Schema 7 reports only counts and the equality result, never the fingerprint; the device reader preserves schema 6's zero-row gate. | **TEST-PROVEN on Windows ObjectBox.** The test performs an initial read, exact receipt commit, restart, blocked unreconciled read, durable receipt acknowledgement, restart, then two successful reads with zero transport saves. Same-count mutation is rejected. Restoring the original guard makes this regression test fail with `outbox_not_empty`. This is synthetic Apple transport evidence, not a live upload claim. |
 | Final native admission | The unfinished generation-fence patch moved `claimForConsumption` inside the armed mutation action. A wrong persisted UUID returned an unknown-outcome result without a native call. | **Reproduced and repaired locally.** Claim validation now follows the durable generation recheck but precedes fence arming. The regression test proves rejection, zero native calls, no fence, reuse with the correct identity, and harmless rejection of repeated consumption. The focused Dart set passes 107 tests. |
 | Rust CI capability tests | Runs `33930475652` and `33930441506` exposed a test-keystore dependency, not a demonstrated parallelism failure. The replacement injects only key loading into the same private consume implementation; the public entry point always uses protected storage. Run `33936071705` on exact `7db9ed89b` passed 285 app Rust tests, 203 rustpush tests, and 30 protector tests. | **TEST-PROVEN on GCE Linux.** Failure, retry and single-use assertions now run through the production consume logic. Do not confuse these passing code gates with the separate failed APK packaging gate. |
-| Media responsiveness during catch-up | `RustPushBackend.downloadAttachment` waits on `_cloudSyncV2SemanticPullInFlight`, which represents the entire automatic catch-up, not one batch. Both CloudKit media lanes wait; IDS does not. | **Usability gap.** A tapped gallery item can spin until history catch-up ends. Add a tested batch-boundary handoff for on-demand media without overlapping native writer pause ownership. Windows tests cannot prove Android HEIC decoding or filesystem promotion. |
+| Media responsiveness during catch-up | Both CloudKit media lanes and each semantic batch now share a FIFO in-isolate gate on V2 Canary. Queued media runs after the active batch releases its native pause and before the next batch starts. The original durable interlock and native authentication remain authoritative. Alpha and IDS scheduling are unchanged. | **TEST-PROVEN; device qualification pending.** Six scheduling tests and the broader 101-test attachment/drain/interlock set pass. A tap still waits for the current bounded batch, not necessarily instantly. Windows tests cannot prove Android HEIC decoding or filesystem promotion. |
 | Remote deletion and message operations | `applyTombstone` intentionally returns `canonical_tombstone_dto_incomplete`. Edit/retracted-part fields have projection code, but outgoing transport supports initial create only. | Do not promise deletion propagation or write-side edit/unsend parity. Preserve history while establishing exact causality and ownership. These are separate capabilities, not automatically provided by a successful text create. |
 | Test versus installed build | GCE run `33943836515` passed full Dart/native validation, APK verification, signing, and runner cleanup for exact `6517f86612a0cf229f2ab8dbc56cf9b70928e182`. Runner registration and GCE instance readbacks were empty. The exact signed artifact was then installed in place on Pixel with first-install time and existing reports preserved. | **Installed, current read proof pending.** The device probe timed out without a new report. It does not include local follow-up `648730b80` or journal commit `107700e94`. Those changes need their own frozen-source qualification. A signed APK is not live Apple upload proof. |
 | Later cleanup | The user requested cleanup of unnecessary or disorganized code after correctness work. | Keep cleanup in separate commits: remove proven dead/duplicate paths, superseded diagnostics and misleading documentation, with tests unchanged or stronger. Do not combine a broad refactor with protocol or persistence changes. |
@@ -207,6 +207,26 @@ queued invocation passes. No specific Dart SDK defect is claimed. The device
 probe gives this observer its own 240-second budget instead of the ordinary
 60-second child-process budget. These are tooling repairs, not new APK or live
 Apple protocol proof. Recover current read-only status before another pull.
+
+### On-demand media handoff
+
+The previous media wait observed `_cloudSyncV2SemanticPullInFlight`, which
+covers every automatic batch. The replacement schedules the transport body and
+each bounded semantic batch through `CloudAttachmentSyncGate`. It never locks
+the whole automatic loop. Existing `synchronized` implementation inspection and
+the regression test establish FIFO ordering: batch A, queued media, batch B,
+with at most one operation active. A failed body does not poison the queue.
+
+Queued work rechecks service teardown, client identity and private-store path
+before running. Media also checks cancellation and rejects changed attachment
+GUID or transport lane. These scheduling checks do not replace the V2 body's
+full native account, source and integrity checks. Teardown quiesces admission,
+then drains queued/active media before disposing the client; a barrier timeout
+does not enqueue a delayed destructive action or release a still-active lock.
+The change is limited to the V2 Canary runtime; Alpha and IDS retain their
+existing scheduling. No native writer-pause or account-ownership gate was
+relaxed. The Sol test work was reviewed and the agent closed. Current-device
+gallery responsiveness and image decoding remain unverified for this patch.
 
 ## Historical investigation board
 
