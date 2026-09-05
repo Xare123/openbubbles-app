@@ -646,6 +646,38 @@ fn map_download_failure(error: &PushError) -> CloudNativeAttachmentMaterializati
     }
 }
 
+/// Keep native lookup causes distinguishable without recording response bodies,
+/// asset URLs, record names, tokens, or arbitrary error strings.
+fn download_failure_diagnostic(error: &PushError) -> String {
+    match error {
+        PushError::CloudKitHttpError { status, .. } => format!("http:{status}"),
+        PushError::StatusError(status) => format!("http:{}", status.as_u16()),
+        PushError::CloudKitError(result) => {
+            let detail = result.error.as_ref();
+            let server = detail
+                .and_then(|error| error.server_error.as_ref())
+                .and_then(|error| error.r#type);
+            let client = detail
+                .and_then(|error| error.client_error.as_ref())
+                .and_then(|error| error.r#type);
+            format!("cloudkit:server={server:?},client={client:?}")
+        }
+        PushError::IoError(error) => format!("io:{:?}", error.kind()),
+        PushError::RequestError(error) => format!(
+            "request:timeout={},connect={},status={:?}",
+            error.is_timeout(),
+            error.is_connect(),
+            error.status().map(|status| status.as_u16()),
+        ),
+        PushError::ResourceClosed => "resource:closed".to_owned(),
+        PushError::ResourceFailure(failure) => download_failure_diagnostic(&failure.error),
+        PushError::DoNotRetry(inner) | PushError::BatchError(inner) => {
+            download_failure_diagnostic(inner)
+        }
+        _ => format!("category:{:?}", map_download_failure(error)),
+    }
+}
+
 fn is_lower_hex_sha256(value: &str) -> bool {
     value.len() == 64
         && value
@@ -1242,7 +1274,13 @@ async fn cloud_sync_materialize_attachment_body_inner(
     .catch_unwind();
     match transfer.await {
         Ok(Ok(())) => {}
-        Ok(Err(error)) => return Err(map_download_failure(&error)),
+        Ok(Err(error)) => {
+            log::warn!(
+                "Closed CloudKit attachment transfer failed reason={}",
+                download_failure_diagnostic(&error),
+            );
+            return Err(map_download_failure(&error));
+        }
         Err(_) => {
             log::warn!("Closed CloudKit attachment lookup panicked before completion");
             log::logger().flush();
@@ -1359,6 +1397,48 @@ mod tests {
             ))),
             CloudNativeAttachmentMaterializationFailure::LocalStorage
         );
+    }
+
+    #[test]
+    fn download_diagnostics_keep_numeric_transport_and_cloudkit_causes() {
+        use rustpush::cloudkit_proto::response_operation::result::error::server;
+
+        assert_eq!(
+            download_failure_diagnostic(&PushError::CloudKitHttpError {
+                status: 404,
+                retry_after: None,
+            }),
+            "http:404"
+        );
+        assert_eq!(
+            download_failure_diagnostic(&cloudkit_server_failure(server::Code::NotFound)),
+            format!(
+                "cloudkit:server=Some({}),client=None",
+                server::Code::NotFound as i32
+            )
+        );
+        assert_eq!(
+            download_failure_diagnostic(&PushError::ResourceClosed),
+            "resource:closed"
+        );
+    }
+
+    #[test]
+    fn download_diagnostics_never_include_embedded_error_content() {
+        const PRIVATE_FIXTURE: &str = "private-asset-url?token=secret-fixture";
+        for error in [
+            PushError::IoError(io::Error::new(io::ErrorKind::InvalidData, PRIVATE_FIXTURE)),
+            PushError::ResourcePanic(PRIVATE_FIXTURE.to_owned()),
+            PushError::DoNotRetry(Box::new(PushError::IoError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                PRIVATE_FIXTURE,
+            )))),
+        ] {
+            let diagnostic = download_failure_diagnostic(&error);
+            assert!(!diagnostic.contains(PRIVATE_FIXTURE));
+            assert!(!diagnostic.contains("token"));
+            assert!(diagnostic.len() < 80);
+        }
     }
 
     #[test]
