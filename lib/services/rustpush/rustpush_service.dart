@@ -5,6 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:app_links/app_links.dart';
+import 'package:bluebubbles/services/rustpush/registration_recovery.dart';
 import 'package:async_task/async_task_extension.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/conversation_list.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/message_holder.dart';
@@ -736,11 +737,6 @@ class RustPushBackend implements BackendService {
           break;
         } catch (e) {
           if (e is AnyhowException) {
-            if (e.message.contains("Failed to generate resource") &&
-                e.message.contains("not retrying")) {
-              pushService.markFailedToLogin();
-              rethrow;
-            }
             if (e.message.contains("Send timeout; try again") &&
                 sendTimeoutRetries < maxSendTimeoutRetries) {
               sendTimeoutRetries++;
@@ -1198,19 +1194,15 @@ class RustPushBackend implements BackendService {
     } else if (state is api.RegisterState_Registering) {
       stateStr = "Reregistering...";
     } else if (state is api.RegisterState_Failed) {
-      String suffix = "";
-      if (state.retryWait != null) {
-        var data = state.retryWait!.toInt();
-        final displayError = state.error.replaceAll(
-            "Relay device offline!", "Relay service unavailable!");
-        suffix = "(waiting ${formatDuration(data)}; error: $displayError)";
-      }
-      stateStr = "Deregistered $suffix";
+      stateStr = RegistrationFailureNotice.fromState(state)
+          .statusText(formatDuration);
     }
     return {
       "account_name": ss.settings.userName.value,
       "apple_id": ss.settings.iCloudAccount.value,
       "login_status_message": stateStr,
+      "registration_repair_required":
+          state is api.RegisterState_Failed && state.retryWait == null,
       "vetted_aliases": handles
           .map((e) => {
                 "Alias": e.replaceFirst("tel:", "").replaceFirst("mailto:", ""),
@@ -2358,20 +2350,9 @@ class RustPushService extends GetxService {
 
   Future<List<String>> doValidateTargets(
       List<String> targets, String handle) async {
-    List<String> available;
-    try {
-      available = await api.validateTargets(
-          state: pushService.state!.client, targets: targets, sender: handle);
-    } catch (e) {
-      if (e is AnyhowException) {
-        if (e.message.contains("Failed to generate resource") &&
-            e.message.contains("not retrying")) {
-          pushService.markFailedToLogin();
-        }
-      }
-      rethrow;
-    }
-    return available;
+    // A lookup failure must not dispose the shared account or CloudKit clients.
+    return api.validateTargets(
+        state: pushService.state!.client, targets: targets, sender: handle);
   }
 
   StickerData stickerFromDart(api.PartExtension_Sticker ext) {
@@ -5265,7 +5246,23 @@ class RustPushService extends GetxService {
     );
   }
 
-  var notifiedFailed = false;
+  late final _registrationObserver = RegistrationStateObserver(
+    onRegistered: (nextSeconds) {
+      unawaited(scheduleRelayHealthReminder(nextSeconds));
+      if (ss.settings.deviceIsHosted.value) {
+        mixpanel?.track("hosted-register-success");
+      }
+      handleRegistered();
+    },
+    onRegistering: () => unawaited(cancelRelayHealthReminder()),
+    onFailed: (notice) {
+      unawaited(cancelRelayHealthReminder());
+      if (ss.settings.deviceIsHosted.value) {
+        mixpanel?.track("hosted-register-failure");
+      }
+      unawaited(notif.createRegisterFailed(notice));
+    },
+  );
   var notifiedSubFailed = false;
 
   String? chosenFTRoomGuid;
@@ -5631,29 +5628,7 @@ class RustPushService extends GetxService {
     }
 
     if (push is api.PushMessage_RegistrationState) {
-      var state = push.field0;
-      if (state is api.RegisterState_Registered) {
-        notifiedFailed = false;
-        unawaited(scheduleRelayHealthReminder(state.nextS));
-        if (ss.settings.deviceIsHosted.value) {
-          mixpanel?.track("hosted-register-success");
-        }
-        handleRegistered();
-      }
-      if (state is api.RegisterState_Registering) {
-        unawaited(cancelRelayHealthReminder());
-      }
-      if (state is api.RegisterState_Failed && !notifiedFailed) {
-        unawaited(cancelRelayHealthReminder());
-        if (ss.settings.deviceIsHosted.value) {
-          mixpanel?.track("hosted-register-failure");
-        }
-        notif.createRegisterFailed(state.retryWait == null);
-        if (state.retryWait == null) {
-          pushService.markFailedToLogin(hw: false);
-        }
-        notifiedFailed = true;
-      }
+      _registrationObserver.accept(push.field0);
       return;
     }
 
@@ -7392,7 +7367,6 @@ class RustPushService extends GetxService {
         }
       }
       if (state != null && !ss.settings.finishedSetup.value) {
-        handleRegistered();
         ss.settings.finishedSetup.value = true;
         ss.saveSettings();
         try {
@@ -7443,11 +7417,9 @@ class RustPushService extends GetxService {
     if (state != null) {
       try {
         final registrationState = await api.getRegstate(state: state!.client);
-        if (registrationState is api.RegisterState_Registered) {
-          await scheduleRelayHealthReminder(registrationState.nextS);
-        }
+        _registrationObserver.accept(registrationState);
       } catch (e, s) {
-        Logger.warn("Failed to schedule iPhone relay health check",
+        Logger.warn("Failed to read initial iMessage registration state",
             error: e, trace: s);
       }
     }

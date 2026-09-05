@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/posterkit.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/profile_scaffold.dart';
+import 'package:bluebubbles/app/layouts/settings/pages/profile/registration_repair_dialog.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/theming/avatar/avatar_crop.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
@@ -770,7 +771,7 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                         ),
                       if ((accountInfo['login_status_message']?.startsWith("Deregistered") ?? false) || (accountInfo['login_status_message']?.contains("Subscription not active!") ?? false))
                         SettingsTile(
-                        title: accountInfo['login_status_message']!.contains("Device not reserved!") ? "Reserve a new device" : accountInfo['login_status_message']!.contains("Subscription not active!") ? "Renew subscription" : "Retry now",
+                        title: accountInfo['login_status_message']!.contains("Device not reserved!") ? "Reserve a new device" : accountInfo['login_status_message']!.contains("Subscription not active!") ? "Renew subscription" : accountInfo['registration_repair_required'] == true ? "Repair registration" : "Retry now",
                         onTap: () async {
                           if (accountInfo['login_status_message']!.contains("Subscription not active!") || accountInfo['login_status_message']!.contains("Device not reserved!")) {
                             wrapPromise((() async {
@@ -848,6 +849,21 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                           }
                           try {
                             reregisteringIds.value = true;
+                            if (accountInfo['registration_repair_required'] == true) {
+                              await confirmRegistrationRepair(context, repair: () async {
+                                final currentState = pushService.state;
+                                if (currentState == null) return;
+                                final registration = await api.getRegstate(state: currentState.client);
+                                if (!identical(currentState, pushService.state) ||
+                                    registration is! api.RegisterState_Failed ||
+                                    registration.retryWait != null) {
+                                  if (mounted) getDetails();
+                                  return;
+                                }
+                                await pushService.markFailedToLogin(hw: false, logout: false, ui: true);
+                              });
+                              return;
+                            }
                             await pushService.reregisterIdentity();
                             getDetails();
                             showSnackbar("Success", "Registered");

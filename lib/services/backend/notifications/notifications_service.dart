@@ -14,6 +14,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/services/backend/notifications/desktop_notification_actions.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/services/rustpush/registration_recovery.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
@@ -1200,11 +1201,9 @@ class NotificationsService extends GetxService {
     }
   }
 
-  Future<void> createRegisterFailed(bool loggedOut) async {
-    final title =
-        loggedOut ? 'Logged out by Apple!' : 'Failed to renew registration!';
-    const subtitle =
-        'You can no longer send or receive iMessages. Tap for more info.';
+  Future<void> createRegisterFailed(RegistrationFailureNotice notice) async {
+    final title = notice.title;
+    final subtitle = notice.body;
     if (kIsDesktop) {
       failedToast = LocalNotification(
         title: title,
@@ -1238,7 +1237,7 @@ class NotificationsService extends GetxService {
             color: HexColor("4990de"),
           ),
         ),
-        payload: loggedOut ? "" : "-51");
+        payload: RegistrationFailureNotice.profilePayload);
   }
 
   Future<void> cancelRelayCheckReminder() async {
