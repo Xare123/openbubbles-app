@@ -25,7 +25,8 @@ import java.io.ByteArrayInputStream
 import java.io.File
 
 @SuppressLint("SetJavaScriptEnabled")
-class CachedWebview(context: Context, name: String?, desc: String, url: String) {
+class CachedWebview(context: Context, name: String?, desc: String, url: String, private val sessionId: String? = null) {
+    private val launchUrl = url
     companion object {
         private const val diagnosticTag = "FaceTimeDiag"
 
@@ -94,6 +95,17 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
     private val applicationContext = context.applicationContext
     private val callbackHandler = Handler(Looper.getMainLooper())
     private var mirrorReadyRunnable: Runnable? = null
+    private val mediaProbe = FaceTimeMediaProbe(
+        evaluate = { script, callback -> webView.evaluateJavascript(script) { callback(it) } },
+        schedule = { delay, action -> callbackHandler.postDelayed({ action() }, delay) },
+        currentUrl = { webView.url },
+    )
+
+    internal fun matchesSession(link: String, callId: String?): Boolean =
+        FaceTimeMediaProbe.canReusePage(launchUrl, sessionId, link, callId)
+
+    internal fun requestMediaEvidence(callback: (String?) -> Unit) = mediaProbe.request(callback)
+    internal var mediaDocumentChanged: (() -> Unit)? = null
 
     var mirrorReady = false
     var mirrorReadyCall: (() -> Unit)? = null
@@ -106,6 +118,9 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
     var deferredRequestsUpdated: () -> Unit = {}
 
     fun cancelCallbacks() {
+        mediaProbe.close()
+        mediaDocumentChanged = null
+        callbackHandler.removeCallbacksAndMessages(null)
         mirrorReadyRunnable?.let(callbackHandler::removeCallbacks)
         mirrorReadyRunnable = null
         mirrorReadyCall = null
@@ -358,6 +373,8 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                mediaProbe.invalidate()
+                mediaDocumentChanged?.invoke()
                 if (diagnosticsEnabled()) {
                     Log.i(diagnosticTag, "page started ${safeResourceLabel(url)}")
                 }

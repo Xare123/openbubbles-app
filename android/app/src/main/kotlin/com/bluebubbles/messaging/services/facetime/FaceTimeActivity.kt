@@ -74,6 +74,7 @@ class FaceTimeActivity : Activity() {
     private var connectionProbeRunnable: Runnable? = null
     private var endFallbackRunnable: Runnable? = null
     private var connectionProbeCount = 0
+    private var connectionProbeInFlight = false
     private var callEnding = false
 
     private fun diagnosticsEnabled(): Boolean = FaceTimeDiagnostics.isEnabled(this)
@@ -159,19 +160,29 @@ class FaceTimeActivity : Activity() {
     }
 
     private fun scheduleConnectionProbe(delayMillis: Long = 0) {
-        if (callEnding || isFinishing || isDestroyed || connectionProbeCount >= FaceTimeConnectionProbePolicy.maxProbes) return
+        if (callEnding || isFinishing || isDestroyed || connectionProbeInFlight || connectionProbeCount >= FaceTimeConnectionProbePolicy.maxProbes) return
         connectionProbeRunnable?.let(mainHandler::removeCallbacks)
         val runnable = Runnable {
             if (callEnding || isFinishing || isDestroyed) return@Runnable
-            webView.evaluateJavascript(
-                """window.__obFaceTimeDiagnostics ? window.__obFaceTimeDiagnostics.snapshot() : JSON.stringify({peerId:null,iceState:"unknown",remoteAudioTracks:0,remoteVideoTracks:0,mediaBytes:null,webLeaveVisible:false})"""
-            ) { result ->
+            connectionProbeInFlight = true
+            val probeCallId = callUuid
+            val probeView = cached
+            cached.requestMediaEvidence { result ->
+                connectionProbeInFlight = false
+                if (callEnding || isFinishing || isDestroyed || activeFaceTimeActivity !== this ||
+                    cached !== probeView || callUuid != probeCallId) return@requestMediaEvidence
                 connectionProbeCount += 1
                 val evidence = parseMediaEvidence(result)
                 if (evidence == null) {
                     FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.ICE_STATE, state = "unknown")
+                    // Invalidate the byte baseline: samples across navigations or
+                    // missing probes must never combine to prove connection.
+                    joinPolicy.recordMediaEvidence(FaceTimeMediaEvidence(
+                        FaceTimeIceState.UNKNOWN, 0, 0, null, false,
+                    ))
+                    showCallUi(joined = false)
                     scheduleConnectionProbe(FaceTimeConnectionProbePolicy.pendingDelayMillis)
-                    return@evaluateJavascript
+                    return@requestMediaEvidence
                 }
                 FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.ICE_STATE, state = evidence.iceState.name.lowercase())
                 FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.REMOTE_AUDIO_TRACK, count = evidence.remoteAudioTracks)
@@ -641,12 +652,17 @@ class FaceTimeActivity : Activity() {
         val name = extras.getString("name")
         // sanitize desc
         val desc = extras.getString("desc")?.replace("[^a-zA-Z0-9, +.@:&]+".toRegex(), "") ?: "FaceTime Call"
+        cachedWebview?.takeUnless { it.matchesSession(link, extras.getString("callUuid")) }?.let {
+            it.cancelCallbacks()
+            it.webView.destroy()
+            cachedWebview = null
+        }
         if (cachedWebview != null) {
             // take control of a pre-rendered webview
             cached = cachedWebview!!
             cachedWebview = null
         } else {
-            cached = CachedWebview(this, name, desc, link)
+            cached = CachedWebview(this, name, desc, link, extras.getString("callUuid"))
         }
 
         cached.endTask = {
@@ -665,6 +681,16 @@ class FaceTimeActivity : Activity() {
         }
 
         webView = cached.webView
+        cached.mediaDocumentChanged = {
+            if (answered && !callEnding && !isFinishing && !isDestroyed && activeFaceTimeActivity === this) {
+                joinPolicy.recordMediaEvidence(FaceTimeMediaEvidence(
+                    FaceTimeIceState.UNKNOWN, 0, 0, null, false,
+                ))
+                connectionProbeCount = 0
+                showCallUi(joined = false)
+                scheduleConnectionProbe(FaceTimeConnectionProbePolicy.initialDelayMillis)
+            }
+        }
 
         val isAnsweringCall = extras.containsKey("answer")
         notificationId = extras.getString("notificationId")?.toInt() ?: 0

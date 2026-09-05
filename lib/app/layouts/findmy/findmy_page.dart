@@ -8,6 +8,7 @@ import 'package:collection/collection.dart';
 import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
 import 'package:bluebubbles/app/layouts/findmy/findmy_location_clipper.dart';
 import 'package:bluebubbles/app/layouts/findmy/findmy_pin_clipper.dart';
+import 'package:bluebubbles/app/layouts/findmy/findmy_refresh.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dart';
 import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
@@ -130,14 +131,16 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   bool nearbyAccessoryBusy = false;
   bool locationsRequestInFlight = false;
   bool currentLocationRequestInFlight = false;
-  String? cloudFindMyError;
-  DateTime? automaticCloudRetryAfter;
+  final _peopleRefresh = FindMyRefreshState<List<FindMyFriend>>([]);
+  final _devicesRefresh = FindMyRefreshState<List<FindMyDevice>>([]);
+  final _itemsRefresh = FindMyRefreshState<List<api.DartBeacon>>([]);
   Completer<void>? fmipRequest;
 
   Map<(double, double), Address> cachedAddresses = {};
 
-  List<api.DartBeacon> cachedBeacons = [];
-  DateTime? beaconCacheDate;
+  List<api.DartBeacon> get cachedBeacons => _itemsRefresh.value;
+  DateTime? get beaconCacheDate => _itemsRefresh.lastSuccessAt;
+  set beaconCacheDate(DateTime? value) => _itemsRefresh.lastSuccessAt = value;
 
   Timer? myTimer;
 
@@ -405,28 +408,11 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     bool userInitiated = false,
   }) async {
     if (locationsRequestInFlight) return;
-    if (!userInitiated && automaticCloudRetryAfter?.isAfter(DateTime.now()) == true) return;
 
     locationsRequestInFlight = true;
     unawaited(refreshCurrentLocation(refreshFriends: refreshFriends));
     try {
-      await getCloudLocations(refreshFriends: refreshFriends, refreshDevices: refreshDevices);
-      automaticCloudRetryAfter = null;
-      if (mounted && cloudFindMyError != null) {
-        setState(() => cloudFindMyError = null);
-      }
-    } catch (e) {
-      automaticCloudRetryAfter = DateTime.now().add(const Duration(minutes: 1));
-      locationsRequestInFlight = false;
-      if (mounted) {
-        setState(() {
-          cloudFindMyError = findMyCloudFailureMessage(e);
-          fetching = null;
-          fetching2 = null;
-          refreshing = false;
-          refreshing2 = false;
-        });
-      }
+      await getCloudLocations(refreshFriends: refreshFriends, refreshDevices: refreshDevices, force: userInitiated);
     } finally {
       locationsRequestInFlight = false;
       if (mounted && !canRefresh) setState(() => canRefresh = true);
@@ -476,41 +462,52 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     }
   }
 
-  Future<void> getCloudLocations({bool refreshFriends = true, bool refreshDevices = true}) async {
-    var isNew = fmfClient == null;
-    fmfClient ??= await api.makeFindMyFriends(
-      path: pushService.statePath,
-      config: pushService.state!.osConfig,
-      aps: pushService.state!.conn,
-      anisette: pushService.state!.anisette,
-      provider: pushService.state!.icloudServices!.tokenProvider,
-    );
+  Future<void> getCloudLocations({bool refreshFriends = true, bool refreshDevices = true, bool force = false}) async {
+    await Future.wait([
+      refreshPeople(refreshFriends: refreshFriends, force: force),
+      refreshCloudDevices(refreshDevices: refreshDevices, force: force),
+      refreshItems(force: force),
+    ]);
+  }
 
-    try {
+  Future<void> refreshPeople({required bool refreshFriends, required bool force}) async {
+    await _peopleRefresh.refresh(() async {
+      var isNew = fmfClient == null;
+      fmfClient ??= await api.makeFindMyFriends(
+        path: pushService.statePath,
+        config: pushService.state!.osConfig,
+        aps: pushService.state!.conn,
+        anisette: pushService.state!.anisette,
+        provider: pushService.state!.icloudServices!.tokenProvider,
+      );
       if (refreshFriends && !isNew) {
         await api.refreshFollowing(config: pushService.state!.osConfig, client: fmfClient!);
       }
 
       var following = await api.getFollowing(client: fmfClient!);
     
-      friends = following
-          .map((e) => 
-            FindMyFriend(
+      return projectFindMyPeople(
+          following,
+          handles: (e) => e.invitationAcceptedHandles,
+          lastGood: (e) => _peopleRefresh.value.firstWhereOrNull((person) => person.id == e.id),
+          project: (e, address) {
+            return FindMyFriend(
               latitude: e.lastLocation?.latitude,
               longitude: e.lastLocation?.longitude,
               longAddress: e.lastLocation?.address?.formattedAddressLines?.join("\n"), 
               shortAddress: e.lastLocation?.address != null ? "${e.lastLocation?.address?.locality}, ${e.lastLocation?.address?.stateCode ?? e.lastLocation?.address?.countryCode}" : null,
               title: null, 
               subtitle: null, 
-              handle: Handle.findOne(addressAndService: Tuple2(e.invitationAcceptedHandles.first, "iMessage")) ?? Handle(address: e.invitationAcceptedHandles.first), 
+              handle: Handle.findOne(addressAndService: Tuple2(address, "iMessage")) ?? Handle(address: address),
               lastUpdated: e.lastLocation?.timestamp != null ? DateTime.fromMillisecondsSinceEpoch(e.lastLocation!.timestamp) : null,
               status: null, 
               locatingInProgress: false,
               id: e.id,
-            )
-          )
-          .toList()
-          .cast<FindMyFriend>();
+            );
+          });
+    }, force: force);
+    if (!mounted) return;
+    friends = _peopleRefresh.value;
 
       friendsWithLocation = friends.where((item) => (item.latitude ?? 0) != 0 && (item.longitude ?? 0) != 0).toList();
       friendsWithoutLocation = friends.where((item) => (item.latitude ?? 0) == 0 && (item.longitude ?? 0) == 0).toList();
@@ -519,10 +516,10 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         buildFriendMarker(e);
       }
       setState(() {
-        fetching2 = false;
+        fetching2 = _peopleRefresh.error == null ? false : null;
         refreshing2 = false;
       });
-      if (widget.defaultFriend != null) {
+      if (_peopleRefresh.error == null && widget.defaultFriend != null) {
         var friend = friends.firstWhereOrNull((friend) => friend.id == widget.defaultFriend);
         widget.defaultFriend = null;
         if (friend != null) {
@@ -531,7 +528,15 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           }
           await completer.future;
 
-          await api.selectFriend(config: pushService.state!.osConfig, client: fmfClient!, friend: friend.id);
+          if (!mounted) return;
+          try {
+            await api.selectFriend(config: pushService.state!.osConfig, client: fmfClient!, friend: friend.id);
+          } catch (_) {
+            // Selection is not a failed People/Devices/Items refresh.
+            if (mounted) showSnackbar("Find My", "Could not refresh the selected person.");
+            return;
+          }
+          if (!mounted) return;
 
 
           if (friend.latitude != null) {
@@ -545,28 +550,18 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           }
         }
       }
-    } catch (e, s) {
-      Logger.error("Failed to parse FindMy Friends location data!", error: e, trace: s);
-      if (mounted) {
-        setState(() {
-          fetching2 = null;
-          refreshing2 = false;
-        });
-      }
-      rethrow;
-    }
+  }
 
-    var isNewi = fmipClient == null;
-    fmipClient ??= await api.makeFindMyPhone(
-      config: pushService.state!.osConfig,
-      path: pushService.statePath,
-      aps: pushService.state!.conn,
-      anisette: pushService.state!.anisette,
-      provider: pushService.state!.icloudServices!.tokenProvider,
-    );
-
-
-    try {
+  Future<void> refreshCloudDevices({required bool refreshDevices, required bool force}) async {
+    await _devicesRefresh.refresh(() async {
+      var isNewi = fmipClient == null;
+      fmipClient ??= await api.makeFindMyPhone(
+        config: pushService.state!.osConfig,
+        path: pushService.statePath,
+        aps: pushService.state!.conn,
+        anisette: pushService.state!.anisette,
+        provider: pushService.state!.icloudServices!.tokenProvider,
+      );
       if (refreshDevices && !isNewi) {
         await withFmipLock(() => api.refreshDevices(
               config: pushService.state!.osConfig,
@@ -576,7 +571,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
 
       var following = await api.getDevices(client: fmipClient!);
     
-      var devices = following
+      return following
           .map((e) => 
             FindMyDevice(
               deviceModel: e.deviceModel, 
@@ -642,18 +637,22 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
             )
           )
           .toList().cast<FindMyDevice>();
-      
+    }, force: force);
+    if (!mounted) return;
+    publishDevicesAndItems();
+  }
 
-      if (beaconCacheDate == null || DateTime.now().difference(beaconCacheDate!).inMinutes > 3) {
-        isInClique = await api.isInClique(keychain: pushService.state!.icloudServices!.keychain!);
-        try {
-          cachedBeacons = isInClique ? await api.getBeaconItems(items: pushService.state!.icloudServices!.fmfd!) : [];
-        } catch (e, s) {
-          // used for PCS key missing catching after we reset the clique.
-          Logger.error("Failed to fetch beacon data", error: e, trace: s);
-        }
-        beaconCacheDate = DateTime.now();
+  Future<void> refreshItems({required bool force}) async {
+    final updated = await _itemsRefresh.refresh(() async {
+      isInClique = await api.isInClique(keychain: pushService.state!.icloudServices!.keychain!);
+      if (!isInClique) throw StateError("Find My Items keychain unavailable");
+      return api.getBeaconItems(items: pushService.state!.icloudServices!.fmfd!);
+    }, force: force, maxAge: const Duration(minutes: 3));
+    if (!mounted) return;
+    publishDevicesAndItems();
+    if (updated) {
         for (var cached in cachedBeacons) {
+          if (!mounted) return;
           if (cached.lastReport == null) continue;
           try {
             var placemark = await pushService.reverseGeocode(cached.lastReport!.lat, cached.lastReport!.long);
@@ -685,7 +684,12 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
             Logger.warn("Geocoding failed", error: e, trace: s);
           }
         }
-      }
+    }
+    if (mounted) publishDevicesAndItems();
+  }
+
+  void publishDevicesAndItems() {
+      final devices = List<FindMyDevice>.of(_devicesRefresh.value);
       for (api.DartBeacon e in cachedBeacons) {
         var location = e.lastReport != null ? Location(
             positionType: null, 
@@ -765,6 +769,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       }
 
       this.devices = devices;
+      markers.removeWhere((_, marker) => (marker.key as ValueKey?)?.value.toString().startsWith('device-') == true);
 
       for (FindMyDevice e in devices.where((e) => e.location?.latitude != null && e.location?.longitude != null)) {
           markers[e.id ?? randomString(6)] = Marker(
@@ -803,19 +808,9 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           );
         }
       setState(() {
-        fetching = false;
-        refreshing = false;
+        fetching = _devicesRefresh.error != null ? null : _devicesRefresh.lastSuccessAt == null;
+        refreshing = _devicesRefresh.loading || _itemsRefresh.loading;
       });
-    } catch (e, s) {
-      Logger.error("Failed to parse FindMy Devices location data!", error: e, trace: s);
-      if (mounted) {
-        setState(() {
-          fetching = null;
-          refreshing = false;
-        });
-      }
-      rethrow;
-    }
     
 
     // // Call the FindMy Friends refresh anyways so that new data comes through the socket
@@ -973,7 +968,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                       padding: const EdgeInsets.all(8.0),
                       child: Text(
                         fetching == null
-                            ? (cloudFindMyError ?? "Cloud Find My is unavailable right now.")
+                            ? "Devices: ${findMyCloudFailureMessage(_devicesRefresh.error!)} Last known data is retained."
                             : fetching == false
                                 ? "You have no devices."
                                 : "Getting FindMy data...",
@@ -1070,8 +1065,20 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                 ),
               ],
             ),
-          if (itemsWithLocation.isNotEmpty || !isInClique)
+          if (itemsWithLocation.isNotEmpty || !isInClique || _itemsRefresh.error != null)
             SettingsHeader(iosSubtitle: iosSubtitle, materialSubtitle: materialSubtitle, text: "Items"),
+          if (_itemsRefresh.error != null)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(children: [
+                Text("Items: ${findMyCloudFailureMessage(_itemsRefresh.error!)} Last known data is retained."),
+                TextButton.icon(
+                  onPressed: _itemsRefresh.loading ? null : () => refreshItems(force: true),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text("Retry Items"),
+                ),
+              ]),
+            ),
           if (!isInClique)
           Obx(() => SettingsSection(
             backgroundColor: tileColor,
@@ -1321,7 +1328,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                       padding: const EdgeInsets.all(8.0),
                       child: Text(
                         fetching2 == null
-                            ? "Something went wrong!"
+                            ? "People: ${findMyCloudFailureMessage(_peopleRefresh.error!)} Last known data is retained."
                             : fetching2 == false
                                 ? "You have no friends."
                                 : "Getting FindMy data...",
@@ -1329,6 +1336,12 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                       ),
                     ),
                     if (fetching2 == true) buildProgressIndicator(context, size: 15),
+                    if (fetching2 == null)
+                      TextButton.icon(
+                        onPressed: _peopleRefresh.loading ? null : () => refreshPeople(refreshFriends: true, force: true),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text("Retry People"),
+                      ),
                   ],
                 ),
               ),
