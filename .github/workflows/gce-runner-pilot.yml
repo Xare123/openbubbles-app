@@ -469,7 +469,9 @@ jobs:
       - name: Run the full Dart test suite
         if: ${{ env.VALIDATION_MODE == 'full' }}
         shell: bash
-        run: flutter test
+        run: |
+          flutter test
+          pwsh -NoProfile -File tooling/windows/test_cloudkit_semantic_outbox_contract.ps1
 
       - name: Run Rust library tests
         if: ${{ env.VALIDATION_MODE == 'full' }}
@@ -528,7 +530,14 @@ jobs:
               --dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2
             )
           fi
-          flutter "${build_args[@]}"
+          # Flutter's verbose path supplies Gradle --full-stacktrace. The
+          # previous packageCanaryDebug failure hid its underlying cause;
+          # retain the real error and disk state without changing resources
+          # or retrying a partially failed build.
+          df -h . "$RUNNER_TEMP"
+          build_status=0
+          flutter --verbose "${build_args[@]}" || build_status=$?
+          df -h . "$RUNNER_TEMP"
           finished="$(date +%s)"
           elapsed="$((finished - started))"
           echo "seconds=$elapsed" >> "$GITHUB_OUTPUT"
@@ -539,7 +548,9 @@ jobs:
             echo "- Machine: \`${MACHINE_TYPE}\`"
             echo "- Outbound writer: \`${OUTBOUND_WRITER}\`"
             echo "- Flutter build time: \`${elapsed}s\`"
+            echo "- Build exit status: \`${build_status}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+          exit "$build_status"
 
       - name: Verify producer APK identity and native libraries
         if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' }}
