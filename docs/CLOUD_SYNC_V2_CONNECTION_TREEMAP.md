@@ -225,6 +225,14 @@ continue under a new account.
   controls for this next-iteration investigation; the earlier `not_found`
   response did not establish that its session was deleted. No replacement or
   extra worktree was created.
+- Parent review accepted the media worker's four additional observations for
+  `for_chunks.container`: length and equality with the asset reference, derived
+  Ford reference and `keys_container`. Both descriptor fields were already
+  independently shape-checked. The change touches only the diagnostic helper
+  and tests; missing/ambiguous references remain unavailable and validators,
+  validation results and network functions are unchanged. This closes a
+  diagnostic gap before the next APK, not an integrity or size workaround.
+  New-source compiled tests and real GIF/video retries remain required.
 
 ### Critical-path review, 2026-09-05
 
