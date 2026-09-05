@@ -2902,6 +2902,79 @@ final _entities = <obx_int.ModelEntity>[
     relations: <obx_int.ModelRelation>[],
     backlinks: <obx_int.ModelBacklink>[],
   ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(33, 7403419454425897175),
+    name: 'CloudSyncLocalSendIntentEntity',
+    lastPropertyId: const obx_int.IdUid(10, 3816774319385985138),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 3445876670038431965),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 1709593491039625463),
+        name: 'intentKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(93, 7995204325328707007),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 953300709177395140),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(94, 2047595238010581757),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 5493711835402792133),
+        name: 'writerEpoch',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 9081562806329284554),
+        name: 'localMessageId',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 7861571049273173611),
+        name: 'messageGuidHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 6445081811053322663),
+        name: 'sourceSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 2983762130275110100),
+        name: 'state',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(95, 4712335069625825055),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 1762921255407721725),
+        name: 'createdAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 3816774319385985138),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
 ];
 
 /// Shortcut for [obx.Store.new] that passes [getObjectBoxModel] and for Flutter
@@ -2947,8 +3020,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
     // Typically, this is done with `dart run build_runner build`.
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
-    lastEntityId: const obx_int.IdUid(32, 3377435011161314855),
-    lastIndexId: const obx_int.IdUid(92, 7759272949562488518),
+    lastEntityId: const obx_int.IdUid(33, 7403419454425897175),
+    lastIndexId: const obx_int.IdUid(95, 4712335069625825055),
     lastRelationId: const obx_int.IdUid(1, 7492985733214117623),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [
@@ -6816,6 +6889,105 @@ obx_int.ModelDefinition getObjectBoxModel() {
             return object;
           },
         ),
+    CloudSyncLocalSendIntentEntity:
+        obx_int.EntityDefinition<CloudSyncLocalSendIntentEntity>(
+          model: _entities[24],
+          toOneRelations: (CloudSyncLocalSendIntentEntity object) => [],
+          toManyRelations: (CloudSyncLocalSendIntentEntity object) => {},
+          getId: (CloudSyncLocalSendIntentEntity object) => object.id,
+          setId: (CloudSyncLocalSendIntentEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB: (CloudSyncLocalSendIntentEntity object, fb.Builder fbb) {
+            final intentKeyOffset = fbb.writeString(object.intentKey);
+            final accountFingerprintOffset = fbb.writeString(
+              object.accountFingerprint,
+            );
+            final messageGuidHashOffset = fbb.writeString(
+              object.messageGuidHash,
+            );
+            final sourceSha256Offset = fbb.writeString(object.sourceSha256);
+            fbb.startTable(11);
+            fbb.addInt64(0, object.id);
+            fbb.addOffset(1, intentKeyOffset);
+            fbb.addOffset(2, accountFingerprintOffset);
+            fbb.addInt64(3, object.writerEpoch);
+            fbb.addInt64(4, object.localMessageId);
+            fbb.addOffset(5, messageGuidHashOffset);
+            fbb.addOffset(6, sourceSha256Offset);
+            fbb.addInt64(7, object.state);
+            fbb.addInt64(8, object.createdAtMs);
+            fbb.addInt64(9, object.updatedAtMs);
+            fbb.finish(fbb.endTable());
+            return object.id;
+          },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final intentKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final writerEpochParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              10,
+              0,
+            );
+            final localMessageIdParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              12,
+              0,
+            );
+            final messageGuidHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 14, '');
+            final sourceSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 16, '');
+            final stateParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              18,
+              0,
+            );
+            final createdAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              20,
+              0,
+            );
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              22,
+              0,
+            );
+            final object = CloudSyncLocalSendIntentEntity(
+              id: idParam,
+              intentKey: intentKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              writerEpoch: writerEpochParam,
+              localMessageId: localMessageIdParam,
+              messageGuidHash: messageGuidHashParam,
+              sourceSha256: sourceSha256Param,
+              state: stateParam,
+              createdAtMs: createdAtMsParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
   };
 
   return obx_int.ModelDefinition(model, bindings);
@@ -9157,5 +9329,66 @@ class CloudSemanticChatAliasEntity_ {
   static final updatedAtMs =
       obx.QueryIntegerProperty<CloudSemanticChatAliasEntity>(
         _entities[23].properties[18],
+      );
+}
+
+/// [CloudSyncLocalSendIntentEntity] entity fields to define ObjectBox queries.
+class CloudSyncLocalSendIntentEntity_ {
+  /// See [CloudSyncLocalSendIntentEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudSyncLocalSendIntentEntity>(
+    _entities[24].properties[0],
+  );
+
+  /// See [CloudSyncLocalSendIntentEntity.intentKey].
+  static final intentKey =
+      obx.QueryStringProperty<CloudSyncLocalSendIntentEntity>(
+        _entities[24].properties[1],
+      );
+
+  /// See [CloudSyncLocalSendIntentEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudSyncLocalSendIntentEntity>(
+        _entities[24].properties[2],
+      );
+
+  /// See [CloudSyncLocalSendIntentEntity.writerEpoch].
+  static final writerEpoch =
+      obx.QueryIntegerProperty<CloudSyncLocalSendIntentEntity>(
+        _entities[24].properties[3],
+      );
+
+  /// See [CloudSyncLocalSendIntentEntity.localMessageId].
+  static final localMessageId =
+      obx.QueryIntegerProperty<CloudSyncLocalSendIntentEntity>(
+        _entities[24].properties[4],
+      );
+
+  /// See [CloudSyncLocalSendIntentEntity.messageGuidHash].
+  static final messageGuidHash =
+      obx.QueryStringProperty<CloudSyncLocalSendIntentEntity>(
+        _entities[24].properties[5],
+      );
+
+  /// See [CloudSyncLocalSendIntentEntity.sourceSha256].
+  static final sourceSha256 =
+      obx.QueryStringProperty<CloudSyncLocalSendIntentEntity>(
+        _entities[24].properties[6],
+      );
+
+  /// See [CloudSyncLocalSendIntentEntity.state].
+  static final state = obx.QueryIntegerProperty<CloudSyncLocalSendIntentEntity>(
+    _entities[24].properties[7],
+  );
+
+  /// See [CloudSyncLocalSendIntentEntity.createdAtMs].
+  static final createdAtMs =
+      obx.QueryIntegerProperty<CloudSyncLocalSendIntentEntity>(
+        _entities[24].properties[8],
+      );
+
+  /// See [CloudSyncLocalSendIntentEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudSyncLocalSendIntentEntity>(
+        _entities[24].properties[9],
       );
 }

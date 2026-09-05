@@ -1,10 +1,113 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:objectbox/internal.dart' as obx;
 
 void main() {
+  test(
+    'adding the local send journal preserves a database with last entity ID 32',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'cloud-sync-model-upgrade-',
+      );
+      addTearDown(() async {
+        if (directory.existsSync()) await directory.delete(recursive: true);
+      });
+      final current = getObjectBoxModel();
+      final previousMap = current.model.toMap();
+      (previousMap['entities'] as List).removeWhere(
+        (entity) => entity['name'] == 'CloudSyncLocalSendIntentEntity',
+      );
+      // Exact counters from the qualified pre-journal model, not a fresh store
+      // with the new model. All predecessor entity definitions stay unchanged.
+      previousMap['lastEntityId'] = '32:3377435011161314855';
+      previousMap['lastIndexId'] = '92:7759272949562488518';
+      final previous = obx.ModelDefinition(
+        obx.ModelInfo.fromMap(previousMap),
+        Map.of(current.bindings)..remove(CloudSyncLocalSendIntentEntity),
+      );
+      final oldStore = Store(previous, directory: directory.path);
+      late final int messageId;
+      late final int chatId;
+      late final int attachmentId;
+      late final int checkpointId;
+      try {
+        final chat = Chat(guid: 'iMessage;-;synthetic@example.com');
+        chatId = oldStore.box<Chat>().put(chat);
+        final message = Message(
+          guid: 'synthetic-migration-guid',
+          text: 'synthetic migration sentinel',
+          dateCreated: DateTime.utc(2026, 9, 4),
+          isFromMe: true,
+        )..chat.target = chat;
+        messageId = oldStore.box<Message>().put(message);
+        attachmentId = oldStore.box<Attachment>().put(
+          Attachment(guid: 'synthetic-attachment-guid'),
+        );
+        checkpointId = oldStore.box<CloudSyncCheckpointEntity>().put(
+          CloudSyncCheckpointEntity(
+            checkpointKey: 'synthetic-checkpoint',
+            accountFingerprint: 'A' * 43,
+            container: 'com.apple.messages.cloud',
+            database: 'private',
+            zone: 'messageManateeZone',
+            streamKind: 'messages',
+            generation: 7,
+            fetchedSequence: 43,
+            appliedSequence: 41,
+            mutationRevisionCounter: 12,
+            updatedAtMs: 1000,
+          ),
+        );
+      } finally {
+        oldStore.close();
+      }
+
+      final upgraded = await openStore(directory: directory.path);
+      try {
+        expect(upgraded.box<Message>().count(), 1);
+        expect(
+          upgraded.box<Message>().get(messageId)?.text,
+          'synthetic migration sentinel',
+        );
+        expect(upgraded.box<Message>().get(messageId)?.chat.targetId, chatId);
+        expect(
+          upgraded.box<Attachment>().get(attachmentId)?.guid,
+          'synthetic-attachment-guid',
+        );
+        final checkpoint = upgraded.box<CloudSyncCheckpointEntity>().get(
+          checkpointId,
+        )!;
+        expect(checkpoint.generation, 7);
+        expect(checkpoint.fetchedSequence, 43);
+        expect(checkpoint.appliedSequence, 41);
+        expect(checkpoint.mutationRevisionCounter, 12);
+        expect(upgraded.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+      } finally {
+        upgraded.close();
+      }
+      final reopened = await openStore(directory: directory.path);
+      try {
+        expect(
+          reopened.box<Message>().get(messageId)?.text,
+          'synthetic migration sentinel',
+        );
+        expect(
+          reopened
+              .box<CloudSyncCheckpointEntity>()
+              .get(checkpointId)
+              ?.generation,
+          7,
+        );
+      } finally {
+        reopened.close();
+      }
+    },
+  );
+
   test('cloud inbox status codes preserve the durable 0 through 3 mapping', () {
     expect(CloudInboxStatus.pending.index, 0);
     expect(CloudInboxStatus.applied.index, 1);
@@ -68,7 +171,14 @@ void main() {
         entities,
         containsPair('CloudSemanticChatAliasEntity', '32:3377435011161314855'),
       );
-      expect(model['lastEntityId'], '32:3377435011161314855');
+      expect(
+        entities,
+        containsPair(
+          'CloudSyncLocalSendIntentEntity',
+          '33:7403419454425897175',
+        ),
+      );
+      expect(model['lastEntityId'], '33:7403419454425897175');
       expect(model['modelVersion'], 5);
       expect(model['modelVersionParserMinimum'], 5);
 

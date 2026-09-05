@@ -4,6 +4,8 @@
 /// database exports to compile without creating a web persistence path.
 const int cloudSyncSchemaVersion = 2;
 
+class CloudSyncLocalSendIntentEntity {}
+
 class CloudSyncCheckpointEntity {}
 
 class CloudInboxChangeEntity {}

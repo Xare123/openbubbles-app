@@ -8,6 +8,46 @@ import 'package:objectbox/objectbox.dart';
 /// written to ObjectBox in plaintext.
 const int cloudSyncSchemaVersion = 2;
 
+/// Local-origin send intent, separate from both restored history and the
+/// protected remote-mutation outbox. No body, handle or raw GUID is stored here.
+@Entity()
+class CloudSyncLocalSendIntentEntity {
+  int id;
+
+  @Index(type: IndexType.hash64)
+  @Unique()
+  String intentKey;
+
+  @Index(type: IndexType.hash64)
+  String accountFingerprint;
+
+  int writerEpoch;
+  int localMessageId;
+  String messageGuidHash;
+  String sourceSha256;
+
+  /// Stable codes: 0 awaiting IDS success, 1 ready for protected admission.
+  /// Interrupted submission remains 0; restart is not proof of delivery.
+  @Index()
+  int state;
+
+  int createdAtMs;
+  int updatedAtMs;
+
+  CloudSyncLocalSendIntentEntity({
+    this.id = 0,
+    required this.intentKey,
+    required this.accountFingerprint,
+    required this.writerEpoch,
+    required this.localMessageId,
+    required this.messageGuidHash,
+    required this.sourceSha256,
+    this.state = 0,
+    required this.createdAtMs,
+    required this.updatedAtMs,
+  });
+}
+
 @Entity()
 class CloudSyncCheckpointEntity {
   int id;

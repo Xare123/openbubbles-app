@@ -2499,10 +2499,75 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "33:7403419454425897175",
+      "lastPropertyId": "10:3816774319385985138",
+      "name": "CloudSyncLocalSendIntentEntity",
+      "properties": [
+        {
+          "id": "1:3445876670038431965",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:1709593491039625463",
+          "name": "intentKey",
+          "indexId": "93:7995204325328707007",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:953300709177395140",
+          "name": "accountFingerprint",
+          "indexId": "94:2047595238010581757",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:5493711835402792133",
+          "name": "writerEpoch",
+          "type": 6
+        },
+        {
+          "id": "5:9081562806329284554",
+          "name": "localMessageId",
+          "type": 6
+        },
+        {
+          "id": "6:7861571049273173611",
+          "name": "messageGuidHash",
+          "type": 9
+        },
+        {
+          "id": "7:6445081811053322663",
+          "name": "sourceSha256",
+          "type": 9
+        },
+        {
+          "id": "8:2983762130275110100",
+          "name": "state",
+          "indexId": "95:4712335069625825055",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "9:1762921255407721725",
+          "name": "createdAtMs",
+          "type": 6
+        },
+        {
+          "id": "10:3816774319385985138",
+          "name": "updatedAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "32:3377435011161314855",
-  "lastIndexId": "92:7759272949562488518",
+  "lastEntityId": "33:7403419454425897175",
+  "lastIndexId": "95:4712335069625825055",
   "lastRelationId": "1:7492985733214117623",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

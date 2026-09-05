@@ -32,6 +32,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_proven
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_production_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_sync_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_canary_candidate.dart';
@@ -1489,6 +1490,7 @@ class RustPushBackend implements BackendService {
     }
 
     var msg = await buildWireMessage();
+    final generatedMessageId = msg.id;
     Logger.info("sending ${msg.id}");
     if (m.stagingGuid != null ||
         (m.dateScheduled != null &&
@@ -1505,17 +1507,37 @@ class RustPushBackend implements BackendService {
       msg.target = await getSMSTargets(msg.sender!);
     }
     final stableMessageId = msg.id;
+    final cloudSyncGuidIsNew = CloudSyncLocalSendIdentity.isFreshLocalSubmission(
+      m, generatedGuid: generatedMessageId, stableGuid: stableMessageId,
+    );
+    var localCloudIntent = await pushService._captureCloudSyncV2LocalSend(
+      message: m,
+      chat: chat,
+      wire: msg,
+    );
     Future<api.MessageInst> rebuildWireMessage() async {
       final rebuilt = await buildWireMessage();
       rebuilt.id = stableMessageId;
       if (chat.isRpSms) {
         rebuilt.target = await getSMSTargets(rebuilt.sender!);
       }
+      // A transport rebuild must not certify a different payload as the
+      // originally journaled send. Live retry behavior remains unchanged.
+      if (localCloudIntent != null &&
+          CloudSyncLocalSendIdentity.captureWire(m, chat, rebuilt)?.sourceSha256 !=
+              localCloudIntent!.identity.sourceSha256) {
+        localCloudIntent = null;
+        Logger.warn('Cloud Sync V2 outgoing payload changed during retry; upload intent was not confirmed');
+      }
       return rebuilt;
     }
     m.stagingGuid = msg
         .id; // in case delivered comes in before sending "finishes" (also for retries, duh)
-    m.save(chat: chat);
+    await pushService._saveCloudSyncV2LocalSend(
+      localCloudIntent, m, chat,
+      confirmed: false,
+      newlyGeneratedGuid: cloudSyncGuidIsNew,
+    );
     try {
       await sendMsg(msg, rebuildForRetry: rebuildWireMessage);
     } catch (e) {
@@ -1531,7 +1553,11 @@ class RustPushBackend implements BackendService {
       m.guid = msg.id;
     }
     await m.forwardIfNessesary(chat);
-    m.save(chat: chat);
+    await pushService._saveCloudSyncV2LocalSend(
+      localCloudIntent, m, chat,
+      confirmed: true,
+      newlyGeneratedGuid: false,
+    );
     msg.sentTimestamp = DateTime.now().millisecondsSinceEpoch;
     if (m.hasBeenForwarded) {
       return m; // do not reflect back, it will just send it out again
@@ -7500,6 +7526,119 @@ class RustPushService extends GetxService {
         isAndroid: Platform.isAndroid,
         packageName: fs.packageInfo.packageName,
       );
+
+  // Local intent capture only. This does not schedule or authorize a CloudKit
+  // save; protected admission and the create-only writer remain separate.
+  Future<({
+    CloudSyncLocalSendJournal journal,
+    CloudSyncLocalSendIdentity identity,
+    CloudSyncLocalSendAuthFence authFence,
+  })?> _captureCloudSyncV2LocalSend({
+    required Message message,
+    required Chat chat,
+    required api.MessageInst wire,
+  }) async {
+    if (!CloudKitWriterOwnership.v2MutationsEnabled ||
+        !CloudSyncDevGate.manualOutboundCanaryEnabled) {
+      return null;
+    }
+    try {
+      if (!_cloudSyncV2CanaryRuntimeAllowed || !ls.isUiThread || loggingOut ||
+          ss.settings.cloudSyncingEnabled.value || isSyncing.value != null ||
+          statePath.isEmpty) {
+        return null;
+      }
+      final identity = CloudSyncLocalSendIdentity.captureWire(message, chat, wire);
+      if (identity == null) return null;
+      final currentState = state;
+      final client = currentState?.icloudServices?.cloudMessagesClient;
+      if (client == null) return null;
+      final storagePath = statePath;
+      bool stillCurrent() => !loggingOut && identical(currentState, state) &&
+          identical(client, state?.icloudServices?.cloudMessagesClient) &&
+          storagePath == statePath && !ss.settings.cloudSyncingEnabled.value;
+      // This captures local account/keystore identity only, not network auth.
+      // A slow keystore cannot delay an ordinary live send indefinitely.
+      Future<CloudSyncNativeAuthSnapshot?> captureAuth() async {
+        if (!stillCurrent()) return null;
+        final metadata = await FrbCloudSyncNativeAuthBinding().capture(
+          cloudMessagesClient: client,
+          privateStorageDirectory: storagePath,
+        );
+        if (!stillCurrent()) return null;
+        return CloudSyncNativeAuthSnapshot.fromNative(
+          nativeSessionId: metadata.nativeSessionId,
+          accountFingerprint: metadata.accountFingerprint,
+          protectedStoreIdentity: metadata.protectedStoreIdentity,
+          cloudMessagesClient: client,
+        );
+      }
+      final auth = await captureAuth().timeout(const Duration(seconds: 1));
+      if (auth == null || !stillCurrent() ||
+          CloudSyncLocalSendIdentity.captureWire(message, chat, wire)?.sourceSha256 !=
+              identity.sourceSha256) {
+        return null;
+      }
+      final authority = ObjectBoxCloudKitWriterAuthority(store: Database.store);
+      final authoritySnapshot = authority.read(
+        CloudKitWriterScope(accountFingerprint: auth.accountFingerprint),
+      );
+      if (authoritySnapshot == null || authoritySnapshot.owner != CloudKitWriterOwner.v2) {
+        return null;
+      }
+      return (
+        journal: CloudSyncLocalSendJournal(
+          store: Database.store, authority: authority, authoritySnapshot: authoritySnapshot,
+        ),
+        identity: identity,
+        authFence: CloudSyncLocalSendAuthFence(
+          expected: auth,
+          capture: () => captureAuth().timeout(const Duration(seconds: 1)),
+          stillCurrent: stillCurrent,
+        ),
+      );
+    } catch (_) {
+      Logger.warn('Cloud Sync V2 local send capture unavailable; live sending remains independent');
+      return null;
+    }
+  }
+
+  Future<void> _saveCloudSyncV2LocalSend(
+    ({CloudSyncLocalSendJournal journal, CloudSyncLocalSendIdentity identity,
+      CloudSyncLocalSendAuthFence authFence})? context,
+    Message message,
+    Chat chat, {
+    required bool confirmed,
+    required bool newlyGeneratedGuid,
+  }) async {
+    if (context == null) {
+      message.save(chat: chat);
+      return;
+    }
+    final previousId = message.id;
+    try {
+      await context.authFence.run(() {
+        int persist() => message.save(chat: chat, throwOnUniqueViolation: true).id ?? 0;
+        if (confirmed) {
+          context.journal.saveConfirmedSubmission(
+            identity: context.identity, persistMessage: persist, now: DateTime.now().toUtc(),
+          );
+        } else {
+          context.journal.saveSubmission(
+            identity: context.identity, newlyGeneratedGuid: newlyGeneratedGuid,
+            persistMessage: persist, now: DateTime.now().toUtc(),
+          );
+        }
+      });
+    } catch (_) {
+      // The joint transaction rolled back. Restore the in-memory ObjectBox ID
+      // before the existing local-save fallback. Never report an IDS failure
+      // merely because the CloudKit journal was unavailable or superseded.
+      message.id = previousId;
+      message.save(chat: chat);
+      Logger.warn('Cloud Sync V2 local send intent was not advanced; live sending remains independent');
+    }
+  }
 
   bool get cloudSyncV2PcsPreparationAvailable {
     if (!CloudSyncDevGate.manualSemanticPullEnabled ||

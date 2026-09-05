@@ -60,6 +60,9 @@ void main() {
   });
 
   tearDown(() async {
+    // Remote projection, including restored outgoing messages, must never
+    // fabricate the local-origin evidence consumed by the V2 upload lane.
+    expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
     store.close();
     if (directory.existsSync()) await directory.delete(recursive: true);
   });
