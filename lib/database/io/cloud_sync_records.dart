@@ -26,10 +26,18 @@ class CloudSyncLocalSendIntentEntity {
   String messageGuidHash;
   String sourceSha256;
 
-  /// Stable codes: 0 awaiting IDS success, 1 ready for protected admission.
+  /// Stable codes: 0 awaiting IDS success, 1 ready for protected admission,
+  /// 2 atomically adopted by the protected outbox. Never downgrade state 2.
   /// Interrupted submission remains 0; restart is not proof of delivery.
   @Index()
   int state;
+
+  /// Exact durable operation identity. Set in the same transaction as outbox
+  /// adoption; recovery must use its existing envelope, never re-encode.
+  String? admittedOperationId;
+
+  /// Digest of immutable operation/payload metadata, not mutable receipts.
+  String? admittedBindingSha256;
 
   int createdAtMs;
   int updatedAtMs;
@@ -43,6 +51,8 @@ class CloudSyncLocalSendIntentEntity {
     required this.messageGuidHash,
     required this.sourceSha256,
     this.state = 0,
+    this.admittedOperationId,
+    this.admittedBindingSha256,
     required this.createdAtMs,
     required this.updatedAtMs,
   });

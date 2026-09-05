@@ -66,7 +66,9 @@ Relay identity -> Apple account -> Keychain clique / PCS -> CloudMessagesClient
   +-- normal composer -> IDS live delivery -> local Message save
   |     +-- local-origin intent + Message saved in one transaction
   |           pending -> ready only after matching IDS success / identity proof
-  |           +-- protected admission / recovery consumer NOT wired yet
+  |           +-- protected stage -> atomic outbox/map/intent adoption
+  |           +-- restart resolves exact adopted envelope, never re-encodes
+  |           +-- automatic admission / upload consumer NOT wired yet
   |
   +-- developer one-message writer -> protected outbox -> create-only CloudKit
         -> exact receipt -> confirmed-only readback -> retained terminal row
@@ -79,7 +81,7 @@ Relay identity -> Apple account -> Keychain clique / PCS -> CloudMessagesClient
 | Identity and read prerequisites | Ordinary Apple login and Keychain clique preparation are separate. The dedicated V2 preparation path exists; historical live read and the user's restored messages prove the private read protocol is reachable. | Preserve the working identity. Do not reset Alpha, copy platform-bound keys, or reopen a solved login investigation without fresh evidence. Fresh-device setup remains a separate qualification gate. |
 | Read and visible projection | `RustPushService.runCloudSyncV2AutomaticSemanticCatchUpConfirmed` loops bounded semantic batches. `ObjectBoxCanonicalSemanticEntityAdapter` projects owned records. The user has confirmed readable chats and working photos. | Useful restore exists. Requalify the exact current build and specific gallery/GIF case; do not report all media as broken or all media as proven. |
 | Persistent automatic sync | The automatic catch-up method is called by `troubleshoot_panel.dart`, not startup, reconnect, or a background worker. `CloudSyncShadowRuntime` is shadow-only. The Android scheduling worker is explicitly dormant. | **Production gap.** One-click foreground catch-up is not continuous cross-device sync. Compose one durable account-scoped runtime before enabling background scheduling. |
-| Outgoing integration | The gated normal-send path now journals supported fresh local sends with the Message transaction. Actual IDS text/route and native account/session/store identity are checked; interrupted sends remain pending. Restored records cannot gain local origin. `CloudSyncOutboundAdmissionCoordinator.admitMessage` is still reached only through the developer outbound adapter. | **Partial integration, not automatic upload.** Add durable handling of capture failures, protected admission plus intent adoption, and a recovery consumer. Do not enqueue restored history or make CloudKit availability determine live-send success. |
+| Outgoing integration | The gated normal-send path journals supported fresh local sends with the Message transaction. Actual IDS text/route and native account/session/store identity are checked; interrupted sends remain pending. `admitLocalSend` now atomically links an existing ready intent to its protected outbox and record map. Restart uses the original envelope. The automatic consumer is not connected. | **Partial integration, not automatic upload.** Add durable handling of capture failures, scheduling/lease policy for independently owned creates, and a recovery consumer. Do not enqueue restored history or make CloudKit availability determine live-send success. |
 | Read after write | The reader now distinguishes completely settled, confirmed rows from blocking work in one ObjectBox snapshot. The semantic sampler compares fingerprints of every durable outbox column before/after its paused read; receipts are not deleted. Pending, leased, paused, quarantined, unknown, invalid states and unacknowledged protected receipts still block. Shadow reads retain their zero-row rule. Schema 7 reports only counts and the equality result, never the fingerprint; the device reader preserves schema 6's zero-row gate. | **TEST-PROVEN on Windows ObjectBox.** The test performs an initial read, exact receipt commit, restart, blocked unreconciled read, durable receipt acknowledgement, restart, then two successful reads with zero transport saves. Same-count mutation is rejected. Restoring the original guard makes this regression test fail with `outbox_not_empty`. This is synthetic Apple transport evidence, not a live upload claim. |
 | Final native admission | The unfinished generation-fence patch moved `claimForConsumption` inside the armed mutation action. A wrong persisted UUID returned an unknown-outcome result without a native call. | **Reproduced and repaired locally.** Claim validation now follows the durable generation recheck but precedes fence arming. The regression test proves rejection, zero native calls, no fence, reuse with the correct identity, and harmless rejection of repeated consumption. The focused Dart set passes 107 tests. |
 | Rust CI capability tests | Runs `33930475652` and `33930441506` exposed a test-keystore dependency, not a demonstrated parallelism failure. The replacement injects only key loading into the same private consume implementation; the public entry point always uses protected storage. Run `33936071705` on exact `7db9ed89b` passed 285 app Rust tests, 203 rustpush tests, and 30 protector tests. | **TEST-PROVEN on GCE Linux.** Failure, retry and single-use assertions now run through the production consume logic. Do not confuse these passing code gates with the separate failed APK packaging gate. |
@@ -124,18 +126,22 @@ the final message after IDS. `ActionHandler.sendMessage` then reconciles the
 returned message. The gated V2 Canary path now shares those save transactions
 with an explicitly local send journal; ordinary generic `Message.save` and
 remote projection do not create intents.
-`CloudSyncOutboundAdmissionCoordinator` first awaits native protected staging,
-then atomically commits only the outbox and record map. Calling it unawaited
-after `Message.save` would leave a crash window, not solve durable admission.
+`CloudSyncOutboundAdmissionCoordinator.admitLocalSend` starts from that durable
+origin, awaits native protected staging, and commits the intent's adoption in
+the same transaction as its outbox and record map. Calling the older
+`admitMessage` unawaited after `Message.save` would still leave a crash window.
 
 The additive `CloudSyncLocalSendIntentEntity` is entity 33. Existing entity and
 property UIDs are unchanged. The real ObjectBox upgrade test opens the old
 model whose last entity ID was 32, saves synthetic message/attachment/chat/checkpoint sentinels,
 then upgrades and reopens without losing them. State 0 is awaiting IDS success;
-state 1 is ready for protected admission. The table holds only hashes, local
-row ID, account scope, epoch and timestamps, not raw GUIDs, bodies or recipients.
-Protected admission and durable adoption are not implemented yet. Preserve
-the intent until outbox adoption commits and distinguish confirmed IDS
+state 1 is ready for protected admission; state 2 links the exact adopted
+operation. The table holds only hashes, local row ID, account scope, epoch,
+timestamps, the opaque operation ID and its immutable payload-binding digest,
+not raw GUIDs, bodies or recipients. The two optional fields are additive;
+upgrading existing pending
+and ready rows preserves their state and a null link across reopen. Preserve
+the intent after adoption and distinguish confirmed IDS
 submission from an interrupted or failed send. CloudKit being
 offline must not turn a delivered iMessage into a failed live send. Do not
 derive intent from `ckSyncState == false`: V2 restored messages also retain
@@ -179,6 +185,31 @@ hooking sends into the existing queue can strand both lanes. Keep local intents
 distinct from prepared remote mutations, prove recovery ordering, and establish
 new-create ownership/tombstone handling before relaxing any gate. A one-message
 manual upload is not evidence that this production integration exists.
+
+The protected admission boundary now has 22 focused tests, including native
+commit failure followed by database reopen and replay with the local Message
+removed. Recovery returns the original operation and protected envelope with
+no second encoding or stage. Text, recipient-route, writer-epoch, native-session
+and journal changes during staging reject adoption and roll back the outbox,
+map, revision counter and intent transition together. Missing adopted outbox
+state fails closed; a repeated IDS callback cannot downgrade state 2. Combined
+journal, admission, old-model upgrade and store tests pass 154 cases. These are
+synthetic persistence/ordering tests, not Apple write proof. No automatic
+consumer, projection-readiness relaxation or remote mutation was added.
+
+The follow-up Sol audit was reviewed and closed. Two accepted findings now
+have negative controls: construction rejects a writer authority from another
+Store, and restart validates the current generation, record mapping, immutable
+payload-binding digest and protected-reference shapes in the same transaction
+as the journal link. Missing maps or altered payload references/hashes do not
+cause re-encoding. Lease clearing after an acknowledged receipt remains valid;
+native recovery/submission still verifies the live lease's protected contents.
+The recommendation to re-encode on every receipt/timestamp change was not
+adopted: these are mutable observations, not a second local send. The staged
+snapshot remains authoritative, while text/routing or unsupported semantic
+changes still reject admission. A regression pins that distinction. Later
+metadata-update support requires its own ordered mutation, not a replacement
+initial create.
 
 ### Installed Canary and VM observation follow-up
 

@@ -205,6 +205,9 @@ final class ObjectBoxCloudKitWriterAuthority {
   final CloudKitWriterOwnershipDecision _buildDecision;
   final bool _requireInterlock;
 
+  /// Joint persistence must consult authority in the same database transaction.
+  bool isBoundToStore(Store store) => identical(store, _store);
+
   CloudKitWriterAuthoritySnapshot initializeDisabled(
     CloudKitWriterScope scope, {
     required DateTime now,

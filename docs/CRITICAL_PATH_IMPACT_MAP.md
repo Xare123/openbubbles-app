@@ -169,6 +169,36 @@ path; it is not evidence for the Pixel's iPhone-relay path. Treat relay archival
 as an optimization only if repeated offline, delayed, and reconnect cases prove
 it; otherwise retain an audited explicit CloudKit writer.
 
+### Durable ordinary-send admission, 2026-09-05
+
+```text
+fresh local IDS send -> joint Message + origin-intent save
+  -> matching IDS success -> ready intent (state 1)
+  -> same native account/session/store -> synchronous first encoding
+  -> protected native stage
+  -> native auth recheck -> one ObjectBox transaction:
+       outbox + record map + intent state 2 / operation ID / payload binding
+  -> commit original native lease
+
+restart or commit uncertainty -> recover protected store
+  -> adopted intent -> indexed lookup of original operation
+  -> no mutable Message read, encoding or second native stage
+```
+
+Impact rule: first-stage source validation and final adoption revalidation
+must bind the same intent, account, writer epoch and persisted message source.
+The synchronous store entry point is intentional: there is no await between
+the last native auth observation and the complete adoption transaction.
+An adopted intent remains adopted even after a repeated IDS success callback.
+Its original envelope is authoritative on recovery, not a fresh `utmNow()`
+encoding. Authority, journal and outbox must use the same Store; recovery reads
+the journal link, immutable binding and record mapping in one transaction.
+Mutable receipt fields are excluded from the payload binding so receipt
+acknowledgement cannot invalidate a successfully adopted operation.
+Admission itself is local and cannot authorize a CloudKit request.
+The automatic consumer is not wired; existing projection, tombstone,
+unknown-outcome, writer-permit and submission guards remain unchanged.
+
 ## 4. Legacy CloudKit
 
 ```text

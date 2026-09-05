@@ -2502,7 +2502,7 @@
     },
     {
       "id": "33:7403419454425897175",
-      "lastPropertyId": "10:3816774319385985138",
+      "lastPropertyId": "12:8651771725641056063",
       "name": "CloudSyncLocalSendIntentEntity",
       "properties": [
         {
@@ -2561,6 +2561,16 @@
           "id": "10:3816774319385985138",
           "name": "updatedAtMs",
           "type": 6
+        },
+        {
+          "id": "11:5021406816505463499",
+          "name": "admittedOperationId",
+          "type": 9
+        },
+        {
+          "id": "12:8651771725641056063",
+          "name": "admittedBindingSha256",
+          "type": 9
         }
       ],
       "relations": []

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:crypto/crypto.dart';
@@ -151,6 +152,492 @@ void main() {
       ]);
     },
   );
+
+  group('durable local send handoff', () {
+    late CloudSyncLocalSendJournal journal;
+    late ObjectBoxCloudKitWriterAuthority authority;
+    late CloudSyncLocalSendAuthFence authFence;
+    late CloudSyncNativeAuthSnapshot currentAuth;
+    late Message local;
+    late int intentId;
+    var encodes = 0;
+    final scope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: 'messageManateeZone',
+      streamKind: CloudSyncStreamKind.messages,
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final writerScope = CloudKitWriterScope(
+      accountFingerprint: testAccountFingerprintA,
+    );
+
+    void bindJournal() {
+      authority = ObjectBoxCloudKitWriterAuthority.forTest(
+        store: objectBox,
+        buildDecision: CloudKitWriterOwnership.resolve('v2'),
+      );
+      if (authority.read(writerScope) == null) {
+        final disabled = authority.initializeDisabled(
+          writerScope,
+          now: testEpoch,
+        );
+        authority.provisionInitialOwner(
+          writerScope,
+          owner: CloudKitWriterOwner.v2,
+          expectedEpoch: disabled.epoch,
+          evidence: const CloudKitWriterTransitionEvidence.forTest(
+            operationsQuiesced: true,
+            activeIdentityRevalidated: true,
+            legacyMutationQueues: LegacyMutationQueueDisposition.empty,
+          ),
+          now: testEpoch,
+        );
+      }
+      journal = CloudSyncLocalSendJournal(
+        store: objectBox,
+        authority: authority,
+        authoritySnapshot: authority.read(writerScope)!,
+      );
+    }
+
+    CloudSyncLocalSendIntentEntity intent() =>
+        objectBox.box<CloudSyncLocalSendIntentEntity>().get(intentId)!;
+
+    void confirm() {
+      final identity = CloudSyncLocalSendIdentity.capture(
+        local,
+        local.chat.target!,
+        _localGuid,
+      )!;
+      local
+        ..guid = _localGuid
+        ..stagingGuid = null;
+      journal.saveConfirmedSubmission(
+        identity: identity,
+        persistMessage: () => objectBox.box<Message>().put(local),
+        now: testEpoch,
+      );
+    }
+
+    Future<CloudOutboxOperation> admit({
+      frb_api.CloudMessage Function(Message)? encoder,
+    }) => coordinator.admitLocalSend(
+      scope,
+      intentId: intentId,
+      journal: journal,
+      authFence: authFence,
+      encodeMessage:
+          encoder ??
+          (message) {
+            encodes++;
+            return _LocalCloudMessage(message);
+          },
+    );
+
+    setUp(() {
+      bindJournal();
+      encodes = 0;
+      currentAuth = CloudSyncNativeAuthSnapshot.fromNative(
+        nativeSessionId: 'synthetic-session',
+        accountFingerprint: testAccountFingerprintA,
+        protectedStoreIdentity: 'obcs2.store.$testAccountFingerprintA',
+        cloudMessagesClient: Object(),
+      );
+      authFence = CloudSyncLocalSendAuthFence(
+        expected: currentAuth,
+        capture: () async => currentAuth,
+        stillCurrent: () => true,
+      );
+      final handle = Handle(
+        address: 'recipient@example.com',
+        service: 'iMessage',
+        uniqueAddressAndService: 'recipient@example.com/iMessage',
+      );
+      objectBox.box<Handle>().put(handle);
+      final chat = Chat(
+        guid: 'iMessage;-;recipient@example.com',
+        chatIdentifier: 'recipient@example.com',
+        usingHandle: 'mailto:sender@example.com',
+        style: 45,
+        participants: [handle],
+      )..handles.add(handle);
+      objectBox.box<Chat>().put(chat);
+      local = Message(
+        guid: 'temp-Abc12345',
+        stagingGuid: _localGuid,
+        text: 'synthetic local message',
+        isFromMe: true,
+        dateCreated: testEpoch,
+        attributedBody: [AttributedBody.raw('synthetic local message')],
+      )..chat.target = chat;
+      journal.saveSubmission(
+        identity: CloudSyncLocalSendIdentity.capture(local, chat, _localGuid)!,
+        newlyGeneratedGuid: true,
+        persistMessage: () => objectBox.box<Message>().put(local),
+        now: testEpoch,
+      );
+      intentId = objectBox
+          .box<CloudSyncLocalSendIntentEntity>()
+          .getAll()
+          .single
+          .id;
+      confirm();
+    });
+
+    test(
+      'adopts the journal, mapping and outbox before native commit',
+      () async {
+        final stage = _stage('a', 'P', 'L', 'S');
+        transport.stages.add(stage);
+        transport.onCommit = () {
+          expect(intent().state, 2);
+          expect(intent().admittedOperationId, isNotNull);
+          expect(objectBox.box<CloudOutboxOperationEntity>().count(), 1);
+          expect(objectBox.box<CloudRecordMapEntity>().count(), 1);
+        };
+        final operation = await admit();
+        expect(intent().admittedOperationId, operation.operationId);
+        expect(journal.readReady(), isEmpty);
+        expect(encodes, 1);
+        expect(transport.committed, [stage.leaseReference]);
+        confirm();
+        expect(
+          intent().state,
+          2,
+          reason: 'A repeated IDS callback cannot downgrade adoption',
+        );
+        expect(intent().admittedOperationId, operation.operationId);
+      },
+    );
+
+    test(
+      'reopen after commit failure reuses the original envelope without a Message',
+      () async {
+        final stage = _stage('a', 'P', 'L', 'S');
+        transport
+          ..stages.add(stage)
+          ..commitFailure = StateError('synthetic commit failure');
+        await expectLater(admit(), throwsStateError);
+        final operationId = intent().admittedOperationId!;
+        expect(intent().state, 2);
+        expect(transport.rolledBack, isEmpty);
+        objectBox.box<Message>().remove(local.id!);
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        store = ObjectBoxCloudSyncStore(
+          store: objectBox,
+          protector: _Protector(),
+        );
+        bindJournal();
+        coordinator = CloudSyncOutboundAdmissionCoordinator(
+          store: store,
+          transport: transport,
+          ensureProtectedStoreRecovered: () async {
+            timeline.add('recover');
+          },
+        );
+        final original = await admit(
+          encoder: (_) => throw StateError('must not encode'),
+        );
+        expect(original.operationId, operationId);
+        expect(
+          original.encryptedPayloadReference,
+          stage.protectedEnvelopeReference,
+        );
+        expect(original.protectedLeaseReference, stage.leaseReference);
+        expect(original.status, CloudOutboxStatus.pending);
+        expect(original.attemptCount, 0);
+        expect(encodes, 1);
+        expect(timeline.where((entry) => entry == 'stage'), hasLength(1));
+        expect(timeline.where((entry) => entry == 'recover'), hasLength(2));
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 1);
+      },
+    );
+
+    test('pending IDS submission is never encoded or adopted', () async {
+      objectBox.box<CloudSyncLocalSendIntentEntity>().put(intent()..state = 0);
+      await expectLater(admit(), throwsStateError);
+      expect(encodes, 0);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(timeline, ['recover']);
+    });
+
+    for (final change in ['text', 'route', 'epoch', 'session', 'journal']) {
+      test(
+        '$change drift during staging rolls back the complete adoption',
+        () async {
+          final stage = _stage('a', 'P', 'L', 'S');
+          final entered = Completer<void>();
+          final release = Completer<void>();
+          transport
+            ..stages.add(stage)
+            ..stageEntered = entered
+            ..releaseStage = release;
+          final failureCode = switch (change) {
+            'epoch' => 'cloud_sync_local_send_owner_changed',
+            'session' => 'cloud_sync_local_send_identity_changed',
+            'journal' => 'cloud_sync_local_send_adoption_changed',
+            _ => 'cloud_sync_local_send_source_changed',
+          };
+          final rejected = expectLater(
+            admit(),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'safe code',
+                failureCode,
+              ),
+            ),
+          );
+          await entered.future;
+          switch (change) {
+            case 'text':
+              local.text = 'synthetic edited text';
+              objectBox.box<Message>().put(local);
+            case 'route':
+              final chat = local.chat.target!
+                ..usingHandle = 'mailto:other@example.com';
+              objectBox.box<Chat>().put(chat);
+            case 'epoch':
+              final row = objectBox
+                  .box<CloudKitWriterAuthorityEntity>()
+                  .getAll()
+                  .single;
+              row.epoch++;
+              objectBox.box<CloudKitWriterAuthorityEntity>().put(row);
+            case 'session':
+              currentAuth = CloudSyncNativeAuthSnapshot.fromNative(
+                nativeSessionId: 'replacement-session',
+                accountFingerprint: testAccountFingerprintA,
+                protectedStoreIdentity: 'obcs2.store.$testAccountFingerprintA',
+                cloudMessagesClient: Object(),
+              );
+            case 'journal':
+              objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+                intent()..sourceSha256 = 'changed',
+              );
+          }
+          release.complete();
+          await rejected;
+          expect(intent().state, 1);
+          expect(intent().admittedOperationId, isNull);
+          expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+          expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+          expect(objectBox.box<CloudSyncCheckpointEntity>().count(), 0);
+          expect(transport.rolledBack, [stage.leaseReference]);
+          expect(transport.committed, isEmpty);
+        },
+      );
+    }
+
+    test('missing adopted operation is not silently re-encoded', () async {
+      transport.stages.add(_stage('a', 'P', 'L', 'S'));
+      await admit();
+      final row = objectBox.box<CloudOutboxOperationEntity>().getAll().single;
+      objectBox.box<CloudOutboxOperationEntity>().remove(row.id);
+      await expectLater(admit(), throwsStateError);
+      expect(encodes, 1);
+      expect(intent().state, 2);
+      expect(timeline.where((entry) => entry == 'stage'), hasLength(1));
+    });
+
+    test('scope account must match the native auth fence', () async {
+      final otherAuth = CloudSyncNativeAuthSnapshot.fromNative(
+        nativeSessionId: 'other',
+        accountFingerprint: testAccountFingerprintB,
+        protectedStoreIdentity: 'obcs2.store.$testAccountFingerprintB',
+        cloudMessagesClient: Object(),
+      );
+      authFence = CloudSyncLocalSendAuthFence(
+        expected: otherAuth,
+        capture: () async => otherAuth,
+        stillCurrent: () => true,
+      );
+      await expectLater(admit(), throwsStateError);
+      expect(encodes, 0);
+      expect(timeline, ['recover']);
+    });
+
+    test(
+      'journal rejects authority from another Store at construction',
+      () async {
+        final other = await openStore(
+          directory: '${directory.path}/other-store',
+        );
+        try {
+          expect(
+            () => CloudSyncLocalSendJournal(
+              store: other,
+              authority: authority,
+              authoritySnapshot: authority.read(writerScope)!,
+            ),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'safe code',
+                'cloud_sync_local_send_authority_store_mismatch',
+              ),
+            ),
+          );
+          expect(other.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+          expect(intent().state, 1);
+        } finally {
+          other.close();
+        }
+      },
+    );
+
+    for (final corruption in [
+      'missing map',
+      'envelope',
+      'payload hash',
+      'server hash',
+      'lease',
+    ]) {
+      test(
+        'adopted $corruption corruption fails without re-encoding',
+        () async {
+          transport.stages.add(_stage('a', 'P', 'L', 'S'));
+          await admit();
+          final row = objectBox
+              .box<CloudOutboxOperationEntity>()
+              .getAll()
+              .single;
+          switch (corruption) {
+            case 'missing map':
+              final mapping = objectBox
+                  .box<CloudRecordMapEntity>()
+                  .getAll()
+                  .single;
+              objectBox.box<CloudRecordMapEntity>().remove(mapping.id);
+            case 'envelope':
+              row.encryptedPayloadRef = testProtectedReference('Q');
+            case 'payload hash':
+              row.payloadSha256 = testSha256('b');
+            case 'server hash':
+              row.serverRecordIdHash = 'T' * 43;
+            case 'lease':
+              row.protectedLeaseReference = 'invalid-lease';
+          }
+          objectBox.box<CloudOutboxOperationEntity>().put(row);
+          await expectLater(
+            admit(),
+            corruption == 'lease'
+                ? throwsA(
+                    isA<ArgumentError>().having(
+                      (error) => error.message,
+                      'safe code',
+                      'cloud_outbox_protected_lease_reference_invalid',
+                    ),
+                  )
+                : throwsA(
+                    isA<StateError>().having(
+                      (error) => error.message,
+                      'safe code',
+                      corruption == 'missing map'
+                          ? 'cloud_sync_local_send_adopted_mapping_changed'
+                          : 'cloud_sync_local_send_adopted_operation_missing',
+                    ),
+                  ),
+          );
+          expect(encodes, 1);
+          expect(intent().state, 2);
+          expect(timeline.where((entry) => entry == 'stage'), hasLength(1));
+        },
+      );
+    }
+
+    test(
+      'settled receipt changes do not invalidate the immutable payload binding',
+      () async {
+        transport.stages.add(_stage('a', 'P', 'L', 'S'));
+        final initial = await admit();
+        // Synthetic already-acknowledged state. Receipt admission itself is
+        // exercised by the separate exact-receipt store tests.
+        final row = objectBox.box<CloudOutboxOperationEntity>().getAll().single
+          ..state = 2
+          ..confirmedAtMs = testEpoch.millisecondsSinceEpoch + 1000
+          ..appleRequestUuid = '11111111-2222-4333-8444-555555555555'
+          ..appleOperationUuid = '22222222-2222-4333-8444-555555555555'
+          ..attemptCount = 1
+          ..protectedLeaseReference = null;
+        objectBox.box<CloudOutboxOperationEntity>().put(row);
+        final mapping = objectBox.box<CloudRecordMapEntity>().getAll().single
+          ..etagHash = 'E' * 43
+          ..encryptedServerRecordId = testProtectedReference('Q');
+        objectBox.box<CloudRecordMapEntity>().put(mapping);
+        final settled = await admit();
+        expect(settled.operationId, initial.operationId);
+        expect(settled.status, CloudOutboxStatus.confirmed);
+        expect(
+          settled.encryptedPayloadReference,
+          initial.encryptedPayloadReference,
+        );
+        expect(settled.protectedLeaseReference, isNull);
+        expect(encodes, 1);
+      },
+    );
+
+    test(
+      'receipt and timestamp normalization preserve the first staged snapshot',
+      () async {
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        transport
+          ..stages.add(_stage('a', 'P', 'L', 'S'))
+          ..stageEntered = entered
+          ..releaseStage = release;
+        DateTime? encodedDate;
+        final admission = admit(
+          encoder: (message) {
+            encodes++;
+            encodedDate = message.dateCreated;
+            return _LocalCloudMessage(message);
+          },
+        );
+        await entered.future;
+        local
+          ..dateCreated = testEpoch.add(const Duration(seconds: 1))
+          ..dateRead = testEpoch.add(const Duration(seconds: 3))
+          ..dateDelivered = testEpoch.add(const Duration(seconds: 2));
+        objectBox.box<Message>().put(local);
+        release.complete();
+        final admitted = await admission;
+        expect(encodedDate?.toUtc(), testEpoch);
+        expect(intent().state, 2);
+        expect((await admit()).operationId, admitted.operationId);
+        expect(encodes, 1);
+      },
+    );
+  });
+}
+
+const _localGuid = '11111111-1111-4111-8111-111111111111';
+
+// Tests exercise persistence and crash ordering, not the native protobuf codec.
+final class _LocalCloudMessage implements frb_api.CloudMessage {
+  _LocalCloudMessage(Message message)
+    : guid = message.guid!,
+      chatId = message.chat.target!.guid,
+      destinationCallerId = message.chat.target!.usingHandle!
+          .replaceFirst('mailto:', '')
+          .replaceFirst('tel:', '');
+  @override
+  final String guid;
+  @override
+  final String chatId;
+  @override
+  final String destinationCallerId;
+  @override
+  int get type => 1;
+  @override
+  String get service => 'iMessage';
+  @override
+  String get sender => '';
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 CloudSyncProtectedOutboundStageData _stage(
@@ -179,6 +666,7 @@ final class _StagingTransport implements CloudSyncOutboundStagingTransport {
   final List<String> committed = [];
   final List<String> rolledBack = [];
   Object? commitFailure;
+  void Function()? onCommit;
   Completer<void>? stageEntered;
   Completer<void>? releaseStage;
   Future<void> _exclusiveTail = Future<void>.value();
@@ -215,6 +703,7 @@ final class _StagingTransport implements CloudSyncOutboundStagingTransport {
     String protectedEnvelopeReference,
   ) async {
     timeline.add('commit:$leaseReference');
+    onCommit?.call();
     if (commitFailure case final failure?) throw failure;
     committed.add(leaseReference);
   }

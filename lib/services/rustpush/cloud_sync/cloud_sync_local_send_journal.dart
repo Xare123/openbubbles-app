@@ -6,7 +6,9 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:crypto/crypto.dart';
 
+import 'cloud_operation_identity.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
+import 'cloud_sync_models.dart';
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
 
@@ -228,15 +230,17 @@ final class CloudSyncLocalSendAuthFence {
   final CloudSyncNativeAuthSnapshotReader _capture;
   final bool Function() _stillCurrent;
 
-  Future<void> run(void Function() persist) async {
-    if (!_stillCurrent()) {
+  Future<T> run<T>(T Function() persist, {String? accountFingerprint}) async {
+    if (!_stillCurrent() ||
+        (accountFingerprint != null &&
+            accountFingerprint != _expected.accountFingerprint)) {
       throw StateError('cloud_sync_local_send_identity_changed');
     }
     final current = await _capture();
     if (!_expected.sameIdentity(current) || !_stillCurrent()) {
       throw StateError('cloud_sync_local_send_identity_changed');
     }
-    persist();
+    return persist();
   }
 }
 
@@ -252,7 +256,11 @@ final class CloudSyncLocalSendJournal {
        _authority = authority,
        _binding = authoritySnapshot,
        _intents = store.box<CloudSyncLocalSendIntentEntity>(),
-       _messages = store.box<Message>();
+       _messages = store.box<Message>() {
+    if (!authority.isBoundToStore(store)) {
+      throw StateError('cloud_sync_local_send_authority_store_mismatch');
+    }
+  }
 
   final Store _store;
   final ObjectBoxCloudKitWriterAuthority _authority;
@@ -324,7 +332,8 @@ final class CloudSyncLocalSendJournal {
               previous.messageGuidHash != identity.guidHash ||
               previous.sourceSha256 != identity.sourceSha256 ||
               previous.state < 0 ||
-              previous.state > 1)) {
+              previous.state > 2 ||
+              !_hasConsistentAdoption(previous))) {
         throw StateError('cloud_sync_local_send_intent_changed');
       }
       final messageId = persistMessage();
@@ -353,7 +362,7 @@ final class CloudSyncLocalSendJournal {
             updatedAtMs: now.millisecondsSinceEpoch,
           );
       intent.localMessageId = messageId;
-      if (confirmed) intent.state = 1;
+      if (confirmed && intent.state == 0) intent.state = 1;
       intent.updatedAtMs = now.millisecondsSinceEpoch;
       _intents.put(intent);
     });
@@ -388,6 +397,148 @@ final class CloudSyncLocalSendJournal {
     });
   }
 
+  /// Reconstruct only from an existing journaled origin, never by scanning
+  /// Message.isFromMe. An adopted intent does not need its mutable message
+  /// anymore: the outbox's original protected envelope is authoritative.
+  CloudSyncLocalSendAdmissionSource readForAdmission(int intentId) =>
+      _store.runInTransaction(TxMode.read, () {
+        _verifyLocalOwnership();
+        final intent = _readBoundIntent(intentId);
+        if (intent.state != 1 && intent.state != 2) {
+          throw StateError('cloud_sync_local_send_not_ready');
+        }
+        final message = intent.state == 1 ? _validatedMessage(intent) : null;
+        return CloudSyncLocalSendAdmissionSource._(intent, message);
+      });
+
+  /// Called synchronously inside this exact Store's outbox write transaction.
+  /// Throwing rejects both adoption and the journal transition together.
+  void adoptInOutboxTransaction(
+    Store transactionStore,
+    CloudSyncLocalSendAdmissionSource expected,
+    CloudOutboxOperation operation,
+  ) {
+    if (!identical(transactionStore, _store)) {
+      throw StateError('cloud_sync_local_send_adoption_store_mismatch');
+    }
+    _verifyLocalOwnership();
+    final intent = _readBoundIntent(expected.intentId);
+    if (!expected._matches(intent) ||
+        intent.state != 1 ||
+        operation.scope.accountFingerprint != intent.accountFingerprint ||
+        operation.scope.container != _binding.scope.container ||
+        operation.scope.database != _binding.scope.database ||
+        operation.scope.zone != 'messageManateeZone' ||
+        operation.scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
+        operation.action != CloudOutboxAction.save ||
+        operation.payloadVersion != cloudSyncOutboundPayloadVersion ||
+        operation.status != CloudOutboxStatus.pending ||
+        operation.attemptCount != 0 ||
+        operation.operationId !=
+            CloudOperationIdentity.forInitialCreate(
+              scope: operation.scope,
+              logicalEntityKeyHash: operation.logicalEntityKeyHash,
+              payloadVersion: operation.payloadVersion,
+            ) ||
+        operation.createdAt.millisecondsSinceEpoch != intent.createdAtMs) {
+      throw StateError('cloud_sync_local_send_adoption_changed');
+    }
+    _validatedMessage(intent);
+    intent
+      ..state = 2
+      ..admittedOperationId = operation.operationId
+      ..admittedBindingSha256 = _operationBinding(operation);
+    _intents.put(intent);
+  }
+
+  void validateAdoptedOperation(
+    Store transactionStore,
+    CloudSyncLocalSendAdmissionSource expected,
+    CloudOutboxOperation? operation,
+  ) => _store.runInTransaction(TxMode.read, () {
+    if (!identical(transactionStore, _store)) {
+      throw StateError('cloud_sync_local_send_adoption_store_mismatch');
+    }
+    _verifyLocalOwnership();
+    final intent = _readBoundIntent(expected.intentId);
+    if (!expected._matches(intent) ||
+        intent.state != 2 ||
+        operation == null ||
+        operation.operationId != intent.admittedOperationId ||
+        operation.scope.accountFingerprint != intent.accountFingerprint ||
+        operation.scope.container != _binding.scope.container ||
+        operation.scope.database != _binding.scope.database ||
+        operation.scope.zone != 'messageManateeZone' ||
+        operation.scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
+        operation.action != CloudOutboxAction.save ||
+        operation.payloadVersion != cloudSyncOutboundPayloadVersion ||
+        intent.admittedBindingSha256 != _operationBinding(operation) ||
+        operation.createdAt.millisecondsSinceEpoch != intent.createdAtMs) {
+      throw StateError('cloud_sync_local_send_adopted_operation_missing');
+    }
+  });
+
+  CloudSyncLocalSendIntentEntity _readBoundIntent(int intentId) {
+    final intent = intentId > 0 ? _intents.get(intentId) : null;
+    if (intent == null ||
+        intent.accountFingerprint != _binding.scope.accountFingerprint ||
+        intent.writerEpoch != _binding.epoch ||
+        intent.state < 0 ||
+        intent.state > 2 ||
+        !_hasConsistentAdoption(intent) ||
+        intent.intentKey !=
+            CloudSyncLocalSendIdentity._digest([
+              'cloud-sync-local-send-intent-v1',
+              intent.accountFingerprint,
+              intent.messageGuidHash,
+            ])) {
+      throw StateError('cloud_sync_local_send_intent_changed');
+    }
+    return intent;
+  }
+
+  static bool _hasConsistentAdoption(CloudSyncLocalSendIntentEntity intent) =>
+      intent.state == 2
+      ? intent.admittedOperationId != null &&
+            RegExp(
+              r'^[0-9a-f]{64}$',
+            ).hasMatch(intent.admittedBindingSha256 ?? '')
+      : intent.admittedOperationId == null &&
+            intent.admittedBindingSha256 == null;
+
+  static String _operationBinding(CloudOutboxOperation operation) =>
+      CloudSyncLocalSendIdentity._digest([
+        'cloud-sync-local-send-adoption-v1',
+        operation.scope.storageKey, operation.operationId,
+        operation.logicalEntityKeyHash, operation.action.name,
+        operation.payloadVersion, operation.mutationRevision,
+        operation.checkpointGeneration, operation.encryptedPayloadReference,
+        operation.payloadSha256, operation.serverRecordIdHash,
+        operation.dependencyOperationIds.toList()..sort(),
+        operation.createdAt.millisecondsSinceEpoch,
+        // Lease/receipt/status fields legitimately change on confirmation.
+        // Native recovery and submission still validate the live lease itself.
+      ]);
+
+  Message _validatedMessage(CloudSyncLocalSendIntentEntity intent) {
+    final message = _messages.get(intent.localMessageId);
+    final chat = message?.chat.target;
+    final guid = message?.guid;
+    final identity =
+        message == null ||
+            chat == null ||
+            guid == null ||
+            message.stagingGuid != null
+        ? null
+        : CloudSyncLocalSendIdentity.capture(message, chat, guid);
+    if (identity == null ||
+        identity.guidHash != intent.messageGuidHash ||
+        identity.sourceSha256 != intent.sourceSha256) {
+      throw StateError('cloud_sync_local_send_source_changed');
+    }
+    return message!;
+  }
+
   void _verifyLocalOwnership() {
     if (_binding.owner != CloudKitWriterOwner.v2 ||
         _binding.epoch <= 0 ||
@@ -404,4 +555,55 @@ final class CloudSyncLocalSendJournal {
     // An unresolved earlier remote mutation may fence uploads, but it must
     // not prevent journaling a new local send. This grants no writer permit.
   }
+}
+
+/// Immutable admission binding. Only the journal can construct one. The
+/// mutable Message is used for first encoding only and re-read at adoption.
+final class CloudSyncLocalSendAdmissionSource {
+  CloudSyncLocalSendAdmissionSource._(
+    CloudSyncLocalSendIntentEntity intent,
+    this.message,
+  ) : intentId = intent.id,
+      intentKey = intent.intentKey,
+      localMessageId = intent.localMessageId,
+      accountFingerprint = intent.accountFingerprint,
+      writerEpoch = intent.writerEpoch,
+      sourceSha256 = intent.sourceSha256,
+      messageGuidHash = intent.messageGuidHash,
+      admittedOperationId = intent.admittedOperationId,
+      admittedBindingSha256 = intent.admittedBindingSha256,
+      state = intent.state,
+      createdAtUtc = DateTime.fromMillisecondsSinceEpoch(
+        intent.createdAtMs,
+        isUtc: true,
+      );
+
+  final int intentId;
+  final String intentKey;
+  final int localMessageId;
+  final String accountFingerprint;
+  final int writerEpoch;
+  final String sourceSha256;
+  final String messageGuidHash;
+  final String? admittedOperationId;
+  final String? admittedBindingSha256;
+  final int state;
+  final DateTime createdAtUtc;
+  final Message? message;
+
+  bool _matches(CloudSyncLocalSendIntentEntity intent) =>
+      intentId == intent.id &&
+      intentKey == intent.intentKey &&
+      localMessageId == intent.localMessageId &&
+      accountFingerprint == intent.accountFingerprint &&
+      writerEpoch == intent.writerEpoch &&
+      sourceSha256 == intent.sourceSha256 &&
+      messageGuidHash == intent.messageGuidHash &&
+      state == intent.state &&
+      admittedOperationId == intent.admittedOperationId &&
+      admittedBindingSha256 == intent.admittedBindingSha256 &&
+      createdAtUtc.millisecondsSinceEpoch == intent.createdAtMs;
+
+  @override
+  String toString() => 'CloudSyncLocalSendAdmissionSource(redacted)';
 }

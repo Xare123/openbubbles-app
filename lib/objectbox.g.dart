@@ -2905,7 +2905,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(33, 7403419454425897175),
     name: 'CloudSyncLocalSendIntentEntity',
-    lastPropertyId: const obx_int.IdUid(10, 3816774319385985138),
+    lastPropertyId: const obx_int.IdUid(12, 8651771725641056063),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -2969,6 +2969,18 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(10, 3816774319385985138),
         name: 'updatedAtMs',
         type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 5021406816505463499),
+        name: 'admittedOperationId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 8651771725641056063),
+        name: 'admittedBindingSha256',
+        type: 9,
         flags: 0,
       ),
     ],
@@ -6907,7 +6919,14 @@ obx_int.ModelDefinition getObjectBoxModel() {
               object.messageGuidHash,
             );
             final sourceSha256Offset = fbb.writeString(object.sourceSha256);
-            fbb.startTable(11);
+            final admittedOperationIdOffset = object.admittedOperationId == null
+                ? null
+                : fbb.writeString(object.admittedOperationId!);
+            final admittedBindingSha256Offset =
+                object.admittedBindingSha256 == null
+                ? null
+                : fbb.writeString(object.admittedBindingSha256!);
+            fbb.startTable(13);
             fbb.addInt64(0, object.id);
             fbb.addOffset(1, intentKeyOffset);
             fbb.addOffset(2, accountFingerprintOffset);
@@ -6918,6 +6937,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
             fbb.addInt64(7, object.state);
             fbb.addInt64(8, object.createdAtMs);
             fbb.addInt64(9, object.updatedAtMs);
+            fbb.addOffset(10, admittedOperationIdOffset);
+            fbb.addOffset(11, admittedBindingSha256Offset);
             fbb.finish(fbb.endTable());
             return object.id;
           },
@@ -6960,6 +6981,12 @@ obx_int.ModelDefinition getObjectBoxModel() {
               18,
               0,
             );
+            final admittedOperationIdParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 24);
+            final admittedBindingSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 26);
             final createdAtMsParam = const fb.Int64Reader().vTableGet(
               buffer,
               rootOffset,
@@ -6981,6 +7008,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
               messageGuidHash: messageGuidHashParam,
               sourceSha256: sourceSha256Param,
               state: stateParam,
+              admittedOperationId: admittedOperationIdParam,
+              admittedBindingSha256: admittedBindingSha256Param,
               createdAtMs: createdAtMsParam,
               updatedAtMs: updatedAtMsParam,
             );
@@ -9390,5 +9419,17 @@ class CloudSyncLocalSendIntentEntity_ {
   static final updatedAtMs =
       obx.QueryIntegerProperty<CloudSyncLocalSendIntentEntity>(
         _entities[24].properties[9],
+      );
+
+  /// See [CloudSyncLocalSendIntentEntity.admittedOperationId].
+  static final admittedOperationId =
+      obx.QueryStringProperty<CloudSyncLocalSendIntentEntity>(
+        _entities[24].properties[10],
+      );
+
+  /// See [CloudSyncLocalSendIntentEntity.admittedBindingSha256].
+  static final admittedBindingSha256 =
+      obx.QueryStringProperty<CloudSyncLocalSendIntentEntity>(
+        _entities[24].properties[11],
       );
 }

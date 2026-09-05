@@ -116,6 +116,79 @@ void main() {
   });
 
   test(
+    'admission link upgrade preserves existing pending and ready intents',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'cloud-sync-admission-upgrade-',
+      );
+      addTearDown(() async {
+        if (directory.existsSync()) await directory.delete(recursive: true);
+      });
+      final current = getObjectBoxModel();
+      final previousMap = current.model.toMap();
+      final intentModel = (previousMap['entities'] as List)
+          .cast<Map>()
+          .singleWhere(
+            (entity) => entity['name'] == 'CloudSyncLocalSendIntentEntity',
+          );
+      (intentModel['properties'] as List).removeWhere(
+        (property) => [
+          'admittedOperationId',
+          'admittedBindingSha256',
+        ].contains(property['name']),
+      );
+      intentModel['lastPropertyId'] = '10:3816774319385985138';
+      final previous = obx.ModelDefinition(
+        obx.ModelInfo.fromMap(previousMap),
+        current.bindings,
+      );
+      final oldStore = Store(previous, directory: directory.path);
+      final ids = <int>[];
+      try {
+        for (final state in [0, 1]) {
+          ids.add(
+            oldStore.box<CloudSyncLocalSendIntentEntity>().put(
+              CloudSyncLocalSendIntentEntity(
+                intentKey: 'synthetic-intent-$state',
+                accountFingerprint: 'A' * 43,
+                writerEpoch: 3,
+                localMessageId: state + 1,
+                messageGuidHash: 'B' * 64,
+                sourceSha256: 'C' * 64,
+                state: state,
+                createdAtMs: 1000,
+                updatedAtMs: 2000,
+              ),
+            ),
+          );
+        }
+      } finally {
+        oldStore.close();
+      }
+      for (var reopen = 0; reopen < 2; reopen++) {
+        final upgraded = await openStore(directory: directory.path);
+        try {
+          expect(upgraded.box<CloudSyncLocalSendIntentEntity>().count(), 2);
+          for (var state = 0; state < 2; state++) {
+            final intent = upgraded.box<CloudSyncLocalSendIntentEntity>().get(
+              ids[state],
+            )!;
+            expect(intent.state, state);
+            expect(intent.admittedOperationId, isNull);
+            expect(intent.admittedBindingSha256, isNull);
+            expect(intent.intentKey, 'synthetic-intent-$state');
+            expect(intent.writerEpoch, 3);
+            expect(intent.sourceSha256, 'C' * 64);
+            expect(intent.localMessageId, state + 1);
+          }
+        } finally {
+          upgraded.close();
+        }
+      }
+    },
+  );
+
+  test(
     'Cloud Sync entities extend rather than renumber the canonical model',
     () {
       final model =

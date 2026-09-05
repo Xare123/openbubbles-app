@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 
 import 'cloud_operation_identity.dart';
 import 'cloud_shadow_journal_budget.dart';
+import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_protector.dart';
@@ -1607,7 +1608,28 @@ class ObjectBoxCloudSyncStore
   Future<CloudOutboxOperation> admitProtectedOutboundCreate({
     required CloudOutboxDraft draft,
     required CloudRecordMapEntry recordMapping,
-  }) async {
+  }) async => _admitProtectedOutboundCreate(draft, recordMapping);
+
+  /// Synchronous so the native auth revalidation and this write transaction
+  /// have no intervening await. The journal is adopted in this exact Store,
+  /// not through a separately committed callback or an async transaction hook.
+  CloudOutboxOperation admitProtectedLocalSendCreate({
+    required CloudOutboxDraft draft,
+    required CloudRecordMapEntry recordMapping,
+    required CloudSyncLocalSendJournal journal,
+    required CloudSyncLocalSendAdmissionSource source,
+  }) => _admitProtectedOutboundCreate(
+    draft,
+    recordMapping,
+    onAdopt: (operation) =>
+        journal.adoptInOutboxTransaction(_store, source, operation),
+  );
+
+  CloudOutboxOperation _admitProtectedOutboundCreate(
+    CloudOutboxDraft draft,
+    CloudRecordMapEntry recordMapping, {
+    void Function(CloudOutboxOperation)? onAdopt,
+  }) {
     if (draft.action != CloudOutboxAction.save ||
         draft.payloadVersion != cloudSyncOutboundPayloadVersion ||
         draft.dependencyOperationIds.isNotEmpty ||
@@ -1701,6 +1723,7 @@ class ObjectBoxCloudSyncStore
             safeCode: 'protected_outbound_retry_mapping_changed',
           );
         }
+        onAdopt?.call(existing);
         return existing;
       }
 
@@ -1769,6 +1792,7 @@ class ObjectBoxCloudSyncStore
           updatedAtMs: nowMs,
         ),
       );
+      onAdopt?.call(operation);
       return operation;
     });
   }
@@ -2461,6 +2485,46 @@ class ObjectBoxCloudSyncStore
       return entries;
     });
   }
+
+  /// Exact indexed lookup for an already-adopted local send. This neither
+  /// leases nor restages the operation, regardless of its current outcome.
+  CloudOutboxOperation readAdoptedLocalSendOperation(
+    CloudSyncScope scope, {
+    required CloudSyncLocalSendJournal journal,
+    required CloudSyncLocalSendAdmissionSource source,
+  }) => _store.runInTransaction(TxMode.read, () {
+    final entity = _findOutboxByOperationIdLocked(source.admittedOperationId ?? '');
+    final scopeKey = _scopeKey(scope);
+    if (entity == null || entity.scopeKey != scopeKey ||
+        entity.accountFingerprint != scope.accountFingerprint || entity.zone != scope.zone) {
+      throw StateError('cloud_sync_local_send_adopted_operation_missing');
+    }
+    final operation = _outboxFromEntity(scope, entity);
+    journal.validateAdoptedOperation(_store, source, operation);
+    final mapping = _findRecordMapByKeyLocked(_scopedDigest(
+      scope, 'record-map', operation.logicalEntityKeyHash,
+    ));
+    final checkpoint = _findCheckpointByKeyLocked(scopeKey);
+    final reference = operation.encryptedPayloadReference;
+    final lease = operation.protectedLeaseReference;
+    if (reference == null || !_isNativeProtectedReference(reference) ||
+        operation.payloadSha256 == null || !_isContentDigest(operation.payloadSha256!) ||
+        (lease == null ? operation.status != CloudOutboxStatus.confirmed : !_isProtectedPageLease(lease)) ||
+        checkpoint == null || checkpoint.generation != operation.checkpointGeneration ||
+        mapping == null || mapping.scopeKey != scopeKey ||
+        mapping.accountFingerprint != scope.accountFingerprint || mapping.zone != scope.zone ||
+        mapping.generation != operation.checkpointGeneration ||
+        mapping.logicalEntityKeyHash != operation.logicalEntityKeyHash ||
+        mapping.serverRecordIdHash != operation.serverRecordIdHash ||
+        !_isNativeProtectedReference(mapping.encryptedServerRecordId) ||
+        // A settled confirmed row may acquire a newer inbound record mapping.
+        // Unsettled work must still reference its adopted upload envelope.
+        ((operation.status != CloudOutboxStatus.confirmed || lease != null) &&
+            mapping.encryptedServerRecordId != reference)) {
+      throw StateError('cloud_sync_local_send_adopted_mapping_changed');
+    }
+    return operation;
+  });
 
   @override
   Future<int> postponeEligiblePausedOutbox(
