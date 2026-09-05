@@ -59,7 +59,12 @@
     Maximum report-poll duration. Defaults to 180 seconds.
 
 .PARAMETER ProcessTimeoutSeconds
-    Maximum duration for one non-install child process. Defaults to 60 seconds.
+    Maximum duration for one short child process. Defaults to 60 seconds.
+
+.PARAMETER VmTriggerTimeoutSeconds
+    Maximum duration for the semantic trigger, which observes the remote
+    Future for up to 210 seconds. Defaults to 240 seconds. A timeout does not
+    cancel a pull that is still running inside the app.
 
 .EXAMPLE
     .\cloudkit_canary_device_probe.ps1 `
@@ -128,7 +133,10 @@ param(
     [int] $ReportTimeoutSeconds = 180,
 
     [ValidateRange(1, 900)]
-    [int] $ProcessTimeoutSeconds = 60
+    [int] $ProcessTimeoutSeconds = 60,
+
+    [ValidateRange(240, 900)]
+    [int] $VmTriggerTimeoutSeconds = 240
 )
 
 Set-StrictMode -Version 3.0
@@ -256,7 +264,7 @@ function Invoke-DartTrigger {
     $null = Invoke-BoundedProcessText `
         -FilePath $DartPath `
         -Arguments @("--packages=$ConfigPath", $ScriptPath, $Uri) `
-        -TimeoutSeconds $ProcessTimeoutSeconds `
+        -TimeoutSeconds $VmTriggerTimeoutSeconds `
         -FailureCode 'vm_trigger_failed' `
         -TimeoutCode 'vm_trigger_timeout'
 }

@@ -85,7 +85,7 @@ Relay identity -> Apple account -> Keychain clique / PCS -> CloudMessagesClient
 | Rust CI capability tests | Runs `33930475652` and `33930441506` exposed a test-keystore dependency, not a demonstrated parallelism failure. The replacement injects only key loading into the same private consume implementation; the public entry point always uses protected storage. Run `33936071705` on exact `7db9ed89b` passed 285 app Rust tests, 203 rustpush tests, and 30 protector tests. | **TEST-PROVEN on GCE Linux.** Failure, retry and single-use assertions now run through the production consume logic. Do not confuse these passing code gates with the separate failed APK packaging gate. |
 | Media responsiveness during catch-up | `RustPushBackend.downloadAttachment` waits on `_cloudSyncV2SemanticPullInFlight`, which represents the entire automatic catch-up, not one batch. Both CloudKit media lanes wait; IDS does not. | **Usability gap.** A tapped gallery item can spin until history catch-up ends. Add a tested batch-boundary handoff for on-demand media without overlapping native writer pause ownership. Windows tests cannot prove Android HEIC decoding or filesystem promotion. |
 | Remote deletion and message operations | `applyTombstone` intentionally returns `canonical_tombstone_dto_incomplete`. Edit/retracted-part fields have projection code, but outgoing transport supports initial create only. | Do not promise deletion propagation or write-side edit/unsend parity. Preserve history while establishing exact causality and ownership. These are separate capabilities, not automatically provided by a successful text create. |
-| Test versus installed build | GCE run `33943836515` passed full Dart/native validation, APK verification, signing, and runner cleanup for exact `6517f86612a0cf229f2ab8dbc56cf9b70928e182`. Runner registration and GCE instance readbacks were empty. The earlier packaging failure did not recur with verbose logging; its original cause remains unconfirmed. | **Qualified artifact available, not installed in this pass.** It does not include local follow-up `648730b80` or the ordinary-send journal. Those changes need their own frozen-source qualification. A signed APK is not live Apple upload proof. |
+| Test versus installed build | GCE run `33943836515` passed full Dart/native validation, APK verification, signing, and runner cleanup for exact `6517f86612a0cf229f2ab8dbc56cf9b70928e182`. Runner registration and GCE instance readbacks were empty. The exact signed artifact was then installed in place on Pixel with first-install time and existing reports preserved. | **Installed, current read proof pending.** The device probe timed out without a new report. It does not include local follow-up `648730b80` or journal commit `107700e94`. Those changes need their own frozen-source qualification. A signed APK is not live Apple upload proof. |
 | Later cleanup | The user requested cleanup of unnecessary or disorganized code after correctness work. | Keep cleanup in separate commits: remove proven dead/duplicate paths, superseded diagnostics and misleading documentation, with tests unchanged or stronger. Do not combine a broad refactor with protocol or persistence changes. |
 
 ### Review scope and restraint
@@ -179,6 +179,34 @@ hooking sends into the existing queue can strand both lanes. Keep local intents
 distinct from prepared remote mutations, prove recovery ordering, and establish
 new-create ownership/tombstone handling before relaxing any gate. A one-message
 manual upload is not evidence that this production integration exists.
+
+### Installed Canary and VM observation follow-up
+
+The signed `6517f8661` APK passed application-ID, native-library, signing and
+SHA-256 checks before an in-place Canary-only install. Pixel's first-install
+time remained unchanged; Alpha and existing reports were not modified. The
+probe ended with `probe_new_report_not_emitted`, not a successful CloudKit
+read. The checked exit history contained the expected package update and
+probe restart, with no later recorded crash or ANR. That does not establish
+whether the attempted pull started or completed.
+
+The newest retained report still belongs to older source `e62a73297`: 476
+Chat, 8,864 Message and 1,853 Attachment records retained as unprojected, with
+`retained_projection_incomplete`. Those counts are not new-build evidence.
+The phone remains connected but locked; do not force-stop an unresolved pull
+merely to recover a VM endpoint.
+
+The diagnostic driver previously treated a VM reference to the returned
+Future as an invocation result without observing its outcome. It now selects
+a ready UI isolate, schedules a fixed semantic method after evaluation returns,
+and polls a content-free completion/error observer. Five real child-Dart-VM
+tests cover delayed success, catch-up, immediate asynchronous failure, error
+redaction and an unresolved timeout that leaves the remote operation alone.
+Inline invocation reproduced a missed immediate error in that test; event-
+queued invocation passes. No specific Dart SDK defect is claimed. The device
+probe gives this observer its own 240-second budget instead of the ordinary
+60-second child-process budget. These are tooling repairs, not new APK or live
+Apple protocol proof. Recover current read-only status before another pull.
 
 ## Historical investigation board
 
