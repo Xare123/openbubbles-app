@@ -228,6 +228,40 @@ existing scheduling. No native writer-pause or account-ownership gate was
 relaxed. The Sol test work was reviewed and the agent closed. Current-device
 gallery responsiveness and image decoding remain unverified for this patch.
 
+### Pixel gallery qualification follow-up, 2026-09-05 UTC
+
+The user manually started a semantic pull and limited photo testing to
+Gizelle's conversation. Fresh schema-7 report
+`obcs2-semantic-1788590554560231.json` identifies installed `6517f8661`, with
+all three zones observing a terminal empty remote read, zero fetched records,
+outbox `0 -> 0`, `settledOutboxUnchanged=true`, remote saves/deletes disabled
+and retained evidence preserved. Retained counts remain 476 Chats, 8,864
+Messages and 1,853 Attachments. The content-free report is retained under
+`evidence/device-6517f8661-20260905/` outside this worktree; SHA-256 is
+`6720d4d33e37474a5a2be7ebac60bed7bcf412fcc02c4eb4260391e0a8918b63`.
+This is fresh remote-read evidence, not completed local projection.
+
+On the actual Pixel UI, an already-available conversation image rendered,
+while a requested PNG in the same contact's gallery remained a spinner.
+Native logs continued processing retained records for more than ten minutes
+after the remote report, including `invalid_snapshot` and nested Message
+protobuf field-2 wire-type mismatches. No photo contents or message text belong
+in this report. One private temporary UI capture was discarded from the PC;
+no phone image, message, account data or app package was deleted or reset.
+
+This observation exposes a remaining limit of the new scheduling patch:
+`_catchUpWithinConfirmedSession` runs the entire `_sweepRetainedSavesAtHead`
+inside the same confirmed native pause. That sweep restarts its cursor at zero
+for every run and retries windows of retained saves. Yielding between outer
+catch-up batches cannot interrupt this long final sweep. Do not qualify gallery
+responsiveness merely because the FIFO tests pass. The next repair must split
+retained projection into resumable, bounded work that revalidates the exact
+account, checkpoint bounds and write fence between sessions. It must preserve
+unresolved records and distinguish known unchanged conversion failures from
+records whose dependencies or converter have changed. Simply dropping the
+session-proof or native-pause checks is not a repair. Verify the same gallery
+request after that handoff before diagnosing asset absence or HEIC decoding.
+
 ## Historical investigation board
 
 The following table preserves evidence and prior decisions. Its references to
