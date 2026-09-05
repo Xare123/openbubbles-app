@@ -1,3 +1,4 @@
+import 'package:bluebubbles/app/layouts/settings/pages/misc/cloud_sync_outbound_recipient_dialog.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/misc/logging_panel.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/content/log_level_selector.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dart';
@@ -398,46 +399,13 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
 
   Future<String?> _requestCloudSyncV2OutboundRecipient() async {
     if (!mounted) return null;
-    final controller = TextEditingController();
-    try {
-      return await showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => AlertDialog(
-          backgroundColor: context.theme.colorScheme.properSurface,
-          title: Text(
-            "Enter the exact test recipient",
-            style: context.theme.textTheme.titleLarge,
-          ),
-          content: TextField(
-            controller: controller,
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(
-              hintText: "Apple email or phone number",
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text("Cancel"),
-            ),
-            TextButton(
-              onPressed: () {
-                final recipient = controller.text.trim();
-                if (recipient.isNotEmpty) {
-                  Navigator.of(dialogContext).pop(recipient);
-                }
-              },
-              child: const Text("Use Exact Recipient"),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      controller.dispose();
-    }
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => CloudSyncOutboundRecipientDialog(
+        backgroundColor: context.theme.colorScheme.properSurface,
+      ),
+    );
   }
 
   Future<CloudSyncV2OutboundCanaryPresentation?>
