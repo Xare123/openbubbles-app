@@ -149,7 +149,9 @@ continue under a new account.
   `RustPushBackend.createChat` saves a provisional UUID Chat without identifier
   or style; `_applyChatUpsert` requires the canonical identity and does not
   adopt that row by participant matching. Calling legacy `Chat.toCloud` first
-  does not repair this: it retains the UUID and can create an alias conflict.
+  does not repair this: it builds a canonical wire GUID but mutates the local
+  identifier/cloud GUID without canonicalizing the local row's UUID. That
+  leaves inconsistent local identities and can create an alias conflict.
   The installed protected outbound boundary supports Message records only.
   Parent source review accepted these findings; a Chat create plus exact
   same-row adoption is new work, not a relaxed Message admission check.
@@ -196,6 +198,33 @@ continue under a new account.
   reversed and content verified unchanged. Its newly created 345,739,064-byte
   target directory is recorded in the external cleanup manifest; execution
   policy rejected removal, so no bypass or deletion occurred.
+- The correction at parent `3ed2be5c7`, rustpush `35caf1a`, passed native-only
+  GCE run `33996242128`: 218 tests, zero failures/ignored tests, including the
+  five Chat-create tests, cold Chat zero-transport test and three asset-evidence
+  tests. Total elapsed time was 5m03s. Cleanup succeeded; independent readback
+  found zero project instances and zero repository runners. This qualifies the
+  rustpush correction, not the new parent Rust protected-Chat envelope, Dart
+  integration or an APK. The installed `ad204c0d7` remains unchanged.
+- A bounded fresh Canary database copy passed source-before/source-after/copy
+  SHA-256 equality. The offline helper again validates 133/133 restored direct
+  bindings through Store restart. Its optional recipient-only metadata probe
+  finds exactly one row for the now exclusively authorized outbound recipient:
+  local Chat 320, null style, absent identifier, noncanonical GUID and no
+  restored binding. The original was not opened as a database; remote calls
+  were zero. This resolves the critical-path branch below: new-chat support is
+  required for this recipient. No test was sent to another recipient and the
+  unsent test remains excluded. The 106 MiB capture and bounded logs stay local,
+  outside Git/CI, with a preservation manifest.
+- Separate profile taps now identify the media failures on installed `ad204`:
+  the 4.69 MB GIF fails with `cloud_attachment_size_mismatch` at 22:47:35Z;
+  the 6.95 MB QuickTime video, tapped at 22:48:19Z, fails native Ford-key binding
+  at 22:48:20Z and reports `cloud_attachment_integrity_mismatch`. Still photos
+  in the same gallery render. These are retrieval/validation failures before
+  playback, not proof of a GIF/MOV renderer defect or missing cloud assets.
+  The existing Astra reviewer was successfully resumed through supported
+  controls for this next-iteration investigation; the earlier `not_found`
+  response did not establish that its session was deleted. No replacement or
+  extra worktree was created.
 
 ### Critical-path review, 2026-09-05
 
@@ -212,13 +241,21 @@ unless the source changes a named device acceptance result.
 | Full APK iteration for every source check | Existing `rustpush-only` or `bindings-only` modes where applicable, then full qualification for an integrated candidate | No reduced release suite; native-only result cannot qualify parent Rust or Android |
 | Reopen broad audits and parallel features | Parent owns one write milestone; delegate bounded independent defects only | Video/GIF work stays in the next APK; no Alpha changes |
 
-The installed `ad204c0d7` already has the manual Message writer. One read-only
+  The installed `ad204c0d7` already has the manual Message writer. One read-only
 preflight must establish that an authorized recipient really has a restored
 binding; the 133/133 offline result does not establish that any particular
 recipient is included. Never replay the user-unsent test. If no authorized
 restored conversation is available, the new-chat work is genuinely on the
 critical path and resumes; do not spend repeated cycles searching or ask for
 unnecessary login/reset/builds.
+
+**Preflight outcome:** the exclusively authorized test number has only the
+provisional row described above. Resume the new-chat branch. The next write
+milestone is one protected Chat create, exact-name recovery/readback and
+same-row canonical adoption, followed by a fresh Message through the existing
+manual writer. No alternative-recipient experiment is authorized now. Keep
+the original row ID/message relations intact and prove restart/competing-owner
+behavior before any remote create; no selector or admission bypass is allowed.
 
 New-chat support is **deferred behind the first write proof, not removed from
 production scope**. Its new native foundation remains preserved. Inspection

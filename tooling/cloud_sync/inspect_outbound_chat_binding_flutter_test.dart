@@ -10,6 +10,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('checks restored chat dependencies on a disposable offline copy', () async {
     final source = Platform.environment['OPENBUBBLES_OBJECTBOX_INSPECT_DIR'];
+    final requestedRecipient =
+        Platform.environment['OPENBUBBLES_OBJECTBOX_INSPECT_RECIPIENT'];
     expect(source, isNotNull, reason: 'offline inspection directory required');
     final sourceData = File('$source/data.mdb');
     expect(sourceData.existsSync(), isTrue);
@@ -47,8 +49,36 @@ void main() {
       var ready = 0;
       var notReady = 0;
       final bindings = <String>[];
+      final requestedChats = <Map<String, Object?>>[];
       store.runInTransaction(TxMode.read, () {
         for (final chat in store!.box<Chat>().getAll()) {
+          if (requestedRecipient != null &&
+              requestedRecipient.isNotEmpty &&
+              (chat.chatIdentifier == requestedRecipient ||
+                  chat.guid == 'iMessage;-;$requestedRecipient' ||
+                  chat.handles.any(
+                    (handle) => handle.address == requestedRecipient,
+                  ))) {
+            var restored = false;
+            try {
+              requireCloudSyncRestoredDirectChat(
+                store: store,
+                messageScope: scope,
+                message: Message()..chat.targetId = chat.id!,
+              );
+              restored = true;
+            } on CloudSyncFailure catch (failure) {
+              expect(failure.safeCode, 'cloud_sync_local_send_chat_not_ready');
+            }
+            requestedChats.add({
+              'localChatId': chat.id,
+              'style': chat.style,
+              'identifierPresent': chat.chatIdentifier?.isNotEmpty == true,
+              'canonicalDirect':
+                  chat.guid == 'iMessage;-;${chat.chatIdentifier}',
+              'restoredBindingReady': restored,
+            });
+          }
           if (chat.style != 45 || chat.isRpSms || chat.isRoutingStub) continue;
           candidates++;
           // No body or address is read into the synthetic message or emitted.
@@ -85,7 +115,7 @@ void main() {
       expect(sourceUnchanged, isTrue);
       // ignore: avoid_print
       print(
-        'OUTBOUND_CHAT_BINDING_REPORT=${jsonEncode({'directChatCandidates': candidates, 'restoredChatReady': ready, 'restartChatReady': restartReady, 'chatDependencyNotReady': notReady, 'remoteCalls': 0, 'sourceOpenedAsDatabase': false, 'sourceUnchanged': sourceUnchanged})}',
+        'OUTBOUND_CHAT_BINDING_REPORT=${jsonEncode({'directChatCandidates': candidates, 'restoredChatReady': ready, 'restartChatReady': restartReady, 'chatDependencyNotReady': notReady, 'requestedRecipientChats': requestedChats, 'remoteCalls': 0, 'sourceOpenedAsDatabase': false, 'sourceUnchanged': sourceUnchanged})}',
       );
       expect(
         ready,
