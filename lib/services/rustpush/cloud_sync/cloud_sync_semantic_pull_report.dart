@@ -134,11 +134,12 @@ final class CloudSyncSemanticPullReport {
     required this.changeLimit,
     required this.outboxCountBefore,
     required this.outboxCountAfter,
+    this.settledOutboxUnchanged = false,
     required Iterable<CloudSyncSemanticPullZoneReport> zones,
     this.mode = CloudSyncSemanticReportMode.readOnlyCloudKit,
   }) : zones = List.unmodifiable(zones);
 
-  static const schemaVersion = 6;
+  static const schemaVersion = 7;
   static const expectedZoneLabels = <String>{
     'attachments',
     'chats',
@@ -152,11 +153,19 @@ final class CloudSyncSemanticPullReport {
   final int changeLimit;
   final int outboxCountBefore;
   final int outboxCountAfter;
+
+  /// The sampler compared complete, confirmed-only local snapshots while
+  /// holding the operation interlock and native writer pause. No row identity
+  /// or fingerprint belongs in this content-free report.
+  final bool settledOutboxUnchanged;
   final List<CloudSyncSemanticPullZoneReport> zones;
   final CloudSyncSemanticReportMode mode;
 
   bool get remoteWriteTripwiresIntact =>
-      outboxCountBefore == 0 && outboxCountAfter == 0;
+      (outboxCountBefore == 0 && outboxCountAfter == 0) ||
+      (outboxCountBefore > 0 &&
+          outboxCountBefore == outboxCountAfter &&
+          settledOutboxUnchanged);
 
   bool get hasExactThreeZoneStructure {
     final labels = zones.map((zone) => zone.zoneLabel).toSet();
@@ -373,6 +382,7 @@ final class CloudSyncSemanticPullReport {
     'changeLimit': changeLimit,
     'outboxCountBefore': outboxCountBefore,
     'outboxCountAfter': outboxCountAfter,
+    'settledOutboxUnchanged': settledOutboxUnchanged,
     'zones': zones.map((zone) => zone.toJson()).toList(growable: false),
   };
 }

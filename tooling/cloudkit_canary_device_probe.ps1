@@ -492,8 +492,11 @@ function Assert-SemanticReportContract {
         'outboxCountAfter',
         'zones'
     )
+    Assert-ReportIntegerRange -Value $Report.schemaVersion -Minimum 6 -Maximum 7 -Code 'report_schema_version_invalid'
+    if ($Report.schemaVersion -eq 7) {
+        $topLevelProperties += 'settledOutboxUnchanged'
+    }
     Assert-ExactPropertyNames -Value $Report -Expected $topLevelProperties -Code 'report_schema_properties_invalid'
-    Assert-ReportIntegerRange -Value $Report.schemaVersion -Minimum 6 -Maximum 6 -Code 'report_schema_version_invalid'
     if ($Report.platform -isnot [string] -or
         $Report.architecture -isnot [string] -or
         $Report.platform -cne 'android' -or
@@ -529,8 +532,7 @@ function Assert-SemanticReportContract {
     }
     Assert-ReportIntegerRange -Value $Report.pageLimit -Minimum 4 -Maximum 4 -Code 'report_page_limit_invalid'
     Assert-ReportIntegerRange -Value $Report.changeLimit -Minimum 50 -Maximum 50 -Code 'report_change_limit_invalid'
-    Assert-ReportIntegerRange -Value $Report.outboxCountBefore -Minimum 0 -Maximum 0 -Code 'outbox_not_zero_to_zero'
-    Assert-ReportIntegerRange -Value $Report.outboxCountAfter -Minimum 0 -Maximum 0 -Code 'outbox_not_zero_to_zero'
+    Assert-SemanticOutboxContract -Report $Report
 
     $timestamp = [DateTimeOffset]::MinValue
     if ($Report.timestampUtc -is [DateTime]) {
@@ -637,6 +639,24 @@ function Assert-SemanticReportContract {
     if ($actualZones.Count -ne 3 -or
         @(Compare-Object -ReferenceObject $expectedZones -DifferenceObject $actualZones).Count -ne 0) {
         Fail-Probe 'report_zone_set_invalid'
+    }
+}
+
+function Assert-SemanticOutboxContract {
+    param([Parameter(Mandatory = $true)] $Report)
+    # Schema 6 has no complete-snapshot proof and must keep its zero-row gate.
+    # Schema 7 permits retained, fully settled rows only with the sampler's
+    # before/after equality proof. Counts continue to mean all durable rows.
+    Assert-ReportIntegerRange -Value $Report.schemaVersion -Minimum 6 -Maximum 7 -Code 'report_schema_version_invalid'
+    $maximum = if ($Report.schemaVersion -eq 6) { 0 } else { 65535 }
+    Assert-ReportIntegerRange -Value $Report.outboxCountBefore -Minimum 0 -Maximum $maximum -Code 'outbox_snapshot_invalid'
+    Assert-ReportIntegerRange -Value $Report.outboxCountAfter -Minimum 0 -Maximum $maximum -Code 'outbox_snapshot_invalid'
+    if ($Report.schemaVersion -eq 7 -and $Report.settledOutboxUnchanged -isnot [bool]) {
+        Fail-Probe 'outbox_snapshot_invalid'
+    }
+    if ($Report.outboxCountBefore -ne $Report.outboxCountAfter -or
+        ($Report.outboxCountBefore -gt 0 -and -not $Report.settledOutboxUnchanged)) {
+        Fail-Probe 'outbox_snapshot_changed'
     }
 }
 

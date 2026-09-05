@@ -11,16 +11,19 @@ final class CloudSyncLocalPreflightState {
     required this.objectBoxReady,
     required this.coordinatorLeaseActive,
     required this.outboxCount,
+    this.settledOutboxFingerprint,
   });
 
   const CloudSyncLocalPreflightState.blocked()
     : objectBoxReady = false,
       coordinatorLeaseActive = true,
-      outboxCount = -1;
+      outboxCount = -1,
+      settledOutboxFingerprint = null;
 
   final bool objectBoxReady;
   final bool coordinatorLeaseActive;
   final int outboxCount;
+  final String? settledOutboxFingerprint;
 }
 
 /// Fail-closed production probe for the developer-only shadow sampler.
@@ -101,6 +104,7 @@ final class CloudSyncProductionPreflightProbe {
       ),
       coordinatorLeaseActive: localState.coordinatorLeaseActive,
       outboxCount: localState.outboxCount,
+      settledOutboxFingerprint: localState.settledOutboxFingerprint,
       protectorSentinelValid: await _readBoolean(
         _protectorSentinelValid,
         failureValue: false,

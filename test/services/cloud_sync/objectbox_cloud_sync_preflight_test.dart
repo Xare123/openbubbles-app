@@ -86,6 +86,51 @@ void main() {
     );
 
     expect(reader.read().outboxCount, 1);
+    expect(reader.read().settledOutboxFingerprint, isNull);
+  });
+
+  test('incomplete confirmations and live receipt metadata never settle', () {
+    CloudOutboxOperationEntity confirmed() => CloudOutboxOperationEntity(
+      operationId: 'operation',
+      scopeKey: 'scope',
+      accountFingerprint: _fingerprint,
+      zone: 'messageManateeZone',
+      logicalEntityKeyHash: 'logical',
+      action: 0,
+      mutationRevision: 1,
+      checkpointGeneration: 1,
+      state: 2,
+      encryptedPayloadRef: 'protected-payload',
+      payloadSha256: 'payload-hash',
+      serverRecordIdHash: 'server-hash',
+      confirmedAtMs: now.millisecondsSinceEpoch,
+      createdAtMs: now.millisecondsSinceEpoch,
+      updatedAtMs: now.millisecondsSinceEpoch,
+    );
+    final outbox = store.box<CloudOutboxOperationEntity>();
+    final id = outbox.put(confirmed());
+    expect(reader.read().settledOutboxFingerprint, matches(r'^[0-9a-f]{64}$'));
+    final invalid = <void Function(CloudOutboxOperationEntity)>[
+      (row) => row.protectedLeaseReference = 'unacknowledged',
+      (row) => row.leaseIdHash = 'live-lease',
+      (row) => row.leaseExpiresAtMs = 1,
+      (row) => row.nextEligibleAtMs = 1,
+      (row) => row.lastErrorCategory = 'unknown',
+      (row) => row.confirmedAtMs = 0,
+      (row) => row.checkpointGeneration = 0,
+      (row) => row.serverRecordIdHash = null,
+      (row) => row.encryptedPayloadRef = null,
+      (row) => row.payloadSha256 = null,
+      (row) => row.action = 1,
+      (row) => row.action = 99,
+    ];
+    for (final mutate in invalid) {
+      final row = confirmed()..id = id;
+      mutate(row);
+      outbox.put(row);
+      expect(reader.read().outboxCount, 1);
+      expect(reader.read().settledOutboxFingerprint, isNull);
+    }
   });
 
   test(

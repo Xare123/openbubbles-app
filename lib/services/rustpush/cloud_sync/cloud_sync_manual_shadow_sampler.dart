@@ -107,6 +107,7 @@ class CloudSyncShadowPreflightState {
     required this.coordinatorLeaseActive,
     required this.outboxCount,
     required this.protectorSentinelValid,
+    this.settledOutboxFingerprint,
   });
 
   final bool platformSupported;
@@ -120,6 +121,24 @@ class CloudSyncShadowPreflightState {
   final bool coordinatorLeaseActive;
   final int outboxCount;
   final bool protectorSentinelValid;
+
+  /// Local-only fingerprint of the complete outbox snapshot, issued only when
+  /// every retained row is confirmed and has no pending lease or replay receipt.
+  /// Never serialize this fingerprint. Shadow runs still require zero rows.
+  final String? settledOutboxFingerprint;
+
+  bool get allowsSemanticRead =>
+      outboxCount == 0 ||
+      (outboxCount > 0 &&
+          settledOutboxFingerprint != null &&
+          RegExp(r'^[0-9a-f]{64}$').hasMatch(settledOutboxFingerprint!));
+
+  bool hasSameSettledOutboxAs(CloudSyncShadowPreflightState other) =>
+      allowsSemanticRead &&
+      other.allowsSemanticRead &&
+      outboxCount == other.outboxCount &&
+      (outboxCount == 0 ||
+          settledOutboxFingerprint == other.settledOutboxFingerprint);
 }
 
 typedef CloudSyncShadowPreflightReader =

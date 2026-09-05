@@ -45,9 +45,9 @@ continue under a new account.
 ## Live investigation board: personal integration review, 2026-09-04
 
 This board supersedes the historical board below. Reviewed baseline:
-`d64ec7a621f96fe385f19194bb59c9400be19494`, including its pinned rustpush
-`722fa440e9458459290bfb09ceda20c4e578161e`, plus the uncommitted final-admission
-patch. Do not infer current installed-device behavior from an old checkpoint,
+`7db9ed89b9443ffa5beef07b373e8d281ccaac40`, including its pinned rustpush
+`722fa440e9458459290bfb09ceda20c4e578161e`, plus the focused settled-outbox
+repair described below. Do not infer current installed-device behavior from an old checkpoint,
 an APK build, or a test count. The user has since observed real chats and
 photos; sequence 475 and zero displayed messages are historical failures, not
 the current universal blocker. No fresh device read or live remote write was
@@ -68,7 +68,8 @@ Relay identity -> Apple account -> Keychain clique / PCS -> CloudMessagesClient
   |
   +-- developer one-message writer -> protected outbox -> create-only CloudKit
         -> exact receipt -> confirmed-only readback -> retained terminal row
-        -> BLOCKS next semantic read because that reader requires outbox zero
+        -> acknowledged, immutable settled row -> next semantic read
+           (Windows ObjectBox restart test passes; live Apple cycle pending)
 ```
 
 | Boundary | Current source evidence | Status / required proof |
@@ -77,12 +78,13 @@ Relay identity -> Apple account -> Keychain clique / PCS -> CloudMessagesClient
 | Read and visible projection | `RustPushService.runCloudSyncV2AutomaticSemanticCatchUpConfirmed` loops bounded semantic batches. `ObjectBoxCanonicalSemanticEntityAdapter` projects owned records. The user has confirmed readable chats and working photos. | Useful restore exists. Requalify the exact current build and specific gallery/GIF case; do not report all media as broken or all media as proven. |
 | Persistent automatic sync | The automatic catch-up method is called by `troubleshoot_panel.dart`, not startup, reconnect, or a background worker. `CloudSyncShadowRuntime` is shadow-only. The Android scheduling worker is explicitly dormant. | **Production gap.** One-click foreground catch-up is not continuous cross-device sync. Compose one durable account-scoped runtime before enabling background scheduling. |
 | Outgoing integration | `CloudSyncOutboundAdmissionCoordinator.admitMessage` is reached through the developer outbound adapter. Normal `Message.save` / send does not atomically admit a V2 outbox operation. Legacy uploads are separately build-owner gated. | **Production gap.** A successful manual canary cannot prove that ordinary sent messages enter V2. Add local message plus outbox admission in one transaction, independent of IDS transport success, before claiming automatic upload. |
-| Read after write | `ObjectBoxCloudSyncPreflightReader.read` counts every outbox row. `CloudSyncManualSemanticPullSampler._validatePreflight` requires zero. Confirmed-only replay clears the protected lease reference but deliberately retains the terminal row. The semantic report also requires total counts of zero. | **Confirmed integration blocker.** A completed write prevents a subsequent semantic read. Introduce an explicit settled-versus-blocking outbox snapshot and test read/write/read after restart. Do not delete receipts or simply weaken the zero check. |
+| Read after write | The reader now distinguishes completely settled, confirmed rows from blocking work in one ObjectBox snapshot. The semantic sampler compares fingerprints of every durable outbox column before/after its paused read; receipts are not deleted. Pending, leased, paused, quarantined, unknown, invalid states and unacknowledged protected receipts still block. Shadow reads retain their zero-row rule. Schema 7 reports only counts and the equality result, never the fingerprint; the device reader preserves schema 6's zero-row gate. | **TEST-PROVEN on Windows ObjectBox.** The test performs an initial read, exact receipt commit, restart, blocked unreconciled read, durable receipt acknowledgement, restart, then two successful reads with zero transport saves. Same-count mutation is rejected. Restoring the original guard makes this regression test fail with `outbox_not_empty`. This is synthetic Apple transport evidence, not a live upload claim. |
 | Final native admission | The unfinished generation-fence patch moved `claimForConsumption` inside the armed mutation action. A wrong persisted UUID returned an unknown-outcome result without a native call. | **Reproduced and repaired locally.** Claim validation now follows the durable generation recheck but precedes fence arming. The regression test proves rejection, zero native calls, no fence, reuse with the correct identity, and harmless rejection of repeated consumption. The focused Dart set passes 107 tests. |
-| Rust CI capability tests | Runs `33930475652` and `33930441506` fail the same three tests with `ProtectedStorage` / zero fake remote calls. Linux has no production platform keystore backend. | **Test-boundary defect, not demonstrated parallelism failure.** The replacement injects only key loading into the same private consume implementation. The exported production entry point always uses protected storage. Added failure, retry, and single-use assertions; Linux qualification remains required. |
+| Rust CI capability tests | Runs `33930475652` and `33930441506` exposed a test-keystore dependency, not a demonstrated parallelism failure. The replacement injects only key loading into the same private consume implementation; the public entry point always uses protected storage. Run `33936071705` on exact `7db9ed89b` passed 285 app Rust tests, 203 rustpush tests, and 30 protector tests. | **TEST-PROVEN on GCE Linux.** Failure, retry and single-use assertions now run through the production consume logic. Do not confuse these passing code gates with the separate failed APK packaging gate. |
 | Media responsiveness during catch-up | `RustPushBackend.downloadAttachment` waits on `_cloudSyncV2SemanticPullInFlight`, which represents the entire automatic catch-up, not one batch. Both CloudKit media lanes wait; IDS does not. | **Usability gap.** A tapped gallery item can spin until history catch-up ends. Add a tested batch-boundary handoff for on-demand media without overlapping native writer pause ownership. Windows tests cannot prove Android HEIC decoding or filesystem promotion. |
 | Remote deletion and message operations | `applyTombstone` intentionally returns `canonical_tombstone_dto_incomplete`. Edit/retracted-part fields have projection code, but outgoing transport supports initial create only. | Do not promise deletion propagation or write-side edit/unsend parity. Preserve history while establishing exact causality and ownership. These are separate capabilities, not automatically provided by a successful text create. |
-| Test versus installed build | APK jobs can pass while the separate Rust bridge test job fails. Latest attempted full pilot failed before packaging; its VM cleanup completed. | Qualify one exact source SHA with full Dart, Rust, bindings, native-library verification and signed Canary provenance. An APK artifact alone is not a green candidate. |
+| Test versus installed build | GCE run `33936071705` passed bridge regeneration/drift, the full Dart suite and all three native suites, then failed at `:app:packageCanaryDebug` / `IncrementalSplitterRunnable`. The log did not identify the underlying exception. Cleanup completed with no remaining VM. The pilot now requests Gradle's full stack trace and records disk availability without changing infrastructure or retrying a partial build. | **Packaging failure unresolved.** The settled-outbox patch passes 192 focused Dart tests, 13 portable report-validator cases and Windows launcher behavioral tests locally. Qualify this exact follow-up source on GCE before signing or installation. |
+| Later cleanup | The user requested cleanup of unnecessary or disorganized code after correctness work. | Keep cleanup in separate commits: remove proven dead/duplicate paths, superseded diagnostics and misleading documentation, with tests unchanged or stronger. Do not combine a broad refactor with protocol or persistence changes. |
 
 ### Review scope and restraint
 
@@ -92,8 +94,9 @@ runtime callers, and build/test composition. This is not a claim to have read
 every line of unrelated FaceTime/Find My code or to have live-verified all
 message types. No new review agents were used after the user requested a
 personal pass. Alpha, the private Windows profile, and Apple data were not
-modified. Broad runtime, tombstone, and report-contract changes remain outside
-the two narrowly reproduced gate repairs.
+modified. The follow-up expands only the semantic report's settled-outbox
+contract and its readers/tests. Broad runtime and tombstone changes remain
+outside these narrowly reproduced repairs.
 
 ## Historical investigation board
 
@@ -827,13 +830,14 @@ enabling writes.
 Do not broaden scope to FaceTime, Find My, Windows ARM, or SMS/RCS while this
 sequence is active. Keep the working read path and identity intact:
 
-1. Qualify the final-admission and Linux capability-test repairs on one exact
-   source SHA. Keep runtime writer activation and personal credentials out of
-   the source-only GCE test job. Do not install merely because packaging passes.
-2. Repair the read-after-confirmed-write contract with an explicit immutable
-   settled-outbox snapshot. Pending, unknown, invalid, or unreconciled work must
-   still block. Prove ordinary read, one confirmed create, no-save replay,
-   restart, and another read against one real ObjectBox store.
+1. Finish exact-source GCE qualification. Final-admission and native capability
+   tests passed on `7db9ed89b`; APK packaging failed with no underlying cause
+   in the default log. The next pilot captures the full packaging stack and
+   disk state. Keep live credentials out of GCE and do not skip native tests.
+2. Include the tested settled-outbox repair in that qualification. The Windows
+   real-ObjectBox read/receipt/restart/read sequence passes with synthetic
+   transport; pending, unknown, invalid and unreconciled work still blocks.
+   This local proof does not replace exact live remote readback/no-save replay.
 3. Exercise one explicitly confirmed text create on Canary, followed by exact
    readback and no-save replay. Verify the text on the other Apple client and
    prove no duplicate. Keep Alpha untouched and remote deletes disabled.
@@ -852,7 +856,7 @@ sequence is active. Keep the working read path and identity intact:
    unsends require their own causal and anti-resurrection proof; initial text
    create support must not be advertised as complete Messages parity.
 
-### Latest bounded live proof
+### Historical bounded live proof
 
 The signed Windows ARM64 harness completed a clean rebuild in 99.7 seconds on
 2026-08-31 after bridge regeneration. Its first replay projected 143 chats but

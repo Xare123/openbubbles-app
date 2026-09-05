@@ -622,7 +622,7 @@ final class CloudSyncManualSemanticPullSampler {
 
     final after = await _readPreflight();
     _validatePreflight(after);
-    if (after.outboxCount != before.outboxCount) {
+    if (!before.hasSameSettledOutboxAs(after)) {
       throw StateError('cloud_sync_semantic_remote_write_tripwire');
     }
     return CloudSyncSemanticPullReport(
@@ -634,6 +634,7 @@ final class CloudSyncManualSemanticPullSampler {
       changeLimit: changeLimit,
       outboxCountBefore: before.outboxCount,
       outboxCountAfter: after.outboxCount,
+      settledOutboxUnchanged: before.hasSameSettledOutboxAs(after),
       zones: reports,
     );
   }
@@ -857,7 +858,7 @@ final class CloudSyncManualSemanticPullSampler {
     await _requireSameAuth(proof.auth);
     final after = await _readPreflight();
     _validatePreflight(after);
-    if (after.outboxCount != before.outboxCount) {
+    if (!before.hasSameSettledOutboxAs(after)) {
       throw StateError('cloud_sync_semantic_remote_write_tripwire');
     }
     return CloudSyncSemanticPullReport(
@@ -869,6 +870,7 @@ final class CloudSyncManualSemanticPullSampler {
       changeLimit: changeLimit,
       outboxCountBefore: before.outboxCount,
       outboxCountAfter: after.outboxCount,
+      settledOutboxUnchanged: before.hasSameSettledOutboxAs(after),
       zones: reports,
       mode: CloudSyncSemanticReportMode.retainedProjectionSweep,
     );
@@ -1196,7 +1198,7 @@ final class CloudSyncManualSemanticPullSampler {
       throw StateError('legacy_sync_active');
     }
     if (state.coordinatorLeaseActive) throw StateError('coordinator_active');
-    if (state.outboxCount != 0) throw StateError('outbox_not_empty');
+    if (!state.allowsSemanticRead) throw StateError('outbox_not_empty');
     if (!state.protectorSentinelValid) {
       throw StateError('protector_unavailable');
     }

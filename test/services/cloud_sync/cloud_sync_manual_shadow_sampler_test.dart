@@ -15,6 +15,7 @@ import 'package:universal_io/io.dart';
 CloudSyncShadowPreflightState readyState({
   bool legacySyncEnabled = false,
   int outboxCount = 0,
+  String? settledOutboxFingerprint,
 }) => CloudSyncShadowPreflightState(
   platformSupported: true,
   uiIsolate: true,
@@ -26,6 +27,7 @@ CloudSyncShadowPreflightState readyState({
   legacySyncActive: false,
   coordinatorLeaseActive: false,
   outboxCount: outboxCount,
+  settledOutboxFingerprint: settledOutboxFingerprint,
   protectorSentinelValid: true,
 );
 
@@ -443,6 +445,32 @@ void main() {
         kind: CloudKitOperationKind.legacyReadWrite,
         action: () async {},
       );
+    },
+  );
+
+  test(
+    'shadow still rejects retained settled rows before transport creation',
+    () async {
+      var transports = 0;
+      final sampler = CloudSyncManualShadowSampler(
+        readPreflight: () async =>
+            readyState(outboxCount: 1, settledOutboxFingerprint: 'a' * 64),
+        prepareAuthSnapshot: () async => auth('session-a'),
+        readAuthSnapshot: () async => auth('session-a'),
+        createStore: (_) async => InMemoryCloudSyncStore(),
+        createRawTransport: (_, __) async {
+          transports++;
+          return FakeCloudSyncTransport();
+        },
+        operationFenceStore: InMemoryCloudSyncStore(),
+        privateStorageDirectory: privateStorageDirectory.path,
+        platform: 'windows',
+        architecture: 'arm64',
+        buildCommit: 'test',
+        compileGateOverrideForTest: true,
+      );
+      await expectLater(sampler.runConfirmed(), throwsStateError);
+      expect(transports, 0);
     },
   );
 

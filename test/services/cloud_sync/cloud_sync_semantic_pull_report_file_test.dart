@@ -139,7 +139,9 @@ CloudSyncSemanticPullZoneReport _cleanZone(
 
 CloudSyncSemanticPullReport _report(
   DateTime timestamp, {
+  int outboxCountBefore = 0,
   int outboxCountAfter = 0,
+  bool settledOutboxUnchanged = false,
   int pageLimit = 4,
   int changeLimit = 50,
   int chatFetched = 1,
@@ -155,8 +157,9 @@ CloudSyncSemanticPullReport _report(
   buildCommit: 'test-commit',
   pageLimit: pageLimit,
   changeLimit: changeLimit,
-  outboxCountBefore: 0,
+  outboxCountBefore: outboxCountBefore,
   outboxCountAfter: outboxCountAfter,
+  settledOutboxUnchanged: settledOutboxUnchanged,
   mode: mode,
   zones:
       zoneReports ??
@@ -201,7 +204,7 @@ void main() {
 
     expect(file.path, contains('obcs2-semantic-'));
     final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-    expect(json['schemaVersion'], 6);
+    expect(json['schemaVersion'], 7);
     expect(json['tombstoneSemanticDeletesEnabled'], isFalse);
     expect(json['tombstoneReadOnlyAcknowledgementsEnabled'], isTrue);
     expect(json['retainedUnprojectedEvidencePreserved'], isTrue);
@@ -226,7 +229,7 @@ void main() {
     expect(encoded, isNot(contains('obcs2.ref.')));
   });
 
-  test('serializes both schema-6 report modes', () async {
+  test('serializes both schema-7 report modes', () async {
     final writer = CloudSyncSemanticPullReportFileWriter(
       privateReportDirectory: reports.path,
       trustedStorageRoot: root.path,
@@ -262,17 +265,68 @@ void main() {
         jsonDecode(await (await writer.write(sweep)).readAsString())
             as Map<String, dynamic>;
 
-    expect(remoteJson['schemaVersion'], 6);
+    expect(remoteJson['schemaVersion'], 7);
     expect(
       remoteJson['mode'],
       CloudSyncSemanticReportMode.readOnlyCloudKit.wireName,
     );
-    expect(sweepJson['schemaVersion'], 6);
+    expect(sweepJson['schemaVersion'], 7);
     expect(
       sweepJson['mode'],
       CloudSyncSemanticReportMode.retainedProjectionSweep.wireName,
     );
   });
+
+  test(
+    'settled outbox equality proof permits retained receipts, not mutations',
+    () async {
+      final writer = CloudSyncSemanticPullReportFileWriter(
+        privateReportDirectory: reports.path,
+        trustedStorageRoot: root.path,
+      );
+      final timestamp = DateTime.utc(2026, 9, 4);
+      final settled = _report(
+        timestamp,
+        outboxCountBefore: 1,
+        outboxCountAfter: 1,
+        settledOutboxUnchanged: true,
+      );
+      expect(settled.remoteWriteTripwiresIntact, isTrue);
+      final json = jsonDecode(
+        await (await writer.write(settled)).readAsString(),
+      );
+      expect(json['outboxCountBefore'], 1);
+      expect(json['outboxCountAfter'], 1);
+      expect(json['settledOutboxUnchanged'], isTrue);
+      expect(jsonEncode(json), isNot(contains('Fingerprint')));
+      expect(
+        _report(
+          timestamp,
+          outboxCountBefore: 1,
+          outboxCountAfter: 1,
+        ).remoteWriteTripwiresIntact,
+        isFalse,
+      );
+      expect(
+        _report(
+          timestamp,
+          outboxCountBefore: 1,
+          outboxCountAfter: 2,
+          settledOutboxUnchanged: true,
+        ).remoteWriteTripwiresIntact,
+        isFalse,
+      );
+      expect(
+        _report(
+          timestamp,
+          outboxCountBefore: -1,
+          outboxCountAfter: -1,
+          settledOutboxUnchanged: true,
+        ).remoteWriteTripwiresIntact,
+        isFalse,
+      );
+    },
+  );
 
   test('remote reports reject nonzero projection counters', () async {
     final writer = CloudSyncSemanticPullReportFileWriter(
