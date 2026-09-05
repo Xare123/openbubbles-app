@@ -263,13 +263,9 @@ Two native release questions remain distinct from this local ordering fix:
   conversation on another Apple device without a Chat dependency or observed
   synthesis. The bounded Sol lookup was independently checked and closed.
 - The builder selects `save_semantics = 2` with the update flag false.
-  Its unit test verifies this encoded number, not a server-side collision.
-  Apple's public [recordID documentation](https://developer.apple.com/documentation/cloudkit/ckrecord/recordid)
-  confirms that rejecting an existing ID depends on save policy; other policies
-  can overwrite it. That public contract does not establish the private
-  numeric mapping. Preserve the exact-absence and ambiguity protections, and
-  require authoritative mapping or a controlled collision fixture before using
-  the intended create-only behavior to relax account-wide projection gates.
+  Independent Apple-client enum evidence is now recorded below. A controlled
+  live collision/readback test remains a separate release gate; client enum
+  evidence does not establish that a particular live write succeeded.
 
 The documentation lookup used Apple's current page directly after the Agent
 Reach reader rejected anonymous access. No credentials were sent to a research
@@ -278,6 +274,145 @@ at 6 percent, unplugged, and the latest persisted report still ended at 00:06
 PDT. VM status discovery was unavailable, so this is not proof that no pull was
 in flight. No update, force-stop or new pull was performed. The signed
 `a5f84f30a` media APK remains a separate, not-yet-installed artifact.
+
+### Qualified fresh-create readiness, 2026-09-05
+
+The `StringAsSaveSemantics:` implementation in independently published Apple
+client decompilations maps `failIfOutdated` to 1, `failIfExists` to 2, and
+`override` to 3. The mapping agrees in both
+[iOS 18.2, pinned source](https://github.com/EthanArbuckle/iPhone17-1_18.2_22C152_Restore/blob/e26ed4563f78871c59d2d96856756a65d62517e5/System/Library/PrivateFrameworks/CloudKitDaemon.framework/CKDPRecordSaveRequest.m)
+and [iOS 26.1, pinned source](https://github.com/EthanArbuckle/iPhone18-3_26.1_23B85_Restore/blob/90aa0cfe59d9682b4265e1354c8b19ec3c7823ab/System/Library/PrivateFrameworks/CloudKitDaemon.framework/CloudKitDaemon/CKDPRecordSaveRequest.mm).
+Only protocol facts are used here, not copied implementation code. This is
+independent client evidence, not an Apple-published private API contract or a
+live server-collision result. In particular, value 3 must not be described as
+conditional updating.
+
+An explicitly configured `ObjectBoxCloudSyncStore(localSendJournal: ...)`
+can now admit and lease an initial create with durable local-origin evidence
+despite unrelated retained history. The default store and generic admissions
+retain the original full-projection requirement.
+
+```text
+ready local intent + stable V2 authority + exact account/epoch
+  -> all three zones have complete durable terminal journals
+     (applied or retained, not pending/holed/backed-off)
+  -> stage original protected envelope
+  -> atomic adoption rechecks origin, account, history and target tombstones
+  -> lease and submission independently recheck adopted envelope/map/authority
+  -> native explicit failIfExists create
+  -> exact receipt or unknown-outcome reconciliation, never blind replay
+```
+
+An observed tombstone for the exact target record still blocks the create,
+whether retained or already applied. No historical row is relabeled, applied,
+deleted or inferred to be locally authored. Restart recovers the original
+adopted envelope without reading or re-encoding a changed/deleted Message.
+Unknown-outcome reconciliation remains independent of new-send readiness.
+
+Verification: 258 focused journal/admission/store/model/authority/canary tests
+pass. The optional journal must be composed into the same store used for
+admission and submission. **No production consumer has been connected and no
+live write has been qualified by these tests.** New-chat remote dependencies,
+durable handling of origin-capture failures, continuous read/write scheduling
+and real receipt/readback qualification remain open.
+
+### Pixel media and registration incident, 2026-09-05 morning
+
+The installed build remains `6517f8661`; no APK was installed or account reset
+by the operator during this session. The 12:58:41 UTC semantic report records
+zero new fetched/applied records, retained historical debt, an unchanged empty
+outbox and remote saves/deletes disabled. Subsequent user testing is a separate
+event and must not be covered by that earlier report's safety counts.
+
+- At 12:56:42 UTC, an attachment failed during the native exact-record fetch.
+  Dart collapsed its native result into `cloud_attachment_source_invalid`.
+  Another attachment completed in 2326 ms. The user subsequently reported only
+  a few working gallery photos and five unsuccessful taps. Do not classify all
+  those attempts as queued, missing or decoded without per-attempt evidence.
+- At 13:03:13 UTC, the recipient dialog produced a disposed TextEditingController
+  error and cascading widget-tree errors. Its caller disposed the controller
+  when the showDialog Future completed, before route teardown. The repaired
+  dialog owns its controller until State.dispose; three widget tests cover
+  the closing animation, cancellation/reopening and empty input. Not deployed.
+- At 13:03:33 UTC, IDS returned 6005 and attempted re-registration. Later normal
+  sends failed with `Resource has been closed`; account reset was deferred by
+  `cloudkit_interlock_busy`. The user confirms the Developer Settings write
+  test came before the failed ordinary chat send. Do not retry the remote write
+  without checking durable outbox state.
+- The installed native ResourceManager publishes a terminal failure and then
+  overwrites it with Closed. Installed Dart treats that non-retryable state as
+  "Logged out by Apple" and starts an automatic reset. The source repair below
+  preserves the cause and removes that automatic account transition. Live
+  Canary registration repair remains open; Alpha is not proof of readiness.
+
+The media handoff APK is still pending installation. Photo presence alone is
+not proof of current download reliability or a successful CloudKit write.
+
+A later local control-state inspection used a 110,600,192-byte Canary database
+copy whose SHA-256 matched before transfer, after transfer and locally. It
+reported **zero outbox rows**, three checkpoints without pending page/token
+markers, 318 chats, 10,126 messages and 2,391 attachment rows. These are current
+stored counts, not counts restored overnight or proof of downloaded bodies.
+No V2 upload remained queued in that snapshot. The inspection made no device
+database changes; the private copy remains local as incident evidence.
+
+### Registration lifecycle and explicit repair, 2026-09-05
+
+The investigation identifies linked failures, not proof that a CloudKit save
+revoked an Apple Account. The developer recipient dialog failed first; native
+IDS later reported 6005; the resource worker then erased its terminal cause;
+and Dart attempted an account transition while protected CloudKit work was
+still active. A later snapshot had no V2 outbox operation queued.
+
+The repaired dependency path is:
+
+```text
+native resource generation
+  -> transient failure: retain retry delay; immediate retry can recover
+  -> terminal failure: retain exact failure after worker exits; no blind retry
+  -> explicit shutdown: Closed; refresh cannot report success
+startup or live registration observation
+  -> same observer: show failure, preserve account and CloudKit handles
+  -> failure notification: open Profile, never claim an account-wide logout
+Profile
+  -> retryable: existing interlocked Retry now
+  -> terminal: confirmation, recheck account/state, existing interlocked repair
+     -> busy: preserve attached state; wait or ask the user to retry
+     -> admitted: reopen sign-in without hardware reset or remote logout_all
+```
+
+Native commit `df74a78378e1f60fee41f16382190785816a4aa8`, pinned by app
+`775bf22d5`, passed all **209 rustpush tests** on the T2D GCE runner in
+[run 33970071687](https://github.com/Xare123/openbubbles-app/actions/runs/33970071687).
+Six new tests exercise the actual resource worker without Apple credentials,
+including late subscribers, permanent error refresh, transient recovery,
+terminal failure after retry, healthy close and close during backoff.
+Compilation took 47.43 seconds; tests took 5.71 seconds. Cleanup succeeded;
+both the live runner-registration and VM inventories were empty afterward.
+This was Rust-only validation, not an APK build or live authentication test.
+
+Dart source now removes automatic resets from registration observation,
+ordinary sends and target validation. Both startup and live state events use
+`RegistrationStateObserver`; retryable-to-terminal transitions produce a new
+notice, while repeated identical failure classes do not spam notifications.
+Profile retains the terminal error and offers confirmed repair using
+`hw: false`, `logout: false`, `ui: true`, with the existing quiescence and
+interlock checks unchanged. Nine observer/confirmation tests and three
+recipient-dialog tests pass. The earlier combined admission/journal/store/
+canary/presentation set passes 267 tests. No new analyzer errors were found;
+Profile still has five pre-existing unused/duplicate warnings.
+
+At the subsequent USB check the Pixel remained on `6517f8661`, at 36 percent
+and charging. No registration-success evidence appeared after the recorded
+failure. No phone reset, install, send or writer retry was performed. Integrated
+APK qualification and live registration recovery remain required.
+
+The same integration candidate adds a closed-set attachment-transfer diagnostic:
+HTTP status, numeric CloudKit client/server code, I/O kind, or an existing safe
+failure category. It never formats arbitrary PushError text, response bodies,
+record identifiers or asset URLs. Two native tests pin cause separation and
+redaction. This changes observability, not attachment permission, retry or
+integrity policy; the five failed gallery taps are not yet classified.
 
 ### Installed Canary and VM observation follow-up
 
