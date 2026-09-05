@@ -53,9 +53,6 @@ class _SendAnimationState
     final part = tuple.item5;
     final effectId = tuple.item6;
     final payload = tuple.item7;
-    if (ss.settings.scrollToBottomOnSend.value) {
-      await controller.scrollToTime(schedule ?? DateTime.now());
-    }
     if (ss.settings.sendSoundPath.value != null && !(isNullOrEmptyString(annotations.string) && isNullOrEmptyString(subject) && controller.pickedAttachments.isEmpty && controller.pickedApp.value == null)) {
       if (kIsDesktop) {
         Player player = Player();

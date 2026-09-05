@@ -34,7 +34,7 @@ or account-reset code.
 | V2 outbound create | Confirmation requires an exact server-record and ETag receipt committed atomically with the existing current-generation mapping; missing proof remains outcome-unknown and is never replayed blindly. |
 | V2 fresh-create admission | Check readiness before encoding and inside adoption. Only an explicitly configured, same-store journal with durable local origin and stable V2 account/epoch may use complete terminal history instead of fully applied history. An exact-target tombstone blocks admission and submission. Revalidate origin, original envelope and mapping at lease/submission. Generic operations retain the strict gate; unknown outcomes are never blindly replayed. |
 | Developer write recipient dialog | Controller lifetime belongs to the dialog State, not the showDialog Future. Pop completes before reverse-animation teardown; disposing in the awaiting caller can break the still-mounted TextField and cascade into widget errors. |
-| Registration failure visibility | Retain the terminal native cause after the worker exits. Explicit Closed is distinct and cannot report refresh success. Startup and live events share one observer; neither failure observation nor sending/target lookup may reset the shared account. Notification taps open Profile, and terminal repair requires confirmation plus the existing CloudKit quiescence/interlock. Full GCE run 33972171533 passed; signed 317adb489 is installed on Canary with its database unchanged. Live registration recovery remains unverified. |
+| Registration failure visibility | Retain the terminal native cause after the worker exits. Explicit Closed is distinct and cannot report refresh success. Startup and live events share one observer; neither failure observation nor sending/target lookup may reset the shared account. Notification taps open Profile, and terminal repair requires confirmation plus the existing CloudKit quiescence/interlock. Full GCE run 33972171533 passed; signed 317adb489 is installed on Canary with its database unchanged. September 5 19:11 and 19:14 UTC logs now record fresh successful sends and delivered status after sign-in. The first send attempt failed before IDS on a disposed scroll controller, not registration. |
 | Fresh-create chat dependency | Admission requires a current Chat-zone snapshot, unique direct iMessage service alias, record mapping and latest applied save for the same canonical Chat. Its immutable scoped binding is stored with adoption and included in the payload-binding digest. Revalidate at lease and submission, including restart, without consulting a mutable Message. A newer valid ETag is allowed; remaps and deleted/stale/missing proof are not. Older unbound envelopes remain recoverable but cannot dispatch. Automatic uploading remains disconnected. |
 | V2 interrupted-create recovery | Exact readback confirmation must use the same atomic create-receipt commit as the ordinary write path. Generic confirmation is forbidden; receipt mismatch keeps the operation unknown and retry-fenced. |
 | Account transition | Old-account work is quiescent before state is replaced or disposed. |
@@ -221,6 +221,16 @@ Every active pass still checks the full account/client/session/store tuple.
 Logout disposes the worker and awaits native quiescence before Store teardown.
 The first native-auth timeout, missing writer owner, initial `createChat`
 producer, full background integration and live create/readback remain open.
+
+The initial-message audit found a different producer path, not a reason to
+rewrite ordinary sending. `RustPushBackend.createChat` saves a provisional chat,
+builds one stable IDS message, sends it, then reflects and persists the final
+Message. It bypasses the ordinary composer queue. Replacing it with `sendMessage`
+would change temporary-row and failure behavior. Origin capture must eventually
+cover this path without inventing a canonical remote Chat binding. Separately,
+the native auth snapshot currently requires cached matching GSA identifiers;
+cold persisted account identity alone is not full write authorization. Keep
+both gaps visible while qualifying the existing exact create/readback path.
 
 ### Profile documents and compact media, 2026-09-05
 

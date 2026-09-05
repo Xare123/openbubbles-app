@@ -44,9 +44,18 @@ continue under a new account.
 
 ## Latest integration checkpoint, 2026-09-05
 
-- Installed Canary remains `317adb489`: the user confirms working photos, but
-  current IDS registration repair still needs completed sign-in and an ordinary
-  send. Alpha and the source inspection databases are untouched.
+- Installed Canary remains `317adb489`: the user confirms working photos and
+  completed sign-in. At 19:11 UTC on September 5, a fresh ordinary test send
+  completed and the log recorded delivered status. The user then unsent that
+  test; it is excluded from any CloudKit create experiment. Alpha and the source
+  inspection databases are untouched. The first attempt at 19:08 UTC failed
+  locally before IDS because send preparation awaited a disposed scroll
+  controller. The composer preserved the draft, and reopening the chat allowed
+  the same draft to send. The reviewed repair makes transcript scrolling
+  optional to queue admission, defers scroll-controller disposal until active
+  scrolls settle, and rejects sends from closed routes. Ten controller tests
+  and a combined 66-test controller/transport-gate/runtime/candidate run pass.
+  The new code still needs full GCE and Pixel qualification.
 - Reviewed gallery/document, recipient-validation, FaceTime and Find My fixes
   passed full GCE run `33981816999` at exact `d5413ec9c`: complete Dart suite,
   287 app Rust, 209 rustpush and 30 protector tests, bridge-drift checks, Android
@@ -79,9 +88,17 @@ continue under a new account.
   writer flags enabled, proving those flags alone cannot activate this consumer.
   Analysis reports only four preexisting brace-style infos in `rustpush_service.dart`,
   not a clean analyzer exit. These synthetic/offline tests are not live-upload proof.
-- Next device gate: complete Canary registration and prove ordinary IDS
-  sending, then qualify one exact CloudKit create/readback and interruption
-  recovery. No automatic upload is enabled by these local results.
+- GCE full run `33985376550` on `e8afd9c89` stopped before APK compilation:
+  1,766 Dart tests passed and one source-contract test still counted three
+  protected transports instead of the four reviewed adapters. The corrected
+  test checks one constructor per adapter and the independent local-send gate
+  before construction. Eleven focused tests pass with default flags and again
+  with the manual-writer flags enabled. VM cleanup succeeded; project instances
+  and repository runner registrations are empty. This is not a qualified APK.
+- Next device gate: qualify the corrected build, then one fresh exact CloudKit
+  create/readback and interruption recovery using the designated test account.
+  Ordinary IDS sending now has fresh device evidence. No automatic upload is
+  enabled by these local results.
 
 ## Live investigation board: personal integration review, 2026-09-04
 

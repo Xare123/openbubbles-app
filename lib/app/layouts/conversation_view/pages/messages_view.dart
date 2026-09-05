@@ -94,7 +94,7 @@ class MessagesViewState extends OptimizedState<MessagesView> {
       return;
     }
     _messageFocusNode(_messages[index]).requestFocus();
-    unawaited(scrollController.scrollToIndex(index, preferPosition: AutoScrollPosition.middle));
+    unawaited(controller.scrollToMessageIndex(index, preferPosition: AutoScrollPosition.middle));
   }
 
   Future<bool> _toggleAudioMessage(Message message) async {
@@ -180,8 +180,8 @@ class MessagesViewState extends OptimizedState<MessagesView> {
       // scroll to message if needed
       if (searchMessage != null) {
         final index = _messages.indexWhere((element) => element.guid == searchMessage.guid);
-        await scrollController.scrollToIndex(index, preferPosition: AutoScrollPosition.middle);
-        if (!mounted || generation != _lifecycleGeneration) return;
+        final didScroll = await controller.scrollToMessageIndex(index, preferPosition: AutoScrollPosition.middle);
+        if (!mounted || generation != _lifecycleGeneration || !didScroll) return;
         scrollController.highlight(index, highlightDuration: const Duration(milliseconds: 500));
       } else if (!(_messages.firstOrNull?.isFromMe ?? true)) {
         updateReplies();
@@ -307,7 +307,8 @@ class MessagesViewState extends OptimizedState<MessagesView> {
     // check if the message is already loaded
     int index = _messages.indexWhere((element) => element.guid == guid);
     if (index != -1) {
-      await scrollController.scrollToIndex(index, preferPosition: AutoScrollPosition.middle);
+      final didScroll = await controller.scrollToMessageIndex(index, preferPosition: AutoScrollPosition.middle);
+      if (!mounted || !didScroll) return;
       scrollController.highlight(index, highlightDuration: const Duration(milliseconds: 500));
       return;
     }
@@ -322,7 +323,8 @@ class MessagesViewState extends OptimizedState<MessagesView> {
     await loadNextChunk(limit: pos + 10);
     index = _messages.indexWhere((element) => element.guid == guid);
     if (index != -1) {
-      await scrollController.scrollToIndex(index, preferPosition: AutoScrollPosition.middle);
+      final didScroll = await controller.scrollToMessageIndex(index, preferPosition: AutoScrollPosition.middle);
+      if (!mounted || !didScroll) return;
       scrollController.highlight(index, highlightDuration: const Duration(milliseconds: 500));
     } else {
       showSnackbar("Error", "Failed to find message!");

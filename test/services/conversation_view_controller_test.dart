@@ -4,6 +4,8 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:get/get.dart';
+import 'package:scroll_to_index/scroll_to_index.dart';
 
 void main() {
   test('send waits for the composer handler to finish', () async {
@@ -51,6 +53,156 @@ void main() {
       ),
       throwsStateError,
     );
+  });
+
+  test('send rejects a controller whose conversation route has closed', () async {
+    final controller = ConversationViewController(Chat(guid: 'iMessage;-;send-stale-route-test'));
+    var handlerCalled = false;
+    controller.sendFunc = (_, __, ___) async => handlerCalled = true;
+    controller.onClose();
+
+    await expectLater(
+      controller.send(
+        [],
+        AttributedBody.raw('message'),
+        '',
+        null,
+        null,
+        null,
+        null,
+        false,
+        null,
+      ),
+      throwsStateError,
+    );
+    expect(handlerCalled, isFalse);
+  });
+
+  test('optional send scroll does not swallow a queue failure', () async {
+    ss.settings = Settings();
+    ss.settings.openKeyboardOnSTB.value = false;
+    final guid = 'iMessage;-;send-queue-failure-test';
+    final controller = ConversationViewController(Chat(guid: guid));
+    final queueError = StateError('queue admission failed');
+    controller.sendFunc = (_, __, ___) async => throw queueError;
+
+    await expectLater(
+      controller.send(
+        [],
+        AttributedBody.raw('message'),
+        '',
+        null,
+        null,
+        null,
+        null,
+        false,
+        null,
+        scrollTranscript: true,
+      ),
+      throwsA(same(queueError)),
+    );
+    await Future<void>.delayed(Duration.zero);
+    controller.onClose();
+    Get.delete<MessagesService>(tag: guid, force: true);
+  });
+
+  testWidgets('route disposal waits for an in-flight indexed scroll to settle', (tester) async {
+    final controller = ConversationViewController(Chat(guid: 'iMessage;-;scroll-disposal-test'));
+
+    await tester.pumpWidget(MaterialApp(
+      home: SizedBox(
+        height: 120,
+        child: ListView.builder(
+          controller: controller.scrollController,
+          itemCount: 100,
+          itemExtent: 40,
+          itemBuilder: (context, index) => AutoScrollTag(
+            key: ValueKey(index),
+            controller: controller.scrollController,
+            index: index,
+            child: Text('Message $index'),
+          ),
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    final scrolling = controller.scrollToMessageIndex(
+      80,
+      duration: const Duration(seconds: 1),
+      preferPosition: AutoScrollPosition.middle,
+    );
+    await tester.pump();
+    controller.onClose();
+
+    expect(() => controller.scrollController.addListener(() {}), returnsNormally);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    expect(await scrolling, isFalse);
+    expect(() => controller.scrollController.addListener(() {}), throwsFlutterError);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('optional send scroll cannot delay queue admission or fail on route disposal', (tester) async {
+    ss.settings = Settings();
+    ss.settings.openKeyboardOnSTB.value = false;
+    final guid = 'iMessage;-;send-scroll-lifecycle-test';
+    final controller = ConversationViewController(Chat(guid: guid));
+    final base = DateTime(2026, 9, 5, 12);
+    ms(guid).struct.addMessages(List.generate(
+      100,
+      (index) => Message(
+        guid: 'send-scroll-$index',
+        isFromMe: false,
+        dateCreated: base.subtract(Duration(minutes: index)),
+      ),
+    ));
+    final queueGate = Completer<void>();
+    final queueStarted = Completer<void>();
+    controller.sendFunc = (_, __, ___) async {
+      queueStarted.complete();
+      await queueGate.future;
+    };
+
+    await tester.pumpWidget(MaterialApp(
+      home: SizedBox(
+        height: 120,
+        child: ListView.builder(
+          controller: controller.scrollController,
+          itemCount: 100,
+          itemExtent: 40,
+          itemBuilder: (context, index) => AutoScrollTag(
+            key: ValueKey(index),
+            controller: controller.scrollController,
+            index: index,
+            child: Text('Message $index'),
+          ),
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    final sending = controller.send(
+      [],
+      AttributedBody.raw('ordinary send'),
+      '',
+      null,
+      null,
+      null,
+      null,
+      false,
+      base.subtract(const Duration(minutes: 80)),
+      scrollTranscript: true,
+    );
+    await queueStarted.future;
+    controller.onClose();
+    await tester.pumpWidget(const SizedBox.shrink());
+    queueGate.complete();
+    await sending;
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    Get.delete<MessagesService>(tag: guid, force: true);
   });
 
   testWidgets('dismissKeyboard releases the conversation composer focus',

@@ -152,6 +152,8 @@ class ConversationViewController extends StatefulController
   final RxBool reportJunkAvailable = false.obs;
   Timer? _debounceTyping;
   bool _isClosed = false;
+  bool _scrollControllerDisposed = false;
+  int _activeScrollOperations = 0;
   int _posterGeneration = 0;
 
   void clearTypingState() {
@@ -335,7 +337,7 @@ class ConversationViewController extends StatefulController
       unawaited(typingState.$1.cancel());
     }
     typingIndicatorData.clear();
-    scrollController.dispose();
+    _disposeScrollControllerIfIdle();
     emojiScrollController.dispose();
     headerBackFocusNode.dispose();
     shareSubscription?.cancel();
@@ -359,17 +361,46 @@ class ConversationViewController extends StatefulController
     SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
   }
 
+  void _disposeScrollControllerIfIdle() {
+    if (!_isClosed || _activeScrollOperations != 0 || _scrollControllerDisposed) return;
+    _scrollControllerDisposed = true;
+    scrollController.dispose();
+  }
+
+  Future<bool> _runScrollOperation(Future<void> Function() operation) async {
+    if (_isClosed || _scrollControllerDisposed || !scrollController.hasClients) return false;
+    _activeScrollOperations++;
+    try {
+      await operation();
+      return !_isClosed;
+    } finally {
+      _activeScrollOperations--;
+      _disposeScrollControllerIfIdle();
+    }
+  }
+
+  Future<bool> scrollToMessageIndex(int index,
+      {Duration duration = scrollAnimationDuration,
+      AutoScrollPosition? preferPosition}) {
+    return _runScrollOperation(() async {
+      await scrollController.scrollToIndex(index,
+          duration: duration, preferPosition: preferPosition);
+    });
+  }
+
   Future<void> scrollToBottom() async {
     if (scrollController.positions.isNotEmpty &&
         scrollController.positions.first.extentBefore > 0) {
-      await scrollController.animateTo(
-        0.0,
-        curve: Curves.easeOut,
-        duration: const Duration(milliseconds: 300),
-      );
+      await _runScrollOperation(() async {
+        await scrollController.animateTo(
+          0.0,
+          curve: Curves.easeOut,
+          duration: const Duration(milliseconds: 300),
+        );
+      });
     }
 
-    if (ss.settings.openKeyboardOnSTB.value) {
+    if (!_isClosed && ss.settings.openKeyboardOnSTB.value) {
       focusNode.requestFocus();
     }
   }
@@ -380,12 +411,28 @@ class ConversationViewController extends StatefulController
     if (scrollController.positions.isNotEmpty) {
       var test = messages.indexWhere(
           (element) => element.chatViewDate?.isBefore(time) ?? false);
-      await scrollController.scrollToIndex(test,
+      await scrollToMessageIndex(test,
           preferPosition: AutoScrollPosition.begin);
     }
 
-    if (ss.settings.openKeyboardOnSTB.value) {
+    if (!_isClosed && ss.settings.openKeyboardOnSTB.value) {
       focusNode.requestFocus();
+    }
+  }
+
+  void requestScrollToTime(DateTime time) {
+    unawaited(_scrollToTimeForSend(time));
+  }
+
+  Future<void> _scrollToTimeForSend(DateTime time) async {
+    try {
+      await scrollToTime(time);
+    } catch (error, stack) {
+      Logger.warn(
+        "Failed to scroll transcript for outgoing message; send continued",
+        error: error,
+        trace: stack,
+      );
     }
   }
 
@@ -398,10 +445,17 @@ class ConversationViewController extends StatefulController
       String? effectId,
       PayloadData? payload,
       bool isAudioMessage,
-      DateTime? scheduledDate) async {
+      DateTime? scheduledDate,
+      {bool scrollTranscript = false}) async {
+    if (_isClosed) {
+      throw StateError("Conversation is no longer active");
+    }
     final callback = sendFunc;
     if (callback == null) {
       throw StateError("Conversation send handler is not ready");
+    }
+    if (scrollTranscript) {
+      requestScrollToTime(scheduledDate ?? DateTime.now());
     }
     await callback(
         Tuple7(attachments, text, subject, replyGuid, replyPart, effectId,

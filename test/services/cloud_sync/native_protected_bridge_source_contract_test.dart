@@ -69,9 +69,9 @@ void main() {
         RegExp(
           r'NativeProtectedCloudSyncTransport\(',
         ).allMatches(adapter).length,
-        3,
+        4,
         reason:
-            'shadow, semantic pull, and one-text outbound are the only protected transport compositions',
+            'shadow, semantic pull, local-send runtime, and one-text outbound are the only protected transport compositions',
       );
       expect(adapter, contains('NativeProtectedCloudSyncBindings?'));
       expect(adapter, isNot(contains('RustCloudSyncTransport(')));
@@ -85,11 +85,43 @@ void main() {
       final outboundStart = adapter.indexOf(
         'final class CloudSyncProductionOutboundCanaryAdapter',
       );
+      final localSendStart = adapter.indexOf(
+        'final class CloudSyncProductionLocalSendAdapter',
+      );
       expect(shadowStart, greaterThanOrEqualTo(0));
       expect(semanticStart, greaterThan(shadowStart));
-      expect(outboundStart, greaterThan(semanticStart));
+      expect(localSendStart, greaterThan(semanticStart));
+      expect(outboundStart, greaterThan(localSendStart));
       final shadowComposition = adapter.substring(shadowStart, semanticStart);
-      final semanticComposition = adapter.substring(semanticStart, outboundStart);
+      final semanticComposition = adapter.substring(semanticStart, localSendStart);
+      final localSendComposition = adapter.substring(localSendStart, outboundStart);
+      final localTransportStart = localSendComposition.indexOf(
+        'NativeProtectedCloudSyncTransport(',
+      );
+      expect(localTransportStart, greaterThan(0));
+      final localSendGate = localSendComposition.substring(0, localTransportStart);
+      for (final gate in [
+        '!CloudKitWriterOwnership.v2MutationsEnabled',
+        '!CloudSyncDevGate.manualOutboundCanaryEnabled',
+        '!CloudSyncDevGate.localSendRuntimeEnabled',
+        "throw StateError('cloud_sync_local_send_consumer_disabled')",
+      ]) {
+        expect(localSendGate, contains(gate));
+      }
+      for (final composition in [
+        shadowComposition,
+        semanticComposition,
+        localSendComposition,
+        adapter.substring(outboundStart),
+      ]) {
+        expect(
+          RegExp(r'NativeProtectedCloudSyncTransport\(')
+              .allMatches(composition)
+              .length,
+          1,
+          reason: 'each reviewed adapter owns exactly one protected transport',
+        );
+      }
       expect(
         shadowComposition,
         isNot(contains('nativeWriterPauseToken: pauseToken')),

@@ -366,7 +366,8 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
           effect,
           controller.pickedApp.value?.$2,
           false,
-          controller.scheduledDate.value
+          controller.scheduledDate.value,
+          scrollTranscript: ss.settings.scrollToBottomOnSend.value,
         );
       } catch (error, stack) {
         Logger.error(
