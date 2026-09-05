@@ -671,9 +671,8 @@ fn download_failure_diagnostic(error: &PushError) -> String {
         ),
         PushError::ResourceClosed => "resource:closed".to_owned(),
         PushError::ResourceFailure(failure) => download_failure_diagnostic(&failure.error),
-        PushError::DoNotRetry(inner) | PushError::BatchError(inner) => {
-            download_failure_diagnostic(inner)
-        }
+        PushError::DoNotRetry(inner) => download_failure_diagnostic(inner),
+        PushError::BatchError(inner) => download_failure_diagnostic(inner),
         _ => format!("category:{:?}", map_download_failure(error)),
     }
 }
@@ -1431,6 +1430,10 @@ mod tests {
             PushError::ResourcePanic(PRIVATE_FIXTURE.to_owned()),
             PushError::DoNotRetry(Box::new(PushError::IoError(io::Error::new(
                 io::ErrorKind::InvalidInput,
+                PRIVATE_FIXTURE,
+            )))),
+            PushError::BatchError(Arc::new(PushError::IoError(io::Error::new(
+                io::ErrorKind::InvalidData,
                 PRIVATE_FIXTURE,
             )))),
         ] {

@@ -414,6 +414,14 @@ record identifiers or asset URLs. Two native tests pin cause separation and
 redaction. This changes observability, not attachment permission, retry or
 integrity policy; the five failed gallery taps are not yet classified.
 
+The first integrated run, `33971506711` at `5eb6db19e`, failed at the Rust bridge
+compile check with E0308: the new diagnostic combined `DoNotRetry(Box<_>)` and
+`BatchError(Arc<_>)` in one pattern. This was an introduced compile defect,
+not a device or Apple protocol failure. Split arms preserve both concrete
+types, and the redaction test now includes both wrappers. No APK was produced;
+cleanup completed and both live runner and VM inventories were empty. The
+integration still needs a successful full rerun.
+
 ### Installed Canary and VM observation follow-up
 
 The signed `6517f8661` APK passed application-ID, native-library, signing and
