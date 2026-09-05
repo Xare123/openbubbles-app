@@ -462,6 +462,96 @@ Existing adopted envelopes remain recoverable without re-encoding mutable
 messages. This is not a permanent restriction of production scope to restored
 direct chats.
 
+### Document/gallery usability and fresh IDS failure, 2026-09-05
+
+The user reports that photos now work on installed `317adb489`. This is
+user-facing read/media evidence, not proof of successful IDS sending or CloudKit
+writing. The newly captured native log records a fresh IDS 6005 at 08:59:04 PDT,
+followed by unsuccessful registration recovery. Later target lookup/create-chat
+calls receive the retained terminal failure. Do not attribute that rejection to
+an outbox save: there is no automatic writer consumer in this build.
+
+```text
+Profile attachment overview
+  -> six newest photo/video tiles (no older-page fetch on profile scroll)
+  -> See all -> lazy paged gallery -> existing fullscreen/swipe viewer
+  -> Documents & files immediately below the compact photo preview
+
+Verified attachment body -> local path or bytes
+  -> declared MIME, otherwise filename/path/UTI inference
+  -> document card and operating-system open/share handler
+```
+
+`MediaGalleryCard` incorrectly required in-memory bytes to render a document
+after download, even though the CloudKit materializer returns a verified local
+file path. The source repair accepts that path without reading the entire
+document into memory. MIME inference and document routing must agree between
+the profile and message bubble. A card label does not prove bytes are available:
+the fresh logs separately contain `cloud_attachment_source_unavailable` and
+`cloud_attachment_size_mismatch`. Those require source recovery or integrity
+diagnosis, not weakening verification or declaring all missing files fixed.
+
+The compact/full gallery widget tests cover the six-item limit, reachable
+documents, return navigation, lazy tile construction, paged loading and bounded
+error/retry behavior. Physical-device verification of this new UI remains
+pending an updated qualified APK.
+
+For terminal IDS failure, the existing explicit Profile repair preserves chats,
+hardware identity and CloudKit state, but removes the failed IDS identity/cache
+and reopens account setup. It requires operator confirmation and CloudKit
+quiescence. A green relay check is not proof of successful IDS registration.
+Do not reset Alpha or loop repairs if Apple rejects registration again.
+
+#### Write production gates, in dependency order
+
+1. Repair Canary IDS registration and prove one ordinary text send. CloudKit
+   must not become a prerequisite for live messaging or silently retry that
+   text through a different delivery path.
+2. Carry the exact restored Chat dependency into the immutable admitted send
+   and revalidate it at dispatch/restart. Admission-only proof in `10a069d5c`
+   is not sufficient. Handle genuinely new remote chats separately.
+3. Compose an account-scoped durable consumer using the same journal, Store,
+   auth fence and protected-admission coordinator. Only confirmed local origins
+   may enter it. Recover original envelopes, never scan outgoing history or
+   re-encode adopted messages. Handle origin-capture failure explicitly and
+   cover the initial-message `createChat` path, which currently bypasses the
+   ordinary-send journal.
+4. Prove one create-only upload and exact server readback, then repeated runs,
+   process death, reconnect and unknown-outcome recovery without duplicates.
+   Enable ongoing uploads only after these pass. Group/media writes, edits and
+   undo require their own supported contracts; text-create success is not proof
+   of those operations.
+
+The present change does not connect the automatic consumer or claim production
+write readiness. No database schema, Apple credentials or remote cloud records
+were changed in this investigation.
+
+#### Reviewed integration candidate and repair handoff
+
+The media, document, recipient-validation, registration-dialog and attachment
+coordinator regression set passes 66 tests together on Windows ARM64. An actual
+`MediaGalleryCard` test drives a path-only completion, displays `OtherFile`, and
+verifies both callback subscriptions detach on exit. Targeted analysis of the
+new helpers and widget fixtures reports no issues. Full Android qualification
+and physical document opening remain pending; a synthetic local file is not
+evidence that an unavailable CloudKit source has recovered.
+
+The user explicitly approved one Canary registration repair. It reopened the
+normal onboarding flow. Hardware, CloudKit and Keychain files retained their
+pre-repair hashes. ObjectBox changed during the transition, so byte-for-byte
+database preservation is not claimed; the repair path does not delete chat or
+attachment rows. Alpha was untouched. Ordinary send and live CloudKit write
+qualification still require completing Canary sign-in.
+
+The bounded Astra implementation was reviewed and retained, and its worker
+was closed. FaceTime now reads resolved asynchronous media evidence from the
+trusted top-level Apple origin, rejects stale call/navigation results, and
+keeps native hang-up available. Find My refreshes People, Devices and Items
+independently, retains last-good data on failure, and does not mark a failed
+Items fetch fresh. Parent verification passes 41 focused Dart tests and 10
+JavaScript tests; the worker also reports 39 host Kotlin tests passed. These
+do not prove a working live FaceTime handshake or a location-sharing record.
+
 ### Installed Canary and VM observation follow-up
 
 The signed `6517f8661` APK passed application-ID, native-library, signing and

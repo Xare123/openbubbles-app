@@ -38,6 +38,8 @@ or account-reset code.
 | Fresh-create chat dependency | Admission requires a current Chat-zone snapshot, unique direct iMessage service alias, record mapping and latest applied save for the same canonical Chat. Recheck before encoding and within adoption; absent/conflicting/deleted proof keeps the intent ready outside the outbox. Recovery of already-adopted envelopes remains possible. The immutable chat dependency still needs dispatch-time validation before automatic uploading is connected. |
 | V2 interrupted-create recovery | Exact readback confirmation must use the same atomic create-receipt commit as the ordinary write path. Generic confirmation is forbidden; receipt mismatch keeps the operation unknown and retry-fenced. |
 | Account transition | Old-account work is quiescent before state is replaced or disposed. |
+| FaceTime media evidence | Await the diagnostic Promise through a bounded request-scoped mailbox; only the current top-level trusted Apple origin and current call UUID may update connected state. Never substitute local preview for remote media evidence. Native hang-up remains available. |
+| Find My refresh | People, Devices and Items failures are isolated. Failed fetches retain last-good values and do not advance freshness; empty friend handles cannot abort all device refreshes. |
 | Canary | Semantic pull performs no remote content write, delete, subscription, or PCS creation. |
 
 ## Change-impact matrix
@@ -203,6 +205,27 @@ acknowledgement cannot invalidate a successfully adopted operation.
 Admission itself is local and cannot authorize a CloudKit request.
 The automatic consumer is not wired; existing projection, tombstone,
 unknown-outcome, writer-permit and submission guards remain unchanged.
+
+### Profile documents and compact media, 2026-09-05
+
+`ConversationDetails -> ConversationMediaPreview` must remain a bounded
+six-item view regardless of how many items its pager has already loaded.
+`See all -> ConversationMediaGallery -> ConversationMediaPager` is the only
+profile route that fetches older media. It keeps the existing fullscreen/swipe
+and multi-selection behavior, while documents remain directly below the preview.
+
+Downloaded documents can be path-only. `MediaGalleryCard -> OtherFile` must use
+the verified local-file gate, not require `PlatformFile.bytes`. MIME fallback
+must agree with the message attachment holder and must never invent a body for
+metadata-only placeholders. Source-unavailable and size-mismatch failures are
+separate from presentation; retain both protections.
+
+The user-confirmed photo success and fresh IDS 6005 are independent evidence.
+Registration repair is explicit, quiesced and non-destructive to chats/hardware,
+not a CloudKit write fallback. The next writer gates are immutable Chat proof at
+dispatch/restart, an account-bound durable consumer (including initial-message
+origin capture), then an exact live create/readback and interruption test.
+Do not enable automatic uploads just because the gallery or ordinary send works.
 
 ## 4. Legacy CloudKit
 
