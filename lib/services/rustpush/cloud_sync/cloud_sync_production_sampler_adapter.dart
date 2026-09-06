@@ -763,25 +763,33 @@ final class CloudSyncProductionLocalSendAdapter {
     final lifecycle = CloudProtectedPageLeaseLifecycle(
       store: durable, transport: transport,
     );
-    Future<void> validateSelection() => fence.run(() {
-      selection?.validate(
-        store: objectBox, journal: journal, durable: durable, scope: scope,
-      );
-    }, accountFingerprint: scope.accountFingerprint);
-    Future<void> recoverProtectedStore() async {
-      if (selection != null) await validateSelection();
-      await lifecycle.ensureRecoveredBeforeWrite();
-      if (selection != null) await validateSelection();
-    }
-    final admission = CloudSyncOutboundAdmissionCoordinator(
-      store: durable, transport: transport,
-      ensureProtectedStoreRecovered: recoverProtectedStore,
-    );
     final chatScope = CloudSyncScope(
       accountFingerprint: scope.accountFingerprint,
       container: scope.container, database: scope.database,
       zone: 'chatManateeZone', streamKind: scope.streamKind,
       schemaVersion: scope.schemaVersion, persistenceLane: scope.persistenceLane,
+    );
+    Future<void> validateSelection() async {
+      await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
+      await durable.recoverExpiredOutboxLeases(chatScope, now: DateTime.now().toUtc());
+      await fence.run(() {
+        // Commit local disposition independently before an invalid diagnostic
+        // source throws. Do not replace that source with a different intent.
+        durable.retireUnsubmittedChatCreates(chatScope,
+          now: DateTime.now().toUtc(), onlyIntentId: selection?.intentId);
+        selection?.validate(
+          store: objectBox, journal: journal, durable: durable, scope: scope,
+        );
+      }, accountFingerprint: scope.accountFingerprint);
+    }
+    Future<void> recoverProtectedStore() async {
+      await validateSelection();
+      await lifecycle.ensureRecoveredBeforeWrite();
+      await validateSelection();
+    }
+    final admission = CloudSyncOutboundAdmissionCoordinator(
+      store: durable, transport: transport,
+      ensureProtectedStoreRecovered: recoverProtectedStore,
     );
     final chatAdmission = CloudSyncOutboundChatAdmissionCoordinator(
       store: durable, transport: transport,
@@ -808,6 +816,8 @@ final class CloudSyncProductionLocalSendAdapter {
       await recoverProtectedStore();
       final settled = await drainCloudSyncCreateQueues(
         scopes: [chatScope, scope],
+        isRetiredUnsubmittedChatCreate: (operation) async =>
+            durable.isRetiredUnsubmittedChatCreate(operation),
         readOutbox: (target) async {
           final rows = await durable.readOutboxEntries(target);
           if (selection == null) return rows;
@@ -910,6 +920,7 @@ final class CloudSyncProductionLocalSendAdapter {
               !localChat.guid.startsWith('iMessage;')) {
             await chatAdmission.admitChat(chatScope, chatId: localChat.id!,
                 createdAt: source.createdAtUtc, authFence: fence,
+                localSendSource: source,
                 validateLocalOrigin: () {
                   final message = journal.validateReadyForCreate(objectBox, scope, source);
                   if (message.chat.targetId != localChat.id) {

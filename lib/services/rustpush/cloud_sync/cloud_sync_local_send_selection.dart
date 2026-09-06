@@ -145,7 +145,9 @@ final class CloudSyncLocalSendExactSelection {
         );
         if (selectedChat != null ||
             row.accountFingerprint != scope.accountFingerprint ||
-            row.localChatOrigin != origin.binding(row.checkpointGeneration) ||
+            row.localChatOrigin == null ||
+            cloudSyncOutboundChatOriginIdentity(row.localChatOrigin!) !=
+                origin.binding(row.checkpointGeneration) ||
             (_chatOperationId != null && _chatOperationId != row.operationId) ||
             (_chatOperationBinding != null &&
                 _chatOperationBinding != _outboxBinding(row))) {
@@ -196,7 +198,8 @@ final class CloudSyncLocalSendExactSelection {
     row.logicalEntityKeyHash, row.action, row.payloadVersion,
     row.mutationRevision, row.checkpointGeneration, row.encryptedPayloadRef,
     row.payloadSha256, row.serverRecordIdHash, row.dependencyOperationIdsJson,
-    row.createdAtMs, row.localChatOrigin,
+    row.createdAtMs, row.localChatOrigin == null ? null :
+        cloudSyncActiveChatOriginBinding(row.localChatOrigin!),
     // Status, lease and receipt fields legitimately evolve under native guards.
   ]);
 

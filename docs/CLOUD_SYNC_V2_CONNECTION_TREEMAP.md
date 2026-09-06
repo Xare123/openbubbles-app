@@ -88,7 +88,7 @@ native completion handoff, not a CloudKit save. Old delivered state-0 intents
 were not retroactively promoted. The new-composer navigation path still needs
 its own installed-device test.
 
-### Current write blocker: Chat dependency, not native send completion
+### Installed write blocker: Chat dependency, not native send completion
 
 ```text
 native-confirmed local Message intent [live-proven handoff]
@@ -100,7 +100,7 @@ native-confirmed local Message intent [live-proven handoff]
   -> original Message admission -> save/readback [still unqualified]
 ```
 
-`CloudSyncProductionSamplerAdapter` injects the local-send journal. However,
+In installed `dcef0e9bf`, `CloudSyncProductionSamplerAdapter` injects the local-send journal. However,
 `CloudSyncOutboundChatAdmissionCoordinator` carries only an in-memory origin
 validation callback. Persisted `localChatOrigin` proves Chat row identity, not
 durable journal authorization. The Message-specific history exception does
@@ -125,6 +125,83 @@ may be separable, but pending pages, ambiguous Chat ownership and uncertain
 remote outcomes remain fenced. Existing immutable-envelope recovery must not
 require permission to create a different envelope. Do not implement broad
 tombstone deletion to make this qualification pass.
+
+### Journal-bound Chat create candidate, 2026-09-06 (not installed)
+
+The new candidate passes the exact native-confirmed local-send source through
+Chat capture and atomic admission. Origin version 2 adds a journal/envelope
+digest to the existing version 1 Chat identity. The digest binds the account,
+writer epoch, original journal intent, local Message and Chat IDs, source hash,
+generation and immutable operation envelope. Version 3 records consumption of
+that capability atomically with the first submission UUIDs and is never reset
+by retry or reconciliation. Version 4 marks a verified local cancellation.
+These are local origin encodings, not ObjectBox schema or Apple wire versions.
+The immutable proof is revalidated after Store
+reopen, at lease and immediately before the submission ambiguity boundary.
+Version 1 callers retain the strict original projection requirement.
+
+```text
+native-confirmed journal source
+  -> full Chat-zone projection + no known prior recipient identity
+     (local Chats, canonical snapshots, aliases, prior origins/maps)
+  -> bound Chat capture -> atomic protected adoption
+  -> restart/lease validation -> authenticated no-save preparation
+  -> source/dependency validation -> persisted submission UUIDs -> remote save
+  -> exact Chat readback -> original Message admission (intent remains state 1)
+
+source deleted/edited before any submission
+  -> exact current journal/envelope/map proof + unconsumed origin capability
+     + no submission UUIDs or active lease (preparation retries are preserved)
+  -> local cancelled quarantine, immutable evidence and native lease retained
+  -> inert read preflight / no submission / no receipt acknowledgement
+```
+
+Only terminal unrelated Message/attachment history is exempted. Pending pages,
+retained Chat changes/tombstones, prior logical recipient identity, changed
+account/epoch and uncertain outcomes still block. No history is removed or
+relabelled. The prior whole-account tombstone gate is not globally disabled.
+
+Independent review caught two concrete holes before deployment: a store reopened
+without a journal could bypass the per-operation proof check, and a removed
+source could leave a blocking pending Chat forever. Lease and pre-submit now
+always run the per-operation check. A separately committed, bounded cancellation
+transaction handles only proven never-submitted retired sources. A follow-up
+review showed that preparation failures increment retry counts without sending;
+the durable v2-to-v3 submission marker replaces the incorrect zero-retry test.
+Pre-submission pending, paused and quarantined rows retain their native marker.
+The retirement query bounds only unconsumed candidates, not acknowledged or
+retired history. A test covers 4,097 settled rows plus one cancellation.
+The disposition preserves
+the native adoption marker for recovery and is recognized by the same strict
+audit predicate in lease liveness, queue draining and semantic preflight.
+Diagnostic selection still ends when its source becomes invalid; it never
+silently switches to a different intent. A later fresh intent for the same
+cancelled Chat currently defers with `cloud_sync_outbound_chat_source_retired`.
+Safe explicit reauthorization remains a known write-recovery gap.
+
+Accepted deferred review finding: v4 cancellations retain native lease markers,
+so 4,097 distinct retained outbound leases still exceed the lifecycle recovery
+bound of 4,096. The candidate filter fix does not solve that native lifetime
+capacity limit. A cancellation-specific, evidence-preserving native receipt
+finalization path is required before claiming unbounded production operation.
+Do not drop adoption markers, raise limits blindly or delete protected envelopes
+to hide this. It does not block the bounded single-recipient Canary write gate;
+native cleanup is intentionally not bundled into this Dart-only candidate.
+
+Targeted local validation: 309 tests across Chat origin/admission, local-send
+journal, queue drain, ObjectBox preflight, production preflight and real engine
+behavior passed. The real engine test consumes one prepared submission on the
+valid path and zero when source/dependency changes during preparation. Ten
+retirement cases cover delete, edit, missing row, expired/active lease boundary,
+exact diagnostic selection, UUID evidence, consumed capabilities, large retained
+history and live-source rejection. Three real-engine tests cover preparation
+retry/pause/quarantine followed by source deletion and restart. Another proves
+that clearing UUIDs after authoritative non-application does not restore the
+never-submitted capability or authorize local cancellation.
+These use real ObjectBox reopen/adoption/projection and synthetic native/auth
+edges. They do not prove current-device CloudKit write/readback or replace full
+GCE qualification. Eight changed runtime/test paths also passed targeted
+analysis with no issues. No APK containing this candidate has been installed yet.
 
 ### Installed gallery and capture qualification
 

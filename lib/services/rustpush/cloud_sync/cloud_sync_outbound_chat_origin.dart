@@ -69,16 +69,17 @@ final class CloudSyncOutboundChatOrigin {
     value,
   ]);
 
-  String binding(int generation) {
+  String binding(int generation, {String? localSendProof}) {
     if (generation <= 0) _reject('cloud_sync_outbound_chat_generation_invalid');
     return jsonEncode([
-      1,
+      localSendProof == null ? 1 : 2,
       generation,
       chatId,
       _hash('original-guid', originalGuid),
       _hash('canonical-guid', canonicalGuid),
       _hash('recipient', chatIdentifier),
       _hash('sender', usingHandle),
+      if (localSendProof != null) localSendProof,
     ]);
   }
 
@@ -161,7 +162,8 @@ Chat? resolveCloudSyncOutboundChatOrigin({
   final local = store.box<Chat>().get(chatId);
   if (local == null) _reject('cloud_sync_outbound_chat_origin_missing');
   final origin = CloudSyncOutboundChatOrigin.capture(scope: scope, chat: local);
-  if (origin.binding(generation) != operation.localChatOrigin ||
+  if (origin.binding(generation) !=
+          cloudSyncOutboundChatOriginIdentity(operation.localChatOrigin!) ||
       payload.canonicalGuid != origin.canonicalGuid ||
       payload.chatIdentifier != origin.chatIdentifier ||
       payload.groupId != origin.originalGuid ||
@@ -237,13 +239,14 @@ List<dynamic> _decodeBinding(String encoded) {
     _reject('cloud_sync_outbound_chat_origin_malformed');
   }
   if (value is! List ||
-      value.length != 7 ||
-      value[0] != 1 ||
+      !((value.length == 7 && value[0] == 1) ||
+          (value.length == 8 && {2, 3, 4}.contains(value[0]) &&
+              value[7] is String && value[7].length <= 256)) ||
       value[1] is! int ||
       value[1] <= 0 ||
       value[2] is! int ||
       value[2] <= 0 ||
-      value.skip(3).any((part) => part is! String || !_sha256.hasMatch(part))) {
+      value.skip(3).take(4).any((part) => part is! String || !_sha256.hasMatch(part))) {
     _reject('cloud_sync_outbound_chat_origin_malformed');
   }
   return value;
@@ -252,6 +255,114 @@ List<dynamic> _decodeBinding(String encoded) {
 /// Locate a durable origin before allocating another random server name.
 int cloudSyncOutboundChatOriginId(String encoded) =>
     _decodeBinding(encoded)[2] as int;
+
+/// Version 1's row identity remains stable when version 2 adds journal proof.
+String cloudSyncOutboundChatOriginIdentity(String encoded) =>
+    jsonEncode([1, ..._decodeBinding(encoded).skip(1).take(6)]);
+
+String? cloudSyncOutboundChatOriginSendProof(String encoded) {
+  final value = _decodeBinding(encoded);
+  return {2, 3}.contains(value[0]) ? value[7] as String : null;
+}
+
+// These new local origin versions have never shipped before this candidate.
+// 2: unconsumed send capability; 3: ever submitted; 4: locally retired.
+// Version 3 is committed atomically with submission UUIDs and never cleared by
+// retry/reconciliation. Retry counts alone cannot prove a remote attempt.
+String cloudSyncSubmittedChatOrigin(String encoded) {
+  final value = _decodeBinding(encoded);
+  if (value[0] == 4) _reject('cloud_sync_outbound_chat_source_retired');
+  return value[0] == 2 ? jsonEncode([3, ...value.skip(1)]) : encoded;
+}
+
+String cloudSyncRetiredChatOrigin(String encoded) {
+  final value = _decodeBinding(encoded);
+  if (value[0] != 2) _reject('cloud_sync_outbound_chat_retirement_invalid');
+  return jsonEncode([4, ...value.skip(1)]);
+}
+
+bool cloudSyncChatOriginIsRetired(String encoded) => _decodeBinding(encoded)[0] == 4;
+
+/// Pin immutable authorization while allowing its atomic consumption. A
+/// retirement is deliberately not normalized and ends an exact selection.
+String cloudSyncActiveChatOriginBinding(String encoded) {
+  final value = _decodeBinding(encoded);
+  return value[0] == 3 ? jsonEncode([2, ...value.skip(1)]) : encoded;
+}
+
+bool cloudSyncIsNeverSubmittedChatCreate(CloudOutboxOperationEntity row) =>
+    _hasChatCreateAuditShape(row, version: 2);
+
+/// Local cancellation audit only, never evidence of a remote save. Ordinary
+/// quarantine (including unknown outcomes) must still block semantic reads.
+/// Creation of this shape requires the store's journal-bound transaction.
+bool cloudSyncIsRetiredUnsubmittedChatCreate(CloudOutboxOperationEntity row) {
+  if (row.state != CloudOutboxStatus.quarantined.index ||
+      row.lastErrorCategory != CloudFailureCategory.cancelled.name ||
+      row.leaseIdHash != null || row.leaseExpiresAtMs != 0 ||
+      row.nextEligibleAtMs != 0) {
+    return false;
+  }
+  return _hasChatCreateAuditShape(row, version: 4);
+}
+
+bool _hasChatCreateAuditShape(CloudOutboxOperationEntity row, {required int version}) {
+  if (row.attemptCount < 0 || row.action != CloudOutboxAction.save.index ||
+      row.appleRequestUuid != null || row.appleOperationUuid != null ||
+      row.confirmedAtMs != 0 ||
+      row.payloadVersion != cloudSyncOutboundChatPayloadVersion ||
+      row.mutationRevision <= 0 || row.checkpointGeneration <= 0 ||
+      row.dependencyOperationIdsJson != '[]' ||
+      !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(row.accountFingerprint) ||
+      row.zone != 'chatManateeZone' ||
+      row.logicalEntityKeyHash.isEmpty || row.createdAtMs <= 0 ||
+      row.updatedAtMs < row.createdAtMs ||
+      !RegExp(r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$').hasMatch(row.encryptedPayloadRef ?? '') ||
+      !RegExp(r'^obcs2\.lease\.[0-9a-f]{32}$').hasMatch(row.protectedLeaseReference ?? '') ||
+      !_sha256.hasMatch(row.payloadSha256 ?? '') ||
+      !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(row.serverRecordIdHash ?? '') ||
+      row.localChatOrigin == null) {
+    return false;
+  }
+  final scope = CloudSyncScope(
+    accountFingerprint: row.accountFingerprint,
+    container: 'com.apple.messages.cloud', database: 'private',
+    zone: row.zone, streamKind: CloudSyncStreamKind.messages,
+    schemaVersion: 2, persistenceLane: CloudSyncPersistenceLane.semantic,
+  );
+  if (row.scopeKey != cloudSyncPersistentScopeKey(scope) ||
+      row.operationId != CloudOperationIdentity.forInitialCreate(
+        scope: scope, logicalEntityKeyHash: row.logicalEntityKeyHash,
+        payloadVersion: row.payloadVersion)) {
+    return false;
+  }
+  try {
+    final origin = _decodeBinding(row.localChatOrigin!);
+    if (origin[0] != version || origin[1] != row.checkpointGeneration) return false;
+    final proof = jsonDecode(origin[7] as String);
+    return proof is List && proof.length == 3 && proof[0] == 1 &&
+        proof[1] is int && proof[1] > 0 && proof[2] is String &&
+        _sha256.hasMatch(proof[2]);
+  } on FormatException {
+    return false;
+  } on StateError {
+    return false;
+  } on CloudSyncFailure {
+    return false;
+  }
+}
+
+bool cloudSyncOutboundChatOriginMatchesCanonical(
+  String encoded,
+  CloudSyncScope scope,
+  String canonicalGuid,
+) {
+  final value = _decodeBinding(encoded);
+  return value[4] == _digest([
+    'cloud-sync-local-chat-origin-v1', scope.storageKey,
+    value[2] as int, 'canonical-guid', canonicalGuid,
+  ]);
+}
 
 final _uuidV4 = RegExp(
   r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',

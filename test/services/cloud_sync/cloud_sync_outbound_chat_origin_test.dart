@@ -5,6 +5,12 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_create_queue_drain.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_selection.dart';
@@ -64,7 +70,8 @@ void main() {
   }
 
   CloudOutboxOperationEntity outbox() =>
-      db.box<CloudOutboxOperationEntity>().getAll().single;
+      db.box<CloudOutboxOperationEntity>().getAll()
+          .where((row) => !row.operationId.startsWith('settled-')).single;
   CloudRecordMapEntity recordMap() =>
       db.box<CloudRecordMapEntity>().getAll().single;
   void preserved({bool adopted = false}) {
@@ -143,6 +150,36 @@ void main() {
       // It is never installed before a rejected provisional-origin adoption.
       _persistOwnership(db, generation);
     });
+  }
+
+  Future<void> retainHistory(String zone, {bool tombstone = false, String? record}) async {
+    final scope = _scope(zone);
+    final checkpoint = await sync.readCheckpoint(scope);
+    final fence = (await sync.tryAcquireCoordinatorLease(scope,
+      ownerId: 'synthetic-retained-history', now: _now,
+      leaseDuration: const Duration(minutes: 1)))!;
+    await sync.journalFetchedBatch(CloudFetchBatch(
+      scope: scope,
+      changes: [CloudFetchedChange(
+        changeId: 'U' * 43, recordIdHash: record ?? 'V' * 43,
+        etagHash: tombstone ? null : 'E' * 43,
+        type: tombstone ? CloudChangeType.delete : CloudChangeType.save,
+        isTombstone: tombstone,
+        encryptedServerRecordId: 'obcs2.ref.${'U' * 43}',
+        protectedSystemFieldsReference: 'obcs2.ref.${'F' * 43}',
+        encryptedPayloadReference: tombstone ? null : 'obcs2.ref.${'R' * 43}',
+        payloadSha256: tombstone ? null : 'c' * 64,
+      )],
+      batchId: 'synthetic-history-$zone', generation: checkpoint.generation,
+      nextToken: 'synthetic-history-token-$zone', hasMore: false,
+    ), now: _now, leaseFence: fence, expectedGeneration: checkpoint.generation,
+      expectedFetchedToken: checkpoint.fetchedToken);
+    await sync.markInboxRetainedUnprojected(scope,
+      sequence: checkpoint.fetchedSequence + 1,
+      category: tombstone ? null : CloudFailureCategory.malformedRecord,
+      now: _now, maximumDeferredAttempts: 8,
+      maximumDeferredAge: const Duration(days: 3), leaseFence: fence);
+    await sync.releaseCoordinatorLease(scope, leaseFence: fence);
   }
 
   for (final messageTombstone in [false, true]) {
@@ -358,6 +395,39 @@ void main() {
   for (final mutation in [
     'none',
     'shared Chat',
+    'unrelated history',
+    'engine success',
+    'engine source during preflight',
+    'engine tombstone during preflight',
+    'engine preflight retry retirement',
+    'engine preflight pause retirement',
+    'engine preflight quarantine retirement',
+    'retire deleted',
+    'retire missing',
+    'retire edited',
+    'retire expired lease',
+    'retire diagnostic',
+    'retire unknown',
+    'retire attempted',
+    'retire submitted UUID',
+    'retire live source',
+    'retire large settled history',
+    'submitted cancellation forbidden',
+    'retained Chat save',
+    'retained Chat tombstone',
+    'duplicate before stage',
+    'prior snapshot before stage',
+    'prior generation before stage',
+    'prior map during stage',
+    'source during stage',
+    'tombstone during stage',
+    'proof before lease',
+    'missing journal before lease',
+    'missing journal before submit',
+    'source before lease',
+    'payload before submit',
+    'tombstone before submit',
+    'duplicate before submit',
     'account',
     'route',
     'recipient',
@@ -472,6 +542,74 @@ void main() {
           );
         });
         await validateSelected();
+        final unrelatedHistory = !mutation.startsWith('missing journal') &&
+            (mutation == 'unrelated history' ||
+            mutation.startsWith('engine') ||
+            mutation.contains('before') || mutation.contains('during'));
+        if (unrelatedHistory) {
+          await retainHistory('attachmentManateeZone');
+          await retainHistory('messageManateeZone', tombstone: true);
+        }
+        if (mutation.startsWith('retained Chat')) {
+          await retainHistory('chatManateeZone', tombstone: mutation.endsWith('tombstone'));
+        }
+        void duplicateChat() {
+          final duplicate = Chat(
+            guid: 'EEEEEEEE-EEEE-4EEE-8EEE-EEEEEEEEEEEE',
+            usingHandle: 'mailto:$_sender', style: 45,
+          )..handles.add(db.box<Chat>().get(chatId)!.handles.single);
+          db.box<Chat>().put(duplicate);
+        }
+        if (mutation == 'duplicate before stage') duplicateChat();
+        if (mutation == 'prior snapshot before stage' ||
+            mutation == 'prior generation before stage') {
+          _persistOwnership(db, 1);
+          if (mutation == 'prior generation before stage') {
+            final checkpoint = db.box<CloudSyncCheckpointEntity>().getAll()
+                .singleWhere((row) => row.zone == 'chatManateeZone')..generation = 2;
+            db.box<CloudSyncCheckpointEntity>().put(checkpoint);
+          }
+        }
+        if (mutation == 'source during stage') {
+          transport.onChatStage = () async {
+            db.box<Message>().put(db.box<Message>().get(messageId)!..dateDeleted = _now);
+          };
+        }
+        if (mutation == 'tombstone during stage') {
+          transport.onChatStage = () => retainHistory('chatManateeZone',
+              tombstone: true, record: _record);
+        }
+        if (mutation == 'prior map during stage') {
+          transport.onChatStage = () => sync.upsertRecordMap(CloudRecordMapEntry(
+            scope: _scope(), logicalEntityKeyHash: _logical,
+            serverRecordIdHash: 'Z' * 43,
+            encryptedServerRecordId: 'obcs2.ref.${'Z' * 43}',
+            etagHash: 'E' * 43, updatedAt: _now,
+          ), generation: 1);
+        }
+        Future<CloudOutboxOperation> admitChat() =>
+            CloudSyncOutboundChatAdmissionCoordinator(
+              store: sync, transport: transport,
+              ensureProtectedStoreRecovered: () async {},
+            ).admitChat(_scope(), chatId: chatId,
+              createdAt: source.createdAtUtc, authFence: fence,
+              localSendSource: source, encode: (_) => _FakeChat());
+        if (mutation.startsWith('retained Chat') ||
+            mutation.endsWith('before stage') || mutation.contains('during stage')) {
+          await expectLater(admitChat(),
+            throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())));
+          final staged = mutation.contains('during stage') ? 1 : 0;
+          expect(transport.stages, staged);
+          expect(transport.rollbacks, staged);
+          expect(transport.commits, 0);
+          expect(db.box<CloudOutboxOperationEntity>().count(), 0);
+          expect(db.box<CloudRecordMapEntity>().count(), mutation == 'prior map during stage' ? 1 : 0);
+          if (mutation == 'prior map during stage') {
+            expect(recordMap().serverRecordIdHash, 'Z' * 43);
+          }
+          expect(db.box<CloudSyncLocalSendIntentEntity>().get(intentId)!.state, 1);
+          return;
+        }
         final operation =
             await CloudSyncOutboundChatAdmissionCoordinator(
               store: sync,
@@ -484,6 +622,7 @@ void main() {
                   ? _now.subtract(const Duration(days: 1))
                   : _now,
               authFence: fence,
+              localSendSource: source,
               encode: (_) => _FakeChat(),
               validateLocalOrigin: () {
                 expect(
@@ -500,9 +639,238 @@ void main() {
               },
             );
         expect(transport.stages, 1);
+        // The journal proof survives a real Store reopen, not an in-memory
+        // callback. Recovery returns the same envelope without staging again.
+        if (mutation != 'shared Chat') {
+          expect(jsonDecode(outbox().localChatOrigin!)[0], 2);
+          await restart();
+          bindJournal();
+          selection = newSelection();
+          expect((await admitChat()).operationId, operation.operationId);
+          expect(transport.stages, 1);
+        }
         await validateSelected();
         const submissionLease = 'synthetic-combined-submission';
-        final leased = await sync.leaseEligibleOutbox(
+        if (mutation.startsWith('retire ')) {
+          final before = outbox();
+          if (mutation == 'retire large settled history') {
+            db.box<CloudOutboxOperationEntity>().putMany([
+              for (var i = 0; i < 4097; i++) CloudOutboxOperationEntity(
+                operationId: 'settled-$i', scopeKey: before.scopeKey,
+                accountFingerprint: before.accountFingerprint, zone: before.zone,
+                logicalEntityKeyHash: 'settled-$i', action: 0,
+                payloadVersion: before.payloadVersion, mutationRevision: 1,
+                checkpointGeneration: 1, state: CloudOutboxStatus.confirmed.index,
+                confirmedAtMs: before.createdAtMs, createdAtMs: before.createdAtMs,
+                updatedAtMs: before.createdAtMs, encryptedPayloadRef: before.encryptedPayloadRef,
+                payloadSha256: before.payloadSha256, serverRecordIdHash: before.serverRecordIdHash,
+              ),
+            ]);
+          }
+          if (mutation == 'retire missing') {
+            db.box<Message>().remove(messageId);
+          } else if (mutation != 'retire live source') {
+            final changed = db.box<Message>().get(messageId)!;
+            if (mutation == 'retire edited') {
+              changed.dateEdited = _now;
+            } else {
+              changed.dateDeleted = _now;
+            }
+            db.box<Message>().put(changed);
+          }
+          if (mutation == 'retire unknown') {
+            db.box<CloudOutboxOperationEntity>().put(outbox()
+              ..state = CloudOutboxStatus.unknownOutcome.index
+              ..appleRequestUuid = 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB'
+              ..appleOperationUuid = 'CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC');
+          }
+          if (mutation == 'retire submitted UUID') {
+            db.box<CloudOutboxOperationEntity>().put(outbox()
+              ..appleRequestUuid = 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB');
+          }
+          if (mutation == 'retire attempted') {
+            db.box<CloudOutboxOperationEntity>().put(outbox()..attemptCount = 1
+              ..localChatOrigin = cloudSyncSubmittedChatOrigin(before.localChatOrigin!));
+          }
+          if (mutation == 'retire expired lease') {
+            db.box<CloudOutboxOperationEntity>().put(outbox()
+              ..state = CloudOutboxStatus.leased.index
+              ..leaseIdHash = 'synthetic-lease'
+              ..leaseExpiresAtMs = _now.add(const Duration(minutes: 1)).millisecondsSinceEpoch);
+            expect(sync.retireUnsubmittedChatCreates(_scope(), now: _now), 0);
+            await sync.recoverExpiredOutboxLeases(_scope(),
+              now: _now.add(const Duration(minutes: 2)));
+          }
+          final untouched = {'retire unknown', 'retire attempted',
+            'retire submitted UUID', 'retire live source'}.contains(mutation);
+          if (mutation == 'retire diagnostic') {
+            expect(sync.retireUnsubmittedChatCreates(_scope(),
+              now: _now, onlyIntentId: intentId + 1), 0);
+          }
+          expect(sync.retireUnsubmittedChatCreates(_scope(),
+            now: _now.add(const Duration(minutes: 2)),
+            onlyIntentId: mutation == 'retire diagnostic' ? intentId : null),
+            untouched ? 0 : 1);
+          if (untouched) {
+            expect(cloudSyncIsRetiredUnsubmittedChatCreate(outbox()), isFalse);
+            expect(ObjectBoxCloudSyncPreflightReader(store: db).read()
+              .settledOutboxFingerprint, isNull);
+            return;
+          }
+          if (mutation == 'retire diagnostic') {
+            await expectLater(validateSelected(), throwsA(isA<StateError>()));
+          }
+          final retired = outbox();
+          expect(retired.state, CloudOutboxStatus.quarantined.index);
+          expect(retired.lastErrorCategory, CloudFailureCategory.cancelled.name);
+          expect(retired.attemptCount, 0);
+          expect(retired.appleRequestUuid, isNull);
+          expect(retired.confirmedAtMs, 0);
+          expect(retired.encryptedPayloadRef, before.encryptedPayloadRef);
+          expect(retired.payloadSha256, before.payloadSha256);
+          expect(jsonDecode(retired.localChatOrigin!)[0], 4);
+          expect((jsonDecode(retired.localChatOrigin!) as List).skip(1),
+            (jsonDecode(before.localChatOrigin!) as List).skip(1));
+          expect(retired.protectedLeaseReference, before.protectedLeaseReference);
+          expect(recordMap().serverRecordIdHash, before.serverRecordIdHash);
+          expect(db.box<CloudSyncLocalSendIntentEntity>().get(intentId)!.state, 1);
+          await restart();
+          bindJournal();
+          expect(sync.retireUnsubmittedChatCreates(_scope(), now: _now), 0);
+          expect(await sync.readLiveProtectedOutboundLeaseReferences(maximumCount: 16),
+            contains(before.protectedLeaseReference));
+          expect((await sync.readLiveProtectedReferences(maximumCount: 10000))
+            .references, contains(before.encryptedPayloadRef));
+          expect(ObjectBoxCloudSyncPreflightReader(store: db).read()
+            .settledOutboxFingerprint, isNotNull);
+          if (mutation == 'retire large settled history') {
+            // Settled history never occupies the cancellation candidate bound.
+            expect(db.box<CloudOutboxOperationEntity>().count(), 4098);
+            return;
+          }
+          var acknowledgements = 0;
+          var submissions = 0;
+          expect(await drainCloudSyncCreateQueues(
+            scopes: [_scope(), _scope('messageManateeZone')],
+            readOutbox: sync.readOutboxEntries,
+            recoverExpired: (_) async {},
+            reconcileUnknown: (_) async => fail('retirement is not remote reconciliation'),
+            flush: (_) async { submissions++; },
+            acknowledgeConfirmed: (_, __) async { acknowledgements++; },
+            validateAccount: () async {},
+            isRetiredUnsubmittedChatCreate: (op) async => sync.isRetiredUnsubmittedChatCreate(op),
+          ), isTrue);
+          expect(submissions, 0);
+          expect(acknowledgements, 0);
+          await expectLater(admitChat(), throwsA(isA<StateError>().having(
+            (e) => e.message, 'code', 'cloud_sync_outbound_chat_source_retired')));
+          expect(transport.stages, 1);
+          // A malformed cancellation or unknown outcome cannot masquerade as
+          // inert. Each mutation invalidates both queue and preflight proof.
+          for (final mutate in <void Function(CloudOutboxOperationEntity)>[
+            (r) => r.attemptCount = -1,
+            (r) => r.appleRequestUuid = 'present',
+            (r) => r.appleOperationUuid = 'present',
+            (r) => r.leaseIdHash = 'present',
+            (r) => r.confirmedAtMs = 1,
+            (r) => r.state = CloudOutboxStatus.unknownOutcome.index,
+            (r) => r.lastErrorCategory = CloudFailureCategory.unknown.name,
+            (r) => r.localChatOrigin = 'malformed',
+            (r) => r.protectedLeaseReference = null,
+            (r) => r.accountFingerprint = 'malformed',
+          ]) {
+            final malformed = outbox();
+            mutate(malformed);
+            expect(cloudSyncIsRetiredUnsubmittedChatCreate(malformed), isFalse);
+            expect(ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint([malformed]), isNull);
+          }
+          return;
+        }
+        if (mutation.startsWith('engine')) {
+          final remote = FakeCloudSyncTransport();
+          remote.writePreflightHandler = (scope, identity, operations) async {
+            expect(operations.single.operationId, operation.operationId);
+            if (mutation.startsWith('engine preflight')) {
+              throw CloudSyncFailure(
+                category: mutation.contains('retry') ? CloudFailureCategory.unknown :
+                    mutation.contains('pause') ? CloudFailureCategory.dependency :
+                    CloudFailureCategory.conflict,
+                safeCode: 'synthetic_pre_submit_failure');
+            }
+            if (mutation == 'engine source during preflight') {
+              db.box<Message>().put(db.box<Message>().get(messageId)!..dateDeleted = _now);
+            }
+            if (mutation == 'engine tombstone during preflight') {
+              await retainHistory('chatManateeZone', tombstone: true, record: _record);
+            }
+          };
+          remote.preparedSubmissionHandler = (scope, prepared, identity) async {
+            expect(outbox().state, CloudOutboxStatus.unknownOutcome.index);
+            expect(outbox().appleRequestUuid, identity.requestUuid);
+            expect(prepared.operationIds, [operation.operationId]);
+            return CloudPushBatchResult(outcomes: [CloudPushOutcome(
+              operationId: operation.operationId,
+              disposition: CloudPushDisposition.confirmed,
+              createReceipt: CloudOutboxCreateReceipt(
+                operationId: operation.operationId,
+                logicalEntityKeyHash: _logical, serverRecordIdHash: _record,
+                etagHash: 'E' * 43,
+              ),
+            )]);
+          };
+          await CloudSyncEngine(
+            scope: _scope(), coordinatorId: 'synthetic-chat-real-engine',
+            store: sync, transport: remote, inboxApplier: FakeCloudInboxApplier(),
+            writerAuthority: FakeCloudSyncWriterAuthority(),
+            writerExclusion: FakeCloudKitOperationExclusion(), clock: () => _now,
+            config: CloudSyncEngineConfig(
+              maximumOutboxBatchesPerRun: 1,
+              flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+            ),
+          ).synchronize(trigger: CloudSyncTrigger.manual);
+          expect(remote.prepareSubmissionCallCount, 1);
+          expect(remote.consumePreparedSubmissionCallCount,
+              mutation == 'engine success' ? 1 : 0);
+          if (mutation == 'engine success') {
+            expect(outbox().state, CloudOutboxStatus.confirmed.index);
+            expect(recordMap().etagHash, 'E' * 43);
+          } else {
+            expect(outbox().appleRequestUuid, isNull);
+          }
+          if (mutation.startsWith('engine preflight')) {
+            expect(outbox().attemptCount, 1);
+            expect(outbox().state, mutation.contains('retry') ? CloudOutboxStatus.pending.index :
+                mutation.contains('pause') ? CloudOutboxStatus.paused.index :
+                CloudOutboxStatus.quarantined.index);
+            expect(jsonDecode(outbox().localChatOrigin!)[0], 2);
+            expect(await sync.readLiveProtectedOutboundLeaseReferences(maximumCount: 16),
+              contains(_lease));
+            db.box<Message>().put(db.box<Message>().get(messageId)!..dateDeleted = _now);
+            await restart();
+            bindJournal();
+            expect(sync.retireUnsubmittedChatCreates(_scope(), now: _now), 1);
+            expect(outbox().attemptCount, 1); // never erase retry evidence
+            expect(jsonDecode(outbox().localChatOrigin!)[0], 4);
+            expect(ObjectBoxCloudSyncPreflightReader(store: db).read()
+              .settledOutboxFingerprint, isNotNull);
+            expect(await sync.readLiveProtectedOutboundLeaseReferences(maximumCount: 16),
+              contains(_lease));
+          }
+          expect(db.box<CloudSyncLocalSendIntentEntity>().get(intentId)!.state, 1);
+          expect(transport.stages, 1);
+          expect(remote.fetchCallCount, 0);
+          return;
+        }
+        if (mutation == 'proof before lease') {
+          final proof = jsonDecode(outbox().localChatOrigin!) as List<dynamic>;
+          proof[7] = jsonEncode([1, intentId, '0' * 64]);
+          db.box<CloudOutboxOperationEntity>().put(outbox()..localChatOrigin = jsonEncode(proof));
+        }
+        if (mutation == 'source before lease') {
+          db.box<Message>().put(db.box<Message>().get(messageId)!..dateDeleted = _now);
+        }
+        if (mutation == 'missing journal before lease') bindStore();
+        Future<List<CloudOutboxOperation>> leaseChat() => sync.leaseEligibleOutbox(
           _scope(),
           now: _now,
           limit: 1,
@@ -510,8 +878,26 @@ void main() {
           leaseDuration: const Duration(minutes: 1),
           allowedActions: const {CloudOutboxAction.save},
         );
+        if (mutation.endsWith('before lease')) {
+          await expectLater(leaseChat(), mutation.startsWith('missing journal')
+            ? throwsA(isA<StateError>().having((error) => error.message, 'code',
+                'cloud_sync_local_send_chat_journal_missing'))
+            : throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())));
+          expect(outbox().state, CloudOutboxStatus.pending.index);
+          expect(outbox().appleRequestUuid, isNull);
+          return;
+        }
+        final leased = await leaseChat();
         expect(leased.single.operationId, operation.operationId);
-        await sync.markOutboxSubmissionStarted(
+        if (mutation == 'payload before submit') {
+          db.box<CloudOutboxOperationEntity>().put(outbox()..payloadSha256 = 'e' * 64);
+        }
+        if (mutation == 'duplicate before submit') duplicateChat();
+        if (mutation == 'missing journal before submit') bindStore();
+        if (mutation == 'tombstone before submit') {
+          await retainHistory('chatManateeZone', tombstone: true, record: _record);
+        }
+        Future<List<CloudOutboxOperation>> startSubmit() => sync.markOutboxSubmissionStarted(
           _scope(),
           leaseId: submissionLease,
           submissionIdentity: CloudOutboxSubmissionIdentity(
@@ -522,6 +908,34 @@ void main() {
           ),
           now: _now,
         );
+        if (mutation.endsWith('before submit')) {
+          await expectLater(startSubmit(), mutation.startsWith('missing journal')
+            ? throwsA(isA<StateError>().having((error) => error.message, 'code',
+                'cloud_sync_local_send_chat_journal_missing'))
+            : throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())));
+          expect(outbox().state, CloudOutboxStatus.leased.index);
+          expect(outbox().appleRequestUuid, isNull);
+          return;
+        }
+        await startSubmit();
+        if (mutation != 'shared Chat') expect(jsonDecode(outbox().localChatOrigin!)[0], 3);
+        if (mutation == 'submitted cancellation forbidden') {
+          // Even explicit retry permission after an unknown result cannot
+          // restore the original never-submitted capability.
+          await sync.applyOutboxTransitions(_scope(), leaseId: submissionLease,
+            transitions: [CloudOutboxTransition.provenNotApplied(operation.operationId,
+              category: CloudFailureCategory.unknown, nextEligibleAt: _now)], now: _now);
+          expect(outbox().appleRequestUuid, isNull);
+          expect(jsonDecode(outbox().localChatOrigin!)[0], 3);
+          db.box<Message>().put(db.box<Message>().get(messageId)!..dateDeleted = _now);
+          await restart();
+          bindJournal();
+          expect(sync.retireUnsubmittedChatCreates(_scope(), now: _now), 0);
+          expect(outbox().state, CloudOutboxStatus.pending.index);
+          expect(ObjectBoxCloudSyncPreflightReader(store: db).read()
+            .settledOutboxFingerprint, isNull);
+          return;
+        }
         // Fake successful network response, committed by the actual store API.
         await sync.commitOutboxCreateReceipt(
           _scope(),
@@ -705,7 +1119,7 @@ void main() {
           }
           db.box<CloudOutboxOperationEntity>().put(foreign);
         }
-        if (mutation != 'none' && mutation != 'shared Chat') {
+        if (mutation != 'none' && mutation != 'shared Chat' && mutation != 'unrelated history') {
           await expectLater(
             admitMessage(),
             throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())),
@@ -734,6 +1148,10 @@ void main() {
             identity.sourceSha256,
           );
           expect(db.box<CloudOutboxOperationEntity>().count(), 2);
+          if (unrelatedHistory) {
+            expect(db.box<CloudInboxChangeEntity>().getAll().where((row) =>
+              row.status == CloudInboxStatus.retainedUnprojected.index), hasLength(2));
+          }
           preserved(adopted: true);
         }
       },
@@ -1511,7 +1929,7 @@ final class _FakeChat implements api.CloudChat {
   int get style => 45;
   @override
   List<api.CloudParticipant> get participants => [
-    api.CloudParticipant(uri: _recipient),
+    const api.CloudParticipant(uri: _recipient),
   ];
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -1520,6 +1938,7 @@ final class _FakeChat implements api.CloudChat {
 class _Staging implements CloudSyncOutboundChatStagingTransport {
   int stages = 0, commits = 0, rollbacks = 0;
   bool failCommit = false;
+  Future<void> Function()? onChatStage;
   @override
   Future<T> runOutboundAdmissionExclusive<T>(Future<T> Function() action) =>
       action();
@@ -1529,6 +1948,7 @@ class _Staging implements CloudSyncOutboundChatStagingTransport {
     required api.CloudChat chat,
   }) async {
     stages++;
+    await onChatStage?.call();
     return CloudSyncProtectedOutboundStageData(
       logicalEntityKeyHash: _logical,
       protectedEnvelopeReference: _ref,

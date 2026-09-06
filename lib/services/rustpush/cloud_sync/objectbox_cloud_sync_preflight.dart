@@ -5,6 +5,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_production_preflight.dart';
+import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloudkit_operation_interlock.dart';
 
 /// Reads the local mutation fence in one ObjectBox transaction.
@@ -65,12 +66,14 @@ final class ObjectBoxCloudSyncPreflightReader {
   // This is evidence of local quiescence, not proof of a remote save. The
   // writer owns receipt validation. Retaining its completed audit rows must
   // not prevent subsequent reads, but unacknowledged receipts, uncertain
-  // outcomes, malformed states, and every non-confirmed row still block.
+  // outcomes, malformed states, and ordinary quarantine still block. A strictly
+  // identified local cancellation is inert, not a confirmed remote receipt.
   /// Content-free local-quiescence proof for retained audit rows. It is not
   /// remote ownership evidence and must never authorize submission or replay.
   static String? settledAuditFingerprint(List<CloudOutboxOperationEntity> rows) {
     if (rows.isEmpty) return null;
     for (final row in rows) {
+      if (cloudSyncIsRetiredUnsubmittedChatCreate(row)) continue;
       if (row.state != 2 ||
           row.action != 0 ||
           row.confirmedAtMs <= 0 ||

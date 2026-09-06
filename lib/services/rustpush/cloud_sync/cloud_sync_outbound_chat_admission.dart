@@ -26,6 +26,7 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
     required int chatId,
     required DateTime createdAt,
     required CloudSyncLocalSendAuthFence authFence,
+    CloudSyncLocalSendAdmissionSource? localSendSource,
     void Function()? validateLocalOrigin,
     api.CloudChat Function(CloudSyncOutboundChatOrigin)? encode,
   }) => _transport.runOutboundAdmissionExclusive(() async {
@@ -37,10 +38,16 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
       },
       accountFingerprint: scope.accountFingerprint,
     );
-    if (existing != null) return existing;
+    if (existing != null) {
+      if (_store.isRetiredUnsubmittedChatCreate(existing)) {
+        throw StateError('cloud_sync_outbound_chat_source_retired');
+      }
+      return existing;
+    }
 
     final origin = await authFence.run(
-      () => _store.captureFreshOutboundChatOrigin(scope, chatId),
+      () => _store.captureFreshOutboundChatOrigin(
+        scope, chatId, localSendSource: localSendSource),
       accountFingerprint: scope.accountFingerprint,
     );
     final candidate = (encode ?? _encodeOrigin)(origin);
@@ -80,6 +87,7 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
             updatedAt: createdAt,
           ),
           origin: origin,
+          localSendSource: localSendSource,
           validateLocalOrigin: validateLocalOrigin,
         ),
         accountFingerprint: scope.accountFingerprint,

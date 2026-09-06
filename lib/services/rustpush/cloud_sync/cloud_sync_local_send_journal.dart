@@ -871,6 +871,118 @@ final class CloudSyncLocalSendJournal {
     return source;
   });
 
+  /// A Chat dependency does not consume the Message's adoption slot. It must
+  /// still be justified by the exact native-confirmed, not-yet-adopted send.
+  void validateChatCreateSource(
+    Store transactionStore,
+    CloudSyncScope chatScope,
+    int chatId,
+    CloudSyncLocalSendAdmissionSource source,
+  ) {
+    final message = validateReadyForCreate(
+      transactionStore, _messageScopeForChatCreate(chatScope), source);
+    if (message.chat.targetId != chatId) {
+      throw StateError('cloud_sync_local_send_chat_changed');
+    }
+  }
+
+  CloudSyncScope _messageScopeForChatCreate(CloudSyncScope chatScope) {
+    if (chatScope.zone != 'chatManateeZone') {
+      throw StateError('cloud_sync_local_send_scope_invalid');
+    }
+    return CloudSyncScope(
+      accountFingerprint: chatScope.accountFingerprint,
+      container: chatScope.container,
+      database: chatScope.database,
+      zone: 'messageManateeZone',
+      streamKind: chatScope.streamKind,
+      schemaVersion: chatScope.schemaVersion,
+      persistenceLane: chatScope.persistenceLane,
+    );
+  }
+
+  /// Persisted alongside the Chat origin in the same admission transaction.
+  /// Only hashes/row IDs cross this boundary; the immutable envelope, source,
+  /// writer epoch and Chat identity are all bound. No journal state is changed.
+  String bindChatCreateSource(
+    Store transactionStore,
+    CloudOutboxOperation operation,
+    int chatId,
+    String originIdentity,
+    CloudSyncLocalSendAdmissionSource source,
+  ) {
+    validateChatCreateSource(transactionStore, operation.scope, chatId, source);
+    return _chatCreateBinding(operation, chatId, originIdentity, source);
+  }
+
+  String _chatCreateBinding(CloudOutboxOperation operation, int chatId,
+      String originIdentity, CloudSyncLocalSendAdmissionSource source) => jsonEncode([
+      1,
+      source.intentId,
+      CloudSyncLocalSendIdentity._digest([
+        'cloud-sync-local-send-chat-create-v1',
+        source.intentKey, source.localMessageId, source.accountFingerprint,
+        source.writerEpoch, source.messageGuidHash, source.sourceSha256,
+        source.createdAtUtc.millisecondsSinceEpoch,
+        chatId, originIdentity, _operationBinding(operation),
+      ]),
+    ]);
+
+  /// Re-read after restart and again immediately before submission. A callback
+  /// or an outgoing Message row alone is never a durable create capability.
+  void validateChatCreateBinding(
+    Store transactionStore,
+    CloudOutboxOperation operation,
+    int chatId,
+    String originIdentity,
+    String binding,
+  ) {
+    final source = _readChatCreateBindingSource(transactionStore, operation,
+      chatId, originIdentity, binding);
+    validateChatCreateSource(transactionStore, operation.scope, chatId, source);
+  }
+
+  /// Explicit source retirement is not an unknown validation error. This only
+  /// recognizes a deleted/missing/edited Message after verifying the immutable
+  /// journal/envelope binding and current owner. The caller must independently
+  /// prove that the Chat has never crossed the submission boundary.
+  bool hasRetiredChatCreateSource(
+    Store transactionStore, CloudOutboxOperation operation, int chatId,
+    String originIdentity, String binding,
+  ) {
+    final source = _readChatCreateBindingSource(transactionStore, operation,
+      chatId, originIdentity, binding);
+    final message = _messages.get(source.localMessageId);
+    return message == null || message.dateDeleted != null || message.dateEdited != null;
+  }
+
+  CloudSyncLocalSendAdmissionSource _readChatCreateBindingSource(
+    Store transactionStore, CloudOutboxOperation operation, int chatId,
+    String originIdentity, String binding,
+  ) {
+    _requireCreateAuthority(transactionStore, _messageScopeForChatCreate(operation.scope));
+    Never reject() => throw StateError('cloud_sync_local_send_chat_binding_changed');
+    if (binding.length > 256) reject();
+    final dynamic value;
+    try {
+      value = jsonDecode(binding);
+    } on FormatException {
+      reject();
+    }
+    if (value is! List || value.length != 3 || value[0] != 1 ||
+        value[1] is! int || value[1] <= 0 || value[2] is! String ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(value[2])) {
+      reject();
+    }
+    final intent = _readBoundIntent(value[1] as int);
+    final source = CloudSyncLocalSendAdmissionSource._(intent, null);
+    if (intent.state != 1 ||
+        _chatCreateBinding(operation, chatId, originIdentity, source) != binding) {
+      reject();
+    }
+    return source;
+  }
+
   void _requireCreateAuthority(Store transactionStore, CloudSyncScope scope) {
     if (!identical(transactionStore, _store)) {
       throw StateError('cloud_sync_local_send_adoption_store_mismatch');

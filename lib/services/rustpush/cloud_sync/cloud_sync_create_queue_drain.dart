@@ -13,6 +13,7 @@ Future<bool> drainCloudSyncCreateQueues({
   required Future<void> Function(CloudSyncScope, CloudOutboxOperation)
   acknowledgeConfirmed,
   required Future<void> Function() validateAccount,
+  Future<bool> Function(CloudOutboxOperation)? isRetiredUnsubmittedChatCreate,
 }) async {
   final ordered = List<CloudSyncScope>.unmodifiable(scopes);
   const zones = ['chatManateeZone', 'messageManateeZone'];
@@ -83,12 +84,19 @@ Future<bool> drainCloudSyncCreateQueues({
       await checked(() => flush(scope));
     }
     final after = await read(scope);
-    if (after.any(
-      (operation) => operation.status != CloudOutboxStatus.confirmed,
-    )) {
-      return false;
-    }
+    final confirmed = <CloudOutboxOperation>[];
     for (final operation in after) {
+      if (operation.status == CloudOutboxStatus.confirmed) {
+        confirmed.add(operation);
+      } else if (operation.status != CloudOutboxStatus.quarantined ||
+          isRetiredUnsubmittedChatCreate == null ||
+          !await checked(() => isRetiredUnsubmittedChatCreate(operation))) {
+        return false;
+      }
+    }
+    // Retired rows retain their native adoption marker as audit evidence.
+    // They are never submitted or acknowledged as successful receipts.
+    for (final operation in confirmed) {
       if (operation.protectedLeaseReference != null) {
         await checked(() => acknowledgeConfirmed(scope, operation));
       }
