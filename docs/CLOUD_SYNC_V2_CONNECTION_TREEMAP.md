@@ -4,7 +4,7 @@ title: Cloud Sync V2 Connection Treemap and Recovery State Machine
 description: Source-linked end-to-end model for safely authenticating, fetching, decoding, journaling, projecting, recovering, and validating Messages in iCloud data.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-05
+timestamp: 2026-09-06
 ---
 
 # Cloud Sync V2 connection treemap and recovery state machine
@@ -42,7 +42,7 @@ continue under a new account.
 | `IN REPAIR` | A concrete counterexample invalidated the prior candidate and the replacement has not passed every gate yet. |
 | `GAP / POLICY DECISION` | The safe behavior is not wired end to end or needs an explicit product decision. |
 
-## Latest integration checkpoint, 2026-09-05
+## Latest integration checkpoint, 2026-09-06
 
 ### Production scope, clarified by the user
 
@@ -54,7 +54,7 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | Capability | Current evidence / explicit remaining gap |
 | --- | --- |
 | Message history and conversation projection | User has observed restored readable chats; sustained incremental/restart behavior must be qualified on the release candidate. |
-| Photos, video, GIF and documents | Some photos are user-verified. One profile video now downloaded and rendered a fullscreen decoded frame on installed `475f9d082`; continuous playback/audio remain unproven. GIF byte-size mismatch remains unresolved. Each media surface/type needs user-facing validation, not metadata-only success. |
+| Photos, video, GIF and documents | Photos and video playback are now user-confirmed. Gallery photo auto-download is repaired locally; installed-device proof remains. GIF byte-size mismatch remains unresolved and is explicitly deferred by the user; GIF attachments are preserved, not deleted or hidden. Each media surface/type still needs user-facing validation, not metadata-only success. |
 | Chat-first ordinary text writing | Implemented behind rollout gates, combined offline tests pass. Exact-recipient live save/readback and ordinary-runtime qualification remain. |
 | Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
@@ -62,6 +62,27 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | Ongoing sync and account lifecycle | Missing automatic writer setup is repaired and installed in `463a19881`, with full CI passing; fresh foreground setup and automatic save/readback are still unverified. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence remain release gates. |
 
 ### Wi-Fi resume checkpoint
+
+- Gallery follow-up: the user confirms video works, GIFs do not, and every
+  uncached photo required a tap. `MediaGalleryCard.initState` previously only
+  joined an existing download or loaded a cached file. It never admitted an
+  automatic download. The local repair queues nearby photo tiles once after
+  layout, using the existing shared queue without manual priority. The preview
+  remains capped at six; the full gallery remains lazy. Videos, GIFs and
+  documents retain explicit taps. Auto-download, Wi-Fi-only and hidden-media
+  settings gate admission; disposed widgets, manual-tap races, an existing
+  controller and files cached during the network check cannot create duplicate
+  downloads. Failed automatic attempts remain manually retryable without an
+  automatic rebuild loop or a toast for every unavailable old attachment.
+  `AttachmentsService.canAutoDownload` no longer requests legacy Android
+  storage permission for `fs.appDocDir` files. App-internal files do not require
+  that permission, per [Android's app-specific storage documentation](https://developer.android.com/training/data-storage/app-specific#internal).
+  This is separate from exporting/saving to shared storage. The gallery,
+  settings, file-gate, lazy-paging and actual V2 queue tests pass locally
+  (44 checks). The two newly added test files cover 22 cases. Analyzer has no
+  errors/warnings; two existing `surfaceVariant` deprecation infos remain.
+  This follow-up is not in installed source `463a19881`; no new APK was built
+  or installed for this investigation. No user media or messages were removed.
 
 - Latest device/CI checkpoint: full GCE run `34016745531` passed for frozen
   source `463a19881bf8d4b764eaae8eaa2a662cac81a868`. It passed the full Dart

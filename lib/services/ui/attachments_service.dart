@@ -17,7 +17,6 @@ import 'package:image_size_getter/image_size_getter.dart' as isg;
 import 'package:mime_type/mime_type.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:saver_gallery/saver_gallery.dart';
 import 'package:universal_html/html.dart' as html;
 import 'package:universal_io/io.dart';
@@ -315,17 +314,20 @@ class AttachmentsService extends GetxService {
   }
 
   Future<bool> canAutoDownload() async {
-    final canSave = (await Permission.storage.request()).isGranted;
-    if (!canSave) return false;
-    if (!ss.settings.autoDownload.value) {
+    // Downloads use fs.appDocDir, not shared media storage. Internal app files
+    // need no Android storage permission (the legacy permission is unavailable
+    // on Android 13+). Saving/exporting to shared storage is a separate action.
+    if (!ss.settings.autoDownload.value) return false;
+    if (!ss.settings.onlyWifiDownload.value) return true;
+    try {
+      final status = await Connectivity().checkConnectivity();
+      // Settings may have changed while the platform query was pending.
+      return ss.settings.autoDownload.value &&
+          (!ss.settings.onlyWifiDownload.value ||
+              status.contains(ConnectivityResult.wifi));
+    } catch (_) {
+      // An unavailable network check must not bypass Wi-Fi-only downloads.
       return false;
-    } else {
-      if (!ss.settings.onlyWifiDownload.value) {
-        return true;
-      } else {
-        List<ConnectivityResult> status = await (Connectivity().checkConnectivity());
-        return status.contains(ConnectivityResult.wifi);
-      }
     }
   }
 

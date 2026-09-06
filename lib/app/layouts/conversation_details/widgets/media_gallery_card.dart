@@ -33,6 +33,8 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
   AttachmentDownloadController? controller;
   AttachmentDownloadController? _subscribedController;
   bool localFileAvailable = false;
+  bool _downloadAttempted = false;
+  bool _reportDownloadFailure = false;
   String? galleryThumbnailPath;
   late final void Function(PlatformFile) _downloadComplete;
   late final void Function() _downloadFailed;
@@ -65,11 +67,49 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
 
     // check active downloader otherwise check file exists
     if (attachmentDownloader.getController(attachment.guid) != null) {
+      _downloadAttempted = true;
       controller = attachmentDownloader.getController(attachment.guid);
       _subscribeTo(controller!);
     } else if (!kIsWeb) {
       getBytes();
     }
+    // The preview is capped and the full gallery builds tiles lazily. Queue
+    // nearby photos once, not the whole chat history or on every rebuild.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_autoDownloadPhoto());
+    });
+  }
+
+  bool get _canStartPhotoDownload {
+    final guid = attachment.guid;
+    final type = resolvedMimeType?.toLowerCase();
+    return mounted &&
+        !_downloadAttempted &&
+        !localFileAvailable &&
+        controller == null &&
+        guid != null &&
+        guid.isNotEmpty &&
+        !guid.contains('temp') &&
+        !guid.startsWith('demo') &&
+        (type?.startsWith('image/') ?? false) &&
+        type != 'image/gif' &&
+        !attachmentFile.name.toLowerCase().endsWith('.gif') &&
+        attachment.uti?.toLowerCase() != 'com.compuserve.gif' &&
+        !(ss.settings.redactedMode.value && ss.settings.hideAttachments.value);
+  }
+
+  Future<void> _autoDownloadPhoto() async {
+    if (!_canStartPhotoDownload || !await as.canAutoDownload()) return;
+    // A manual tap, completed download, privacy change or disposal may have
+    // happened during the settings/network check.
+    if (!_canStartPhotoDownload) return;
+    // Another view may have finished and removed its downloader while our
+    // network check was pending. Reuse that file instead of fetching it again.
+    if (!kIsWeb && isUsableDownloadedAttachmentFile(attachment.path)) {
+      await getBytes();
+      return;
+    }
+    _startDownload(automatic: true);
   }
 
   void _subscribeTo(AttachmentDownloadController target) {
@@ -119,10 +159,18 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
       controller = null;
     });
     updateKeepAlive();
-    showSnackbar("Error", "Failed to download attachment!");
+    if (_reportDownloadFailure) {
+      showSnackbar("Error", "Failed to download attachment!");
+    }
   }
 
-  void downloadAttachment() {
+  void downloadAttachment() => _startDownload(automatic: false);
+
+  void _startDownload({required bool automatic}) {
+    // Failed automatic attempts remain tappable; they don't retry on rebuild
+    // or flood the screen with an error toast for every unavailable old photo.
+    _downloadAttempted = true;
+    _reportDownloadFailure = !automatic;
     if (controller?.error.value ?? false) {
       controller = null;
       Get.delete<AttachmentDownloadController>(tag: attachment.guid);
@@ -131,7 +179,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
       attachment,
       onComplete: _downloadComplete,
       onError: _downloadFailed,
-      prioritized: true,
+      prioritized: !automatic,
     );
     setState(() {
       controller = next;
