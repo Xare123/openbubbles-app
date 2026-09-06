@@ -2,6 +2,7 @@
 
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_safe_failure.dart';
 import 'cloudkit_operation_interlock.dart';
 
 /// One bounded pass over actual, confirmed local origins. The supplied drain
@@ -70,6 +71,7 @@ final class CloudSyncLocalSendConsumer {
     );
     var admitted = 0;
     var deferred = 0;
+    final deferredReasons = <String, int>{};
     for (final intent in candidates) {
       // Persist fair selection independently of staging. An unsupported or
       // dependency-blocked first row must not starve all later local sends.
@@ -81,12 +83,14 @@ final class CloudSyncLocalSendConsumer {
       try {
         await _admit(intent.id);
         admitted++;
-      } catch (_) {
+      } catch (error) {
         // Staging may have committed to ObjectBox before native lease commit
         // failed. Never assume a throw means no durable operation exists.
         // Recheck identity, then recover before considering any other origin.
         await _validateAccount();
         deferred++;
+        final code = cloudSyncV2SafeFailureCode(error);
+        deferredReasons.update(code, (count) => count + 1, ifAbsent: () => 1);
       }
       await _validateAccount();
       if (!await _drainExisting()) {
@@ -95,6 +99,7 @@ final class CloudSyncLocalSendConsumer {
           admitted: admitted,
           deferred: deferred,
           outboxBlocked: true,
+          deferredReasons: Map.unmodifiable(deferredReasons),
         );
       }
       await _validateAccount();
@@ -102,6 +107,7 @@ final class CloudSyncLocalSendConsumer {
     return CloudSyncLocalSendConsumerResult(
       admitted: admitted,
       deferred: deferred,
+      deferredReasons: Map.unmodifiable(deferredReasons),
     );
   }
 
@@ -139,13 +145,15 @@ final class CloudSyncLocalSendConsumer {
             }
             var admitted = 0;
             var deferred = 0;
+            String? deferredReason;
             try {
               await _admit(intentId);
               admitted = 1;
-            } catch (_) {
+            } catch (error) {
               // An adopted envelope can survive native commit failure. Validate
               // its exact linkage before using the same recovery pipeline.
               deferred = 1;
+              deferredReason = cloudSyncV2SafeFailureCode(error);
             }
             await validate();
             final settled = await _drainExisting();
@@ -154,6 +162,9 @@ final class CloudSyncLocalSendConsumer {
               admitted: admitted,
               deferred: deferred,
               outboxBlocked: !settled,
+              deferredReasons: deferredReason == null
+                  ? const {}
+                  : Map.unmodifiable({deferredReason: 1}),
             );
           },
         )
@@ -173,11 +184,16 @@ final class CloudSyncLocalSendConsumerResult {
     this.deferred = 0,
     this.outboxBlocked = false,
     this.chatReadbackPending = false,
+    this.deferredReasons = const {},
   });
 
   final int admitted;
   final int deferred;
   final bool outboxBlocked;
+
+  /// Fixed, allowlisted codes only, aggregated per pass. Never identifiers,
+  /// message text or raw exception/server content.
+  final Map<String, int> deferredReasons;
 
   /// Queue receipts are settled, but the ordinary semantic reader still needs
   /// to project the newly created Chat before its first Message can upload.

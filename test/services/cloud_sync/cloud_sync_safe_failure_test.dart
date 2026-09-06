@@ -10,6 +10,22 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('outbound Chat-origin failures retain only their fixed codes', () {
+    final source = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_outbound_chat_origin.dart',
+    ).readAsStringSync();
+    final codes = RegExp(
+      r"_reject\('([^']+)'\)",
+    ).allMatches(source).map((m) => m[1]!).toSet();
+    expect(codes.length, greaterThan(10));
+    for (final code in codes) {
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+      expect(
+        cloudSyncV2SafeFailureCode(StateError('$code private body')),
+        'cloud_sync_unknown_failure',
+      );
+    }
+  });
   test('local-send blockers are specific without exposing exception text', () {
     for (final code in [
       'cloud_sync_local_send_owner_required',

@@ -54,6 +54,44 @@ void main() {
     });
     tearDown(() async => fixture.close());
 
+    for (final exact in [false, true]) {
+      for (final known in [false, true]) {
+        test(
+          'admission diagnostics are safe and retained exact=$exact known=$known',
+          () async {
+            await fixture.seedAccount();
+            var drains = 0;
+            const code = 'cloud_sync_local_send_chat_readback_pending';
+            final worker = consumer(
+              drain: () async => ++drains == 1,
+              admit: (_) async => throw StateError(
+                known ? code : 'private@example.test secret-body',
+              ),
+            );
+            final result = exact
+                ? await worker.runExactIntent(
+                    intentId: fixture.intentId,
+                    validateSelection: validate,
+                  )
+                : await worker.runOnce();
+            expect(result.deferredReasons, {
+              known ? code : 'cloud_sync_unknown_failure': 1,
+            });
+            expect(result.outboxBlocked, true);
+            expect(result.deferred, 1);
+            expect(result.admitted, 0);
+            expect(drains, 2);
+            expect(fixture.intent.state, 1);
+            expect(fixture.transport.stageCalls, 0);
+            expect(
+              () => result.deferredReasons.clear(),
+              throwsUnsupportedError,
+            );
+          },
+        );
+      }
+    }
+
     test(
       'admits only selected row and never rotates a foreign ready row',
       () async {

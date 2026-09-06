@@ -7602,6 +7602,13 @@ class RustPushService extends GetxService {
           },
           action: adapter.runOnce,
           );
+          if (result.admitted > 0 || result.deferred > 0 || result.outboxBlocked) {
+            Logger.info('Cloud Sync V2 upload pass '
+                'admitted=${result.admitted} deferred=${result.deferred} '
+                'outboxBlocked=${result.outboxBlocked} '
+                'chatReadbackPending=${result.chatReadbackPending} '
+                'reasons=${jsonEncode(result.deferredReasons)}');
+          }
           // Both the native writer and the attachment gate have been released.
           // Reuse the real semantic gateway, never turn an ACK into a local
           // Chat binding or keep a writer lock while asking the reader to run.

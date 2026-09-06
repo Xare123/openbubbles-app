@@ -109,6 +109,37 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
   inspection used a disposable clone and verified its source unchanged. No new
   IDS test message, data clear, account repair, or Alpha change occurred.
 
+- Repair source `463a19881bf8d4b764eaae8eaa2a662cac81a868` was pushed only to
+  the fork feature branch. Full automatic Canary qualification was dispatched
+  as GCE run `34016745531` on T2D-60, primary lane. Before launch, independent
+  checks found no VMs or registered runners; quotas showed global CPU 164/0
+  used, regional T2D 100/0 used, SSD 500 GB/0 used, and IPv4 8/0 used. Existing
+  isolated pilot and signing path are unchanged. Run outcome, signed artifact,
+  cleanup and on-device proof are pending; installed source is still `475f9d082`.
+
+- Focused independent audit of frozen `463a19881` found no demonstrated
+  cross-profile provisioning, transition/attachment lock cycle, automatic
+  legacy migration, deletion-queue quarantine, or unknown-outcome retry bypass.
+  Parent checked the cited logout barrier and all-queue recovery barrier and
+  accepted the findings as static evidence only. Real native stalls/contention
+  and profile replacement outside the inspected teardown path remain unproven.
+  The auditor made no edits, builds or device/cloud changes. Its completed work
+  is retained here; no dedicated disposable artifact ownership was established.
+
+- Follow-on diagnostics, deliberately not part of the frozen `463a19881` APK:
+  automatic and exact consumers now retain immutable per-pass counts of
+  allowlisted admission-failure codes, including when recovery blocks the
+  queue. The production adapter carries these counts through, and service logs
+  aggregate admitted/deferred/blocked/readback-pending state without content,
+  recipient or record identifiers. Chat-origin validation codes were reviewed
+  and allowlisted; raw exceptions still become `cloud_sync_unknown_failure`.
+  **79 tests passed**, including both consumer modes, privacy filtering,
+  immutable reports and retained recovery behavior. Analysis reported zero
+  errors/warnings (five existing style infos). Admission eligibility, ordering,
+  retry disposition and remote submission behavior are unchanged. Persistent
+  per-intent admission failures still require explicit production retry-policy
+  qualification; counts alone do not make those operations successful.
+
 - Both full runs `34013640516` (manual) and `34014225330` (automatic) completed
   successfully. The automatic run passed Dart, parent Rust, rustpush, protector,
   automatic-mode flag, bridge reproducibility, APK/native-library and signing

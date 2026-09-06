@@ -936,6 +936,7 @@ final class CloudSyncProductionLocalSendAdapter {
         admitted: result.admitted, deferred: result.deferred,
         outboxBlocked: result.outboxBlocked,
         chatReadbackPending: chatReadbackPending && !result.outboxBlocked,
+        deferredReasons: result.deferredReasons,
       );
     } finally {
       await transport.quiesceNativeOperations();
