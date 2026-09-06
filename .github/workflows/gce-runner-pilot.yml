@@ -56,13 +56,22 @@ on:
         required: true
         default: false
         type: boolean
+      runner_lane:
+        description: Use the second bounded lane only after checking concurrent CPU and disk quota
+        required: true
+        default: primary
+        type: choice
+        options:
+          - primary
+          - parallel
 permissions:
   contents: read
 
-# Do not cancel a running pilot. GitHub cancellation can interrupt cleanup;
-# the fixed VM lifetime below is the independent billing backstop.
+# Two bounded lanes; primary preserves the existing concurrency group. Check
+# quota before using parallel. Never cancel a running VM's cleanup: each run
+# has its own name/label, exact-name cleanup and independent 75-minute lifetime.
 concurrency:
-  group: gce-runner-pilot
+  group: gce-runner-pilot${{ inputs.runner_lane == 'parallel' && '-parallel' || '' }}
   cancel-in-progress: false
 
 env:
@@ -80,6 +89,7 @@ env:
   VALIDATION_MODE: ${{ inputs.validation_mode || 'full' }}
   OUTBOUND_WRITER: ${{ inputs.outbound_writer || false }}
   AUTOMATIC_UPLOADS: ${{ inputs.automatic_uploads || false }}
+  RUNNER_LANE: ${{ inputs.runner_lane || 'primary' }}
   SOURCE_REF: ${{ inputs.source_ref || github.sha }}
   TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-sms-chat-contract
 
@@ -188,6 +198,7 @@ jobs:
             echo '### Ephemeral runner'
             echo
             echo "- Name: \`${RUNNER_NAME}\`"
+            echo "- Lane: \`${RUNNER_LANE}\`"
             echo "- Zone: \`${{ steps.create.outputs.zone }}\`"
             echo "- Machine: \`${MACHINE_TYPE}\`"
             echo "- Disk: \`${DISK_TYPE}\`"
