@@ -189,6 +189,23 @@ Future<CloudSyncProtectedOutboundStageResult> cloudSyncStageOutboundMessage({
   message: message,
 );
 
+/// Stages one direct iMessage Chat and its original random record name.
+/// The caller must durably adopt this exact lease before prepare; staging is
+/// not local-origin admission and must never be repeated to recover a submit.
+Future<CloudSyncProtectedOutboundStageResult> cloudSyncStageOutboundChat({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required CloudChat chat,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageOutboundChat(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  chat: chat,
+);
+
 /// Prepares a create-only CloudKit request without performing remote I/O. The
 /// returned opaque handle owns PCS material, prepared authentication, exact
 /// request identity, and all operations. It can be consumed only once.
@@ -210,6 +227,30 @@ Future<CloudSyncPreparedMessageCreateResult> cloudSyncPrepareMessageCreate({
   inputs: inputs,
 );
 
+/// Prepares exactly one chatManateeZone create from an adopted version-1
+/// envelope. No record/request/operation UUID is allocated here. Authentication
+/// warmup is lookup-only; remote RecordSave requires the shared consume API.
+Future<CloudSyncPreparedMessageCreateResult> cloudSyncPrepareChatCreate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required String requestUuid,
+  required BigInt requestTimeoutSeconds,
+  required List<CloudSyncPreparedMessageCreateInput> inputs,
+}) => RustLib.instance.api.crateApiApiCloudSyncPrepareChatCreate(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  requestUuid: requestUuid,
+  requestTimeoutSeconds: requestTimeoutSeconds,
+  inputs: inputs,
+);
+
+/// Historical message name: this record-agnostic consumer also consumes the
+/// opaque handle returned by chat prepare. No capability, permit, keystore,
+/// single-use, container revalidation, or receipt fence is bypassed.
 Future<CloudSyncOutboundConsumeResult> cloudSyncConsumePreparedMessageCreate({
   required CloudSyncPreparedMessageCreateHandle handle,
   required String mutationCapabilityToken,
@@ -229,6 +270,28 @@ Future<CloudSyncOutboundReconcileResult> cloudSyncReconcileMessageCreate({
   required String requestUuid,
   required CloudSyncPreparedMessageCreateInput input,
 }) => RustLib.instance.api.crateApiApiCloudSyncReconcileMessageCreate(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  requestUuid: requestUuid,
+  input: input,
+);
+
+/// Exact readback of the ORIGINAL protected Chat/name, never a new stage or
+/// legacy saver. Only explicit NotFound proves absence. The proof reference
+/// identifies the same account/store-scoped, committed envelope, not a bearer
+/// authorization to replay. As with messages, the durable caller must supply
+/// the original persisted UUIDs and bind this result to that submission via the
+/// writer guard's reconciliation fence before releasing it or permitting retry.
+Future<CloudSyncOutboundReconcileResult> cloudSyncReconcileChatCreate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required String requestUuid,
+  required CloudSyncPreparedMessageCreateInput input,
+}) => RustLib.instance.api.crateApiApiCloudSyncReconcileChatCreate(
   cloudMessagesClient: cloudMessagesClient,
   storageDirectory: storageDirectory,
   expectedAccountFingerprint: expectedAccountFingerprint,
