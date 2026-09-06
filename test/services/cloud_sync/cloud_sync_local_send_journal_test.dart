@@ -995,6 +995,204 @@ void main() {
   }
 
   test(
+    'production capture recovers v2 retry and validates original wire after adoption',
+    () {
+      const origin = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+      chat.guid = origin;
+      store.box<Chat>().put(chat);
+      final message = _message(chat: chat, stagingGuid: _guidA);
+      final originalWire = _wire(chat);
+      final initial = CloudSyncLocalSendIdentity.capture(
+        message,
+        chat,
+        originalWire.id,
+      )!;
+      final identity = journal.captureSubmissionWire(
+        message: message,
+        chat: chat,
+        wire: originalWire,
+        initialSourceSha256: initial.sourceSha256,
+      )!;
+      journal.saveSubmission(
+        identity: identity,
+        newlyGeneratedGuid: true,
+        persistMessage: () => store.box<Message>().put(message),
+        now: _time(2),
+      );
+      chat.guid = 'iMessage;-;person@example.com';
+      chat.cloudGuid = origin;
+      chat.usingHandle = 'mailto:me@example.com';
+      store.box<Chat>().put(chat);
+      final postAwait = CloudSyncLocalSendIdentity.captureWire(
+        message,
+        chat,
+        originalWire,
+        expectedSourceSha256: identity.sourceSha256,
+      );
+      expect(postAwait?.sourceSha256, identity.sourceSha256);
+      final rebuilt = _wire(chat);
+      final retryInitial = CloudSyncLocalSendIdentity.capture(
+        message,
+        chat,
+        rebuilt.id,
+      )!;
+      expect(retryInitial.sourceSha256, isNot(identity.sourceSha256));
+      final retry = journal.captureSubmissionWire(
+        message: message,
+        chat: chat,
+        wire: rebuilt,
+        initialSourceSha256: retryInitial.sourceSha256,
+      )!;
+      expect(retry.sourceSha256, identity.sourceSha256);
+      journal.saveSubmission(
+        identity: retry,
+        newlyGeneratedGuid: false,
+        persistMessage: () => store.box<Message>().put(message),
+        now: _time(3),
+      );
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 1);
+      originalWire.sender = 'other@example.com';
+      expect(
+        CloudSyncLocalSendIdentity.captureWire(
+          message,
+          chat,
+          originalWire,
+          expectedSourceSha256: identity.sourceSha256,
+        ),
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'provisional first send survives same-row canonical adoption and restart',
+    () async {
+      const origin = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+      chat.guid = origin;
+      chat.style = null;
+      chat.chatIdentifier = null;
+      store.box<Chat>().put(chat);
+      final message = _message(chat: chat, stagingGuid: _guidA);
+      final identity = _identity(message, chat, _guidA);
+      journal.saveSubmission(
+        identity: identity,
+        newlyGeneratedGuid: true,
+        persistMessage: () => store.box<Message>().put(message),
+        now: _time(2),
+      );
+      message.guid = _guidA;
+      message.stagingGuid = null;
+      journal.saveConfirmedSubmission(
+        identity: identity,
+        persistMessage: () => store.box<Message>().put(message),
+        now: _time(3),
+      );
+      final intent = journal.readReady().single;
+      expect(
+        journal.readForAdmission(intent.id).message!.chat.target!.guid,
+        origin,
+      );
+      chat.guid = 'iMessage;-;person@example.com';
+      chat.cloudGuid = origin;
+      chat.style = 45;
+      chat.chatIdentifier = 'person@example.com';
+      chat.usingHandle = 'mailto:me@example.com';
+      store.box<Chat>().put(chat);
+      await reopen();
+      final source = journal.readForAdmission(intent.id);
+      expect(source.sourceSha256, identity.sourceSha256);
+      expect(source.message!.chat.targetId, chat.id);
+      expect(
+        source.message!.chat.target!.guid,
+        'iMessage;-;person@example.com',
+      );
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 1);
+      // Journal identity is not a remote-write permission. Admission still
+      // requires the separate authenticated canonical Chat ownership proof.
+    },
+  );
+
+  test(
+    'provisional identity rejects a different row, sender, text or original GUID',
+    () {
+      const origin = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+      chat.guid = origin;
+      final message = _message(chat: chat, stagingGuid: _guidA);
+      final identity = _identity(message, chat, _guidA);
+      chat.guid = 'iMessage;-;person@example.com';
+      chat.cloudGuid = origin;
+      CloudSyncLocalSendIdentity? verify() =>
+          CloudSyncLocalSendIdentity.capture(
+            message,
+            chat,
+            _guidA,
+            expectedSourceSha256: identity.sourceSha256,
+          );
+      expect(verify(), isNotNull);
+      final id = chat.id;
+      chat.id = id! + 1;
+      expect(verify(), isNull);
+      chat.id = id;
+      chat.usingHandle = 'other@example.com';
+      expect(verify(), isNull);
+      chat.usingHandle = 'me@example.com';
+      chat.cloudGuid = 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB';
+      expect(verify(), isNull);
+      chat.cloudGuid = origin;
+      message.text = 'changed';
+      message.attributedBody = [AttributedBody.raw('changed')];
+      expect(verify(), isNull);
+    },
+  );
+
+  test(
+    'provisional wire capture works without mutating Chat routing fields',
+    () {
+      chat.guid = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+      final message = _message(chat: chat, stagingGuid: _guidA);
+      final wire = _wire(chat);
+      chat.style = null;
+      chat.chatIdentifier = null;
+      expect(
+        CloudSyncLocalSendIdentity.captureWire(message, chat, wire),
+        isNotNull,
+      );
+      expect(chat.style, isNull);
+      expect(chat.chatIdentifier, isNull);
+    },
+  );
+
+  test('v2 normalization rejects email and phone scheme mismatches', () {
+    chat.guid = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+    final message = _message(chat: chat, stagingGuid: _guidA);
+    final wire = _wire(chat)..sender = 'tel:me@example.com';
+    expect(CloudSyncLocalSendIdentity.captureWire(message, chat, wire), isNull);
+    wire.sender = 'mailto:me@example.com';
+    wire.conversation!.participants[0] = 'tel:person@example.com';
+    expect(CloudSyncLocalSendIdentity.captureWire(message, chat, wire), isNull);
+    chat.handles.single.address = '+15550000001';
+    chat.chatIdentifier = '+15550000001';
+    chat.usingHandle = 'tel:+15550000002';
+    final phone = _wire(chat);
+    phone.conversation!.participants[0] = 'tel:+15550000001';
+    expect(
+      CloudSyncLocalSendIdentity.captureWire(message, chat, phone),
+      isNotNull,
+    );
+    phone.sender = 'mailto:+15550000002';
+    expect(
+      CloudSyncLocalSendIdentity.captureWire(message, chat, phone),
+      isNull,
+    );
+    phone.sender = 'tel:+15550000002';
+    phone.conversation!.participants[0] = 'mailto:+15550000001';
+    expect(
+      CloudSyncLocalSendIdentity.captureWire(message, chat, phone),
+      isNull,
+    );
+  });
+
+  test(
     'read and delivery receipts plus reaction flag preserve original text identity',
     () {
       final message = _message(chat: chat, stagingGuid: _guidA);

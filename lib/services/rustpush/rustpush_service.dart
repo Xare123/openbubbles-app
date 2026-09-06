@@ -5,6 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:app_links/app_links.dart';
+import 'package:bluebubbles/services/rustpush/icloud_maintenance.dart';
 import 'package:bluebubbles/services/rustpush/registration_recovery.dart';
 import 'package:async_task/async_task_extension.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/conversation_list.dart';
@@ -1546,7 +1547,8 @@ class RustPushBackend implements BackendService {
       // A transport rebuild must not certify a different payload as the
       // originally journaled send. Live retry behavior remains unchanged.
       if (localCloudIntent != null &&
-          CloudSyncLocalSendIdentity.captureWire(m, chat, rebuilt)?.sourceSha256 !=
+          CloudSyncLocalSendIdentity.captureWire(m, chat, rebuilt,
+              expectedSourceSha256: localCloudIntent!.identity.sourceSha256)?.sourceSha256 !=
               localCloudIntent!.identity.sourceSha256) {
         localCloudIntent = null;
         Logger.warn('Cloud Sync V2 outgoing payload changed during retry; upload intent was not confirmed');
@@ -7260,75 +7262,48 @@ class RustPushService extends GetxService {
   BillingClientManager client = BillingClientManager();
   bool cachedInClique = false;
 
-  static const Duration _initialICloudMaintenanceTimeout =
-      Duration(seconds: 30);
+  final _icloudMaintenance = ICloudMaintenance();
 
   void _startRecurringICloudMaintenance() {
     Timer.periodic(const Duration(days: 1), (timer) async {
       final currentState = state;
-      if (currentState == null) {
-        return;
-      }
-      try {
-        final passwords = currentState.icloudServices?.passwords;
-        if (passwords != null) {
-          await api
-              .syncPasswords(passwords: passwords, conn: currentState.conn)
-              .timeout(_initialICloudMaintenanceTimeout);
-        }
-        if (!ss.settings.cloudSyncingEnabled.value ||
-            !identical(state, currentState)) {
-          return;
-        }
-        Logger.info("Doing scheduled CloudKit sync");
-        await pushService.doCloudKitSync();
-      } catch (e, stackTrace) {
-        Logger.warn("Scheduled CloudKit maintenance failed",
-            error: e, trace: stackTrace);
+      if (currentState != null) {
+        await _runICloudMaintenance(currentState, initial: false);
       }
     });
   }
 
   Future<void> _runInitialICloudMaintenance(
-      api.SharedPushState initializedState) async {
+      api.SharedPushState initializedState) =>
+      _runICloudMaintenance(initializedState, initial: true);
+
+  Future<void> _runICloudMaintenance(
+      api.SharedPushState initializedState, {required bool initial}) {
     final passwords = initializedState.icloudServices?.passwords;
-    if (passwords != null) {
-      try {
-        await api
-            .syncPasswords(passwords: passwords, conn: initializedState.conn)
-            .timeout(_initialICloudMaintenanceTimeout);
-      } catch (e, stackTrace) {
-        Logger.warn("Initial iCloud Passwords sync failed",
-            error: e, trace: stackTrace);
-      }
-    }
-
-    if (!identical(state, initializedState)) {
-      return;
-    }
     final keychain = initializedState.icloudServices?.keychain;
-    if (keychain != null) {
-      try {
-        cachedInClique = await api
-            .isInClique(keychain: keychain)
-            .timeout(_initialICloudMaintenanceTimeout);
-      } catch (e, stackTrace) {
-        cachedInClique = false;
-        Logger.warn("Unable to read initial iCloud clique state",
-            error: e, trace: stackTrace);
-      }
-    }
-
-    if (!identical(state, initializedState) ||
-        !ss.settings.cloudSyncingEnabled.value) {
-      return;
-    }
-    Logger.info("Doing cloudkit sync!");
-    try {
-      await pushService.doCloudKitSync();
-    } catch (e, stackTrace) {
-      Logger.warn("Initial CloudKit sync failed", error: e, trace: stackTrace);
-    }
+    return _icloudMaintenance.run(
+      stateIdentity: initializedState,
+      stillCurrent: () => identical(state, initializedState),
+      syncPasswords: passwords == null
+          ? null
+          : () => api.syncPasswords(
+              passwords: passwords, conn: initializedState.conn),
+      readClique: !initial || keychain == null
+          ? null
+          : () => api.isInClique(keychain: keychain),
+      // The coordinator publishes only a timely result for this same state.
+      // Timeout/error remains unknown and never overwrites a cached success.
+      publishClique: (trusted) => cachedInClique = trusted,
+      syncEnabled: () => ss.settings.cloudSyncingEnabled.value,
+      syncCloudKit: () async {
+        Logger.info(initial
+            ? "Doing cloudkit sync!" : "Doing scheduled CloudKit sync");
+        await pushService.doCloudKitSync();
+      },
+      report: (phase, error, stack) => Logger.warn(
+          "iCloud maintenance $phase incomplete",
+          error: error, trace: stack),
+    );
   }
 
   @override
@@ -7613,8 +7588,8 @@ class RustPushService extends GetxService {
           statePath.isEmpty) {
         return null;
       }
-      final identity = CloudSyncLocalSendIdentity.captureWire(message, chat, wire);
-      if (identity == null) return null;
+      final initialIdentity = CloudSyncLocalSendIdentity.capture(message, chat, wire.id);
+      if (initialIdentity == null) return null;
       final currentState = state;
       final client = currentState?.icloudServices?.cloudMessagesClient;
       if (client == null) return null;
@@ -7642,9 +7617,7 @@ class RustPushService extends GetxService {
         );
       }
       final auth = await captureAuth().timeout(const Duration(seconds: 1));
-      if (auth == null || !stillCurrent() ||
-          CloudSyncLocalSendIdentity.captureWire(message, chat, wire)?.sourceSha256 !=
-              identity.sourceSha256) {
+      if (auth == null || !stillCurrent()) {
         return null;
       }
       final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
@@ -7654,10 +7627,16 @@ class RustPushService extends GetxService {
       if (authoritySnapshot == null || authoritySnapshot.owner != CloudKitWriterOwner.v2) {
         return null;
       }
+      final journal = CloudSyncLocalSendJournal(
+        store: objectBox, authority: authority, authoritySnapshot: authoritySnapshot,
+      );
+      final identity = journal.captureSubmissionWire(
+        message: message, chat: chat, wire: wire,
+        initialSourceSha256: initialIdentity.sourceSha256,
+      );
+      if (identity == null) return null;
       return (
-        journal: CloudSyncLocalSendJournal(
-          store: objectBox, authority: authority, authoritySnapshot: authoritySnapshot,
-        ),
+        journal: journal,
         identity: identity,
         capturedAuth: auth,
         stillCurrent: stillCurrent,

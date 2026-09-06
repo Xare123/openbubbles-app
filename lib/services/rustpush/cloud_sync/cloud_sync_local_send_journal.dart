@@ -20,17 +20,20 @@ final class CloudSyncLocalSendIdentity {
     this._guid,
     this.guidHash,
     this.sourceSha256,
+    this._usesProvisionalOrigin,
   );
 
   final String _guid;
   final String guidHash;
   final String sourceSha256;
+  final bool _usesProvisionalOrigin;
 
   static CloudSyncLocalSendIdentity? capture(
     Message message,
     Chat chat,
-    String stableGuid,
-  ) {
+    String stableGuid, {
+    String? expectedSourceSha256,
+  }) {
     if (!RegExp(
       r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
     ).hasMatch(stableGuid)) {
@@ -99,19 +102,68 @@ final class CloudSyncLocalSendIdentity {
       end += run.range.last;
       if (end > text.length) return null;
     }
+    final provisional = _uuid.hasMatch(chat.guid);
     if (end != text.length ||
-        chat.style != 45 ||
+        (chat.style != 45 && !(provisional && chat.style == null)) ||
         chat.isRpSms ||
         chat.isRoutingStub ||
-        chat.usingHandle?.isNotEmpty != true ||
-        chat.chatIdentifier?.isNotEmpty != true) {
+        chat.usingHandle?.isNotEmpty != true) {
       return null;
     }
     final participants = chat.handles.toList(growable: false);
-    if (participants.length != 1 ||
-        participants.single.service != 'iMessage' ||
-        participants.single.address != chat.chatIdentifier ||
-        chat.guid != 'iMessage;-;${chat.chatIdentifier}') {
+    if (participants.length != 1 || participants.single.service != 'iMessage') {
+      return null;
+    }
+    final recipient = participants.single.address;
+    if (recipient.isEmpty ||
+        (chat.chatIdentifier != recipient &&
+            !(provisional && chat.chatIdentifier == null)) ||
+        (!provisional && chat.guid != 'iMessage;-;$recipient') ||
+        (provisional &&
+            (chat.id == null ||
+                chat.id! <= 0 ||
+                chat.ckRecordId != null ||
+                chat.cloudData != null ||
+                (chat.cloudGuid != null && chat.cloudGuid != chat.guid)))) {
+      return null;
+    }
+
+    // Preserve existing canonical-chat journal hashes byte-for-byte. Only an
+    // explicitly captured provisional origin uses v2. Revalidation after
+    // canonical adoption must select it with the previously persisted hash,
+    // never rewrite the journal to match whatever row happens to exist now.
+    final legacyHash = _digest([
+      'cloud-sync-local-send-source-v1',
+      stableGuid,
+      text,
+      chat.guid,
+      chat.chatIdentifier,
+      chat.usingHandle,
+    ]);
+    final originalChatGuid = provisional ? chat.guid : chat.cloudGuid;
+    final originHash =
+        chat.id != null &&
+            chat.id! > 0 &&
+            _compatibleRoutePrefix(chat.usingHandle!) &&
+            originalChatGuid != null &&
+            _uuid.hasMatch(originalChatGuid)
+        ? _digest([
+            'cloud-sync-local-send-source-v2',
+            stableGuid,
+            text,
+            chat.id,
+            originalChatGuid,
+            recipient,
+            _bareSender(chat.usingHandle!),
+          ])
+        : null;
+    final sourceHash = provisional
+        ? originHash
+        : expectedSourceSha256 != null && expectedSourceSha256 == originHash
+        ? originHash
+        : legacyHash;
+    if (sourceHash == null ||
+        (expectedSourceSha256 != null && expectedSourceSha256 != sourceHash)) {
       return null;
     }
 
@@ -120,19 +172,27 @@ final class CloudSyncLocalSendIdentity {
     return CloudSyncLocalSendIdentity._(
       stableGuid,
       _digest(['cloud-sync-local-send-guid-v1', stableGuid]),
-      _digest([
-        'cloud-sync-local-send-source-v1',
-        stableGuid,
-        text,
-        chat.guid,
-        chat.chatIdentifier,
-        chat.usingHandle,
-      ]),
+      sourceHash,
+      sourceHash == originHash,
     );
   }
 
   static String _digest(Object value) =>
       sha256.convert(utf8.encode(jsonEncode(value))).toString();
+
+  static final _uuid = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+  );
+
+  static String _bareSender(String value) => value.startsWith('mailto:')
+      ? value.substring(7)
+      : value.startsWith('tel:')
+      ? value.substring(4)
+      : value;
+
+  static bool _compatibleRoutePrefix(String value) =>
+      !value.contains(':') ||
+      value.startsWith(value.contains('@') ? 'mailto:' : 'tel:');
 
   /// Validate the actual IDS payload, not only the mutable local model. Wire
   /// construction and retries can await network work while that model changes.
@@ -140,13 +200,23 @@ final class CloudSyncLocalSendIdentity {
   static CloudSyncLocalSendIdentity? captureWire(
     Message message,
     Chat chat,
-    api.MessageInst wire,
-  ) {
-    final identity = capture(message, chat, wire.id);
+    api.MessageInst wire, {
+    String? expectedSourceSha256,
+  }) {
+    final identity = capture(
+      message,
+      chat,
+      wire.id,
+      expectedSourceSha256: expectedSourceSha256,
+    );
     if (identity == null ||
         wire.verificationFailed ||
         wire.target != null ||
-        wire.sender != chat.usingHandle ||
+        (identity._usesProvisionalOrigin
+            ? wire.sender == null ||
+                  !_compatibleRoutePrefix(wire.sender!) ||
+                  _bareSender(wire.sender!) != _bareSender(chat.usingHandle!)
+            : wire.sender != chat.usingHandle) ||
         wire.message is! api.Message_Message) {
       return null;
     }
@@ -181,15 +251,30 @@ final class CloudSyncLocalSendIdentity {
       }
       text.write(part.field0);
     }
-    final recipient = chat.chatIdentifier!;
+    final recipient = chat.handles.single.address;
     final expectedParticipants = [
       '${recipient.contains('@') ? 'mailto' : 'tel'}:$recipient',
       chat.usingHandle!,
     ]..sort();
     final conversation = wire.conversation;
-    final actualParticipants = conversation?.participants.toList()?..sort();
+    var actualParticipants = conversation?.participants.toList()?..sort();
+    if (identity._usesProvisionalOrigin) {
+      if (actualParticipants?.any((value) => !_compatibleRoutePrefix(value)) ==
+          true) {
+        return null;
+      }
+      actualParticipants = actualParticipants?.map(_bareSender).toList()
+        ?..sort();
+      for (var i = 0; i < expectedParticipants.length; i++) {
+        expectedParticipants[i] = _bareSender(expectedParticipants[i]);
+      }
+      expectedParticipants.sort();
+    }
     if (text.toString() != message.text ||
-        conversation?.senderGuid != chat.guid ||
+        (conversation?.senderGuid != chat.guid &&
+            !(identity._usesProvisionalOrigin &&
+                chat.cloudGuid != null &&
+                conversation?.senderGuid == chat.cloudGuid)) ||
         jsonEncode(actualParticipants) != jsonEncode(expectedParticipants)) {
       return null;
     }
@@ -270,6 +355,44 @@ final class CloudSyncLocalSendJournal {
   final Box<Message> _messages;
 
   bool isBoundToStore(Store store) => identical(store, _store);
+
+  /// Recover the original fingerprint for a retry under this exact local
+  /// account/owner. New submissions still need the pre-await fingerprint;
+  /// this read neither invents an intent nor changes its payload or state.
+  CloudSyncLocalSendIdentity? captureSubmissionWire({
+    required Message message,
+    required Chat chat,
+    required api.MessageInst wire,
+    required String initialSourceSha256,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyLocalOwnership();
+    final key = CloudSyncLocalSendIdentity._digest([
+      'cloud-sync-local-send-intent-v1',
+      _binding.scope.accountFingerprint,
+      CloudSyncLocalSendIdentity._digest([
+        'cloud-sync-local-send-guid-v1',
+        wire.id,
+      ]),
+    ]);
+    final query = _intents
+        .query(CloudSyncLocalSendIntentEntity_.intentKey.equals(key))
+        .build();
+    final CloudSyncLocalSendIntentEntity? existing;
+    try {
+      existing = query.findUnique();
+    } finally {
+      query.close();
+    }
+    final expected = existing == null
+        ? initialSourceSha256
+        : _readBoundIntent(existing.id).sourceSha256;
+    return CloudSyncLocalSendIdentity.captureWire(
+      message,
+      chat,
+      wire,
+      expectedSourceSha256: expected,
+    );
+  });
 
   /// A retry may re-use an existing intent, but cannot invent local origin for
   /// a GUID that predated this journal. Only the fresh IDS GUID path may create.
@@ -357,7 +480,12 @@ final class CloudSyncLocalSendJournal {
       final chat = saved?.chat.target;
       final actual = saved == null || chat == null
           ? null
-          : CloudSyncLocalSendIdentity.capture(saved, chat, identity._guid);
+          : CloudSyncLocalSendIdentity.capture(
+              saved,
+              chat,
+              identity._guid,
+              expectedSourceSha256: identity.sourceSha256,
+            );
       if (actual == null ||
           actual.sourceSha256 != identity.sourceSha256 ||
           saved!.guid != identity._guid ||
@@ -497,7 +625,12 @@ final class CloudSyncLocalSendJournal {
       final chat = saved?.chat.target;
       final actual = saved == null || chat == null
           ? null
-          : CloudSyncLocalSendIdentity.capture(saved, chat, identity._guid);
+          : CloudSyncLocalSendIdentity.capture(
+              saved,
+              chat,
+              identity._guid,
+              expectedSourceSha256: identity.sourceSha256,
+            );
       if (actual == null ||
           actual.sourceSha256 != identity.sourceSha256 ||
           (confirmed
@@ -823,7 +956,12 @@ final class CloudSyncLocalSendJournal {
             guid == null ||
             message.stagingGuid != null
         ? null
-        : CloudSyncLocalSendIdentity.capture(message, chat, guid);
+        : CloudSyncLocalSendIdentity.capture(
+            message,
+            chat,
+            guid,
+            expectedSourceSha256: intent.sourceSha256,
+          );
     if (identity == null ||
         identity.guidHash != intent.messageGuidHash ||
         identity.sourceSha256 != intent.sourceSha256) {
