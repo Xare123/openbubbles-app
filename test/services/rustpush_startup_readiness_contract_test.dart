@@ -4,9 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('incoming push readiness excludes optional iCloud maintenance', () {
-    final source = File('lib/services/rustpush/rustpush_service.dart')
-        .readAsStringSync()
-        .replaceAll('\r\n', '\n');
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync().replaceAll('\r\n', '\n');
     final barrierStart = source.indexOf('initFuture = (() async {');
     final barrierEnd = source.indexOf(
       '    })();\n    initSyncState();',
@@ -31,9 +31,9 @@ void main() {
   });
 
   test('incoming pushes wait for native state and database readiness', () {
-    final source = File('lib/services/rustpush/rustpush_service.dart')
-        .readAsStringSync()
-        .replaceAll('\r\n', '\n');
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync().replaceAll('\r\n', '\n');
     final receiveStart = source.indexOf(
       'Future recievedMsgPointer(String pointer, String retry) async {',
     );
@@ -46,14 +46,18 @@ void main() {
     final readinessAwait = receive.indexOf(
       'await waitForRustPushReceiveReadiness<api.SharedPushState>(',
     );
-    final stateBarrier =
-        receive.indexOf('nativeStateReady: initFuture,', readinessAwait);
+    final stateBarrier = receive.indexOf(
+      'nativeStateReady: initFuture,',
+      readinessAwait,
+    );
     final databaseBarrier = receive.indexOf(
       'databaseReady: Database.waitForInit(),',
       readinessAwait,
     );
-    final stateResolver =
-        receive.indexOf('currentState: () => state,', readinessAwait);
+    final stateResolver = receive.indexOf(
+      'currentState: () => state,',
+      readinessAwait,
+    );
     final handle = receive.indexOf('await handleMsg(message);');
     final stateChangeCheck = receive.indexOf(
       'if (!identical(state, initializedState))',
@@ -77,12 +81,12 @@ void main() {
     );
   });
 
-  test('optional startup probes are bounded', () {
-    final source = File('lib/services/rustpush/rustpush_service.dart')
-        .readAsStringSync()
-        .replaceAll('\r\n', '\n');
+  test('startup and recurring probes share the bounded maintenance owner', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync().replaceAll('\r\n', '\n');
     final maintenanceStart = source.indexOf(
-      'Future<void> _runInitialICloudMaintenance(',
+      'final _icloudMaintenance = ICloudMaintenance();',
     );
     final maintenanceEnd = source.indexOf('\n  @override', maintenanceStart);
 
@@ -90,11 +94,28 @@ void main() {
     expect(maintenanceEnd, greaterThan(maintenanceStart));
 
     final maintenance = source.substring(maintenanceStart, maintenanceEnd);
+    // Behavioral deadlines and late-result suppression are exercised by
+    // icloud_maintenance_test.dart. Pin both service callers to that same
+    // owner instead of counting the superseded independent Future.timeouts,
+    // which released Dart ownership while native work was still running.
     expect(
-      '.timeout(_initialICloudMaintenanceTimeout)'
-          .allMatches(maintenance)
-          .length,
-      2,
+      maintenance,
+      contains('_runICloudMaintenance(currentState, initial: false)'),
     );
+    expect(
+      maintenance,
+      contains('_runICloudMaintenance(initializedState, initial: true)'),
+    );
+    expect(maintenance, contains('return _icloudMaintenance.run('));
+    expect(RegExp(r'\bICloudMaintenance\(\)').allMatches(maintenance).length, 1);
+    expect(maintenance, contains('stateIdentity: initializedState,'));
+    expect(
+      maintenance,
+      contains('stillCurrent: () => identical(state, initializedState),'),
+    );
+    expect(maintenance, contains('syncPasswords: passwords == null'));
+    expect(maintenance, contains('readClique: !initial || keychain == null'));
+    expect(maintenance, contains('syncCloudKit: () async {'));
+    expect(maintenance, isNot(contains('.timeout(')));
   });
 }

@@ -46,6 +46,22 @@ continue under a new account.
 
 ### Wi-Fi resume checkpoint
 
+- Full GCE run `34009821113` ended at the Dart suite: 1,847 tests passed,
+  one old startup source-contract test failed because it counted the removed
+  independent timeout calls. Bridge generation and Rust library checking passed;
+  Rust unit suites and APK/signing were skipped. The updated contract checks
+  both callers use the same maintenance owner. All 15 startup-contract plus
+  behavioral maintenance tests passed locally. Cleanup succeeded; independent
+  project-instance and GitHub-runner listings were both empty afterward.
+- Controlled Chat-first qualification needs an exact-intent entry point.
+  The existing manual selector requires a canonical Chat and admits only its
+  Message. The ordinary worker drains all eligible account work before selecting
+  ready intents, so simply enabling it cannot isolate one authorized test.
+  A scoped mode must reject unrelated outbox operations before any reconciliation
+  or save, avoid promoting other intents, and reuse the ordinary Chat-first
+  pipeline. Automatic runtime remains disabled. Combined origin and queue tests
+  independently rerun: 56 passed. Commit `0779c14ac` is pushed to the fork.
+
 - Combined offline coverage exposed a first-submit adoption defect: real
   `markOutboxSubmissionStarted` assigns request/operation UUIDs and unknown
   outcome state without incrementing `attemptCount`. Successful first receipts
@@ -69,7 +85,7 @@ continue under a new account.
   to the user's fork. Full qualification run `34009821113` is dispatched on
   one T2D-60 runner in us-west1-b, Canary, outbound_writer=false. It includes
   the native Chat bridge, Dart integration and rustpush media candidate
-  `a3e7983`. It is not an installed build or completed qualification result.
+  `a3e7983`. It produced no APK; see the failed qualification result above.
 
 - Production worker now drains Chat and Message queues together. It recovers
   and inspects both before any fresh save, reconciles at most one unknown
