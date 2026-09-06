@@ -29,7 +29,8 @@ abstract final class CloudSyncDevGate {
 
   /// Independent rollout gate for the ordinary-send journal consumer. The
   /// existing manual writer flag alone must never start automatic uploads.
-  /// Current release/pilot builds omit this until live qualification passes.
+  /// Release builds omit this. An explicitly authorized Canary qualification
+  /// build may opt in; enabling the worker is not proof of production readiness.
   static const bool localSendRuntimeEnabled = bool.fromEnvironment(
     'OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME',
     defaultValue: false,

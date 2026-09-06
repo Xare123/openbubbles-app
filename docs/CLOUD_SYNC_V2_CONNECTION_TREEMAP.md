@@ -59,9 +59,33 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
 | Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
-| Ongoing sync and account lifecycle | Automatic local-send runtime remains disabled. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence are release gates. |
+| Ongoing sync and account lifecycle | Automatic local-send uploads are user-authorized for the next explicitly opted-in Canary, not enabled on the currently installed APK. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence remain release gates. |
 
 ### Wi-Fi resume checkpoint
+
+- User approved automatic uploads in Canary, including earlier eligible journaled
+  sends. This is CloudKit upload authorization, not permission to send new IDS
+  test texts to additional people; assistant-originated test sends remain limited
+  to the previously approved test destination. The user-unsent test stays excluded.
+  A fresh 110,698,496-byte Canary snapshot passed device-before/device-after/copy
+  SHA-256 equality. Offline inspection found zero journal entries and zero outbox
+  operations, including zero excluded-origin entries. The source was not opened
+  as a database or changed; only the dedicated scratch copy was removed. The
+  private snapshot remains local outside Git/CI. This is point-in-time queue
+  evidence, not an upload or account-readiness claim.
+  The isolated pilot now has `automatic_uploads`, default false, requiring the
+  full Canary writer build. It supplies the existing runtime opt-in and labels
+  producer/signed artifacts with the automatic mode. Alpha/Beta defaults, signing,
+  infrastructure, credentials and cleanup are unchanged. Default gate tests (3),
+  manual-writer gate/runtime tests (10), and automatic-on gate tests (3) pass.
+  The initial attempt to run the manual-only negative test under automatic-on
+  correctly failed its default-off assertion; it remains in manual/default
+  qualification rather than weakening that assertion. The opt-in CI step checks
+  the automatic flags separately. Existing run `34013640516` retains the manual
+  configuration at `070865904285cd4035b24d5ca508e4c8aaf3382a`; it is not canceled
+  or modified mid-run. The next automatic build must pass full qualification and
+  signer/provenance checks before installation. Enabling this worker does not
+  implement attachment, reaction, edit, undo, group or deletion writes.
 
 - Native media qualification is separated into GCE run `34011715096`,
   `rustpush-only`, T2D-60, source
