@@ -720,7 +720,9 @@ class RustPushBackend implements BackendService {
   static const sendTimeoutRetryWait = Duration(seconds: 2);
   static const maxSendTimeoutRetries = 1;
 
-  Future<void> sendMsg(api.MessageInst msg,
+  /// True means native still owns a background send; its SendConfirm event is
+  /// the completion evidence. A successful return alone is not completion.
+  Future<bool> sendMsg(api.MessageInst msg,
       {bool waitForResource = true,
       Future<api.MessageInst> Function()? rebuildForRetry}) async {
     var message = Message.findOne(guid: msg.id);
@@ -775,6 +777,7 @@ class RustPushBackend implements BackendService {
         }
       }
     }
+    return stillRunning;
   }
 
   @override
@@ -1564,8 +1567,9 @@ class RustPushBackend implements BackendService {
       confirmed: false,
       newlyGeneratedGuid: cloudSyncGuidIsNew,
     );
+    var backgroundSendPending = false;
     try {
-      await sendMsg(msg, rebuildForRetry: rebuildWireMessage);
+      backgroundSendPending = await sendMsg(msg, rebuildForRetry: rebuildWireMessage);
     } catch (e) {
       Logger.error(e);
       if (!chat.isRpSms || !ss.settings.isSmsRouter.value) {
@@ -1578,7 +1582,7 @@ class RustPushBackend implements BackendService {
       m.stagingGuid = null;
       m.guid = msg.id;
     }
-    if (localCloudIntent != null) {
+    if (localCloudIntent != null && !backgroundSendPending) {
       // Persist the observed IDS completion before awaiting unrelated
       // forwarding. Alpha and non-journaled sends keep their original order.
       await pushService._saveCloudSyncV2LocalSend(
@@ -5684,6 +5688,12 @@ class RustPushService extends GetxService {
       Logger.info("SendFinished");
       message.sendingServiceId = null;
       message.save(updateSendingServiceId: true);
+      if (push.error == null) {
+        await _confirmCloudSyncV2NativeSend(push.uuid);
+      } else {
+        // A failed background job is never evidence that CloudKit may upload.
+        Logger.warn('Cloud Sync V2 background send failed; intent retained');
+      }
       return;
     }
 
@@ -7725,6 +7735,90 @@ class RustPushService extends GetxService {
     }
   }
 
+  Future<void> _confirmCloudSyncV2NativeSend(String stableGuid) async {
+    if (!CloudKitWriterOwnership.v2MutationsEnabled ||
+        !CloudSyncDevGate.manualOutboundCanaryEnabled ||
+        !_cloudSyncV2CanaryRuntimeAllowed || loggingOut ||
+        _cloudSyncV2OutboundQuiescing || statePath.isEmpty) {
+      return;
+    }
+    final expectedState = state;
+    final client = expectedState?.icloudServices?.cloudMessagesClient;
+    if (client == null) return;
+    final storagePath = statePath;
+    final objectBox = Database.store;
+    bool stillCurrent() => !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+        !objectBox.isClosed() && identical(objectBox, Database.store) &&
+        identical(expectedState, state) && statePath == storagePath &&
+        identical(client, state?.icloudServices?.cloudMessagesClient);
+    Future<CloudSyncNativeAuthSnapshot?> captureAuth() async {
+      if (!stillCurrent()) return null;
+      final metadata = await FrbCloudSyncNativeAuthBinding().capture(
+        cloudMessagesClient: client, privateStorageDirectory: storagePath,
+      ).timeout(const Duration(seconds: 1));
+      if (!stillCurrent()) return null;
+      return CloudSyncNativeAuthSnapshot.fromNative(
+        nativeSessionId: metadata.nativeSessionId,
+        accountFingerprint: metadata.accountFingerprint,
+        protectedStoreIdentity: metadata.protectedStoreIdentity,
+        cloudMessagesClient: client,
+      );
+    }
+    // This is a local keystore identity read, not an Apple request. Failures
+    // before durable confirmation propagate to the existing bounded in-memory
+    // receive retry queue. Only the state-3 journal survives a process restart;
+    // the native event itself does not.
+    final auth = await captureAuth();
+    if (auth == null || !stillCurrent()) return;
+    final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
+    final owner = authority.read(CloudKitWriterScope(accountFingerprint: auth.accountFingerprint));
+    if (owner == null || owner.owner != CloudKitWriterOwner.v2) return;
+    final journal = CloudSyncLocalSendJournal(
+      store: objectBox, authority: authority, authoritySnapshot: owner,
+    );
+    final int? intentId;
+    try {
+      intentId = journal.recordNativeSendConfirmation(
+        stableGuid: stableGuid, succeeded: true, capturedAuth: auth,
+        stillCurrent: stillCurrent, now: DateTime.now().toUtc(),
+      );
+    } on StateError catch (error) {
+      // An edited/deleted source or replaced authority cannot be authorized by
+      // replaying this event. Preserve the intent without obstructing receiving.
+      // Unexpected storage failures and transient identity fences still retry.
+      if (!const <String>{
+        'cloud_sync_local_send_source_changed',
+        'cloud_sync_local_send_origin_missing',
+        'cloud_sync_local_send_intent_changed',
+        'cloud_sync_local_send_owner_changed',
+        'cloud_sync_local_send_auth_changed',
+      }.contains(error.message)) {
+        rethrow;
+      }
+      Logger.warn('Cloud Sync V2 native send confirmation not admitted '
+          'code=${cloudSyncV2SafeFailureCode(error)}');
+      return;
+    }
+    final confirmedIntentId = intentId;
+    if (confirmedIntentId == null) return;
+    try {
+      await CloudSyncLocalSendAuthFence(
+        expected: auth, capture: captureAuth, stillCurrent: stillCurrent,
+      ).run(() {
+        journal.promoteIdsConfirmedDeferred(
+          intentId: confirmedIntentId, currentAuth: auth, now: DateTime.now().toUtc(),
+        );
+      });
+      Logger.info('Cloud Sync V2 native send confirmation journaled');
+    } catch (error) {
+      // State 3 is durable proof of IDS success even if auth/ownership needs
+      // recovery. The normal worker can promote it; never infer state 0.
+      Logger.warn('Cloud Sync V2 IDS success retained; upload authorization deferred '
+          'code=${cloudSyncV2SafeFailureCode(error)}');
+    }
+    _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
+  }
+
   Future<void> _saveCloudSyncV2LocalSend(
     ({CloudSyncLocalSendJournal journal, CloudSyncLocalSendIdentity identity,
       CloudSyncLocalSendAuthFence authFence,
@@ -7766,7 +7860,7 @@ class RustPushService extends GetxService {
           savedWithIntent = true;
         });
       }
-    } catch (_) {
+    } catch (error) {
       if (!savedWithIntent) {
         // Only a rolled-back message/intent transaction needs the fallback.
         // Re-saving after a successful state-3 commit could duplicate the row.
@@ -7779,9 +7873,10 @@ class RustPushService extends GetxService {
         }
         message.save(chat: chat);
       }
-      Logger.warn(savedWithIntent && confirmed
+      final failure = savedWithIntent && confirmed
           ? 'Cloud Sync V2 IDS success retained; upload authorization deferred'
-          : 'Cloud Sync V2 local send intent was not advanced; live sending remains independent');
+          : 'Cloud Sync V2 local send intent was not advanced; live sending remains independent';
+      Logger.warn('$failure code=${cloudSyncV2SafeFailureCode(error)}');
     }
     if (confirmed && savedWithIntent) {
       _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);

@@ -502,6 +502,69 @@ final class CloudSyncLocalSendJournal {
     });
   }
 
+  /// Consume an actual native SendConfirm success, not the early return from
+  /// api.send when its background SendJob is still running. No origin is
+  /// invented: the exact GUID, account, epoch, row and submitted body must all
+  /// match an existing state-0/3 journal entry. Duplicate completed events are
+  /// harmless. Persisted state 3 survives restart; native callbacks themselves
+  /// currently live only in the bounded in-memory receive retry queue.
+  int? recordNativeSendConfirmation({
+    required String stableGuid,
+    required bool succeeded,
+    required CloudSyncNativeAuthSnapshot capturedAuth,
+    required bool Function() stillCurrent,
+    required DateTime now,
+  }) {
+    if (!succeeded || !CloudSyncLocalSendIdentity._uuid.hasMatch(stableGuid)) {
+      return null;
+    }
+    return _store.runInTransaction(TxMode.write, () {
+      _verifyLocalOwnership();
+      final guidHash = CloudSyncLocalSendIdentity._digest([
+        'cloud-sync-local-send-guid-v1', stableGuid,
+      ]);
+      final key = CloudSyncLocalSendIdentity._digest([
+        'cloud-sync-local-send-intent-v1',
+        _binding.scope.accountFingerprint, guidHash,
+      ]);
+      final query = _intents.query(
+        CloudSyncLocalSendIntentEntity_.intentKey.equals(key),
+      ).build();
+      final CloudSyncLocalSendIntentEntity? found;
+      try {
+        found = query.findUnique();
+      } finally {
+        query.close();
+      }
+      if (found == null) return null;
+      final intent = _readBoundIntent(found.id);
+      if (intent.state == 1 || intent.state == 2) return null;
+      final message = _messages.get(intent.localMessageId);
+      final chat = message?.chat.target;
+      if (message == null || chat == null ||
+          (message.guid != stableGuid && message.stagingGuid != stableGuid)) {
+        throw StateError('cloud_sync_local_send_source_changed');
+      }
+      // These are transport bookkeeping, normalized only after explicit native
+      // success. All content/routing eligibility checks remain unchanged.
+      message
+        ..guid = stableGuid
+        ..stagingGuid = null
+        ..sendingServiceId = null;
+      final identity = CloudSyncLocalSendIdentity.capture(
+        message, chat, stableGuid, expectedSourceSha256: intent.sourceSha256,
+      );
+      if (identity == null || identity.guidHash != intent.messageGuidHash) {
+        throw StateError('cloud_sync_local_send_source_changed');
+      }
+      return saveIdsConfirmedDeferredSubmission(
+        identity: identity, capturedAuth: capturedAuth,
+        stillCurrent: stillCurrent,
+        persistMessage: () => _messages.put(message), now: now,
+      );
+    });
+  }
+
   /// Bounded restart recovery for explicit IDS-confirmed/auth-deferred rows.
   /// Awaiting-IDS state 0 is intentionally excluded and cannot be inferred
   /// from the current Message or a stable GUID.

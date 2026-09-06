@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -11,6 +12,7 @@ void main() {
   test('inspect upload queue and an explicitly excluded origin', () async {
     final source = Platform.environment['OPENBUBBLES_OBJECTBOX_INSPECT_DIR'];
     final excluded = Platform.environment['OPENBUBBLES_EXCLUDED_MESSAGE_GUID'];
+    final testText = Platform.environment['OPENBUBBLES_TEST_MESSAGE_TEXT'];
     expect(source, isNotNull);
     expect(excluded, matches(RegExp(r'^[0-9a-fA-F-]{36}$')));
     final file = File('$source/data.mdb');
@@ -25,6 +27,15 @@ void main() {
         final intents = store!.box<CloudSyncLocalSendIntentEntity>().getAll();
         final outbox = store.box<CloudOutboxOperationEntity>().getAll();
         final authorities = store.box<CloudKitWriterAuthorityEntity>().getAll();
+        final testMessages = <Message>[];
+        if (testText != null && testText.isNotEmpty) {
+          final query = store.box<Message>().query(Message_.text.equals(testText)).build();
+          try {
+            testMessages.addAll(query.find());
+          } finally {
+            query.close();
+          }
+        }
         final authorityStates = <String, int>{};
         for (final authority in authorities) {
           // Integer enums only. Do not expose account identifiers or permits.
@@ -66,6 +77,25 @@ void main() {
               .where((o) => !knownOperations.contains(o.operationId))
               .length,
           'missingOrDeletedJournalSources': missingOrDeletedSources,
+          if (testText != null) 'testMessageCount': testMessages.length,
+          if (testText != null) 'testMessageStates': [
+            for (final message in testMessages) {
+              'error': message.error,
+              'pendingGuid': message.stagingGuid != null,
+              'cloudMapped': message.ckRecordId != null,
+              'chatLinked': message.chat.targetId != 0,
+              'sendingServiceAssigned': message.sendingServiceId != null,
+              'deleted': message.dateDeleted != null,
+              'metadataPresent': message.metadata != null,
+              'forwarded': message.hasBeenForwarded,
+              'bodyCount': message.attributedBody.length,
+              'hasAttachments': message.hasAttachments,
+              'journalSourceStillMatches': intents.any((intent) =>
+                  intent.localMessageId == message.id && message.chat.target != null &&
+                  CloudSyncLocalSendIdentity.capture(message, message.chat.target!,
+                    message.guid ?? '', expectedSourceSha256: intent.sourceSha256) != null),
+            },
+          ],
           'excludedOriginJournalCount': excludedIntents.length,
           'excludedOriginAdoptedCount': excludedIntents
               .where((i) => i.admittedOperationId != null)

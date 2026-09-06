@@ -64,6 +64,104 @@ void main() {
     provisionJournal();
   }
 
+  Message awaitingNativeConfirmation({bool reflected = true}) {
+    final message = _message(chat: chat, stagingGuid: _guidA);
+    final identity = _identity(message, chat, _guidA);
+    journal.saveSubmission(
+      identity: identity, newlyGeneratedGuid: true,
+      persistMessage: () => store.box<Message>().put(message), now: _time(2),
+    );
+    message.sendingServiceId = 'synthetic-native-send';
+    if (reflected) {
+      message..guid = _guidA..stagingGuid = null;
+    }
+    store.box<Message>().put(message);
+    return message;
+  }
+
+  int? confirmNative({String guid = _guidA, bool succeeded = true,
+      bool current = true, CloudSyncNativeAuthSnapshot? auth}) =>
+      journal.recordNativeSendConfirmation(
+        stableGuid: guid, succeeded: succeeded,
+        capturedAuth: auth ?? _auth(Object()), stillCurrent: () => current,
+        now: _time(4),
+      );
+
+  test('background send return is not confirmation; native success records proof', () {
+    final message = awaitingNativeConfirmation();
+    expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+    expect(journal.readReady(), isEmpty);
+    final id = confirmNative()!;
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(id)!.state, 3);
+    expect(store.box<Message>().get(message.id!)!.sendingServiceId, isNull);
+    expect(journal.readReady(), isEmpty, reason: 'Fresh auth is still required');
+    journal.promoteIdsConfirmedDeferred(
+      intentId: id, currentAuth: _auth(Object()), now: _time(5),
+    );
+    expect(journal.readReady(), hasLength(1));
+  });
+
+  test('native confirmation can beat foreground GUID normalization', () {
+    final message = awaitingNativeConfirmation(reflected: false);
+    final id = confirmNative()!;
+    final saved = store.box<Message>().get(message.id!)!;
+    expect(saved.guid, _guidA);
+    expect(saved.stagingGuid, isNull);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(id)!.state, 3);
+  });
+
+  test('native failure does not authorize, mutate or clear the pending send', () {
+    final message = awaitingNativeConfirmation();
+    expect(confirmNative(succeeded: false), isNull);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+    expect(store.box<Message>().get(message.id!)!.sendingServiceId, isNotNull);
+  });
+
+  test('unmatched native GUID never invents an origin', () {
+    awaitingNativeConfirmation();
+    expect(confirmNative(guid: _guidB), isNull);
+    expect(confirmNative(guid: 'not-a-guid'), isNull);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+  });
+
+  test('native event replays after restart without an in-memory send map', () async {
+    awaitingNativeConfirmation();
+    await reopen();
+    final id = confirmNative()!;
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(id)!.state, 3);
+    expect(confirmNative(), id);
+    journal.promoteIdsConfirmedDeferred(
+      intentId: id, currentAuth: _auth(Object()), now: _time(5),
+    );
+    expect(confirmNative(), isNull);
+    expect(journal.readReady(), hasLength(1));
+  });
+
+  test('edited source rejects native confirmation and rolls back normalization', () {
+    final message = awaitingNativeConfirmation();
+    message.text = 'changed after submission';
+    store.box<Message>().put(message);
+    expect(() => confirmNative(), throwsStateError);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+    expect(store.box<Message>().get(message.id!)!.sendingServiceId, isNotNull);
+  });
+
+  test('deleted source cannot be revived by native confirmation', () {
+    final message = awaitingNativeConfirmation();
+    message.dateDeleted = _time(3);
+    store.box<Message>().put(message);
+    expect(() => confirmNative(), throwsStateError);
+    expect(store.box<Message>().get(message.id!)!.dateDeleted?.toUtc(), _time(3));
+    expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+  });
+
+  test('identity change cannot commit native success or update message flags', () {
+    final message = awaitingNativeConfirmation();
+    expect(() => confirmNative(current: false), throwsStateError);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+    expect(store.box<Message>().get(message.id!)!.sendingServiceId, isNotNull);
+  });
+
   CloudSyncLocalSendIntentEntity saveDeferredIdsSuccess({
     CloudSyncNativeAuthSnapshot? capturedAuth,
     String stableGuid = _guidA,

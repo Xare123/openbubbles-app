@@ -55,11 +55,63 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | --- | --- |
 | Message history and conversation projection | User has observed restored readable chats; sustained incremental/restart behavior must be qualified on the release candidate. |
 | Photos, video, GIF and documents | Photos and video playback are now user-confirmed. Gallery photo auto-download is repaired locally; installed-device proof remains. GIF byte-size mismatch remains unresolved and is explicitly deferred by the user; GIF attachments are preserved, not deleted or hidden. Each media surface/type still needs user-facing validation, not metadata-only success. |
-| Chat-first ordinary text writing | Implemented behind rollout gates, combined offline tests pass. Exact-recipient live save/readback and ordinary-runtime qualification remain. |
+| Chat-first ordinary text writing | Native asynchronous completion handoff repaired locally after a real send stayed state 0 despite delivery; combined focused checks pass. Installed candidate and exact-recipient automatic save/readback qualification remain. |
 | Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
 | Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
-| Ongoing sync and account lifecycle | Missing automatic writer setup is repaired and installed in `463a19881`, with full CI passing; fresh foreground setup and automatic save/readback are still unverified. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence remain release gates. |
+| Ongoing sync and account lifecycle | Missing automatic writer setup is repaired and installed in `463a19881`; fresh logs and a stable database now prove V2 ownership and worker readiness. Automatic save/readback remains unverified. Native send callbacks have a pre-journal process-death gap. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence remain release gates. |
+
+### Ordinary-send completion investigation
+
+```text
+mounted New Conversation composer
+  -> frozen draft snapshot before navigation [local repair; real widget tested]
+  -> destination controller + mutable conversion copy
+  -> origin journal state 0 before IDS submission
+  -> native api.send
+       false: synchronous send completion -> deferred proof
+       true: background SendJob pending; NOT completion
+          -> SendConfirm(error == null) -> exact existing origin/source match
+          -> journal state 3 (durable IDS success)
+          -> fresh account/store/ownership authorization -> state 1
+          -> existing outbox admission and writer -> remote readback [live pending]
+       SendConfirm(error != null): no proof, no upload
+```
+
+- Fresh installed `463a19881` logs prove `automatic writer ready`. The stable
+  capture has one V2 authority. A new-composer test navigated away without a
+  saved message or intent; an existing-composer test sent and received delivery
+  plus `SendFinished`, but the durable intent stayed state 0 and outbox count 0.
+  The offline inspector confirms the source still matches the submitted
+  identity. This is a completion-handoff failure, not proof of bad credentials.
+- `rust/src/api/api.rs::send` returns true while its background job runs. The
+  Dart wrapper previously discarded that distinction and the `SendConfirm`
+  handler only cleared UI transport bookkeeping. Local code now waits for the
+  actual successful event, binds the exact existing account/epoch/GUID/source,
+  records state 3, then separately reacquires upload authorization. Failure,
+  edits, deletion, changed identity and duplicate callbacks cannot invent origin
+  or authorize an unrelated payload. Fixed rejection codes expose the reason
+  without message text. This does not retroactively promote old state-0 rows.
+- Parent-reviewed composer repair captures the actual mounted editor rather
+  than the stale fallback controller. Formatting, replies and attachment
+  selection survive navigation. Snapshot runs remain frozen, but downstream
+  conversion gets a mutable copy because `Message.attributedBodyToMessagePart`
+  sorts them in place. Eight new composer checks cover this boundary.
+- 118 combined journal/runtime/diagnostic/composer/receive checks pass locally.
+  This includes eight new journal cases and three structural cross-language
+  handoff checks. A test-only local-vs-UTC assertion and nullable closure compile
+  error were corrected before the passing run. No new APK has qualified these
+  repairs yet, and automatic CloudKit save/readback is not passed.
+- Important recovery limit: `rust/src/native.rs::QUEUED_MESSAGES` is an in-memory
+  map with five retries at 30-second intervals, not a durable queue. If the
+  process dies before the native success reaches state 3, the old state-0 row
+  remains safely non-uploadable. Durable native completion or a separately
+  proven reconciliation path is still needed for that crash window. Never
+  recover it by assuming a stable GUID or delivery flag proves IDS success.
+- Two hash-qualified private ObjectBox snapshots and an aggregate findings
+  report are retained outside the repository under `device-evidence/20260906-auto-writer-check`.
+  Neither snapshot was changed. No deleted/unsent origin was admitted, no Alpha
+  data was touched, and no private message contents were placed in this document.
 
 ### Wi-Fi resume checkpoint
 
