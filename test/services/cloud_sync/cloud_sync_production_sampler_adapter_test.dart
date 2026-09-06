@@ -16,6 +16,99 @@ import 'package:universal_io/io.dart';
 import 'cloud_sync_test_helpers.dart';
 
 void main() {
+  test(
+    'exact production selection stays pinned and never enables runtime',
+    () async {
+      var clientReads = 0;
+      final adapter = CloudSyncProductionLocalSendAdapter(
+        readActiveClient: () {
+          clientReads++;
+          return null;
+        },
+        privateStorageDirectory: 'unused-gated-path',
+        stillCurrent: () => false,
+      );
+      Future<void> select() async => adapter.runExactIntent(
+        intentId: 42,
+        expectedRecipient: 'selected@example.invalid',
+        expectedSourceSha256: 'a' * 64,
+      );
+      await expectLater(select(), throwsStateError);
+      await expectLater(select(), throwsStateError);
+      for (final changed in [
+        (43, 'selected@example.invalid', 'a' * 64),
+        (42, 'other@example.invalid', 'a' * 64),
+        (42, 'selected@example.invalid', 'b' * 64),
+      ]) {
+        expect(
+          () => adapter.runExactIntent(
+            intentId: changed.$1,
+            expectedRecipient: changed.$2,
+            expectedSourceSha256: changed.$3,
+          ),
+          throwsStateError,
+        );
+      }
+      expect(() => adapter.runOnce(), throwsStateError);
+      expect(clientReads, 0);
+    },
+  );
+
+  test(
+    'production exact seam preserves gates, whole-outbox checks and Chat-first admission',
+    () {
+      final file = File(
+        'lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart',
+      ).readAsStringSync();
+      final adapter = file.substring(
+        file.indexOf('final class CloudSyncProductionLocalSendAdapter'),
+        file.indexOf('final class CloudSyncProductionOutboundCanaryAdapter'),
+      );
+      expect(adapter, contains('!CloudKitWriterOwnership.v2MutationsEnabled'));
+      expect(
+        adapter,
+        contains('!CloudSyncDevGate.manualOutboundCanaryEnabled'),
+      );
+      expect(
+        adapter,
+        contains(
+          '(selection == null && !CloudSyncDevGate.localSendRuntimeEnabled)',
+        ),
+      );
+      expect(adapter, contains('owner.owner != CloudKitWriterOwner.v2'));
+      expect(adapter, contains('selection?.validate('));
+      expect(adapter, contains('validateAccount: validateSelection'));
+      expect(
+        adapter,
+        contains(
+          'reconcile: (op) async {\n            if (selection != null) await validateSelection();',
+        ),
+      );
+      expect(
+        adapter,
+        contains(
+          'flush: (target) async {\n          if (selection != null) await validateSelection();',
+        ),
+      );
+      expect(adapter, contains('intentId: source.intentId, currentAuth: auth'));
+      expect(
+        adapter.indexOf('chatAdmission.admitChat('),
+        lessThan(adapter.indexOf('admission.admitLocalSend(')),
+      );
+      expect(adapter, isNot(contains('admission.admitMessage(')));
+      final consumer = File(
+        'lib/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart',
+      ).readAsStringSync();
+      final exact = consumer.substring(
+        consumer.indexOf(
+          'Future<CloudSyncLocalSendConsumerResult> runExactIntent',
+        ),
+      );
+      expect(exact, isNot(contains('.readReady(')));
+      expect(exact, isNot(contains('.markAdmissionConsidered(')));
+    },
+  );
+
   late Directory temporaryDirectory;
   late CloudKitOperationInterlock interlock;
 
@@ -173,7 +266,7 @@ void main() {
             isA<CloudSyncFailure>().having(
               (failure) => failure.safeCode,
               'safeCode',
-            'server_mapping_changed',
+              'server_mapping_changed',
             ),
           ),
         );

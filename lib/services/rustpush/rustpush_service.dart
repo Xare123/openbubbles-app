@@ -35,6 +35,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_produc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_sync_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_runtime.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
@@ -1984,6 +1985,26 @@ enum CloudSyncV2PcsPreparationOutcome {
   alreadyReady,
   joined,
   cancelled,
+}
+
+/// Opaque, short-lived approval for one existing journaled send. Constructed
+/// only after local account/owner/source checks; it grants no writer authority.
+final class CloudSyncExactIntentCanarySelection {
+  CloudSyncExactIntentCanarySelection._({
+    required this.intentId,
+    required this.guidHash,
+    required this.createdAtUtc,
+    required this._stillCurrent,
+    required this._runPass,
+  }) : _expires = DateTime.now().add(const Duration(minutes: 4));
+
+  final int intentId;
+  final String guidHash;
+  final DateTime createdAtUtc;
+  final bool Function() _stillCurrent;
+  final Future<CloudSyncLocalSendConsumerResult> Function() _runPass;
+  final DateTime _expires;
+  bool _consumed = false;
 }
 
 class RustPushService extends GetxService {
@@ -7503,7 +7524,7 @@ class RustPushService extends GetxService {
   CloudSyncOutboundCanaryConfirmation? _cloudSyncV2OutboundConfirmation;
   Future<CloudKitV2WriterProvisioningResult>?
       _cloudSyncV2OutboundProvisioningInFlight;
-  Future<CloudSyncOutboundCanaryReport>? _cloudSyncV2OutboundInFlight;
+  Future<Object?>? _cloudSyncV2OutboundInFlight;
   bool _cloudSyncV2OutboundQuiescing = false;
   static const _cloudSyncV2SemanticPullQuiescenceTimeout =
       Duration(seconds: 50);
@@ -8298,6 +8319,116 @@ class RustPushService extends GetxService {
     } catch (_) {
       throw StateError('cloud_sync_outbound_candidate_selection_failed');
     }
+  }
+
+  /// No historical Message scan or send is performed. Only the newest origin
+  /// already journaled under this owner can be selected; no older fallback.
+  Future<CloudSyncExactIntentCanarySelection?>
+      selectCloudSyncV2ExactIntent({required String expectedRecipient}) async {
+    if (!cloudSyncV2ManualOutboundAvailable ||
+        CloudSyncDevGate.localSendRuntimeEnabled) {
+      throw StateError('cloud_sync_outbound_canary_unavailable');
+    }
+    final expectedState = state;
+    final expectedClient = state?.icloudServices?.cloudMessagesClient;
+    final expectedStorage = statePath;
+    final objectBox = Database.store;
+    bool stillCurrent() => !_serviceClosing && !loggingOut &&
+        !_cloudSyncV2OutboundQuiescing && _cloudSyncV2DeveloperRuntimeAllowed &&
+        identical(expectedState, state) && statePath == expectedStorage &&
+        identical(expectedClient, state?.icloudServices?.cloudMessagesClient) &&
+        identical(objectBox, Database.store) && !objectBox.isClosed() &&
+        !ss.settings.cloudSyncingEnabled.value && isSyncing.value == null;
+    final provider = CloudSyncProductionAuthSnapshotProvider(
+      readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+      nativeAuthBinding: FrbCloudSyncNativeAuthBinding(),
+      privateStorageDirectory: expectedStorage,
+    );
+    final auth = await provider.capture();
+    if (auth == null || !stillCurrent()) {
+      throw StateError('cloud_sync_local_send_identity_changed');
+    }
+    final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
+    final writerScope = CloudKitWriterScope(accountFingerprint: auth.accountFingerprint);
+    final owner = authority.read(writerScope);
+    if (owner == null || owner.owner != CloudKitWriterOwner.v2) {
+      throw StateError('cloud_sync_local_send_owner_required');
+    }
+    final journal = CloudSyncLocalSendJournal(
+      store: objectBox, authority: authority, authoritySnapshot: owner,
+    );
+    final query = objectBox.box<CloudSyncLocalSendIntentEntity>().query(
+      CloudSyncLocalSendIntentEntity_.accountFingerprint.equals(auth.accountFingerprint)
+          .and(CloudSyncLocalSendIntentEntity_.writerEpoch.equals(owner.epoch)),
+    ).order(CloudSyncLocalSendIntentEntity_.createdAtMs, flags: Order.descending)
+        .order(CloudSyncLocalSendIntentEntity_.id, flags: Order.descending)
+        .build()..limit = 1;
+    late final CloudSyncLocalSendIntentEntity? candidate;
+    try {
+      candidate = query.findFirst();
+    } finally {
+      query.close();
+    }
+    if (candidate == null) return null;
+    final source = journal.readExactIntent(
+      intentId: candidate.id,
+      expectedRecipient: expectedRecipient,
+      expectedSourceSha256: candidate.sourceSha256,
+    );
+    bool boundCurrent() => stillCurrent() &&
+        authority.read(writerScope)?.epoch == owner.epoch;
+    final adapter = CloudSyncProductionLocalSendAdapter(
+      readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+      privateStorageDirectory: expectedStorage,
+      stillCurrent: boundCurrent,
+    );
+    return CloudSyncExactIntentCanarySelection._(
+      intentId: source.intentId, guidHash: source.messageGuidHash,
+      createdAtUtc: source.createdAtUtc, stillCurrent: boundCurrent,
+      runPass: () => adapter.runExactIntent(
+        intentId: source.intentId, expectedRecipient: expectedRecipient,
+        expectedSourceSha256: source.sourceSha256,
+      ),
+    );
+  }
+
+  /// One explicitly confirmed pass, plus at most one dependency read and pass.
+  /// The existing outbound lifetime protects account teardown through both.
+  Future<CloudSyncLocalSendConsumerResult>
+      runCloudSyncV2ExactIntentConfirmed(CloudSyncExactIntentCanarySelection selection) {
+    if (!cloudSyncV2ManualOutboundAvailable ||
+        CloudSyncDevGate.localSendRuntimeEnabled || selection._consumed ||
+        DateTime.now().isAfter(selection._expires) || !selection._stillCurrent()) {
+      throw StateError('cloud_sync_outbound_canary_confirmation_invalid');
+    }
+    selection._consumed = true;
+    void validate() {
+      if (!selection._stillCurrent() || _cloudSyncV2SemanticPullInFlight != null ||
+          _cloudSyncV2OutboundConfirmation != null ||
+          _cloudSyncV2OutboundProvisioningInFlight != null) {
+        throw StateError('cloud_sync_local_send_identity_changed');
+      }
+    }
+    final future = () async {
+      final first = await _cloudSyncV2AttachmentGate.run(
+        validate: validate, action: selection._runPass,
+      );
+      if (!first.chatReadbackPending || first.outboxBlocked) return first;
+      validate();
+      // No writer/interlock/attachment lock survives runPass. The actual
+      // semantic gateway, not a save receipt, establishes Chat ownership.
+      await runCloudSyncV2ManualSemanticPullConfirmed(maximumPasses: 1);
+      validate();
+      return _cloudSyncV2AttachmentGate.run(
+        validate: validate, action: selection._runPass,
+      );
+    }();
+    _cloudSyncV2OutboundInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_cloudSyncV2OutboundInFlight, future)) {
+        _cloudSyncV2OutboundInFlight = null;
+      }
+    });
   }
 
   Future<List<String>> _readCloudSyncV2ActiveHandles() async {

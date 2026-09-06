@@ -54,7 +54,7 @@ final class ObjectBoxCloudSyncPreflightReader {
           objectBoxReady: true,
           coordinatorLeaseActive: query.findFirst() != null,
           outboxCount: rows.length,
-          settledOutboxFingerprint: _settledFingerprint(rows),
+          settledOutboxFingerprint: settledAuditFingerprint(rows),
         );
       } finally {
         query.close();
@@ -66,7 +66,9 @@ final class ObjectBoxCloudSyncPreflightReader {
   // writer owns receipt validation. Retaining its completed audit rows must
   // not prevent subsequent reads, but unacknowledged receipts, uncertain
   // outcomes, malformed states, and every non-confirmed row still block.
-  static String? _settledFingerprint(List<CloudOutboxOperationEntity> rows) {
+  /// Content-free local-quiescence proof for retained audit rows. It is not
+  /// remote ownership evidence and must never authorize submission or replay.
+  static String? settledAuditFingerprint(List<CloudOutboxOperationEntity> rows) {
     if (rows.isEmpty) return null;
     for (final row in rows) {
       if (row.state != 2 ||
@@ -116,6 +118,7 @@ final class ObjectBoxCloudSyncPreflightReader {
                   row.payloadVersion,
                   row.mutationRevision,
                   row.checkpointGeneration,
+                  row.localChatOrigin,
                   row.appleRequestUuid,
                   row.appleOperationUuid,
                   row.encryptedPayloadRef,

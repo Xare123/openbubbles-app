@@ -7,6 +7,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_selection.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_origin.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_admission.dart';
@@ -144,7 +145,20 @@ void main() {
     });
   }
 
-  for (final mutation in ['none', 'account', 'route']) {
+  for (final mutation in [
+    'none',
+    'shared Chat',
+    'account',
+    'route',
+    'recipient',
+    'original GUID',
+    'origin',
+    'generation',
+    'map',
+    'payload',
+    'foreign Chat',
+    'foreign Message',
+  ]) {
     test(
       'offline first Chat receipt -> gateway -> original v2 Message ($mutation)',
       () async {
@@ -232,6 +246,22 @@ void main() {
         );
         final transport = _CombinedStaging();
         final source = journal.readForAdmission(intentId);
+        CloudSyncLocalSendExactSelection newSelection() =>
+            CloudSyncLocalSendExactSelection(
+              intentId: intentId,
+              expectedRecipient: _recipient,
+              expectedSourceSha256: identity.sourceSha256,
+            );
+        var selection = newSelection();
+        Future<void> validateSelected() => fence.run(() {
+          selection.validate(
+            store: db,
+            journal: journal,
+            durable: sync,
+            scope: _scope('messageManateeZone'),
+          );
+        });
+        await validateSelected();
         final operation =
             await CloudSyncOutboundChatAdmissionCoordinator(
               store: sync,
@@ -240,7 +270,9 @@ void main() {
             ).admitChat(
               _scope(),
               chatId: chatId,
-              createdAt: _now,
+              createdAt: mutation == 'shared Chat'
+                  ? _now.subtract(const Duration(days: 1))
+                  : _now,
               authFence: fence,
               encode: (_) => _FakeChat(),
               validateLocalOrigin: () {
@@ -258,6 +290,7 @@ void main() {
               },
             );
         expect(transport.stages, 1);
+        await validateSelected();
         const submissionLease = 'synthetic-combined-submission';
         final leased = await sync.leaseEligibleOutbox(
           _scope(),
@@ -297,19 +330,26 @@ void main() {
         expect(db.box<CloudSemanticSnapshotEntity>().count(), 0);
         await restart();
         bindJournal();
+        selection = newSelection();
+        // Durable same-Chat recovery must accept even settled work allocated
+        // for an earlier intent, without relying on process-local selection.
+        await validateSelected();
 
-        Future<CloudOutboxOperation> admitMessage() =>
-            CloudSyncOutboundAdmissionCoordinator(
-              store: sync,
-              transport: transport,
-              ensureProtectedStoreRecovered: () async {},
-            ).admitLocalSend(
-              _scope('messageManateeZone'),
-              intentId: intentId,
-              journal: journal,
-              authFence: fence,
-              encodeMessage: _CombinedMessage.new,
-            );
+        Future<CloudOutboxOperation> admitMessage() async {
+          await validateSelected();
+          return CloudSyncOutboundAdmissionCoordinator(
+            store: sync,
+            transport: transport,
+            ensureProtectedStoreRecovered: () async {},
+          ).admitLocalSend(
+            _scope('messageManateeZone'),
+            intentId: intentId,
+            journal: journal,
+            authFence: fence,
+            encodeMessage: _CombinedMessage.new,
+          );
+        }
+
         // Receipt alone must not admit a Message before canonical ownership exists.
         await expectLater(
           admitMessage(),
@@ -401,6 +441,8 @@ void main() {
         expect(db.box<CloudSemanticSnapshotEntity>().count(), 1);
         await restart();
         bindJournal();
+        selection = newSelection();
+        await validateSelected();
         expect(
           journal.readForAdmission(intentId).sourceSha256,
           identity.sourceSha256,
@@ -412,12 +454,62 @@ void main() {
               ..usingHandle = 'mailto:other@example.invalid',
           );
         }
-        if (mutation != 'none') {
-          await expectLater(admitMessage(), throwsStateError);
+        if (mutation == 'recipient') {
+          db.box<Handle>().put(
+            db.box<Chat>().get(chatId)!.handles.single
+              ..address = 'other@example.invalid',
+          );
+        }
+        if (mutation == 'original GUID') {
+          db.box<Chat>().put(
+            db.box<Chat>().get(chatId)!
+              ..cloudGuid = 'EEEEEEEE-EEEE-4EEE-8EEE-EEEEEEEEEEEE',
+          );
+        }
+        if (mutation == 'origin') {
+          db.box<CloudOutboxOperationEntity>().put(
+            outbox()..localChatOrigin = null,
+          );
+        }
+        if (mutation == 'generation') {
+          db.box<CloudOutboxOperationEntity>().put(
+            outbox()..checkpointGeneration = 2,
+          );
+        }
+        if (mutation == 'payload') {
+          db.box<CloudOutboxOperationEntity>().put(
+            outbox()..payloadSha256 = 'e' * 64,
+          );
+        }
+        if (mutation == 'map') {
+          db.box<CloudRecordMapEntity>().put(
+            recordMap()..serverRecordIdHash = 'X' * 43,
+          );
+        }
+        if (mutation == 'foreign Chat' || mutation == 'foreign Message') {
+          final foreign = outbox()
+            ..id = 0
+            ..operationId = 'F' * 43;
+          if (mutation == 'foreign Message') {
+            foreign.zone = 'messageManateeZone';
+          }
+          db.box<CloudOutboxOperationEntity>().put(foreign);
+        }
+        if (mutation != 'none' && mutation != 'shared Chat') {
+          await expectLater(
+            admitMessage(),
+            throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())),
+          );
           expect(transport.messageStages, 0);
-          expect(db.box<CloudOutboxOperationEntity>().count(), 1);
+          expect(
+            db.box<CloudOutboxOperationEntity>().count(),
+            mutation.startsWith('foreign') ? 2 : 1,
+          );
         } else {
           final messageOperation = await admitMessage();
+          await validateSelected();
+          final retried = await admitMessage();
+          expect(retried.operationId, messageOperation.operationId);
           expect(transport.messageStages, 1);
           expect(messageOperation.scope, _scope('messageManateeZone'));
           expect(

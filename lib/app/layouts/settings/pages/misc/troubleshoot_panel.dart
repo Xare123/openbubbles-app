@@ -456,6 +456,61 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
     }
   }
 
+  Future<void> _runCloudSyncV2ExactIntentCanary() async {
+    if (cloudSyncV2Running.value) return;
+    if (!pushService.cloudSyncV2ManualOutboundAvailable ||
+        CloudSyncDevGate.localSendRuntimeEnabled) {
+      showSnackbar('CloudKit Write Test Unavailable',
+          'Use the isolated manual-writer Canary with automatic uploads off. Finish setup, enable Developer Mode, turn off legacy sync, and wait for active work to finish.');
+      return;
+    }
+    cloudSyncV2Running.value = true;
+    try {
+      final recipient = await _requestCloudSyncV2OutboundRecipient();
+      if (recipient == null) return;
+      if (!await _confirmCloudSyncV2Outbound(
+        title: 'Prepare one journaled-send test?',
+        message: 'Expected recipient: $recipient. Preparation changes local V2 writer ownership if needed, but performs no CloudKit upload. The test can only select the newest send already captured in the V2 journal. If none exists, send a fresh ordinary text to this recipient and return here. No older-message fallback or general uploads.',
+        confirmLabel: 'Prepare Test',
+      )) {
+        return;
+      }
+      await pushService.prepareCloudSyncV2OutboundWriter();
+      final selection = await pushService.selectCloudSyncV2ExactIntent(
+        expectedRecipient: recipient,
+      );
+      if (selection == null) {
+        showSnackbar('No Journaled Send Yet',
+            'Send a fresh ordinary iMessage text to the selected recipient, then return to this test. Nothing was uploaded.');
+        return;
+      }
+      if (!await _confirmCloudSyncV2Outbound(
+        title: 'Test this one send through CloudKit?',
+        message: 'Recipient: $recipient. Message hash ${selection.guidHash}, created ${selection.createdAtUtc.toIso8601String()}. This may create its Chat if missing, read it back, then create this one Message. Unrelated queued work blocks the test. No deletes or general automatic uploads. An uncertain result is retained for exact recovery.',
+        confirmLabel: 'Run One Send',
+      )) {
+        return;
+      }
+      final result = await pushService.runCloudSyncV2ExactIntentConfirmed(selection);
+      showSnackbar(
+        result.outboxBlocked || result.chatReadbackPending
+            ? 'CloudKit Test Needs More Evidence' : 'CloudKit Test Pass Finished',
+        'Message admissions: ${result.admitted}; deferred: ${result.deferred}. '
+        '${result.outboxBlocked ? 'An unresolved outbox outcome blocks further writes. ' : ''}'
+        '${result.chatReadbackPending ? 'Chat projection is still pending. ' : ''}'
+        'A completed pass alone does not prove cross-device sync. No unrelated message was selected.',
+      );
+    } catch (error) {
+      if (_showCloudSyncV2Busy(error)) return;
+      final code = cloudSyncV2SafeFailureCode(error);
+      Logger.warn('CloudKit exact-intent test stopped code=$code');
+      showSnackbar('CloudKit Test Stopped Safely',
+          'Diagnostic code: $code. Existing work is retained. A missing journal requires a fresh send after preparation; do not clear chats or retry general uploads.');
+    } finally {
+      cloudSyncV2Running.value = false;
+    }
+  }
+
   Future<void> _runCloudSyncV2OutboundCanary() async {
     if (cloudSyncV2Running.value) return;
     if (!pushService.cloudSyncV2ManualOutboundAvailable) {
@@ -1075,6 +1130,22 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                               cloudSyncV2Running.value = false;
                             }
                           },
+                        )),
+                      if (CloudSyncDevGate.manualOutboundCanaryEnabled &&
+                          !CloudSyncDevGate.localSendRuntimeEnabled && Platform.isAndroid)
+                        Obx(() => SettingsTile(
+                          leading: const SettingsLeadingIcon(
+                            iosIcon: CupertinoIcons.cloud_upload,
+                            materialIcon: Icons.cloud_upload_outlined,
+                            containerColor: Colors.deepOrange,
+                          ),
+                          title: 'Test One Journaled Send (Chat + Message)',
+                          subtitle: 'Two confirmations. Reuses the ordinary-send worker for one exact recipient and origin. No general uploads or deletes.',
+                          trailing: cloudSyncV2Running.value
+                              ? const SizedBox(width: 20, height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 3))
+                              : const NextButton(),
+                          onTap: _runCloudSyncV2ExactIntentCanary,
                         )),
                       if (CloudSyncDevGate.manualOutboundCanaryEnabled &&
                           Platform.isAndroid)

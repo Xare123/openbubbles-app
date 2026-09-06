@@ -10,6 +10,7 @@ import 'cloud_operation_identity.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_chat_binding.dart';
+import 'cloud_sync_persistent_keys.dart';
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
 
@@ -701,6 +702,32 @@ final class CloudSyncLocalSendJournal {
         return CloudSyncLocalSendAdmissionSource._(intent, message);
       });
 
+  /// Explicit diagnostic selection is stricter than ordinary recovery: keep
+  /// checking the caller's source and recipient even after envelope adoption.
+  /// This is an exact primary-key read, including auth-deferred IDS success;
+  /// it neither scans candidates nor promotes any journal entry.
+  CloudSyncLocalSendAdmissionSource readExactIntent({
+    required int intentId,
+    required String expectedRecipient,
+    required String expectedSourceSha256,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyLocalOwnership();
+    final intent = _readBoundIntent(intentId);
+    if (expectedRecipient.isEmpty ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(expectedSourceSha256) ||
+        intent.sourceSha256 != expectedSourceSha256 ||
+        (intent.state != 1 && intent.state != 2 && intent.state != 3)) {
+      throw StateError('cloud_sync_local_send_selection_changed');
+    }
+    final message = intent.state == 2
+        ? _validatedExactAdoptedMessage(intent)
+        : _validatedMessage(intent);
+    if (message.chat.target!.handles.single.address != expectedRecipient) {
+      throw StateError('cloud_sync_local_send_selection_changed');
+    }
+    return CloudSyncLocalSendAdmissionSource._(intent, message);
+  });
+
   /// Durable round-robin selection, without changing immutable origin or
   /// adopting an upload. Blocked rows stay ready and can be retried after a
   /// pull repairs their dependency; they cannot monopolize a bounded worker.
@@ -948,6 +975,105 @@ final class CloudSyncLocalSendJournal {
 
   Message _validatedMessage(CloudSyncLocalSendIntentEntity intent) {
     final message = _messages.get(intent.localMessageId);
+    return _validateMessageIdentity(intent, message);
+  }
+
+  /// State 2 alone is not permission to ignore pre-upload eligibility fields.
+  /// First prove the original envelope and Chat ownership. Only then inspect
+  /// an unpersisted copy with CloudKit bookkeeping removed. All source-capture
+  /// rules still apply, including user edits, routes, attachments and deletion.
+  Message _validatedExactAdoptedMessage(CloudSyncLocalSendIntentEntity intent) {
+    final scope = CloudSyncScope(
+      accountFingerprint: intent.accountFingerprint,
+      container: _binding.scope.container,
+      database: _binding.scope.database,
+      zone: 'messageManateeZone',
+      streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: cloudSyncSchemaVersion,
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final scopeKey = cloudSyncPersistentScopeKey(scope);
+    final row = _readUnique(_store.box<CloudOutboxOperationEntity>().query(
+      CloudOutboxOperationEntity_.operationId.equals(intent.admittedOperationId!),
+    ));
+    if (row == null || row.scopeKey != scopeKey ||
+        row.accountFingerprint != intent.accountFingerprint ||
+        row.zone != scope.zone || row.action != CloudOutboxAction.save.index ||
+        row.dependencyOperationIdsJson != '[]' || row.localChatOrigin != null ||
+        !RegExp(r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$').hasMatch(row.encryptedPayloadRef ?? '') ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(row.payloadSha256 ?? '') ||
+        !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(row.serverRecordIdHash ?? '')) {
+      throw StateError('cloud_sync_local_send_adopted_operation_missing');
+    }
+    // Receipt/status transitions are not source identity. Dispatch continues
+    // to validate their live values through the existing store/native guards.
+    final operation = CloudOutboxOperation(
+      scope: scope, operationId: row.operationId,
+      logicalEntityKeyHash: row.logicalEntityKeyHash,
+      action: CloudOutboxAction.save, payloadVersion: row.payloadVersion,
+      mutationRevision: row.mutationRevision,
+      checkpointGeneration: row.checkpointGeneration,
+      dependencyOperationIds: const {},
+      createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAtMs, isUtc: true),
+      encryptedPayloadReference: row.encryptedPayloadRef,
+      payloadSha256: row.payloadSha256, serverRecordIdHash: row.serverRecordIdHash,
+    );
+    if (operation.operationId != CloudOperationIdentity.forInitialCreate(
+      scope: scope, logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      payloadVersion: operation.payloadVersion,
+    )) {
+      throw StateError('cloud_sync_local_send_adopted_operation_missing');
+    }
+    validateAdoptedOperation(
+      _store, CloudSyncLocalSendAdmissionSource._(intent, null), operation,
+    );
+    final checkpoint = _readUnique(_store.box<CloudSyncCheckpointEntity>().query(
+      CloudSyncCheckpointEntity_.checkpointKey.equals(scopeKey),
+    ));
+    final mapping = _readUnique(_store.box<CloudRecordMapEntity>().query(
+      CloudRecordMapEntity_.scopeKey.equals(scopeKey).and(
+        CloudRecordMapEntity_.logicalEntityKeyHash.equals(operation.logicalEntityKeyHash),
+      ),
+    ));
+    if (checkpoint == null || checkpoint.accountFingerprint != intent.accountFingerprint ||
+        checkpoint.generation != operation.checkpointGeneration ||
+        mapping == null || mapping.accountFingerprint != intent.accountFingerprint ||
+        mapping.zone != scope.zone || mapping.generation != operation.checkpointGeneration ||
+        mapping.serverRecordIdHash != operation.serverRecordIdHash ||
+        !RegExp(r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$').hasMatch(mapping.encryptedServerRecordId) ||
+        ((row.state != CloudOutboxStatus.confirmed.index || row.protectedLeaseReference != null) &&
+          mapping.encryptedServerRecordId != operation.encryptedPayloadReference)) {
+      throw StateError('cloud_sync_local_send_adopted_mapping_changed');
+    }
+    final message = _messages.get(intent.localMessageId);
+    if (message == null || intent.admittedChatBinding == null ||
+        requireCloudSyncRestoredDirectChat(
+          store: _store, messageScope: scope, message: message,
+        ) != intent.admittedChatBinding) {
+      throw StateError('cloud_sync_local_send_source_changed');
+    }
+    // ObjectBox reads return independent objects. Do not round-trip toMap:
+    // it omits fields that capture must continue rejecting. Never put this view.
+    final view = _messages.get(intent.localMessageId)!
+      ..ckRecordId = null
+      ..ckSyncState = false;
+    _validateMessageIdentity(intent, view);
+    return message;
+  }
+
+  T? _readUnique<T>(QueryBuilder<T> builder) {
+    final query = builder.build();
+    try {
+      return query.findUnique();
+    } finally {
+      query.close();
+    }
+  }
+
+  Message _validateMessageIdentity(
+    CloudSyncLocalSendIntentEntity intent,
+    Message? message,
+  ) {
     final chat = message?.chat.target;
     final guid = message?.guid;
     final identity =

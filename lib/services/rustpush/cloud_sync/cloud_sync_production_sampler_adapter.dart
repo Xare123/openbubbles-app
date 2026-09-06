@@ -18,6 +18,7 @@ import 'cloud_sync_engine.dart';
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_local_send_consumer.dart';
 import 'cloud_sync_local_send_journal.dart';
+import 'cloud_sync_local_send_selection.dart';
 import 'cloud_sync_manual_outbound_canary.dart';
 import 'cloud_sync_manual_semantic_pull_sampler.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
@@ -646,14 +647,48 @@ final class CloudSyncProductionLocalSendAdapter {
   Future<CloudSyncLocalSendConsumerResult>? _running;
   CloudSyncNativeAuthSnapshot? _boundAuth;
   int? _boundWriterEpoch;
+  CloudSyncLocalSendExactSelection? _exactSelection;
 
-  Future<CloudSyncLocalSendConsumerResult> runOnce() =>
-      _running ??= _run().whenComplete(() => _running = null);
+  Future<CloudSyncLocalSendConsumerResult> runOnce() {
+    if (_exactSelection != null) {
+      throw StateError('cloud_sync_local_send_selection_changed');
+    }
+    return _running ??= _run().whenComplete(() => _running = null);
+  }
 
-  Future<CloudSyncLocalSendConsumerResult> _run() async {
+  /// Manually select exactly one journaled IDS send. Reuse this adapter for
+  /// Chat readback and retry passes; it pins the source and operation identities.
+  /// This does not enable or depend on the automatic local-send runtime.
+  Future<CloudSyncLocalSendConsumerResult> runExactIntent({
+    required int intentId,
+    required String expectedRecipient,
+    required String expectedSourceSha256,
+  }) {
+    if (_running != null) {
+      throw StateError('cloud_sync_local_send_consumer_busy');
+    }
+    final selection = _exactSelection;
+    if (selection != null && !selection.matches(
+      intentId: intentId, expectedRecipient: expectedRecipient,
+      expectedSourceSha256: expectedSourceSha256,
+    )) {
+      throw StateError('cloud_sync_local_send_selection_changed');
+    }
+    _exactSelection ??= CloudSyncLocalSendExactSelection(
+      intentId: intentId, expectedRecipient: expectedRecipient,
+      expectedSourceSha256: expectedSourceSha256,
+    );
+    return _running ??= _run(selection: _exactSelection)
+        .whenComplete(() => _running = null);
+  }
+
+  Future<CloudSyncLocalSendConsumerResult> _run({
+    CloudSyncLocalSendExactSelection? selection,
+  }) async {
     if (!CloudKitWriterOwnership.v2MutationsEnabled ||
         !CloudSyncDevGate.manualOutboundCanaryEnabled ||
-        !CloudSyncDevGate.localSendRuntimeEnabled || !_stillCurrent()) {
+        (selection == null && !CloudSyncDevGate.localSendRuntimeEnabled) ||
+        !_stillCurrent()) {
       throw StateError('cloud_sync_local_send_consumer_disabled');
     }
     final objectBox = Database.store;
@@ -728,9 +763,19 @@ final class CloudSyncProductionLocalSendAdapter {
     final lifecycle = CloudProtectedPageLeaseLifecycle(
       store: durable, transport: transport,
     );
+    Future<void> validateSelection() => fence.run(() {
+      selection?.validate(
+        store: objectBox, journal: journal, durable: durable, scope: scope,
+      );
+    }, accountFingerprint: scope.accountFingerprint);
+    Future<void> recoverProtectedStore() async {
+      if (selection != null) await validateSelection();
+      await lifecycle.ensureRecoveredBeforeWrite();
+      if (selection != null) await validateSelection();
+    }
     final admission = CloudSyncOutboundAdmissionCoordinator(
       store: durable, transport: transport,
-      ensureProtectedStoreRecovered: lifecycle.ensureRecoveredBeforeWrite,
+      ensureProtectedStoreRecovered: recoverProtectedStore,
     );
     final chatScope = CloudSyncScope(
       accountFingerprint: scope.accountFingerprint,
@@ -740,7 +785,7 @@ final class CloudSyncProductionLocalSendAdapter {
     );
     final chatAdmission = CloudSyncOutboundChatAdmissionCoordinator(
       store: durable, transport: transport,
-      ensureProtectedStoreRecovered: lifecycle.ensureRecoveredBeforeWrite,
+      ensureProtectedStoreRecovered: recoverProtectedStore,
     );
     CloudSyncEngine engineFor(CloudSyncScope target) => CloudSyncEngine(
       scope: target,
@@ -760,14 +805,21 @@ final class CloudSyncProductionLocalSendAdapter {
 
     Future<bool> drainExisting() async {
       await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
-      await lifecycle.ensureRecoveredBeforeWrite();
+      await recoverProtectedStore();
       final settled = await drainCloudSyncCreateQueues(
         scopes: [chatScope, scope],
-        readOutbox: durable.readOutboxEntries,
-        validateAccount: () => fence.run(() {}, accountFingerprint: scope.accountFingerprint),
+        readOutbox: (target) async {
+          final rows = await durable.readOutboxEntries(target);
+          if (selection == null) return rows;
+          await validateSelection();
+          return rows.where((row) =>
+              !selection.isInertAuditOperation(row.operationId)).toList(growable: false);
+        },
+        validateAccount: validateSelection,
         recoverExpired: (target) => durable.recoverExpiredOutboxLeases(
           target, now: DateTime.now().toUtc()),
         reconcileUnknown: (operation) async {
+        if (selection != null) await validateSelection();
         final target = operation.scope;
         await guard.requireReconciliationAllowed(
           owner: CloudKitWriterOwner.v2,
@@ -785,22 +837,28 @@ final class CloudSyncProductionLocalSendAdapter {
           commitCreateReceipt: ({required leaseId, required receipt, required now}) =>
               durable.commitOutboxCreateReceipt(target, leaseId: leaseId,
                 receipt: receipt, retainProtectedLeaseReference: true, now: now),
-          reconcile: (op) => guard.reconcileUnknownOutcome(
-            owner: CloudKitWriterOwner.v2,
-            expectedClient: auth.cloudMessagesClient, operation: op),
+          reconcile: (op) async {
+            if (selection != null) await validateSelection();
+            return guard.reconcileUnknownOutcome(
+              owner: CloudKitWriterOwner.v2,
+              expectedClient: auth.cloudMessagesClient, operation: op);
+          },
           quiesce: transport.quiesceNativeOperations,
         );
         await recovery.reconcileUnknownOutcome(operation: operation);
         },
         flush: (target) async {
+          if (selection != null) await validateSelection();
           guard.requireClear();
           await engineFor(target).synchronize(trigger: CloudSyncTrigger.localOutbox);
         },
         acknowledgeConfirmed: (target, operation) async {
+        if (selection != null) await validateSelection();
         guard.requireClear();
         final proof = target.zone == 'chatManateeZone'
             ? await transport.verifyConfirmedChatCreateNoSave(target, operation: operation)
             : await transport.verifyConfirmedMessageCreateNoSave(target, operation: operation);
+        if (selection != null) await validateSelection();
         await transport.releaseConfirmedReplayReceipt(
           target, operation: operation, proof: proof,
           clearDurableAdoptionMarker: () =>
@@ -819,10 +877,22 @@ final class CloudSyncProductionLocalSendAdapter {
         return false;
       }
       await fence.run(() {
-        for (final intent in journal.readIdsConfirmedDeferred(currentAuth: auth)) {
-          journal.promoteIdsConfirmedDeferred(
-            intentId: intent.id, currentAuth: auth, now: DateTime.now().toUtc(),
+        if (selection != null) {
+          final source = selection.validate(
+            store: objectBox, journal: journal, durable: durable, scope: scope,
           );
+          if (source.state == 3) {
+            journal.promoteIdsConfirmedDeferred(
+              intentId: source.intentId, currentAuth: auth,
+              now: DateTime.now().toUtc(),
+            );
+          }
+        } else {
+          for (final intent in journal.readIdsConfirmedDeferred(currentAuth: auth)) {
+            journal.promoteIdsConfirmedDeferred(
+              intentId: intent.id, currentAuth: auth, now: DateTime.now().toUtc(),
+            );
+          }
         }
       }, accountFingerprint: scope.accountFingerprint);
       return true;
@@ -830,7 +900,7 @@ final class CloudSyncProductionLocalSendAdapter {
 
     var chatReadbackPending = false;
     try {
-      final result = await CloudSyncLocalSendConsumer(
+      final consumer = CloudSyncLocalSendConsumer(
         scope: scope, journal: journal, authFence: fence, exclusion: interlock,
         admit: (id) async {
           final source = await fence.run(() => journal.readForAdmission(id),
@@ -856,7 +926,12 @@ final class CloudSyncProductionLocalSendAdapter {
               intentId: id, journal: journal, authFence: fence);
         },
         drainExisting: drainExisting,
-      ).runOnce();
+      );
+      final result = selection == null
+          ? await consumer.runOnce()
+          : await consumer.runExactIntent(
+              intentId: selection.intentId, validateSelection: validateSelection,
+            );
       return CloudSyncLocalSendConsumerResult(
         admitted: result.admitted, deferred: result.deferred,
         outboxBlocked: result.outboxBlocked,

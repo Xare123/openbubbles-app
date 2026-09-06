@@ -110,6 +110,9 @@ void main() {
     final outbox = store.box<CloudOutboxOperationEntity>();
     final id = outbox.put(confirmed());
     expect(reader.read().settledOutboxFingerprint, matches(r'^[0-9a-f]{64}$'));
+    final beforeOriginChange = reader.read().settledOutboxFingerprint;
+    outbox.put(confirmed()..id = id..localChatOrigin = 'synthetic-origin');
+    expect(reader.read().settledOutboxFingerprint, isNot(beforeOriginChange));
     final invalid = <void Function(CloudOutboxOperationEntity)>[
       (row) => row.protectedLeaseReference = 'unacknowledged',
       (row) => row.leaseIdHash = 'live-lease',

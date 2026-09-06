@@ -6,8 +6,10 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_selection.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,6 +18,476 @@ import 'cloud_sync_test_helpers.dart';
 import 'cloud_sync_restored_chat_test_fixture.dart';
 
 void main() {
+  group('exact local-send selection', () {
+    late _Fixture fixture;
+    late CloudSyncLocalSendExactSelection selection;
+
+    Future<void> validate() async {
+      selection.validate(
+        store: fixture.objectBox,
+        journal: fixture.journal,
+        durable: fixture.store,
+        scope: fixture.scope(),
+      );
+    }
+
+    CloudSyncLocalSendConsumer consumer({
+      required Future<bool> Function() drain,
+      Future<CloudOutboxOperation> Function(int)? admit,
+      CloudSyncLocalSendAuthFence? fence,
+    }) => CloudSyncLocalSendConsumer(
+      scope: fixture.scope(),
+      journal: fixture.journal,
+      authFence: fence ?? fixture.authFence,
+      exclusion: _ConsumerExclusion(),
+      drainExisting: drain,
+      admit: admit ?? (_) => fixture.admitLocal(),
+    );
+
+    setUp(() async {
+      fixture = await _Fixture.create();
+      selection = CloudSyncLocalSendExactSelection(
+        intentId: fixture.intentId,
+        expectedRecipient: _chatIdentifier,
+        expectedSourceSha256: fixture.intent.sourceSha256,
+      );
+    });
+    tearDown(() async => fixture.close());
+
+    test(
+      'admits only selected row and never rotates a foreign ready row',
+      () async {
+        final selectedId = fixture.intentId;
+        final selectedMessage = fixture.local;
+        fixture._createConfirmedIntent(
+          guid: '22222222-2222-4222-8222-222222222222',
+          existingChat: selectedMessage.chat.target,
+        );
+        final foreign = fixture.intent;
+        fixture.intentId = selectedId;
+        fixture.local = selectedMessage;
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        final admittedIds = <int>[];
+        var drains = 0;
+        final worker = consumer(
+          drain: () async {
+            drains++;
+            return true;
+          },
+          admit: (id) {
+            admittedIds.add(id);
+            return fixture.admitLocal();
+          },
+        );
+        final result = await worker.runExactIntent(
+          intentId: selectedId,
+          validateSelection: validate,
+        );
+        expect(result.admitted, 1);
+        expect(admittedIds, [selectedId]);
+        expect(drains, 2);
+        final unchanged = fixture.objectBox
+            .box<CloudSyncLocalSendIntentEntity>()
+            .get(foreign.id)!;
+        expect(unchanged.state, 1);
+        expect(unchanged.updatedAtMs, foreign.updatedAtMs);
+        expect(unchanged.admittedOperationId, isNull);
+        expect(fixture.transport.stageCalls, 1);
+        await worker.runExactIntent(
+          intentId: selectedId,
+          validateSelection: validate,
+        );
+        expect(fixture.transport.stageCalls, 1);
+        expect(admittedIds, [selectedId]);
+      },
+    );
+
+    test(
+      'fully settled prior Message is inert pinned history for a subsequent exact intent',
+      () async {
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        final prior = await fixture.admitLocal();
+        const leaseId = 'synthetic-settled-prior-message';
+        await fixture.store.leaseEligibleOutbox(
+          fixture.scope(),
+          now: testEpoch,
+          limit: 1,
+          leaseId: leaseId,
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        );
+        await fixture.store.markOutboxSubmissionStarted(
+          fixture.scope(),
+          leaseId: leaseId,
+          submissionIdentity: testSubmissionIdentity([prior.operationId]),
+          now: testEpoch,
+        );
+        // Synthetic network receipt; real durable receipt/settlement transition.
+        await fixture.store.commitOutboxCreateReceipt(
+          fixture.scope(),
+          leaseId: leaseId,
+          receipt: CloudOutboxCreateReceipt(
+            operationId: prior.operationId,
+            logicalEntityKeyHash: prior.logicalEntityKeyHash,
+            serverRecordIdHash: prior.serverRecordIdHash!,
+            etagHash: 'E' * 43,
+          ),
+          now: testEpoch,
+        );
+        expect(fixture.outboxRow.state, CloudOutboxStatus.confirmed.index);
+        expect(fixture.outboxRow.protectedLeaseReference, isNull);
+        expect(
+          ObjectBoxCloudSyncPreflightReader(
+            store: fixture.objectBox,
+          ).read().settledOutboxFingerprint,
+          isNotNull,
+        );
+        final priorRow = fixture.outboxRow;
+        final priorFingerprint =
+            ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint([
+              priorRow,
+            ]);
+        fixture._createConfirmedIntent(
+          guid: '22222222-2222-4222-8222-222222222222',
+          existingChat: fixture.local.chat.target,
+        );
+        selection = CloudSyncLocalSendExactSelection(
+          intentId: fixture.intentId,
+          expectedRecipient: _chatIdentifier,
+          expectedSourceSha256: fixture.intent.sourceSha256,
+        );
+        fixture.transport.stages.add(
+          _stage(
+            leaseCharacter: 'b',
+            referenceCharacter: 'Q',
+            logicalCharacter: 'N',
+            serverCharacter: 'T',
+          ),
+        );
+        var drains = 0;
+        final result =
+            await consumer(
+              drain: () async {
+                drains++;
+                return true;
+              },
+            ).runExactIntent(
+              intentId: fixture.intentId,
+              validateSelection: validate,
+            );
+        expect(result.admitted, 1);
+        expect(drains, 2);
+        expect(selection.isInertAuditOperation(prior.operationId), isTrue);
+        final retained = fixture.objectBox
+            .box<CloudOutboxOperationEntity>()
+            .get(priorRow.id)!;
+        expect(
+          ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint([retained]),
+          priorFingerprint,
+        );
+        expect(fixture.intent.state, 2);
+        expect(fixture.transport.stageCalls, 2);
+        fixture.objectBox.box<CloudOutboxOperationEntity>().put(
+          retained..updatedAtMs += 1,
+        );
+        await expectLater(validate(), throwsStateError);
+      },
+    );
+
+    for (final readbackField in ['ckRecordId', 'ckSyncState']) {
+      test(
+        'adopted Message $readbackField bookkeeping permits exact envelope recovery',
+        () async {
+          await fixture.seedAccount();
+          fixture.transport.stages.add(_stage());
+          final adopted = await fixture.admitLocal();
+          await validate();
+          // Model just the canonical Message metadata change, not a live pull.
+          if (readbackField == 'ckRecordId') {
+            fixture.local.ckRecordId = 'synthetic-canonical-record';
+          } else {
+            fixture.local.ckSyncState = true;
+          }
+          fixture.objectBox.box<Message>().put(fixture.local);
+          await fixture.reopenConfigured();
+          selection = CloudSyncLocalSendExactSelection(
+            intentId: fixture.intentId,
+            expectedRecipient: _chatIdentifier,
+            expectedSourceSha256: fixture.intent.sourceSha256,
+          );
+          final recovered = await fixture.admitLocal(
+            encoder: (_) =>
+                throw StateError('must not re-encode adopted source'),
+          );
+          expect(recovered.operationId, adopted.operationId);
+          var drains = 0;
+          final result =
+              await consumer(
+                drain: () async {
+                  drains++;
+                  return true;
+                },
+              ).runExactIntent(
+                intentId: fixture.intentId,
+                validateSelection: validate,
+              );
+          expect(result.admitted, 0);
+          expect(drains, 1);
+          expect(fixture.intent.state, 2);
+          expect(fixture.outboxRow.operationId, adopted.operationId);
+          expect(fixture.transport.stageCalls, 1);
+        },
+      );
+    }
+
+    for (final status in CloudOutboxStatus.values) {
+      test('foreign $status blocks before any drain or admission', () async {
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        await fixture.coordinator.admitMessage(
+          fixture.scope(),
+          message: _FakeCloudMessage(),
+          createdAt: testEpoch,
+        );
+        fixture.objectBox.box<CloudOutboxOperationEntity>().put(
+          fixture.outboxRow..state = status.index,
+        );
+        var drains = 0;
+        var admits = 0;
+        final worker = consumer(
+          drain: () async {
+            drains++;
+            return true;
+          },
+          admit: (_) {
+            admits++;
+            throw StateError('unexpected admission');
+          },
+        );
+        await expectLater(
+          worker.runExactIntent(
+            intentId: fixture.intentId,
+            validateSelection: validate,
+          ),
+          throwsStateError,
+        );
+        expect(drains, 0);
+        expect(admits, 0);
+        expect(fixture.outboxRow.state, status.index);
+        expect(fixture.intent.state, 1);
+      });
+    }
+
+    test(
+      'foreign account and other zone rows are not hidden by queue scope',
+      () async {
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        await fixture.admitLocal();
+        await validate();
+        final foreign = fixture.outboxRow
+          ..id = 0
+          ..operationId = 'F' * 43
+          ..accountFingerprint = testAccountFingerprintB
+          ..zone = 'attachmentManateeZone'
+          ..state = CloudOutboxStatus.confirmed.index;
+        fixture.objectBox.box<CloudOutboxOperationEntity>().put(foreign);
+        await expectLater(validate(), throwsStateError);
+      },
+    );
+
+    test(
+      'commit uncertainty and restart adopt only the original Message envelope',
+      () async {
+        await fixture.seedAccount();
+        fixture.transport
+          ..stages.add(_stage())
+          ..commitFailure = StateError('uncertain');
+        var drains = 0;
+        final result = await consumer(drain: () async => ++drains == 1)
+            .runExactIntent(
+              intentId: fixture.intentId,
+              validateSelection: validate,
+            );
+        expect(result.deferred, 1);
+        expect(result.outboxBlocked, true);
+        final operationId = fixture.intent.admittedOperationId;
+        final envelope = fixture.outboxRow.encryptedPayloadRef;
+        fixture.transport.commitFailure = null;
+        await fixture.reopenConfigured();
+        selection = CloudSyncLocalSendExactSelection(
+          intentId: fixture.intentId,
+          expectedRecipient: _chatIdentifier,
+          expectedSourceSha256: fixture.intent.sourceSha256,
+        );
+        await consumer(drain: () async => true).runExactIntent(
+          intentId: fixture.intentId,
+          validateSelection: validate,
+        );
+        expect(fixture.intent.admittedOperationId, operationId);
+        expect(fixture.outboxRow.encryptedPayloadRef, envelope);
+        expect(fixture.transport.stageCalls, 1);
+        expect(fixture.encodes, 1);
+      },
+    );
+
+    for (final mutation in [
+      'sender',
+      'recipient',
+      'source',
+      'owner',
+      'epoch',
+      'account',
+    ]) {
+      test(
+        '$mutation drift across passes prevents draining selected work',
+        () async {
+          await fixture.seedAccount();
+          fixture.transport.stages.add(_stage());
+          await fixture.admitLocal();
+          await validate();
+          if (mutation == 'sender') {
+            fixture.objectBox.box<Chat>().put(
+              fixture.local.chat.target!..usingHandle = 'other@example.com',
+            );
+          } else if (mutation == 'recipient') {
+            fixture.objectBox.box<Handle>().put(
+              fixture.local.chat.target!.handles.single
+                ..address = 'other@example.com',
+            );
+          } else if (mutation == 'source') {
+            fixture.objectBox.box<Message>().put(
+              fixture.local..text = 'changed',
+            );
+          } else if (mutation == 'account') {
+            fixture.objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+              fixture.intent..accountFingerprint = testAccountFingerprintB,
+            );
+          } else {
+            final box = fixture.objectBox.box<CloudKitWriterAuthorityEntity>();
+            final owner = box.getAll().single;
+            if (mutation == 'owner') owner.owner = 1;
+            if (mutation == 'epoch') owner.epoch++;
+            box.put(owner);
+          }
+          var drains = 0;
+          await expectLater(
+            consumer(
+              drain: () async {
+                drains++;
+                return true;
+              },
+            ).runExactIntent(
+              intentId: fixture.intentId,
+              validateSelection: validate,
+            ),
+            throwsStateError,
+          );
+          expect(drains, 0);
+          expect(fixture.transport.stageCalls, 1);
+        },
+      );
+    }
+
+    test(
+      'outbox payload binding drift rejects even a matching operation ID',
+      () async {
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        await fixture.admitLocal();
+        await validate();
+        fixture.objectBox.box<CloudOutboxOperationEntity>().put(
+          fixture.outboxRow..payloadSha256 = 'c' * 64,
+        );
+        await expectLater(validate(), throwsStateError);
+      },
+    );
+
+    test(
+      'changed native account is rejected before selected outcome recovery',
+      () async {
+        var drains = 0;
+        final client = Object();
+        CloudSyncNativeAuthSnapshot auth(String account) =>
+            CloudSyncNativeAuthSnapshot.fromNative(
+              nativeSessionId: 'session',
+              accountFingerprint: account,
+              protectedStoreIdentity: 'obcs2.store.$account',
+              cloudMessagesClient: client,
+            );
+        await expectLater(
+          consumer(
+            drain: () async {
+              drains++;
+              return true;
+            },
+            fence: CloudSyncLocalSendAuthFence(
+              expected: auth(testAccountFingerprintA),
+              capture: () async => auth(testAccountFingerprintB),
+              stillCurrent: () => true,
+            ),
+          ).runExactIntent(
+            intentId: fixture.intentId,
+            validateSelection: validate,
+          ),
+          throwsStateError,
+        );
+        expect(drains, 0);
+      },
+    );
+
+    test('route drift during admission rejects before second drain', () async {
+      await fixture.seedAccount();
+      fixture.transport.stages.add(_stage());
+      var drains = 0;
+      final worker = consumer(
+        drain: () async {
+          drains++;
+          return true;
+        },
+        admit: (_) async {
+          final operation = await fixture.admitLocal();
+          fixture.objectBox.box<Chat>().put(
+            fixture.local.chat.target!..usingHandle = 'changed@example.com',
+          );
+          return operation;
+        },
+      );
+      await expectLater(
+        worker.runExactIntent(
+          intentId: fixture.intentId,
+          validateSelection: validate,
+        ),
+        throwsStateError,
+      );
+      expect(drains, 1);
+    });
+
+    test(
+      'exact pass does not join an automatic or another exact pass',
+      () async {
+        final release = Completer<bool>();
+        final worker = consumer(drain: () => release.future);
+        final first = worker.runExactIntent(
+          intentId: fixture.intentId,
+          validateSelection: validate,
+        );
+        expect(() => worker.runOnce(), throwsStateError);
+        expect(
+          () => worker.runExactIntent(
+            intentId: fixture.intentId + 1,
+            validateSelection: validate,
+          ),
+          throwsStateError,
+        );
+        release.complete(false);
+        await first;
+      },
+    );
+  });
+
   test(
     'consumer recovers durable adoption even when native lease commit throws',
     () async {
@@ -1312,34 +1784,34 @@ final class _Fixture {
     );
   }
 
-  void _createConfirmedIntent() {
-    final handle = Handle(
-      address: 'recipient@example.com',
-      service: 'iMessage',
-      uniqueAddressAndService: 'recipient@example.com/iMessage',
-    );
+  void _createConfirmedIntent({String guid = _localGuid, Chat? existingChat}) {
+    final handle =
+        existingChat?.handles.single ??
+        Handle(
+          address: 'recipient@example.com',
+          service: 'iMessage',
+          uniqueAddressAndService: 'recipient@example.com/iMessage',
+        );
     objectBox.box<Handle>().put(handle);
-    final chat = Chat(
-      guid: _chatGuid,
-      chatIdentifier: _chatIdentifier,
-      usingHandle: 'mailto:sender@example.com',
-      style: 45,
-      participants: [handle],
-    )..handles.add(handle);
+    final chat =
+        existingChat ??
+        (Chat(
+          guid: _chatGuid,
+          chatIdentifier: _chatIdentifier,
+          usingHandle: 'mailto:sender@example.com',
+          style: 45,
+          participants: [handle],
+        )..handles.add(handle));
     objectBox.box<Chat>().put(chat);
     local = Message(
       guid: 'temp-Abc12345',
-      stagingGuid: _localGuid,
+      stagingGuid: guid,
       text: 'synthetic local message',
       isFromMe: true,
       dateCreated: testEpoch,
       attributedBody: [AttributedBody.raw('synthetic local message')],
     )..chat.target = chat;
-    final identity = CloudSyncLocalSendIdentity.capture(
-      local,
-      chat,
-      _localGuid,
-    )!;
+    final identity = CloudSyncLocalSendIdentity.capture(local, chat, guid)!;
     journal.saveSubmission(
       identity: identity,
       newlyGeneratedGuid: true,
@@ -1349,10 +1821,10 @@ final class _Fixture {
     intentId = objectBox
         .box<CloudSyncLocalSendIntentEntity>()
         .getAll()
-        .single
+        .singleWhere((row) => row.messageGuidHash == identity.guidHash)
         .id;
     local
-      ..guid = _localGuid
+      ..guid = guid
       ..stagingGuid = null;
     journal.saveConfirmedSubmission(
       identity: identity,

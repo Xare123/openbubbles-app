@@ -39,10 +39,14 @@ final class CloudSyncLocalSendConsumer {
   final Future<bool> Function() _drainExisting;
   final DateTime Function() _clock;
   Future<CloudSyncLocalSendConsumerResult>? _running;
+  bool _runningExact = false;
 
   /// Concurrent triggers join this pass, not a second native upload. The OS
   /// interlock and durable outbox leases remain the cross-process boundaries.
   Future<CloudSyncLocalSendConsumerResult> runOnce({int maximumIntents = 20}) {
+    if (_runningExact) {
+      throw StateError('cloud_sync_local_send_consumer_busy');
+    }
     if (maximumIntents < 1 || maximumIntents > 50) {
       throw ArgumentError('cloud_sync_local_send_consumer_limit_invalid');
     }
@@ -101,6 +105,64 @@ final class CloudSyncLocalSendConsumer {
     );
   }
 
+  /// Explicit one-intent pass. The production selection callback verifies the
+  /// entire outbox and the pinned origin before any shared drain is entered.
+  /// Never join a different running pass, scan readReady, or rotate candidates.
+  Future<CloudSyncLocalSendConsumerResult> runExactIntent({
+    required int intentId,
+    required Future<void> Function() validateSelection,
+  }) {
+    if (_running != null) {
+      throw StateError('cloud_sync_local_send_consumer_busy');
+    }
+    _runningExact = true;
+    Future<void> validate() async {
+      await _validateAccount();
+      await validateSelection();
+    }
+
+    return _running = _exclusion
+        .runExclusive(
+          kind: CloudKitOperationKind.v2ReadWrite,
+          action: () async {
+            await validate();
+            if (!await _drainExisting()) {
+              await validate();
+              return const CloudSyncLocalSendConsumerResult(
+                outboxBlocked: true,
+              );
+            }
+            await validate();
+            final source = _journal.readForAdmission(intentId);
+            if (source.admittedOperationId != null) {
+              return const CloudSyncLocalSendConsumerResult();
+            }
+            var admitted = 0;
+            var deferred = 0;
+            try {
+              await _admit(intentId);
+              admitted = 1;
+            } catch (_) {
+              // An adopted envelope can survive native commit failure. Validate
+              // its exact linkage before using the same recovery pipeline.
+              deferred = 1;
+            }
+            await validate();
+            final settled = await _drainExisting();
+            await validate();
+            return CloudSyncLocalSendConsumerResult(
+              admitted: admitted,
+              deferred: deferred,
+              outboxBlocked: !settled,
+            );
+          },
+        )
+        .whenComplete(() {
+          _running = null;
+          _runningExact = false;
+        });
+  }
+
   Future<void> _validateAccount() =>
       _authFence.run(() {}, accountFingerprint: scope.accountFingerprint);
 }
@@ -116,6 +178,7 @@ final class CloudSyncLocalSendConsumerResult {
   final int admitted;
   final int deferred;
   final bool outboxBlocked;
+
   /// Queue receipts are settled, but the ordinary semantic reader still needs
   /// to project the newly created Chat before its first Message can upload.
   final bool chatReadbackPending;

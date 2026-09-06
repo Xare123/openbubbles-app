@@ -89,6 +89,57 @@ void main() {
     return store.box<CloudSyncLocalSendIntentEntity>().get(intentId)!;
   }
 
+  test('exact selection reads deferred IDS success without promoting any row', () {
+    final selected = saveDeferredIdsSuccess();
+    final foreign = saveDeferredIdsSuccess(stableGuid: _guidB);
+    final source = journal.readExactIntent(
+      intentId: selected.id,
+      expectedRecipient: chat.handles.single.address,
+      expectedSourceSha256: selected.sourceSha256,
+    );
+    expect(source.intentId, selected.id);
+    expect(source.state, 3);
+    expect(source.message!.guid, _guidA);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(selected.id)!.state, 3);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(foreign.id)!.state, 3);
+    journal.promoteIdsConfirmedDeferred(
+      intentId: source.intentId, currentAuth: _auth(Object()), now: _time(4),
+    );
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(selected.id)!.state, 1);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(foreign.id)!.state, 3);
+  });
+
+  test('exact selection rejects missing intent and wrong caller identity', () {
+    final selected = saveDeferredIdsSuccess();
+    for (final request in [
+      (selected.id + 100, chat.handles.single.address, selected.sourceSha256),
+      (selected.id, 'other@example.invalid', selected.sourceSha256),
+      (selected.id, '', selected.sourceSha256),
+      (selected.id, chat.handles.single.address, 'a' * 64),
+    ]) {
+      expect(() => journal.readExactIntent(
+        intentId: request.$1, expectedRecipient: request.$2,
+        expectedSourceSha256: request.$3,
+      ), throwsStateError);
+    }
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(selected.id)!.state, 3);
+  });
+
+  test('exact selection cannot infer IDS confirmation from an ordinary Message', () {
+    final message = _message(chat: chat, stagingGuid: _guidA);
+    final identity = _identity(message, chat, _guidA);
+    journal.saveSubmission(
+      identity: identity, newlyGeneratedGuid: true,
+      persistMessage: () => store.box<Message>().put(message), now: _time(2),
+    );
+    final selected = store.box<CloudSyncLocalSendIntentEntity>().getAll().single;
+    expect(() => journal.readExactIntent(
+      intentId: selected.id, expectedRecipient: chat.handles.single.address,
+      expectedSourceSha256: selected.sourceSha256,
+    ), throwsStateError);
+    expect(selected.state, 0);
+  });
+
   test(
     'callback failure rolls back the local message and intent atomically',
     () {

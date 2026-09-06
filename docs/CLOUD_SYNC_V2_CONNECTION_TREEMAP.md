@@ -44,7 +44,63 @@ continue under a new account.
 
 ## Latest integration checkpoint, 2026-09-05
 
+### Production scope, clarified by the user
+
+The completion target covers both reads and writes and the application features
+backed by Messages in iCloud. A single text create is a qualification step, not
+a smaller substitute for that target. SMS/MMS/RCS remain outside the earlier
+agreed iMessage scope; do not silently add them back or discard iMessage features.
+
+| Capability | Current evidence / explicit remaining gap |
+| --- | --- |
+| Message history and conversation projection | User has observed restored readable chats; sustained incremental/restart behavior must be qualified on the release candidate. |
+| Photos, video, GIF and documents | Some photos are user-verified. Video key-selection repair passed native tests; live video qualification and the GIF byte-size mismatch remain unresolved. Each media surface/type needs user-facing validation, not metadata-only success. |
+| Chat-first ordinary text writing | Implemented behind rollout gates, combined offline tests pass. Exact-recipient live save/readback and ordinary-runtime qualification remain. |
+| Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
+| Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
+| Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
+| Ongoing sync and account lifecycle | Automatic local-send runtime remains disabled. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence are release gates. |
+
 ### Wi-Fi resume checkpoint
+
+- Native media qualification is separated into GCE run `34011715096`,
+  `rustpush-only`, T2D-60, source
+  `590f5b2cc5c9ade549775e395d11a047c0eb4dd8`, writer=false. It must exercise
+  generated Ford sibling selection in either order, wrong/ambiguous keys,
+  malformed sibling metadata, and unchanged single-reference behavior. It
+  passed all 222 production-feature rustpush tests, including the three key
+  selection regressions, with zero failures. Cleanup succeeded, and independent
+  project/runner listings were empty. This cannot qualify parent Rust changes,
+  Dart changes, APK behavior or live media.
+  Dispatch `34011685610` was rejected before VM creation because the parent
+  supplied an abbreviated SHA; cleanup completed before this corrected run.
+
+- The local developer control now selects the newest existing current-owner
+  journal entry without scanning historical Message rows, asks two confirmations,
+  and calls the same adapter's exact-intent mode. It holds the shared outbound
+  lifetime through a bounded Chat semantic readback between write passes, while
+  releasing writer/interlock/attachment locks for the reader. Automatic uploads
+  remain disabled. Parent review and 264 targeted tests across eleven suites
+  passed, including selection, journal, canonical adoption, queue recovery,
+  runtime and maintenance coverage. Analyzer found no errors or warnings (six
+  pre-existing informational lints remain). Service/UI checks are composition
+  tests, not proof of actual device or lock-lifecycle behavior. Full GCE and
+  live qualification of this batch are still pending.
+
+- Exact-selection review reproduced two retry blockers before an APK build.
+  Fully settled prior operations are now pinned as immutable audit history and
+  excluded from diagnostic reconcile/acknowledgment callbacks. Unrelated active
+  work still blocks, and mutation or removal of pinned history aborts the pass.
+  The audit fingerprint now includes `localChatOrigin`. Already-adopted Message
+  recovery also accepts canonical `ckRecordId`/`ckSyncState` bookkeeping only
+  after durable envelope, map and Chat ownership validation. It validates an
+  unpersisted independent Message view, never rewrites metadata or fabricates a
+  historical origin. The 28 dedicated tests include restart and source, route,
+  account, ownership, deletion, attachment and envelope drift rejection.
+  The implementation agent's work was reviewed, accepted and preserved in this
+  shared worktree; shutdown was verified. No dedicated disposable artifacts were
+  proven, so no transcripts, logs, evidence or worktrees were deleted. C: had
+  approximately 65 GiB free at this checkpoint.
 
 - Full GCE run `34009821113` ended at the Dart suite: 1,847 tests passed,
   one old startup source-contract test failed because it counted the removed
