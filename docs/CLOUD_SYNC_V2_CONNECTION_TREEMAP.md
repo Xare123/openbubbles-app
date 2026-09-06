@@ -55,7 +55,7 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | --- | --- |
 | Message history and conversation projection | User has observed restored readable chats; sustained incremental/restart behavior must be qualified on the release candidate. |
 | Photos, video, GIF and documents | Photos and video playback are user-confirmed. Installed `dcef0e9bf` automatically fetched three gallery attachments after navigation/scrolling without card taps. One HEIC still fails exact-size validation. GIF support is explicitly deferred; attachments are preserved, not deleted or hidden. Each media surface/type still needs user-facing validation, not metadata-only success. |
-| Chat-first ordinary text writing | Installed `dcef0e9bf` journaled actual native completion of a fresh approved-recipient send; the UI showed Delivered and an empty composer. Automatic CloudKit admission then deferred at Chat creation with `messages_cloud_tombstone_projection_unavailable`. Remote save/readback is not passed. |
+| Chat-first ordinary text writing | Prior `dcef0e9bf` journaled actual native completion of a fresh approved-recipient send; the UI showed Delivered and an empty composer. Automatic CloudKit admission then deferred at Chat creation with `messages_cloud_tombstone_projection_unavailable`. Candidate `98772e7d2` passed full GCE qualification and is now installed, awaiting its live foreground write/readback test. Remote save/readback is not passed. |
 | Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
 | Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
@@ -88,7 +88,7 @@ native completion handoff, not a CloudKit save. Old delivered state-0 intents
 were not retroactively promoted. The new-composer navigation path still needs
 its own installed-device test.
 
-### Installed write blocker: Chat dependency, not native send completion
+### Observed prior-build write blocker: Chat dependency, not native send completion
 
 ```text
 native-confirmed local Message intent [live-proven handoff]
@@ -126,7 +126,27 @@ remote outcomes remain fenced. Existing immutable-envelope recovery must not
 require permission to create a different envelope. Do not implement broad
 tombstone deletion to make this qualification pass.
 
-### Journal-bound Chat create candidate, 2026-09-06 (not installed)
+### Journal-bound Chat create candidate, 2026-09-06 (installed; live proof pending)
+
+Candidate source `98772e7d296dc2fe4352e4342e2b25f3a8ddb458` is pushed to
+the fork only. Full GCE run `34032672777` was dispatched at 12:17:41Z with
+T2D-60, primary lane, Canary, writer and automatic uploads enabled. Workflow
+source remains isolated pilot `4e27caefffdb32a1f821c63dfafe3fb20f4e0750`.
+The full run succeeded at 12:41:36Z (23m55s overall). Full Dart tests,
+302 parent Rust tests, 222 rustpush tests, 31 protector tests, bridge
+reproducibility, automatic-upload flags, ARM64 native libraries and hosted
+signing passed. Independent readbacks confirmed zero GCE instances and zero
+repository runner registrations afterward.
+
+Signed APK SHA-256:
+`dc0a89392026d3c0d7d15e9983798bdb2b92ea7e134e5412840eb03fea30cf24`
+(449,112,446 bytes). Local verification confirmed the pinned certificate,
+v2/v3 signatures, Canary package and all four required ARM64 ELF libraries.
+Wireless `adb install -r -t` succeeded at 06:08:23 PDT. Canary's original
+install date and both Alpha install/update timestamps are unchanged. No data
+clear, uninstall or credential reconfiguration occurred. The user was asked to
+open Canary for the live write/readback test; the phone was showing ChatGPT,
+and no app-launch or VM-attach command was attempted.
 
 The new candidate passes the exact native-confirmed local-send source through
 Chat capture and atomic admission. Origin version 2 adds a journal/envelope
@@ -199,9 +219,9 @@ retry/pause/quarantine followed by source deletion and restart. Another proves
 that clearing UUIDs after authoritative non-application does not restore the
 never-submitted capability or authorize local cancellation.
 These use real ObjectBox reopen/adoption/projection and synthetic native/auth
-edges. They do not prove current-device CloudKit write/readback or replace full
-GCE qualification. Eight changed runtime/test paths also passed targeted
-analysis with no issues. No APK containing this candidate has been installed yet.
+edges. They do not prove current-device CloudKit write/readback. Full GCE
+qualification and installation are now complete as recorded above. Eight
+changed runtime/test paths also passed targeted analysis with no issues.
 
 ### Installed gallery and capture qualification
 
