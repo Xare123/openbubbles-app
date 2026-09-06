@@ -7615,7 +7615,12 @@ class RustPushService extends GetxService {
           if (result.chatReadbackPending && stillCurrent() &&
               _cloudSyncV2SemanticPullInFlight == null) {
             try {
-              await runCloudSyncV2ManualSemanticPullConfirmed(maximumPasses: 1);
+              // The runtime owns the delayed retry after this readback.
+              // Do not turn its own semantic read into an immediate new pass.
+              await runCloudSyncV2ManualSemanticPullConfirmed(
+                maximumPasses: 1,
+                resumeAutomaticUploads: false,
+              );
             } catch (_) {
               Logger.warn('Cloud Sync V2 Chat dependency readback deferred; intent retained');
             }
@@ -8041,8 +8046,13 @@ class RustPushService extends GetxService {
   /// count resumes from the same durable zone checkpoints while holding one
   /// operation interlock and one native-writer pause for the complete drain.
   /// CloudKit saves, CloudKit deletes, and local tombstones remain disabled.
+  /// Afterwards, opted-in automatic uploads resume independently. Internal
+  /// writer readbacks disable that wakeup and retain their own retry policy.
   Future<CloudSyncSemanticDrainResult>
-  runCloudSyncV2ManualSemanticPullConfirmed({int maximumPasses = 1}) {
+  runCloudSyncV2ManualSemanticPullConfirmed({
+    int maximumPasses = 1,
+    bool resumeAutomaticUploads = true,
+  }) {
     if (!CloudSyncDevGate.manualSemanticPullEnabled) {
       throw StateError('cloud_sync_semantic_pull_disabled');
     }
@@ -8070,6 +8080,9 @@ class RustPushService extends GetxService {
     return future.whenComplete(() {
       if (identical(_cloudSyncV2SemanticPullInFlight, future)) {
         _cloudSyncV2SemanticPullInFlight = null;
+        if (resumeAutomaticUploads) {
+          _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
+        }
       }
     });
   }
@@ -8450,7 +8463,11 @@ class RustPushService extends GetxService {
       validate();
       // No writer/interlock/attachment lock survives runPass. The actual
       // semantic gateway, not a save receipt, establishes Chat ownership.
-      await runCloudSyncV2ManualSemanticPullConfirmed(maximumPasses: 1);
+      // This exact-intent action must not wake the automatic queue.
+      await runCloudSyncV2ManualSemanticPullConfirmed(
+        maximumPasses: 1,
+        resumeAutomaticUploads: false,
+      );
       validate();
       return _cloudSyncV2AttachmentGate.run(
         validate: validate, action: selection._runPass,

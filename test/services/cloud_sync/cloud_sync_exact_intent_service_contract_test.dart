@@ -47,13 +47,17 @@ void main() {
     final consumed = run.indexOf('selection._consumed = true');
     final first = run.indexOf('await _cloudSyncV2AttachmentGate.run(');
     final read = run.indexOf(
-      'await runCloudSyncV2ManualSemanticPullConfirmed(maximumPasses: 1)',
+      'await runCloudSyncV2ManualSemanticPullConfirmed(',
     );
     final next = run.indexOf('return _cloudSyncV2AttachmentGate.run(', read);
     expect(consumed, greaterThan(0));
     expect(first, greaterThan(consumed));
     expect(read, greaterThan(first));
     expect(next, greaterThan(read));
+    final readback = run.substring(read, next);
+    expect(readback, contains('maximumPasses: 1,'));
+    expect(readback, contains('resumeAutomaticUploads: false,'));
+    expect(run, isNot(contains('_queueCloudSyncV2LocalSends')));
     expect(
       run,
       contains(

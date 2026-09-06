@@ -213,7 +213,7 @@ void main() {
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
     final methodStart = source.indexOf(
-      'runCloudSyncV2ManualSemanticPullConfirmed({int maximumPasses = 1})',
+      'runCloudSyncV2ManualSemanticPullConfirmed({',
     );
     final methodEnd = source.indexOf(
       'runCloudSyncV2ManualSemanticCatchUpConfirmed()',
@@ -223,6 +223,17 @@ void main() {
     expect(methodStart, greaterThanOrEqualTo(0));
     expect(methodEnd, greaterThan(methodStart));
     final method = source.substring(methodStart, methodEnd);
+    expect(method, contains('int maximumPasses = 1'));
+    expect(method, contains('bool resumeAutomaticUploads = true'));
+    final clear = method.indexOf('_cloudSyncV2SemanticPullInFlight = null;');
+    final guard = method.indexOf('if (resumeAutomaticUploads)');
+    final resume = method.indexOf(
+      '_queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox)',
+    );
+    expect(clear, greaterThan(0));
+    expect(guard, greaterThan(clear));
+    expect(resume, greaterThan(guard));
+    expect('_queueCloudSyncV2LocalSends('.allMatches(method).length, 1);
     expect(method, contains('CloudSyncDevGate.manualSemanticPullEnabled'));
     expect(method, contains('_cloudSyncV2CanaryRuntimeAllowed'));
     expect(method, contains('_cloudSyncV2DeveloperRuntimeAllowed'));
@@ -235,6 +246,26 @@ void main() {
       method,
       contains('CloudSyncSemanticDrainController.defaultMaximumPasses'),
     );
+  });
+
+  test('automatic writer readback does not wake its own queue', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final start = source.indexOf('void _queueCloudSyncV2LocalSends(');
+    final end = source.indexOf('_captureCloudSyncV2LocalSend({', start);
+    expect(start, greaterThan(0));
+    expect(end, greaterThan(start));
+    final worker = source.substring(start, end);
+    final read = worker.indexOf(
+      'await runCloudSyncV2ManualSemanticPullConfirmed(',
+    );
+    final result = worker.indexOf('return result;', read);
+    expect(read, greaterThan(0));
+    expect(result, greaterThan(read));
+    final readback = worker.substring(read, result);
+    expect(readback, contains('maximumPasses: 1,'));
+    expect(readback, contains('resumeAutomaticUploads: false,'));
   });
 
   test('one confirmed action auto-resumes only bounded semantic batches', () {
@@ -252,6 +283,14 @@ void main() {
     expect(start, greaterThanOrEqualTo(0));
     expect(end, greaterThan(start));
     final method = source.substring(start, end);
+    final clear = method.indexOf('_cloudSyncV2SemanticPullInFlight = null;');
+    final resume = method.indexOf(
+      '_queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox)',
+    );
+    expect(clear, greaterThan(0));
+    expect(resume, greaterThan(clear));
+    expect('_queueCloudSyncV2LocalSends('.allMatches(method).length, 1);
+    expect(method, isNot(contains('resumeAutomaticUploads')));
     expect(method, contains('_cloudSyncV2AutomaticCatchUpMaximumBatches'));
     expect(
       method,

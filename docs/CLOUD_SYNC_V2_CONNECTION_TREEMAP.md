@@ -140,6 +140,22 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
   per-intent admission failures still require explicit production retry-policy
   qualification; counts alone do not make those operations successful.
 
+- Follow-on read/write handoff, also outside the frozen `463a19881` APK:
+  one-pass/deep manual semantic pulls now wake already opted-in automatic
+  uploads after clearing their in-flight barrier, matching automatic catch-up.
+  The automatic writer's own Chat readback and the exact-intent manual writer
+  explicitly suppress this wakeup. They retain delayed retries and exact-intent
+  isolation rather than recursively retriggering the queue. Existing rollout,
+  identity, legacy-sync and quiescence gates still control any wakeup.
+  **44 focused tests passed** across composition, exact-intent contracts and
+  runtime behavior; analyzer reported zero errors/warnings and four existing
+  style infos. A new contract test first caught an unfinished patch in the
+  wrong completion callback; correction and strengthened assertions passed
+  before commit. No affected candidate was built or installed. One local test
+  launcher attempt failed in PowerShell startup with `0xC0000005`, before Dart
+  started; the unchanged test invocation subsequently completed successfully.
+  Actual device upload/readback and first-send/setup-race coverage remain open.
+
 - Both full runs `34013640516` (manual) and `34014225330` (automatic) completed
   successfully. The automatic run passed Dart, parent Rust, rustpush, protector,
   automatic-mode flag, bridge reproducibility, APK/native-library and signing
