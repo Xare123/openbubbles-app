@@ -54,14 +54,42 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | Capability | Current evidence / explicit remaining gap |
 | --- | --- |
 | Message history and conversation projection | User has observed restored readable chats; sustained incremental/restart behavior must be qualified on the release candidate. |
-| Photos, video, GIF and documents | Some photos are user-verified. Video key-selection repair passed native tests; live video qualification and the GIF byte-size mismatch remain unresolved. Each media surface/type needs user-facing validation, not metadata-only success. |
+| Photos, video, GIF and documents | Some photos are user-verified. One profile video now downloaded and rendered a fullscreen decoded frame on installed `475f9d082`; continuous playback/audio remain unproven. GIF byte-size mismatch remains unresolved. Each media surface/type needs user-facing validation, not metadata-only success. |
 | Chat-first ordinary text writing | Implemented behind rollout gates, combined offline tests pass. Exact-recipient live save/readback and ordinary-runtime qualification remain. |
 | Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
 | Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
-| Ongoing sync and account lifecycle | Automatic local-send mode is compiled into installed source `475f9d082`, but the fresh profile has no writer authority or journal entries. Missing automatic setup is in repair. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence remain release gates. |
+| Ongoing sync and account lifecycle | Missing automatic writer setup is repaired and installed in `463a19881`, with full CI passing; fresh foreground setup and automatic save/readback are still unverified. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence remain release gates. |
 
 ### Wi-Fi resume checkpoint
+
+- Latest device/CI checkpoint: full GCE run `34016745531` passed for frozen
+  source `463a19881bf8d4b764eaae8eaa2a662cac81a868`. It passed the full Dart
+  suite, 302 parent Rust tests, 222 rustpush tests, 31 protector tests, compiled
+  automatic flags, bridge reproducibility, APK verification and hosted signing.
+  Total run time was 24m11s; the APK build step took 7m01s. Cleanup passed,
+  with independent listings showing zero instances and registered runners.
+  Local checks verified the pinned Canary signer, v2/v3 signatures, package
+  and four required ARM64 libraries. APK SHA-256 is
+  `882e76582fbe7eafbd6089ce8bd521664349ec9b73619cd6178e7b5296d1d2c6`
+  (449,083,774 bytes). `adb install -r -t` succeeded; Canary update time is
+  `2026-09-05 23:58:26`, its original install time is unchanged, and Alpha's
+  timestamps are unchanged. No data clear, credential change or uninstall.
+  Installation returned to the launcher; a background process alone does not
+  establish writer readiness. The earlier blocked launch/debug command was
+  not retried or routed around. Automatic save/readback is still open.
+  Follow-ons `2b2fa5685` and `01fc88858` are local-only and excluded from this APK.
+
+- Before that installation, the already-open old Canary permitted a real
+  contact-profile media check. An unloaded `video/quicktime` card became a
+  thumbnail/duration and opened to a decoded fullscreen frame. Native evidence
+  showed two checksum candidates, exactly one qualified candidate and successful
+  validation of a 4,202,496-byte asset. This exercises the installed MMCS
+  key-qualified sibling-selection fix rather than merely compiling it. Two
+  captures showed the same frame, so continuous playback/audio are not passed.
+  A later screen differed from the expected flow; additional taps were paused
+  instead of guessing at the cause. The GIF was not retried. Six small private
+  evidence files total about 5.6 MiB and remain outside the repository.
 
 - Fresh evidence after the user's existing-thread and delete-local-thread/new-send
   tests: current logs contain ordinary IDS delivery acknowledgements and two
@@ -114,8 +142,9 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
   as GCE run `34016745531` on T2D-60, primary lane. Before launch, independent
   checks found no VMs or registered runners; quotas showed global CPU 164/0
   used, regional T2D 100/0 used, SSD 500 GB/0 used, and IPv4 8/0 used. Existing
-  isolated pilot and signing path are unchanged. Run outcome, signed artifact,
-  cleanup and on-device proof are pending; installed source is still `475f9d082`.
+  isolated pilot and signing path are unchanged. At dispatch the installed
+  source was `475f9d082`; the newer completion/install checkpoint above
+  supersedes that state. Live automatic save/readback remains pending.
 
 - Focused independent audit of frozen `463a19881` found no demonstrated
   cross-profile provisioning, transition/attachment lock cycle, automatic
@@ -163,7 +192,7 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
   registrations afterward. The signed automatic artifact was downloaded and
   its Canary package, four ARM64 libraries, v2 signature and pinned certificate
   were independently verified before `adb install -r -t` succeeded.
-  Installed source is `475f9d082fcb9bc66aecbe5fd6fcfff8d76497f4`, APK SHA-256
+  That earlier installed source was `475f9d082fcb9bc66aecbe5fd6fcfff8d76497f4`, APK SHA-256
   `d15aa514203438686818ff0c274a9ba7c3628f5ed2cdd64597903469a322e48a`,
   size 449,075,582 bytes. Device-reported update time is 2026-09-05 23:11:45;
   Canary's original first-install time and Alpha's package timestamps remained
