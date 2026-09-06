@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:bluebubbles/app/components/custom_text_editing_controllers.dart';
+import 'package:bluebubbles/app/layouts/chat_creator/chat_creator_message_snapshot.dart';
 import 'package:bluebubbles/app/layouts/chat_creator/chat_recipient_validation.dart';
 import 'package:bluebubbles/app/layouts/chat_creator/widgets/chat_creator_tile.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/pages/conversation_view.dart';
@@ -28,6 +29,21 @@ import 'package:flutter_acrylic/window_effect.dart';
 import 'package:get/get.dart' hide Response;
 import 'package:slugify/slugify.dart';
 import 'package:tuple/tuple.dart';
+
+ChatCreatorMessageSnapshot captureChatCreatorMessage(
+    TextFieldComponentState composer) {
+  // TextFieldComponent retains these bindings from initState. The latest
+  // fakeController is not necessarily the controller behind the visible field.
+  final controller = composer.controller;
+  final textController = controller?.textController ?? composer.textController;
+  final reply = controller?.replyToMessage;
+  return ChatCreatorMessageSnapshot(
+    body: textController.getFinalAnnotations(),
+    attachments: controller?.pickedAttachments ?? composer.initialAttachments,
+    replyGuid: reply?.item1.threadOriginatorGuid ?? reply?.item1.guid,
+    replyPart: reply?.item2,
+  );
+}
 
 class SelectedContact {
   final String displayName;
@@ -75,6 +91,7 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
   List<Chat> filteredChats = [];
   late final RxList<SelectedContact> selectedContacts = List<SelectedContact>.from(widget.initialSelected).obs;
   final Rxn<ConversationViewController> fakeController = Rxn(null);
+  final _composerKey = GlobalKey<TextFieldComponentState>();
   bool iMessage = true;
   bool sms = false;
   String? oldText;
@@ -1050,12 +1067,18 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
                       return KeyEventResult.ignored;
                     },
                     child: Obx(() => TextFieldComponent(
+                        key: _composerKey,
                         focusNode: messageNode,
                         textController: textController,
                         controller: fakeController.value,
                         recorderController: null,
                         initialAttachments: widget.initialAttachments,
                         sendMessage: ({String? effect}) async {
+                          final composer = _composerKey.currentState;
+                          if (composer == null) return;
+                          // Capture before recipient lookup, navigation, or keyboard
+                          // callbacks can change/clear either editing controller.
+                          final outgoing = captureChatCreatorMessage(composer);
                           if (selectedContacts.isEmpty) {
                             showSnackbar("Error!", "Choose a contact before sending this message!");
                             return;
@@ -1139,34 +1162,22 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
                                 .toList();
                             mcs.invokeMethod("open-sms-app", {
                               "targets": participants.join(";"),
-                              "body": textController.text
+                              "body": outgoing.body.string
                             });
                             Navigator.of(context).pop();
                             return;
                           }
                           if (chat != null && existsOnServer) {
                             sendInitialMessage() async {
-                              try {
-                                if (fakeController.value == null) {
-                                  await cm.setActiveChat(chat, clearNotifications: false);
-                                  cm.activeChat!.controller = cvc(chat);
-                                  cm.activeChat!.controller!.pickedAttachments.value = [];
-                                  fakeController.value = cm.activeChat!.controller;
-                                } else {
-                                  fakeController.value!.textController.text = textController.text;
-                                  fakeController.value!.pickedAttachments.value = widget.initialAttachments;
-                                }
-                              } catch (e, stack) {
-                                Logger.error("Fix your code zach!", error: e, trace: stack);
-                              }
-
-                              await fakeController.value!.send(
-                                widget.initialAttachments,
-                                fakeController.value!.textController.getFinalAnnotations(),
+                              // ConversationView.onInit has installed the destination
+                              // controller. Never reconstruct the payload from it.
+                              final controller = cvc(chat);
+                              await controller.send(
+                                outgoing.attachments,
+                                outgoing.bodyForSend(),
                                 "",
-                                fakeController.value!.replyToMessage?.item1.threadOriginatorGuid ??
-                                    fakeController.value!.replyToMessage?.item1.guid,
-                                fakeController.value!.replyToMessage?.item2,
+                                outgoing.replyGuid,
+                                outgoing.replyPart,
                                 effect,
                                 null,
                                 false,
@@ -1174,10 +1185,10 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
                               );
                               
                               try {
-                                fakeController.value!.replyToMessage = null;
-                                fakeController.value!.pickedAttachments.clear();
-                                fakeController.value!.textController.clear();
-                                fakeController.value!.subjectTextController.clear();
+                                controller.replyToMessage = null;
+                                controller.pickedAttachments.clear();
+                                controller.textController.clear();
+                                controller.subjectTextController.clear();
                               } catch (e, stack) {
                                 Logger.error("Fix your code zach!", error: e, trace: stack);
                               }
@@ -1238,7 +1249,7 @@ class ChatCreatorState extends OptimizedState<ChatCreator> {
                                     ),
                                   );
                                 });
-                            backend.createChat(participants.map((i) => RustPushBBUtils.formatAddress(i)).toList(), textController.getFinalAnnotations(), method).then((newChat) async {
+                            backend.createChat(participants.map((i) => RustPushBBUtils.formatAddress(i)).toList(), outgoing.bodyForSend(), method).then((newChat) async {
                               newChat.senderIsKnown = true;
                               // Load the chat data and save it to the DB
                               newChat = newChat.save(updateSenderIsKnown: true);
