@@ -369,6 +369,37 @@ abstract interface class NativeProtectedCloudSyncWriteBindings {
   });
 }
 
+/// Explicit opt-in: existing Message-only bindings do not acquire Chat authority.
+abstract interface class NativeProtectedCloudSyncChatWriteBindings
+    implements NativeProtectedCloudSyncWriteBindings {
+  Future<frb_api.CloudSyncProtectedOutboundStageResult> stageOutboundChat({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required frb_api.CloudChat chat,
+  });
+
+  Future<frb_api.CloudSyncPreparedMessageCreateResult> prepareChatCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required Duration requestTimeout,
+    required List<frb_api.CloudSyncPreparedMessageCreateInput> inputs,
+  });
+
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileChatCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  });
+}
+
 enum _CreatePreflightDisposition { absent, alreadyPresent }
 
 final class _NativeCloudSyncPreparedSubmission
@@ -441,7 +472,7 @@ final class NativeProtectedCloudSyncTransport
     implements
         CloudSyncTransport,
         CloudProtectedPageLeaseTransport,
-        CloudSyncOutboundStagingTransport,
+        CloudSyncOutboundChatStagingTransport,
         CloudSyncWriteTransport,
         CloudSyncWriteReceiptFinalizer,
         CloudSyncConfirmedReceiptRetentionPolicy,
@@ -559,6 +590,14 @@ final class NativeProtectedCloudSyncTransport
     return bindings as NativeProtectedCloudSyncWriteBindings;
   }
 
+  NativeProtectedCloudSyncChatWriteBindings _requireChatWriteBindings() {
+    final bindings = _bindings;
+    if (bindings is! NativeProtectedCloudSyncChatWriteBindings) {
+      throw _readOnlyFailure();
+    }
+    return bindings as NativeProtectedCloudSyncChatWriteBindings;
+  }
+
   void _requireV2WriterInterlock() {
     CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);
   }
@@ -617,6 +656,49 @@ final class NativeProtectedCloudSyncTransport
   }
 
   @override
+  Future<CloudSyncProtectedOutboundStageData> stageOutboundChat(
+    CloudSyncScope scope, {
+    required frb_api.CloudChat chat,
+  }) async {
+    _requireV2WriterInterlock();
+    _validateOutboundChatScope(scope);
+    final result = await _runProtectedStoreOperation(
+      () => _requireChatWriteBindings().stageOutboundChat(
+        cloudMessagesClient: _cloudMessagesClient,
+        storageDirectory: _storageDirectory,
+        expectedAccountFingerprint: scope.accountFingerprint,
+        expectedProtectedStoreIdentity: _protectedStoreIdentity,
+        chat: chat,
+      ),
+    );
+    if ((result.stage == null) == (result.failure == null)) {
+      throw _localStorage('cloud_sync_outbound_stage_envelope_invalid');
+    }
+    if (result.failure case final failure?) {
+      throw _mapOutboundFailure(failure);
+    }
+    final stage = result.stage!;
+    if (!_nativeDigestPattern.hasMatch(stage.logicalEntityKeyHash) ||
+        !_protectedReferencePattern.hasMatch(stage.protectedPayloadReference) ||
+        stage.protectedPayloadReference !=
+            stage.protectedServerRecordReference ||
+        !_contentDigestPattern.hasMatch(stage.payloadSha256) ||
+        !_nativeDigestPattern.hasMatch(stage.serverRecordIdHash) ||
+        !_leaseReferencePattern.hasMatch(stage.leaseReference) ||
+        stage.payloadLength <= BigInt.zero ||
+        stage.payloadLength > BigInt.from(256 * 1024)) {
+      throw _localStorage('cloud_sync_outbound_stage_invalid');
+    }
+    return CloudSyncProtectedOutboundStageData(
+      logicalEntityKeyHash: stage.logicalEntityKeyHash,
+      protectedEnvelopeReference: stage.protectedPayloadReference,
+      payloadSha256: stage.payloadSha256,
+      serverRecordIdHash: stage.serverRecordIdHash,
+      leaseReference: stage.leaseReference,
+    );
+  }
+
+  @override
   Future<void> commitOutboundLease(
     String leaseReference,
     String protectedEnvelopeReference,
@@ -640,9 +722,11 @@ final class NativeProtectedCloudSyncTransport
     required List<CloudSyncProtectedWriteOperation> operations,
   }) async {
     _requireV2WriterInterlock();
-    _validateOutboundMessageScope(scope);
+    final payloadVersion = _outboundCreatePayloadVersion(scope);
+    final isChat = scope.zone == 'chatManateeZone';
     if (operations.isEmpty ||
         operations.length > _maximumChangesPerPage ||
+        (isChat && operations.length != 1) ||
         operations.any(
           (operation) =>
               operation.action != CloudOutboxAction.save ||
@@ -650,7 +734,7 @@ final class NativeProtectedCloudSyncTransport
                 scope,
                 operationId: operation.operationId,
                 logicalEntityKeyHash: operation.logicalEntityKeyHash,
-                payloadVersion: cloudSyncOutboundPayloadVersion,
+                payloadVersion: payloadVersion,
               ) ||
               operation.protectedPayloadReference == null ||
               operation.payloadSha256 == null ||
@@ -674,11 +758,17 @@ final class NativeProtectedCloudSyncTransport
         )
         .toList(growable: false);
     final bindings = _requireWriteBindings();
+    final reconcile = isChat
+        ? _requireChatWriteBindings().reconcileChatCreate
+        : bindings.reconcileMessageCreate;
+    final prepare = isChat
+        ? _requireChatWriteBindings().prepareChatCreate
+        : bindings.prepareMessageCreate;
     final preparation = await _runProtectedStoreOperation(() async {
       final remoteInputs = <frb_api.CloudSyncPreparedMessageCreateInput>[];
       final preconfirmedReceipts = <CloudOutboxCreateReceipt>[];
       for (final input in inputs) {
-        final lookup = await bindings.reconcileMessageCreate(
+        final lookup = await reconcile(
           cloudMessagesClient: _cloudMessagesClient,
           storageDirectory: _storageDirectory,
           expectedAccountFingerprint: scope.accountFingerprint,
@@ -700,7 +790,7 @@ final class NativeProtectedCloudSyncTransport
       }
       final result = remoteInputs.isEmpty
           ? null
-          : await bindings.prepareMessageCreate(
+          : await prepare(
               cloudMessagesClient: _cloudMessagesClient,
               storageDirectory: _storageDirectory,
               expectedAccountFingerprint: scope.accountFingerprint,
@@ -753,9 +843,15 @@ final class NativeProtectedCloudSyncTransport
     required List<CloudOutboxOperation> operations,
   }) async {
     _requireV2WriterInterlock();
-    _validateOutboundMessageScope(scope);
+    _outboundCreatePayloadVersion(scope);
     if (preparedSubmission is! _NativeCloudSyncPreparedSubmission) {
       throw ArgumentError('cloud_sync_native_prepared_submission_required');
+    }
+    if (scope.zone == 'chatManateeZone') {
+      _requireChatWriteBindings();
+      if (preparedSubmission.operationCount != 1) {
+        throw _localStorage('cloud_sync_outbound_create_only');
+      }
     }
     final outcomes = <CloudPushOutcome>[
       for (final receipt in preparedSubmission.preconfirmedReceipts)
@@ -1670,6 +1766,26 @@ final class NativeProtectedCloudSyncTransport
     }
   }
 
+  void _validateOutboundChatScope(CloudSyncScope scope) {
+    if (_validateScopeAndStream(scope) != 'chats' ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semantic) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.cancelled,
+        safeCode: 'unsupported_protected_outbound_scope',
+      );
+    }
+  }
+
+  int _outboundCreatePayloadVersion(CloudSyncScope scope) {
+    if (scope.zone == 'chatManateeZone') {
+      _validateOutboundChatScope(scope);
+      return cloudSyncOutboundChatPayloadVersion;
+    }
+    // The existing Message-v2 validation remains unchanged.
+    _validateOutboundMessageScope(scope);
+    return cloudSyncOutboundPayloadVersion;
+  }
+
   bool _isInitialCreateOperationIdentity(
     CloudSyncScope scope, {
     required String operationId,
@@ -1796,6 +1912,10 @@ final class NativeProtectedCloudSyncTransport
     if (operation.scope != scope) {
       throw _localStorage('cloud_sync_outbound_reconcile_operation_invalid');
     }
+    if (scope.zone == 'chatManateeZone') {
+      _validateOutboundChatScope(scope);
+      _requireChatWriteBindings();
+    }
     final mutationGuard = _writerMutationGuard;
     if (mutationGuard == null) {
       throw CloudSyncFailure(
@@ -1818,8 +1938,28 @@ final class NativeProtectedCloudSyncTransport
   Future<CloudSyncConfirmedReplayProof> verifyConfirmedMessageCreateNoSave(
     CloudSyncScope scope, {
     required CloudOutboxOperation operation,
+  }) {
+    _requireV2WriterInterlock();
+    _validateOutboundMessageScope(scope);
+    return _verifyConfirmedCreateNoSave(scope, operation: operation);
+  }
+
+  /// Chat-specific no-save readback retains the same proof/receipt fences.
+  Future<CloudSyncConfirmedReplayProof> verifyConfirmedChatCreateNoSave(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+  }) {
+    _requireV2WriterInterlock();
+    _validateOutboundChatScope(scope);
+    _requireChatWriteBindings();
+    return _verifyConfirmedCreateNoSave(scope, operation: operation);
+  }
+
+  Future<CloudSyncConfirmedReplayProof> _verifyConfirmedCreateNoSave(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
   }) async {
-    final resolution = await _reconcileMessageCreateOutcome(
+    final resolution = await _reconcileCreateOutcome(
       scope,
       operation: operation,
       expectedStatus: CloudOutboxStatus.confirmed,
@@ -1867,7 +2007,7 @@ final class NativeProtectedCloudSyncTransport
     required Future<void> Function() clearDurableAdoptionMarker,
   }) async {
     _requireV2WriterInterlock();
-    _validateOutboundMessageScope(scope);
+    final payloadVersion = _outboundCreatePayloadVersion(scope);
     final payloadReference = operation.encryptedPayloadReference;
     final payloadSha256 = operation.payloadSha256;
     final serverRecordIdHash = operation.serverRecordIdHash;
@@ -1880,7 +2020,7 @@ final class NativeProtectedCloudSyncTransport
         operation.scope != scope ||
         operation.status != CloudOutboxStatus.confirmed ||
         operation.action != CloudOutboxAction.save ||
-        operation.payloadVersion != cloudSyncOutboundPayloadVersion ||
+        operation.payloadVersion != payloadVersion ||
         !_isInitialCreateOperationIdentity(
           scope,
           operationId: operation.operationId,
@@ -1916,7 +2056,7 @@ final class NativeProtectedCloudSyncTransport
     }
   }
 
-  Future<CloudUnknownOutcomeResolution> _reconcileMessageCreateOutcome(
+  Future<CloudUnknownOutcomeResolution> _reconcileCreateOutcome(
     CloudSyncScope scope, {
     required CloudOutboxOperation operation,
     required CloudOutboxStatus expectedStatus,
@@ -1924,7 +2064,10 @@ final class NativeProtectedCloudSyncTransport
     required String invalidEnvelopeCode,
   }) async {
     _requireV2WriterInterlock();
-    _validateOutboundMessageScope(scope);
+    final payloadVersion = _outboundCreatePayloadVersion(scope);
+    final reconcile = scope.zone == 'chatManateeZone'
+        ? _requireChatWriteBindings().reconcileChatCreate
+        : _requireWriteBindings().reconcileMessageCreate;
     final payloadReference = operation.encryptedPayloadReference;
     final payloadSha256 = operation.payloadSha256;
     final serverRecordIdHash = operation.serverRecordIdHash;
@@ -1934,7 +2077,7 @@ final class NativeProtectedCloudSyncTransport
     if (operation.scope != scope ||
         operation.status != expectedStatus ||
         operation.action != CloudOutboxAction.save ||
-        operation.payloadVersion != cloudSyncOutboundPayloadVersion ||
+        operation.payloadVersion != payloadVersion ||
         !_isInitialCreateOperationIdentity(
           scope,
           operationId: operation.operationId,
@@ -1958,7 +2101,7 @@ final class NativeProtectedCloudSyncTransport
     }
 
     final result = await _runProtectedStoreOperation(
-      () => _requireWriteBindings().reconcileMessageCreate(
+      () => reconcile(
         cloudMessagesClient: _cloudMessagesClient,
         storageDirectory: _storageDirectory,
         expectedAccountFingerprint: scope.accountFingerprint,
@@ -2059,7 +2202,8 @@ final class FrbNativeProtectedCloudSyncBindings
     implements
         NativeProtectedCloudSyncBindings,
         NativeProtectedCloudSyncWriteBindings,
-        CloudKitWriterReconciliationBinding {
+        CloudKitWriterChatReconciliationBinding,
+        NativeProtectedCloudSyncChatWriteBindings {
   FrbNativeProtectedCloudSyncBindings({RustLibApi? api})
     // ignore: invalid_use_of_internal_member
     : _api = api ?? RustLib.instance.api;
@@ -2118,6 +2262,57 @@ final class FrbNativeProtectedCloudSyncBindings
     required String requestUuid,
     required frb_api.CloudSyncPreparedMessageCreateInput input,
   }) => _api.crateApiApiCloudSyncReconcileMessageCreate(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    storageDirectory: storageDirectory,
+    expectedAccountFingerprint: expectedAccountFingerprint,
+    expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+    requestUuid: requestUuid,
+    input: input,
+  );
+
+  @override
+  Future<frb_api.CloudSyncProtectedOutboundStageResult> stageOutboundChat({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required frb_api.CloudChat chat,
+  }) => _api.crateApiApiCloudSyncStageOutboundChat(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    storageDirectory: storageDirectory,
+    expectedAccountFingerprint: expectedAccountFingerprint,
+    expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+    chat: chat,
+  );
+
+  @override
+  Future<frb_api.CloudSyncPreparedMessageCreateResult> prepareChatCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required Duration requestTimeout,
+    required List<frb_api.CloudSyncPreparedMessageCreateInput> inputs,
+  }) => _api.crateApiApiCloudSyncPrepareChatCreate(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    storageDirectory: storageDirectory,
+    expectedAccountFingerprint: expectedAccountFingerprint,
+    expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+    requestUuid: requestUuid,
+    requestTimeoutSeconds: BigInt.from(requestTimeout.inSeconds),
+    inputs: inputs,
+  );
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileChatCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) => _api.crateApiApiCloudSyncReconcileChatCreate(
     cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
     storageDirectory: storageDirectory,
     expectedAccountFingerprint: expectedAccountFingerprint,

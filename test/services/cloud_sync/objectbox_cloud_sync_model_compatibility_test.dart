@@ -8,6 +8,135 @@ import 'package:objectbox/internal.dart' as obx;
 
 void main() {
   test(
+    'Outbox property26 database upgrades to nullable localChatOrigin without data loss',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'synthetic-outbox-origin-upgrade-',
+      );
+      addTearDown(() async {
+        if (directory.existsSync()) await directory.delete(recursive: true);
+      });
+      final current = getObjectBoxModel();
+      final previousMap = current.model.toMap();
+      final outboxModel = (previousMap['entities'] as List)
+          .cast<Map>()
+          .singleWhere(
+            (entity) => entity['name'] == 'CloudOutboxOperationEntity',
+          );
+      final properties = outboxModel['properties'] as List;
+      expect(
+        properties.singleWhere((p) => p['name'] == 'localChatOrigin')['id'],
+        '27:6111179417259911182',
+      );
+      properties.removeWhere((p) => p['name'] == 'localChatOrigin');
+      outboxModel['lastPropertyId'] = '26:4302324668053862926';
+      expect(properties.length, 26);
+      expect(properties.any((p) => p['name'] == 'localChatOrigin'), isFalse);
+      // Actually create and populate the predecessor schema, then close it.
+      // The current nullable serializer omits property27 when it is null.
+      final predecessor = Store(
+        obx.ModelDefinition(
+          obx.ModelInfo.fromMap(previousMap),
+          current.bindings,
+        ),
+        directory: directory.path,
+      );
+      late int chatId, messageId, checkpointId, outboxId;
+      try {
+        final chat = Chat(guid: 'synthetic-pre-origin-chat');
+        chatId = predecessor.box<Chat>().put(chat);
+        messageId = predecessor.box<Message>().put(
+          Message(
+            guid: 'synthetic-pre-origin-message',
+            text: 'synthetic property26 body',
+            isFromMe: true,
+            dateCreated: DateTime.utc(2026, 9, 5),
+          )..chat.target = chat,
+        );
+        checkpointId = predecessor.box<CloudSyncCheckpointEntity>().put(
+          CloudSyncCheckpointEntity(
+            checkpointKey: 'synthetic-property26-checkpoint',
+            accountFingerprint: 'A' * 43,
+            container: 'com.apple.messages.cloud',
+            database: 'private',
+            zone: 'chatManateeZone',
+            streamKind: 'messages',
+            generation: 7,
+            fetchedSequence: 43,
+            appliedSequence: 41,
+            mutationRevisionCounter: 12,
+            updatedAtMs: 1000,
+          ),
+        );
+        outboxId = predecessor.box<CloudOutboxOperationEntity>().put(
+          CloudOutboxOperationEntity(
+            operationId: 'op1:${'b' * 64}',
+            scopeKey: 'synthetic-property26-scope',
+            accountFingerprint: 'A' * 43,
+            zone: 'chatManateeZone',
+            logicalEntityKeyHash: 'L' * 43,
+            action: CloudOutboxAction.save.index,
+            payloadVersion: 1,
+            mutationRevision: 12,
+            checkpointGeneration: 7,
+            state: CloudOutboxStatus.unknownOutcome.index,
+            attemptCount: 1,
+            encryptedPayloadRef: 'obcs2.ref.${'P' * 43}',
+            payloadSha256: 'c' * 64,
+            protectedLeaseReference: 'obcs2.lease.${'d' * 32}',
+            serverRecordIdHash: 'S' * 43,
+            appleRequestUuid: 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+            appleOperationUuid: 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB',
+            createdAtMs: 1000,
+            updatedAtMs: 2000,
+          ),
+        );
+      } finally {
+        predecessor.close();
+      }
+      for (var restart = 0; restart < 2; restart++) {
+        final upgraded = await openStore(directory: directory.path);
+        try {
+          expect(upgraded.box<Chat>().count(), 1);
+          expect(upgraded.box<Message>().count(), 1);
+          expect(upgraded.box<CloudOutboxOperationEntity>().count(), 1);
+          final message = upgraded.box<Message>().get(messageId)!;
+          expect(message.text, 'synthetic property26 body');
+          expect(message.chat.targetId, chatId);
+          expect(message.chat.target!.guid, 'synthetic-pre-origin-chat');
+          final checkpoint = upgraded.box<CloudSyncCheckpointEntity>().get(
+            checkpointId,
+          )!;
+          expect(checkpoint.generation, 7);
+          expect(checkpoint.fetchedSequence, 43);
+          expect(checkpoint.appliedSequence, 41);
+          expect(checkpoint.mutationRevisionCounter, 12);
+          final row = upgraded.box<CloudOutboxOperationEntity>().get(outboxId)!;
+          expect(row.localChatOrigin, isNull);
+          expect(row.operationId, 'op1:${'b' * 64}');
+          expect(row.state, CloudOutboxStatus.unknownOutcome.index);
+          expect(row.attemptCount, 1);
+          expect(row.checkpointGeneration, 7);
+          expect(row.mutationRevision, 12);
+          expect(row.encryptedPayloadRef, 'obcs2.ref.${'P' * 43}');
+          expect(row.payloadSha256, 'c' * 64);
+          expect(row.protectedLeaseReference, 'obcs2.lease.${'d' * 32}');
+          expect(row.serverRecordIdHash, 'S' * 43);
+          expect(row.appleRequestUuid, 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA');
+          expect(
+            row.appleOperationUuid,
+            'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB',
+          );
+          expect(row.createdAtMs, 1000);
+          expect(row.updatedAtMs, 2000);
+        } finally {
+          upgraded.close();
+        }
+      }
+    },
+  );
+
+  test(
     'adding the local send journal preserves a database with last entity ID 32',
     () async {
       final directory = await Directory.systemTemp.createTemp(
@@ -330,6 +459,9 @@ void main() {
       expect(properties['checkpointGeneration'], '23:3453625028306797643');
       expect(properties['appleRequestUuid'], '24:2838853240019164046');
       expect(properties['appleOperationUuid'], '25:593864995002474100');
+      expect(properties['protectedLeaseReference'], '26:4302324668053862926');
+      expect(properties['localChatOrigin'], '27:6111179417259911182');
+      expect(outbox['lastPropertyId'], '27:6111179417259911182');
 
       final checkpoint = (model['entities'] as List<dynamic>)
           .cast<Map<String, dynamic>>()

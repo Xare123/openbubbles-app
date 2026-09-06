@@ -110,9 +110,13 @@ final class CloudSyncLocalSendConsumerResult {
     this.admitted = 0,
     this.deferred = 0,
     this.outboxBlocked = false,
+    this.chatReadbackPending = false,
   });
 
   final int admitted;
   final int deferred;
   final bool outboxBlocked;
+  /// Queue receipts are settled, but the ordinary semantic reader still needs
+  /// to project the newly created Chat before its first Message can upload.
+  final bool chatReadbackPending;
 }

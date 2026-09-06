@@ -7,6 +7,10 @@ import 'dart:collection';
 /// the only version eligible for remote submission.
 const int cloudSyncOutboundPayloadVersion = 2;
 
+/// Separate protected Chat envelope and initial-operation domain. This does
+/// not make legacy version-1 Message operations eligible for transmission.
+const int cloudSyncOutboundChatPayloadVersion = 1;
+
 final RegExp _canonicalAppleUuidPattern = RegExp(
   r'^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$',
 );

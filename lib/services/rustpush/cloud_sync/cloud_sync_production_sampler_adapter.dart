@@ -30,6 +30,8 @@ import 'objectbox_cloud_semantic_store_gateway.dart';
 import 'cloud_sync_protector.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 import 'cloud_sync_outbound_admission.dart';
+import 'cloud_sync_outbound_chat_admission.dart';
+import 'cloud_sync_create_queue_drain.dart';
 import 'cloud_sync_writer_authority.dart';
 import 'cloudkit_operation_interlock.dart';
 import 'cloudkit_writer_authority.dart';
@@ -730,9 +732,19 @@ final class CloudSyncProductionLocalSendAdapter {
       store: durable, transport: transport,
       ensureProtectedStoreRecovered: lifecycle.ensureRecoveredBeforeWrite,
     );
-    final engine = CloudSyncEngine(
-      scope: scope,
-      coordinatorId: 'local-send-${auth.nativeSessionId}',
+    final chatScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container, database: scope.database,
+      zone: 'chatManateeZone', streamKind: scope.streamKind,
+      schemaVersion: scope.schemaVersion, persistenceLane: scope.persistenceLane,
+    );
+    final chatAdmission = CloudSyncOutboundChatAdmissionCoordinator(
+      store: durable, transport: transport,
+      ensureProtectedStoreRecovered: lifecycle.ensureRecoveredBeforeWrite,
+    );
+    CloudSyncEngine engineFor(CloudSyncScope target) => CloudSyncEngine(
+      scope: target,
+      coordinatorId: 'local-send-${auth.nativeSessionId}-${target.zone}',
       store: durable, transport: transport,
       inboxApplier: const RejectingShadowInboxApplier(),
       writerAuthority: ObjectBoxCloudSyncWriterAuthority(store: objectBox),
@@ -749,30 +761,29 @@ final class CloudSyncProductionLocalSendAdapter {
     Future<bool> drainExisting() async {
       await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
       await lifecycle.ensureRecoveredBeforeWrite();
-      await durable.recoverExpiredOutboxLeases(scope, now: DateTime.now().toUtc());
-      final before = await durable.readOutboxEntries(scope);
-      final unknown = before.where((op) => op.status == CloudOutboxStatus.unknownOutcome).toList();
-      if (unknown.isNotEmpty) {
-        // The native mutation fence identifies at most one interrupted save.
-        // A mismatching/multiple-unknown state is evidence for recovery, not
-        // permission to choose a different record or submit another request.
-        if (unknown.length != 1) return false;
-        final operation = unknown.single;
+      final settled = await drainCloudSyncCreateQueues(
+        scopes: [chatScope, scope],
+        readOutbox: durable.readOutboxEntries,
+        validateAccount: () => fence.run(() {}, accountFingerprint: scope.accountFingerprint),
+        recoverExpired: (target) => durable.recoverExpiredOutboxLeases(
+          target, now: DateTime.now().toUtc()),
+        reconcileUnknown: (operation) async {
+        final target = operation.scope;
         await guard.requireReconciliationAllowed(
           owner: CloudKitWriterOwner.v2,
           expectedClient: auth.cloudMessagesClient, operation: operation,
         );
         final recovery = _ProductionUnknownOutcomeCanarySession(
-          scope: scope, expectedOperation: operation,
-          readOutbox: () => durable.readOutboxEntries(scope),
+          scope: target, expectedOperation: operation,
+          readOutbox: () => durable.readOutboxEntries(target),
           leaseUnknown: ({required now, required leaseId, required leaseDuration}) =>
-              durable.leaseUnknownOutcomes(scope, now: now, limit: 1,
+              durable.leaseUnknownOutcomes(target, now: now, limit: 1,
                 leaseId: leaseId, leaseDuration: leaseDuration),
           applyTransition: ({required leaseId, required transition, required now}) =>
-              durable.applyOutboxTransitions(scope, leaseId: leaseId,
+              durable.applyOutboxTransitions(target, leaseId: leaseId,
                 transitions: [transition], now: now),
           commitCreateReceipt: ({required leaseId, required receipt, required now}) =>
-              durable.commitOutboxCreateReceipt(scope, leaseId: leaseId,
+              durable.commitOutboxCreateReceipt(target, leaseId: leaseId,
                 receipt: receipt, retainProtectedLeaseReference: true, now: now),
           reconcile: (op) => guard.reconcileUnknownOutcome(
             owner: CloudKitWriterOwner.v2,
@@ -780,30 +791,26 @@ final class CloudSyncProductionLocalSendAdapter {
           quiesce: transport.quiesceNativeOperations,
         );
         await recovery.reconcileUnknownOutcome(operation: operation);
-        // Reconciliation and a fresh submission are separate decisions,
-        // including when exact readback proves that the first save was absent.
-        return false;
-      }
-      guard.requireClear();
-      if (before.any((op) => op.status != CloudOutboxStatus.confirmed &&
-          op.status != CloudOutboxStatus.quarantined)) {
-        await engine.synchronize(trigger: CloudSyncTrigger.localOutbox);
-      }
-      await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
-      final after = await durable.readOutboxEntries(scope);
-      for (final operation in after) {
-        if (operation.status != CloudOutboxStatus.confirmed) return false;
-        if (operation.protectedLeaseReference == null) continue;
-        final proof = await transport.verifyConfirmedMessageCreateNoSave(
-          scope, operation: operation,
-        );
+        },
+        flush: (target) async {
+          guard.requireClear();
+          await engineFor(target).synchronize(trigger: CloudSyncTrigger.localOutbox);
+        },
+        acknowledgeConfirmed: (target, operation) async {
+        guard.requireClear();
+        final proof = target.zone == 'chatManateeZone'
+            ? await transport.verifyConfirmedChatCreateNoSave(target, operation: operation)
+            : await transport.verifyConfirmedMessageCreateNoSave(target, operation: operation);
         await transport.releaseConfirmedReplayReceipt(
-          scope, operation: operation, proof: proof,
+          target, operation: operation, proof: proof,
           clearDurableAdoptionMarker: () =>
               durable.clearConfirmedProtectedOutboundLeaseReference(
                 expectedOperation: operation),
         );
-      }
+        },
+      );
+      if (!settled) return false;
+      guard.requireClear();
       // Use the same durable quiescence evidence as semantic reads. A bare
       // confirmed status must not hide malformed or unacknowledged receipts.
       final local = ObjectBoxCloudSyncPreflightReader(store: objectBox).read();
@@ -821,13 +828,40 @@ final class CloudSyncProductionLocalSendAdapter {
       return true;
     }
 
+    var chatReadbackPending = false;
     try {
-      return await CloudSyncLocalSendConsumer(
+      final result = await CloudSyncLocalSendConsumer(
         scope: scope, journal: journal, authFence: fence, exclusion: interlock,
-        admit: (id) => admission.admitLocalSend(scope,
-          intentId: id, journal: journal, authFence: fence),
+        admit: (id) async {
+          final source = await fence.run(() => journal.readForAdmission(id),
+              accountFingerprint: scope.accountFingerprint);
+          final localChat = source.message?.chat.target;
+          if (source.admittedOperationId == null && localChat != null &&
+              !localChat.guid.startsWith('iMessage;')) {
+            await chatAdmission.admitChat(chatScope, chatId: localChat.id!,
+                createdAt: source.createdAtUtc, authFence: fence,
+                validateLocalOrigin: () {
+                  final message = journal.validateReadyForCreate(objectBox, scope, source);
+                  if (message.chat.targetId != localChat.id) {
+                    throw StateError('cloud_sync_local_send_chat_changed');
+                  }
+                });
+            chatReadbackPending = true;
+            // A successful save/readback receipt is not canonical projection.
+            // The regular semantic reader must adopt the exact local Chat row
+            // before Message admission's existing ownership proof can pass.
+            throw StateError('cloud_sync_local_send_chat_readback_pending');
+          }
+          return admission.admitLocalSend(scope,
+              intentId: id, journal: journal, authFence: fence);
+        },
         drainExisting: drainExisting,
       ).runOnce();
+      return CloudSyncLocalSendConsumerResult(
+        admitted: result.admitted, deferred: result.deferred,
+        outboxBlocked: result.outboxBlocked,
+        chatReadbackPending: chatReadbackPending && !result.outboxBlocked,
+      );
     } finally {
       await transport.quiesceNativeOperations();
     }

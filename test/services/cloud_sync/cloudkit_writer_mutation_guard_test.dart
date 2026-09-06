@@ -59,12 +59,13 @@ void main() {
   CloudKitWriterMutationGuard guard({
     CloudKitWriterOwner owner = CloudKitWriterOwner.legacy,
     Object? Function()? reader,
+    CloudKitWriterReconciliationBinding? reconciler,
   }) => CloudKitWriterMutationGuard.forTest(
     store: store,
     readActiveClient: reader ?? () => activeClient,
     privateStorageDirectory: directory.path,
     nativeAuthBinding: binding,
-    reconciliationBinding: binding,
+    reconciliationBinding: reconciler ?? binding,
     buildDecision: decision(owner),
   );
 
@@ -379,6 +380,89 @@ void main() {
     },
   );
 
+  test(
+    'Chat exact readback uses its own binding and clears only its fence',
+    () async {
+      provision(CloudKitWriterOwner.v2);
+      final operation = _unknownOutcomeOperation(
+        zone: 'chatManateeZone',
+        payloadVersion: 1,
+      );
+      await armUnknownV2Fence(operation);
+      final chatBinding = _ChatReconciliationBinding();
+      final result = await runV2(
+        () => guard(owner: CloudKitWriterOwner.v2, reconciler: chatBinding)
+            .reconcileUnknownOutcome(
+              owner: CloudKitWriterOwner.v2,
+              expectedClient: activeClient,
+              operation: operation,
+            ),
+      );
+      expect(result.disposition, CloudUnknownOutcomeDisposition.notApplied);
+      expect(chatBinding.chatCalls, 1);
+      expect(chatBinding.messageCalls, 0);
+      expect(_persistentFence(directory).existsSync(), isFalse);
+    },
+  );
+
+  test(
+    'Chat cannot fall back to a Message-only reconciliation binding',
+    () async {
+      provision(CloudKitWriterOwner.v2);
+      final operation = _unknownOutcomeOperation(
+        zone: 'chatManateeZone',
+        payloadVersion: 1,
+      );
+      await armUnknownV2Fence(operation);
+      await expectLater(
+        runV2(
+          () => guard(owner: CloudKitWriterOwner.v2).reconcileUnknownOutcome(
+            owner: CloudKitWriterOwner.v2,
+            expectedClient: activeClient,
+            operation: operation,
+          ),
+        ),
+        throwsA(
+          _failure('cloudkit_writer_chat_reconciliation_binding_missing'),
+        ),
+      );
+      expect(binding.reconcileCalls, 0);
+      expect(_persistentFence(directory).existsSync(), isTrue);
+    },
+  );
+
+  for (final invalid in [
+    ('chatManateeZone', 2),
+    ('messageManateeZone', 1),
+    ('attachmentManateeZone', 2),
+  ]) {
+    test(
+      'reconciliation rejects zone/payload mismatch $invalid before native lookup',
+      () async {
+        provision(CloudKitWriterOwner.v2);
+        final operation = _unknownOutcomeOperation(
+          zone: invalid.$1,
+          payloadVersion: invalid.$2,
+        );
+        await expectLater(
+          runV2(
+            () => guard(owner: CloudKitWriterOwner.v2).reconcileUnknownOutcome(
+              owner: CloudKitWriterOwner.v2,
+              expectedClient: activeClient,
+              operation: operation,
+            ),
+          ),
+          throwsA(
+            _failure(
+              'cloudkit_writer_mutation_reconciliation_operation_invalid',
+            ),
+          ),
+        );
+        expect(binding.reconcileCalls, 0);
+      },
+    );
+  }
+
   test('legacy version-two mutation fence fails closed', () async {
     final stable = () {
       provision(CloudKitWriterOwner.v2);
@@ -572,6 +656,41 @@ final class _FakeAuthBinding
   }
 }
 
+final class _ChatReconciliationBinding
+    implements CloudKitWriterChatReconciliationBinding {
+  int chatCalls = 0;
+  int messageCalls = 0;
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileChatCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) async {
+    chatCalls++;
+    return frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+      protectedProofReference: input.protectedPayloadReference,
+    );
+  }
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileMessageCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) async {
+    messageCalls++;
+    throw StateError('Chat must not use Message reconciliation');
+  }
+}
+
 Matcher _failure(String safeCode) => isA<CloudKitWriterAuthorityFailure>()
     .having((value) => value.safeCode, 'safeCode', safeCode);
 
@@ -605,18 +724,28 @@ const _completeEvidence = CloudKitWriterTransitionEvidence.forTest(
 const _migrationId =
     '3333333333333333333333333333333333333333333333333333333333333333';
 
-CloudOutboxOperation _unknownOutcomeOperation() {
+CloudOutboxOperation _unknownOutcomeOperation({
+  String zone = 'messageManateeZone',
+  int payloadVersion = cloudSyncOutboundPayloadVersion,
+}) {
   final logicalEntityKeyHash = _hash('L');
+  final scope = CloudSyncScope(
+    accountFingerprint: _digestA,
+    container: 'com.apple.messages.cloud',
+    database: 'private',
+    zone: zone,
+    persistenceLane: CloudSyncPersistenceLane.semanticV2,
+  );
   return CloudOutboxOperation(
-    scope: _cloudScope,
+    scope: scope,
     operationId: CloudOperationIdentity.forInitialCreate(
-      scope: _cloudScope,
+      scope: scope,
       logicalEntityKeyHash: logicalEntityKeyHash,
-      payloadVersion: cloudSyncOutboundPayloadVersion,
+      payloadVersion: payloadVersion,
     ),
     logicalEntityKeyHash: logicalEntityKeyHash,
     action: CloudOutboxAction.save,
-    payloadVersion: cloudSyncOutboundPayloadVersion,
+    payloadVersion: payloadVersion,
     mutationRevision: 1,
     checkpointGeneration: 1,
     encryptedPayloadReference: _reference('P'),

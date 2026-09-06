@@ -44,6 +44,174 @@ continue under a new account.
 
 ## Latest integration checkpoint, 2026-09-05
 
+### Wi-Fi resume checkpoint
+
+- Production worker now drains Chat and Message queues together. It recovers
+  and inspects both before any fresh save, reconciles at most one unknown
+  outcome in a separate pass, and acknowledges confirmed receipts using the
+  exact zone-specific readback. Global settled-outbox preflight still follows.
+  Provisional ready intents admit their Chat first; the original message is
+  revalidated again inside Chat admission's transaction. After writer and
+  attachment-gate release, a settled Chat dependency requests one bounded pass
+  through the existing semantic reader. Message admission still requires its
+  authenticated canonical Chat ownership proof. The automatic runtime compile
+  flag remains false by default and is not enabled by the current pilot.
+  Queue/origin/runtime/production-adapter/composition tests: 102 passed.
+  Reviewer found no concrete additional auth/lock bypass, but a combined
+  production-orchestration test and native/live roundtrip remain required.
+
+- First-send journal integration now captures a provisional direct Chat with
+  a separate v2 source hash bound to the original Chat UUID, local row ID,
+  recipient, normalized sender, message UUID and text. Existing canonical
+  v1 hashes remain unchanged. Revalidation selects v2 only against the
+  original persisted hash, never by rewriting an intent after adoption.
+  Five added tests cover canonical adoption/restart, changed identity,
+  nullable provisional routing fields, original-wire/stable-GUID retries, and
+  URI scheme compatibility. The production capture path recovers a retry's
+  original hash under the same journal account/owner instead of choosing a
+  new v1 hash after adoption. Route normalization rejects email-under-tel and
+  phone-under-mailto rather than treating them as equivalent. Agent review
+  found the two retry gaps and the scheme gap; parent fixed and tested them.
+  Journal/admission tests: 84 passed.
+  Production Chat-first scheduling and authenticated adoption proof are still
+  required; this change grants no upload permission or automatic runtime enablement.
+- Startup/recurring iCloud maintenance shares native-operation ownership until
+  the underlying future settles, not merely until Dart's 30-second timer fires.
+  Timed-out work cannot launch follow-on maintenance or publish late clique
+  results. A bounded latest-state queue prevents a new login's startup from
+  being lost behind an old pending request. Parent review caught that queue
+  gap in the first candidate; the revised 12 maintenance tests and 6 registration
+  regression tests passed independently. Never-settling native work still blocks
+  the queue; this is not proof of native cancellation or resolved device timeouts.
+
+- New ordinary-send evidence after the user's registration repair: the fresh
+  message reached SendFinished and delivered
+  at 20:22 PDT. This is IDS evidence, not CloudKit write evidence. Initial
+  password sync and subsequent clique-status query each hit a 30-second
+  timeout; neither proves lost trust. No reset or extra outbound test occurred.
+- Media candidate rustpush commit `a3e7983` replaces checksum-first selection
+  with a unique checksum-and-key-qualified index used by both validation and
+  download target construction. Parent reviewed source and generated-sibling
+  test; native execution and live video proof remain pending. GIF exact-size
+  rejection remains unchanged. The media worker was closed after review; its
+  report and shared-worktree artifacts remain required qualification evidence,
+  so no session, transcript, worktree or evidence deletion was attempted.
+- Writer bridge qualification source is now fork commit `f158879f7`, containing
+  only the reviewed native Chat stage/prepare/reconcile additions and their
+  tests. GCE run `34008654682` uses `bindings-only`, T2D-60 and writer=false.
+  Generation, normalization and the Rust library check passed. The build job
+  failed only its final generated-drift gate. The seven allowlisted generated
+  files were imported from artifact 9981871990 after checking the new Chat
+  API surface; unrelated generated files were not replaced. This run did not
+  execute native unit tests or build an APK, so it is not production qualification.
+  Generated files are committed separately as `1c6edada2`. Cleanup completed
+  successfully, followed by independent checks showing zero GCE instances in
+  the project and zero registered repository runners.
+- Pending Dart integration adds explicit Chat binding capability to transport
+  and mutation-fence recovery. Chat schema/payload is zone `chatManateeZone`,
+  stream `messages`, schema 2, payload 1; Message remains zone
+  `messageManateeZone`, payload 2. Wrong zone/version must fail before native
+  lookup, and missing Chat support must never fall back to Message lookup.
+  After importing the bridge, all 121 tests across mutation guard, native
+  transport, Chat origin/gateway, ObjectBox compatibility and the operation
+  identity contract passed locally. Native code generation normalizers also
+  passed verification. These tests unblock integration, not live write approval.
+  A separate 79-test Message admission/local-send journal regression run also
+  passed. Total for these seven targeted files is 200 passing tests; this is
+  not the full Dart suite and does not execute native Rust unit tests.
+- Remaining writer critical path:
+
+  ```text
+  native Chat bridge + generated bindings
+    -> scope-aware transport / original-submission recovery
+    -> explicit local-origin admission and single Chat create
+    -> authenticated readback through real canonical gateway
+    -> same-row canonical Chat binding
+    -> fresh Message create and readback
+    -> automatic first-send journal and restart/cross-device qualification
+  ```
+
+  The last two stages are not implemented by merely exposing the Chat API.
+  First-send capture now preserves provisional intent across canonical adoption;
+  no historical-row scan or retrospective origin creation was added. Chat-first
+  runtime wiring is in source with targeted tests, not yet qualified end to end.
+  Keep automatic runtime disabled until the complete transition is exercised.
+- Frozen full GCE run `33997373450` succeeded, including hosted signing and
+  cleanup. Independent readback found no GCE instances and zero registered
+  repository runners. Signed `f5271153f` was installed in place over wireless
+  ADB at 20:14 PDT. APK SHA-256 is
+  `80f420e9a92996fa53fa540447d9eae410d00be01fd97a156273c65185316921`.
+  Package name and signing certificate match Canary; ARM64 native libraries
+  are present. Alpha's package/version/update timestamp is unchanged.
+- Post-install Keychain, keystore, CloudKit state and install-secret hashes
+  match pre-install. `hw_info.plist` changed during app restart; source
+  `setup_push` rewrites this file with refreshed push state and saved identity.
+  No hardware reconfiguration was requested, but the whole-file hash does not
+  prove stable inner hardware fields. No pre-install field-level snapshot was
+  captured in this continuation, so do not claim byte-identical hardware state.
+  AndroidRuntime error readback was empty; GIF/video retest remains pending.
+- Subsequent user retest at 20:14:59 and 20:15:01 PDT produced distinct
+  failures. Video: Ford-key-binding rejection, asset bytes 7,118,848 and two
+  matching file references. Ambiguous-reference evidence deliberately omits
+  selected-chunk/key-binding details; this does not prove both are equivalent.
+  GIF: MMCS validation succeeds with one selected chunk and matching Ford key
+  signature, then size validation rejects 4,326,728 downloaded bytes versus
+  4,797,699 canonical bytes (asset metadata is 4,333,568 bytes). Neither is
+  currently a playback/codec failure. Do not bypass integrity checks or assume
+  the size mismatch means truncation without tracing the selected asset.
+- Parent review found the pending native Chat operation identity used stream
+  `chats`, while the actual Dart scope uses `messages`. Corrected the native
+  domain and rejection fixture. Dart computation now matches independently
+  calculated fixed vector
+  `op1:a78f1b167797724168f9233a56838cfef90e17e3dd90d2328de23c33658945db`.
+  The fixture-parity test does not substitute for executing native tests.
+- Parent independently ran 21 targeted tests successfully: 14 Chat-origin
+  cases, six model compatibility cases, and one identity-vector case.
+  The upgrade test creates a property-26 predecessor database and preserves
+  messages, relations, checkpoints and uncertain outbox operations through
+  two reopens. Adapter replay fixtures model ownership snapshots manually;
+  full gateway transaction coverage remains a separate required check.
+- Focused analysis of four production Dart files found no errors or warnings,
+  with three constructor-style infos. Native bridge compilation, generated
+  bindings, runtime wiring and live Chat-then-Message verification remain
+  unfinished. None of these pending changes is in the frozen diagnostic APK.
+
+### User-requested pause checkpoint
+
+- Qualified/installable source remains separate from ongoing source edits.
+  Full GCE run `33997373450` uses frozen `f5271153f` / rustpush `8e1f676`.
+  It was live at **Run Rust library tests** when the user requested a pause.
+  No duplicate workflow was dispatched. Recheck this exact run and its cleanup
+  before any new build or installation; its final result is not yet known.
+- The installed Canary remains `ad204c0d7`; Alpha is untouched. No outbound
+  message, CloudKit create, deletion, login repair or device installation was
+  performed during this continuation. Only the previously approved recipient
+  ending `6179` is authorized for outbound tests when work resumes.
+- Uncommitted next-iteration work adds a nullable local Chat-origin binding
+  to the existing outbox entity, explicit Chat-v1 local admission, recovery
+  lookup before restaging, and exact-record same-row projection. The generated
+  model changes add one property without replacing existing IDs. This is not
+  wired to live submission and is not production-qualified. Required tests
+  still include real Store upgrade/restart, adoption/ACK races, alias conflicts,
+  ordinary-message regression and end-to-end first-send capture.
+- Focused analysis of the origin helper, projection adapter and store found no
+  compile errors. A subsequent admission-coordinator analysis found a missing
+  required `dependencyOperationIds`; the explicit empty set was added, but
+  analysis has not been rerun. Constructor-style infos remain. Do not describe
+  this work as a passing test suite.
+- The Astra native worker saved Chat stage/prepare/reconcile bridge changes in
+  `rust/src/api/api.rs` and `rust/src/cloud_sync_outbound_chat.rs`, with seven
+  proposed zero-network tests. The patch is retained for independent review,
+  not accepted into the frozen APK. No generated bindings or runtime adapter
+  integration is present yet, and the new Rust code has not been compiled.
+- The two workers were requested to stop for this pause. Their reviewed media
+  patch is integrated; the new native patch remains pending. No transcripts,
+  worktrees, device evidence, credentials or uncommitted work were deleted.
+  C: had approximately 66.46 GiB free. Resume from this working tree, not an
+  older source directory, and preserve the unrelated preexisting dirty files.
+
+### Prior verified checkpoints
+
 - Installed Canary is now `ad204c0d7`, updated in place over USB on September 5.
   Full run `33986853124` passed 1,771 Dart tests, 287 app Rust, 209 rustpush,
   30 protector tests, 14 semantic outbox contracts and three evidence-output

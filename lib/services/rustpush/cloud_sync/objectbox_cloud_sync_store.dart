@@ -9,6 +9,7 @@ import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_chat_binding.dart';
+import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_protector.dart';
 import 'cloud_sync_safe_failure.dart';
@@ -1620,6 +1621,100 @@ class ObjectBoxCloudSyncStore
     required CloudRecordMapEntry recordMapping,
   }) async => _admitProtectedOutboundCreate(draft, recordMapping);
 
+  /// Read a prior Chat create before staging. A retry keeps the original
+  /// random record name even after an uncertain submission or process restart.
+  CloudOutboxOperation? readOutboundChatCreateForLocalRow(
+    CloudSyncScope scope,
+    int chatId,
+  ) => _store.runInTransaction(TxMode.read, () {
+    final matches = _findOutboxForScopeLocked(scope)
+        .where(
+          (row) =>
+              row.localChatOrigin != null &&
+              cloudSyncOutboundChatOriginId(row.localChatOrigin!) == chatId,
+        )
+        .toList();
+    if (matches.isEmpty) return null;
+    if (matches.length != 1) {
+      throw _storageFailure('cloud_sync_outbound_chat_origin_ambiguous');
+    }
+    final row = matches.single;
+    final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+    final mapping = _findRecordMapByKeyLocked(
+      _scopedDigest(scope, 'record-map', row.logicalEntityKeyHash),
+    );
+    if (scope.container != _messagesCloudContainer ||
+        scope.database != _messagesCloudDatabase ||
+        scope.zone != 'chatManateeZone' ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
+        row.accountFingerprint != scope.accountFingerprint ||
+        row.zone != scope.zone ||
+        checkpoint == null ||
+        row.checkpointGeneration != checkpoint.generation ||
+        row.payloadVersion != cloudSyncOutboundChatPayloadVersion ||
+        row.action != CloudOutboxAction.save.index ||
+        row.operationId !=
+            CloudOperationIdentity.forInitialCreate(
+              scope: scope,
+              logicalEntityKeyHash: row.logicalEntityKeyHash,
+              payloadVersion: cloudSyncOutboundChatPayloadVersion,
+            ) ||
+        mapping == null ||
+        mapping.scopeKey != _scopeKey(scope) ||
+        mapping.accountFingerprint != scope.accountFingerprint ||
+        mapping.generation != row.checkpointGeneration ||
+        mapping.serverRecordIdHash != row.serverRecordIdHash ||
+        row.encryptedPayloadRef == null ||
+        !_isNativeProtectedReference(row.encryptedPayloadRef!) ||
+        (row.protectedLeaseReference == null
+            ? row.state != CloudOutboxStatus.confirmed.index
+            : !_isProtectedPageLease(row.protectedLeaseReference!)) ||
+        row.payloadSha256 == null ||
+        !_isContentDigest(row.payloadSha256!)) {
+      throw _storageFailure('cloud_sync_outbound_chat_recovery_changed');
+    }
+    return _outboxFromEntity(scope, row);
+  });
+
+  CloudSyncOutboundChatOrigin captureFreshOutboundChatOrigin(
+    CloudSyncScope scope,
+    int chatId,
+  ) => _store.runInTransaction(TxMode.read, () {
+    _requireMessagesCloudAccountProjectionReadyLocked(scope);
+    final chat = _store.box<Chat>().get(chatId);
+    if (chat == null) {
+      throw _storageFailure('cloud_sync_outbound_chat_origin_missing');
+    }
+    return CloudSyncOutboundChatOrigin.capture(scope: scope, chat: chat);
+  });
+
+  /// Origin proof, immutable payload and record map commit together. Neither
+  /// staging nor this admission is permission to perform a remote create.
+  CloudOutboxOperation admitProtectedOutboundChatCreate({
+    required CloudOutboxDraft draft,
+    required CloudRecordMapEntry recordMapping,
+    required CloudSyncOutboundChatOrigin origin,
+    void Function()? validateLocalOrigin,
+  }) => _admitProtectedOutboundCreate(
+    draft,
+    recordMapping,
+    chatOrigin: origin,
+    validateFreshDependency: () {
+      origin.requireUnchanged(_store);
+      validateLocalOrigin?.call();
+    },
+    onAdopt: (operation) {
+      origin.requireUnchanged(_store);
+      final row = _findOutboxByOperationIdLocked(operation.operationId)!;
+      final binding = origin.binding(operation.checkpointGeneration);
+      if (row.localChatOrigin != null && row.localChatOrigin != binding) {
+        throw _storageFailure('cloud_sync_outbound_chat_origin_changed');
+      }
+      row.localChatOrigin = binding;
+      _outbox.put(row);
+    },
+  );
+
   /// Check before encoding/staging a fresh local intent. Pending outbox work
   /// blocks semantic reads, so admitting a write behind an unmet projection
   /// prerequisite can strand both lanes. This is an optimization, not a
@@ -1687,9 +1782,17 @@ class ObjectBoxCloudSyncStore
     void Function(CloudOutboxOperation)? onAdopt,
     CloudSyncLocalSendAdmissionSource? localSendSource,
     void Function()? validateFreshDependency,
+    CloudSyncOutboundChatOrigin? chatOrigin,
   }) {
+    final isChatCreate = chatOrigin != null;
     if (draft.action != CloudOutboxAction.save ||
-        draft.payloadVersion != cloudSyncOutboundPayloadVersion ||
+        draft.payloadVersion !=
+            (isChatCreate
+                ? cloudSyncOutboundChatPayloadVersion
+                : cloudSyncOutboundPayloadVersion) ||
+        (isChatCreate &&
+            (chatOrigin.scope != draft.scope ||
+                draft.scope.zone != 'chatManateeZone')) ||
         draft.dependencyOperationIds.isNotEmpty ||
         draft.protectedLeaseReference == null ||
         !_isProtectedPageLease(draft.protectedLeaseReference!) ||
@@ -2584,26 +2687,37 @@ class ObjectBoxCloudSyncStore
     required CloudSyncLocalSendJournal journal,
     required CloudSyncLocalSendAdmissionSource source,
   }) => _store.runInTransaction(TxMode.read, () {
-    final entity = _findOutboxByOperationIdLocked(source.admittedOperationId ?? '');
+    final entity = _findOutboxByOperationIdLocked(
+      source.admittedOperationId ?? '',
+    );
     final scopeKey = _scopeKey(scope);
-    if (entity == null || entity.scopeKey != scopeKey ||
-        entity.accountFingerprint != scope.accountFingerprint || entity.zone != scope.zone) {
+    if (entity == null ||
+        entity.scopeKey != scopeKey ||
+        entity.accountFingerprint != scope.accountFingerprint ||
+        entity.zone != scope.zone) {
       throw StateError('cloud_sync_local_send_adopted_operation_missing');
     }
     final operation = _outboxFromEntity(scope, entity);
     journal.validateAdoptedOperation(_store, source, operation);
-    final mapping = _findRecordMapByKeyLocked(_scopedDigest(
-      scope, 'record-map', operation.logicalEntityKeyHash,
-    ));
+    final mapping = _findRecordMapByKeyLocked(
+      _scopedDigest(scope, 'record-map', operation.logicalEntityKeyHash),
+    );
     final checkpoint = _findCheckpointByKeyLocked(scopeKey);
     final reference = operation.encryptedPayloadReference;
     final lease = operation.protectedLeaseReference;
-    if (reference == null || !_isNativeProtectedReference(reference) ||
-        operation.payloadSha256 == null || !_isContentDigest(operation.payloadSha256!) ||
-        (lease == null ? operation.status != CloudOutboxStatus.confirmed : !_isProtectedPageLease(lease)) ||
-        checkpoint == null || checkpoint.generation != operation.checkpointGeneration ||
-        mapping == null || mapping.scopeKey != scopeKey ||
-        mapping.accountFingerprint != scope.accountFingerprint || mapping.zone != scope.zone ||
+    if (reference == null ||
+        !_isNativeProtectedReference(reference) ||
+        operation.payloadSha256 == null ||
+        !_isContentDigest(operation.payloadSha256!) ||
+        (lease == null
+            ? operation.status != CloudOutboxStatus.confirmed
+            : !_isProtectedPageLease(lease)) ||
+        checkpoint == null ||
+        checkpoint.generation != operation.checkpointGeneration ||
+        mapping == null ||
+        mapping.scopeKey != scopeKey ||
+        mapping.accountFingerprint != scope.accountFingerprint ||
+        mapping.zone != scope.zone ||
         mapping.generation != operation.checkpointGeneration ||
         mapping.logicalEntityKeyHash != operation.logicalEntityKeyHash ||
         mapping.serverRecordIdHash != operation.serverRecordIdHash ||
@@ -3477,10 +3591,10 @@ class ObjectBoxCloudSyncStore
           (allowRetainedForFreshCreate
               ? !_isCompleteTerminalInboxJournalLocked(siblingScope, checkpoint)
               : (checkpoint.appliedSequence != checkpoint.fetchedSequence ||
-                  !_isCompleteAppliedInboxJournalLocked(
-                    siblingScope,
-                    checkpoint,
-                  )))) {
+                    !_isCompleteAppliedInboxJournalLocked(
+                      siblingScope,
+                      checkpoint,
+                    )))) {
         throw _storageFailure('messages_cloud_account_projection_incomplete');
       }
     }

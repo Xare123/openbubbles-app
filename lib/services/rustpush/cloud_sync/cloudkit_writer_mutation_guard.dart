@@ -106,6 +106,19 @@ abstract interface class CloudKitWriterReconciliationBinding {
   });
 }
 
+/// Chat reconciliation is an explicit capability, never a Message fallback.
+abstract interface class CloudKitWriterChatReconciliationBinding
+    implements CloudKitWriterReconciliationBinding {
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileChatCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  });
+}
+
 /// Non-constructible, single-use native mutation capability.
 ///
 /// The raw random token exists only for the lifetime of one guarded action.
@@ -320,7 +333,17 @@ final class CloudKitWriterMutationGuard
         'cloudkit_writer_reconciliation_binding_missing',
       );
     }
-    final result = await binding.reconcileMessageCreate(
+    final isChat = operation.scope.zone == 'chatManateeZone';
+    if (isChat && binding is! CloudKitWriterChatReconciliationBinding) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_chat_reconciliation_binding_missing',
+      );
+    }
+    final reconcile = isChat
+        ? (binding as CloudKitWriterChatReconciliationBinding)
+              .reconcileChatCreate
+        : binding.reconcileMessageCreate;
+    final result = await reconcile(
       cloudMessagesClient: expectedClient,
       storageDirectory: _privateStorageDirectory,
       expectedAccountFingerprint: identity.accountFingerprint,
@@ -458,6 +481,11 @@ final class CloudKitWriterMutationGuard
     CloudKitWriterOwner owner,
     CloudOutboxOperation operation,
   ) {
+    final expectedPayloadVersion = switch (operation.scope.zone) {
+      'chatManateeZone' => cloudSyncOutboundChatPayloadVersion,
+      'messageManateeZone' => cloudSyncOutboundPayloadVersion,
+      _ => null,
+    };
     if (owner != CloudKitWriterOwner.v2 ||
         operation.scope.container != 'com.apple.messages.cloud' ||
         operation.scope.database != 'private' ||
@@ -466,7 +494,8 @@ final class CloudKitWriterMutationGuard
         operation.scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
         operation.status != CloudOutboxStatus.unknownOutcome ||
         operation.action != CloudOutboxAction.save ||
-        operation.payloadVersion != cloudSyncOutboundPayloadVersion ||
+        expectedPayloadVersion == null ||
+        operation.payloadVersion != expectedPayloadVersion ||
         operation.operationId !=
             CloudOperationIdentity.forInitialCreate(
               scope: operation.scope,

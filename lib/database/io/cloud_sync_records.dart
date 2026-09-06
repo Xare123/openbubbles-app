@@ -362,6 +362,11 @@ class CloudOutboxOperationEntity {
   /// rows written before the schema migration remain readable.
   String? protectedLeaseReference;
 
+  /// Versioned, content-free proof of the provisional local Chat row owned by
+  /// a Chat create. Null for messages and all pre-origin outbox records.
+  /// Persisted with admission, never inferred from a matching participant.
+  String? localChatOrigin;
+
   /// 0 pending, 1 in-flight, 2 confirmed, 3 paused, 4 quarantined,
   /// 5 unknown outcome. These values are stable persisted state codes.
   @Index()
@@ -397,6 +402,7 @@ class CloudOutboxOperationEntity {
     this.encryptedPayloadRef,
     this.payloadSha256,
     this.protectedLeaseReference,
+    this.localChatOrigin,
     this.state = 0,
     this.attemptCount = 0,
     this.nextEligibleAtMs = 0,

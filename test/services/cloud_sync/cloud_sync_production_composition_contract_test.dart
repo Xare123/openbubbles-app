@@ -686,7 +686,13 @@ void main() {
     expect(adapter, contains('proof: proof'));
     expect(manual, contains('finalizeConfirmedReplayProof'));
     expect(adapter, contains('verifyConfirmedMessageCreateNoSave('));
-    final verifyStart = adapter.indexOf('verifyConfirmedMessageCreateNoSave(');
+    final manualAdapterStart = adapter.indexOf(
+      'final class CloudSyncProductionOutboundCanaryAdapter',
+    );
+    expect(manualAdapterStart, greaterThanOrEqualTo(0));
+    final verifyStart = adapter.indexOf(
+      'verifyConfirmedMessageCreateNoSave(', manualAdapterStart,
+    );
     final verifyEnd = adapter.indexOf(');', verifyStart);
     expect(verifyStart, greaterThanOrEqualTo(0));
     expect(verifyEnd, greaterThan(verifyStart));
@@ -818,7 +824,11 @@ void main() {
       'lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart',
     ).readAsStringSync();
     expect(guard, contains('_completeReconciliationAfterExactReadback('));
-    expect(guard, contains('binding.reconcileMessageCreate('));
+    expect(guard, contains('final reconcile = isChat'));
+    expect(guard, contains('binding.reconcileMessageCreate;'));
+    expect(guard, contains('CloudKitWriterChatReconciliationBinding'));
+    expect(guard, contains('.reconcileChatCreate'));
+    expect(guard, contains('final result = await reconcile('));
     expect(guard, isNot(contains('Future<void> completeReconciliation(')));
 
     final models = File(

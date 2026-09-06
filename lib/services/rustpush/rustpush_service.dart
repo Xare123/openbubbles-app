@@ -7546,7 +7546,8 @@ class RustPushService extends GetxService {
         privateStorageDirectory: expectedStorage, stillCurrent: stillCurrent,
       );
       _cloudSyncV2LocalSendRuntime = CloudSyncLocalSendRuntime(
-        drain: () => _cloudSyncV2AttachmentGate.run(
+        drain: () async {
+          final result = await _cloudSyncV2AttachmentGate.run(
           validate: () {
             if (!stillCurrent() || _cloudSyncV2SemanticPullInFlight != null ||
                 _cloudSyncV2OutboundConfirmation != null ||
@@ -7556,7 +7557,20 @@ class RustPushService extends GetxService {
             }
           },
           action: adapter.runOnce,
-        ),
+          );
+          // Both the native writer and the attachment gate have been released.
+          // Reuse the real semantic gateway, never turn an ACK into a local
+          // Chat binding or keep a writer lock while asking the reader to run.
+          if (result.chatReadbackPending && stillCurrent() &&
+              _cloudSyncV2SemanticPullInFlight == null) {
+            try {
+              await runCloudSyncV2ManualSemanticPullConfirmed(maximumPasses: 1);
+            } catch (_) {
+              Logger.warn('Cloud Sync V2 Chat dependency readback deferred; intent retained');
+            }
+          }
+          return result;
+        },
         onError: (_, __) => Logger.warn(
           'Cloud Sync V2 local-send worker deferred; journal retained',
         ),

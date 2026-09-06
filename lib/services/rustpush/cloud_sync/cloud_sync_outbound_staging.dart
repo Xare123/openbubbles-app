@@ -35,3 +35,13 @@ abstract interface class CloudSyncOutboundStagingTransport {
 
   Future<void> rollbackOutboundLease(String leaseReference);
 }
+
+/// Chat staging is an explicit capability; implementing the existing Message
+/// transport alone cannot admit a version-1 Chat operation.
+abstract interface class CloudSyncOutboundChatStagingTransport
+    implements CloudSyncOutboundStagingTransport {
+  Future<CloudSyncProtectedOutboundStageData> stageOutboundChat(
+    CloudSyncScope scope, {
+    required frb_api.CloudChat chat,
+  });
+}

@@ -8,6 +8,7 @@ import 'cloud_merge_policy.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_attachment_provenance.dart';
 import 'cloud_sync_chat_presentation_repair.dart';
+import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 import 'objectbox_cloud_semantic_store_gateway.dart';
@@ -690,6 +691,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
           scope: scope,
           generation: generation,
           payload: payload,
+          snapshot: snapshot,
         );
       }
       return _applyExistingChatPresentation(
@@ -1050,6 +1052,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     required CloudSyncScope scope,
     required int generation,
     required CloudChatEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
   }) {
     if (payload.service == null ||
         payload.style == null ||
@@ -1088,8 +1091,21 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
 
     final service = payload.service!;
     final isSms = service == CloudSemanticService.sms;
+    var chat = _findChat(guid);
+    final origin = resolveCloudSyncOutboundChatOrigin(
+      store: store,
+      scope: scope,
+      generation: generation,
+      payload: payload,
+      snapshot: snapshot,
+      canonicalChat: chat,
+    );
+    final adoptsLocalOrigin = chat == null && origin != null;
+    chat ??= origin;
     final aliasMatch = _findChatByIdentifier(payload.chatIdentifier, service);
-    if (aliasMatch != null && aliasMatch.guid != guid) {
+    if (aliasMatch != null &&
+        aliasMatch.guid != guid &&
+        !(adoptsLocalOrigin && aliasMatch.id == chat?.id)) {
       _diagnosticRecorder?.call(
         'canonical_chat_alias_conflict_identifier_owner',
       );
@@ -1099,7 +1115,6 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       );
     }
 
-    var chat = _findChat(guid);
     final isCreate = chat == null;
     final style = switch (payload.style!) {
       CloudSemanticChatStyle.direct => 45,
@@ -1172,6 +1187,12 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       chatIdentifier: payload.chatIdentifier,
       style: style,
     );
+    if (adoptsLocalOrigin) {
+      // Keep the same row and every Message.chat relation. The authenticated
+      // record matched the original durable create, not just its recipient.
+      chat.guid = guid;
+      chat.cloudGuid = payload.groupId;
+    }
     chat.chatIdentifier = payload.chatIdentifier;
     chat.style = style;
     chat.isRpSms = isSms;
@@ -2400,9 +2421,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       // proven alias can route the Message.
       unprovenExactOwnerFailure = failure;
       exactOwners = <int, _ProvenChatOwner>{};
-      _diagnosticRecorder?.call(
-        'canonical_message_chat_exact_guid_unproven',
-      );
+      _diagnosticRecorder?.call('canonical_message_chat_exact_guid_unproven');
     }
     _recordChatOwnerCardinality(
       'canonical_message_chat_exact_guid',

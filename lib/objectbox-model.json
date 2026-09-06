@@ -1072,7 +1072,7 @@
     },
     {
       "id": "19:6209808242097333245",
-      "lastPropertyId": "26:4302324668053862926",
+      "lastPropertyId": "27:6111179417259911182",
       "name": "CloudOutboxOperationEntity",
       "properties": [
         {
@@ -1218,6 +1218,11 @@
         {
           "id": "26:4302324668053862926",
           "name": "protectedLeaseReference",
+          "type": 9
+        },
+        {
+          "id": "27:6111179417259911182",
+          "name": "localChatOrigin",
           "type": 9
         }
       ],

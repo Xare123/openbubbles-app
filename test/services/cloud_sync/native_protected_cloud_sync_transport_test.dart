@@ -963,6 +963,293 @@ void main() {
     },
   );
 
+  group('explicit Chat-v1 writer capability', () {
+    late _ChatBindings chatBindings;
+    setUp(() {
+      scope = _semanticScope(zone: 'chatManateeZone');
+      chatBindings = _ChatBindings();
+      bindings = chatBindings;
+      transport = buildTransport();
+    });
+    void absent() {
+      chatBindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: _reference('P'),
+      );
+      chatBindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: _FakePreparedHandle(),
+        handleBindingSha256: _preparedHandleBindingSha256,
+      );
+    }
+
+    Future<CloudSyncPreparedSubmission> prepare(
+      CloudOutboxOperation operation,
+    ) => runV2(
+      () => transport.prepareSubmission(
+        scope,
+        submissionIdentity: _submissionIdentity(operation.operationId),
+        operations: [_protectedWriteOperation(operation)],
+      ),
+    );
+    test(
+      'staging uses Chat binding only and retains exact protected references',
+      () async {
+        chatBindings.stageResult =
+            frb_api.CloudSyncProtectedOutboundStageResult(
+              stage: frb_api.CloudSyncProtectedOutboundStage(
+                logicalEntityKeyHash: _hash('L'),
+                protectedPayloadReference: _reference('P'),
+                payloadSha256: _sha('b'),
+                payloadLength: BigInt.from(256),
+                protectedServerRecordReference: _reference('P'),
+                serverRecordIdHash: _hash('S'),
+                leaseReference: _lease('a'),
+              ),
+            );
+        final staged = await runV2(
+          () => transport.stageOutboundChat(scope, chat: _FakeCloudChat()),
+        );
+        expect(staged.protectedEnvelopeReference, _reference('P'));
+        expect(staged.leaseReference, _lease('a'));
+        expect(chatBindings.chatStageCalls, 1);
+        expect(chatBindings.stageCalls, 0);
+      },
+    );
+    test('Message-only bindings cannot stage or prepare Chat', () async {
+      bindings = _FakeBindings();
+      transport = buildTransport();
+      await expectLater(
+        runV2(() => transport.stageOutboundChat(scope, chat: _FakeCloudChat())),
+        throwsA(isA<CloudSyncFailure>()),
+      );
+      await expectLater(
+        prepare(_chatOperation(scope)),
+        throwsA(isA<CloudSyncFailure>()),
+      );
+      expect(bindings.stageCalls, 0);
+      expect(bindings.prepareCalls, 0);
+      expect(bindings.reconcileCalls, 0);
+    });
+    test(
+      'Chat preparation routes exact original input and UUIDs without Message fallback',
+      () async {
+        absent();
+        final op = _chatOperation(scope);
+        final prepared = await prepare(op);
+        expect(prepared.operationIds, [op.operationId]);
+        expect(chatBindings.chatReconcileCalls, 1);
+        expect(chatBindings.chatPrepareCalls, 1);
+        expect(chatBindings.prepareCalls, 0);
+        expect(chatBindings.reconcileCalls, 0);
+        expect(chatBindings.preparedRequestUuid, op.appleRequestUuid);
+        expect(
+          chatBindings.preparedInputs.single.localOperationId,
+          op.operationId,
+        );
+        expect(
+          chatBindings.preparedInputs.single.appleOperationUuid,
+          op.appleOperationUuid,
+        );
+        expect(
+          chatBindings.preparedInputs.single.protectedPayloadReference,
+          _reference('P'),
+        );
+        expect(
+          chatBindings.preparedInputs.single.protectedLeaseReference,
+          _lease('a'),
+        );
+      },
+    );
+    test(
+      'Message-v2 keeps Message dispatch on bindings that also support Chat',
+      () async {
+        absent();
+        scope = _semanticScope();
+        final op = _writeOperation(scope);
+        await prepare(op);
+        expect(chatBindings.reconcileCalls, 1);
+        expect(chatBindings.prepareCalls, 1);
+        expect(chatBindings.chatReconcileCalls, 0);
+        expect(chatBindings.chatPrepareCalls, 0);
+      },
+    );
+    test(
+      'cross-domain version and zone operations fail before any lookup',
+      () async {
+        absent();
+        await expectLater(
+          prepare(_writeOperation(scope)),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        final chat = _chatOperation(scope);
+        scope = _semanticScope();
+        await expectLater(prepare(chat), throwsA(isA<CloudSyncFailure>()));
+        scope = _semanticScope(zone: 'attachmentManateeZone');
+        await expectLater(
+          prepare(_chatOperation(scope)),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        scope = CloudSyncScope(
+          accountFingerprint: _hash('A'),
+          container: 'com.apple.messages.cloud',
+          database: 'private',
+          zone: 'chatManateeZone',
+          streamKind: CloudSyncStreamKind.profiles,
+          schemaVersion: 2,
+          persistenceLane: CloudSyncPersistenceLane.semantic,
+        );
+        await expectLater(
+          prepare(_chatOperation(scope)),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        expect(chatBindings.chatReconcileCalls, 0);
+        expect(chatBindings.reconcileCalls, 0);
+        expect(chatBindings.chatPrepareCalls, 0);
+        expect(chatBindings.prepareCalls, 0);
+      },
+    );
+    test('Chat rejects two distinct operations before preflight', () async {
+      absent();
+      final first = _chatOperation(scope);
+      final second = _chatOperation(scope, logical: _hash('M'));
+      await expectLater(
+        runV2(
+          () => transport.prepareSubmission(
+            scope,
+            submissionIdentity: CloudOutboxSubmissionIdentity(
+              requestUuid: first.appleRequestUuid!,
+              operationUuids: {
+                first.operationId: first.appleOperationUuid!,
+                second.operationId: 'DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD',
+              },
+            ),
+            operations: [
+              _protectedWriteOperation(first),
+              _protectedWriteOperation(second),
+            ],
+          ),
+        ),
+        throwsA(isA<CloudSyncFailure>()),
+      );
+      expect(chatBindings.chatReconcileCalls, 0);
+      expect(chatBindings.chatPrepareCalls, 0);
+    });
+    test(
+      'unresolved Chat preflight retains retry delay and retries the same envelope',
+      () async {
+        absent();
+        final op = _chatOperation(scope);
+        chatBindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+          disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved,
+          failureClass: frb_api.CloudSyncOutboundFailureClass.throttled,
+          retryAfterSeconds: BigInt.from(17),
+        );
+        await expectLater(
+          prepare(op),
+          throwsA(
+            isA<CloudSyncFailure>().having(
+              (e) => e.retryAfter,
+              'retry',
+              const Duration(seconds: 17),
+            ),
+          ),
+        );
+        expect(chatBindings.chatPrepareCalls, 0);
+        expect(chatBindings.consumeCalls, 0);
+        absent();
+        await prepare(op);
+        expect(chatBindings.chatReconcileCalls, 2);
+        expect(chatBindings.chatPrepareCalls, 1);
+        expect(
+          chatBindings.preparedInputs.single.protectedPayloadReference,
+          op.encryptedPayloadReference,
+        );
+        expect(chatBindings.preparedRequestUuid, op.appleRequestUuid);
+        expect(chatBindings.chatStageCalls, 0);
+      },
+    );
+    test(
+      'existing Chat readback is a confirmed no-op without native prepare or consume',
+      () async {
+        final op = _chatOperation(scope);
+        chatBindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+          disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+          protectedProofReference: _reference('P'),
+          serverRecordIdHash: _hash('S'),
+          etagHash: _hash('E'),
+        );
+        final prepared = await prepare(op);
+        final result = await runV2(
+          () => transport.consumePreparedSubmission(
+            scope,
+            preparedSubmission: prepared,
+            persistedIdentity: _submissionIdentity(op.operationId),
+            protectedOperations: [_protectedWriteOperation(op)],
+            operations: [op],
+          ),
+        );
+        expect(
+          result.outcomes.values.single.disposition,
+          CloudPushDisposition.confirmed,
+        );
+        expect(chatBindings.chatPrepareCalls, 0);
+        expect(chatBindings.consumeCalls, 0);
+        expect(chatBindings.reconcileCalls, 0);
+      },
+    );
+    test(
+      'unknown Chat reconciliation uses the guarded Chat seam and original submission',
+      () async {
+        final op = _chatOperation(scope);
+        chatBindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+          disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved,
+          failureClass: frb_api.CloudSyncOutboundFailureClass.transientServer,
+          retryAfterSeconds: BigInt.from(11),
+        );
+        final result = await runV2(
+          () => transport.reconcileUnknownOutcome(scope, operation: op),
+        );
+        expect(result.disposition, CloudUnknownOutcomeDisposition.unresolved);
+        expect(result.retryAfter, const Duration(seconds: 11));
+        expect(chatBindings.chatReconcileCalls, 1);
+        expect(chatBindings.reconcileCalls, 0);
+        expect(chatBindings.reconcileRequestUuid, op.appleRequestUuid);
+        expect(
+          chatBindings.reconcileInput!.appleOperationUuid,
+          op.appleOperationUuid,
+        );
+        expect(chatBindings.consumeCalls, 0);
+      },
+    );
+    test(
+      'confirmed Chat proof uses Chat readback while Message proof rejects Chat scope',
+      () async {
+        final op = _chatOperation(scope, status: CloudOutboxStatus.confirmed);
+        chatBindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+          disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+          protectedProofReference: _reference('P'),
+          serverRecordIdHash: _hash('S'),
+          etagHash: _hash('E'),
+        );
+        await runV2(
+          () => transport.verifyConfirmedChatCreateNoSave(scope, operation: op),
+        );
+        await expectLater(
+          runV2(
+            () => transport.verifyConfirmedMessageCreateNoSave(
+              scope,
+              operation: op,
+            ),
+          ),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        expect(chatBindings.chatReconcileCalls, 1);
+        expect(chatBindings.reconcileCalls, 0);
+        expect(chatBindings.consumeCalls, 0);
+      },
+    );
+  });
+
   test('protected writer forwards one exact prepared create binding', () async {
     final operation = _writeOperation(scope);
     final protectedOperation = _protectedWriteOperation(operation);
@@ -3034,6 +3321,95 @@ void main() {
       expect(bindings.consumeCalls, 0);
     },
   );
+}
+
+CloudOutboxOperation _chatOperation(
+  CloudSyncScope scope, {
+  String? logical,
+  CloudOutboxStatus status = CloudOutboxStatus.unknownOutcome,
+}) {
+  final key = logical ?? _hash('L');
+  return CloudOutboxOperation(
+    scope: scope,
+    operationId: CloudOperationIdentity.forInitialCreate(
+      scope: scope,
+      logicalEntityKeyHash: key,
+      payloadVersion: cloudSyncOutboundChatPayloadVersion,
+    ),
+    logicalEntityKeyHash: key,
+    action: CloudOutboxAction.save,
+    payloadVersion: cloudSyncOutboundChatPayloadVersion,
+    mutationRevision: 1,
+    checkpointGeneration: 1,
+    encryptedPayloadReference: _reference('P'),
+    payloadSha256: _sha('b'),
+    serverRecordIdHash: _hash('S'),
+    protectedLeaseReference: _lease('a'),
+    appleRequestUuid: '11111111-2222-4ABC-8DEF-555555555555',
+    appleOperationUuid: 'AAAAAAAA-BBBB-4CCC-8DDD-000000000001',
+    dependencyOperationIds: const {},
+    createdAt: DateTime.utc(2026, 9, 5),
+    status: status,
+    attemptCount: 1,
+  );
+}
+
+final class _FakeCloudChat implements frb_api.CloudChat {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _ChatBindings extends _FakeBindings
+    implements
+        NativeProtectedCloudSyncChatWriteBindings,
+        CloudKitWriterChatReconciliationBinding {
+  int chatStageCalls = 0, chatPrepareCalls = 0, chatReconcileCalls = 0;
+  @override
+  Future<frb_api.CloudSyncProtectedOutboundStageResult> stageOutboundChat({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required frb_api.CloudChat chat,
+  }) async {
+    chatStageCalls++;
+    return stageResult;
+  }
+
+  @override
+  Future<frb_api.CloudSyncPreparedMessageCreateResult> prepareChatCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required Duration requestTimeout,
+    required List<frb_api.CloudSyncPreparedMessageCreateInput> inputs,
+  }) async {
+    chatPrepareCalls++;
+    preparedRequestUuid = requestUuid;
+    preparedInputs = [...inputs];
+    return prepareResult;
+  }
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileChatCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) async {
+    chatReconcileCalls++;
+    reconcileCloudMessagesClient = cloudMessagesClient;
+    reconcileStorageDirectory = storageDirectory;
+    reconcileExpectedAccountFingerprint = expectedAccountFingerprint;
+    reconcileExpectedProtectedStoreIdentity = expectedProtectedStoreIdentity;
+    reconcileRequestUuid = requestUuid;
+    reconcileInput = input;
+    return reconcileResult;
+  }
 }
 
 CloudOutboxOperation _writeOperation(CloudSyncScope scope) {
