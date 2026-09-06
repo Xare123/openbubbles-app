@@ -54,14 +54,107 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | Capability | Current evidence / explicit remaining gap |
 | --- | --- |
 | Message history and conversation projection | User has observed restored readable chats; sustained incremental/restart behavior must be qualified on the release candidate. |
-| Photos, video, GIF and documents | Photos and video playback are now user-confirmed. Gallery photo auto-download is repaired locally; installed-device proof remains. GIF byte-size mismatch remains unresolved and is explicitly deferred by the user; GIF attachments are preserved, not deleted or hidden. Each media surface/type still needs user-facing validation, not metadata-only success. |
-| Chat-first ordinary text writing | Native asynchronous completion handoff repaired locally after a real send stayed state 0 despite delivery; combined focused checks pass. Installed candidate and exact-recipient automatic save/readback qualification remain. |
+| Photos, video, GIF and documents | Photos and video playback are user-confirmed. Installed `dcef0e9bf` automatically fetched three gallery attachments after navigation/scrolling without card taps. One HEIC still fails exact-size validation. GIF support is explicitly deferred; attachments are preserved, not deleted or hidden. Each media surface/type still needs user-facing validation, not metadata-only success. |
+| Chat-first ordinary text writing | Installed `dcef0e9bf` journaled actual native completion of a fresh approved-recipient send; the UI showed Delivered and an empty composer. Automatic CloudKit admission then deferred at Chat creation with `messages_cloud_tombstone_projection_unavailable`. Remote save/readback is not passed. |
 | Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
 | Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
 | Ongoing sync and account lifecycle | Missing automatic writer setup is repaired and installed in `463a19881`; fresh logs and a stable database now prove V2 ownership and worker readiness. Automatic save/readback remains unverified. Native send callbacks have a pre-journal process-death gap. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence remain release gates. |
 
 ### Ordinary-send completion investigation
+
+Source `dcef0e9bf3066310a7dfabef80b80b77fa7783de` is pushed to the fork only
+and installed in Canary. Full GCE qualification run `34019592343` succeeded
+with one T2D-60 primary runner, Canary flavor, outbound writer and automatic
+uploads enabled. Full Dart, parent Rust, rustpush and protector suites, bridge
+reproducibility, compiled feature flags, APK verification and hosted signing
+passed. Total time was 24m20s; APK compilation took 6m58s. Independent cleanup
+readbacks found zero instances and zero registered repository runners.
+
+Local verification checked the pinned signer, v2/v3 signatures, Canary package
+and four ARM64 native libraries. Signed APK SHA-256:
+`998af63d3ba3e2379a43c6e6d1c8659159e4a155510cfe4240711150f0732338`.
+`adb install -r -t` succeeded at 01:02:52 PDT, preserving Canary's original
+install time and Alpha's install/update timestamps. No data clear, uninstall,
+credential reconfiguration or Alpha interaction. Canary resumed automatically;
+no blocked launch/debug command was retried. No device captures or credentials
+were sent to GCE. Private artifact provenance retains exact verification data.
+
+At 08:05:44Z the fresh send produced the durable native-completion log; later
+UI inspection showed Delivered and an empty composer. At 08:05:53Z the worker
+reported admitted=0, deferred=1, outboxBlocked=false, chatReadbackPending=false,
+reason `messages_cloud_tombstone_projection_unavailable`. This qualifies the
+native completion handoff, not a CloudKit save. Old delivered state-0 intents
+were not retroactively promoted. The new-composer navigation path still needs
+its own installed-device test.
+
+### Current write blocker: Chat dependency, not native send completion
+
+```text
+native-confirmed local Message intent [live-proven handoff]
+  -> provisional local Chat has no authenticated CloudKit dependency
+  -> captureFreshOutboundChatOrigin
+       -> global three-zone full-projection guard [observed deferral]
+  -> stage/adopt -> lease -> pre-submit [not reached on this device test]
+  -> exact Chat readback adopts original local row
+  -> original Message admission -> save/readback [still unqualified]
+```
+
+`CloudSyncProductionSamplerAdapter` injects the local-send journal. However,
+`CloudSyncOutboundChatAdmissionCoordinator` carries only an in-memory origin
+validation callback. Persisted `localChatOrigin` proves Chat row identity, not
+durable journal authorization. The Message-specific history exception does
+not apply to Chat capture, adoption, lease or pre-submit. Removing just the
+capture guard would strand a blocking outbox operation behind the next guard.
+
+Two reviewed characterization tests exercise real journal confirmation,
+promotion, terminal retained-page transitions and Chat admission. Retained
+attachment/Message saves produce `messages_cloud_account_projection_incomplete`;
+a retained Message tombstone produces the observed tombstone code. Both reject
+before encoding/staging and preserve the intent, local rows and history. The
+focused file passes 40 tests. Synthetic native/auth edges and empty Chat history
+mean these are not a complete transport/restart qualification.
+
+The repair must bind any Chat-specific create permission durably to the exact
+confirmed journal origin, account/epoch, local row, canonical recipient,
+generation and immutable envelope, then revalidate all four gates. A new random
+server record name is not a new logical recipient. Known prior canonical Chats,
+their mappings/aliases and deletion evidence cannot be ignored; unmapped Chat
+history is not proven unrelated. Unrelated terminal attachment/Message history
+may be separable, but pending pages, ambiguous Chat ownership and uncertain
+remote outcomes remain fenced. Existing immutable-envelope recovery must not
+require permission to create a different envelope. Do not implement broad
+tombstone deletion to make this qualification pass.
+
+### Installed gallery and capture qualification
+
+Opening the approved contact gallery and scrolling, with no card taps, produced
+three downloads in 3377ms, 1499ms and 1766ms at 08:18:17-21Z. Private screenshots
+show decoded photos. A remaining HEIC reports `cloud_attachment_size_mismatch`:
+canonical metadata expects 4,659,935 bytes; the fully returned body has 1,538,793
+bytes and an ISO-BMFF header. MMCS asset metadata is 1,540,096 bytes and the
+selected single Ford reference passes existing key/chunk validation. The closed
+lookup fetches `CloudAttachment.lqa`, while exact-size validation uses `cm.tb`.
+This is evidence for investigating a representation-size mismatch, not proof
+that the file is truncated or safe to accept unchanged. Do not remove integrity
+checks or label it a deleted asset. GIF support remains deferred by the user.
+The phone was locked after capture; no user media or messages were removed.
+
+Two live database copies changed during transfer, including the compressed
+attempt. The first was mistakenly inspected before its failed capture status
+was checked; all results from that copy are disqualified. Both copies remain
+private, marked unqualified. The capture tool now writes a stable=false manifest
+before transfer and qualifies only matching before/after-device and local hashes.
+The offline inspector rejects missing/failed qualification before copying or
+opening ObjectBox; a targeted negative run confirmed rejection. Compression is
+only a transfer optimization, not a snapshot guarantee. Do not requalify an old
+copy from its unchanged local hash or repeatedly copy a busy database.
+
+The characterization agent's work was reviewed and accepted, then the agent
+was closed and shutdown verified. No dedicated worktree or per-agent cache was
+created; its transcript remains because supported session deletion is unavailable.
+The earlier composer agent was also closed after integration. C: has 62.78 GiB
+free at this checkpoint; private captures and rollback/provenance remain retained.
 
 ```text
 mounted New Conversation composer
@@ -74,6 +167,7 @@ mounted New Conversation composer
           -> SendConfirm(error == null) -> exact existing origin/source match
           -> journal state 3 (durable IDS success)
           -> fresh account/store/ownership authorization -> state 1
+          -> Chat dependency guard [current observed deferral]
           -> existing outbox admission and writer -> remote readback [live pending]
        SendConfirm(error != null): no proof, no upload
 ```
@@ -133,8 +227,9 @@ mounted New Conversation composer
   settings, file-gate, lazy-paging and actual V2 queue tests pass locally
   (44 checks). The two newly added test files cover 22 cases. Analyzer has no
   errors/warnings; two existing `surfaceVariant` deprecation infos remain.
-  This follow-up is not in installed source `463a19881`; no new APK was built
-  or installed for this investigation. No user media or messages were removed.
+  This follow-up was initially excluded from installed source `463a19881` and
+  is now included in installed `dcef0e9bf`; see the live gallery checkpoint above.
+  No user media or messages were removed.
 
 - Latest device/CI checkpoint: full GCE run `34016745531` passed for frozen
   source `463a19881bf8d4b764eaae8eaa2a662cac81a868`. It passed the full Dart

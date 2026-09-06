@@ -145,6 +145,216 @@ void main() {
     });
   }
 
+  for (final messageTombstone in [false, true]) {
+    test(
+      'native-confirmed Chat dependency rejects unrelated terminal retained '
+      'attachment save and Message ${messageTombstone ? "tombstone" : "save"} '
+      'before staging',
+      () async {
+        // Characterize the current global Chat gate, not a safe exemption.
+        // Native confirmation/auth and transport are synthetic edges; journal,
+        // retained-page transitions, origin capture and admission are real.
+        final writerScope = CloudKitWriterScope(accountFingerprint: 'A' * 43);
+        final authority = ObjectBoxCloudKitWriterAuthority.forTest(
+          store: db,
+          buildDecision: CloudKitWriterOwnership.resolve('v2'),
+        );
+        final disabled = authority.initializeDisabled(writerScope, now: _now);
+        authority.provisionInitialOwner(
+          writerScope,
+          owner: CloudKitWriterOwner.v2,
+          expectedEpoch: disabled.epoch,
+          evidence: const CloudKitWriterTransitionEvidence.forTest(
+            operationsQuiesced: true,
+            activeIdentityRevalidated: true,
+            legacyMutationQueues: LegacyMutationQueueDisposition.empty,
+          ),
+          now: _now,
+        );
+        final journal = CloudSyncLocalSendJournal(
+          store: db,
+          authority: authority,
+          authoritySnapshot: authority.read(writerScope)!,
+        );
+        sync = ObjectBoxCloudSyncStore(
+          store: db,
+          protector: _Protector(),
+          clock: () => _now,
+          localSendJournal: journal,
+        );
+        final auth = CloudSyncNativeAuthSnapshot.fromNative(
+          nativeSessionId: 'synthetic-retained-chat-session',
+          accountFingerprint: 'A' * 43,
+          protectedStoreIdentity: 'obcs2.store.${'A' * 43}',
+          cloudMessagesClient: Object(),
+        );
+        const messageGuid = 'DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD';
+        final local = db.box<Message>().get(messageId)!
+          ..guid = 'temp-Abc12345'
+          ..stagingGuid = messageGuid
+          ..attributedBody = [
+            AttributedBody.raw('synthetic body survives adoption'),
+          ];
+        final identity = CloudSyncLocalSendIdentity.capture(
+          local,
+          local.chat.target!,
+          messageGuid,
+        )!;
+        journal.saveSubmission(
+          identity: identity,
+          newlyGeneratedGuid: true,
+          persistMessage: () => db.box<Message>().put(local),
+          now: _now,
+        );
+        expect(journal.readReady(), isEmpty);
+        final intentId = journal.recordNativeSendConfirmation(
+          stableGuid: messageGuid,
+          succeeded: true,
+          capturedAuth: auth,
+          stillCurrent: () => true,
+          now: _now,
+        )!;
+        expect(db.box<CloudSyncLocalSendIntentEntity>().get(intentId)!.state, 3);
+        journal.promoteIdsConfirmedDeferred(
+          intentId: intentId,
+          currentAuth: auth,
+          now: _now,
+        );
+        expect(journal.readReady().single.id, intentId);
+        final source = journal.readForAdmission(intentId);
+        expect(source.admittedOperationId, isNull);
+        expect(source.message!.guid, messageGuid);
+        expect(source.message!.chat.target!.guid, _guid);
+        // Without history debt this exact provisional Chat passes capture.
+        expect(
+          sync.captureFreshOutboundChatOrigin(_scope(), chatId).canonicalGuid,
+          _canonical,
+        );
+
+        for (final zone in ['attachmentManateeZone', 'messageManateeZone']) {
+          final sibling = _scope(zone);
+          final checkpoint = await sync.readCheckpoint(sibling);
+          final fence = (await sync.tryAcquireCoordinatorLease(
+            sibling,
+            ownerId: 'synthetic-retained-chat-history',
+            now: _now,
+            leaseDuration: const Duration(minutes: 1),
+          ))!;
+          final tombstone = messageTombstone && zone == 'messageManateeZone';
+          await sync.journalFetchedBatch(
+            CloudFetchBatch(
+              scope: sibling,
+              changes: [
+                CloudFetchedChange(
+                  changeId: 'C' * 43,
+                  recordIdHash: 'U' * 43,
+                  etagHash: tombstone ? null : 'E' * 43,
+                  type: tombstone ? CloudChangeType.delete : CloudChangeType.save,
+                  isTombstone: tombstone,
+                  encryptedServerRecordId: 'obcs2.ref.${'U' * 43}',
+                  protectedSystemFieldsReference: 'obcs2.ref.${'F' * 43}',
+                  encryptedPayloadReference:
+                      tombstone ? null : 'obcs2.ref.${'R' * 43}',
+                  payloadSha256: tombstone ? null : 'c' * 64,
+                ),
+              ],
+              batchId: 'synthetic-retained-$zone',
+              generation: checkpoint.generation,
+              nextToken: 'synthetic-retained-token-$zone',
+              hasMore: false,
+            ),
+            now: _now,
+            leaseFence: fence,
+            expectedGeneration: checkpoint.generation,
+            expectedFetchedToken: checkpoint.fetchedToken,
+          );
+          await sync.markInboxRetainedUnprojected(
+            sibling,
+            sequence: 1,
+            category: tombstone ? null : CloudFailureCategory.malformedRecord,
+            now: _now,
+            maximumDeferredAttempts: 8,
+            maximumDeferredAge: const Duration(days: 3),
+            leaseFence: fence,
+          );
+          await sync.releaseCoordinatorLease(sibling, leaseFence: fence);
+          final terminal = await sync.readCheckpoint(sibling);
+          expect(terminal.pendingBatchId, isNull);
+          expect(terminal.hasUnmarkedPendingInbox, isFalse);
+          expect(terminal.fetchedToken, 'synthetic-retained-token-$zone');
+          expect(terminal.lastAppliedSequence, 0);
+        }
+        final safeCode = messageTombstone
+            ? 'messages_cloud_tombstone_projection_unavailable'
+            : 'messages_cloud_account_projection_incomplete';
+        expect(
+          () => sync.captureFreshOutboundChatOrigin(_scope(), chatId),
+          _failure(safeCode),
+        );
+        final transport = _Staging();
+        var originChecks = 0;
+        var encodes = 0;
+        await expectLater(
+          CloudSyncOutboundChatAdmissionCoordinator(
+            store: sync,
+            transport: transport,
+            ensureProtectedStoreRecovered: () async {},
+          ).admitChat(
+            _scope(),
+            chatId: chatId,
+            createdAt: source.createdAtUtc,
+            authFence: CloudSyncLocalSendAuthFence(
+              expected: auth,
+              capture: () async => auth,
+              stillCurrent: () => true,
+            ),
+            validateLocalOrigin: () {
+              originChecks++;
+              expect(
+                journal
+                    .validateReadyForCreate(
+                      db,
+                      _scope('messageManateeZone'),
+                      source,
+                    )
+                    .chat
+                    .targetId,
+                chatId,
+              );
+            },
+            encode: (_) {
+              encodes++;
+              return _FakeChat();
+            },
+          ),
+          _failure(safeCode),
+        );
+        expect(originChecks, 1);
+        expect(encodes, 0);
+        expect(transport.stages, 0);
+        expect(transport.commits, 0);
+        expect(transport.rollbacks, 0);
+        expect(db.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(db.box<CloudRecordMapEntity>().count(), 0);
+        expect(journal.readReady().single.id, intentId);
+        expect(journal.readForAdmission(intentId).admittedOperationId, isNull);
+        final retained = db.box<CloudInboxChangeEntity>().getAll();
+        expect(retained, hasLength(2));
+        expect(
+          retained.every(
+            (row) => row.status == CloudInboxStatus.retainedUnprojected.index,
+          ),
+          isTrue,
+        );
+        expect(
+          retained.where((row) => row.isTombstone),
+          hasLength(messageTombstone ? 1 : 0),
+        );
+        preserved();
+      },
+    );
+  }
+
   for (final mutation in [
     'none',
     'shared Chat',

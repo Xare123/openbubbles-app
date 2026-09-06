@@ -15,8 +15,24 @@ void main() {
     final testText = Platform.environment['OPENBUBBLES_TEST_MESSAGE_TEXT'];
     expect(source, isNotNull);
     expect(excluded, matches(RegExp(r'^[0-9a-fA-F-]{36}$')));
+    // A locally unchanged file can still be an inconsistent device transfer.
+    // Require the capture tool's three-way device/file hash qualification before
+    // copying or opening any ObjectBox data. Historical unqualified copies are
+    // not made trustworthy by passing this inspector's final local hash check.
+    final qualificationFile = File('$source/capture-qualification.json');
+    expect(qualificationFile.existsSync(), isTrue,
+        reason: 'A stable device capture qualification is required');
+    final qualification = jsonDecode(await qualificationFile.readAsString())
+        as Map<String, dynamic>;
+    expect(qualification['stable'], isTrue,
+        reason: 'Do not inspect an unqualified device capture');
+    expect(qualification['package'], 'com.bluebubbles.messaging.cloudkitcanary');
     final file = File('$source/data.mdb');
     final before = await sha256.bind(file.openRead()).first;
+    expect(qualification['databaseSha256'], before.toString());
+    expect(qualification['remoteBeforeSha256'], before.toString());
+    expect(qualification['remoteAfterSha256'], before.toString());
+    expect(qualification['bytes'], await file.length());
     final root = Directory(r'C:\Codex\OpenBubblesReview\scratch');
     final staging = await root.createTemp('canary-upload-queue-');
     Store? store;
@@ -105,7 +121,7 @@ void main() {
       expect(await sha256.bind(file.openRead()).first, before);
       // ignore: avoid_print
       print(
-        'CANARY_UPLOAD_QUEUE=${jsonEncode({...report, 'sourceUnchanged': true, 'notAnUploadAuthorization': true})}',
+        'CANARY_UPLOAD_QUEUE=${jsonEncode({...report, 'sourceCaptureVerified': true, 'sourceUnchanged': true, 'notAnUploadAuthorization': true})}',
       );
     } finally {
       store?.close();
