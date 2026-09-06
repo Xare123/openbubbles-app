@@ -9,6 +9,9 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shado
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_origin.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_admission.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_admission.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
@@ -106,7 +109,6 @@ void main() {
                   ? CloudOutboxStatus.confirmed
                   : CloudOutboxStatus.unknownOutcome)
               .index
-      ..attemptCount = 1
       ..appleRequestUuid = 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB'
       ..appleOperationUuid = 'CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC';
     if (cleanup) row.protectedLeaseReference = null;
@@ -142,6 +144,300 @@ void main() {
     });
   }
 
+  for (final mutation in ['none', 'account', 'route']) {
+    test(
+      'offline first Chat receipt -> gateway -> original v2 Message ($mutation)',
+      () async {
+        // Real persistence/admission/projection, synthetic native edges only.
+        // Does not execute service attachment-lock release or live CloudKit.
+        final writerScope = CloudKitWriterScope(accountFingerprint: 'A' * 43);
+        late CloudSyncLocalSendJournal journal;
+        void bindJournal() {
+          final authority = ObjectBoxCloudKitWriterAuthority.forTest(
+            store: db,
+            buildDecision: CloudKitWriterOwnership.resolve('v2'),
+          );
+          if (authority.read(writerScope) == null) {
+            final disabled = authority.initializeDisabled(
+              writerScope,
+              now: _now,
+            );
+            authority.provisionInitialOwner(
+              writerScope,
+              owner: CloudKitWriterOwner.v2,
+              expectedEpoch: disabled.epoch,
+              evidence: const CloudKitWriterTransitionEvidence.forTest(
+                operationsQuiesced: true,
+                activeIdentityRevalidated: true,
+                legacyMutationQueues: LegacyMutationQueueDisposition.empty,
+              ),
+              now: _now,
+            );
+          }
+          journal = CloudSyncLocalSendJournal(
+            store: db,
+            authority: authority,
+            authoritySnapshot: authority.read(writerScope)!,
+          );
+          sync = ObjectBoxCloudSyncStore(
+            store: db,
+            protector: _Protector(),
+            clock: () => _now,
+            localSendJournal: journal,
+          );
+        }
+
+        bindJournal();
+        const messageGuid = 'DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD';
+        final local = db.box<Message>().get(messageId)!
+          ..guid = 'temp-Abc12345'
+          ..stagingGuid = messageGuid
+          ..attributedBody = [
+            AttributedBody.raw('synthetic body survives adoption'),
+          ];
+        final identity = CloudSyncLocalSendIdentity.capture(
+          local,
+          local.chat.target!,
+          messageGuid,
+        )!;
+        journal.saveSubmission(
+          identity: identity,
+          newlyGeneratedGuid: true,
+          persistMessage: () => db.box<Message>().put(local),
+          now: _now,
+        );
+        local
+          ..guid = messageGuid
+          ..stagingGuid = null;
+        journal.saveConfirmedSubmission(
+          identity: identity,
+          persistMessage: () => db.box<Message>().put(local),
+          now: _now,
+        );
+        final intentId = journal.readReady().single.id;
+        final client = Object();
+        CloudSyncNativeAuthSnapshot auth(String account) =>
+            CloudSyncNativeAuthSnapshot.fromNative(
+              nativeSessionId: 'synthetic-session',
+              accountFingerprint: account,
+              protectedStoreIdentity: 'obcs2.store.${'A' * 43}',
+              cloudMessagesClient: client,
+            );
+        final expected = auth('A' * 43);
+        var current = expected;
+        final fence = CloudSyncLocalSendAuthFence(
+          expected: expected,
+          capture: () async => current,
+          stillCurrent: () => true,
+        );
+        final transport = _CombinedStaging();
+        final source = journal.readForAdmission(intentId);
+        final operation =
+            await CloudSyncOutboundChatAdmissionCoordinator(
+              store: sync,
+              transport: transport,
+              ensureProtectedStoreRecovered: () async {},
+            ).admitChat(
+              _scope(),
+              chatId: chatId,
+              createdAt: _now,
+              authFence: fence,
+              encode: (_) => _FakeChat(),
+              validateLocalOrigin: () {
+                expect(
+                  journal
+                      .validateReadyForCreate(
+                        db,
+                        _scope('messageManateeZone'),
+                        source,
+                      )
+                      .chat
+                      .targetId,
+                  chatId,
+                );
+              },
+            );
+        expect(transport.stages, 1);
+        const submissionLease = 'synthetic-combined-submission';
+        final leased = await sync.leaseEligibleOutbox(
+          _scope(),
+          now: _now,
+          limit: 1,
+          leaseId: submissionLease,
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        );
+        expect(leased.single.operationId, operation.operationId);
+        await sync.markOutboxSubmissionStarted(
+          _scope(),
+          leaseId: submissionLease,
+          submissionIdentity: CloudOutboxSubmissionIdentity(
+            requestUuid: 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB',
+            operationUuids: {
+              operation.operationId: 'CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC',
+            },
+          ),
+          now: _now,
+        );
+        // Fake successful network response, committed by the actual store API.
+        await sync.commitOutboxCreateReceipt(
+          _scope(),
+          leaseId: submissionLease,
+          receipt: CloudOutboxCreateReceipt(
+            operationId: operation.operationId,
+            logicalEntityKeyHash: _logical,
+            serverRecordIdHash: _record,
+            etagHash: 'E' * 43,
+          ),
+          now: _now,
+        );
+        final confirmed = (await sync.readOutboxEntries(_scope())).single;
+        expect(confirmed.status, CloudOutboxStatus.confirmed);
+        expect(confirmed.protectedLeaseReference, isNull);
+        expect(db.box<CloudSemanticSnapshotEntity>().count(), 0);
+        await restart();
+        bindJournal();
+
+        Future<CloudOutboxOperation> admitMessage() =>
+            CloudSyncOutboundAdmissionCoordinator(
+              store: sync,
+              transport: transport,
+              ensureProtectedStoreRecovered: () async {},
+            ).admitLocalSend(
+              _scope('messageManateeZone'),
+              intentId: intentId,
+              journal: journal,
+              authFence: fence,
+              encodeMessage: _CombinedMessage.new,
+            );
+        // Receipt alone must not admit a Message before canonical ownership exists.
+        await expectLater(
+          admitMessage(),
+          _failure('cloud_sync_local_send_chat_not_ready'),
+        );
+        expect(transport.messageStages, 0);
+
+        final checkpoint = await sync.readCheckpoint(_scope());
+        final lease = (await sync.tryAcquireCoordinatorLease(
+          _scope(),
+          ownerId: 'synthetic-combined-gateway',
+          now: _now,
+          leaseDuration: const Duration(minutes: 1),
+        ))!;
+        final change = CloudFetchedChange(
+          changeId: 'C' * 43,
+          recordIdHash: _record,
+          etagHash: 'E' * 43,
+          type: CloudChangeType.save,
+          isTombstone: false,
+          encryptedServerRecordId: _ref,
+          protectedSystemFieldsReference: 'obcs2.ref.${'F' * 43}',
+          encryptedPayloadReference: 'obcs2.ref.${'R' * 43}',
+          payloadSha256: 'c' * 64,
+        );
+        await sync.journalFetchedBatch(
+          CloudFetchBatch(
+            scope: _scope(),
+            changes: [change],
+            batchId: 'synthetic-combined-readback',
+            generation: checkpoint.generation,
+            nextToken: 'synthetic-combined-token',
+            hasMore: false,
+          ),
+          now: _now,
+          leaseFence: lease,
+          expectedGeneration: checkpoint.generation,
+          expectedFetchedToken: checkpoint.fetchedToken,
+        );
+        final entry = (await sync.readEligibleInbox(
+          _scope(),
+          now: _now,
+          limit: 1,
+        )).single;
+        final registry = TransientCloudCanonicalIdentityRegistry();
+        final gateway = ObjectBoxCloudSemanticStoreGateway(
+          store: db,
+          canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(
+            store: db,
+            identityResolver: registry,
+            activeScopeProvider: () =>
+                CloudCanonicalActiveScope(scope: _scope(), generation: 1),
+            semanticApplyEnabled: true,
+            allowChatUpserts: true,
+          ),
+          clock: () => _now,
+        );
+        final payload = _payload();
+        final snapshot = CloudSemanticSnapshot(
+          kind: CloudEntityKind.chat,
+          logicalEntityKeyHash: _logical,
+          immutableContentDigest: 'I' * 43,
+          etagHash: change.etagHash,
+          encryptedRawRecordReference: change.encryptedPayloadReference,
+        );
+        final identityLease = registry.bind(
+          CloudDecodedMutation.upsert(
+            scope: _scope(),
+            generation: 1,
+            changeId: change.changeId,
+            snapshot: snapshot,
+            payload: payload,
+          ),
+        );
+        try {
+          await gateway.writeTransaction<void>(
+            entry: entry,
+            leaseFence: lease,
+            action: (tx) {
+              tx.applyEntity(payload: payload, snapshot: snapshot);
+              tx.markChangeApplied(change.changeId);
+            },
+          );
+        } finally {
+          identityLease.release();
+          await sync.releaseCoordinatorLease(_scope(), leaseFence: lease);
+        }
+        preserved(adopted: true);
+        expect(db.box<CloudSemanticSnapshotEntity>().count(), 1);
+        await restart();
+        bindJournal();
+        expect(
+          journal.readForAdmission(intentId).sourceSha256,
+          identity.sourceSha256,
+        );
+        if (mutation == 'account') current = auth('B' * 43);
+        if (mutation == 'route') {
+          db.box<Chat>().put(
+            db.box<Chat>().get(chatId)!
+              ..usingHandle = 'mailto:other@example.invalid',
+          );
+        }
+        if (mutation != 'none') {
+          await expectLater(admitMessage(), throwsStateError);
+          expect(transport.messageStages, 0);
+          expect(db.box<CloudOutboxOperationEntity>().count(), 1);
+        } else {
+          final messageOperation = await admitMessage();
+          expect(transport.messageStages, 1);
+          expect(messageOperation.scope, _scope('messageManateeZone'));
+          expect(
+            journal.readForAdmission(intentId).admittedOperationId,
+            messageOperation.operationId,
+          );
+          expect(
+            db
+                .box<CloudSyncLocalSendIntentEntity>()
+                .get(intentId)!
+                .sourceSha256,
+            identity.sourceSha256,
+          );
+          expect(db.box<CloudOutboxOperationEntity>().count(), 2);
+          preserved(adopted: true);
+        }
+      },
+    );
+  }
+
   test(
     'real gateway binds map, adopts same row, persists ownership and survives replay/restart',
     () async {
@@ -151,7 +447,6 @@ void main() {
       db.box<CloudOutboxOperationEntity>().put(
         outbox()
           ..state = CloudOutboxStatus.confirmed.index
-          ..attemptCount = 1
           ..appleRequestUuid = 'BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB'
           ..appleOperationUuid = 'CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC',
       );
@@ -383,6 +678,7 @@ void main() {
       expect(operation.protectedLeaseReference, _lease);
       preserved();
       submitted();
+      expect(outbox().attemptCount, 0);
       project();
       preserved(adopted: true);
       expect(db.box<Chat>().get(chatId)!.cloudGuid, _guid);
@@ -422,6 +718,74 @@ void main() {
       );
       preserved();
       expect(db.box<CloudSemanticChatAliasEntity>().count(), 0);
+    },
+  );
+
+  for (final missing in ['both', 'request', 'operation']) {
+    test(
+      'leased origin without $missing submission UUIDs cannot adopt local Chat',
+      () {
+        admit();
+        submitted();
+        final row = outbox()..state = CloudOutboxStatus.leased.index;
+        if (missing != 'operation') row.appleRequestUuid = null;
+        if (missing != 'request') row.appleOperationUuid = null;
+        db.box<CloudOutboxOperationEntity>().put(row);
+        expect(outbox().attemptCount, 0);
+        expect(
+          () => project(),
+          _failure('cloud_sync_outbound_chat_origin_not_submitted'),
+        );
+        preserved();
+        expect(db.box<CloudSemanticChatAliasEntity>().count(), 0);
+        expect(db.box<CloudSemanticSnapshotEntity>().count(), 0);
+      },
+    );
+  }
+
+  for (final field in ['request', 'operation']) {
+    for (final invalid in [
+      'malformed-uuid',
+      'BBBBBBBB-BBBB-1BBB-8BBB-BBBBBBBBBBBB',
+      'BBBBBBBB-BBBB-4BBB-7BBB-BBBBBBBBBBBB',
+    ]) {
+      test(
+        'invalid $field submission UUID ($invalid) cannot adopt local Chat',
+        () {
+          admit();
+          submitted();
+          final row = outbox();
+          if (field == 'request') {
+            row.appleRequestUuid = invalid;
+          } else {
+            row.appleOperationUuid = invalid;
+          }
+          db.box<CloudOutboxOperationEntity>().put(row);
+          expect(
+            () => project(),
+            _failure('cloud_sync_outbound_chat_origin_not_submitted'),
+          );
+          preserved();
+          expect(db.box<CloudSemanticChatAliasEntity>().count(), 0);
+          expect(db.box<CloudSemanticSnapshotEntity>().count(), 0);
+        },
+      );
+    }
+  }
+
+  test(
+    'negative attempt count cannot adopt local Chat with valid submission UUIDs',
+    () {
+      admit();
+      submitted();
+      db.box<CloudOutboxOperationEntity>().put(outbox()..attemptCount = -1);
+      expect(
+        () => project(),
+        _failure('cloud_sync_outbound_chat_origin_not_submitted'),
+      );
+      preserved();
+      expect(db.box<CloudSemanticChatAliasEntity>().count(), 0);
+      expect(db.box<CloudSemanticSnapshotEntity>().count(), 0);
     },
   );
 
@@ -566,33 +930,47 @@ void main() {
     },
   );
 
-  test('fresh send drift during Chat staging rolls back Chat admission', () async {
-    final transport = _Staging();
-    final native = CloudSyncNativeAuthSnapshot.fromNative(
-      nativeSessionId: 'synthetic-session', accountFingerprint: 'A' * 43,
-      protectedStoreIdentity: 'obcs2.store.${'A' * 43}', cloudMessagesClient: Object(),
-    );
-    var checks = 0;
-    final coordinator = CloudSyncOutboundChatAdmissionCoordinator(
-      store: sync, transport: transport,
-      ensureProtectedStoreRecovered: () async {},
-    );
-    await expectLater(coordinator.admitChat(_scope(), chatId: chatId,
-      createdAt: _now,
-      authFence: CloudSyncLocalSendAuthFence(expected: native,
-        capture: () async => native, stillCurrent: () => true),
-      encode: (_) => _FakeChat(),
-      validateLocalOrigin: () {
-        if (++checks == 2) throw StateError('synthetic_send_changed');
-      },
-    ), throwsStateError);
-    expect(checks, 2);
-    expect(transport.stages, 1);
-    expect(transport.rollbacks, 1);
-    expect(transport.commits, 0);
-    expect(db.box<CloudOutboxOperationEntity>().count(), 0);
-    preserved();
-  });
+  test(
+    'fresh send drift during Chat staging rolls back Chat admission',
+    () async {
+      final transport = _Staging();
+      final native = CloudSyncNativeAuthSnapshot.fromNative(
+        nativeSessionId: 'synthetic-session',
+        accountFingerprint: 'A' * 43,
+        protectedStoreIdentity: 'obcs2.store.${'A' * 43}',
+        cloudMessagesClient: Object(),
+      );
+      var checks = 0;
+      final coordinator = CloudSyncOutboundChatAdmissionCoordinator(
+        store: sync,
+        transport: transport,
+        ensureProtectedStoreRecovered: () async {},
+      );
+      await expectLater(
+        coordinator.admitChat(
+          _scope(),
+          chatId: chatId,
+          createdAt: _now,
+          authFence: CloudSyncLocalSendAuthFence(
+            expected: native,
+            capture: () async => native,
+            stillCurrent: () => true,
+          ),
+          encode: (_) => _FakeChat(),
+          validateLocalOrigin: () {
+            if (++checks == 2) throw StateError('synthetic_send_changed');
+          },
+        ),
+        throwsStateError,
+      );
+      expect(checks, 2);
+      expect(transport.stages, 1);
+      expect(transport.rollbacks, 1);
+      expect(transport.commits, 0);
+      expect(db.box<CloudOutboxOperationEntity>().count(), 0);
+      preserved();
+    },
+  );
 
   test(
     'coordinator retry after commit uncertainty and restart recovers without restaging',
@@ -762,6 +1140,58 @@ final class _Protector implements CloudSyncProtector {
   }) async => ciphertext.substring('fixture:'.length);
 }
 
+// Native Message serialization is an edge fake; journal and admission remain real.
+final class _CombinedMessage implements api.CloudMessage {
+  _CombinedMessage(Message message)
+    : guid = message.guid!,
+      chatId = message.chat.target!.guid,
+      destinationCallerId = message.chat.target!.usingHandle!.replaceFirst(
+        'mailto:',
+        '',
+      );
+  @override
+  final String guid;
+  @override
+  final String chatId;
+  @override
+  final String destinationCallerId;
+  @override
+  int get type => 1;
+  @override
+  String get service => 'iMessage';
+  @override
+  String get sender => '';
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _CombinedStaging extends _Staging {
+  int messageStages = 0;
+  @override
+  Future<CloudSyncProtectedOutboundStageData> stageOutboundMessage(
+    CloudSyncScope scope, {
+    required api.CloudMessage message,
+  }) async {
+    messageStages++;
+    expect(message.chatId, _canonical);
+    return CloudSyncProtectedOutboundStageData(
+      logicalEntityKeyHash: 'M' * 43,
+      protectedEnvelopeReference: 'obcs2.ref.${'Q' * 43}',
+      payloadSha256: 'd' * 64,
+      serverRecordIdHash: 'T' * 43,
+      leaseReference: 'obcs2.lease.${'b' * 32}',
+    );
+  }
+
+  @override
+  Future<void> commitOutboundLease(
+    String leaseReference,
+    String protectedEnvelopeReference,
+  ) async {
+    commits++;
+  }
+}
+
 final class _FakeChat implements api.CloudChat {
   @override
   String get guid => _canonical;
@@ -785,7 +1215,7 @@ final class _FakeChat implements api.CloudChat {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-final class _Staging implements CloudSyncOutboundChatStagingTransport {
+class _Staging implements CloudSyncOutboundChatStagingTransport {
   int stages = 0, commits = 0, rollbacks = 0;
   bool failCommit = false;
   @override

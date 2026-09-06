@@ -935,10 +935,29 @@ fn verify_existing_cache_and_discard_temporaries(
     Ok(bytes)
 }
 
-fn attachment_size_evidence(canonical_expected_bytes: u64, actual_file_bytes: u64) -> String {
+fn attachment_size_evidence(
+    canonical_expected_bytes: u64,
+    actual_file_bytes: u64,
+    header: &[u8],
+) -> String {
+    // Classify a bounded prefix, never log bytes, paths, names, hashes or keys.
+    // This is diagnostic only: a recognized format grants no cache admission.
+    let kind = if header.starts_with(b"GIF87a") || header.starts_with(b"GIF89a") {
+        "gif"
+    } else if header.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "png"
+    } else if header.starts_with(b"\xff\xd8\xff") {
+        "jpeg"
+    } else if header.len() >= 12 && &header[..4] == b"RIFF" && &header[8..12] == b"WEBP" {
+        "webp"
+    } else if header.len() >= 8 && &header[4..8] == b"ftyp" {
+        "iso_bmff"
+    } else {
+        "unknown"
+    };
     format!(
-        "CloudKit attachment size evidence canonical_expected_bytes={} actual_file_bytes={}",
-        canonical_expected_bytes, actual_file_bytes,
+        "CloudKit attachment size evidence canonical_expected_bytes={} actual_file_bytes={} actual_format={}",
+        canonical_expected_bytes, actual_file_bytes, kind,
     )
 }
 
@@ -954,7 +973,14 @@ fn verify_or_place_temp(
         .map_err(|_| CloudNativeAttachmentMaterializationFailure::LocalStorage)?
         .len();
     if temporary_bytes != expected_bytes {
-        log::warn!("{}", attachment_size_evidence(expected_bytes, temporary_bytes));
+        let mut header = [0_u8; 12];
+        let count = File::open(temporary)
+            .and_then(|mut file| file.read(&mut header))
+            .unwrap_or(0);
+        log::warn!(
+            "{}",
+            attachment_size_evidence(expected_bytes, temporary_bytes, &header[..count])
+        );
         return Err(CloudNativeAttachmentMaterializationFailure::SizeMismatch);
     }
     let body_sha256 = sha256_file(temporary)?;
@@ -1555,13 +1581,28 @@ mod tests {
     }
 
     #[test]
-    fn size_evidence_contains_only_named_byte_counts() {
+    fn size_evidence_contains_only_named_counts_and_fixed_format() {
         assert_eq!(
-            attachment_size_evidence(4, 3),
-            "CloudKit attachment size evidence canonical_expected_bytes=4 actual_file_bytes=3"
+            attachment_size_evidence(4, 3, b"private-user-content"),
+            "CloudKit attachment size evidence canonical_expected_bytes=4 actual_file_bytes=3 actual_format=unknown"
         );
-        assert_eq!(attachment_size_evidence(0, u64::MAX),
-            "CloudKit attachment size evidence canonical_expected_bytes=0 actual_file_bytes=18446744073709551615");
+        assert_eq!(attachment_size_evidence(0, u64::MAX, b"GIF89a"),
+            "CloudKit attachment size evidence canonical_expected_bytes=0 actual_file_bytes=18446744073709551615 actual_format=gif");
+    }
+
+    #[test]
+    fn size_evidence_uses_only_fixed_format_labels() {
+        for (header, label) in [
+            (b"GIF87a".as_slice(), "gif"),
+            (b"\x89PNG\r\n\x1a\n".as_slice(), "png"),
+            (b"\xff\xd8\xff".as_slice(), "jpeg"),
+            (b"RIFF0000WEBP".as_slice(), "webp"),
+            (b"0000ftypheic".as_slice(), "iso_bmff"),
+            (b"RIFF".as_slice(), "unknown"),
+            (b"".as_slice(), "unknown"),
+        ] {
+            assert!(attachment_size_evidence(4, 3, header).ends_with(&format!("actual_format={label}")));
+        }
     }
 
     #[test]

@@ -174,14 +174,18 @@ Chat? resolveCloudSyncOutboundChatOrigin({
       _bareHandle(payload.lastAddressedHandle) != origin.usingHandle) {
     _reject('cloud_sync_outbound_chat_origin_payload_changed');
   }
-  if (operation.attemptCount <= 0 ||
+  // attemptCount counts retry/error transitions, not successful submissions.
+  // A first-attempt receipt legitimately has zero. Submission identity and
+  // state, followed by exact authenticated record/payload binding, are the
+  // evidence here. Merely leasing an operation does not allocate these UUIDs.
+  if (operation.attemptCount < 0 ||
       !{
         CloudOutboxStatus.leased.index,
         CloudOutboxStatus.unknownOutcome.index,
         CloudOutboxStatus.confirmed.index,
       }.contains(operation.state) ||
-      operation.appleRequestUuid == null ||
-      operation.appleOperationUuid == null ||
+      !_uuidV4.hasMatch(operation.appleRequestUuid ?? '') ||
+      !_uuidV4.hasMatch(operation.appleOperationUuid ?? '') ||
       operation.encryptedPayloadRef == null ||
       (operation.protectedLeaseReference == null &&
           operation.state != CloudOutboxStatus.confirmed.index) ||

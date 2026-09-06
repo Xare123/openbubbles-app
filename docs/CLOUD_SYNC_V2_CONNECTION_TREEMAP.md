@@ -46,6 +46,31 @@ continue under a new account.
 
 ### Wi-Fi resume checkpoint
 
+- Combined offline coverage exposed a first-submit adoption defect: real
+  `markOutboxSubmissionStarted` assigns request/operation UUIDs and unknown
+  outcome state without incrementing `attemptCount`. Successful first receipts
+  therefore retain zero. The former adoption guard rejected those receipts;
+  its fixture incorrectly manufactured a count of one. The local repair uses
+  valid submission UUIDs, allowed state and the existing exact authenticated
+  record/payload bindings, allowing zero while rejecting negative counts.
+  Three combined cases now cover real journal/admission, receipt persistence,
+  restart, semantic gateway adoption and subsequent Message admission, with
+  changed-account and changed-route rejection. All 29 origin tests passed,
+  including ten added rejection cases for missing/malformed submission UUIDs
+  and negative attempt counts. The production guard also passed Dart analysis.
+  These are synthetic network receipts, not live CloudKit or service-lock
+  release proof. This repair and these tests are NOT in frozen run 34009821113.
+- Pending local GIF diagnostics classify at most 12 bytes into fixed format
+  labels only on the existing size-mismatch failure. No raw bytes or user
+  content are logged; exact-size admission remains unchanged. Native compile
+  and execution are pending. This is evidence collection, not a GIF repair.
+
+- Frozen source `a8653ecfd3ab5170c6246486f6b46ceae623f7f4` is pushed
+  to the user's fork. Full qualification run `34009821113` is dispatched on
+  one T2D-60 runner in us-west1-b, Canary, outbound_writer=false. It includes
+  the native Chat bridge, Dart integration and rustpush media candidate
+  `a3e7983`. It is not an installed build or completed qualification result.
+
 - Production worker now drains Chat and Message queues together. It recovers
   and inspects both before any fresh save, reconciles at most one unknown
   outcome in a separate pass, and acknowledges confirmed receipts using the
