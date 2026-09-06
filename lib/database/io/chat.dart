@@ -230,6 +230,15 @@ class GetChatAttachmentOverview
         if (message.isGroupEvent || message.isInteractive) continue;
         message.attachments = List<Attachment>.from(message.dbAttachments);
         for (final attachment in message.attachments.whereType<Attachment>()) {
+          // Internal iMessage preview/plugin data is not a user document.
+          // Keep the attachment and its Message relation for consumers such as
+          // UrlPreview; filter only this overview, before applying card limits.
+          if (attachment.transferName
+                  ?.toLowerCase()
+                  .endsWith('.pluginpayloadattachment') ??
+              false) {
+            continue;
+          }
           final mimeType = attachment.mimeType ?? '';
           if (mimeType.contains('location')) {
             if (locations.length < locationLimit) locations.add(attachment);

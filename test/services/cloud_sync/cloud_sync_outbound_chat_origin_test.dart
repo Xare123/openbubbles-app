@@ -31,6 +31,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:crypto/crypto.dart';
 
 const _guid = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+
+class _UnexpectedTombstoneDecoder implements CloudSemanticDecoder {
+  @override
+  Future<CloudDecodedMutation> decode(CloudInboxEntry entry) async =>
+      throw StateError('read-only tombstones must not decode an identity');
+}
 const _recipient = 'recipient@example.invalid';
 const _sender = 'sender@example.invalid';
 const _canonical = 'iMessage;-;$_recipient';
@@ -415,6 +421,8 @@ void main() {
     'submitted cancellation forbidden',
     'retained Chat save',
     'retained Chat tombstone',
+    'retained Chat reader tombstone',
+    'retained Chat restart reader tombstone',
     'duplicate before stage',
     'prior snapshot before stage',
     'prior generation before stage',
@@ -525,7 +533,7 @@ void main() {
           stillCurrent: () => true,
         );
         final transport = _CombinedStaging();
-        final source = journal.readForAdmission(intentId);
+        var source = journal.readForAdmission(intentId);
         CloudSyncLocalSendExactSelection newSelection() =>
             CloudSyncLocalSendExactSelection(
               intentId: intentId,
@@ -551,7 +559,70 @@ void main() {
           await retainHistory('messageManateeZone', tombstone: true);
         }
         if (mutation.startsWith('retained Chat')) {
-          await retainHistory('chatManateeZone', tombstone: mutation.endsWith('tombstone'));
+          if (mutation.contains('reader')) {
+            // Exercise the installed reader policy, not a hand-marked inbox
+            // row. A completed fetch can retain a tombstone indefinitely.
+            final remote = FakeCloudSyncTransport()..enqueueFetchBatch(
+              CloudFetchBatch(
+                scope: _scope(), generation: 1,
+                batchId: 'synthetic-read-only-chat-deletion',
+                nextToken: 'synthetic-terminal-chat-token', hasMore: false,
+                changes: [CloudFetchedChange(
+                  changeId: 'U' * 43, recordIdHash: 'V' * 43,
+                  type: CloudChangeType.delete, isTombstone: true,
+                  encryptedServerRecordId: 'obcs2.ref.${'U' * 43}',
+                  protectedSystemFieldsReference: 'obcs2.ref.${'F' * 43}',
+                )],
+              ),
+            );
+            final registry = TransientCloudCanonicalIdentityRegistry();
+            final reader = CloudSyncEngine(
+              scope: _scope(), coordinatorId: 'synthetic-read-write-boundary',
+              store: sync, transport: remote, clock: () => _now,
+              inboxApplier: TransactionalCloudInboxApplier(
+                decoder: _UnexpectedTombstoneDecoder(),
+                identityRegistrar: registry,
+                store: ObjectBoxCloudSemanticStoreGateway(
+                  store: db, clock: () => _now,
+                  canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(
+                    store: db, identityResolver: registry,
+                    activeScopeProvider: () => CloudCanonicalActiveScope(
+                      scope: _scope(), generation: 1),
+                    semanticApplyEnabled: true, allowChatUpserts: true,
+                  ),
+                ),
+              ),
+              config: CloudSyncEngineConfig(
+                maximumFetchPagesPerRun: 1,
+                flags: const CloudSyncFeatureFlags(semanticApply: true),
+              ),
+            );
+            final first = await reader.synchronize(trigger: CloudSyncTrigger.manual);
+            expect(first.status, CloudSyncRunStatus.degraded);
+            expect(first.failureSafeCode, 'retained_projection_incomplete');
+            expect(first.counters.tombstoneReadOnlyAcknowledged, 1);
+            final second = await reader.synchronize(trigger: CloudSyncTrigger.manual);
+            expect(second.status, CloudSyncRunStatus.degraded);
+            expect(second.failureSafeCode, 'retained_projection_incomplete');
+            expect(second.counters.fetched, 0);
+            expect(second.counters.tombstoneReadOnlyAcknowledged, 0);
+            expect(remote.consumePreparedSubmissionCallCount, 0);
+            if (mutation.contains('restart')) {
+              await restart();
+              bindJournal();
+              source = journal.readForAdmission(intentId);
+            }
+            final checkpoint = await sync.readCheckpoint(_scope());
+            expect(checkpoint.fetchedSequence, 1);
+            expect(checkpoint.lastAppliedSequence, 0);
+            expect(checkpoint.fetchedToken, 'synthetic-terminal-chat-token');
+            expect(checkpoint.pendingBatchId, isNull);
+            expect(db.box<CloudInboxChangeEntity>().getAll().single.status,
+                CloudInboxStatus.retainedUnprojected.index);
+            preserved();
+          } else {
+            await retainHistory('chatManateeZone', tombstone: mutation.endsWith('tombstone'));
+          }
         }
         void duplicateChat() {
           final duplicate = Chat(
@@ -597,7 +668,11 @@ void main() {
         if (mutation.startsWith('retained Chat') ||
             mutation.endsWith('before stage') || mutation.contains('during stage')) {
           await expectLater(admitChat(),
-            throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())));
+            mutation.startsWith('retained Chat')
+                ? _failure(mutation.endsWith('tombstone')
+                    ? 'messages_cloud_tombstone_projection_unavailable'
+                    : 'messages_cloud_account_projection_incomplete')
+                : throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())));
           final staged = mutation.contains('during stage') ? 1 : 0;
           expect(transport.stages, staged);
           expect(transport.rollbacks, staged);

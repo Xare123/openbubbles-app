@@ -55,11 +55,113 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | --- | --- |
 | Message history and conversation projection | User has observed restored readable chats; sustained incremental/restart behavior must be qualified on the release candidate. |
 | Photos, video, GIF and documents | Photos and video playback are user-confirmed. Installed `dcef0e9bf` automatically fetched three gallery attachments after navigation/scrolling without card taps. One HEIC still fails exact-size validation. GIF support is explicitly deferred; attachments are preserved, not deleted or hidden. Each media surface/type still needs user-facing validation, not metadata-only success. |
-| Chat-first ordinary text writing | Prior `dcef0e9bf` journaled actual native completion of a fresh approved-recipient send; the UI showed Delivered and an empty composer. Automatic CloudKit admission then deferred at Chat creation with `messages_cloud_tombstone_projection_unavailable`. Candidate `98772e7d2` passed full GCE qualification and is now installed, awaiting its live foreground write/readback test. Remote save/readback is not passed. |
+| Chat-first ordinary text writing | Installed `98772e7d2` passed full GCE qualification, but its 2026-09-06 foreground test still deferred at `messages_cloud_tombstone_projection_unavailable` after native send confirmation. No CloudKit admission or remote save/readback was proven. A qualified current database snapshot is needed to distinguish retained Chat identity history from the other guard paths. |
 | Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
 | Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
 | Ongoing sync and account lifecycle | Missing automatic writer setup is repaired and installed in `463a19881`; fresh logs and a stable database now prove V2 ownership and worker readiness. Automatic save/readback remains unverified. Native send callbacks have a pre-journal process-death gap. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence remain release gates. |
+
+### Conversation Documents list: internal payload classification repaired locally
+
+The reported Documents list exposed files ending in `.pluginPayloadAttachment`
+as downloadable/openable user documents. `GetChatAttachmentOverview` classified
+all non-image/video attachments as documents, while `UrlPreview` separately
+consumes these internal attachments. This is a presentation classification
+defect, not evidence that ordinary PDFs or DOCX contents are corrupt.
+
+The local repair filters only that exact case-insensitive extension from the
+overview before document limits. It does not delete, modify, or unlink source
+attachments, alter sync, or change preview loading. Real documents from the
+same message, unknown file types and filename substring lookalikes remain
+visible. Four characterization failures reproduced the defect before the fix;
+all five new real-ObjectBox cases and the related gallery/auto-download/MIME
+checks now pass, 35 tests total. Source repair only, not yet in an installed
+APK. Include it in the next qualified candidate rather than a separate rebuild.
+
+### Current installed write test: not passed, investigate before rebuilding
+
+At 13:14:51Z, installed `98772e7d2` emitted `SendFinished` and journaled native
+send confirmation. At 13:14:52Z, the automatic upload pass reported admitted=0,
+deferred=1, outboxBlocked=false, chatReadbackPending=false, with
+`messages_cloud_tombstone_projection_unavailable`. At 13:15:02Z, deferred=2
+with the same code. This is a successful native-send handoff, not a successful
+CloudKit write. Full CI success did not qualify this live history shape.
+
+The current Chat-create guard deliberately still requires fully projected Chat
+history. Two focused real-ObjectBox tests now assert the exact retained Chat
+save and tombstone failure codes, and both pass before staging any upload.
+Those tests establish a possible cause, not the identity of this device's
+blocking zone. Do not remove the guard or claim a zone-specific diagnosis from
+the shared error string alone.
+
+The first current capture changed during transfer and is unqualified. Canary
+was then force-stopped for a consistent capture, without clearing data or
+touching Alpha. Subsequent transfers timed out or lost ADB connectivity. All
+failed captures remain unqualified and must not be inspected. Reconnecting to
+the observed wireless endpoint also timed out. No further send is needed yet.
+
+Next: obtain a capture with matching device-before, device-after and local
+hashes. The offline upload inspector now emits content-free checkpoint/zone
+status counts and ready-source Chat-route flags. Use that evidence to identify
+the exact dependency, update this board, and select the smallest repair before
+another APK. Do not relabel retained rows as applied, erase tombstones, reset
+cursors, or replay the explicitly excluded unsent origin to make the test pass.
+
+### Offline cross-boundary reproduction and revised repair plan
+
+Two added cases run the real `CloudSyncEngine`,
+`TransactionalCloudInboxApplier`, ObjectBox semantic gateway and journal-bound
+Chat admission with synthetic transport/auth only. A Chat deletion is fetched
+and retained without decoding its identity. The fetch token advances, the
+exact-applied floor stays zero, and the reader correctly reports
+`retained_projection_incomplete`. A second empty read does not resolve it.
+Fresh-chat admission then rejects with the same tombstone code; reopening the
+database preserves that result. The full Chat-origin file passes 75 tests.
+This proves the read/write contract mismatch for this input, not that the
+unavailable current device snapshot contains that input.
+
+```text
+read-only Chat tombstone -> durable retained record -> fetch continues
+                                  |
+                                  v
+new-send Chat admission requires all Chat rows applied -> deferred
+```
+
+A bounded independent review initially proposed resolving every tombstone to
+a recipient. Parent review rejected that as a universal prerequisite: a deleted
+record never previously seen may have no recoverable recipient identity. A
+new, explicitly native-confirmed send can justify a new conversation shell;
+it must not justify replaying any deleted message or old operation. The reviewer
+accepted this distinction. Preserve record/history no-resurrection, not an
+unintended rule that a recipient can never be contacted again.
+
+Simply relaxing the guard remains insufficient. The current semantic gateway
+binds one server record to one logical Chat key and rejects a second record
+with `semantic_record_mapping_conflict`. The canonical adapter also rejects
+conflicting recipient aliases. A local success followed by a duplicate-record
+readback conflict would be another regression, not a working writer.
+
+Repair order, not yet implemented:
+
+1. Characterize authenticated duplicate direct-Chat records, their per-record
+   provenance, and alias ownership. Keep group/SMS behavior unchanged.
+2. Define a record-aware direct-Chat membership/merge path. Retiring an older
+   record must not remove a newer shell or its new messages. Preserve exact
+   replay and unknown-outcome recovery, including concurrent-device cases.
+3. Only then make new-send admission independent of unrelated retained
+   tombstones. Pending/unknown live Chat saves and observed deletions of the
+   exact new target still require explicit handling. Never relabel old rows,
+   reset generations, or clear history to manufacture readiness.
+4. Qualify one installed native-confirmed send through Chat readback, Message
+   readback, restart and a zero-extra-save retry. Keep the excluded unsent
+   origin excluded. Do not call current writes production-ready.
+
+While the user is away, Developer Tools provides `Download / Share Logs` and
+`Export OB logs`. With verbose CloudKit diagnostics already enabled, the Dart
+log can contain the final per-zone semantic report. These exports may narrow
+the blocker but are not substitutes for an unavailable current database
+snapshot when the required fields are absent. Do not request passwords,
+hardware identity, a new login, public log uploads, or internet-exposed ADB.
 
 ### Ordinary-send completion investigation
 

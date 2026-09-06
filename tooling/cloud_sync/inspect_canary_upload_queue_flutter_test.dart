@@ -43,6 +43,45 @@ void main() {
         final intents = store!.box<CloudSyncLocalSendIntentEntity>().getAll();
         final outbox = store.box<CloudOutboxOperationEntity>().getAll();
         final authorities = store.box<CloudKitWriterAuthorityEntity>().getAll();
+        final checkpoints = store.box<CloudSyncCheckpointEntity>().getAll();
+        final zoneReports = <Map<String, Object?>>[];
+        for (final checkpoint in checkpoints) {
+          final query = store.box<CloudInboxChangeEntity>().query(
+            CloudInboxChangeEntity_.scopeKey.equals(checkpoint.checkpointKey) &
+            CloudInboxChangeEntity_.generation.equals(checkpoint.generation),
+          ).build();
+          final rows = <CloudInboxChangeEntity>[];
+          try {
+            rows.addAll(query.find());
+          } finally {
+            query.close();
+          }
+          final counts = <String, int>{};
+          for (final row in rows) {
+            final status = row.status >= 0 && row.status <= 3
+                ? '${row.status}' : 'invalid';
+            final change = const {'save', 'delete'}.contains(row.changeType)
+                ? row.changeType : 'invalid';
+            final key = '$status/$change/tombstone:${row.isTombstone}';
+            counts.update(key, (n) => n + 1, ifAbsent: () => 1);
+          }
+          zoneReports.add({
+            'zone': const {'chatManateeZone', 'messageManateeZone',
+              'attachmentManateeZone'}.contains(checkpoint.zone)
+                ? checkpoint.zone : 'other',
+            'hasPersistenceLane': checkpoint.persistenceLane != null,
+            'generation': checkpoint.generation,
+            'fetchedSequence': checkpoint.fetchedSequence,
+            'appliedSequence': checkpoint.appliedSequence,
+            'pendingBatch': checkpoint.pendingBatchId != null,
+            'pendingToken': checkpoint.pendingFetchedTokenCiphertext != null,
+            'hasSuccessfulFetch': checkpoint.lastSuccessfulAtMs > 0,
+            'hasError': checkpoint.lastErrorCategory != null,
+            'backoffAttempt': checkpoint.backoffAttempt,
+            'hasNextEligibleTime': checkpoint.nextEligibleAtMs != 0,
+            'inboxCounts': counts,
+          });
+        }
         final testMessages = <Message>[];
         if (testText != null && testText.isNotEmpty) {
           final query = store.box<Message>().query(Message_.text.equals(testText)).build();
@@ -72,6 +111,7 @@ void main() {
             .map((i) => i.admittedOperationId)
             .toSet();
         final states = <String, int>{};
+        final readySourceShapes = <String, int>{};
         var missingOrDeletedSources = 0;
         for (final intent in intents) {
           final state = intent.state >= 0 && intent.state <= 3
@@ -82,12 +122,28 @@ void main() {
           if (message == null || message.dateDeleted != null) {
             missingOrDeletedSources++;
           }
+          if (intent.state == 1 && message != null) {
+            final chat = message.chat.target;
+            final intact = chat != null &&
+                CloudSyncLocalSendIdentity.capture(message, chat,
+                  message.guid ?? '',
+                  expectedSourceSha256: intent.sourceSha256) != null;
+            final shape = 'chatLinked:${chat != null},'
+                'canonicalChat:${chat?.guid.startsWith('iMessage;') ?? false},'
+                'messageMapped:${message.ckRecordId != null},'
+                'deleted:${message.dateDeleted != null},'
+                'sourceIntact:$intact,'
+                'adopted:${intent.admittedOperationId != null}';
+            readySourceShapes.update(shape, (n) => n + 1, ifAbsent: () => 1);
+          }
         }
         return {
           'journalCount': intents.length,
           'writerAuthorityCount': authorities.length,
           'writerAuthorityStates': authorityStates,
           'journalStates': states,
+          'readySourceShapes': readySourceShapes,
+          'checkpointZones': zoneReports,
           'outboxCount': outbox.length,
           'outboxWithoutJournalLink': outbox
               .where((o) => !knownOperations.contains(o.operationId))
