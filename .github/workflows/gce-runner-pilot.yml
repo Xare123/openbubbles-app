@@ -51,6 +51,11 @@ on:
         required: true
         default: false
         type: boolean
+      automatic_uploads:
+        description: Enable Canary's ordinary-send worker, including earlier eligible journaled sends
+        required: true
+        default: false
+        type: boolean
 permissions:
   contents: read
 
@@ -74,6 +79,7 @@ env:
   BUILD_FLAVOR: ${{ inputs.flavor || 'beta' }}
   VALIDATION_MODE: ${{ inputs.validation_mode || 'full' }}
   OUTBOUND_WRITER: ${{ inputs.outbound_writer || false }}
+  AUTOMATIC_UPLOADS: ${{ inputs.automatic_uploads || false }}
   SOURCE_REF: ${{ inputs.source_ref || github.sha }}
   TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-sms-chat-contract
 
@@ -124,6 +130,10 @@ jobs:
           fi
           if [[ "$OUTBOUND_WRITER" == 'true' && "$VALIDATION_MODE" != 'full' ]]; then
             echo 'outbound_writer requires validation_mode=full.' >&2
+            exit 1
+          fi
+          if [[ "$AUTOMATIC_UPLOADS" == 'true' && "$OUTBOUND_WRITER" != 'true' ]]; then
+            echo 'automatic_uploads requires outbound_writer=true (full Canary qualification).' >&2
             exit 1
           fi
           trusted_sha="$(
@@ -478,6 +488,18 @@ jobs:
         shell: bash
         run: cargo test --manifest-path rust/Cargo.toml --lib
 
+      - name: Qualify automatic-upload Canary flags
+        if: ${{ env.VALIDATION_MODE == 'full' && env.AUTOMATIC_UPLOADS == 'true' }}
+        shell: bash
+        run: |
+          flutter test --no-pub \
+            --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true \
+            --dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2 \
+            --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME=true \
+            --dart-define=TEST_EXPECT_CLOUDKIT_WRITER=true \
+            --dart-define=TEST_EXPECT_AUTOMATIC_UPLOADS=true \
+            test/services/cloud_sync/cloud_sync_upload_rollout_gate_test.dart
+
       - name: Run rustpush library tests with production feature set
         if: ${{ env.VALIDATION_MODE == 'full' }}
         shell: bash
@@ -530,6 +552,9 @@ jobs:
               --dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2
             )
           fi
+          if [[ "$AUTOMATIC_UPLOADS" == 'true' ]]; then
+            build_args+=(--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME=true)
+          fi
           # Flutter's verbose path supplies Gradle --full-stacktrace. The
           # previous packageCanaryDebug failure hid its underlying cause;
           # retain the real error and disk state without changing resources
@@ -547,6 +572,7 @@ jobs:
             echo "- Flavor: \`${BUILD_FLAVOR}\`"
             echo "- Machine: \`${MACHINE_TYPE}\`"
             echo "- Outbound writer: \`${OUTBOUND_WRITER}\`"
+            echo "- Automatic uploads: \`${AUTOMATIC_UPLOADS}\`"
             echo "- Flutter build time: \`${elapsed}s\`"
             echo "- Build exit status: \`${build_status}\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -590,7 +616,7 @@ jobs:
         if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: GCE producer ${{ inputs.flavor || 'beta' }} APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }}
+          name: GCE producer ${{ inputs.flavor || 'beta' }} APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}
           path: build/app/outputs/flutter-apk/app-${{ inputs.flavor || 'beta' }}-debug.apk
           if-no-files-found: error
 
@@ -638,7 +664,7 @@ jobs:
       - name: Download GCE producer APK
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: GCE producer canary APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }}
+          name: GCE producer canary APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}
           path: producer
 
       - name: Sign and verify Canary
@@ -712,7 +738,7 @@ jobs:
       - name: Upload signed Canary APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: GCE CloudKit V2 Canary APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }}
+          name: GCE CloudKit V2 Canary APK ${{ env.SOURCE_REF }} writer-${{ inputs.outbound_writer || false }} automatic-${{ inputs.automatic_uploads || false }}
           path: producer/app-canary-debug.apk
           if-no-files-found: error
 
