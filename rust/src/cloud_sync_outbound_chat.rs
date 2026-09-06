@@ -1,5 +1,5 @@
-//! Protected direct-chat create payload. No bridge or runtime admission is
-//! enabled yet; the coordinator must retain the original stage before submit.
+//! Protected direct-chat create payload. The bridge does not grant runtime
+//! admission: the coordinator must retain the original stage before submit.
 //! This separate purpose/zone cannot be replayed through the message writer.
 #![cfg_attr(not(test), allow(dead_code))]
 
@@ -28,6 +28,42 @@ mod wire {
 
 const CHAT_PAYLOAD_VERSION: u32 = 1;
 const MAX_CHAT_ENVELOPE_BYTES: usize = 256 * 1024;
+
+/// Exact Dart `CloudOperationIdentity.forInitialCreate` domain for semantic
+/// Chat schema 2, payload version 1. Message, mutation, and legacy operations
+/// cannot be admitted merely because their IDs have the same `op1:` grammar.
+pub(crate) fn initial_chat_create_operation_id(
+    account_fingerprint: &str,
+    logical_entity_key_hash: &str,
+) -> Result<String, Failure> {
+    if [account_fingerprint, logical_entity_key_hash]
+        .iter()
+        .any(|value| {
+            value.len() != 43
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+    {
+        return Err(Failure::BindingMismatch);
+    }
+    let payload_version = CHAT_PAYLOAD_VERSION.to_string();
+    let canonical = [
+        "cloud-sync-initial-create-v1",
+        account_fingerprint,
+        "com.apple.messages.cloud",
+        "private",
+        "chatManateeZone",
+        "messages",
+        "2",
+        "semantic",
+        logical_entity_key_hash,
+        "save",
+        payload_version.as_str(),
+    ]
+    .join("\u{001f}");
+    Ok(format!("op1:{}", digest(canonical.as_bytes())))
+}
 
 /// One random server name is generated at staging, before durable admission.
 /// After adoption, recovery opens this exact envelope; it must not stage again.
@@ -105,6 +141,26 @@ pub(crate) fn outbound_chat_payload_sha256(
     server_record_name: &str,
 ) -> Result<String, Failure> {
     encode_chat(chat, server_record_name).map(|bytes| digest(&bytes))
+}
+
+/// Call only with authenticated exact-name readback. Re-serialize every field,
+/// including properties, timestamps, participants and proto001, using the same
+/// versioned envelope as staging. Normalization is divergence, never absence.
+/// No local Chat ID or separately supplied replacement server name is used.
+pub(crate) fn verify_chat_readback(
+    chat: &CloudChat,
+    receipt_record_name: &str,
+    original_record_name: &str,
+    expected_payload_sha256: &str,
+) -> Result<String, Failure> {
+    if receipt_record_name != original_record_name {
+        return Err(Failure::BindingMismatch);
+    }
+    let actual = outbound_chat_payload_sha256(chat, original_record_name)?;
+    if actual != expected_payload_sha256 {
+        return Err(Failure::BindingMismatch);
+    }
+    Ok(actual)
 }
 
 fn validate(chat: &CloudChat, record_name: &str) -> Result<(), Failure> {
@@ -255,6 +311,132 @@ mod tests {
         // The chat record name uses wire field 2 as a string; messages use a
         // boolean there. Domain separation also exists in protection scope.
         assert!(wire::CloudSyncOutboundMessageV1::decode(encoded.as_slice()).is_err());
+    }
+
+    #[test]
+    fn chat_initial_operation_matches_fixed_dart_domain_vector() {
+        let account = "A".repeat(43);
+        let logical = "L".repeat(43);
+        let expected = initial_chat_create_operation_id(&account, &logical).unwrap();
+        assert_eq!(
+            expected,
+            "op1:a78f1b167797724168f9233a56838cfef90e17e3dd90d2328de23c33658945db"
+        );
+        assert_ne!(
+            expected,
+            crate::cloud_sync_outbound::initial_message_create_operation_id(&account, &logical)
+                .unwrap()
+        );
+        assert_ne!(
+            expected,
+            initial_chat_create_operation_id(&"B".repeat(43), &logical).unwrap()
+        );
+        assert_ne!(
+            expected,
+            initial_chat_create_operation_id(&account, &"M".repeat(43)).unwrap()
+        );
+        // Repeated prepare/recovery identifies the same initial operation.
+        assert_eq!(
+            expected,
+            initial_chat_create_operation_id(&account, &logical).unwrap()
+        );
+        for invalid in [
+            String::new(),
+            "A".repeat(42),
+            "A".repeat(44),
+            "!".repeat(43),
+        ] {
+            assert_eq!(
+                initial_chat_create_operation_id(&invalid, &logical),
+                Err(Failure::BindingMismatch)
+            );
+            assert_eq!(
+                initial_chat_create_operation_id(&account, &invalid),
+                Err(Failure::BindingMismatch)
+            );
+        }
+    }
+
+    #[test]
+    fn exact_chat_readback_binds_original_name_and_entire_payload() {
+        let source = fixture();
+        let expected = outbound_chat_payload_sha256(&source, RECORD).unwrap();
+        let (restored, original_name) =
+            decode_chat(&encode_chat(&source, RECORD).unwrap()).unwrap();
+        assert_eq!(
+            verify_chat_readback(&restored, RECORD, &original_name, &expected).unwrap(),
+            expected
+        );
+        assert!(verify_chat_readback(&restored, RECORD, RECORD, &"f".repeat(64)).is_err());
+        assert!(verify_chat_readback(
+            &restored,
+            "DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD",
+            RECORD,
+            &expected
+        )
+        .is_err());
+        // A separately staged replacement name is not proof of the original.
+        assert!(verify_chat_readback(
+            &restored,
+            RECORD,
+            "DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD",
+            &expected
+        )
+        .is_err());
+        let changes: &[fn(&mut CloudChat)] = &[
+            |c| c.style = 43,
+            |c| c.is_filtered = 1,
+            |c| c.successful_query = 0,
+            |c| c.state = 0,
+            |c| c.service_name = "SMS".to_owned(),
+            |c| c.chat_identifier = "other@example.invalid".to_owned(),
+            |c| c.guid = "iMessage;-;other@example.invalid".to_owned(),
+            |c| c.group_id = RECORD.to_owned(),
+            |c| c.original_group_id = RECORD.to_owned(),
+            |c| {
+                c.group_id = RECORD.to_owned();
+                c.original_group_id = RECORD.to_owned();
+            },
+            |c| c.participants[0].uri = "other@example.invalid".to_owned(),
+            |c| c.participants.push(c.participants[0].clone()),
+            |c| c.last_addressed_handle = "other-sender@example.invalid".to_owned(),
+            |c| c.last_read_message_timestamp = 1,
+            |c| c.display_name = Some("changed".to_owned()),
+            |c| c.group_photo_guid = Some(RECORD.to_owned()),
+            |c| c.group_photo = Some(Default::default()),
+            |c| c.prop001.syndication_type = 1,
+            |c| c.proto001.as_mut().unwrap().unk1 = Some(1),
+            |c| c.proto001 = None,
+            |c| c.properties = None,
+            |c| c.properties.as_mut().unwrap().pv = Some(2),
+            |c| c.properties.as_mut().unwrap().gpufc = Some(2),
+            |c| {
+                c.properties
+                    .as_mut()
+                    .unwrap()
+                    .number_of_times_respondedto_thread = Some(1)
+            },
+            |c| c.properties.as_mut().unwrap().should_force_to_sms = None,
+            |c| c.properties.as_mut().unwrap().last_seen_message_guid = Some(RECORD.to_owned()),
+            |c| c.properties.as_mut().unwrap().message_handshake_state = Some(1),
+            |c| {
+                c.properties
+                    .as_mut()
+                    .unwrap()
+                    .legacy_group_identifiers
+                    .push(RECORD.to_owned())
+            },
+            |c| c.properties.as_mut().unwrap().group_photo_guid = Some(RECORD.to_owned()),
+            |c| {
+                c.properties.as_mut().unwrap().last_modification_date =
+                    Some(std::time::UNIX_EPOCH.into())
+            },
+        ];
+        for change in changes {
+            let mut changed = source.clone();
+            change(&mut changed);
+            assert!(verify_chat_readback(&changed, RECORD, RECORD, &expected).is_err());
+        }
     }
 
     #[test]

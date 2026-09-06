@@ -1004,6 +1004,10 @@ pub struct CloudSyncPreparedMessageCreateInput {
     pub apple_operation_uuid: String,
 }
 
+/// Historical bridge name retained for binding compatibility. The owner is
+/// record-agnostic: typed Message and Chat prepare APIs freeze their own exact
+/// operations before constructing this handle. Consumption cannot change the
+/// record type, zone, payload, or persisted request/operation identity.
 #[frb(opaque)]
 pub struct CloudSyncPreparedMessageCreateHandle {
     prepared: tokio::sync::Mutex<Option<CloudSyncPreparedMessageCreateOwner>>,
@@ -1767,6 +1771,92 @@ pub async fn cloud_sync_stage_outbound_message(
     }
 }
 
+/// Stages one direct iMessage Chat and its original random record name.
+/// The caller must durably adopt this exact lease before prepare; staging is
+/// not local-origin admission and must never be repeated to recover a submit.
+pub async fn cloud_sync_stage_outbound_chat(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    chat: CloudChat,
+) -> CloudSyncProtectedOutboundStageResult {
+    let auth =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_outbound_failure_result(
+                    CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                )
+            }
+        };
+    if expected_account_fingerprint != auth.account_fingerprint
+        || expected_protected_store_identity != auth.protected_store_identity
+    {
+        return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let writer_binding = match cloud_messages_client
+        .warm_chat_writer_preparation_lookup_only()
+        .await
+    {
+        Ok(binding) => binding,
+        Err(_) => {
+            return cloud_sync_outbound_failure_result(
+                CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+            )
+        }
+    };
+    let auth_after_preparation =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_outbound_failure_result(
+                    CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                )
+            }
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth,
+        &auth_after_preparation,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) {
+        return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    if cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    match crate::cloud_sync_outbound_chat::stage_outbound_chat(
+        PathBuf::from(storage_directory),
+        auth_after_preparation.account_fingerprint,
+        chat,
+    ) {
+        Ok(stage) => CloudSyncProtectedOutboundStageResult {
+            stage: Some(CloudSyncProtectedOutboundStage {
+                logical_entity_key_hash: stage.logical_entity_key_hash,
+                protected_payload_reference: stage.protected_payload_reference,
+                payload_sha256: stage.payload_sha256,
+                payload_length: stage.payload_length,
+                protected_server_record_reference: stage.protected_server_record_reference,
+                server_record_id_hash: stage.server_record_id_hash,
+                lease_reference: stage.lease_reference,
+            }),
+            failure: None,
+        },
+        Err(failure) => {
+            cloud_sync_outbound_failure_result(map_cloud_sync_outbound_failure(failure))
+        }
+    }
+}
+
 fn cloud_sync_prepare_failure(
     failure: CloudSyncOutboundSafeCode,
 ) -> CloudSyncPreparedMessageCreateResult {
@@ -2060,6 +2150,203 @@ pub async fn cloud_sync_prepare_message_create(
     }
 }
 
+/// Prepares exactly one chatManateeZone create from an adopted version-1
+/// envelope. No record/request/operation UUID is allocated here. Authentication
+/// warmup is lookup-only; remote RecordSave requires the shared consume API.
+#[allow(clippy::too_many_arguments)]
+pub async fn cloud_sync_prepare_chat_create(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    request_uuid: String,
+    request_timeout_seconds: u64,
+    inputs: Vec<CloudSyncPreparedMessageCreateInput>,
+) -> CloudSyncPreparedMessageCreateResult {
+    if !is_valid_cloud_sync_chat_create_request(
+        &expected_account_fingerprint,
+        &request_uuid,
+        request_timeout_seconds,
+        &inputs,
+    ) {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+    let auth =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+            }
+        };
+    if auth.account_fingerprint != expected_account_fingerprint
+        || auth.protected_store_identity != expected_protected_store_identity
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let writer_binding = match cloud_messages_client
+        .warm_chat_writer_preparation_lookup_only()
+        .await
+    {
+        Ok(binding) => binding,
+        Err(_) => {
+            return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+        }
+    };
+    let auth_after_preparation =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+            }
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth,
+        &auth_after_preparation,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    if cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+
+    let input = &inputs[0];
+    let request_identity = match rustpush::cloudkit::CloudKitRequestIdentity::new(
+        request_uuid,
+        vec![input.apple_operation_uuid.clone()],
+    ) {
+        Ok(identity) => identity,
+        Err(_) => return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidRequest),
+    };
+    let storage_path = PathBuf::from(&storage_directory);
+    if crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
+        storage_path.clone(),
+        &input.protected_lease_reference,
+        std::slice::from_ref(&input.protected_payload_reference),
+    )
+    .is_err()
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::ProtectedStorage);
+    }
+    let (chat, server_record_name) =
+        match crate::cloud_sync_outbound_chat::open_staged_outbound_chat(
+            storage_path,
+            auth_after_preparation.account_fingerprint.clone(),
+            &input.protected_payload_reference,
+            &input.payload_sha256,
+            &input.server_record_id_hash,
+        ) {
+            Ok(value) => value,
+            Err(failure) => {
+                return cloud_sync_prepare_failure(map_cloud_sync_outbound_failure(failure))
+            }
+        };
+    let hasher =
+        match crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.clone()) {
+            Ok(hasher) => hasher,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::ProtectedStorage)
+            }
+        };
+    let logical_hash = match hasher.canonical_entity_key_hash(
+        crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Chat,
+        &chat.guid,
+    ) {
+        Ok(hash) => hash,
+        Err(_) => return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch),
+    };
+    if logical_hash.value() != input.logical_entity_key_hash {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
+    let chat_input = rustpush::cloud_messages::CloudChatSaveInput {
+        local_operation_id: input.local_operation_id.clone(),
+        server_record_name,
+        apple_operation_uuid: input.apple_operation_uuid.clone(),
+        chat,
+    };
+
+    let native_writer_permit =
+        match rustpush::cloudkit_operation_gate::acquire_cloudkit_writer_operation().await {
+            Ok(permit) => permit,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativePrepareFailed)
+            }
+        };
+    let prepared_result = native_writer_permit
+        .run(cloud_messages_client.prepare_chat_save_submission(
+            &writer_binding,
+            chat_input,
+            request_identity,
+            Duration::from_secs(request_timeout_seconds),
+        ))
+        .await;
+    match prepared_result {
+        Ok(prepared) => {
+            let auth_after_native_prepare = match cloud_sync_capture_auth_snapshot(
+                cloud_messages_client,
+                storage_directory.clone(),
+            )
+            .await
+            {
+                Ok(auth) => auth,
+                Err(_) => {
+                    return cloud_sync_prepare_failure(
+                        CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                    )
+                }
+            };
+            if !cloud_sync_auth_identity_remains_exact(
+                &auth_after_preparation,
+                &auth_after_native_prepare,
+                &expected_account_fingerprint,
+                &expected_protected_store_identity,
+            ) {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+            }
+            if cloud_messages_client
+                .validate_writer_preparation_binding(&writer_binding)
+                .await
+                .is_err()
+            {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+            }
+            let handle_binding_sha256 = cloud_sync_new_prepared_handle_binding_sha256();
+            CloudSyncPreparedMessageCreateResult {
+                handle: Some(CloudSyncPreparedMessageCreateHandle {
+                    prepared: tokio::sync::Mutex::new(Some(
+                        CloudSyncPreparedMessageCreateOwner::Native {
+                            prepared,
+                            native_writer_permit,
+                            cloud_messages_client: cloud_messages_client.clone(),
+                            writer_binding,
+                        },
+                    )),
+                    storage_directory,
+                    expected_account_fingerprint,
+                    expected_protected_store_identity,
+                    expected_handle_binding_sha256: handle_binding_sha256.clone(),
+                    expected_reconciliation_binding_sha256: std::sync::OnceLock::new(),
+                }),
+                handle_binding_sha256: Some(handle_binding_sha256),
+                failure: None,
+            }
+        }
+        Err(_) => cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativePrepareFailed),
+    }
+}
+
+/// Historical message name: this record-agnostic consumer also consumes the
+/// opaque handle returned by chat prepare. No capability, permit, keystore,
+/// single-use, container revalidation, or receipt fence is bypassed.
 pub async fn cloud_sync_consume_prepared_message_create(
     handle: &CloudSyncPreparedMessageCreateHandle,
     mutation_capability_token: String,
@@ -2504,6 +2791,74 @@ mod cloud_sync_writer_mutation_capability_tests {
     }
 
     #[tokio::test]
+    async fn chat_owner_uses_shared_scope_capability_and_single_use_fences() {
+        let directory = tempfile::tempdir().unwrap();
+        let token = "a".repeat(64);
+        let binding = "d".repeat(64);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut handle = test_handle(directory.path(), calls.clone(), None, &binding);
+        handle.expected_account_fingerprint = "A".repeat(43);
+        handle.expected_protected_store_identity = "S".repeat(43);
+        let chat_operation = crate::cloud_sync_outbound_chat::initial_chat_create_operation_id(
+            &handle.expected_account_fingerprint,
+            &"L".repeat(43),
+        )
+        .unwrap();
+        if let Some(CloudSyncPreparedMessageCreateOwner::Test { outcomes, .. }) =
+            handle.prepared.lock().await.as_mut()
+        {
+            outcomes[0].local_operation_id = chat_operation.clone();
+        } else {
+            panic!("fixture owner missing");
+        }
+        let path = write_valid_fence(
+            directory.path(),
+            &token,
+            &handle.expected_account_fingerprint,
+            &handle.expected_protected_store_identity,
+            &binding,
+        );
+        // Freeze the same original-submission binding before checking replay.
+        assert!(cloud_sync_writer_mutation_capability_is_valid(
+            &handle, &token
+        ));
+        let original: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        for (field, replacement) in [
+            ("accountFingerprint", "B".repeat(43)),
+            ("protectedStoreIdentity", "T".repeat(43)),
+            ("preparedHandleBindingSha256", "e".repeat(64)),
+            ("reconciliationBindingSha256", "8".repeat(64)),
+            ("capabilitySha256", "0".repeat(64)),
+            ("owner", "legacy".to_owned()),
+            ("container", "other.container".to_owned()),
+            ("database", "public".to_owned()),
+        ] {
+            let mut changed = original.clone();
+            changed[field] = serde_json::json!(replacement);
+            fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
+            let result = consume_test_handle(&handle, token.clone()).await;
+            assert_eq!(
+                result.failure,
+                Some(CloudSyncOutboundSafeCode::MutationCapabilityInvalid)
+            );
+            assert!(result.outcomes.is_empty());
+            assert!(handle.prepared.lock().await.is_some());
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+        }
+        fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+        let accepted = consume_test_handle(&handle, token.clone()).await;
+        assert_eq!(accepted.failure, None);
+        assert_eq!(accepted.outcomes[0].local_operation_id, chat_operation);
+        let replay = consume_test_handle(&handle, token).await;
+        assert_eq!(
+            replay.failure,
+            Some(CloudSyncOutboundSafeCode::AlreadyConsumed)
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn protected_storage_failure_preserves_owner_without_remote_submission() {
         let directory = tempfile::tempdir().unwrap();
         let valid_token = "a".repeat(64);
@@ -2563,6 +2918,48 @@ fn is_valid_cloud_sync_reconcile_message_create_input(
 ) -> bool {
     is_cloud_sync_operation_id(&input.local_operation_id)
         && crate::cloud_sync_outbound::initial_message_create_operation_id(
+            expected_account_fingerprint,
+            &input.logical_entity_key_hash,
+        )
+        .as_deref()
+            == Ok(input.local_operation_id.as_str())
+        && is_cloud_sync_keyed_hash(&input.logical_entity_key_hash)
+        && is_cloud_sync_lease_reference(&input.protected_lease_reference)
+        && is_cloud_sync_protected_reference(&input.protected_payload_reference)
+        && is_cloud_sync_hex_digest(&input.payload_sha256)
+        && is_cloud_sync_protected_reference(&input.protected_server_record_reference)
+        && is_cloud_sync_keyed_hash(&input.server_record_id_hash)
+        && input.protected_payload_reference == input.protected_server_record_reference
+        && request_uuid != input.apple_operation_uuid
+        && rustpush::cloudkit::CloudKitRequestIdentity::new(
+            request_uuid.to_owned(),
+            vec![input.apple_operation_uuid.clone()],
+        )
+        .is_ok()
+}
+
+fn is_valid_cloud_sync_chat_create_request(
+    expected_account_fingerprint: &str,
+    request_uuid: &str,
+    request_timeout_seconds: u64,
+    inputs: &[CloudSyncPreparedMessageCreateInput],
+) -> bool {
+    inputs.len() == 1
+        && (1..=300).contains(&request_timeout_seconds)
+        && is_valid_cloud_sync_chat_create_input(
+            expected_account_fingerprint,
+            request_uuid,
+            &inputs[0],
+        )
+}
+
+fn is_valid_cloud_sync_chat_create_input(
+    expected_account_fingerprint: &str,
+    request_uuid: &str,
+    input: &CloudSyncPreparedMessageCreateInput,
+) -> bool {
+    is_cloud_sync_operation_id(&input.local_operation_id)
+        && crate::cloud_sync_outbound_chat::initial_chat_create_operation_id(
             expected_account_fingerprint,
             &input.logical_entity_key_hash,
         )
@@ -2865,6 +3262,201 @@ pub async fn cloud_sync_reconcile_message_create(
     )
 }
 
+fn cloud_sync_chat_lookup_observation(
+    lookup: Result<rustpush::cloud_messages::CloudChatRecordLookup, rustpush::PushError>,
+    original_record_name: &str,
+    input: &CloudSyncPreparedMessageCreateInput,
+    hasher: &crate::cloud_sync_semantic_identity::CloudSemanticIdentifierHasher,
+) -> CloudSyncReconcileObservation {
+    use rustpush::cloud_messages::CloudChatRecordLookup;
+    match lookup {
+        Ok(CloudChatRecordLookup::Found(chat, receipt)) => {
+            let receipt_server_record_id_hash = hasher.server_record_id_hash(receipt.record_name());
+            let receipt_etag_hash = hasher
+                .canonical_etag_hash(receipt.etag())
+                .map(|hash| hash.value().to_owned());
+            if receipt_server_record_id_hash != input.server_record_id_hash {
+                CloudSyncReconcileObservation::DivergedRecord
+            } else {
+                match (
+                    crate::cloud_sync_outbound_chat::verify_chat_readback(
+                        &chat,
+                        receipt.record_name(),
+                        original_record_name,
+                        &input.payload_sha256,
+                    ),
+                    receipt_etag_hash,
+                ) {
+                    (Ok(payload_sha256), Ok(etag_hash)) => {
+                        CloudSyncReconcileObservation::FoundPayloadDigest {
+                            payload_sha256,
+                            server_record_id_hash: receipt_server_record_id_hash,
+                            etag_hash,
+                        }
+                    }
+                    _ => CloudSyncReconcileObservation::DivergedRecord,
+                }
+            }
+        }
+        Ok(CloudChatRecordLookup::NotFound) => CloudSyncReconcileObservation::NotFound,
+        Ok(CloudChatRecordLookup::Unresolved {
+            failure_class,
+            retry_after,
+        }) => CloudSyncReconcileObservation::Unresolved {
+            failure_class,
+            retry_after,
+        },
+        Err(_) => CloudSyncReconcileObservation::UnknownFailure,
+    }
+}
+
+/// Exact readback of the ORIGINAL protected Chat/name, never a new stage or
+/// legacy saver. Only explicit NotFound proves absence. The proof reference
+/// identifies the same account/store-scoped, committed envelope, not a bearer
+/// authorization to replay. As with messages, the durable caller must supply
+/// the original persisted UUIDs and bind this result to that submission via the
+/// writer guard's reconciliation fence before releasing it or permitting retry.
+#[allow(clippy::too_many_arguments)]
+pub async fn cloud_sync_reconcile_chat_create(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    request_uuid: String,
+    input: CloudSyncPreparedMessageCreateInput,
+) -> CloudSyncOutboundReconcileResult {
+    if !is_valid_cloud_sync_chat_create_input(&expected_account_fingerprint, &request_uuid, &input)
+    {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+    let auth =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_reconcile_failure(
+                    CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                )
+            }
+        };
+    if auth.account_fingerprint != expected_account_fingerprint
+        || auth.protected_store_identity != expected_protected_store_identity
+    {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let writer_binding = match cloud_messages_client
+        .warm_chat_writer_preparation_lookup_only()
+        .await
+    {
+        Ok(binding) => binding,
+        Err(_) => {
+            return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+        }
+    };
+    let auth_after_preparation =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_reconcile_failure(
+                    CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                )
+            }
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth,
+        &auth_after_preparation,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    if cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+
+    let storage_path = PathBuf::from(&storage_directory);
+    if crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
+        storage_path.clone(),
+        &input.protected_lease_reference,
+        std::slice::from_ref(&input.protected_payload_reference),
+    )
+    .is_err()
+    {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::ProtectedStorage);
+    }
+    let (expected_chat, server_record_name) =
+        match crate::cloud_sync_outbound_chat::open_staged_outbound_chat(
+            storage_path.clone(),
+            auth_after_preparation.account_fingerprint.clone(),
+            &input.protected_payload_reference,
+            &input.payload_sha256,
+            &input.server_record_id_hash,
+        ) {
+            Ok(value) => value,
+            Err(failure) => {
+                return cloud_sync_reconcile_failure(map_cloud_sync_outbound_failure(failure))
+            }
+        };
+    let hasher =
+        match crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.clone()) {
+            Ok(hasher) => hasher,
+            Err(_) => {
+                return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::ProtectedStorage)
+            }
+        };
+    let logical_hash = match hasher.canonical_entity_key_hash(
+        crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Chat,
+        &expected_chat.guid,
+    ) {
+        Ok(hash) => hash,
+        Err(_) => return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::BindingMismatch),
+    };
+    if logical_hash.value() != input.logical_entity_key_hash {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
+    let lookup = cloud_messages_client
+        .lookup_chat_record(&writer_binding, &server_record_name)
+        .await;
+    let observation =
+        cloud_sync_chat_lookup_observation(lookup, &server_record_name, &input, &hasher);
+    let auth_after_lookup =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory).await {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_reconcile_failure(
+                    CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                )
+            }
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth_after_preparation,
+        &auth_after_lookup,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    if cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    classify_cloud_sync_reconcile_observation(
+        observation,
+        &input.payload_sha256,
+        input.protected_payload_reference,
+    )
+}
+
 #[cfg(test)]
 mod cloud_sync_outbound_reconcile_contract_tests {
     use super::*;
@@ -2891,6 +3483,226 @@ mod cloud_sync_outbound_reconcile_contract_tests {
             protected_server_record_reference: format!("obcs2.ref.{}", "P".repeat(43)),
             server_record_id_hash: "S".repeat(43),
             apple_operation_uuid: OPERATION_UUID.to_owned(),
+        }
+    }
+
+    fn chat_input() -> CloudSyncPreparedMessageCreateInput {
+        let mut chat = input();
+        chat.local_operation_id =
+            crate::cloud_sync_outbound_chat::initial_chat_create_operation_id(
+                &account(),
+                &chat.logical_entity_key_hash,
+            )
+            .unwrap();
+        chat
+    }
+
+    #[test]
+    fn chat_prepare_is_one_initial_create_not_a_message_or_mutation_replay() {
+        let chat = chat_input();
+        assert!(is_valid_cloud_sync_chat_create_request(
+            &account(),
+            REQUEST_UUID,
+            300,
+            &[chat.clone()]
+        ));
+        assert!(!is_valid_cloud_sync_chat_create_request(
+            &account(),
+            REQUEST_UUID,
+            0,
+            &[chat.clone()]
+        ));
+        assert!(!is_valid_cloud_sync_chat_create_request(
+            &account(),
+            REQUEST_UUID,
+            301,
+            &[chat.clone()]
+        ));
+        assert!(!is_valid_cloud_sync_chat_create_request(
+            &account(),
+            REQUEST_UUID,
+            1,
+            &[]
+        ));
+        assert!(!is_valid_cloud_sync_chat_create_request(
+            &account(),
+            REQUEST_UUID,
+            1,
+            &[chat.clone(), chat.clone()]
+        ));
+        assert!(!is_valid_cloud_sync_chat_create_input(
+            &account(),
+            REQUEST_UUID,
+            &input()
+        ));
+        assert!(!is_valid_cloud_sync_reconcile_message_create_input(
+            &account(),
+            REQUEST_UUID,
+            &chat
+        ));
+        let canonical = vec![
+            "cloud-sync-initial-create-v1".to_owned(),
+            account(),
+            "com.apple.messages.cloud".to_owned(),
+            "private".to_owned(),
+            "chatManateeZone".to_owned(),
+            "messages".to_owned(),
+            "2".to_owned(),
+            "semantic".to_owned(),
+            chat.logical_entity_key_hash.clone(),
+            "save".to_owned(),
+            "1".to_owned(),
+        ];
+        for (index, replacement) in [
+            (0, "cloud-sync-operation-v1"),
+            (2, "other.container"),
+            (3, "public"),
+            (4, "messageManateeZone"),
+            (5, "profiles"),
+            (6, "1"),
+            (7, "shadow"),
+            (9, "delete"),
+            (10, "2"),
+        ] {
+            let mut other = canonical.clone();
+            other[index] = replacement.to_owned();
+            let digest = Sha256::digest(other.join("\u{001f}").as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            let mut changed = chat.clone();
+            changed.local_operation_id = format!("op1:{digest}");
+            assert!(!is_valid_cloud_sync_chat_create_input(
+                &account(),
+                REQUEST_UUID,
+                &changed
+            ));
+        }
+    }
+
+    #[test]
+    fn chat_reconcile_rejects_wrong_scope_references_and_uuid_shapes() {
+        let chat = chat_input();
+        assert!(!is_valid_cloud_sync_chat_create_input(
+            &"B".repeat(43),
+            REQUEST_UUID,
+            &chat
+        ));
+        for request in [
+            OPERATION_UUID.to_owned(),
+            REQUEST_UUID.to_lowercase(),
+            "bad".to_owned(),
+        ] {
+            assert!(!is_valid_cloud_sync_chat_create_input(
+                &account(),
+                &request,
+                &chat
+            ));
+        }
+        let changes: &[fn(&mut CloudSyncPreparedMessageCreateInput)] = &[
+            |i| i.local_operation_id = format!("op1:{}", "f".repeat(64)),
+            |i| i.logical_entity_key_hash = "M".repeat(43),
+            |i| i.protected_lease_reference.clear(),
+            |i| i.protected_payload_reference.clear(),
+            |i| i.payload_sha256 = "B".repeat(64),
+            |i| i.protected_server_record_reference = format!("obcs2.ref.{}", "Q".repeat(43)),
+            |i| i.server_record_id_hash.clear(),
+            |i| i.apple_operation_uuid = OPERATION_UUID.to_lowercase(),
+            |i| i.apple_operation_uuid = REQUEST_UUID.to_owned(),
+        ];
+        for change in changes {
+            let mut changed = chat.clone();
+            change(&mut changed);
+            assert!(!is_valid_cloud_sync_chat_create_input(
+                &account(),
+                REQUEST_UUID,
+                &changed
+            ));
+        }
+    }
+
+    #[test]
+    fn chat_lookup_only_explicit_not_found_can_prove_absence() {
+        use rustpush::cloud_messages::CloudChatRecordLookup;
+        let chat = chat_input();
+        let hasher = crate::cloud_sync_semantic_identity::CloudSemanticIdentifierHasher::new(
+            b"chat-readback-fixture-only-key",
+        )
+        .unwrap();
+        for (lookup, expected) in [
+            (
+                Ok(CloudChatRecordLookup::NotFound),
+                CloudSyncOutboundReconcileDisposition::NotApplied,
+            ),
+            (
+                Ok(CloudChatRecordLookup::Unresolved {
+                    failure_class: Some(CloudKitFailureClass::Authentication),
+                    retry_after: None,
+                }),
+                CloudSyncOutboundReconcileDisposition::Unresolved,
+            ),
+            (
+                Ok(CloudChatRecordLookup::Unresolved {
+                    failure_class: Some(CloudKitFailureClass::TransientServer),
+                    retry_after: Some(Duration::from_secs(7)),
+                }),
+                CloudSyncOutboundReconcileDisposition::Unresolved,
+            ),
+            (
+                Err(rustpush::PushError::BadMsg),
+                CloudSyncOutboundReconcileDisposition::Unresolved,
+            ),
+        ] {
+            let result = classify_cloud_sync_reconcile_observation(
+                cloud_sync_chat_lookup_observation(
+                    lookup,
+                    "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC",
+                    &chat,
+                    &hasher,
+                ),
+                &chat.payload_sha256,
+                chat.protected_payload_reference.clone(),
+            );
+            assert_eq!(result.disposition, Some(expected));
+            assert_eq!(
+                result.protected_proof_reference,
+                (expected == CloudSyncOutboundReconcileDisposition::NotApplied)
+                    .then(|| chat.protected_payload_reference.clone())
+            );
+            assert_eq!(result.server_record_id_hash, None);
+            assert_eq!(result.etag_hash, None);
+        }
+    }
+
+    #[test]
+    fn chat_auth_proof_rejects_account_store_and_native_session_drift() {
+        let before = CloudSyncNativeAuthMetadata {
+            native_session_id: "N".repeat(43),
+            account_fingerprint: account(),
+            protected_store_identity: "S".repeat(43),
+        };
+        assert!(cloud_sync_auth_identity_remains_exact(
+            &before,
+            &before,
+            &account(),
+            &"S".repeat(43)
+        ));
+        for (session, account_fingerprint, store) in [
+            ("M".repeat(43), account(), "S".repeat(43)),
+            ("N".repeat(43), "B".repeat(43), "S".repeat(43)),
+            ("N".repeat(43), account(), "T".repeat(43)),
+        ] {
+            let after = CloudSyncNativeAuthMetadata {
+                native_session_id: session,
+                account_fingerprint,
+                protected_store_identity: store,
+            };
+            assert!(!cloud_sync_auth_identity_remains_exact(
+                &before,
+                &after,
+                &account(),
+                &"S".repeat(43)
+            ));
         }
     }
 
