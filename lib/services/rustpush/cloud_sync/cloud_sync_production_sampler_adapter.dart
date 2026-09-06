@@ -1192,12 +1192,16 @@ final class CloudSyncProductionOutboundCanaryAdapter {
   late final CloudKitV2WriterProvisioner writerProvisioner;
   late final CloudSyncNativeAuthSnapshotReader _captureAuth;
 
-  Future<CloudKitV2WriterProvisioningResult> ensureWriterOwned() async {
+  Future<CloudKitV2WriterProvisioningResult> ensureWriterOwned({
+    bool initialOwnerOnly = false,
+  }) async {
     final auth = await _captureAuth();
     if (auth == null) {
       throw StateError('native_auth_unavailable');
     }
-    return writerProvisioner.ensureV2Owned(expectedAuth: auth);
+    return writerProvisioner.ensureV2Owned(
+      expectedAuth: auth, initialOwnerOnly: initialOwnerOnly,
+    );
   }
 
   @visibleForTesting

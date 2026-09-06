@@ -3,6 +3,9 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_runtime.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
@@ -162,6 +165,162 @@ void main() {
     expect(readback?.epoch, 2);
     expect(authReadCount, 4);
   });
+
+  test(
+    'automatic runtime establishes the real missing owner before draining',
+    () async {
+      expect(objectBox.box<CloudKitWriterAuthorityEntity>().count(), 0);
+      var drains = 0;
+      final errors = <Object>[];
+      final runtime = CloudSyncLocalSendRuntime(
+        debounce: Duration.zero,
+        prepare: () async {
+          await provisioner.ensureV2Owned(
+            expectedAuth: expectedAuth,
+            initialOwnerOnly: true,
+          );
+        },
+        drain: () async {
+          final permit = authority.issuePermit(
+            writerScope,
+            expectedOwner: CloudKitWriterOwner.v2,
+          );
+          authority.verifyPermit(permit);
+          drains++;
+          return const CloudSyncLocalSendConsumerResult();
+        },
+        onError: (error, _) => errors.add(error),
+      );
+      try {
+        runtime.request(CloudSyncTrigger.startup);
+        await runtime.waitUntilIdle();
+        expect(errors, isEmpty);
+        expect(drains, 1);
+        expect(authority.read(writerScope)?.owner, CloudKitWriterOwner.v2);
+      } finally {
+        await runtime.dispose();
+      }
+    },
+  );
+
+  test(
+    'automatic setup still rejects an account change during preparation',
+    () async {
+      replaceAuthAfterFirstRead = true;
+      await _expectFailure(
+        provisioner.ensureV2Owned(
+          expectedAuth: expectedAuth,
+          initialOwnerOnly: true,
+        ),
+        'cloudkit_writer_identity_changed',
+      );
+      expect(authority.read(writerScope)?.owner, CloudKitWriterOwner.none);
+    },
+  );
+
+  test(
+    'automatic initial setup provisions and restores without quarantining',
+    () async {
+      quarantineThrows =
+          true; // This callback must never run in initial-only mode.
+      final first = await provisioner.ensureV2Owned(
+        expectedAuth: expectedAuth,
+        initialOwnerOnly: true,
+      );
+      expect(first.snapshot.owner, CloudKitWriterOwner.v2);
+      expect(
+        first.disposition,
+        CloudKitV2WriterProvisioningDisposition.provisioned,
+      );
+      suppliedMeasurements = _measurements(existingV2OutboxOperations: 1);
+      final second = await provisioner.ensureV2Owned(
+        expectedAuth: expectedAuth,
+        initialOwnerOnly: true,
+      );
+      expect(
+        second.disposition,
+        CloudKitV2WriterProvisioningDisposition.alreadyOwned,
+      );
+      expect(second.snapshot.epoch, first.snapshot.epoch);
+    },
+  );
+
+  test(
+    'automatic initial setup cannot adopt a pre-existing unowned outbox',
+    () async {
+      suppliedMeasurements = _measurements(existingV2OutboxOperations: 1);
+      await _expectFailure(
+        provisioner.ensureV2Owned(
+          expectedAuth: expectedAuth,
+          initialOwnerOnly: true,
+        ),
+        'cloudkit_writer_transition_precondition_failed',
+      );
+      expect(authority.read(writerScope)?.owner, CloudKitWriterOwner.none);
+    },
+  );
+
+  test(
+    'automatic initial setup cannot clear pending legacy deletions',
+    () async {
+      quarantineThrows = true;
+      suppliedMeasurements = _measurements(pendingLegacyDeletionIntents: 1);
+      await _expectFailure(
+        provisioner.ensureV2Owned(
+          expectedAuth: expectedAuth,
+          initialOwnerOnly: true,
+        ),
+        'cloudkit_writer_transition_precondition_failed',
+      );
+      expect(authority.read(writerScope)?.owner, CloudKitWriterOwner.none);
+    },
+  );
+
+  test(
+    'automatic initial setup refuses legacy and unstable owners unchanged',
+    () async {
+      for (final record in [(1, 0, 0), (1, 1, 2), (2, 4, 0)]) {
+        await interlock.runExclusive(
+          kind: CloudKitOperationKind.writerTransition,
+          action: () async {
+            authority.initializeDisabled(writerScope, now: clock);
+            final entity = objectBox
+                .box<CloudKitWriterAuthorityEntity>()
+                .getAll()
+                .single;
+            entity
+              ..owner = record.$1
+              ..state = record.$2
+              ..targetOwner = record.$3
+              ..transitionIdHash = record.$2 == 1 ? testSha256('a') : null
+              ..epoch = 2;
+            objectBox.box<CloudKitWriterAuthorityEntity>().put(entity);
+          },
+        );
+        quarantineThrows = true;
+        await _expectFailure(
+          provisioner.ensureV2Owned(
+            expectedAuth: expectedAuth,
+            initialOwnerOnly: true,
+          ),
+          'cloudkit_writer_initial_setup_requires_manual_recovery',
+        );
+        final retained = objectBox
+            .box<CloudKitWriterAuthorityEntity>()
+            .getAll()
+            .single;
+        expect(
+          (
+            retained.owner,
+            retained.state,
+            retained.targetOwner,
+            retained.epoch,
+          ),
+          (record.$1, record.$2, record.$3, 2),
+        );
+      }
+    },
+  );
 
   test(
     'already-v2 is idempotent and returns the same epoch-bound permit',

@@ -1064,6 +1064,7 @@ final class CloudKitV2WriterProvisioner {
 
   Future<CloudKitV2WriterProvisioningResult> ensureV2Owned({
     required CloudSyncNativeAuthSnapshot expectedAuth,
+    bool initialOwnerOnly = false,
   }) {
     if (!_authority._buildDecision.configurationValid ||
         _authority._buildDecision.owner != CloudKitWriterOwner.v2) {
@@ -1079,6 +1080,7 @@ final class CloudKitV2WriterProvisioner {
       action: () => _ensureV2OwnedInsideInterlock(
         scope: scope,
         expectedAuth: expectedAuth,
+        initialOwnerOnly: initialOwnerOnly,
       ),
     );
   }
@@ -1086,10 +1088,22 @@ final class CloudKitV2WriterProvisioner {
   Future<CloudKitV2WriterProvisioningResult> _ensureV2OwnedInsideInterlock({
     required CloudKitWriterScope scope,
     required CloudSyncNativeAuthSnapshot expectedAuth,
+    required bool initialOwnerOnly,
   }) async {
     await _requireSameAuth(expectedAuth);
+    final existing = _authority.read(scope);
+    if (initialOwnerOnly && existing != null &&
+        (existing.owner == CloudKitWriterOwner.legacy ||
+            existing.state != CloudKitWriterAuthorityState.stable ||
+            existing.targetOwner != CloudKitWriterOwner.none)) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_initial_setup_requires_manual_recovery',
+      );
+    }
     final initial = _authority.initializeDisabled(scope, now: _clock());
-    await _quarantineLegacyQueuesFailClosed();
+    // Automatic opt-in can provision a fresh profile or restore a stable V2
+    // owner. It cannot migrate a legacy owner or quarantine deletion queues.
+    if (!initialOwnerOnly) await _quarantineLegacyQueuesFailClosed();
     var measurements = await _readMeasurementsFailClosed(scope);
     await _requireSameAuth(expectedAuth);
 

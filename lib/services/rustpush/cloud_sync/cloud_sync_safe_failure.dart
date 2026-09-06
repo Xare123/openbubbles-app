@@ -283,6 +283,16 @@ final class CloudSyncSemanticDrainUnsafeReportException implements Exception {
 }
 
 const _cloudSyncV2SafeFailureCodes = <String>{
+  'cloudkit_writer_initial_setup_requires_manual_recovery',
+  'cloud_sync_local_send_owner_required',
+  'cloud_sync_local_send_owner_changed',
+  'cloud_sync_local_send_identity_changed',
+  'cloud_sync_local_send_runtime_unavailable',
+  'cloud_sync_local_send_consumer_disabled',
+  'cloud_sync_local_send_consumer_busy',
+  'cloud_sync_local_send_selection_changed',
+  'cloud_sync_local_send_chat_changed',
+  'cloud_sync_local_send_chat_readback_pending',
   ...CloudSyncV2DecoderSafeFailureCodes.all,
   ...CloudSyncV2OutOfScopeServiceSafeFailureCodes.all,
   ...CloudSyncV2ProtectedTransportSafeFailureCodes.all,

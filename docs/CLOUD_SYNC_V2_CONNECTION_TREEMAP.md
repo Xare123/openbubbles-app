@@ -59,9 +59,85 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
 | Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
-| Ongoing sync and account lifecycle | Automatic local-send uploads are user-authorized for the next explicitly opted-in Canary, not enabled on the currently installed APK. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence remain release gates. |
+| Ongoing sync and account lifecycle | Automatic local-send mode is compiled into installed source `475f9d082`, but the fresh profile has no writer authority or journal entries. Missing automatic setup is in repair. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence remain release gates. |
 
 ### Wi-Fi resume checkpoint
+
+- Fresh evidence after the user's existing-thread and delete-local-thread/new-send
+  tests: current logs contain ordinary IDS delivery acknowledgements and two
+  local-send worker failures, but the errors discarded their causes. A stable
+  110,698,496-byte private ObjectBox snapshot has **zero writer authorities,
+  zero local-send journal entries and zero outbox operations**. Source confirms
+  the gap: the automatic worker required V2 ownership while only manual test
+  flows called its provisioner; ordinary send capture silently returned without
+  a journal when that owner was missing. This is a local activation-flow defect,
+  not evidence that Apple rejected these CloudKit saves. No save was proven.
+  The excluded user-unsent origin remains absent.
+
+- Repair uses the existing provisioner before the automatic worker's first drain
+  in each account lifetime. The new initial-only mode holds the same transition
+  interlock, revalidates identity, preserves all measurement checks, refuses
+  legacy/unstable ownership and never quarantines legacy deletion queues. Setup
+  releases its lock before the attachment/worker gate; logout waits for setup
+  and suppresses the drain. Manual provisioning behavior is unchanged. Fixed
+  allowlisted error codes now distinguish local-send failures without emitting
+  exception text. This repairs initial setup, not full production readiness.
+
+- Already sent, unjournaled messages are not retroactively scanned, invented as
+  eligible intents, or replayed. A fresh ordinary send after setup succeeds is
+  required for the next live write/readback qualification. Sends racing initial
+  setup, background execution, and media/
+  reaction/edit/undo writes remain explicit follow-up gates. The two earlier
+  test messages cannot prove automatic CloudKit upload merely by IDS delivery.
+
+- A regression test also reproduced permanent stalling after a temporary
+  interlock-busy exception: the scheduler logged the error but scheduled no
+  wakeup. Known lock contention and typed network/server/throttling failures
+  now use increasing delayed retries (base delay through 16 times the base),
+  respecting a longer server retry hint. Identity, authorization, PCS, conflict,
+  malformed and unknown failures do not gain generic retries. This schedules the
+  existing journal/outbox reconciliation worker, not a replay of an IDS send or
+  an unguarded remote save. Logout cancels delayed work.
+
+- Local verification for this repair: **191 tests passed** across runtime,
+  real ObjectBox provisioner, diagnostics, rollout gates, startup contracts,
+  local journal, outbound admission and Chat-origin suites. The separately
+  compiled automatic-on flag matrix passed all three gate tests. Analysis of
+  changed source/tests reported zero errors or warnings and four existing style
+  infos in `rustpush_service.dart`. The retry regression first failed with one
+  preparation call instead of two, then passed after the fix. Device snapshot
+  inspection used a disposable clone and verified its source unchanged. No new
+  IDS test message, data clear, account repair, or Alpha change occurred.
+
+- Both full runs `34013640516` (manual) and `34014225330` (automatic) completed
+  successfully. The automatic run passed Dart, parent Rust, rustpush, protector,
+  automatic-mode flag, bridge reproducibility, APK/native-library and signing
+  steps. Independent GCE/GitHub listings showed no instances or runner
+  registrations afterward. The signed automatic artifact was downloaded and
+  its Canary package, four ARM64 libraries, v2 signature and pinned certificate
+  were independently verified before `adb install -r -t` succeeded.
+  Installed source is `475f9d082fcb9bc66aecbe5fd6fcfff8d76497f4`, APK SHA-256
+  `d15aa514203438686818ff0c274a9ba7c3628f5ed2cdd64597903469a322e48a`,
+  size 449,075,582 bytes. Device-reported update time is 2026-09-05 23:11:45;
+  Canary's original first-install time and Alpha's package timestamps remained
+  unchanged. No app-data clear or uninstall was used.
+  The subsequent launch/debug-verification command was rejected by execution
+  policy before it ran. Do not route around that rejection. Compiled automatic
+  mode is qualified and installed, but foreground worker activity and the first
+  live automatic upload/readback remain unverified. User opening Canary is the
+  next device step; installation alone is not production qualification.
+
+- User explicitly approved parallel GCE builds. Live quota showed 164 global
+  CPUs and 100 T2D CPUs in us-west1, with 60 T2D CPUs in use. The auto-upload
+  qualification therefore uses T2D-32 alongside the existing T2D-60 (92 total),
+  rather than attempting two T2D-60 runners. The isolated pilot has two fixed
+  concurrency lanes: primary preserves the original group and parallel is a
+  separate bounded group. Both retain per-run VM names, output runner labels,
+  exact-name cleanup and the 75-minute lifetime. Queued run `34014079210` was
+  canceled only after verifying it had no jobs and no VM. Replacement
+  `34014225330` uses the parallel lane, automatic uploads=true, full qualification,
+  and frozen source `475f9d082fcb9bc66aecbe5fd6fcfff8d76497f4`. Existing run
+  `34013640516` remains untouched. No quota, IAM, secret, network or signing change.
 
 - User approved automatic uploads in Canary, including earlier eligible journaled
   sends. This is CloudKit upload authorization, not permission to send new IDS

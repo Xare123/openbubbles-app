@@ -24,6 +24,13 @@ void main() {
       final report = store.runInTransaction(TxMode.read, () {
         final intents = store!.box<CloudSyncLocalSendIntentEntity>().getAll();
         final outbox = store.box<CloudOutboxOperationEntity>().getAll();
+        final authorities = store.box<CloudKitWriterAuthorityEntity>().getAll();
+        final authorityStates = <String, int>{};
+        for (final authority in authorities) {
+          // Integer enums only. Do not expose account identifiers or permits.
+          final key = 'owner:${authority.owner},state:${authority.state}';
+          authorityStates.update(key, (n) => n + 1, ifAbsent: () => 1);
+        }
         final excludedHash = sha256
             .convert(
               utf8.encode(
@@ -51,6 +58,8 @@ void main() {
         }
         return {
           'journalCount': intents.length,
+          'writerAuthorityCount': authorities.length,
+          'writerAuthorityStates': authorityStates,
           'journalStates': states,
           'outboxCount': outbox.length,
           'outboxWithoutJournalLink': outbox

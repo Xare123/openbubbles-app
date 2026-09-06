@@ -10,6 +10,26 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('local-send blockers are specific without exposing exception text', () {
+    for (final code in [
+      'cloud_sync_local_send_owner_required',
+      'cloud_sync_local_send_owner_changed',
+      'cloud_sync_local_send_identity_changed',
+      'cloud_sync_local_send_runtime_unavailable',
+      'cloud_sync_local_send_consumer_disabled',
+      'cloud_sync_local_send_consumer_busy',
+      'cloud_sync_local_send_selection_changed',
+      'cloud_sync_local_send_chat_changed',
+      'cloud_sync_local_send_chat_readback_pending',
+    ]) {
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+      expect(
+        cloudSyncV2SafeFailureCode(StateError('$code: private details')),
+        'cloud_sync_unknown_failure',
+      );
+    }
+  });
+
   test('exposes only reviewed state failure codes', () {
     expect(
       cloudSyncV2SafeFailureCode(StateError('legacy_sync_active')),

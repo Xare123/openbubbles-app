@@ -37,6 +37,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dar
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_runtime.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_canary_candidate.dart';
@@ -7567,6 +7568,28 @@ class RustPushService extends GetxService {
         privateStorageDirectory: expectedStorage, stillCurrent: stillCurrent,
       );
       _cloudSyncV2LocalSendRuntime = CloudSyncLocalSendRuntime(
+        prepare: () async {
+          if (!stillCurrent()) {
+            throw StateError('cloud_sync_local_send_identity_changed');
+          }
+          // Explicit automatic-upload Canary opt-in includes initial writer
+          // setup, but never silently migrates legacy ownership or its queues.
+          // Release the transition lock before taking the attachment gate.
+          final preparation = _cloudSyncV2Outbound()
+              .ensureWriterOwned(initialOwnerOnly: true);
+          _cloudSyncV2OutboundProvisioningInFlight = preparation;
+          try {
+            await preparation;
+            if (!stillCurrent()) {
+              throw StateError('cloud_sync_local_send_identity_changed');
+            }
+            Logger.info('Cloud Sync V2 automatic writer ready');
+          } finally {
+            if (identical(_cloudSyncV2OutboundProvisioningInFlight, preparation)) {
+              _cloudSyncV2OutboundProvisioningInFlight = null;
+            }
+          }
+        },
         drain: () async {
           final result = await _cloudSyncV2AttachmentGate.run(
           validate: () {
@@ -7592,8 +7615,9 @@ class RustPushService extends GetxService {
           }
           return result;
         },
-        onError: (_, __) => Logger.warn(
-          'Cloud Sync V2 local-send worker deferred; journal retained',
+        onError: (error, _) => Logger.warn(
+          'Cloud Sync V2 local-send worker deferred '
+          'code=${cloudSyncV2SafeFailureCode(error)}',
         ),
       );
     }
@@ -7660,6 +7684,8 @@ class RustPushService extends GetxService {
         CloudKitWriterScope(accountFingerprint: auth.accountFingerprint),
       );
       if (authoritySnapshot == null || authoritySnapshot.owner != CloudKitWriterOwner.v2) {
+        Logger.warn('Cloud Sync V2 live send not queued for upload '
+            'code=cloud_sync_local_send_owner_required');
         return null;
       }
       final journal = CloudSyncLocalSendJournal(
