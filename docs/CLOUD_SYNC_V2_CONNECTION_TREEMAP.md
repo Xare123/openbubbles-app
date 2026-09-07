@@ -293,19 +293,29 @@ Bridge generation exposed a PowerShell strict-mode array-unwrapping defect in
 the diagnostic normalizer. Conditional output is now captured as an array;
 both empty and singleton matches are covered by a dedicated strict-mode test.
 The existing exact diagnostic allowlist and byte-preservation checks remain.
+The six-test normalizer suite passed separately after that test was added.
+
+The committed `497dcc730` Windows candidate rebuilt in **68.6 seconds** and
+completed the live read-only observer again: **13 disjoint, zero incomplete,
+overlapping or failed saves**, 81 retained tombstones. Before/after offline-copy
+database control reports are exactly equal. Evidence:
+`staged-chat-live-compatibility.log`, `staged-chat-live-compatibility.json` and
+`staged-chat-after-flutter.log` in the replay evidence folder. The harness exited
+normally. No real send or staged outbound record was created in this live check.
 
 The optional observation/evidence callbacks are **not wired into either live
 production composition yet**. Their default remains the original applied-save
 gate. Next integration follows this call graph:
 
-1. Bind observations to the actual staged Chat, not the diagnostic JSON or a
+1. **Implemented/tested:** bind observations to the actual staged Chat, not the diagnostic JSON or a
    mutable Dart `CloudChat` object. `open_staged_outbound_chat` already verifies
    the protected payload digest and physical record identity together.
-2. Require that evidence in all three existing store gates:
-   `captureFreshOutboundChatOrigin`, `_admitProtectedOutboundCreate` and
+2. **Implemented/tested:** observation-specific candidate capture retains the
+   original strict `captureFreshOutboundChatOrigin` path. Require evidence in
+   `_admitProtectedOutboundCreate` and
    `_requireOperationProjectionReadyLocked` (lease plus submission). Keep
    local-send confirmation, prior-identity ownership and exact tombstone checks.
-3. Qualify refreshing the observation with an already-admitted queue after
+3. **Next runtime integration:** qualify refreshing the observation with an already-admitted queue after
    restart. The general semantic sampler deliberately rejects unsettled outbox
    work; calling it from the write consumer would also change interlock mode.
    Use the write owner's exact selection and controlled cached read-auth scope,
