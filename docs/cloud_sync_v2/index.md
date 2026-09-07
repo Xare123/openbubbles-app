@@ -18,16 +18,21 @@ timestamp: 2026-09-07
   preserved chronological checkpoints, prior candidates, run IDs, source
   evidence, patents, and rejected hypotheses. Historical status does not
   override the current treemap.
+- [Current investigation log](history/CLOUD_SYNC_V2_INVESTIGATION_LOG_FROM_2026-09-07.md):
+  chronological qualification results recorded after the documentation split.
 
 ## Evidence roots
 
 - `evidence/windows-replay-20260906/`: Windows fast-loop, ObjectBox, analyzer,
   route, reaction, save/readback, and Smart App Control evidence.
-- GitHub Actions run `34169243930`: exact-source full GCE qualification for
-  candidate `4eb1d66c4`.
+- GitHub Actions run `34170476606`: current exact-source full GCE qualification
+  for candidate `84b1018e4`.
 - GitHub Actions run `34168948855`: invalidated infrastructure attempt. The app
   checkout succeeded, but rustpush commit `2274cee63` was absent from the fork;
   no tests or APK build ran. Runner cleanup passed.
+- GitHub Actions run `34169243930`: invalidated candidate `4eb1d66c4` after
+  2,423 Dart tests passed and three failed. The concrete failures and repair
+  are recorded in the current investigation log. Runner cleanup passed.
 
 ## Reading rule
 

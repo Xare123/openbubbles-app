@@ -55,10 +55,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Candidate | `4eb1d66c44e218a373770fc42e0f6421fcf172ac` |
+| Candidate | `84b1018e4200d6bd838740682424d21dfee7995c` |
 | Main change | Restored group plaintext is bound to protected routing state. |
 | Dependency | rustpush `2274cee63c05432c89fc5dbb61915b5659fa9721`, published to the user's fork after the first clean-run checkout failure. |
-| Full qualification | GCE run `34169243930` is the replacement exact-source run. Its result must be recorded before installation. |
+| Full qualification | GCE run `34170476606` is the current exact-source run. Its result must be recorded before installation. |
 | Android release proof | Pending a signed Canary and controlled Pixel test. Alpha remains untouched. |
 | Production claim | Not yet allowed. |
 
@@ -288,7 +288,7 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 
 ## Current critical path
 
-1. Complete GCE run `34169243930` against candidate `4eb1d66c4` and rustpush
+1. Complete GCE run `34170476606` against candidate `84b1018e4` and rustpush
    `2274cee63`. Do not install an artifact from a failed run.
 2. If it passes, sign and install Canary in place. Preserve Canary identity and
    Alpha completely.
