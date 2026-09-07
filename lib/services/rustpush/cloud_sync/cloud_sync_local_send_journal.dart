@@ -14,6 +14,7 @@ import 'cloud_sync_reaction_send_identity.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
+import 'objectbox_canonical_semantic_entity_adapter.dart';
 
 /// Immutable local send identity. Raw routing/content never leaves this
 /// capture; the raw GUID is retained in memory only for exact revalidation.
@@ -1242,6 +1243,8 @@ final class CloudSyncLocalSendJournal {
       store: _store,
       messageScope: operation.scope,
       message: _validatedMessage(intent),
+      readConfirmedLocalParent: (parent) =>
+          readConfirmedParentDependency(_store, operation.scope, parent),
     );
     intent
       ..state = 2
@@ -1285,6 +1288,132 @@ final class CloudSyncLocalSendJournal {
     }
   });
 
+  /// Called only from the exact-readback callback inside the Store's receipt
+  /// release transaction. Save confirmation and generic cleanup never call
+  /// this. The immutable binding remains independently revalidated on use.
+  void recordConfirmedReadbackInTransaction(
+    Store transactionStore,
+    CloudOutboxOperation operation,
+  ) {
+    final source = readAdoptedCreateSource(transactionStore, operation);
+    if (source == null) return;
+    if (operation.status != CloudOutboxStatus.confirmed ||
+        operation.protectedLeaseReference == null ||
+        operation.confirmedAt == null ||
+        operation.leaseId != null ||
+        operation.leaseExpiresAt != null) {
+      throw StateError('cloud_sync_local_send_readback_not_ready');
+    }
+    final intent = _readBoundIntent(source.intentId);
+    intent.confirmedReadbackBindingSha256 = intent.admittedBindingSha256;
+    _intents.put(intent);
+  }
+
+  /// Durable own-message proof without requiring CloudKit to self-echo a save.
+  /// Never infers confirmation from a Message flag or from generic receipt
+  /// cleanup. Any inbox observation delegates back to restored-parent proof.
+  List<Object>? readConfirmedParentDependency(
+    Store transactionStore,
+    CloudSyncScope scope,
+    Message parent,
+  ) {
+    _requireCreateAuthority(transactionStore, scope);
+    final found = _readUnique(
+      _intents.query(
+        CloudSyncLocalSendIntentEntity_.accountFingerprint
+            .equals(scope.accountFingerprint)
+            .and(
+              CloudSyncLocalSendIntentEntity_.localMessageId.equals(
+                parent.id ?? 0,
+              ),
+            ),
+      ),
+    );
+    if (found == null || found.confirmedReadbackBindingSha256 == null) {
+      return null;
+    }
+    final intent = _readBoundIntent(found.id);
+    final row = _readUnique(
+      _store.box<CloudOutboxOperationEntity>().query(
+        CloudOutboxOperationEntity_.operationId.equals(
+          intent.admittedOperationId!,
+        ),
+      ),
+    );
+    if (row == null ||
+        row.state != CloudOutboxStatus.confirmed.index ||
+        row.confirmedAtMs <= 0 ||
+        row.protectedLeaseReference != null ||
+        row.leaseIdHash != null ||
+        row.leaseExpiresAtMs != 0) {
+      throw StateError('cloud_sync_local_send_readback_not_ready');
+    }
+    final scopeKey = cloudSyncPersistentScopeKey(scope);
+    final inbox = _store
+        .box<CloudInboxChangeEntity>()
+        .query(
+          CloudInboxChangeEntity_.scopeKey
+              .equals(scopeKey)
+              .and(
+                CloudInboxChangeEntity_.generation.equals(
+                  row.checkpointGeneration,
+                ),
+              )
+              .and(
+                CloudInboxChangeEntity_.serverRecordIdHash.equals(
+                  row.serverRecordIdHash ?? '',
+                ),
+              ),
+        )
+        .build();
+    try {
+      if (inbox.count() != 0) return null;
+    } finally {
+      inbox.close();
+    }
+    // A parent is a standalone message, never another reaction. Check the
+    // original direct-Chat binding before validating it to prevent recursion
+    // through a corrupted parent dependency. Existing v1 bindings are unchanged.
+    final dynamic chatBinding = jsonDecode(
+      intent.admittedChatBinding ?? 'null',
+    );
+    if (chatBinding is! List ||
+        chatBinding.length != 9 ||
+        chatBinding[0] != 1) {
+      throw StateError('cloud_sync_local_send_parent_not_ready');
+    }
+    final validated = _validatedExactAdoptedMessage(intent);
+    if (validated.id != parent.id ||
+        validated.guid != parent.guid ||
+        validated.associatedMessageGuid != null ||
+        validated.associatedMessageType != null) {
+      throw StateError('cloud_sync_local_send_parent_not_ready');
+    }
+    final generation = row.checkpointGeneration;
+    return <Object>[
+      2,
+      scopeKey,
+      generation,
+      validated.id!,
+      CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+        scope: scope,
+        generation: generation,
+        canonicalGuid: validated.guid!,
+      ),
+      CloudCanonicalIdentityDigest.forCanonicalGuid(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: row.logicalEntityKeyHash,
+        canonicalGuid: validated.guid!,
+      ),
+      row.logicalEntityKeyHash,
+      row.serverRecordIdHash!,
+      intent.id,
+      intent.confirmedReadbackBindingSha256!,
+    ];
+  }
+
   CloudSyncLocalSendIntentEntity _readBoundIntent(int intentId) {
     final intent = intentId > 0 ? _intents.get(intentId) : null;
     if (intent == null ||
@@ -1304,21 +1433,28 @@ final class CloudSyncLocalSendJournal {
     return intent;
   }
 
-  static bool _hasConsistentAdoption(CloudSyncLocalSendIntentEntity intent) =>
-      intent.state == 2
-      ? intent.admittedOperationId != null &&
-            RegExp(
-              r'^[0-9a-f]{64}$',
-            ).hasMatch(intent.admittedBindingSha256 ?? '')
-      : intent.state == 3
-      ? intent.admittedOperationId == null &&
-            RegExp(
-              r'^[0-9a-f]{64}$',
-            ).hasMatch(intent.admittedBindingSha256 ?? '') &&
-            intent.admittedChatBinding == null
-      : intent.admittedOperationId == null &&
-            intent.admittedBindingSha256 == null &&
-            intent.admittedChatBinding == null;
+  static bool _hasConsistentAdoption(CloudSyncLocalSendIntentEntity intent) {
+    if (intent.confirmedReadbackBindingSha256 != null &&
+        (intent.state != 2 ||
+            intent.confirmedReadbackBindingSha256 !=
+                intent.admittedBindingSha256)) {
+      return false;
+    }
+    return intent.state == 2
+        ? intent.admittedOperationId != null &&
+              RegExp(
+                r'^[0-9a-f]{64}$',
+              ).hasMatch(intent.admittedBindingSha256 ?? '')
+        : intent.state == 3
+        ? intent.admittedOperationId == null &&
+              RegExp(
+                r'^[0-9a-f]{64}$',
+              ).hasMatch(intent.admittedBindingSha256 ?? '') &&
+              intent.admittedChatBinding == null
+        : intent.admittedOperationId == null &&
+              intent.admittedBindingSha256 == null &&
+              intent.admittedChatBinding == null;
+  }
 
   static String _authBinding(CloudSyncNativeAuthSnapshot auth) =>
       CloudSyncLocalSendIdentity._digest([
@@ -1465,6 +1601,8 @@ final class CloudSyncLocalSendJournal {
       messageScope: scope,
       binding: intent.admittedChatBinding,
       expectedChatId: message.chat.targetId,
+      readConfirmedLocalParent: (parent) =>
+          readConfirmedParentDependency(_store, scope, parent),
     );
     // ObjectBox reads return independent objects. Do not round-trip toMap:
     // it omits fields that capture must continue rejecting. Never put this view.

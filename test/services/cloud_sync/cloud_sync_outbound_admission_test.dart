@@ -328,6 +328,45 @@ void main() {
           },
     );
 
+    Future<CloudOutboxOperation> confirmCloudSave() async {
+      transport.stages.add(_stage('a', 'P', 'L', 'S'));
+      final operation = await admit();
+      store = ObjectBoxCloudSyncStore(
+        store: objectBox,
+        protector: _Protector(),
+        clock: () => testEpoch,
+        localSendJournal: journal,
+      );
+      const leaseId = 'synthetic-exact-readback-save';
+      await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: leaseId,
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      await store.markOutboxSubmissionStarted(
+        scope,
+        leaseId: leaseId,
+        submissionIdentity: testSubmissionIdentity([operation.operationId]),
+        now: testEpoch,
+      );
+      await store.commitOutboxCreateReceipt(
+        scope,
+        leaseId: leaseId,
+        receipt: CloudOutboxCreateReceipt(
+          operationId: operation.operationId,
+          logicalEntityKeyHash: operation.logicalEntityKeyHash,
+          serverRecordIdHash: operation.serverRecordIdHash!,
+          etagHash: 'E' * 43,
+        ),
+        retainProtectedLeaseReference: true,
+        now: testEpoch.add(const Duration(seconds: 1)),
+      );
+      return (await store.readOutboxEntries(scope)).single;
+    }
+
     Future<void> prepareReaction({bool restoreParent = true}) async {
       final parent = local;
       if (restoreParent) {
@@ -434,6 +473,146 @@ void main() {
       );
     });
 
+    test(
+      'save confirmation and generic receipt cleanup do not prove readback',
+      () async {
+        expect(intent().confirmedReadbackBindingSha256, isNull);
+        final operation = await confirmCloudSave();
+        expect(intent().state, 2);
+        expect(intent().confirmedReadbackBindingSha256, isNull);
+        await store.clearConfirmedProtectedOutboundLeaseReference(
+          expectedOperation: operation,
+        );
+        expect(intent().confirmedReadbackBindingSha256, isNull);
+      },
+    );
+
+    test(
+      'verified replay persists the immutable binding with receipt release',
+      () async {
+        final operation = await confirmCloudSave();
+        final binding = intent().admittedBindingSha256;
+        await store.clearConfirmedProtectedOutboundLeaseReference(
+          expectedOperation: operation,
+          recordVerifiedLocalSendReadback: true,
+        );
+        expect(intent().confirmedReadbackBindingSha256, binding);
+        expect(
+          (await store.readOutboxEntries(scope)).single.protectedLeaseReference,
+          isNull,
+        );
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        bindJournal();
+        expect(intent().confirmedReadbackBindingSha256, binding);
+        expect(journal.readForAdmission(intentId).state, 2);
+      },
+    );
+
+    test(
+      'changed adopted binding rolls back proof and preserves the receipt',
+      () async {
+        final operation = await confirmCloudSave();
+        objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+          intent()..admittedBindingSha256 = '0' * 64,
+        );
+        await expectLater(
+          store.clearConfirmedProtectedOutboundLeaseReference(
+            expectedOperation: operation,
+            recordVerifiedLocalSendReadback: true,
+          ),
+          throwsStateError,
+        );
+        expect(intent().confirmedReadbackBindingSha256, isNull);
+        expect(
+          (await store.readOutboxEntries(scope)).single.protectedLeaseReference,
+          operation.protectedLeaseReference,
+        );
+      },
+    );
+
+    test('changed receipt snapshot cannot commit readback evidence', () async {
+      final operation = await confirmCloudSave();
+      await expectLater(
+        store.clearConfirmedProtectedOutboundLeaseReference(
+          expectedOperation: operation.copyWith(
+            attemptCount: operation.attemptCount + 1,
+          ),
+          recordVerifiedLocalSendReadback: true,
+        ),
+        throwsA(isA<CloudSyncFailure>()),
+      );
+      expect(intent().confirmedReadbackBindingSha256, isNull);
+      expect(
+        (await store.readOutboxEntries(scope)).single.protectedLeaseReference,
+        operation.protectedLeaseReference,
+      );
+    });
+
+    test(
+      'generic store cannot discard a local-owned verified receipt',
+      () async {
+        final operation = await confirmCloudSave();
+        final unbound = ObjectBoxCloudSyncStore(
+          store: objectBox,
+          protector: _Protector(),
+          clock: () => testEpoch,
+        );
+        await expectLater(
+          unbound.clearConfirmedProtectedOutboundLeaseReference(
+            expectedOperation: operation,
+            recordVerifiedLocalSendReadback: true,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'code',
+              'cloud_sync_local_send_journal_required',
+            ),
+          ),
+        );
+        expect(intent().confirmedReadbackBindingSha256, isNull);
+        expect(
+          (await store.readOutboxEntries(scope)).single.protectedLeaseReference,
+          operation.protectedLeaseReference,
+        );
+      },
+    );
+
+    test(
+      'readback marker cannot bless a different immutable adoption',
+      () async {
+        final operation = await confirmCloudSave();
+        await store.clearConfirmedProtectedOutboundLeaseReference(
+          expectedOperation: operation,
+          recordVerifiedLocalSendReadback: true,
+        );
+        objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+          intent()..confirmedReadbackBindingSha256 = '0' * 64,
+        );
+        expect(() => journal.readForAdmission(intentId), throwsStateError);
+      },
+    );
+
+    test(
+      'older released receipt cannot be retroactively declared verified',
+      () async {
+        final operation = await confirmCloudSave();
+        await store.clearConfirmedProtectedOutboundLeaseReference(
+          expectedOperation: operation,
+        );
+        final settled = (await store.readOutboxEntries(scope)).single;
+        await expectLater(
+          store.clearConfirmedProtectedOutboundLeaseReference(
+            expectedOperation: settled,
+            recordVerifiedLocalSendReadback: true,
+          ),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        expect(intent().confirmedReadbackBindingSha256, isNull);
+      },
+    );
+
     test('local-only reaction parent blocks staging', () async {
       await prepareReaction(restoreParent: false);
       await expectLater(
@@ -450,6 +629,255 @@ void main() {
       expect(intent().state, 1);
       expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
     });
+
+    test(
+      'outer transaction failure rolls back both readback proof and receipt release',
+      () async {
+        final operation = await confirmCloudSave();
+        late Future<void> cleared;
+        expect(
+          () => objectBox.runInTransaction<void>(TxMode.write, () {
+            cleared = store.clearConfirmedProtectedOutboundLeaseReference(
+              expectedOperation: operation,
+              recordVerifiedLocalSendReadback: true,
+            );
+            expect(intent().confirmedReadbackBindingSha256, isNotNull);
+            expect(
+              objectBox
+                  .box<CloudOutboxOperationEntity>()
+                  .getAll()
+                  .single
+                  .protectedLeaseReference,
+              isNull,
+            );
+            throw StateError('synthetic transaction interruption');
+          }),
+          throwsStateError,
+        );
+        await cleared;
+        expect(intent().confirmedReadbackBindingSha256, isNull);
+        expect(
+          (await store.readOutboxEntries(scope)).single.protectedLeaseReference,
+          operation.protectedLeaseReference,
+        );
+      },
+    );
+
+    Future<CloudOutboxOperation> verifyOwnParent() async {
+      final parentOperation = await confirmCloudSave();
+      await store.clearConfirmedProtectedOutboundLeaseReference(
+        expectedOperation: parentOperation,
+        recordVerifiedLocalSendReadback: true,
+      );
+      return parentOperation;
+    }
+
+    Future<CloudOutboxOperation> admitOwnParentReaction() async {
+      await prepareReaction(restoreParent: false);
+      transport.stages.add(_stage('b', 'Q', 'N', 'T'));
+      return admit(encoder: (message) => _LocalCloudMessage(message, type: 2));
+    }
+
+    test(
+      'exact own-parent readback permits reaction without a change-feed echo',
+      () async {
+        final parentOperation = await verifyOwnParent();
+        expect(
+          objectBox.box<CloudInboxChangeEntity>().getAll().where(
+            (row) =>
+                row.serverRecordIdHash == parentOperation.serverRecordIdHash,
+          ),
+          isEmpty,
+        );
+        final reaction = await admitOwnParentReaction();
+        final binding = jsonDecode(intent().admittedChatBinding!) as List;
+        expect(binding[0], 2);
+        expect(binding[2][0], 2);
+        expect(binding[2][7], parentOperation.serverRecordIdHash);
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        bindJournal();
+        store = ObjectBoxCloudSyncStore(
+          store: objectBox,
+          protector: _Protector(),
+          clock: () => testEpoch,
+          localSendJournal: journal,
+        );
+        final leased = await store.leaseEligibleOutbox(
+          scope,
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'own-parent-restart',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        );
+        expect(leased.single.operationId, reaction.operationId);
+        expect(transport.committed, hasLength(2));
+      },
+    );
+
+    for (final clearGenericReceipt in [false, true]) {
+      test(
+        'save-only own parent remains blocked (generic cleanup $clearGenericReceipt)',
+        () async {
+          final operation = await confirmCloudSave();
+          if (clearGenericReceipt) {
+            await store.clearConfirmedProtectedOutboundLeaseReference(
+              expectedOperation: operation,
+            );
+          }
+          await prepareReaction(restoreParent: false);
+          final stagedBefore = transport.committed.length;
+          await expectLater(admit(), throwsA(isA<CloudSyncFailure>()));
+          expect(transport.committed, hasLength(stagedBefore));
+          expect(intent().state, 1);
+        },
+      );
+    }
+
+    for (final mutation in [
+      'marker',
+      'payload',
+      'map',
+      'generation',
+      'parent text',
+      'parent guid',
+    ]) {
+      test('own-parent $mutation drift blocks reaction dispatch', () async {
+        await verifyOwnParent();
+        final parentIntentId = intentId;
+        final parentId = local.id!;
+        await admitOwnParentReaction();
+        switch (mutation) {
+          case 'marker':
+            final box = objectBox.box<CloudSyncLocalSendIntentEntity>();
+            box.put(
+              box.get(parentIntentId)!
+                ..confirmedReadbackBindingSha256 = '0' * 64,
+            );
+          case 'payload':
+            final box = objectBox.box<CloudOutboxOperationEntity>();
+            box.put(
+              box.getAll().singleWhere(
+                (row) => row.state == CloudOutboxStatus.confirmed.index,
+              )..payloadSha256 = '0' * 64,
+            );
+          case 'map':
+            final box = objectBox.box<CloudRecordMapEntity>();
+            box.put(
+              box.getAll().singleWhere(
+                (row) => row.logicalEntityKeyHash == 'L' * 43,
+              )..serverRecordIdHash = 'Z' * 43,
+            );
+          case 'generation':
+            final box = objectBox.box<CloudSyncCheckpointEntity>();
+            box.put(
+              box.getAll().singleWhere(
+                (row) =>
+                    row.checkpointKey == cloudSyncPersistentScopeKey(scope),
+              )..generation = 2,
+            );
+          case 'parent text':
+            objectBox.box<Message>().put(
+              objectBox.box<Message>().get(parentId)!..text = 'changed',
+            );
+          case 'parent guid':
+            objectBox.box<Message>().put(
+              objectBox.box<Message>().get(parentId)!
+                ..guid = '33333333-3333-4333-8333-333333333333',
+            );
+        }
+        final lease = store.leaseEligibleOutbox(
+          scope,
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'own-parent-drift',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        );
+        if (mutation == 'generation') {
+          // Old-generation rows are deliberately excluded before admission.
+          expect(await lease, isEmpty);
+        } else {
+          await expectLater(
+            lease,
+            throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())),
+          );
+        }
+        expect(
+          objectBox.box<CloudOutboxOperationEntity>().getAll().where(
+            (row) => row.state == CloudOutboxStatus.leased.index,
+          ),
+          isEmpty,
+        );
+      });
+    }
+
+    for (final status in CloudInboxStatus.values) {
+      test(
+        'own readback cannot override an incoming ${status.name} parent record',
+        () async {
+          final operation = await verifyOwnParent();
+          final parent = local;
+          await admitOwnParentReaction();
+          await _seedRestoredParent(
+            objectBox,
+            store,
+            scope,
+            parent,
+            origin: operation,
+          );
+          final box = objectBox.box<CloudInboxChangeEntity>();
+          final latest = box.getAll().singleWhere(
+            (row) => row.serverRecordIdHash == operation.serverRecordIdHash,
+          );
+          // Applied-but-tombstoned must not resurrect from the earlier save proof.
+          box.put(
+            latest
+              ..status = status.index
+              ..isTombstone = status == CloudInboxStatus.applied,
+          );
+          await expectLater(
+            store.leaseEligibleOutbox(
+              scope,
+              now: testEpoch,
+              limit: 1,
+              leaseId: 'inbox-parent-contradiction',
+              leaseDuration: const Duration(minutes: 1),
+              allowedActions: const {CloudOutboxAction.save},
+            ),
+            throwsA(isA<CloudSyncFailure>()),
+          );
+        },
+      );
+    }
+
+    test(
+      'fully applied same-parent echo replaces local proof without retargeting',
+      () async {
+        final operation = await verifyOwnParent();
+        final parent = local;
+        final reaction = await admitOwnParentReaction();
+        final originalBinding = intent().admittedChatBinding;
+        await _seedRestoredParent(
+          objectBox,
+          store,
+          scope,
+          parent,
+          origin: operation,
+        );
+        final leased = await store.leaseEligibleOutbox(
+          scope,
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'applied-parent-echo',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        );
+        expect(leased.single.operationId, reaction.operationId);
+        expect(intent().admittedChatBinding, originalBinding);
+      },
+    );
 
     test(
       'reaction adopts once and rechecks pinned parent after restart',
@@ -1097,31 +1525,51 @@ Future<void> _seedRestoredParent(
   Store db,
   ObjectBoxCloudSyncStore store,
   CloudSyncScope scope,
-  Message parent,
-) async {
+  Message parent, {
+  CloudOutboxOperation? origin,
+}) async {
   // Reuse the applied-source journal fixture. Source records are scoped;
   // the separate snapshot below proves this one's Message kind and GUID.
+  final observedAt = origin == null
+      ? testEpoch
+      : testEpoch.add(const Duration(seconds: 2));
   final source = await seedSyntheticRestoredChatAppliedSource(
     objectBox: db,
     store: store,
     chatScope: scope,
-    now: testEpoch,
+    now: observedAt,
+    recordIdHash: origin?.serverRecordIdHash,
   );
   final scopeKey = cloudSyncPersistentScopeKey(scope);
   final generationKey =
       'semantic-generation4:${sha256.convert(utf8.encode('$scopeKey\u001f${source.generation}'))}';
-  final logical = 'M' * 43;
-  await store.upsertRecordMap(
-    CloudRecordMapEntry(
-      scope: scope,
+  final logical = origin?.logicalEntityKeyHash ?? 'M' * 43;
+  // Model the semantic gateway's applied-source mapping, not the generic
+  // transport upsert (which deliberately retains the earlier ID reference).
+  // Production projection binds all references to the newly applied inbox row.
+  final maps = db.box<CloudRecordMapEntity>();
+  final existing = maps
+      .getAll()
+      .where(
+        (row) =>
+            row.scopeKey == scopeKey && row.logicalEntityKeyHash == logical,
+      )
+      .toList();
+  maps.put(
+    CloudRecordMapEntity(
+      id: existing.isEmpty ? 0 : existing.single.id,
+      mapKey: cloudSyncCanonicalRecordMapKey(scope, logical),
+      scopeKey: scopeKey,
+      accountFingerprint: scope.accountFingerprint,
+      zone: scope.zone,
+      generation: source.generation,
       logicalEntityKeyHash: logical,
       serverRecordIdHash: source.serverRecordIdHash,
       encryptedServerRecordId: source.encryptedServerRecordId!,
-      encryptedRawRecordReference: source.encryptedPayloadRef,
+      encryptedRawRecordRef: source.encryptedPayloadRef,
       etagHash: source.etagHash,
-      updatedAt: testEpoch,
+      updatedAtMs: observedAt.millisecondsSinceEpoch,
     ),
-    generation: source.generation,
   );
   db.box<CloudSemanticSnapshotEntity>().put(
     CloudSemanticSnapshotEntity(
@@ -1151,7 +1599,7 @@ Future<void> _seedRestoredParent(
             canonicalGuid: parent.guid!,
           ),
       etagHash: source.etagHash,
-      updatedAtMs: testEpoch.millisecondsSinceEpoch,
+      updatedAtMs: observedAt.millisecondsSinceEpoch,
     ),
   );
 }

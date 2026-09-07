@@ -566,6 +566,9 @@ class ObjectBoxCloudSyncStore
   @override
   Future<void> clearConfirmedProtectedOutboundLeaseReference({
     required CloudOutboxOperation expectedOperation,
+    // Opt in only from the transport's validated no-save replay callback.
+    // A terminal save or generic receipt cleanup does not prove readback.
+    bool recordVerifiedLocalSendReadback = false,
   }) async {
     _requireConfirmedReceiptReleaseCandidate(expectedOperation);
     _store.runInTransaction(TxMode.write, () {
@@ -581,6 +584,25 @@ class ObjectBoxCloudSyncStore
       final current = _outboxFromEntity(expectedOperation.scope, entity);
       if (!current.sameDurableSnapshotAs(expectedOperation)) {
         throw _storageFailure('confirmed_outbound_receipt_snapshot_changed');
+      }
+      if (recordVerifiedLocalSendReadback) {
+        final journal = _localSendJournal;
+        if (journal == null) {
+          final intentQuery = _store.box<CloudSyncLocalSendIntentEntity>().query(
+            CloudSyncLocalSendIntentEntity_.admittedOperationId.equals(
+              current.operationId,
+            ),
+          ).build();
+          try {
+            if (intentQuery.count() != 0) {
+              throw StateError('cloud_sync_local_send_journal_required');
+            }
+          } finally {
+            intentQuery.close();
+          }
+        } else {
+          journal.recordConfirmedReadbackInTransaction(_store, current);
+        }
       }
       entity.protectedLeaseReference = null;
       _outbox.put(entity);
@@ -1859,6 +1881,9 @@ class ObjectBoxCloudSyncStore
           scope,
           localSendSource,
         ),
+        readConfirmedLocalParent: (parent) => localSendJournal.readConfirmedParentDependency(
+          _store, scope, parent,
+        ),
       );
     }
   });
@@ -1885,6 +1910,9 @@ class ObjectBoxCloudSyncStore
         draft.scope,
         source,
         adopting: true,
+      ),
+      readConfirmedLocalParent: (parent) => journal.readConfirmedParentDependency(
+        _store, draft.scope, parent,
       ),
     ),
   );
@@ -3862,6 +3890,9 @@ class ObjectBoxCloudSyncStore
       store: _store,
       messageScope: scope,
       binding: source.admittedChatBinding,
+      readConfirmedLocalParent: (parent) => journal.readConfirmedParentDependency(
+        _store, scope, parent,
+      ),
     );
     _requireMessagesCloudAccountProjectionReadyLocked(
       scope,

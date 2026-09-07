@@ -44,6 +44,60 @@ continue under a new account.
 
 ## Latest integration checkpoint, 2026-09-07
 
+### Own-message reaction dependency, exact-readback proof
+
+The no-self-echo case now has a local, tested dependency path. A confirmed
+save or a cleared native receipt is not enough: the exact no-save readback
+callback stamps `CloudSyncLocalSendIntentEntity.confirmedReadbackBindingSha256`
+with the already-revalidated immutable adoption digest. The stamp and durable
+receipt release share one ObjectBox write transaction. Both the ordinary worker
+and the restart/manual confirmed-replay adapter use that path. Generic receipt
+cleanup never creates proof; unjournaled Chat/manual operations remain valid
+cleanup candidates without being promoted into local-send provenance.
+
+```text
+IDS-confirmed local origin -> immutable protected Message adoption
+  -> confirmed CloudKit save -> exact remote no-save readback
+  -> atomic [readback stamp + receipt release]
+  -> reaction parent selection
+       no inbox observation: revalidate origin, envelope, map, generation, Chat
+       any inbox observation: require fully applied, non-tombstone parent proof
+  -> recheck at adoption and dispatch, including after restart
+```
+
+The outer dependency wrapper stays version 2. Restored parents retain inner
+version 1; own-readback parents use inner version 2 with the same seven identity
+fields plus local intent ID and adoption digest. A later applied save may replace
+the kind of proof but never retarget its pinned Message/record identity. Pending,
+retained, quarantined or tombstoned incoming records cannot be overridden by the
+old readback. There is no fabricated inbox entry, cursor promotion, additional
+network write, relaxed native readback comparison or migration-based backfill.
+
+The additive schema keeps all entity/property identities. A synthetic database
+created with the previous 13-property intent schema upgrades with its four
+intent states and original values intact; the new property is null on every
+old row. Its new ID is `14:6652370228940045642` on the unchanged intent entity
+`33:7403419454425897175`. No personal database was used for this migration test.
+
+The initial applied-echo test exposed a fixture mismatch, not an established
+production defect. Generic `upsertRecordMap` retains the prior protected ID
+reference; the semantic gateway instead binds the map to the newly applied
+source. The fixture now models projection, and a separate real-gateway test
+proves that transition. Existing source-reference checks were not weakened.
+
+**TEST-PROVEN, not LIVE-PROVEN:** 464 focused tests passed across admission,
+journal/runtime, migration, dependency validation, ObjectBox storage/projection,
+protected transport contracts, production composition and safe errors. Evidence:
+`evidence/windows-replay-20260906/own-parent-regression-suite-20260907.log` in the
+project root. Scoped analysis reports no issues in
+`own-parent-regression-analyzer-20260907-r2.log` in the same directory. These
+tests use synthetic account/message fixtures; they do not
+prove an Apple reaction save or recipient display. Next live qualification remains
+one controlled reaction add/remove with exact readback and independent visibility,
+once a permitted runtime is available. Group creation and mutation are still
+unqualified; the user has supplied a second dedicated group-test recipient,
+whose number is deliberately not stored in this public document.
+
 ### New Windows replay is host-blocked, not authentication-failed
 
 The reaction-integrated `454a2c08e` Windows build completed and its DLL has a

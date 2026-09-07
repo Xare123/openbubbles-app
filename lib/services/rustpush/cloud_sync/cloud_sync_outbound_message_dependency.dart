@@ -10,16 +10,22 @@ import 'cloud_sync_reaction_send_identity.dart';
 import 'cloud_sync_record_maps.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 
+/// The account-bound journal supplies this inside the caller's transaction.
+/// Null means there is no qualifying local readback; restored proof is required.
+typedef CloudSyncConfirmedLocalParentReader =
+    List<Object>? Function(Message parent);
+
 /// Captures every durable local dependency needed by an outbound Message.
 ///
 /// Plain-text sends retain the exact v1 Chat binding. Reactions additionally
-/// pin the restored parent Message and its current CloudKit source. The v2
+/// pin a restored parent or a journal-owned parent with exact readback. The v2
 /// wrapper contains digests and local row IDs only, never a GUID, body, route,
 /// or Apple record identifier.
 String requireCloudSyncLocalSendDependencies({
   required Store store,
   required CloudSyncScope messageScope,
   required Message message,
+  CloudSyncConfirmedLocalParentReader? readConfirmedLocalParent,
 }) {
   final hasAssociation =
       message.associatedMessageGuid != null ||
@@ -55,11 +61,13 @@ String requireCloudSyncLocalSendDependencies({
     store.box<Message>().query(Message_.guid.equals(parentGuid)),
   );
   if (!_validParent(parent, chat.id)) reject();
-  final parentBinding = _requireRestoredParent(
-    store: store,
-    messageScope: messageScope,
-    parent: parent!,
-  );
+  final parentBinding =
+      readConfirmedLocalParent?.call(parent!) ??
+      _requireRestoredParent(
+        store: store,
+        messageScope: messageScope,
+        parent: parent!,
+      );
   return jsonEncode([2, chatBinding, parentBinding]);
 }
 
@@ -72,6 +80,7 @@ void requireCloudSyncAdoptedLocalSendDependencies({
   required CloudSyncScope messageScope,
   required String? binding,
   int? expectedChatId,
+  CloudSyncConfirmedLocalParentReader? readConfirmedLocalParent,
 }) {
   Never reject() => throw CloudSyncFailure(
     category: CloudFailureCategory.dependency,
@@ -122,8 +131,9 @@ void requireCloudSyncAdoptedLocalSendDependencies({
     reject();
   }
   final parentBinding = decoded[2] as List;
-  if (parentBinding.length != 8 ||
-      parentBinding[0] != 1 ||
+  final isRestored = parentBinding.length == 8 && parentBinding[0] == 1;
+  final isLocalReadback = parentBinding.length == 10 && parentBinding[0] == 2;
+  if ((!isRestored && !isLocalReadback) ||
       parentBinding[1] is! String ||
       parentBinding[2] is! int ||
       parentBinding[3] is! int ||
@@ -133,9 +143,26 @@ void requireCloudSyncAdoptedLocalSendDependencies({
       parentBinding[7] is! String) {
     reject();
   }
+  if (isLocalReadback &&
+      (parentBinding[8] is! int ||
+          (parentBinding[8] as int) <= 0 ||
+          parentBinding[9] is! String ||
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(parentBinding[9] as String))) {
+    reject();
+  }
   final parentId = parentBinding[3] as int;
   final parent = parentId > 0 ? store.box<Message>().get(parentId) : null;
   if (!_validParent(parent, chatDecoded[3] as int)) reject();
+  if (isLocalReadback) {
+    final localProof = readConfirmedLocalParent?.call(parent!);
+    if (localProof != null) {
+      if (jsonEncode(localProof) != jsonEncode(parentBinding)) reject();
+      return;
+    }
+    // Once an inbox record exists, the earlier readback must not override it.
+    // A fully applied save of the same pinned identity can replace the proof;
+    // pending updates, tombstones and retargeting still fail below.
+  }
   final current = _requireRestoredParent(
     store: store,
     messageScope: messageScope,
@@ -146,7 +173,12 @@ void requireCloudSyncAdoptedLocalSendDependencies({
     expectedLogicalKeyHash: parentBinding[6] as String,
     expectedServerRecordIdHash: parentBinding[7] as String,
   );
-  if (jsonEncode(current) != jsonEncode(parentBinding)) reject();
+  if (isRestored
+      ? jsonEncode(current) != jsonEncode(parentBinding)
+      : jsonEncode(current.sublist(1)) !=
+            jsonEncode(parentBinding.sublist(1, 8))) {
+    reject();
+  }
 }
 
 List<Object> _requireRestoredParent({

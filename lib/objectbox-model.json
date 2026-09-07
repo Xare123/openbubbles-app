@@ -2507,7 +2507,7 @@
     },
     {
       "id": "33:7403419454425897175",
-      "lastPropertyId": "13:3888648459471300555",
+      "lastPropertyId": "14:6652370228940045642",
       "name": "CloudSyncLocalSendIntentEntity",
       "properties": [
         {
@@ -2580,6 +2580,11 @@
         {
           "id": "13:3888648459471300555",
           "name": "admittedChatBinding",
+          "type": 9
+        },
+        {
+          "id": "14:6652370228940045642",
+          "name": "confirmedReadbackBindingSha256",
           "type": 9
         }
       ],

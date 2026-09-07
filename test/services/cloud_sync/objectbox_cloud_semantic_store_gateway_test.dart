@@ -262,6 +262,61 @@ void main() {
   );
 
   test(
+    'applied echo replaces outbound local references without changing remote identity',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final maps = objectBox.box<CloudRecordMapEntity>();
+      final id = maps.put(
+        CloudRecordMapEntity(
+          mapKey: _recordMapKey(scope, _digestValue('L')),
+          scopeKey: _scopeKey(scope),
+          accountFingerprint: scope.accountFingerprint,
+          zone: scope.zone,
+          logicalEntityKeyHash: _digestValue('L'),
+          serverRecordIdHash: entry.change.recordIdHash,
+          generation: entry.generation,
+          encryptedServerRecordId: _protectedReference('O'),
+          encryptedRawRecordRef: null,
+          etagHash: _digestValue('O'),
+          updatedAtMs: now
+              .subtract(const Duration(seconds: 1))
+              .millisecondsSinceEpoch,
+        ),
+      );
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          _applyMessage(transaction);
+          transaction.markChangeApplied(entry.change.changeId);
+        },
+      );
+      expect(maps.count(), 1);
+      final applied = maps.get(id)!;
+      expect(applied.serverRecordIdHash, entry.change.recordIdHash);
+      expect(
+        applied.encryptedServerRecordId,
+        entry.change.encryptedServerRecordId,
+      );
+      expect(
+        applied.encryptedRawRecordRef,
+        entry.change.encryptedPayloadReference,
+      );
+      expect(applied.etagHash, entry.change.etagHash);
+      expect(
+        objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
+        CloudInboxStatus.applied.index,
+      );
+    },
+  );
+
+  test(
     'real adapter rolls back when a dependency generation advances',
     () async {
       final fixture = _prepareCrossZoneAttachmentFixture(objectBox, now);

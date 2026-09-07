@@ -35,6 +35,7 @@ Future<CloudInboxChangeEntity> seedSyntheticRestoredChatAppliedSource({
   required ObjectBoxCloudSyncStore store,
   required CloudSyncScope chatScope,
   required DateTime now,
+  String? recordIdHash,
 }) async {
   final checkpoint = await store.readCheckpoint(chatScope);
   final fence = (await store.tryAcquireCoordinatorLease(
@@ -49,7 +50,7 @@ Future<CloudInboxChangeEntity> seedSyntheticRestoredChatAppliedSource({
       domain: 'OpenBubbles Cloud Sync V2 synthetic change identity\u0000',
       value: '$sequence',
     ),
-    recordIdHash: syntheticRestoredChatServerRecordIdHash,
+    recordIdHash: recordIdHash ?? syntheticRestoredChatServerRecordIdHash,
     etagHash: syntheticRestoredChatEtagHash,
     type: CloudChangeType.save,
     encryptedServerRecordId: 'obcs2.ref.${'R' * 43}',

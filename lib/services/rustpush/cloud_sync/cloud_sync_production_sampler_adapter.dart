@@ -955,7 +955,8 @@ final class CloudSyncProductionLocalSendAdapter {
           target, operation: operation, proof: proof,
           clearDurableAdoptionMarker: () =>
               durable.clearConfirmedProtectedOutboundLeaseReference(
-                expectedOperation: operation),
+                expectedOperation: operation,
+                recordVerifiedLocalSendReadback: true),
         );
         },
       );
@@ -1272,6 +1273,22 @@ final class CloudSyncProductionOutboundCanaryAdapter {
         );
 
         if (kind == CloudSyncOutboundCanarySessionKind.confirmedReplay) {
+          // Restart/manual replay must preserve the same local-origin proof
+          // as the direct worker. Do not release an owned receipt via an
+          // unbound generic store and permanently lose its readback evidence.
+          final owner = authority.read(writerScope);
+          if (owner == null || owner.owner != CloudKitWriterOwner.v2) {
+            throw StateError('cloud_sync_local_send_owner_required');
+          }
+          final replayStore = ObjectBoxCloudSyncStore(
+            store: Database.store,
+            protector: protector,
+            localSendJournal: CloudSyncLocalSendJournal(
+              store: Database.store,
+              authority: authority,
+              authoritySnapshot: owner,
+            ),
+          );
           return _ProductionConfirmedReplayCanarySession(
             scope: scope,
             readOutbox: () => durableStore.readOutboxEntries(scope),
@@ -1284,9 +1301,10 @@ final class CloudSyncProductionOutboundCanaryAdapter {
                   scope,
                   operation: operation,
                   proof: proof,
-                  clearDurableAdoptionMarker: () => durableStore
+                  clearDurableAdoptionMarker: () => replayStore
                       .clearConfirmedProtectedOutboundLeaseReference(
                         expectedOperation: operation,
+                        recordVerifiedLocalSendReadback: true,
                       ),
                 ),
             quiesce: transport.quiesceNativeOperations,

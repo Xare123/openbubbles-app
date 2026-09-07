@@ -46,6 +46,11 @@ class CloudSyncLocalSendIntentEntity {
   /// Null on pre-binding records. Missing proof never authorizes dispatch.
   String? admittedChatBinding;
 
+  /// Exact remote readback completed for this immutable adopted binding.
+  /// Null on older rows and on save-only confirmations. Written only by the
+  /// verified replay callback, atomically with durable receipt release.
+  String? confirmedReadbackBindingSha256;
+
   int createdAtMs;
   int updatedAtMs;
 
@@ -61,6 +66,7 @@ class CloudSyncLocalSendIntentEntity {
     this.admittedOperationId,
     this.admittedBindingSha256,
     this.admittedChatBinding,
+    this.confirmedReadbackBindingSha256,
     required this.createdAtMs,
     required this.updatedAtMs,
   });
