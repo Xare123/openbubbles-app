@@ -2070,8 +2070,12 @@ pub async fn cloud_sync_prepare_message_create(
                 return cloud_sync_prepare_failure(map_cloud_sync_outbound_failure(failure))
             }
         };
+        let entity_kind = match crate::cloud_sync_outbound::outbound_entity_kind(&message) {
+            Ok(kind) => kind,
+            Err(failure) => return cloud_sync_prepare_failure(map_cloud_sync_outbound_failure(failure)),
+        };
         let logical_hash = match hasher.canonical_entity_key_hash(
-            crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Message,
+            entity_kind,
             &message.guid,
         ) {
             Ok(hash) => hash,
@@ -3196,8 +3200,12 @@ pub async fn cloud_sync_reconcile_message_create(
                 return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::ProtectedStorage)
             }
         };
+    let entity_kind = match crate::cloud_sync_outbound::outbound_entity_kind(&expected_message) {
+        Ok(kind) => kind,
+        Err(failure) => return cloud_sync_reconcile_failure(map_cloud_sync_outbound_failure(failure)),
+    };
     let logical_hash = match hasher.canonical_entity_key_hash(
-        crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Message,
+        entity_kind,
         &expected_message.guid,
     ) {
         Ok(hash) => hash,

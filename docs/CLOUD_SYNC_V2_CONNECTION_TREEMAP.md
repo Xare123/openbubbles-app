@@ -56,7 +56,7 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | Message history and conversation projection | User has observed restored readable chats; sustained incremental/restart behavior must be qualified on the release candidate. |
 | Photos, video, GIF and documents | Photos and video playback are user-confirmed. Installed `dcef0e9bf` automatically fetched three gallery attachments after navigation/scrolling without card taps. One HEIC still fails exact-size validation. GIF support is explicitly deferred; attachments are preserved, not deleted or hidden. Each media surface/type still needs user-facing validation, not metadata-only success. |
 | Chat-first ordinary text writing | Windows September 7 qualification proves two real IDS sends: one new conversation and one message in that exact existing conversation. One Chat and two Messages have confirmed saves and exact readbacks; restart reuses the journal without another send or save. The preserved pre-send cursor returns no self-echo while a fresh newest-first page contains the second Message. Independent-reader visibility and ordinary incremental convergence remain unproven. See the controlled existing-conversation qualification below. This is not yet installed on Pixel. |
-| Reaction, edit/undo and attachment writing | Not production-ready: native staging intentionally admits only plain iMessage text. Explicit standard-six reaction journal capture is integrated locally and tested; ordinary plaintext capture is unchanged. Reaction encoding, exact parent mapping, native Reaction-kind staging/readback and cross-device proof remain. Edits/undo and attachments still require their own mutation/recovery contracts, not gate removal alone. |
+| Reaction, edit/undo and attachment writing | Not production-ready. Standard-six reaction journal capture, encoding, parent binding and native Reaction-kind staging/preparation/reconciliation are integrated locally. Focused offline tests pass; live Apple save/readback, replay and independent-reader reaction proof remain. Ordinary plaintext capture and existing envelope versions are preserved. Edits/undo and attachments still require their own mutation/recovery contracts, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
 | Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
 | Ongoing sync and account lifecycle | Missing automatic writer setup is repaired and installed in `463a19881`; fresh logs and a stable database now prove V2 ownership and worker readiness. Automatic save/readback remains unverified. Native send callbacks have a pre-journal process-death gap. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence remain release gates. |
@@ -141,22 +141,60 @@ info notices remain. Evidence under project-root
 `reaction-journal-analyzer-20260907.log`. No reaction was sent to a real recipient;
 this source is not yet a device-qualified build.
 
-The proposed minimal native contract for the standard six add/remove types
-is currently **test-only**. It reuses the canonical parent parser, preserves
-part absence, rejects malformed/partial ranges and unrelated payload fields,
-and keeps type-2 staging disabled. It is not Apple acceptance evidence.
-The native suite passes 319 tests, including eight new reaction-contract
-cases. Compile/test took approximately 31/2 seconds on the cached Windows
-toolchain. The first integration run failed on a duplicate import introduced
-by the parent; the corrected run passed. Evidence:
-`evidence/windows-native-tests/20260907-084617-eac61992/` (project root).
+The minimal native contract for the standard six add/remove types is now
+integrated with the existing protected envelope. It reuses the canonical parent
+parser, preserves part absence, rejects malformed/partial ranges and unrelated
+payload fields, and uses Reaction keys in staging, preparation and reconciliation.
+The record-name and initial-create operation-ID algorithms are unchanged.
+The native suite passes **320 tests**, including reaction envelope roundtrips
+across all twelve add/remove types and bare, part-zero and `bp:` targets.
+Cached compilation took 33.31 seconds and test execution took 2.24 seconds.
+Evidence: `evidence/windows-native-tests/20260907-100129-19d15c09/` (project root).
+This is offline protocol validation, not Apple acceptance evidence.
 
 The Dart reaction identity checks the own GUID, bare parent, nullable part,
 standard-six kind, bound local Chat and exact native sender/recipient multiset.
 Explicit journal integration retains the existing plaintext hashes and mutation
-identities. Native reaction admission remains disabled. The earlier foundation
-checkpoint passed 1,942 tests; the newer integration run above supersedes that
-count. Neither run proves Apple accepts reaction writes.
+identities. Reaction admission now requires the local-send journal; generic
+caller-supplied type-2 records are rejected before staging. A v2 dependency
+wrapper pins the original v1 Chat proof plus the parent Message row, current
+generation, semantic ownership and server record. Its current snapshot, map
+and latest applied inbox revision must agree. An applied same-record ETag
+update is allowed; missing/deleted parents, retained updates, tombstones,
+foreign ownership and record retargeting are blocked. No GUID or content is
+persisted in the wrapper. Plaintext keeps the exact v1 Chat binding.
+
+All five caller boundaries now use the shared dependency validator: before
+staging, during adoption, when recovering a mutable source, and before leasing
+or submitting a queued operation. A generic store without the account-bound
+local-send journal may recover an envelope, but cannot lease a journal-owned
+operation merely because the account's projection is fully drained.
+
+The focused integration run passes **150 tests**. It includes a real ObjectBox
+reaction adoption/restart, no re-encoding on replay, parent removal during the
+asynchronous staging gap, parent removal before leasing, and a missing-journal
+lease rejection. The first run caught a changed plaintext error code; legacy
+validation now retains the old code. Parent-added tests also caught two fixture
+compile mistakes, then exposed the generic-store dependency bypass described
+above. All failed runs remain in evidence; no real reaction was sent.
+Evidence under `evidence/windows-replay-20260906/`:
+`reaction-upload-integration-20260907.log`,
+`reaction-upload-integrated-parent-20260907.log`,
+`reaction-upload-integrated-parent-fixed-20260907.log`, and the passing
+`reaction-upload-journal-fence-20260907.log`.
+
+The broader regression suite then passed **2,008 tests in 91 seconds**, including
+all CloudKit tests and the same reaction, optional-lookup, handle and inspector
+regressions as the preceding checkpoint. Evidence:
+`evidence/windows-replay-20260906/combined-regression-20260907-reaction-upload.log`.
+The final scoped analyzer reports **no issues** after removing two unnecessary
+test imports. The encoder suite also passed **45 tests against the existing
+signed Windows native bridge**, exercising the real protobuf codec rather than
+the test mock. This does not exercise Apple's save endpoint or the new staging
+gate; the separate native suite above covers the latter offline. Evidence:
+`reaction-upload-analyzer-clean-20260907.log` and
+`reaction-encoder-native-bridge-20260907.log` in the same evidence folder.
+No APK or live account state changed in this integration checkpoint.
 
 The signed Windows replay of existing request `qualification-20260907-02`
 completed at `2026-09-07T16:09:38Z` after an 81-second build. Its existing claim
@@ -172,7 +210,7 @@ was sent and Alpha was untouched. Evidence under project-root
 - `windows-existing-chat-replay-reviewed-20260907-status.json`
 - `windows-existing-chat-replay-reviewed-20260907-inspection.log`
 
-The end-to-end enabling patch must cover all of these together:
+The reaction qualification checklist remains:
 
 - **Local capture integrated/tested:** carry the original pending reaction `m`
   through `BackendService.sendTapback`; persist it with an immutable intent
@@ -182,14 +220,13 @@ The end-to-end enabling patch must cover all of these together:
 - Revalidate the native wire's complete recipient/sender route, reaction GUID,
   parent GUID, nullable part and add/remove kind. Preserve existing plaintext
   source hashes and already admitted operations.
-- Require the exact parent Message and Chat mappings to be ready before
+- **Integrated and locally tested:** require the exact parent Message and Chat mappings to be ready before
   admission. Parent GUID determines its logical key; part selects a target
   within that parent and does not change the parent's key. Parsing a GUID or
   finding a local row is not proof of a ready CloudKit parent mapping.
-- Use canonical **Reaction** keys consistently in native staging,
+- **Integrated and locally tested:** use canonical **Reaction** keys consistently in native staging,
   `cloud_sync_prepare_message_create` and `cloud_sync_reconcile_message_create`.
-  The current code
-  hardcodes **Message** in all three places. The generic initial-create
+  One validated-kind function now serves all three places. The generic initial-create
   operation identity can remain shared; there is no need to invent another
   mutation-ID system or new message DTO merely to carry reactions.
 - Reuse the existing protected message envelope and strict exact readback,

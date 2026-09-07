@@ -9,7 +9,7 @@ import 'package:crypto/crypto.dart';
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
-import 'cloud_sync_outbound_chat_binding.dart';
+import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_reaction_send_identity.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloudkit_writer_authority.dart';
@@ -1238,7 +1238,7 @@ final class CloudSyncLocalSendJournal {
         operation.createdAt.millisecondsSinceEpoch != intent.createdAtMs) {
       throw StateError('cloud_sync_local_send_adoption_changed');
     }
-    final chatBinding = requireCloudSyncRestoredDirectChat(
+    final chatBinding = requireCloudSyncLocalSendDependencies(
       store: _store,
       messageScope: operation.scope,
       message: _validatedMessage(intent),
@@ -1460,7 +1460,7 @@ final class CloudSyncLocalSendJournal {
     if (message == null || intent.admittedChatBinding == null) {
       throw StateError('cloud_sync_local_send_source_changed');
     }
-    requireCloudSyncAdoptedChatDependency(
+    requireCloudSyncAdoptedLocalSendDependencies(
       store: _store,
       messageScope: scope,
       binding: intent.admittedChatBinding,

@@ -29,6 +29,11 @@ final class CloudSyncOutboundAdmissionCoordinator {
     required frb_api.CloudMessage message,
     required DateTime createdAt,
   }) => _transport.runOutboundAdmissionExclusive(() async {
+    // Reactions require the durable local-send origin and parent dependency.
+    // A caller-supplied wire record alone cannot prove either.
+    if (message.type == 2) {
+      throw StateError('cloud_sync_reaction_requires_local_send');
+    }
     await _ensureProtectedStoreRecovered();
     return _stageAndAdmit(
       scope,
@@ -78,7 +83,7 @@ final class CloudSyncOutboundAdmissionCoordinator {
           : (encodeMessage ?? _encodeLocalMessage)(local);
       if (candidate != null &&
           (candidate.guid != local!.guid ||
-              candidate.type != 1 ||
+              candidate.type != (local.associatedMessageType == null ? 1 : 2) ||
               candidate.service != 'iMessage' ||
               candidate.sender.isNotEmpty ||
               candidate.chatId != local.chat.target!.guid ||
@@ -121,7 +126,9 @@ final class CloudSyncOutboundAdmissionCoordinator {
   });
 
   static frb_api.CloudMessage _encodeLocalMessage(Message message) =>
-      encodeCloudSyncLocalSendPlainText(message);
+      message.associatedMessageType == null
+      ? encodeCloudSyncLocalSendPlainText(message)
+      : encodeCloudSyncLocalSendReaction(message);
 
   Future<CloudOutboxOperation> _stageAndAdmit(
     CloudSyncScope scope, {

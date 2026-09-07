@@ -16,8 +16,9 @@ use rustpush::cloud_messages::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-#[cfg(test)]
-use crate::cloud_sync_canonical_dto::{parse_associated_parent, CloudCanonicalReactionKind};
+use crate::cloud_sync_canonical_dto::{
+    parse_associated_parent, CloudCanonicalEntityKind, CloudCanonicalReactionKind,
+};
 
 use crate::cloud_sync_native_fetch::{
     cloud_sync_open_protected_outbound_message, cloud_sync_stage_protected_outbound_envelope,
@@ -123,6 +124,7 @@ pub(crate) fn stage_outbound_message(
     container_scoped_user_id: String,
     message: CloudMessage,
 ) -> Result<NativeProtectedOutboundStage, CloudSyncOutboundFailure> {
+    let entity_kind = outbound_entity_kind(&message)?;
     let logical_message_guid = message.guid.clone();
     let record_name =
         deterministic_message_record_name(&logical_message_guid, &container_scoped_user_id)?;
@@ -137,7 +139,7 @@ pub(crate) fn stage_outbound_message(
     .map_err(|_| CloudSyncOutboundFailure::ProtectedStorage)?;
     let logical_entity_key_hash = hasher
         .canonical_entity_key_hash(
-            crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Message,
+            entity_kind,
             &logical_message_guid,
         )
         .map_err(|_| CloudSyncOutboundFailure::MalformedMessage)?
@@ -563,9 +565,26 @@ fn validate_shared_outbound_extension_metadata(
     Ok(())
 }
 
+/// Use the same canonical kind for staging, preparation and reconciliation.
+/// The parent is a Message key; the reaction's own GUID is a Reaction key.
+/// This validates wire shape only, not local origin or parent readiness.
+pub(crate) fn outbound_entity_kind(
+    message: &CloudMessage,
+) -> Result<CloudCanonicalEntityKind, CloudSyncOutboundFailure> {
+    validate_cloud_message(message)?;
+    Ok(if message.r#type == 2 {
+        CloudCanonicalEntityKind::Reaction
+    } else {
+        CloudCanonicalEntityKind::Message
+    })
+}
+
 fn validate_cloud_message(message: &CloudMessage) -> Result<(), CloudSyncOutboundFailure> {
+    if message.r#type == 2 {
+        return validate_candidate_reaction_message(message).map(|_| ());
+    }
     // The first production gate is intentionally one ordinary, outgoing
-    // iMessage text record. Reactions, edits, app balloons, attachments, SMS,
+    // iMessage text record. Edits, app balloons, attachments, SMS,
     // and scheduled messages remain disabled until their own fixtures pass.
     if message.r#type != 1 || message.service != "iMessage" {
         return Err(CloudSyncOutboundFailure::UnsupportedMessage);
@@ -608,23 +627,15 @@ fn validate_cloud_message(message: &CloudMessage) -> Result<(), CloudSyncOutboun
     Ok(())
 }
 
-// Proposed outbound reaction contract, compiled only in tests until the
-// provenance, parent dependency and Reaction-key admission are integrated.
-// The live gate still rejects every type-2 record.
-// Rationale: inbound build_association already yields a canonical Reaction
-// entity for associated types 2000-2006 (add) and 3000-3006 (remove), and
-// parse_associated_parent accepts bare, p: and bp: parent wires. This
-// candidate mirrors that contract for the standard six tapbacks only
-// (indices 0-5; emoji index 6 and sticker index 7 stay explicitly rejected
-// as next coverage). Main wires it into a versioned envelope, Dart
-// confirmation, and admission only after end-to-end review.
-// Reaction kinds reuse the canonical inbound vocabulary
-// (CloudCanonicalReactionKind); no parallel enum is kept here.
+// Outbound wire contract for the standard six tapbacks only (indices 0-5).
+// Emoji and sticker reactions remain unsupported. The existing protected
+// envelope retains the exact parent wire, and all native stages use the
+// canonical Reaction kind. Admission separately proves local submission and
+// the current CloudKit parent dependency; wire validity is not that proof.
 
 // Validated reaction coordinates. parent_part preserves the exact wire:
 // None for a bare GUID (whole-message target) versus Some(0) for an
 // explicit part-zero wire. Never inferred from the range.
-#[cfg(test)]
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct CandidateReactionDescriptor {
     kind: CloudCanonicalReactionKind,
@@ -657,16 +668,14 @@ impl CandidateReactionDescriptor {
     }
 }
 
-#[cfg(test)]
 impl std::fmt::Debug for CandidateReactionDescriptor {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("CandidateReactionDescriptor(redacted)")
     }
 }
 
-// No extra entity-kind surface: the canonical association already owns the
-// Reaction kind mapping, so nothing is added until integration needs it.
-#[cfg(test)]
+// Canonical association owns the Reaction vocabulary. Parent dependency and
+// durable local-origin proof are enforced by admission, not inferred here.
 pub(crate) fn validate_candidate_reaction_message(
     message: &CloudMessage,
 ) -> Result<CandidateReactionDescriptor, CloudSyncOutboundFailure> {
@@ -1377,18 +1386,37 @@ mod tests {
     }
 
     #[test]
-    fn live_gate_still_rejects_reactions_without_changing_plaintext_path() {
-        // The candidate is a proposed minimal encoding, not an Apple
-        // acceptance claim: the live gate admits nothing new.
-        assert_eq!(
-            encode_outbound_message(candidate_fixture(2000, "p:0/parent-guid"), "SERVER-RECORD")
-                .unwrap_err(),
-            CloudSyncOutboundFailure::UnsupportedMessage,
-        );
-        // Serialization stability rests on the untouched encode/decode bodies
-        // plus the existing plaintext roundtrip tests above, not on any
-        // self-comparison here.
-        assert!(encode_outbound_message(fixture(), "SERVER-RECORD").is_ok());
+    fn reaction_envelope_roundtrip_preserves_kind_and_target() {
+        for atype in (2000..=2005).chain(3000..=3005) {
+            for parent in ["parent-guid", "p:0/parent-guid", "bp:2/parent-guid"] {
+                let mut expected = candidate_fixture(atype, parent);
+                expected.msg_proto.0.associated_message_range_location = None;
+                expected.msg_proto.0.associated_message_range_length = None;
+                let bytes = encode_outbound_message(expected.clone(), "SERVER-RECORD").unwrap();
+                let (actual, record) = decode_outbound_envelope(&bytes).unwrap();
+                assert_eq!(record, "SERVER-RECORD");
+                assert_eq!(outbound_entity_kind(&actual).unwrap(), CloudCanonicalEntityKind::Reaction);
+                assert!(message_readback_differences(&expected, &actual).is_empty());
+                let descriptor = validate_candidate_reaction_message(&actual).unwrap();
+                assert_eq!(descriptor.is_remove(), atype >= 3000);
+                assert_eq!(descriptor.parent_guid(), "parent-guid");
+                assert_eq!(descriptor.parent_part(), if parent.starts_with("p:") {
+                    Some(0)
+                } else if parent.starts_with("bp:") {
+                    Some(2)
+                } else { None });
+            }
+        }
+        assert_eq!(outbound_entity_kind(&fixture()).unwrap(), CloudCanonicalEntityKind::Message);
+    }
+
+    #[test]
+    fn malformed_reaction_never_gets_a_valid_outbound_kind() {
+        for atype in [1999, 2006, 2007, 2999, 3006, 3007] {
+            let message = candidate_fixture(atype, "parent-guid");
+            assert_eq!(outbound_entity_kind(&message).unwrap_err(), CloudSyncOutboundFailure::UnsupportedMessage);
+            assert!(encode_outbound_message(message, "SERVER-RECORD").is_err());
+        }
     }
 
     #[test]

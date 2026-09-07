@@ -2311,6 +2311,8 @@ final class _LocalCloudMessage implements frb_api.CloudMessage {
 
 final class _FakeCloudMessage implements frb_api.CloudMessage {
   @override
+  int get type => 1;
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 

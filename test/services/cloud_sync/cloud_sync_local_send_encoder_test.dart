@@ -97,6 +97,102 @@ void main() {
       );
     });
   }
+  group('reaction encoding', () {
+    const order = ['love', 'like', 'dislike', 'laugh', 'emphasize', 'question'];
+    for (var i = 0; i < order.length; i++) {
+      for (final part in <int?>[null, 0]) {
+        for (final remove in [false, true]) {
+          final base = order[i];
+          final rowType = remove ? '-$base' : base;
+          test('roundtrip $rowType part=${part ?? 'null'}', () {
+            final message = _reactionMessage(type: rowType, part: part);
+            final chat = message.chat.target!;
+            final bodies = message.attributedBody;
+            final source = CloudSyncLocalSendIdentity.captureReaction(
+              message,
+              chat,
+              message.guid!,
+            )!;
+            final encoded = encodeCloudSyncLocalSendReaction(message);
+            final proto = api.decodeMessageproto(wrapped: encoded.msgProto);
+            expect(proto.associatedMessageType, (remove ? 3000 : 2000) + i);
+            expect(
+              proto.associatedMessageGuid,
+              part == null
+                  ? 'C9D4E5F6-A7B8-4C9D-8E0F-1A2B3C4D5E6F'
+                  : 'p:$part/C9D4E5F6-A7B8-4C9D-8E0F-1A2B3C4D5E6F',
+            );
+            expect(proto.text, isNull);
+            expect(proto.attributedBody, isNull);
+            expect(proto.subject, isNull);
+            expect(proto.payloadData, isNull);
+            expect(proto.associatedMessageRangeLocation, isNull);
+            expect(proto.associatedMessageRangeLength, isNull);
+            expect(encoded.type, 2);
+            expect(encoded.error, 0);
+            expect(encoded.guid, message.guid);
+            expect(encoded.chatId, chat.guid);
+            expect(encoded.destinationCallerId, 'sender@example.com');
+            expect(encoded.service, 'iMessage');
+            expect(
+              encoded.flags.bits(),
+              IS_FINISHED | IS_FROM_ME | IS_SENT | WAS_DATA_DETECTED,
+            );
+            expect(message.associatedMessageType, rowType);
+            expect(message.associatedMessagePart, part);
+            expect(
+              message.associatedMessageGuid,
+              'C9D4E5F6-A7B8-4C9D-8E0F-1A2B3C4D5E6F',
+            );
+            expect(message.text, isNull);
+            expect(identical(message.attributedBody, bodies), isTrue);
+            expect(
+              CloudSyncLocalSendIdentity.captureReaction(
+                message,
+                chat,
+                message.guid!,
+              )!.sourceSha256,
+              source.sourceSha256,
+            );
+          });
+        }
+      }
+    }
+    test('reaction receipts survive encoding', () {
+      final message = _reactionMessage(type: 'like')
+        ..dateRead = DateTime.utc(2026, 9, 7, 1)
+        ..dateDelivered = DateTime.utc(2026, 9, 7);
+      final encoded = encodeCloudSyncLocalSendReaction(message);
+      final proto = api.decodeMessageproto(wrapped: encoded.msgProto);
+      expect(proto.dateRead, greaterThan(proto.dateDelivered!));
+      expect(
+        encoded.flags.bits() & (IS_READ | IS_DELIVERED),
+        IS_READ | IS_DELIVERED,
+      );
+    });
+    test('rejects emoji payload on a standard reaction', () {
+      final message = _reactionMessage(type: 'like')
+        ..associatedMessageEmoji = '😀';
+      expect(() => encodeCloudSyncLocalSendReaction(message), throwsStateError);
+    });
+    test('rejects emoji reaction type', () {
+      final message = _reactionMessage(type: 'emoji');
+      expect(() => encodeCloudSyncLocalSendReaction(message), throwsStateError);
+    });
+    test('rejects sticker reaction type', () {
+      final message = _reactionMessage(type: 'sticker');
+      expect(() => encodeCloudSyncLocalSendReaction(message), throwsStateError);
+    });
+    test('rejects reaction carrying a body', () {
+      final message = _reactionMessage(type: 'love')
+        ..attributedBody = [AttributedBody.raw('x')];
+      expect(() => encodeCloudSyncLocalSendReaction(message), throwsStateError);
+    });
+    test('rejects failed reaction send', () {
+      final message = _reactionMessage(type: 'love')..error = 1;
+      expect(() => encodeCloudSyncLocalSendReaction(message), throwsStateError);
+    });
+  });
   if (nativeLibrary != null) {
     test('real legacy encoder archives plain text; V2 encoder does not', () {
       final message = _message('bridge integration fixture');
@@ -138,6 +234,31 @@ Message _message(String text) {
     isFromMe: true,
     attributedBody: [AttributedBody.raw(text)],
   )..chat.target = chat;
+}
+
+Message _reactionMessage({required String type, int? part}) {
+  final recipient = Handle(
+    address: 'recipient@example.com',
+    service: 'iMessage',
+  );
+  final chat = Chat(
+    guid: 'iMessage;-;recipient@example.com',
+    chatIdentifier: 'recipient@example.com',
+    usingHandle: 'mailto:sender@example.com',
+    style: 45,
+    participants: [recipient],
+  );
+  chat.handles.add(recipient);
+  return Message(
+      guid: 'B1C2D3E4-F5A6-4B7C-9D8E-F0A1B2C3D4E5',
+      dateCreated: DateTime.utc(2026, 9, 6),
+      isFromMe: true,
+      attributedBody: [],
+    )
+    ..chat.target = chat
+    ..associatedMessageGuid = 'C9D4E5F6-A7B8-4C9D-8E0F-1A2B3C4D5E6F'
+    ..associatedMessagePart = part
+    ..associatedMessageType = type;
 }
 
 void _attributes(Message message, Attributes attributes) {

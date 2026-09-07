@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:crypto/crypto.dart';
@@ -45,6 +46,25 @@ void main() {
   tearDown(() async {
     objectBox.close();
     if (directory.existsSync()) await directory.delete(recursive: true);
+  });
+
+  test('rejects unjournaled reaction before staging or recovery', () async {
+    await expectLater(
+      coordinator.admitMessage(
+        testScope(),
+        message: _FakeCloudMessage(type: 2),
+        createdAt: testEpoch,
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'code',
+          'cloud_sync_reaction_requires_local_send',
+        ),
+      ),
+    );
+    expect(timeline, isEmpty);
+    expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
   });
 
   test('persists adoption before committing the exact native lease', () async {
@@ -308,6 +328,46 @@ void main() {
           },
     );
 
+    Future<void> prepareReaction({bool restoreParent = true}) async {
+      final parent = local;
+      if (restoreParent) {
+        await _seedRestoredParent(objectBox, store, scope, parent);
+      }
+      local = Message(
+        guid: 'temp-Rxn12345',
+        stagingGuid: _reactionGuid,
+        associatedMessageGuid: parent.guid,
+        associatedMessagePart: 0,
+        associatedMessageType: 'like',
+        isFromMe: true,
+        dateCreated: testEpoch,
+      )..chat.target = parent.chat.target;
+      final identity = CloudSyncLocalSendIdentity.captureReaction(
+        local,
+        local.chat.target!,
+        _reactionGuid,
+      )!;
+      journal.saveSubmission(
+        identity: identity,
+        newlyGeneratedGuid: true,
+        persistMessage: () => objectBox.box<Message>().put(local),
+        now: testEpoch,
+      );
+      intentId = objectBox
+          .box<CloudSyncLocalSendIntentEntity>()
+          .getAll()
+          .singleWhere((row) => row.localMessageId == local.id)
+          .id;
+      local
+        ..guid = _reactionGuid
+        ..stagingGuid = null;
+      journal.saveConfirmedSubmission(
+        identity: identity,
+        persistMessage: () => objectBox.box<Message>().put(local),
+        now: testEpoch,
+      );
+    }
+
     setUp(() async {
       await seedCompleteAccount();
       bindJournal();
@@ -372,6 +432,148 @@ void main() {
         appliedSource: restoredSource,
         now: testEpoch,
       );
+    });
+
+    test('local-only reaction parent blocks staging', () async {
+      await prepareReaction(restoreParent: false);
+      await expectLater(
+        admit(encoder: (message) => _LocalCloudMessage(message, type: 2)),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (error) => error.safeCode,
+            'code',
+            'cloud_sync_local_send_parent_not_ready',
+          ),
+        ),
+      );
+      expect(timeline, ['recover']);
+      expect(intent().state, 1);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+    });
+
+    test(
+      'reaction adopts once and rechecks pinned parent after restart',
+      () async {
+        await prepareReaction();
+        transport.stages.add(_stage('a', 'P', 'L', 'S'));
+        final first = await admit(
+          encoder: (message) {
+            encodes++;
+            return _LocalCloudMessage(message, type: 2);
+          },
+        );
+        expect(jsonDecode(intent().admittedChatBinding!)[0], 2);
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        store = ObjectBoxCloudSyncStore(
+          store: objectBox,
+          protector: _Protector(),
+          clock: () => testEpoch,
+        );
+        bindJournal();
+        coordinator = CloudSyncOutboundAdmissionCoordinator(
+          store: store,
+          transport: transport,
+          ensureProtectedStoreRecovered: () async => timeline.add('recover'),
+        );
+        final replay = await admit(
+          encoder: (_) => throw StateError('no re-encoding'),
+        );
+        expect(replay.operationId, first.operationId);
+        expect(encodes, 1);
+        expect(transport.committed, hasLength(1));
+        await expectLater(
+          store.leaseEligibleOutbox(
+            scope,
+            now: testEpoch,
+            limit: 1,
+            leaseId: 'missing-reaction-journal',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save},
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'code',
+              'cloud_sync_local_send_journal_required',
+            ),
+          ),
+        );
+        store = ObjectBoxCloudSyncStore(
+          store: objectBox,
+          protector: _Protector(),
+          clock: () => testEpoch,
+          localSendJournal: journal,
+        );
+        // No mutable source is needed to recover the envelope, but its parent
+        // must still exist when the recovered operation is actually leased.
+        final parent = objectBox.box<Message>().getAll().singleWhere(
+          (row) => row.guid == _localGuid,
+        );
+        objectBox.box<Message>().put(parent..dateDeleted = testEpoch);
+        await expectLater(
+          store.leaseEligibleOutbox(
+            scope,
+            now: testEpoch,
+            limit: 1,
+            leaseId: 'reaction-parent-recheck',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save},
+          ),
+          throwsA(
+            isA<CloudSyncFailure>().having(
+              (error) => error.safeCode,
+              'code',
+              'cloud_sync_local_send_parent_not_ready',
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'reaction parent is rechecked after asynchronous native staging',
+      () async {
+        await prepareReaction();
+        final stage = _stage('a', 'P', 'L', 'S');
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        transport
+          ..stages.add(stage)
+          ..stageEntered = entered
+          ..releaseStage = release;
+        final pending = admit(
+          encoder: (message) => _LocalCloudMessage(message, type: 2),
+        );
+        final rejected = expectLater(pending, throwsA(isA<CloudSyncFailure>()));
+        await entered.future;
+        final parent = objectBox.box<Message>().getAll().singleWhere(
+          (row) => row.guid == _localGuid,
+        );
+        objectBox.box<Message>().put(parent..dateDeleted = testEpoch);
+        release.complete();
+        await rejected;
+        expect(transport.rolledBack, [stage.leaseReference]);
+        expect(transport.committed, isEmpty);
+        expect(intent().state, 1);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      },
+    );
+
+    test('encoder cannot turn a journaled text into a reaction', () async {
+      await expectLater(
+        admit(encoder: (message) => _LocalCloudMessage(message, type: 2)),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'code',
+            'cloud_sync_local_send_encoded_identity_changed',
+          ),
+        ),
+      );
+      expect(timeline, ['recover']);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(intent().state, 1);
     });
 
     for (final debt in const [
@@ -889,10 +1091,74 @@ void main() {
 }
 
 const _localGuid = '11111111-1111-4111-8111-111111111111';
+const _reactionGuid = '22222222-2222-4222-8222-222222222222';
+
+Future<void> _seedRestoredParent(
+  Store db,
+  ObjectBoxCloudSyncStore store,
+  CloudSyncScope scope,
+  Message parent,
+) async {
+  // Reuse the applied-source journal fixture. Source records are scoped;
+  // the separate snapshot below proves this one's Message kind and GUID.
+  final source = await seedSyntheticRestoredChatAppliedSource(
+    objectBox: db,
+    store: store,
+    chatScope: scope,
+    now: testEpoch,
+  );
+  final scopeKey = cloudSyncPersistentScopeKey(scope);
+  final generationKey =
+      'semantic-generation4:${sha256.convert(utf8.encode('$scopeKey\u001f${source.generation}'))}';
+  final logical = 'M' * 43;
+  await store.upsertRecordMap(
+    CloudRecordMapEntry(
+      scope: scope,
+      logicalEntityKeyHash: logical,
+      serverRecordIdHash: source.serverRecordIdHash,
+      encryptedServerRecordId: source.encryptedServerRecordId!,
+      encryptedRawRecordReference: source.encryptedPayloadRef,
+      etagHash: source.etagHash,
+      updatedAt: testEpoch,
+    ),
+    generation: source.generation,
+  );
+  db.box<CloudSemanticSnapshotEntity>().put(
+    CloudSemanticSnapshotEntity(
+      snapshotKey: 'semantic-snapshot4:$generationKey:message:$logical',
+      scopeGenerationKey: generationKey,
+      scopeKey: scopeKey,
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: scope.zone,
+      streamKind: scope.streamKind.name,
+      schemaVersion: scope.schemaVersion,
+      generation: source.generation,
+      entityKind: CloudEntityKind.message.name,
+      logicalEntityKeyHash: logical,
+      canonicalGuidHash: CloudCanonicalIdentityDigest.forCanonicalGuid(
+        scope: scope,
+        generation: source.generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: logical,
+        canonicalGuid: parent.guid!,
+      ),
+      canonicalGuidLookupHash:
+          CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+            scope: scope,
+            generation: source.generation,
+            canonicalGuid: parent.guid!,
+          ),
+      etagHash: source.etagHash,
+      updatedAtMs: testEpoch.millisecondsSinceEpoch,
+    ),
+  );
+}
 
 // Tests exercise persistence and crash ordering, not the native protobuf codec.
 final class _LocalCloudMessage implements frb_api.CloudMessage {
-  _LocalCloudMessage(Message message)
+  _LocalCloudMessage(Message message, {this.type = 1})
     : guid = message.guid!,
       chatId = message.chat.target!.guid,
       destinationCallerId = message.chat.target!.usingHandle!
@@ -905,7 +1171,7 @@ final class _LocalCloudMessage implements frb_api.CloudMessage {
   @override
   final String destinationCallerId;
   @override
-  int get type => 1;
+  final int type;
   @override
   String get service => 'iMessage';
   @override
@@ -928,6 +1194,9 @@ CloudSyncProtectedOutboundStageData _stage(
 );
 
 final class _FakeCloudMessage implements frb_api.CloudMessage {
+  _FakeCloudMessage({this.type = 1});
+  @override
+  final int type;
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

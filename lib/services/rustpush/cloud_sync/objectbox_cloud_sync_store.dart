@@ -9,7 +9,7 @@ import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_chat_identity_evidence.dart';
 import 'cloud_sync_models.dart';
-import 'cloud_sync_outbound_chat_binding.dart';
+import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_record_maps.dart';
@@ -1851,7 +1851,7 @@ class ObjectBoxCloudSyncStore
       if (localSendJournal == null) {
         throw StateError('cloud_sync_local_send_adoption_store_mismatch');
       }
-      requireCloudSyncRestoredDirectChat(
+      requireCloudSyncLocalSendDependencies(
         store: _store,
         messageScope: scope,
         message: localSendJournal.validateReadyForCreate(
@@ -1877,7 +1877,7 @@ class ObjectBoxCloudSyncStore
     onAdopt: (operation) =>
         journal.adoptInOutboxTransaction(_store, source, operation),
     localSendSource: source,
-    validateFreshDependency: () => requireCloudSyncRestoredDirectChat(
+    validateFreshDependency: () => requireCloudSyncLocalSendDependencies(
       store: _store,
       messageScope: draft.scope,
       message: journal.validateReadyForCreate(
@@ -3837,12 +3837,28 @@ class ObjectBoxCloudSyncStore
     final source = journal?.readAdoptedCreateSource(_store, operation);
     if (journal == null || source == null) {
       _requireMessagesCloudAccountProjectionReadyLocked(scope);
+      if (journal == null) {
+        // A generic store may read an adopted envelope, but cannot send it
+        // without the account-bound journal that validates its dependencies.
+        final query = _store.box<CloudSyncLocalSendIntentEntity>().query(
+          CloudSyncLocalSendIntentEntity_.admittedOperationId.equals(
+            operation.operationId,
+          ),
+        ).build()..limit = 1;
+        try {
+          if (query.findFirst() != null) {
+            throw StateError('cloud_sync_local_send_journal_required');
+          }
+        } finally {
+          query.close();
+        }
+      }
       return;
     }
     // Validate mapping, original protected envelope and current generation in
     // this same transaction, including after restart and after lease changes.
     readAdoptedLocalSendOperation(scope, journal: journal, source: source);
-    requireCloudSyncAdoptedChatDependency(
+    requireCloudSyncAdoptedLocalSendDependencies(
       store: _store,
       messageScope: scope,
       binding: source.admittedChatBinding,
