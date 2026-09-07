@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_models.dart';
 import 'cloud_sync_persistent_keys.dart';
+import 'cloud_sync_record_maps.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 
 /// Capture the exact restored-chat dependency for a fresh direct iMessage create.
@@ -27,11 +28,14 @@ String requireCloudSyncRestoredDirectChat({
 /// Revalidate an admitted dependency without consulting the mutable Message.
 /// Used in the same transaction as leasing/submission, including after restart.
 /// ETags are deliberately not frozen: a fully projected update of the same
-/// remote chat is valid, while a remap, deletion or stale generation is not.
+/// remote chat is valid, while an owner change, deletion or stale generation
+/// is not. A newer canonical source never retargets the pinned server record.
+/// Journal callers also supply the Message's current Chat row ID.
 void requireCloudSyncAdoptedChatDependency({
   required Store store,
   required CloudSyncScope messageScope,
   required String? binding,
+  int? expectedChatId,
 }) {
   Never reject() => throw CloudSyncFailure(
     category: CloudFailureCategory.dependency,
@@ -48,13 +52,17 @@ void requireCloudSyncAdoptedChatDependency({
       decoded.length != 9 ||
       decoded[0] != 1 ||
       decoded[3] is! int ||
-      (decoded[3] as int) <= 0) {
+      (decoded[3] as int) <= 0 ||
+      (expectedChatId != null && decoded[3] != expectedChatId) ||
+      decoded[7] is! String ||
+      !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(decoded[7] as String)) {
     reject();
   }
   if (_requireRestoredChatById(
         store: store,
         messageScope: messageScope,
         chatId: decoded[3] as int,
+        serverRecordIdHash: decoded[7] as String,
       ) !=
       binding) {
     reject();
@@ -65,6 +73,7 @@ String _requireRestoredChatById({
   required Store store,
   required CloudSyncScope messageScope,
   required int chatId,
+  String? serverRecordIdHash,
 }) {
   Never reject() => throw CloudSyncFailure(
     category: CloudFailureCategory.dependency,
@@ -175,24 +184,36 @@ String _requireRestoredChatById({
     reject();
   }
 
-  final mapKey =
-      'record-map:${_digest('${scope.storageKey}\u001frecord-map\u001f${snapshot.logicalEntityKeyHash}')}';
-  final mapping = _unique(
-    store.box<CloudRecordMapEntity>().query(
-      CloudRecordMapEntity_.mapKey.equals(mapKey),
-    ),
+  final canonicalMapping = cloudSyncFindRecordMap(
+    store: store,
+    scope: scope,
+    generation: generation,
+    logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
   );
+  if (canonicalMapping == null) reject();
+  final mapping = serverRecordIdHash == null
+      ? canonicalMapping
+      : cloudSyncFindRecordMap(
+          store: store,
+          scope: scope,
+          generation: generation,
+          logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+          serverRecordIdHash: serverRecordIdHash,
+        );
   if (mapping == null ||
       mapping.scopeKey != scopeKey ||
       mapping.accountFingerprint != scope.accountFingerprint ||
       mapping.zone != scope.zone ||
       mapping.generation != generation ||
       mapping.logicalEntityKeyHash != snapshot.logicalEntityKeyHash ||
+      mapping.encryptedRawRecordRef == null ||
       !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(mapping.serverRecordIdHash)) {
     reject();
   }
   // A once-valid snapshot must not mask a later deletion or retained update
   // for this exact remote chat. Unrelated retained history is not a dependency.
+  // Only the current canonical source shares the snapshot's ETag. A pinned
+  // member must instead prove its own latest applied revision in the inbox.
   final latestQuery =
       (store.box<CloudInboxChangeEntity>().query(
             CloudInboxChangeEntity_.scopeKey
@@ -218,7 +239,10 @@ String _requireRestoredChatById({
         latest.isTombstone ||
         latest.changeType != CloudChangeType.save.name ||
         latest.etagHash != mapping.etagHash ||
-        latest.etagHash != snapshot.etagHash) {
+        latest.encryptedServerRecordId != mapping.encryptedServerRecordId ||
+        latest.encryptedPayloadRef != mapping.encryptedRawRecordRef ||
+        (mapping.serverRecordIdHash == canonicalMapping.serverRecordIdHash &&
+            latest.etagHash != snapshot.etagHash)) {
       reject();
     }
   } finally {

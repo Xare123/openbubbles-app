@@ -35,6 +35,16 @@ void main() {
     expect(result.snapshot, same(incoming));
   });
 
+  test('same ETag does not conflate different protected record sources', () {
+    final local = message();
+    final incoming = local.copyWith(encryptedRawRecordReference: 'protected:other-source');
+    final merged = policy.merge(local: local, incoming: incoming);
+    expect(merged.action, CloudMergeAction.update);
+    expect(merged.snapshot!.encryptedRawRecordReference, 'protected:other-source');
+    expect(merged.snapshot!.etagHash, local.etagHash);
+    expect(policy.merge(local: merged.snapshot, incoming: incoming).action, CloudMergeAction.noChange);
+  });
+
   test('quarantines conflicting immutable content', () {
     final result = policy.merge(
       local: message(),

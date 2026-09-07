@@ -292,6 +292,7 @@ final class ShadowOnlyCloudSyncStore
     CloudSyncScope scope, {
     required String logicalEntityKeyHash,
     required int generation,
+    String? serverRecordIdHash,
   }) => _blocked();
 
   @override

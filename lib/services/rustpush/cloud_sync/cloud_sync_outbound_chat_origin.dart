@@ -8,6 +8,7 @@ import 'cloud_merge_policy.dart';
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_persistent_keys.dart';
+import 'cloud_sync_record_maps.dart';
 
 /// Transient local identity captured before native staging. Raw identifiers
 /// never enter the outbox: only [binding] is persisted with the operation.
@@ -194,36 +195,18 @@ Chat? resolveCloudSyncOutboundChatOrigin({
       operation.payloadSha256 == null) {
     _reject('cloud_sync_outbound_chat_origin_not_submitted');
   }
-  final mapQuery =
-      store
-          .box<CloudRecordMapEntity>()
-          .query(
-            CloudRecordMapEntity_.scopeKey
-                .equals(cloudSyncPersistentScopeKey(scope))
-                .and(
-                  CloudRecordMapEntity_.logicalEntityKeyHash.equals(
-                    payload.logicalEntityKeyHash,
-                  ),
-                ),
-          )
-          .build()
-        ..limit = 2;
-  try {
-    final maps = mapQuery.find();
-    if (maps.length != 1 ||
-        maps.single.accountFingerprint != scope.accountFingerprint ||
-        maps.single.zone != scope.zone ||
-        maps.single.generation != generation ||
-        maps.single.serverRecordIdHash != operation.serverRecordIdHash ||
-        snapshot.etagHash == null ||
-        maps.single.etagHash != snapshot.etagHash ||
-        snapshot.encryptedRawRecordReference == null ||
-        maps.single.encryptedRawRecordRef !=
-            snapshot.encryptedRawRecordReference) {
-      _reject('cloud_sync_outbound_chat_origin_record_changed');
-    }
-  } finally {
-    mapQuery.close();
+  final mapping = cloudSyncFindRecordMap(
+    store: store, scope: scope, generation: generation,
+    logicalEntityKeyHash: payload.logicalEntityKeyHash,
+    serverRecordIdHash: operation.serverRecordIdHash,
+  );
+  if (mapping == null ||
+      mapping.serverRecordIdHash != operation.serverRecordIdHash ||
+      snapshot.etagHash == null ||
+      mapping.etagHash != snapshot.etagHash ||
+      snapshot.encryptedRawRecordReference == null ||
+      mapping.encryptedRawRecordRef != snapshot.encryptedRawRecordReference) {
+    _reject('cloud_sync_outbound_chat_origin_record_changed');
   }
   return local;
 }

@@ -11,6 +11,7 @@ import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_chat_binding.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloud_sync_persistent_keys.dart';
+import 'cloud_sync_record_maps.dart';
 import 'cloud_sync_protector.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_store.dart';
@@ -1643,8 +1644,10 @@ class ObjectBoxCloudSyncStore
     }
     final row = matches.single;
     final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
-    final mapping = _findRecordMapByKeyLocked(
-      _scopedDigest(scope, 'record-map', row.logicalEntityKeyHash),
+    final mapping = cloudSyncFindRecordMap(
+      store: _store, scope: scope, generation: row.checkpointGeneration,
+      logicalEntityKeyHash: row.logicalEntityKeyHash,
+      serverRecordIdHash: row.serverRecordIdHash,
     );
     if (scope.container != _messagesCloudContainer ||
         scope.database != _messagesCloudDatabase ||
@@ -1916,12 +1919,11 @@ class ObjectBoxCloudSyncStore
       final existingOperation = _findOutboxByOperationIdLocked(operationId);
       if (existingOperation != null) {
         final existing = _outboxFromEntity(draft.scope, existingOperation);
-        final mapKey = _scopedDigest(
-          draft.scope,
-          'record-map',
-          draft.logicalEntityKeyHash,
+        final existingMapping = cloudSyncFindRecordMap(
+          store: _store, scope: draft.scope, generation: checkpoint.generation,
+          logicalEntityKeyHash: draft.logicalEntityKeyHash,
+          serverRecordIdHash: existing.serverRecordIdHash,
         );
-        final existingMapping = _findRecordMapByKeyLocked(mapKey);
         if (existing.scope != draft.scope ||
             existing.logicalEntityKeyHash != draft.logicalEntityKeyHash ||
             existing.action != CloudOutboxAction.save ||
@@ -2120,6 +2122,11 @@ class ObjectBoxCloudSyncStore
         nowMs: nowMs,
       );
       for (final entity in _findRecordMapsForScopeLocked(request.scope)) {
+        if (entity.mapKey == cloudSyncChatRecordMemberKey(
+          request.scope, entity.generation, entity.serverRecordIdHash,
+        )) {
+          continue; // Preserve the historical member's epoch and evidence.
+        }
         entity
           ..generation = 0
           ..updatedAtMs = nowMs;
@@ -2652,12 +2659,21 @@ class ObjectBoxCloudSyncStore
           safeCode: 'server_mapping_changed',
         );
       }
-      final mapKey = _scopedDigest(
-        scope,
-        'record-map',
-        receipt.logicalEntityKeyHash,
+      final mapping = cloudSyncFindRecordMap(
+        store: _store, scope: scope, generation: checkpoint.generation,
+        logicalEntityKeyHash: receipt.logicalEntityKeyHash,
+        serverRecordIdHash: receipt.serverRecordIdHash,
       );
-      final mapping = _findRecordMapByKeyLocked(mapKey);
+      if (mapping == null) {
+        final other = _findRecordMapByKeyLocked(
+          cloudSyncCanonicalRecordMapKey(scope, receipt.logicalEntityKeyHash),
+        );
+        if (other != null && other.generation == checkpoint.generation &&
+            other.serverRecordIdHash != receipt.serverRecordIdHash) {
+          throw CloudSyncFailure(category: CloudFailureCategory.conflict,
+              safeCode: 'server_mapping_changed');
+        }
+      }
       if (mapping == null ||
           mapping.generation != checkpoint.generation ||
           mapping.scopeKey != _scopeKey(scope) ||
@@ -2680,7 +2696,7 @@ class ObjectBoxCloudSyncStore
       mapping
         ..etagHash = receipt.etagHash
         ..updatedAtMs = nowMs;
-      _recordMaps.put(mapping);
+      _putRecordMapAndMirrorLocked(scope, mapping);
       entity
         ..serverRecordIdHash = receipt.serverRecordIdHash
         ..state = _outboxStatusToInt(CloudOutboxStatus.confirmed)
@@ -2794,8 +2810,10 @@ class ObjectBoxCloudSyncStore
     }
     final operation = _outboxFromEntity(scope, entity);
     journal.validateAdoptedOperation(_store, source, operation);
-    final mapping = _findRecordMapByKeyLocked(
-      _scopedDigest(scope, 'record-map', operation.logicalEntityKeyHash),
+    final mapping = cloudSyncFindRecordMap(
+      store: _store, scope: scope, generation: operation.checkpointGeneration,
+      logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      serverRecordIdHash: operation.serverRecordIdHash,
     );
     final checkpoint = _findCheckpointByKeyLocked(scopeKey);
     final reference = operation.encryptedPayloadReference;
@@ -2964,14 +2982,18 @@ class ObjectBoxCloudSyncStore
     CloudSyncScope scope, {
     required String logicalEntityKeyHash,
     required int generation,
+    String? serverRecordIdHash,
   }) async {
-    final mapKey = _scopedDigest(scope, 'record-map', logicalEntityKeyHash);
     return _store.runInTransaction(TxMode.read, () {
       final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
       if (generation <= 0 || checkpoint?.generation != generation) {
         throw _storageFailure('record_map_generation_mismatch');
       }
-      final entity = _findRecordMapByKeyLocked(mapKey);
+      final entity = cloudSyncFindRecordMap(
+        store: _store, scope: scope, generation: generation,
+        logicalEntityKeyHash: logicalEntityKeyHash,
+        serverRecordIdHash: serverRecordIdHash,
+      );
       if (entity == null || entity.generation != generation) return null;
       if (entity.scopeKey != _scopeKey(scope)) {
         throw _storageFailure('scope_collision');
@@ -3009,19 +3031,23 @@ class ObjectBoxCloudSyncStore
       if (generation <= 0 || checkpoint.generation != generation) {
         throw _storageFailure('record_map_generation_mismatch');
       }
-      final existing = _findRecordMapByKeyLocked(mapKey);
-      if (existing != null &&
-          existing.generation == generation &&
-          existing.serverRecordIdHash != entry.serverRecordIdHash) {
+      final canonical = _findRecordMapByKeyLocked(mapKey);
+      final selected = cloudSyncFindRecordMap(
+        store: _store, scope: entry.scope, generation: generation,
+        logicalEntityKeyHash: entry.logicalEntityKeyHash,
+        serverRecordIdHash: entry.serverRecordIdHash,
+      );
+      if (selected == null && canonical?.generation == generation) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.conflict,
           safeCode: 'server_mapping_changed',
         );
       }
-      _recordMaps.put(
+      final existing = selected ?? canonical;
+      _putRecordMapAndMirrorLocked(entry.scope,
         CloudRecordMapEntity(
           id: existing?.id ?? 0,
-          mapKey: mapKey,
+          mapKey: selected?.mapKey ?? mapKey,
           scopeKey: _scopeKey(entry.scope),
           accountFingerprint: entry.scope.accountFingerprint,
           zone: entry.scope.zone,
@@ -3675,6 +3701,29 @@ class ObjectBoxCloudSyncStore
         row.serverRecordIdHash == freshRecordIdHash)) {
       throw _storageFailure('messages_cloud_tombstone_projection_unavailable');
     }
+  }
+
+  void _putRecordMapAndMirrorLocked(CloudSyncScope scope, CloudRecordMapEntity row) {
+    _recordMaps.put(row);
+    if (scope.zone != 'chatManateeZone') return;
+    final canonicalKey = cloudSyncCanonicalRecordMapKey(scope, row.logicalEntityKeyHash);
+    final memberKey = cloudSyncChatRecordMemberKey(scope, row.generation, row.serverRecordIdHash);
+    final mirror = _findRecordMapByKeyLocked(row.mapKey == canonicalKey ? memberKey : canonicalKey);
+    if (mirror == null || mirror.generation != row.generation ||
+        mirror.serverRecordIdHash != row.serverRecordIdHash) {
+      return;
+    }
+    if (mirror.logicalEntityKeyHash != row.logicalEntityKeyHash ||
+        mirror.accountFingerprint != row.accountFingerprint || mirror.scopeKey != row.scopeKey ||
+        mirror.zone != row.zone) {
+      throw _storageFailure('scope_collision');
+    }
+    mirror
+      ..encryptedServerRecordId = row.encryptedServerRecordId
+      ..etagHash = row.etagHash
+      ..encryptedRawRecordRef = row.encryptedRawRecordRef
+      ..updatedAtMs = row.updatedAtMs;
+    _recordMaps.put(mirror);
   }
 
   void _requireOperationProjectionReadyLocked(

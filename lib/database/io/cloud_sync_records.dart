@@ -420,7 +420,8 @@ class CloudOutboxOperationEntity {
 class CloudRecordMapEntity {
   int id;
 
-  /// SHA-256 over account, zone and logical entity key.
+  /// Canonical source key, or a generation-scoped physical Chat member key.
+  /// Multiple server records may share one logical conversation owner.
   @Index(type: IndexType.hash64)
   @Unique()
   String mapKey;

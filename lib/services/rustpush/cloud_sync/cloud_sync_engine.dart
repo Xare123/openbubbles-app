@@ -2486,6 +2486,7 @@ class CloudSyncEngine {
           scope,
           logicalEntityKeyHash: operation.logicalEntityKeyHash,
           generation: operation.checkpointGeneration,
+          serverRecordIdHash: operation.serverRecordIdHash,
         );
         if (operation.serverRecordIdHash != null) {
           if (mapping == null) {
@@ -2571,6 +2572,7 @@ class CloudSyncEngine {
         scope,
         logicalEntityKeyHash: operation.logicalEntityKeyHash,
         generation: operation.checkpointGeneration,
+        serverRecordIdHash: operation.serverRecordIdHash,
       );
       if (mapping == null) {
         throw CloudSyncFailure(
@@ -2706,6 +2708,7 @@ class CloudSyncEngine {
             scope,
             logicalEntityKeyHash: operation.logicalEntityKeyHash,
             generation: operation.checkpointGeneration,
+            serverRecordIdHash: operation.serverRecordIdHash,
           );
           if (mapping == null ||
               mapping.serverRecordIdHash != resolution.serverRecordIdHash) {

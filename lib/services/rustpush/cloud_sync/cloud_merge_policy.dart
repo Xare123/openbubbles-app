@@ -278,7 +278,12 @@ class CloudMergePolicy {
     // server record without attempting to interpret them.
     var etagHash = local.etagHash;
     var encryptedRawRecordReference = local.encryptedRawRecordReference;
-    if (incoming.etagHash != null && incoming.etagHash != local.etagHash) {
+    // ETags are scoped to a physical record, not a logical conversation.
+    // Two sources can share an ETag while carrying distinct protected bytes.
+    if (incoming.etagHash != null &&
+        (incoming.etagHash != local.etagHash ||
+            (incoming.encryptedRawRecordReference != null &&
+                incoming.encryptedRawRecordReference != local.encryptedRawRecordReference))) {
       etagHash = incoming.etagHash;
       encryptedRawRecordReference =
           incoming.encryptedRawRecordReference ?? encryptedRawRecordReference;

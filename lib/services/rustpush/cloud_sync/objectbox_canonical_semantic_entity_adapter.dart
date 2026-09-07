@@ -212,7 +212,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         CloudCanonicalSemanticEntityAdapter,
         CloudAppliedChatProjectionRepairAdapter,
         CloudAppliedAttachmentProjectionRepairAdapter,
-        CloudLegacyCanonicalOwnershipProofAdapter {
+        CloudLegacyCanonicalOwnershipProofAdapter,
+        CloudDirectChatRecordConvergenceProofAdapter {
   static final RegExp _externalDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
 
   ObjectBoxCanonicalSemanticEntityAdapter({
@@ -1046,6 +1047,54 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       );
     }
     return CloudCanonicalSemanticMutationReceipt.committed;
+  }
+
+  @override
+  void validateDirectChatRecordConvergence({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudChatEntityPayload payload,
+  }) {
+    _requireActiveScope(scope, generation);
+    final guid = _resolveCanonicalGuid(
+      scope: scope, generation: generation, kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: payload.logicalEntityKeyHash,
+    );
+    final chat = guid == null ? null : _findChat(guid);
+    final participant = payload.participantHandles.length == 1
+        ? _normalizeHandle(payload.participantHandles.single)
+        : null;
+    if (payload.service != CloudSemanticService.iMessage ||
+        payload.style != CloudSemanticChatStyle.direct ||
+        guid != payload.canonicalGuid ||
+        guid != 'iMessage;-;${payload.chatIdentifier}' ||
+        participant?.address != payload.chatIdentifier ||
+        chat == null || chat.id == null || chat.id! <= 0 || chat.isRpSms ||
+        chat.isRoutingStub || chat.style != 45 ||
+        chat.chatIdentifier != payload.chatIdentifier ||
+        chat.handles.length != 1 ||
+        chat.handles.single.address != payload.chatIdentifier ||
+        chat.handles.single.service != 'iMessage') {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_chat_convergence_unproven',
+      );
+    }
+    final canonicalHash = CloudCanonicalIdentityDigest.forCanonicalGuid(
+      scope: scope, generation: generation, kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: payload.logicalEntityKeyHash, canonicalGuid: guid!,
+    );
+    final lookup = CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+      scope: scope, generation: generation, canonicalGuid: guid,
+    );
+    for (final alias in payload.aliases) {
+      _validateChatAliasClaim(
+        scope: scope, generation: generation, service: CloudSemanticService.iMessage,
+        alias: alias, logicalEntityKeyHash: payload.logicalEntityKeyHash,
+        canonicalGuidHash: canonicalHash, canonicalGuidLookupHash: lookup,
+        expectedChat: chat,
+      );
+    }
   }
 
   CloudCanonicalSemanticMutationReceipt _applyChatUpsert({

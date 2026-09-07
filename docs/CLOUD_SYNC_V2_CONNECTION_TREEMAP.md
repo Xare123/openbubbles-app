@@ -192,6 +192,82 @@ Initial repair order (superseded by the narrower September 6 repair below):
 
 ### Windows write fast loop: use now for contract repair
 
+#### Direct-Chat record membership: implemented, development opt-in only
+
+The Windows Dart/ObjectBox path now separates physical CloudKit record
+provenance from logical conversation ownership. No entity IDs or ObjectBox
+schema changed. The existing `record-map:` key still selects the current
+canonical source; deterministic `record-member-v1:` keys preserve each physical
+source's generation, server identity, ETag and protected payload reference.
+The second source creates two member rows plus the existing canonical selector,
+not another Chat or copies of its Messages.
+
+```text
+Authenticated saved Chat A and B
+  -> exact same logical identity and existing canonical direct iMessage Chat
+  -> exact recipient + one matching stored/incoming participant
+  -> all strong aliases retain the same scoped owner
+  -> one atomic projection transaction
+       canonical selector = newest observed source
+       member A = latest A revision, member B = latest B revision
+       one Chat + one semantic snapshot + separate immutable replay receipts
+  -> queued sends keep their originally admitted physical source
+  -> receipt/recovery updates that source, never follows the selector to another
+```
+
+`allowDirectChatRecordConvergence` defaults false and is enabled only in tests.
+Neither the Windows harness nor Android production composition enables it yet.
+Same-ETag text on two records no longer hides a different protected source.
+Historical replay requires either the exact mapped revision or an intact later
+applied inbox/replay pair for the same server and logical owner. It cannot infer
+progress from ETag ordering or a map alone. Inconsistent canonical/member copies
+are rejected before projection instead of overwritten as an implicit repair.
+
+Outbound consumers now explicitly resolve their pinned server: preparation,
+unknown-outcome recovery, origin proof, adopted local-send dependency, map
+updates and receipt commit. A new admission may choose the canonical source;
+an already admitted send never switches sources. Its own latest inbox save must
+still be applied, not deleted/retained/pending, and match the member's ETag,
+protected server ID and protected payload. Reset preserves old member provenance
+under its original generation, but it is not selectable in the new generation.
+
+The 16 direct-Chat projection cases pass before/after reopen through the real
+transactional applier, identity registry, canonical adapter and ObjectBox.
+They cover interleaved A/B/A updates, preserved message relations, the union of
+GID/OGID aliases, identical ETags, changed-recipient rejection, rollback for
+inconsistent members and five damaged-successor replay cases. Synthetic
+adopted-send and receipt tests additionally cover a noncanonical A while B is
+selected. These are offline contract tests, not Apple acceptance evidence.
+
+The feature deliberately does not merge different logical GUIDs merely because
+they share a recipient. Group mutation, tombstone deletion and unresolved saved
+Chat admission are unchanged. Native identity comparison, Windows live-write
+composition and controlled save/readback/restart/no-extra-save qualification
+remain required. No fake IDS confirmation or diagnostic collector authorizes
+an outbound operation. The default-off boundary keeps this incremental change
+off real profiles until its consumers and native record shapes are qualified.
+
+Source anchors: `cloud_sync_record_maps.dart`, `cloud_sync_persistent_keys.dart`,
+`objectbox_cloud_semantic_store_gateway.dart`,
+`objectbox_canonical_semantic_entity_adapter.dart`,
+`cloud_sync_outbound_chat_binding.dart`, and `objectbox_cloud_sync_store.dart`.
+Verification: **1,826 tests passed in 61 seconds** in the final combined
+CloudKit Dart suite and real-ObjectBox inspector run. Focused production and
+changed-test analysis has no remaining issues. A separate 56-case readiness
+rerun verifies the final redundant-import cleanup. The two pointer-corruption
+cases failed before their validator repair; one older positive fixture was
+then corrected to update the full applied record source, not just its ETag.
+No production check was weakened to make that fixture pass.
+
+Evidence: `evidence/windows-replay-20260906/chat-membership-final-suite.log`,
+`chat-membership-readiness-final.log`, and `chat-membership-adversarial.log`.
+The one reused agent's code and 39 binding/receipt cases were reviewed and
+integrated, then the agent was closed and shutdown verified. It created no
+descendants, dedicated worktree or logs. Supported session deletion is not
+available, so shared transcript/session storage was preserved. C: has about
+57 GiB free; no deletion was needed. No live profile, credential, account,
+Alpha/Pixel, APK or GCE mutation occurred in this qualification pass.
+
 #### Current boundary review: source coverage is not write authority
 
 The Windows inspector now captures a bounded, immutable Chat-journal
@@ -214,7 +290,8 @@ Authenticated Chat journal
        -> ordinary-send/manual provenance and writer admission (still fenced)
 
 Concurrent remote Chat creation remains possible after any observation
-  -> per-record revision ownership + same-conversation convergence (still gap)
+  -> per-record revision ownership + same-conversation convergence
+       (development opt-in implemented; native/live qualification pending)
        -> protected exact Chat readback
        -> Message create/readback/restart/no-extra-save qualification
 ```
@@ -254,13 +331,10 @@ Source anchors: `cloud_sync_chat_identity_read_set.dart`,
 `objectbox_cloud_semantic_store_gateway.dart::bindRecordIdentity`, and
 `cloud_sync_outbound_chat_binding.dart::_requireRestoredChatById`.
 
-The smallest remaining convergence change must keep server-record revisions
-separate from canonical conversation ownership. Do not simply remove
-`semantic_record_mapping_conflict`: snapshot raw references, replay receipt
-validation, dependency bindings and exact write readback currently all assume
-one mapped record. Preserve each source's ETag/protected payload, reject
-cross-account/recipient collisions, and qualify interleaved duplicate updates,
-restart, rollback and pending-send behavior before widening fresh admission.
+The membership implementation above addresses the prior one-map constraint,
+but remains unenabled in live compositions. Do not simply remove
+`semantic_record_mapping_conflict` or widen fresh admission: cross-account,
+recipient and cross-logical identity conflicts still require rejection.
 Windows live-write composition also remains absent; do not fabricate an IDS
 confirmation to bypass the stricter manual adapter.
 
@@ -307,9 +381,9 @@ the same results before and after reopening the database:
 - Both failures roll back record maps, snapshots, replay state, ownership and
   checkpoints, leave the second inbox row pending, and create no outbox entry.
 
-The negative cases document the current limitation, not desired permanent
-behavior. They convert the predicted next readback regression into a repeatable
-counterexample. Broader admission of unresolved saved Chats must handle
+The negative cases document the default-off limitation; the new opt-in cases
+above qualify same-logical direct-Chat membership without weakening that
+baseline. Broader admission of unresolved saved Chats must handle
 legitimate per-record provenance and direct-chat convergence. The narrower
 tombstone-only exception below does not admit those saved Chats. Keep record
 identity collisions and cross-account/recipient mismatches rejected. Full

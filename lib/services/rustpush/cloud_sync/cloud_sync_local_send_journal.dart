@@ -1221,12 +1221,15 @@ final class CloudSyncLocalSendJournal {
       throw StateError('cloud_sync_local_send_adopted_mapping_changed');
     }
     final message = _messages.get(intent.localMessageId);
-    if (message == null || intent.admittedChatBinding == null ||
-        requireCloudSyncRestoredDirectChat(
-          store: _store, messageScope: scope, message: message,
-        ) != intent.admittedChatBinding) {
+    if (message == null || intent.admittedChatBinding == null) {
       throw StateError('cloud_sync_local_send_source_changed');
     }
+    requireCloudSyncAdoptedChatDependency(
+      store: _store,
+      messageScope: scope,
+      binding: intent.admittedChatBinding,
+      expectedChatId: message.chat.targetId,
+    );
     // ObjectBox reads return independent objects. Do not round-trip toMap:
     // it omits fields that capture must continue rejecting. Never put this view.
     final view = _messages.get(intent.localMessageId)!

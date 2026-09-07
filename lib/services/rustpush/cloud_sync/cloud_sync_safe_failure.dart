@@ -151,6 +151,7 @@ abstract final class CloudSyncV2CanonicalProjectionSafeFailureCodes {
     'canonical_attachment_size_invalid',
     'canonical_chat_alias_conflict',
     'canonical_chat_direct_recipient_conflict',
+    'canonical_chat_convergence_unproven',
     'canonical_chat_alias_unproven',
     'canonical_chat_apply_disabled',
     'canonical_chat_creation_unavailable',

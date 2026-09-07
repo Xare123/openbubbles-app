@@ -1431,6 +1431,7 @@ class InMemoryCloudSyncStore
     CloudSyncScope scope, {
     required String logicalEntityKeyHash,
     required int generation,
+    String? serverRecordIdHash,
   }) {
     return _lock.synchronized(() async {
       final checkpoint = _checkpoint(scope);
@@ -1442,6 +1443,12 @@ class InMemoryCloudSyncStore
       }
       final entry = _recordMaps[_recordMapKey(scope, logicalEntityKeyHash)];
       if (entry == null || entry.generation != generation) return null;
+      // This fake models one physical record per logical owner. Member tests
+      // must exercise the real ObjectBox store, not infer support from it.
+      if (serverRecordIdHash != null &&
+          entry.value.serverRecordIdHash != serverRecordIdHash) {
+        return null;
+      }
       return entry.value;
     });
   }

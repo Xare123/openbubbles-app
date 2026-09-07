@@ -336,6 +336,7 @@ abstract interface class CloudSyncStore {
     CloudSyncScope scope, {
     required String logicalEntityKeyHash,
     required int generation,
+    String? serverRecordIdHash,
   });
 
   Future<void> upsertRecordMap(

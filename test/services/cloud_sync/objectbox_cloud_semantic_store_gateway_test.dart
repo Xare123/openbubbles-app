@@ -2311,8 +2311,14 @@ void main() {
       'changed direct recipient',
       'second record',
       'second alias owner',
+      'convergent second record',
+      'convergent same ETag',
+      'convergent changed recipient',
+      'convergent changed participants',
     ]) {
       test('direct Chat readback $scenario (reopen=$reopen)', () async {
+        final convergenceEnabled = scenario.startsWith('convergent');
+        final converges = scenario == 'convergent second record' || scenario == 'convergent same ETag';
         // Characterize the real projection boundary before relaxing fresh-send
         // admission. Transport/authentication are synthetic; the identity
         // registry, canonical adapter, transactions and durable maps are real.
@@ -2336,26 +2342,42 @@ void main() {
                 allowChatUpserts: true,
               ),
               clock: () => now,
+              allowDirectChatRecordConvergence: convergenceEnabled,
             );
         Future<void> project(
           CloudInboxEntry entry,
-          CloudChatEntityPayload payload,
-        ) async {
+          CloudChatEntityPayload payload, {
+          String? expectedFailure,
+        }) async {
           final snapshot = _chatSnapshot(
             logicalEntityKeyHash: payload.logicalEntityKeyHash,
             etagHash: entry.change.etagHash!,
             encryptedRawRecordReference:
                 entry.change.encryptedPayloadReference!,
           );
-          final identityLease = registry.bind(
-            CloudDecodedMutation.upsert(
+          final mutation = CloudDecodedMutation.upsert(
               scope: chatScope,
               generation: entry.generation,
               changeId: entry.change.changeId,
               snapshot: snapshot,
               payload: payload,
-            ),
-          );
+            );
+          if (converges) {
+            final applier = TransactionalCloudInboxApplier(
+              decoder: _FixedDecoder(mutation), store: realGateway(),
+              identityRegistrar: registry, activeScopeRevalidator: () async => true,
+            );
+            final result = await applier.apply(entry, leaseFence: leaseFence);
+            if (expectedFailure != null) {
+              expect(result.disposition, CloudInboxApplyDisposition.quarantined);
+              expect(result.safeCode, expectedFailure);
+              return;
+            }
+            expect(result.disposition, CloudInboxApplyDisposition.applied);
+            expect(result.inboxStatusPersisted, true);
+            return;
+          }
+          final identityLease = registry.bind(mutation);
           try {
             await realGateway().writeTransaction<void>(
               entry: entry,
@@ -2384,7 +2406,11 @@ void main() {
         objectBox.box<CloudSyncCheckpointEntity>().put(checkpoint);
         final firstPayload = _chatPayload(
           includeServiceIdentifierAlias: true,
-          canonicalGuid: 'direct-chat-a',
+          extraAliases: converges ? [
+            CloudSemanticChatAlias(kind: CloudSemanticChatAliasKind.groupId,
+                keyHash: _indexedDigest('group-A')),
+          ] : const [],
+          canonicalGuid: 'iMessage;-;$recipient',
           chatIdentifier: recipient,
           participantHandles: const [recipient],
         );
@@ -2402,9 +2428,12 @@ void main() {
           objectBox.close();
           objectBox = await openStore(directory: directory.path);
         }
-        final changedRecipient = scenario == 'changed direct recipient';
-        final sameRecord = scenario == 'same record update' || changedRecipient;
-        final accepted = scenario == 'same record update';
+        final changedRecipient = scenario == 'changed direct recipient' ||
+            scenario == 'convergent changed recipient';
+        final changedParticipants = scenario == 'convergent changed participants';
+        final sameRecord = scenario == 'same record update' ||
+            scenario == 'changed direct recipient';
+        final accepted = scenario == 'same record update' || converges;
         final secondOwner = scenario == 'second alias owner';
         final second = _entry(
           scope: chatScope,
@@ -2414,7 +2443,7 @@ void main() {
           recordIdHash: sameRecord
               ? first.change.recordIdHash
               : _indexedDigest('record-2'),
-          etagHash: _indexedDigest('etag-2'),
+          etagHash: scenario == 'convergent same ETag' ? first.change.etagHash : _indexedDigest('etag-2'),
           payloadSha256: _sha256('payload-2'),
           encryptedServerRecordId: sameRecord
               ? first.change.encryptedServerRecordId
@@ -2434,6 +2463,12 @@ void main() {
         });
         final secondPayload = _chatPayload(
           includeServiceIdentifierAlias: true,
+          extraAliases: converges ? [
+            CloudSemanticChatAlias(kind: CloudSemanticChatAliasKind.groupId,
+                keyHash: _indexedDigest('group-B')),
+            CloudSemanticChatAlias(kind: CloudSemanticChatAliasKind.originalGroupId,
+                keyHash: _indexedDigest('group-A')),
+          ] : const [],
           logicalEntityKeyHash: secondOwner
               ? _indexedDigest('logical-2')
               : firstPayload.logicalEntityKeyHash,
@@ -2441,7 +2476,7 @@ void main() {
               ? 'direct-chat-b'
               : firstPayload.canonicalGuid,
           chatIdentifier: changedRecipient ? 'other@example.com' : recipient,
-          participantHandles: changedRecipient
+          participantHandles: changedRecipient || changedParticipants
               ? const ['other@example.com']
               : const [recipient],
         );
@@ -2453,7 +2488,9 @@ void main() {
             project(second, secondPayload),
             throwsA(
               _failureCode(
-                changedRecipient
+                convergenceEnabled
+                    ? 'canonical_chat_convergence_unproven'
+                    : changedRecipient
                     ? 'canonical_chat_direct_recipient_conflict'
                     : secondOwner
                     ? 'canonical_chat_alias_conflict'
@@ -2478,9 +2515,18 @@ void main() {
         final preserved = objectBox.box<Message>().get(messageId)!;
         expect(preserved.chat.targetId, firstChat.id);
         expect(preserved.text, 'Keep this history');
-        expect(objectBox.box<CloudRecordMapEntity>().count(), 1);
-        final map = objectBox.box<CloudRecordMapEntity>().getAll().single;
-        expect(map.serverRecordIdHash, first.change.recordIdHash);
+        final maps = objectBox.box<CloudRecordMapEntity>().getAll();
+        expect(maps, hasLength(converges ? 3 : 1));
+        final map = maps.singleWhere((r) => r.mapKey.startsWith('record-map:'));
+        expect(map.serverRecordIdHash, converges ? second.change.recordIdHash : first.change.recordIdHash);
+        if (converges) {
+          final firstMember = maps.singleWhere((r) => r.mapKey.startsWith('record-member-v1:') && r.serverRecordIdHash == first.change.recordIdHash);
+          final secondMember = maps.singleWhere((r) => r.mapKey.startsWith('record-member-v1:') && r.serverRecordIdHash == second.change.recordIdHash);
+          expect(firstMember.etagHash, first.change.etagHash);
+          expect(firstMember.encryptedRawRecordRef, first.change.encryptedPayloadReference);
+          expect(secondMember.etagHash, second.change.etagHash);
+          expect(secondMember.encryptedRawRecordRef, second.change.encryptedPayloadReference);
+        }
         expect(
           map.etagHash,
           accepted ? second.change.etagHash : first.change.etagHash,
@@ -2509,6 +2555,103 @@ void main() {
               ? CloudInboxStatus.applied.index
               : CloudInboxStatus.pending.index,
         );
+        if (converges) {
+          objectBox.close();
+          objectBox = await openStore(directory: directory.path);
+          final third = _entry(
+            scope: chatScope, sequence: 3, batchId: 'batch-3',
+            changeId: _indexedDigest('change-3'), recordIdHash: first.change.recordIdHash,
+            etagHash: _indexedDigest('etag-3'), payloadSha256: _sha256('payload-3'),
+            encryptedServerRecordId: first.change.encryptedServerRecordId,
+            encryptedPayloadReference: _indexedProtectedReference('payload-3'),
+          );
+          objectBox.box<CloudSyncCheckpointEntity>().put(
+            objectBox.box<CloudSyncCheckpointEntity>().getAll().single
+              ..fetchedSequence = 3 ..lastBatchId = third.batchId,
+          );
+          _putPendingInboxEntry(objectBox, entry: third, now: now);
+          final currentMember = objectBox.box<CloudRecordMapEntity>().getAll()
+              .singleWhere((r) => r.mapKey.startsWith('record-member-v1:') &&
+                  r.serverRecordIdHash == second.change.recordIdHash);
+          final damagedMember = objectBox.box<CloudRecordMapEntity>().get(currentMember.id)!
+              ..etagHash = _indexedDigest('damaged-member');
+          objectBox.box<CloudRecordMapEntity>().put(damagedMember);
+          final beforeRejected = _durableSyncControlFingerprint(objectBox);
+          await project(third, firstPayload, expectedFailure: 'semantic_record_mapping_conflict');
+          expect(_durableSyncControlFingerprint(objectBox), beforeRejected,
+              reason: 'A new fetch must not conceal inconsistent canonical/member provenance');
+          objectBox.box<CloudRecordMapEntity>().put(currentMember);
+          await project(third, firstPayload);
+          final finalMaps = objectBox.box<CloudRecordMapEntity>().getAll();
+          expect(finalMaps, hasLength(3));
+          expect(finalMaps.singleWhere((r) => r.mapKey.startsWith('record-map:')).serverRecordIdHash, first.change.recordIdHash);
+          final members = finalMaps.where((r) => r.mapKey.startsWith('record-member-v1:'));
+          expect(members.singleWhere((r) => r.serverRecordIdHash == first.change.recordIdHash).etagHash, third.change.etagHash);
+          expect(members.singleWhere((r) => r.serverRecordIdHash == second.change.recordIdHash).etagHash, second.change.etagHash);
+          expect(objectBox.box<Chat>().getAll().single.id, firstChat.id);
+          expect(objectBox.box<Message>().get(messageId)!.chat.targetId, firstChat.id);
+          expect(objectBox.box<CloudSemanticReplayEntity>().count(), 3);
+          expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+          final aliases = objectBox.box<CloudSemanticChatAliasEntity>().getAll();
+          expect(aliases, hasLength(4));
+          expect(aliases.every((a) => a.chatId == firstChat.id &&
+              a.chatLogicalEntityKeyHash == firstPayload.logicalEntityKeyHash), true);
+          expect(aliases.map((a) => '${a.aliasKind}:${a.aliasKeyHash}'), containsAll([
+            'groupId:${_indexedDigest('group-A')}',
+            'groupId:${_indexedDigest('group-B')}',
+            'originalGroupId:${_indexedDigest('group-A')}',
+          ]));
+
+          // Corrupt only synthetic successor evidence, never a real profile.
+          // An old delivery may be acknowledged only with an intact later
+          // inbox/replay pair for its exact physical source and logical owner.
+          final successor = objectBox.box<CloudSemanticReplayEntity>().getAll()
+              .singleWhere((r) => r.inboxSequence == third.sequence);
+          final successorInbox = objectBox.box<CloudInboxChangeEntity>().getAll()
+              .singleWhere((r) => r.fetchSequence == third.sequence);
+          final oldInbox = objectBox.box<CloudInboxChangeEntity>().getAll()
+              .singleWhere((r) => r.fetchSequence == first.sequence);
+          objectBox.box<CloudInboxChangeEntity>().put(oldInbox..status = CloudInboxStatus.pending.index);
+          for (final corruption in ['owner', 'payload', 'outcome', 'safeCode', 'inboxKey']) {
+            final changedReplay = objectBox.box<CloudSemanticReplayEntity>().get(successor.id)!;
+            switch (corruption) {
+              case 'owner': changedReplay.logicalEntityKeyHash = _indexedDigest('wrong-owner');
+              case 'payload': changedReplay.payloadSha256 = _sha256('wrong-payload');
+              case 'outcome': changedReplay.terminalOutcome = 'quarantined';
+              case 'safeCode': changedReplay.terminalSafeCode = 'unexpected_code';
+              case 'inboxKey':
+                objectBox.box<CloudInboxChangeEntity>().put(
+                  objectBox.box<CloudInboxChangeEntity>().get(successorInbox.id)!
+                    ..changeKey = 'change:${_sha256('wrong-key')}',
+                );
+            }
+            objectBox.box<CloudSemanticReplayEntity>().put(changedReplay);
+            final before = _durableSyncControlFingerprint(objectBox);
+            await expectLater(realGateway().writeTransaction<void>(
+              entry: first, leaseFence: leaseFence, action: (transaction) {
+                transaction.hasAppliedChange(first.change.changeId);
+              },
+            ), throwsA(_failureCode('semantic_replay_record_binding_mismatch')),
+              reason: corruption);
+            expect(_durableSyncControlFingerprint(objectBox), before, reason: corruption);
+            objectBox.box<CloudSemanticReplayEntity>().put(successor);
+            objectBox.box<CloudInboxChangeEntity>().put(successorInbox);
+          }
+          for (final prior in [first, second]) {
+            final inboxRow = objectBox.box<CloudInboxChangeEntity>().getAll()
+                .singleWhere((r) => r.fetchSequence == prior.sequence);
+            objectBox.box<CloudInboxChangeEntity>().put(inboxRow..status = CloudInboxStatus.pending.index);
+            await realGateway().writeTransaction<void>(
+              entry: prior, leaseFence: leaseFence, action: (transaction) {
+                expect(transaction.hasAppliedChange(prior.change.changeId), true);
+                transaction.markChangeApplied(prior.change.changeId);
+              },
+            );
+          }
+          expect(objectBox.box<CloudSemanticReplayEntity>().count(), 3);
+          expect(objectBox.box<CloudRecordMapEntity>().count(), 3);
+          expect(objectBox.box<CloudSyncCheckpointEntity>().getAll().single.appliedSequence, 3);
+        }
       });
     }
   }
@@ -4366,6 +4509,7 @@ CloudChatEntityPayload _chatPayload({
   String canonicalGuid = 'chat-guid',
   String chatIdentifier = 'iMessage;-;chat',
   String aliasKeyHash = 'H',
+  Iterable<CloudSemanticChatAlias> extraAliases = const [],
 }) {
   return CloudChatEntityPayload(
     logicalEntityKeyHash: logicalEntityKeyHash == 'L'
@@ -4375,16 +4519,16 @@ CloudChatEntityPayload _chatPayload({
     chatIdentifier: chatIdentifier,
     displayName: 'Cloud chat',
     participantHandles: participantHandles,
-    aliases: includeServiceIdentifierAlias
-        ? [
+    aliases: [
+          if (includeServiceIdentifierAlias)
             CloudSemanticChatAlias(
               kind: CloudSemanticChatAliasKind.serviceIdentifier,
               keyHash: aliasKeyHash == 'H'
                   ? _digestValue(aliasKeyHash)
                   : aliasKeyHash,
             ),
-          ]
-        : const [],
+          ...extraAliases,
+        ],
     service: CloudSemanticService.iMessage,
     style: CloudSemanticChatStyle.direct,
   );

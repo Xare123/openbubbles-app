@@ -9,7 +9,6 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_c
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_selection.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
-import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1313,8 +1312,19 @@ void main() {
             .box<CloudRecordMapEntity>()
             .getAll()
             .singleWhere((row) => row.zone == 'chatManateeZone');
+        final latestSources = fixture.objectBox.box<CloudInboxChangeEntity>()
+            .getAll().where((row) => row.zone == 'chatManateeZone' &&
+                row.serverRecordIdHash == _restoredChatServerRecordIdHash)
+            .toList()..sort((a, b) => a.fetchSequence.compareTo(b.fetchSequence));
+        final latestSource = latestSources.last;
+        expect(latestSource.etagHash, updatedEtag);
+        // Model the entire applied revision, as the real gateway does. Updating
+        // only the ETag left this synthetic map pointing at the older payload.
         fixture.objectBox.box<CloudRecordMapEntity>().put(
-          mapping..etagHash = updatedEtag,
+          mapping
+            ..etagHash = updatedEtag
+            ..encryptedServerRecordId = latestSource.encryptedServerRecordId!
+            ..encryptedRawRecordRef = latestSource.encryptedPayloadRef,
         );
         final snapshot = fixture.objectBox
             .box<CloudSemanticSnapshotEntity>()
