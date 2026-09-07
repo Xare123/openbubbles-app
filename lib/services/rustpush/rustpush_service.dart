@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:app_links/app_links.dart';
 import 'package:bluebubbles/services/rustpush/icloud_maintenance.dart';
 import 'package:bluebubbles/services/rustpush/imessage_reaction_payload.dart';
+import 'package:bluebubbles/services/rustpush/imessage_reaction_submission.dart';
 import 'package:bluebubbles/services/rustpush/registration_recovery.dart';
 import 'package:async_task/async_task_extension.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/conversation_list.dart';
@@ -1720,7 +1721,8 @@ class RustPushBackend implements BackendService {
 
   @override
   Future<Message> sendTapback(
-      Chat chat, Message selected, String reaction, int? repPart) async {
+      Chat chat, Message selected, String reaction, int? repPart,
+      {Message? pendingMessage}) async {
     if (!chat.isIMessage) {
       String text;
       if (ReactionTypes.reactionToVerb.containsKey(reaction)) {
@@ -1772,7 +1774,34 @@ class RustPushBackend implements BackendService {
             parentText: selected.text ?? "",
             reaction: reactionMap[reaction]?.call() ?? api.Reaction.emoji(reaction),
             enable: enabled));
-    await sendMsg(msg);
+    if (pendingMessage == null) {
+      // Non-UI callers retain their existing send behavior and cannot invent
+      // a durable local origin without the original pending row.
+      await sendMsg(msg);
+    } else {
+      final generatedGuid = msg.id;
+      msg.id = pendingMessage.stagingGuid ?? msg.id;
+      final stableGuid = msg.id;
+      final freshOrigin = CloudSyncLocalSendIdentity.isFreshLocalSubmission(
+        pendingMessage, generatedGuid: generatedGuid, stableGuid: stableGuid,
+      );
+      final localIntent = await pushService._captureCloudSyncV2LocalSend(
+        message: pendingMessage, chat: chat, wire: msg,
+      );
+      await submitTrackedIMessageReaction(
+        message: pendingMessage,
+        stableGuid: stableGuid,
+        persistPending: () => pushService._saveCloudSyncV2LocalSend(
+          localIntent, pendingMessage, chat,
+          confirmed: false, newlyGeneratedGuid: freshOrigin,
+        ),
+        send: () => sendMsg(msg),
+        persistCompletion: (backgroundPending) => pushService._saveCloudSyncV2LocalSend(
+          backgroundPending ? null : localIntent, pendingMessage, chat,
+          confirmed: true, newlyGeneratedGuid: false,
+        ),
+      );
+    }
     msg.sentTimestamp = DateTime.now().millisecondsSinceEpoch;
     return (await pushService.reflectMessageDyn(msg))!;
   }
@@ -7668,7 +7697,10 @@ class RustPushService extends GetxService {
           statePath.isEmpty) {
         return null;
       }
-      final initialIdentity = CloudSyncLocalSendIdentity.capture(message, chat, wire.id);
+      final isReaction = wire.message is api.Message_React;
+      final initialIdentity = isReaction
+          ? CloudSyncLocalSendIdentity.captureReaction(message, chat, wire.id)
+          : CloudSyncLocalSendIdentity.capture(message, chat, wire.id);
       if (initialIdentity == null) return null;
       final currentState = state;
       final client = currentState?.icloudServices?.cloudMessagesClient;
@@ -7712,10 +7744,15 @@ class RustPushService extends GetxService {
       final journal = CloudSyncLocalSendJournal(
         store: objectBox, authority: authority, authoritySnapshot: authoritySnapshot,
       );
-      final identity = journal.captureSubmissionWire(
-        message: message, chat: chat, wire: wire,
-        initialSourceSha256: initialIdentity.sourceSha256,
-      );
+      final identity = isReaction
+          ? journal.captureReactionSubmissionWire(
+              message: message, chat: chat, wire: wire,
+              initialSourceSha256: initialIdentity.sourceSha256,
+            )
+          : journal.captureSubmissionWire(
+              message: message, chat: chat, wire: wire,
+              initialSourceSha256: initialIdentity.sourceSha256,
+            );
       if (identity == null) return null;
       return (
         journal: journal,
@@ -7836,6 +7873,10 @@ class RustPushService extends GetxService {
     try {
       int persist() => message.save(chat: chat, throwOnUniqueViolation: true).id ?? 0;
       if (confirmed) {
+        context.authFence.requireCurrentBinding(context.capturedAuth);
+        if (context.journal.isSubmissionAlreadyConfirmed(context.identity)) {
+          return;
+        }
         // Record the actual successful IDS completion before the next awaited
         // auth capture. A slow keystore must not erase this distinct evidence.
         final intentId = context.journal.saveIdsConfirmedDeferredSubmission(

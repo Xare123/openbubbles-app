@@ -8,6 +8,9 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/services/rustpush/imessage_reaction_submission.dart';
 import 'package:defer_pointer/defer_pointer.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
@@ -375,6 +378,35 @@ class ReactionWidgetState extends OptimizedState<ReactionWidget> {
                                           color: Get.context!.theme.colorScheme
                                               .primary)),
                               onPressed: () async {
+                                if (backend is RustPushBackend) {
+                                  final retryChat = reaction.chat.target;
+                                  final selected = widget.message;
+                                  if (retryChat == null || selected == null ||
+                                      selected.guid != reaction.associatedMessageGuid) {
+                                    showSnackbar('Cannot retry', 'Reopen this conversation and try again.');
+                                    return;
+                                  }
+                                  try {
+                                    prepareIMessageReactionRetry(reaction);
+                                  } on StateError catch (error) {
+                                    showSnackbar('Cannot retry',
+                                        error.message == 'imessage_reaction_send_still_pending'
+                                            ? 'The original send is still running. Wait for it to finish.'
+                                            : 'This reaction is no longer eligible to resend.');
+                                    return;
+                                  }
+                                  Navigator.of(context).pop();
+                                  // Preserve row ID, native ID, target and journal origin.
+                                  outq.queue(OutgoingItem(
+                                    type: QueueType.sendMessage,
+                                    chat: retryChat,
+                                    message: reaction,
+                                    selected: selected,
+                                    reaction: reaction.associatedMessageType!,
+                                  ));
+                                  await notif.clearFailedToSend(retryChat.id!);
+                                  return;
+                                }
                                 // Remove the original message and notification
                                 Navigator.of(context).pop();
                                 Message.delete(reaction.guid!);

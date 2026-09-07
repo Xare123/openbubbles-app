@@ -141,7 +141,8 @@ class HttpBackend implements BackendService {
   }
   
   @override
-  Future<Message> sendTapback(Chat chat, Message selected, String reaction, int? repPart) async {
+  Future<Message> sendTapback(Chat chat, Message selected, String reaction, int? repPart,
+      {Message? pendingMessage}) async {
     return Message.fromMap((await http.sendTapback(chat.guid, selected.text ?? "", selected.guid!, reaction, partIndex: repPart)).data['data']);
   }
   

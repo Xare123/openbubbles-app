@@ -7,17 +7,17 @@ import 'package:crypto/crypto.dart';
 
 /// Immutable validation for an outgoing iMessage reaction (tapback) send.
 ///
-/// This is foundation only: it validates a local reaction row and its exact
-/// agreement with the native `Message_React` wire. It is not wired to
-/// `sendTapback`, journal capture, or admission; those integrations land
-/// together with native-kind and parent-ready checks next.
+/// Validates a local reaction row and its exact agreement with the native
+/// `Message_React` wire for sendTapback's durable local journal. Native upload
+/// admission remains separate and requires native-kind and parent-ready checks.
 ///
 /// What it proves: the row is a well-formed standard-six add/remove with its
 /// own stable v4 GUID, a bare parent GUID plus an exactly preserved nullable
 /// part, and a canonical direct-chat route. What it never proves: delivery. A
-/// returned identity is usable by a future journal capture before the native
+/// returned identity is usable by journal capture before the native
 /// send and by revalidation after the `SendConfirm` callback, but only an
-/// explicit `SendConfirm` success plus journal promotion authorizes upload.
+/// explicit native send completion plus journal promotion proves submission.
+/// That proof alone does not satisfy native CloudKit upload admission.
 ///
 /// Conventions inherited from the plain-text path without copying it:
 /// the parent logical hash covers the parent GUID only, while the part
@@ -32,8 +32,8 @@ final class CloudSyncReactionSendIdentity {
   const CloudSyncReactionSendIdentity._(this.guidHash, this.sourceSha256);
 
   /// Digest of the reaction row's own stable GUID. The digest namespace
-  /// intentionally matches the plain-text identity's guid namespace so a
-  /// future journal intentKey derivation stays uniform across kinds.
+  /// intentionally matches the plain-text identity's guid namespace so
+  /// journal intentKey derivation stays uniform across kinds.
   final String guidHash;
 
   /// Versioned digest of the immutable reaction source: own stable GUID,
@@ -71,9 +71,18 @@ final class CloudSyncReactionSendIdentity {
     Chat chat,
     String stableGuid, {
     String? expectedSourceSha256,
+    bool allowSubmissionGuid = false,
   }) {
     if (!_uuid.hasMatch(stableGuid)) return null;
-    if (message.guid != stableGuid) return null;
+    if (message.guid != stableGuid &&
+        !(allowSubmissionGuid &&
+            RegExp(r'^temp-[A-Za-z0-9]{8}$').hasMatch(message.guid ?? ''))) {
+      return null;
+    }
+    if (message.stagingGuid != null &&
+        (!allowSubmissionGuid || message.stagingGuid != stableGuid)) {
+      return null;
+    }
     // The provided chat must be the row's own bound chat; a row retargeted
     // at a different chat is never validated as if it belonged to it. A
     // null relation is invalid. The same transient object is accepted, and
@@ -100,7 +109,6 @@ final class CloudSyncReactionSendIdentity {
         message.dbAttachments.isNotEmpty ||
         message.messageSummaryInfo.isNotEmpty ||
         message.sendingServiceId != null ||
-        message.stagingGuid != null ||
         message.threadOriginatorGuid != null ||
         message.threadOriginatorPart != null ||
         message.expressiveSendStyleId != null ||
@@ -189,12 +197,14 @@ final class CloudSyncReactionSendIdentity {
     Chat chat,
     api.MessageInst wire, {
     String? expectedSourceSha256,
+    bool allowSubmissionGuid = false,
   }) {
     final identity = capture(
       message,
       chat,
       wire.id,
       expectedSourceSha256: expectedSourceSha256,
+      allowSubmissionGuid: allowSubmissionGuid,
     );
     if (identity == null ||
         wire.verificationFailed ||

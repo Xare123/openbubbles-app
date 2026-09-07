@@ -10,6 +10,7 @@ import 'cloud_operation_identity.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_chat_binding.dart';
+import 'cloud_sync_reaction_send_identity.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
@@ -21,13 +22,95 @@ final class CloudSyncLocalSendIdentity {
     this._guid,
     this.guidHash,
     this.sourceSha256,
-    this._usesProvisionalOrigin,
-  );
+    this._usesProvisionalOrigin, {
+    bool isReaction = false,
+  }) : _isReaction = isReaction;
 
   final String _guid;
   final String guidHash;
   final String sourceSha256;
   final bool _usesProvisionalOrigin;
+  final bool _isReaction;
+
+  /// Explicit local reaction provenance. Plain-text capture remains unchanged.
+  /// Temporary/staging GUIDs are bookkeeping only; saveSubmission separately
+  /// requires proof that this invocation created the native GUID.
+  static CloudSyncLocalSendIdentity? captureReaction(
+    Message message,
+    Chat chat,
+    String stableGuid, {
+    String? expectedSourceSha256,
+  }) {
+    final reaction = CloudSyncReactionSendIdentity.capture(
+      message,
+      chat,
+      stableGuid,
+      expectedSourceSha256: expectedSourceSha256,
+      allowSubmissionGuid: true,
+    );
+    return reaction == null
+        ? null
+        : CloudSyncLocalSendIdentity._(
+            stableGuid,
+            reaction.guidHash,
+            reaction.sourceSha256,
+            false,
+            isReaction: true,
+          );
+  }
+
+  static CloudSyncLocalSendIdentity? captureReactionWire(
+    Message message,
+    Chat chat,
+    api.MessageInst wire, {
+    String? expectedSourceSha256,
+  }) {
+    final reaction = CloudSyncReactionSendIdentity.captureWire(
+      message,
+      chat,
+      wire,
+      expectedSourceSha256: expectedSourceSha256,
+      allowSubmissionGuid: true,
+    );
+    return reaction == null
+        ? null
+        : CloudSyncLocalSendIdentity._(
+            wire.id,
+            reaction.guidHash,
+            reaction.sourceSha256,
+            false,
+            isReaction: true,
+          );
+  }
+
+  static CloudSyncLocalSendIdentity? _captureJournaled(
+    Message message,
+    Chat chat,
+    String stableGuid, {
+    required String expectedSourceSha256,
+  }) =>
+      capture(
+        message,
+        chat,
+        stableGuid,
+        expectedSourceSha256: expectedSourceSha256,
+      ) ??
+      captureReaction(
+        message,
+        chat,
+        stableGuid,
+        expectedSourceSha256: expectedSourceSha256,
+      );
+
+  CloudSyncLocalSendIdentity? _revalidate(Message message, Chat chat) =>
+      _isReaction
+      ? captureReaction(
+          message,
+          chat,
+          _guid,
+          expectedSourceSha256: sourceSha256,
+        )
+      : capture(message, chat, _guid, expectedSourceSha256: sourceSha256);
 
   static CloudSyncLocalSendIdentity? capture(
     Message message,
@@ -365,6 +448,41 @@ final class CloudSyncLocalSendJournal {
 
   bool isBoundToStore(Store store) => identical(store, _store);
 
+  /// A native callback can finish before the matching send future returns.
+  /// Avoid re-saving or downgrading that same immutable, already-confirmed
+  /// origin. This is not a way to infer confirmation from a Message row.
+  bool isSubmissionAlreadyConfirmed(CloudSyncLocalSendIdentity identity) =>
+      _store.runInTransaction(TxMode.read, () {
+        _verifyLocalOwnership();
+        final key = CloudSyncLocalSendIdentity._digest([
+          'cloud-sync-local-send-intent-v1',
+          _binding.scope.accountFingerprint,
+          identity.guidHash,
+        ]);
+        final query = _intents
+            .query(CloudSyncLocalSendIntentEntity_.intentKey.equals(key))
+            .build();
+        final CloudSyncLocalSendIntentEntity? found;
+        try {
+          found = query.findUnique();
+        } finally {
+          query.close();
+        }
+        if (found == null) return false;
+        final intent = _readBoundIntent(found.id);
+        if (intent.messageGuidHash != identity.guidHash ||
+            intent.sourceSha256 != identity.sourceSha256) {
+          throw StateError('cloud_sync_local_send_source_changed');
+        }
+        if (intent.state == 1) {
+          _validatedMessage(intent);
+          return true;
+        }
+        // _readBoundIntent checked the immutable adoption binding. An adopted
+        // source is no longer overwritten from the caller's mutable model.
+        return intent.state == 2;
+      });
+
   /// Recover the original fingerprint for a retry under this exact local
   /// account/owner. New submissions still need the pre-await fingerprint;
   /// this read neither invents an intent nor changes its payload or state.
@@ -373,6 +491,33 @@ final class CloudSyncLocalSendJournal {
     required Chat chat,
     required api.MessageInst wire,
     required String initialSourceSha256,
+  }) => _captureSubmissionWire(
+    message: message,
+    chat: chat,
+    wire: wire,
+    initialSourceSha256: initialSourceSha256,
+    reaction: false,
+  );
+
+  CloudSyncLocalSendIdentity? captureReactionSubmissionWire({
+    required Message message,
+    required Chat chat,
+    required api.MessageInst wire,
+    required String initialSourceSha256,
+  }) => _captureSubmissionWire(
+    message: message,
+    chat: chat,
+    wire: wire,
+    initialSourceSha256: initialSourceSha256,
+    reaction: true,
+  );
+
+  CloudSyncLocalSendIdentity? _captureSubmissionWire({
+    required Message message,
+    required Chat chat,
+    required api.MessageInst wire,
+    required String initialSourceSha256,
+    required bool reaction,
   }) => _store.runInTransaction(TxMode.read, () {
     _verifyLocalOwnership();
     final key = CloudSyncLocalSendIdentity._digest([
@@ -395,6 +540,14 @@ final class CloudSyncLocalSendJournal {
     final expected = existing == null
         ? initialSourceSha256
         : _readBoundIntent(existing.id).sourceSha256;
+    if (reaction) {
+      return CloudSyncLocalSendIdentity.captureReactionWire(
+        message,
+        chat,
+        wire,
+        expectedSourceSha256: expected,
+      );
+    }
     return CloudSyncLocalSendIdentity.captureWire(
       message,
       chat,
@@ -489,12 +642,7 @@ final class CloudSyncLocalSendJournal {
       final chat = saved?.chat.target;
       final actual = saved == null || chat == null
           ? null
-          : CloudSyncLocalSendIdentity.capture(
-              saved,
-              chat,
-              identity._guid,
-              expectedSourceSha256: identity.sourceSha256,
-            );
+          : identity._revalidate(saved, chat);
       if (actual == null ||
           actual.sourceSha256 != identity.sourceSha256 ||
           saved!.guid != identity._guid ||
@@ -529,15 +677,17 @@ final class CloudSyncLocalSendJournal {
     return _store.runInTransaction(TxMode.write, () {
       _verifyLocalOwnership();
       final guidHash = CloudSyncLocalSendIdentity._digest([
-        'cloud-sync-local-send-guid-v1', stableGuid,
+        'cloud-sync-local-send-guid-v1',
+        stableGuid,
       ]);
       final key = CloudSyncLocalSendIdentity._digest([
         'cloud-sync-local-send-intent-v1',
-        _binding.scope.accountFingerprint, guidHash,
+        _binding.scope.accountFingerprint,
+        guidHash,
       ]);
-      final query = _intents.query(
-        CloudSyncLocalSendIntentEntity_.intentKey.equals(key),
-      ).build();
+      final query = _intents
+          .query(CloudSyncLocalSendIntentEntity_.intentKey.equals(key))
+          .build();
       final CloudSyncLocalSendIntentEntity? found;
       try {
         found = query.findUnique();
@@ -549,7 +699,8 @@ final class CloudSyncLocalSendJournal {
       if (intent.state == 1 || intent.state == 2) return null;
       final message = _messages.get(intent.localMessageId);
       final chat = message?.chat.target;
-      if (message == null || chat == null ||
+      if (message == null ||
+          chat == null ||
           (message.guid != stableGuid && message.stagingGuid != stableGuid)) {
         throw StateError('cloud_sync_local_send_source_changed');
       }
@@ -558,17 +709,23 @@ final class CloudSyncLocalSendJournal {
       message
         ..guid = stableGuid
         ..stagingGuid = null
-        ..sendingServiceId = null;
-      final identity = CloudSyncLocalSendIdentity.capture(
-        message, chat, stableGuid, expectedSourceSha256: intent.sourceSha256,
+        ..sendingServiceId = null
+        ..error = 0;
+      final identity = CloudSyncLocalSendIdentity._captureJournaled(
+        message,
+        chat,
+        stableGuid,
+        expectedSourceSha256: intent.sourceSha256,
       );
       if (identity == null || identity.guidHash != intent.messageGuidHash) {
         throw StateError('cloud_sync_local_send_source_changed');
       }
       return saveIdsConfirmedDeferredSubmission(
-        identity: identity, capturedAuth: capturedAuth,
+        identity: identity,
+        capturedAuth: capturedAuth,
         stillCurrent: stillCurrent,
-        persistMessage: () => _messages.put(message), now: now,
+        persistMessage: () => _messages.put(message),
+        now: now,
       );
     });
   }
@@ -697,12 +854,7 @@ final class CloudSyncLocalSendJournal {
       final chat = saved?.chat.target;
       final actual = saved == null || chat == null
           ? null
-          : CloudSyncLocalSendIdentity.capture(
-              saved,
-              chat,
-              identity._guid,
-              expectedSourceSha256: identity.sourceSha256,
-            );
+          : identity._revalidate(saved, chat);
       if (actual == null ||
           actual.sourceSha256 != identity.sourceSha256 ||
           (confirmed
@@ -888,7 +1040,10 @@ final class CloudSyncLocalSendJournal {
     CloudSyncLocalSendAdmissionSource source,
   ) {
     final message = validateReadyForCreate(
-      transactionStore, _messageScopeForChatCreate(chatScope), source);
+      transactionStore,
+      _messageScopeForChatCreate(chatScope),
+      source,
+    );
     if (message.chat.targetId != chatId) {
       throw StateError('cloud_sync_local_send_chat_changed');
     }
@@ -923,18 +1078,28 @@ final class CloudSyncLocalSendJournal {
     return _chatCreateBinding(operation, chatId, originIdentity, source);
   }
 
-  String _chatCreateBinding(CloudOutboxOperation operation, int chatId,
-      String originIdentity, CloudSyncLocalSendAdmissionSource source) => jsonEncode([
-      1,
-      source.intentId,
-      CloudSyncLocalSendIdentity._digest([
-        'cloud-sync-local-send-chat-create-v1',
-        source.intentKey, source.localMessageId, source.accountFingerprint,
-        source.writerEpoch, source.messageGuidHash, source.sourceSha256,
-        source.createdAtUtc.millisecondsSinceEpoch,
-        chatId, originIdentity, _operationBinding(operation),
-      ]),
-    ]);
+  String _chatCreateBinding(
+    CloudOutboxOperation operation,
+    int chatId,
+    String originIdentity,
+    CloudSyncLocalSendAdmissionSource source,
+  ) => jsonEncode([
+    1,
+    source.intentId,
+    CloudSyncLocalSendIdentity._digest([
+      'cloud-sync-local-send-chat-create-v1',
+      source.intentKey,
+      source.localMessageId,
+      source.accountFingerprint,
+      source.writerEpoch,
+      source.messageGuidHash,
+      source.sourceSha256,
+      source.createdAtUtc.millisecondsSinceEpoch,
+      chatId,
+      originIdentity,
+      _operationBinding(operation),
+    ]),
+  ]);
 
   /// Re-read after restart and again immediately before submission. A callback
   /// or an outgoing Message row alone is never a durable create capability.
@@ -945,8 +1110,13 @@ final class CloudSyncLocalSendJournal {
     String originIdentity,
     String binding,
   ) {
-    final source = _readChatCreateBindingSource(transactionStore, operation,
-      chatId, originIdentity, binding);
+    final source = _readChatCreateBindingSource(
+      transactionStore,
+      operation,
+      chatId,
+      originIdentity,
+      binding,
+    );
     validateChatCreateSource(transactionStore, operation.scope, chatId, source);
   }
 
@@ -955,21 +1125,38 @@ final class CloudSyncLocalSendJournal {
   /// journal/envelope binding and current owner. The caller must independently
   /// prove that the Chat has never crossed the submission boundary.
   bool hasRetiredChatCreateSource(
-    Store transactionStore, CloudOutboxOperation operation, int chatId,
-    String originIdentity, String binding,
+    Store transactionStore,
+    CloudOutboxOperation operation,
+    int chatId,
+    String originIdentity,
+    String binding,
   ) {
-    final source = _readChatCreateBindingSource(transactionStore, operation,
-      chatId, originIdentity, binding);
+    final source = _readChatCreateBindingSource(
+      transactionStore,
+      operation,
+      chatId,
+      originIdentity,
+      binding,
+    );
     final message = _messages.get(source.localMessageId);
-    return message == null || message.dateDeleted != null || message.dateEdited != null;
+    return message == null ||
+        message.dateDeleted != null ||
+        message.dateEdited != null;
   }
 
   CloudSyncLocalSendAdmissionSource _readChatCreateBindingSource(
-    Store transactionStore, CloudOutboxOperation operation, int chatId,
-    String originIdentity, String binding,
+    Store transactionStore,
+    CloudOutboxOperation operation,
+    int chatId,
+    String originIdentity,
+    String binding,
   ) {
-    _requireCreateAuthority(transactionStore, _messageScopeForChatCreate(operation.scope));
-    Never reject() => throw StateError('cloud_sync_local_send_chat_binding_changed');
+    _requireCreateAuthority(
+      transactionStore,
+      _messageScopeForChatCreate(operation.scope),
+    );
+    Never reject() =>
+        throw StateError('cloud_sync_local_send_chat_binding_changed');
     if (binding.length > 256) reject();
     final dynamic value;
     try {
@@ -977,15 +1164,20 @@ final class CloudSyncLocalSendJournal {
     } on FormatException {
       reject();
     }
-    if (value is! List || value.length != 3 || value[0] != 1 ||
-        value[1] is! int || value[1] <= 0 || value[2] is! String ||
+    if (value is! List ||
+        value.length != 3 ||
+        value[0] != 1 ||
+        value[1] is! int ||
+        value[1] <= 0 ||
+        value[2] is! String ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(value[2])) {
       reject();
     }
     final intent = _readBoundIntent(value[1] as int);
     final source = CloudSyncLocalSendAdmissionSource._(intent, null);
     if (intent.state != 1 ||
-        _chatCreateBinding(operation, chatId, originIdentity, source) != binding) {
+        _chatCreateBinding(operation, chatId, originIdentity, source) !=
+            binding) {
       reject();
     }
     return source;
@@ -1176,56 +1368,92 @@ final class CloudSyncLocalSendJournal {
       persistenceLane: CloudSyncPersistenceLane.semantic,
     );
     final scopeKey = cloudSyncPersistentScopeKey(scope);
-    final row = _readUnique(_store.box<CloudOutboxOperationEntity>().query(
-      CloudOutboxOperationEntity_.operationId.equals(intent.admittedOperationId!),
-    ));
-    if (row == null || row.scopeKey != scopeKey ||
+    final row = _readUnique(
+      _store.box<CloudOutboxOperationEntity>().query(
+        CloudOutboxOperationEntity_.operationId.equals(
+          intent.admittedOperationId!,
+        ),
+      ),
+    );
+    if (row == null ||
+        row.scopeKey != scopeKey ||
         row.accountFingerprint != intent.accountFingerprint ||
-        row.zone != scope.zone || row.action != CloudOutboxAction.save.index ||
-        row.dependencyOperationIdsJson != '[]' || row.localChatOrigin != null ||
-        !RegExp(r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$').hasMatch(row.encryptedPayloadRef ?? '') ||
+        row.zone != scope.zone ||
+        row.action != CloudOutboxAction.save.index ||
+        row.dependencyOperationIdsJson != '[]' ||
+        row.localChatOrigin != null ||
+        !RegExp(
+          r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$',
+        ).hasMatch(row.encryptedPayloadRef ?? '') ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(row.payloadSha256 ?? '') ||
-        !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(row.serverRecordIdHash ?? '')) {
+        !RegExp(
+          r'^[A-Za-z0-9_-]{43}$',
+        ).hasMatch(row.serverRecordIdHash ?? '')) {
       throw StateError('cloud_sync_local_send_adopted_operation_missing');
     }
     // Receipt/status transitions are not source identity. Dispatch continues
     // to validate their live values through the existing store/native guards.
     final operation = CloudOutboxOperation(
-      scope: scope, operationId: row.operationId,
+      scope: scope,
+      operationId: row.operationId,
       logicalEntityKeyHash: row.logicalEntityKeyHash,
-      action: CloudOutboxAction.save, payloadVersion: row.payloadVersion,
+      action: CloudOutboxAction.save,
+      payloadVersion: row.payloadVersion,
       mutationRevision: row.mutationRevision,
       checkpointGeneration: row.checkpointGeneration,
       dependencyOperationIds: const {},
-      createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAtMs, isUtc: true),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        row.createdAtMs,
+        isUtc: true,
+      ),
       encryptedPayloadReference: row.encryptedPayloadRef,
-      payloadSha256: row.payloadSha256, serverRecordIdHash: row.serverRecordIdHash,
+      payloadSha256: row.payloadSha256,
+      serverRecordIdHash: row.serverRecordIdHash,
     );
-    if (operation.operationId != CloudOperationIdentity.forInitialCreate(
-      scope: scope, logicalEntityKeyHash: operation.logicalEntityKeyHash,
-      payloadVersion: operation.payloadVersion,
-    )) {
+    if (operation.operationId !=
+        CloudOperationIdentity.forInitialCreate(
+          scope: scope,
+          logicalEntityKeyHash: operation.logicalEntityKeyHash,
+          payloadVersion: operation.payloadVersion,
+        )) {
       throw StateError('cloud_sync_local_send_adopted_operation_missing');
     }
     validateAdoptedOperation(
-      _store, CloudSyncLocalSendAdmissionSource._(intent, null), operation,
+      _store,
+      CloudSyncLocalSendAdmissionSource._(intent, null),
+      operation,
     );
-    final checkpoint = _readUnique(_store.box<CloudSyncCheckpointEntity>().query(
-      CloudSyncCheckpointEntity_.checkpointKey.equals(scopeKey),
-    ));
-    final mapping = _readUnique(_store.box<CloudRecordMapEntity>().query(
-      CloudRecordMapEntity_.scopeKey.equals(scopeKey).and(
-        CloudRecordMapEntity_.logicalEntityKeyHash.equals(operation.logicalEntityKeyHash),
+    final checkpoint = _readUnique(
+      _store.box<CloudSyncCheckpointEntity>().query(
+        CloudSyncCheckpointEntity_.checkpointKey.equals(scopeKey),
       ),
-    ));
-    if (checkpoint == null || checkpoint.accountFingerprint != intent.accountFingerprint ||
+    );
+    final mapping = _readUnique(
+      _store.box<CloudRecordMapEntity>().query(
+        CloudRecordMapEntity_.scopeKey
+            .equals(scopeKey)
+            .and(
+              CloudRecordMapEntity_.logicalEntityKeyHash.equals(
+                operation.logicalEntityKeyHash,
+              ),
+            ),
+      ),
+    );
+    if (checkpoint == null ||
+        checkpoint.accountFingerprint != intent.accountFingerprint ||
         checkpoint.generation != operation.checkpointGeneration ||
-        mapping == null || mapping.accountFingerprint != intent.accountFingerprint ||
-        mapping.zone != scope.zone || mapping.generation != operation.checkpointGeneration ||
+        mapping == null ||
+        mapping.accountFingerprint != intent.accountFingerprint ||
+        mapping.zone != scope.zone ||
+        mapping.generation != operation.checkpointGeneration ||
         mapping.serverRecordIdHash != operation.serverRecordIdHash ||
-        !RegExp(r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$').hasMatch(mapping.encryptedServerRecordId) ||
-        ((row.state != CloudOutboxStatus.confirmed.index || row.protectedLeaseReference != null) &&
-          mapping.encryptedServerRecordId != operation.encryptedPayloadReference)) {
+        !RegExp(
+          r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$',
+        ).hasMatch(mapping.encryptedServerRecordId) ||
+        ((row.state != CloudOutboxStatus.confirmed.index ||
+                row.protectedLeaseReference != null) &&
+            mapping.encryptedServerRecordId !=
+                operation.encryptedPayloadReference)) {
       throw StateError('cloud_sync_local_send_adopted_mapping_changed');
     }
     final message = _messages.get(intent.localMessageId);
@@ -1268,7 +1496,7 @@ final class CloudSyncLocalSendJournal {
             guid == null ||
             message.stagingGuid != null
         ? null
-        : CloudSyncLocalSendIdentity.capture(
+        : CloudSyncLocalSendIdentity._captureJournaled(
             message,
             chat,
             guid,

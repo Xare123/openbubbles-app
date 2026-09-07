@@ -244,7 +244,7 @@ class ActionHandler extends GetxService {
       });
     } else {
       backend
-          .sendTapback(c, selected!, r, m.associatedMessagePart)
+          .sendTapback(c, selected!, r, m.associatedMessagePart, pendingMessage: m)
           .timeout(const Duration(minutes: 5))
           .then((newMessage) async {
         try {

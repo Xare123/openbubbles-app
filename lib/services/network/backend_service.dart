@@ -19,7 +19,8 @@ abstract class BackendService {
   Future<void> permanentlyDeleteChat(Chat c);
   Future<bool> leaveChat(Chat chat);
   Future<Message> sendTapback(
-      Chat chat, Message selected, String reaction, int? repPart);
+      Chat chat, Message selected, String reaction, int? repPart,
+      {Message? pendingMessage});
   Future<Message> updateMessage(
       Chat chat, Message old, PayloadData newData, PlatformFile? newImage, bool isMeta, String? notifText);
   Future<bool> markRead(Chat chat, bool notifyOthers);
