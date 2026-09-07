@@ -1314,6 +1314,32 @@ Future<bool> send({
 }) =>
     RustLib.instance.api.crateApiApiSend(state: state, local: local, msg: msg);
 
+/// Windows qualification only. Uses the already-bound GSA account instead of
+/// replaying onboarding (which would replace unrelated CloudKit/Keychain state).
+/// No credentials or tokens cross this boundary, and no local state is written.
+Future<IdsUser> cloudSyncWindowsAuthenticateSender({
+  required String path,
+  required ArcMutexAppleAccountDefaultAnisetteProvider account,
+  required JoinedOsConfig config,
+}) => RustLib.instance.api.crateApiApiCloudSyncWindowsAuthenticateSender(
+  path: path,
+  account: account,
+  config: config,
+);
+
+/// Unlike `send`, this returns only after the actual native SendJob completes.
+/// A timeout/crash must remain an unconfirmed journal entry, never a replayed
+/// send or synthetic confirmation. The caller owns the exact pre-send intent.
+Future<void> cloudSyncWindowsSendConfirmed({
+  required String path,
+  required ArcImClient state,
+  required MessageInst msg,
+}) => RustLib.instance.api.crateApiApiCloudSyncWindowsSendConfirmed(
+  path: path,
+  state: state,
+  msg: msg,
+);
+
 Future<List<String>> getHandles({required ArcImClient state}) =>
     RustLib.instance.api.crateApiApiGetHandles(state: state);
 

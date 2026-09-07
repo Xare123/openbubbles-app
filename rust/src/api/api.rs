@@ -3231,6 +3231,10 @@ pub async fn cloud_sync_reconcile_message_create(
         .await
     {
         Ok(CloudMessageRecordLookup::Found(message, receipt)) => {
+            let differences = crate::cloud_sync_outbound::message_readback_differences(&expected_message, &message);
+            if !differences.is_empty() {
+                warn!("Cloud Sync message readback differing_fields={}", differences.join(","));
+            }
             let receipt_server_record_id_hash = hasher.server_record_id_hash(receipt.record_name());
             let receipt_etag_hash = hasher
                 .canonical_etag_hash(receipt.etag())
@@ -3239,9 +3243,11 @@ pub async fn cloud_sync_reconcile_message_create(
                 CloudSyncReconcileObservation::DivergedRecord
             } else {
                 match (
-                    crate::cloud_sync_outbound::outbound_message_payload_sha256(
+                    crate::cloud_sync_outbound::verify_message_readback(
                         message,
+                        &expected_message,
                         &server_record_name,
+                        &input.payload_sha256,
                     ),
                     receipt_etag_hash,
                 ) {
@@ -8856,6 +8862,116 @@ pub async fn send(
         Ok(true)
     } else {
         Ok(false)
+    }
+}
+
+/// Windows qualification only. Uses the already-bound GSA account instead of
+/// replaying onboarding (which would replace unrelated CloudKit/Keychain state).
+/// No credentials or tokens cross this boundary, and no local state is written.
+pub async fn cloud_sync_windows_authenticate_sender(
+    path: String,
+    account: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
+    config: &JoinedOSConfig,
+) -> anyhow::Result<IDSUser> {
+    if !is_cloud_sync_windows_dev_profile(&path) {
+        return Err(anyhow!("cloud_sync_windows_sender_profile_required"));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (account, config);
+        Err(anyhow!("cloud_sync_windows_sender_profile_required"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let directory = canonical_cloudkit_state_directory(&PathBuf::from(path))?;
+        let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&directory)?;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
+        let saved: GSAConfig = plist::from_file(directory.join("gsa.plist"))
+            .map_err(|_| anyhow!("cloud_sync_windows_sender_account_unavailable"))?;
+        let hardware: SavedHardwareState = plist::from_file(directory.join("hw_info.plist"))
+            .map_err(|_| anyhow!("cloud_sync_windows_sender_hardware_unavailable"))?;
+        let mut account = account.lock().await;
+        if account.username.as_deref() != Some(saved.username.as_str())
+            || hardware.os_config.config().get_udid() != config.config().get_udid()
+        {
+            return Err(anyhow!("cloud_sync_windows_sender_identity_mismatch"));
+        }
+        // This is the same PET/delegate exchange used by the ordinary client.
+        // A missing session fails here. Never reset credentials to make it pass.
+        if account.get_token("com.apple.gs.idms.pet").await.is_none()
+            || account.get_pet().is_none()
+            || account.spd.as_ref().and_then(|spd| spd.get("adsid"))
+                .and_then(Value::as_string).is_none_or(str::is_empty)
+        {
+            return Err(anyhow!("cloud_sync_windows_sender_auth_required"));
+        }
+        let delegates = login_apple_delegates(
+            &*account, None, &*config.config(), &[LoginDelegate::IDS],
+        ).await.map_err(|_| anyhow!("cloud_sync_windows_sender_delegate_failed"))?;
+        let ids = delegates.ids
+            .ok_or_else(|| anyhow!("cloud_sync_windows_sender_delegate_missing"))?;
+        authenticate_apple(ids, &*config.config()).await
+            .map_err(|_| anyhow!("cloud_sync_windows_sender_authentication_failed"))
+    }
+}
+
+/// Unlike `send`, this returns only after the actual native SendJob completes.
+/// A timeout/crash must remain an unconfirmed journal entry, never a replayed
+/// send or synthetic confirmation. The caller owns the exact pre-send intent.
+pub async fn cloud_sync_windows_send_confirmed(
+    path: String,
+    state: &Arc<IMClient>,
+    mut msg: MessageInst,
+) -> anyhow::Result<()> {
+    if !is_cloud_sync_windows_dev_profile(&path) {
+        return Err(anyhow!("cloud_sync_windows_sender_profile_required"));
+    }
+    let result = state.send(&mut msg).await
+        .map_err(|_| anyhow!("cloud_sync_windows_sender_send_failed"))?;
+    cloud_sync_windows_finish_send_job(result.handle).await
+}
+
+#[frb(ignore)]
+async fn cloud_sync_windows_finish_send_job(
+    handle: Option<tokio::task::JoinHandle<Result<(), PushError>>>,
+) -> anyhow::Result<()> {
+    if let Some(handle) = handle {
+        handle.await
+            .map_err(|_| anyhow!("cloud_sync_windows_sender_completion_unknown"))?
+            .map_err(|_| anyhow!("cloud_sync_windows_sender_send_failed"))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod cloud_sync_windows_sender_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cloud_sync_windows_sender_waits_for_actual_completion() {
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let native = tokio::spawn(async move { wait.await.unwrap(); Ok(()) });
+        let completion = tokio::spawn(cloud_sync_windows_finish_send_job(Some(native)));
+        tokio::task::yield_now().await;
+        assert!(!completion.is_finished());
+        release.send(()).unwrap();
+        completion.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn cloud_sync_windows_sender_failure_never_confirms() {
+        let native = tokio::spawn(async { Err(PushError::TokenMissing) });
+        let error = cloud_sync_windows_finish_send_job(Some(native)).await.unwrap_err();
+        assert_eq!(error.to_string(), "cloud_sync_windows_sender_send_failed");
+    }
+
+    #[tokio::test]
+    async fn cloud_sync_windows_sender_lost_job_is_unknown() {
+        let native = tokio::spawn(async { std::future::pending::<Result<(), PushError>>().await });
+        native.abort();
+        let error = cloud_sync_windows_finish_send_job(Some(native)).await.unwrap_err();
+        assert_eq!(error.to_string(), "cloud_sync_windows_sender_completion_unknown");
+        cloud_sync_windows_finish_send_job(None).await.unwrap();
     }
 }
 

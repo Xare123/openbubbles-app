@@ -9,6 +9,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_source
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identity_read_set.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
 
 const _pageSize = 256;
 const _failureCategories = <String>{
@@ -179,7 +180,7 @@ Map<String, Object?> _inspectStore(Store store) {
   );
 
   return <String, Object?>{
-    'schema': 10,
+    'schema': 11,
     'canonicalCounts': <String, int>{
       'chats': store.box<Chat>().count(),
       'messages': store.box<Message>().count(),
@@ -198,10 +199,65 @@ Map<String, Object?> _inspectStore(Store store) {
     'presentationFidelityCounts': presentationFidelityCounts,
     'semanticOwnershipCounts': semanticOwnershipCounts,
     'chatIdentityObservationInputs': _inspectChatIdentityInputs(store),
+    'outboundControl': _inspectOutboundControl(store),
     'checkpoints': checkpoints,
     'inboxGroups': inboxGroups,
     'replayOutcomes': replayOutcomes,
     'replaySafeCodes': replaySafeCodes,
+  };
+}
+
+Map<String, Object?> _inspectOutboundControl(Store store) {
+  final rows = store.box<CloudOutboxOperationEntity>().getAll()
+    ..sort((a, b) => a.id.compareTo(b.id));
+  final states = <String, int>{};
+  var present = 0;
+  var readable = 0;
+  var cloudSynced = 0;
+  var linkedToSyncedChat = 0;
+  for (final intent in store.box<CloudSyncLocalSendIntentEntity>().getAll()) {
+    final name = switch (intent.state) {
+      0 => 'awaitingIds', 1 => 'ready', 2 => 'adopted', 3 => 'authDeferred',
+      _ => 'invalid',
+    };
+    states.update(name, (count) => count + 1, ifAbsent: () => 1);
+    final message = store.box<Message>().get(intent.localMessageId);
+    if (message != null) {
+      present++;
+      final body = message.attributedBody;
+      if (message.text?.trim().isNotEmpty == true && body.length == 1 &&
+          body.single.string == message.text) {
+        readable++;
+      }
+      if (message.ckSyncState == true && message.ckRecordId?.isNotEmpty == true) cloudSynced++;
+      final chat = message.chat.target;
+      if (chat?.ckSyncState == true && chat?.ckRecordId?.isNotEmpty == true) linkedToSyncedChat++;
+    }
+  }
+  return {
+    'journalStates': states,
+    // These flags belong to the legacy uploader. V2 owns separate semantic
+    // snapshots and record maps; false here is NOT evidence of a V2 failure.
+    'journalMessageRows': {'present': present, 'readable': readable,
+      'legacyMessageCkSynced': cloudSynced, 'legacyChatCkSynced': linkedToSyncedChat},
+    // An unchanged digest proves that the complete durable audit did not
+    // change across restart. It contains no raw IDs, paths, keys or content.
+    'settledAuditFingerprint': ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint(rows),
+    'operations': [for (final row in rows) {
+      'ordinal': row.id,
+      'zone': _allowlistedOrInvalid(row.zone, _cloudZones),
+      'state': switch (row.state) {
+        0 => 'pending', 1 => 'inFlight', 2 => 'confirmed', 3 => 'paused',
+        4 => 'quarantined', 5 => 'unknownOutcome', _ => 'invalid',
+      },
+      'action': row.action == 0 ? 'save' : row.action == 1 ? 'delete' : 'invalid',
+      'attemptCount': row.attemptCount,
+      'hasServerRecord': row.serverRecordIdHash != null,
+      'hasProtectedPayload': row.encryptedPayloadRef != null,
+      'hasRetainedReceipt': row.protectedLeaseReference != null,
+      'hasActiveLease': row.leaseIdHash != null,
+      'confirmedAtMs': row.confirmedAtMs,
+    }],
   };
 }
 

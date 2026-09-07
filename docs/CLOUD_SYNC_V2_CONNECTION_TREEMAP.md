@@ -55,7 +55,7 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | --- | --- |
 | Message history and conversation projection | User has observed restored readable chats; sustained incremental/restart behavior must be qualified on the release candidate. |
 | Photos, video, GIF and documents | Photos and video playback are user-confirmed. Installed `dcef0e9bf` automatically fetched three gallery attachments after navigation/scrolling without card taps. One HEIC still fails exact-size validation. GIF support is explicitly deferred; attachments are preserved, not deleted or hidden. Each media surface/type still needs user-facing validation, not metadata-only success. |
-| Chat-first ordinary text writing | Installed `98772e7d2` still deferred after native confirmation. The local tombstone-only admission repair is not installed or live-write qualified. Current Windows inspection proves 81 retained deletions plus 13 unresolved Chat saves (10 RCS and 3 satellite/iMessageLite). Fresh Chat creation remains blocked; the approved test recipient has no already-restored Chat in this Windows profile. |
+| Chat-first ordinary text writing | Windows September 7 qualification now proves one real IDS send, a new Chat save/exact readback/canonical adoption, and the dependent Message save/exact readback. Restart reuses the journal without another send or save. Retained historical evidence stays intact. Ordinary Message change-feed convergence and independent-device presentation still require proof. See the genuine Windows local-send qualification below. This is not yet installed on Pixel. |
 | Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
 | Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
@@ -418,6 +418,92 @@ EOL-only generated-file status, not an uncommitted functional patch.
 Chat save/readback/convergence, dependent Message save/readback and zero-extra-save
 recovery remain the next qualification. Do not activate Android or production
 uploads solely because protected staging is now live-proven.
+
+#### Genuine Windows local-send qualification, September 7
+
+The Windows-only `-LocalWrite` launcher mode composes the real IDS transport with
+the existing local-send journal and exact-intent consumer. It is not another
+CloudKit uploader and does not enable the automatic worker. Its private request
+file fixes one authorized recipient and body. An exclusive persisted claim is
+created before local mutations or send; restart never repeats a send whose
+outcome is unknown.
+
+Investigation board:
+
+```text
+Current hardware + GSA session (no onboarding/reset)
+  -> real IDS delegate authentication and ordinary registration
+  -> validate registered sender and recipient
+  -> measured initial-only V2 ownership under writer-transition interlock
+  -> exact plain-text wire + provisional Chat + pending local-send journal
+  -> await actual native SendJob completion (not send-started)
+  -> durable IDS-confirmed/auth-deferred proof
+  -> native identity revalidation and journal promotion
+  -> production runExactIntent: Chat save/readback
+  -> ordinary semantic pull adopts the same Chat row
+  -> production runExactIntent: Message save/readback
+  -> restart/replay: no second IDS send and no extra CloudKit save
+```
+
+The isolated profile initially had no `id.plist`; only older registration backups
+were found. They were not copied. The explicit sender helper uses the already
+bound account and hardware, requests the ordinary IDS delegate, and never calls
+the onboarding reset, replaces Keychain state, or changes Alpha. The normal
+CloudKit-only read composition remains unchanged. Credentials, message contents,
+and routing details stay in the private profile and are excluded from reports.
+
+Live results, September 7 (Windows ARM64, isolated profile only):
+
+- One explicitly authorized IDS text completed its actual native SendJob. A first
+  registration attempt returned 5052; the second ordinary registration succeeded.
+  The generated registration is retained. No copied backup or login-reset path
+  was used. The hardware configuration remains identical to the pre-test copy.
+- Chat create returned an exact receipt; no-save readback settled that receipt.
+  The ordinary semantic pull fetched/applied one Chat and adopted the existing
+  local conversation row. Message admission then used that proven dependency.
+- The first Message admission exposed an encoder mismatch: `Message.toCloud`
+  always writes an attributed-body archive, while native V2 is plain-text-only.
+  `encodeCloudSyncLocalSendPlainText` now uses the journal's strict shape proof,
+  preserves text, route, timestamp and receipts, and omits only the redundant
+  archive. It does not mutate the Message/journal or change legacy encoding.
+- CloudKit accepted the Message, but exact replay initially reported conflict.
+  A real CloudKitRecord serializer roundtrip reproduced the cause: `utm` stores
+  nanoseconds locally but travels as f64 seconds since Apple's epoch. Replay now
+  accepts only the exact `CloudKitValue` timestamp roundtrip, never a tolerance.
+  The original protected envelope and digest are unchanged, and every other
+  field stays exact. Live diagnostics confirmed `differing_fields=utm` only.
+- Both outbox operations are confirmed, with no retained receipt or active lease.
+  The later Windows restart completed without re-sending IDS or admitting a new
+  operation. The complete settled outbox audit fingerprint is unchanged across
+  restart and both later reads. The original one-intent claim remains durable.
+- Canonical counts are 700 Chats, 13,643 Messages and 2,417 Attachments, exactly
+  one new Chat/Message above baseline. The new local Message has nonempty text
+  matching its attributed body. Alpha was not opened, replaced or modified.
+- Two subsequent ordinary semantic reads returned empty terminal pages, not this
+  new Message. Exact-name readback proves the remote body, but ordinary feed
+  convergence and independent-device rendering are still separate pending gates.
+  Legacy `ckSyncState`/`ckRecordId` flags are not V2 ownership evidence.
+
+Next investigation: compare the exact Message lookup with the Message zone's
+delta visibility without clearing its cursor or re-sending. The writer's engine
+is push-only (`readOnlyFetch=false`), and current source does not silently pull
+or project this record while saving. The shared changes request leaves
+`ignoreCallingDeviceChanges` unspecified; this is a hypothesis to investigate,
+not a proven cause or permission to alter the protocol. Chat self-write feedback
+already worked, so test contrary evidence before adopting that explanation.
+
+Validation: 310 native tests, 1,898 full CloudKit Dart/inspector tests, and
+15 additional real signed-library bridge cases passed. The subsequent expanded
+inspector has five passing cases. Diagnostics and evidence contain aggregates
+and fixed field names only. Private account state, the request/claim and the
+pre-write rollback snapshot remain in the isolated profile.
+
+Evidence bundle: `C:/Codex/OpenBubblesReview/evidence/windows-replay-20260906/`.
+Important files: `windows-local-write-live-02.log`,
+`windows-local-write-chat-convergence.log`, `windows-plain-text-bridge-retest.log`,
+`windows-readback-date-native-final.log`, `windows-local-write-readback-date.log`,
+`windows-local-write-restart-replay.log`, and
+`windows-local-write-before-restart-inspection.log`.
 
 #### Direct-Chat record membership: implemented, development opt-in only
 

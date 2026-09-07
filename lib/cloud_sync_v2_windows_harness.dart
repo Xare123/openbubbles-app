@@ -35,6 +35,7 @@ import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
+import 'cloud_sync_v2_windows_local_write.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -103,7 +104,8 @@ enum CloudSyncV2WindowsHarnessOperation {
   projectionViewer,
   projectionDetailViewer,
   chatIdentityObservation,
-  stagedChatIdentityObservation;
+  stagedChatIdentityObservation,
+  localWrite;
 
   static CloudSyncV2WindowsHarnessOperation parse(List<String> arguments) {
     return CloudSyncV2WindowsHarnessLaunch.parse(arguments).operation;
@@ -490,6 +492,12 @@ final class CloudSyncV2WindowsHarnessLaunch {
             throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
           }
           operation = CloudSyncV2WindowsHarnessOperation.projectionDetailViewer;
+          operationSeen = true;
+        case 'local-write':
+          if (operationSeen) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          operation = CloudSyncV2WindowsHarnessOperation.localWrite;
           operationSeen = true;
         case 'observe-chat-identity':
         case 'observe-staged-chat-identity':
@@ -1022,6 +1030,65 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       case CloudSyncV2WindowsHarnessOperation.chatIdentityObservation:
       case CloudSyncV2WindowsHarnessOperation.stagedChatIdentityObservation:
         await _runChatIdentityObservation();
+      case CloudSyncV2WindowsHarnessOperation.localWrite:
+        await _runLocalWrite();
+    }
+  }
+
+  Future<void> _runLocalWrite() async {
+    if (_busy) return;
+    setState(() { _busy = true; _status = 'Running the explicit Windows write request...'; });
+    rustlib.ArcImClient? senderClient;
+    try {
+      final result = await CloudSyncWindowsLocalWrite(
+        readClient: () => _activeClient,
+        reportStage: (stage) => _setRuntimeStage(stage, state: 'running'),
+        prepareSender: (sender, recipient) async {
+          final config = _osConfig!;
+          final connection = _connection!;
+          final hardware = api.readHardware(path: fs.appDocDir.path);
+          if (hardware == null) throw StateError('cloud_sync_windows_sender_hardware_unavailable');
+          final identity = api.decodeIdentity(identity: hardware.identity);
+          var users = api.restoreUsers(path: fs.appDocDir.path);
+          if (users == null || users.isEmpty) {
+            await _setRuntimeStage('windows-write-ids-authentication', state: 'running');
+            final user = await api.cloudSyncWindowsAuthenticateSender(
+              path: fs.appDocDir.path, account: _account!, config: config,
+            );
+            await _setRuntimeStage('windows-write-ids-registration', state: 'running');
+            final registration = await api.registerIds(path: fs.appDocDir.path,
+              config: config, aps: connection, identity: identity, users: [user]);
+            if (registration.$1 == null || registration.$2 != null) {
+              throw StateError('cloud_sync_windows_sender_registration_failed');
+            }
+            users = registration.$1!;
+          }
+          await _setRuntimeStage('windows-write-ids-client', state: 'running');
+          final im = await api.makeImclient(path: fs.appDocDir.path,
+            conn: connection, users: users, identity: identity);
+          senderClient = im;
+          _sessionHandles.addAll([hardware, identity, im]);
+          await _setRuntimeStage('windows-write-registered-sender', state: 'running');
+          if (!(await api.getHandles(state: im)).contains(sender)) {
+            throw StateError('cloud_sync_windows_sender_handle_unregistered');
+          }
+          await _setRuntimeStage('windows-write-recipient-lookup', state: 'running');
+          if (!(await api.validateTargets(state: im, targets: [recipient], sender: sender))
+              .contains(recipient)) {
+            throw StateError('cloud_sync_windows_sender_target_unavailable');
+          }
+        },
+        sendConfirmed: (message) => api.cloudSyncWindowsSendConfirmed(
+          path: fs.appDocDir.path, state: senderClient!, msg: message,
+        ),
+      ).run();
+      await _setRuntimeStage('windows-local-write-pass-complete', state: 'finished',
+        detail: jsonEncode(result));
+      if (mounted) setState(() { _busy = false; _status = 'Write pass complete. See the bounded status report.'; });
+    } catch (error) {
+      // Do not silently restart authentication or resend on a failed write.
+      final code = cloudSyncWindowsWriteFailureCode(error);
+      _showFailure(StateError(code)); // Never report raw registration/server data.
     }
   }
 

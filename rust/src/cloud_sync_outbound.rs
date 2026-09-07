@@ -220,6 +220,58 @@ pub(crate) fn outbound_message_payload_sha256(
     encode_outbound_message(message, server_record_name).map(|encoded| sha256_hex(&encoded))
 }
 
+/// The durable envelope stores a nanosecond SystemTime, while the unencrypted
+/// CloudKit Date field uses f64 seconds since Apple's epoch. Compare its exact
+/// wire roundtrip, not an arbitrary time tolerance. Every other field and the
+/// original protected payload digest remain byte-exact. Never rewrite the
+/// durable envelope, identity, or remote record to accommodate transport loss.
+pub(crate) fn verify_message_readback(
+    mut actual: CloudMessage,
+    expected: &CloudMessage,
+    server_record_name: &str,
+    expected_payload_sha256: &str,
+) -> Result<String, CloudSyncOutboundFailure> {
+    use rustpush::cloudkit_proto::CloudKitValue;
+    use std::time::{Duration, SystemTime};
+
+    let expected_digest = outbound_message_payload_sha256(expected.clone(), server_record_name)?;
+    if expected_digest != expected_payload_sha256 {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    if actual.utm != expected.utm {
+        let value = expected.utm.ok_or(CloudSyncOutboundFailure::BindingMismatch)?;
+        if value < UNIX_EPOCH + Duration::from_secs(978307200) {
+            return Err(CloudSyncOutboundFailure::MalformedMessage);
+        }
+        let wire = value.to_value().ok_or(CloudSyncOutboundFailure::MalformedMessage)?;
+        if actual.utm != SystemTime::from_value(&wire) {
+            return Err(CloudSyncOutboundFailure::BindingMismatch);
+        }
+        actual.utm = expected.utm;
+    }
+    let actual_digest = outbound_message_payload_sha256(actual, server_record_name)?;
+    if actual_digest != expected_digest {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    Ok(expected_digest)
+}
+
+/// Closed-set mismatch labels only. No values, hashes, record names or text.
+pub(crate) fn message_readback_differences(expected: &CloudMessage, actual: &CloudMessage) -> Vec<&'static str> {
+    let mut fields = Vec::new();
+    macro_rules! check {
+        ($($field:ident),+ $(,)?) => { $(if expected.$field != actual.$field { fields.push(stringify!($field)); })+ };
+    }
+    check!(utm, error, chat_id, sender, time, destination_caller_id, guid, service);
+    if expected.flags.bits() != actual.flags.bits() { fields.push("flags"); }
+    if expected.r#type != actual.r#type { fields.push("message_type"); }
+    if expected.msg_proto.0 != actual.msg_proto.0 { fields.push("msg_proto"); }
+    if expected.msg_proto_2.as_ref().map(|p| &p.0) != actual.msg_proto_2.as_ref().map(|p| &p.0) { fields.push("msg_proto_2"); }
+    if expected.msg_proto_3.as_ref().map(|p| &p.0) != actual.msg_proto_3.as_ref().map(|p| &p.0) { fields.push("msg_proto_3"); }
+    if expected.msg_proto_4.as_ref().map(|p| &p.0) != actual.msg_proto_4.as_ref().map(|p| &p.0) { fields.push("msg_proto_4"); }
+    fields
+}
+
 /// Recomputes the Dart `CloudOperationIdentity.forInitialCreate` value for
 /// the one currently supported outbound scope. Keeping this check native
 /// prevents a well-formed but unrelated local ID from being paired with a
@@ -692,6 +744,90 @@ mod tests {
             outbound_message_payload_sha256(changed, "SERVER-RECORD").unwrap(),
             expected
         );
+    }
+
+    struct IdentityEncryptor;
+
+    impl rustpush::cloudkit_proto::CloudKitEncryptor for IdentityEncryptor {
+        fn encrypt_data(&self, data: &[u8], _: &str) -> Vec<u8> { data.to_vec() }
+        fn decrypt_data(&self, data: &[u8], _: &str) -> Vec<u8> { data.to_vec() }
+    }
+
+    fn cloudkit_roundtrip(message: &CloudMessage) -> CloudMessage {
+        use rustpush::cloudkit_proto::CloudKitRecord;
+        CloudMessage::from_record_encrypted(
+            &message.to_record_encrypted(Some(&IdentityEncryptor)),
+            Some(&IdentityEncryptor),
+        )
+    }
+
+    fn readback_fixture() -> CloudMessage {
+        let mut message = fixture();
+        // Windows SystemTime resolution is 100ns. This value changes after
+        // CloudKit's f64 roundtrip even on that platform (unlike 123ns).
+        message.utm = Some(UNIX_EPOCH + std::time::Duration::new(1_788_000_000, 500));
+        message
+    }
+
+    #[test]
+    fn message_readback_uses_the_exact_cloudkit_date_roundtrip() {
+        let expected = readback_fixture();
+        let actual = cloudkit_roundtrip(&expected);
+        let digest = outbound_message_payload_sha256(expected.clone(), "RECORD").unwrap();
+        // Reproduces the old false conflict through the real record serializer.
+        assert_ne!(expected.utm, actual.utm);
+        assert_eq!(message_readback_differences(&expected, &actual), ["utm"]);
+        assert_ne!(outbound_message_payload_sha256(actual.clone(), "RECORD").unwrap(), digest);
+        assert_eq!(verify_message_readback(actual, &expected, "RECORD", &digest).unwrap(), digest);
+        assert_eq!(verify_message_readback(expected.clone(), &expected, "RECORD", &digest).unwrap(), digest);
+    }
+
+    #[test]
+    fn message_readback_does_not_use_a_time_tolerance_or_ignore_presence() {
+        use std::time::Duration;
+        let expected = readback_fixture();
+        let actual = cloudkit_roundtrip(&expected);
+        let digest = outbound_message_payload_sha256(expected.clone(), "RECORD").unwrap();
+        for utm in [None, actual.utm.map(|time| time - Duration::from_nanos(100)),
+            actual.utm.map(|time| time + Duration::from_millis(1))] {
+            let mut changed = actual.clone();
+            changed.utm = utm;
+            assert_eq!(verify_message_readback(changed, &expected, "RECORD", &digest),
+                Err(CloudSyncOutboundFailure::BindingMismatch));
+        }
+        let mut missing_expected = expected.clone();
+        missing_expected.utm = None;
+        let missing_digest = outbound_message_payload_sha256(missing_expected.clone(), "RECORD").unwrap();
+        assert_eq!(verify_message_readback(actual, &missing_expected, "RECORD", &missing_digest),
+            Err(CloudSyncOutboundFailure::BindingMismatch));
+    }
+
+    #[test]
+    fn message_readback_still_binds_every_content_and_route_field() {
+        let expected = readback_fixture();
+        let actual = cloudkit_roundtrip(&expected);
+        let digest = outbound_message_payload_sha256(expected.clone(), "RECORD").unwrap();
+        let mutations: Vec<Box<dyn Fn(&mut CloudMessage)>> = vec![
+            Box::new(|m| m.chat_id.push('x')),
+            Box::new(|m| m.guid.push('x')),
+            Box::new(|m| m.time += 1),
+            Box::new(|m| m.destination_caller_id.push('x')),
+            Box::new(|m| m.flags |= MessageFlags::IS_READ),
+            Box::new(|m| m.msg_proto.0.text = Some("different".to_owned())),
+            Box::new(|m| m.msg_proto.0.date_read = Some(123)),
+            Box::new(|m| m.msg_proto_3 = None),
+            Box::new(|m| m.msg_proto_4.as_mut().unwrap().0.group_id = Some("other".to_owned())),
+        ];
+        for mutate in mutations {
+            let mut changed = actual.clone();
+            mutate(&mut changed);
+            assert_eq!(verify_message_readback(changed, &expected, "RECORD", &digest),
+                Err(CloudSyncOutboundFailure::BindingMismatch));
+        }
+        assert_eq!(verify_message_readback(actual.clone(), &expected, "OTHER", &digest),
+            Err(CloudSyncOutboundFailure::BindingMismatch));
+        assert_eq!(verify_message_readback(actual, &expected, "RECORD", &"0".repeat(64)),
+            Err(CloudSyncOutboundFailure::BindingMismatch));
     }
 
     #[test]

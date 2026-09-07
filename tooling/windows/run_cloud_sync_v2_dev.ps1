@@ -24,6 +24,7 @@ param(
     [switch] $ProjectionDetailViewer,
     [switch] $ChatIdentityObservation,
     [switch] $StagedChatIdentityObservation,
+    [switch] $LocalWrite,
     [ValidateRange(30, 3600)]
     [int] $RunOnceTimeoutSeconds = 600,
     [ValidateRange(60, 7200)]
@@ -45,7 +46,8 @@ $selectedOperations = @(
         $ProjectionViewer,
         $ProjectionDetailViewer,
         $ChatIdentityObservation,
-        $StagedChatIdentityObservation
+        $StagedChatIdentityObservation,
+        $LocalWrite
     ) | Where-Object { $_ }
 )
 if ($selectedOperations.Count -gt 1) {
@@ -542,7 +544,8 @@ function Wait-HarnessOperation {
             'attachment-probe',
             'attachment-reuse-probe',
             'chat-identity-observation',
-            'staged-chat-identity-observation'
+            'staged-chat-identity-observation',
+            'local-write'
         )]
         [string] $ExpectedOperation,
         [Parameter(Mandatory)][int] $TimeoutSeconds
@@ -575,6 +578,9 @@ function Wait-HarnessOperation {
                 }
                 elseif ($ExpectedOperation -eq 'staged-chat-identity-observation') {
                     $status.stage -eq 'staged-chat-identity-observation-complete'
+                }
+                elseif ($ExpectedOperation -eq 'local-write') {
+                    $status.stage -eq 'windows-local-write-pass-complete'
                 }
                 else {
                     $status.stage -eq 'semantic-pull'
@@ -735,6 +741,11 @@ $arguments = @(
 )
 if ($ReplayExcludedChats) {
     $arguments += '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_REPLAY_EXCLUDED_CHATS=true'
+}
+if ($LocalWrite) {
+    $arguments += '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true'
+    $arguments += '--dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2'
+    if ($SkipBuild) { throw 'LocalWrite requires a verified writer build.' }
 }
 
 $launcherLock = Enter-ProfileScopedLauncherLock -ProfilePath $profile
@@ -913,13 +924,16 @@ try {
     elseif ($StagedChatIdentityObservation) {
         $harnessArguments = @("observe-staged-chat-identity") + $harnessArguments
     }
+    elseif ($LocalWrite) {
+        $harnessArguments = @("local-write") + $harnessArguments
+    }
     $startParameters = @{
         FilePath = $runner
         WorkingDirectory = $runnerDirectory
         PassThru = $true
         ArgumentList = $harnessArguments
     }
-    if ($ChatIdentityObservation -or $StagedChatIdentityObservation) { $startParameters.WindowStyle = 'Hidden' }
+    if ($ChatIdentityObservation -or $StagedChatIdentityObservation -or $LocalWrite) { $startParameters.WindowStyle = 'Hidden' }
     $statusPath = Join-Path $profile "cloud-sync-v2\windows-harness-status.json"
     $statusBaselineWriteUtc = [datetime]::MinValue
     if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
@@ -940,7 +954,7 @@ try {
         throw "The Windows Cloud Sync V2 harness exited during startup."
     }
     Write-Host "Cloud Sync V2 Windows harness started (PID $($process.Id))."
-    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse -or $ChatIdentityObservation -or $StagedChatIdentityObservation) {
+    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse -or $ChatIdentityObservation -or $StagedChatIdentityObservation -or $LocalWrite) {
         $operationTimeoutSeconds = if ($Drain) {
             $DrainTimeoutSeconds
         }
@@ -967,6 +981,8 @@ try {
                 'chat-identity-observation'
             } elseif ($StagedChatIdentityObservation) {
                 'staged-chat-identity-observation'
+            } elseif ($LocalWrite) {
+                'local-write'
             } else {
                 'run-once'
             }) `

@@ -4,6 +4,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 
 import 'cloud_sync_local_send_journal.dart';
+import 'cloud_sync_local_send_encoder.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_staging.dart';
 import 'objectbox_cloud_sync_store.dart';
@@ -120,7 +121,7 @@ final class CloudSyncOutboundAdmissionCoordinator {
   });
 
   static frb_api.CloudMessage _encodeLocalMessage(Message message) =>
-      message.toCloud(true);
+      encodeCloudSyncLocalSendPlainText(message);
 
   Future<CloudOutboxOperation> _stageAndAdmit(
     CloudSyncScope scope, {

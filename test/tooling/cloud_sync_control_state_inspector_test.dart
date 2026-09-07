@@ -10,6 +10,30 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../tooling/cloud_sync/inspect_cloud_sync_control_state.dart';
 
 void main() {
+  test('journal convergence reports content-free canonical fidelity counts', () async {
+    final directory = await Directory.systemTemp.createTemp('cloud-inspector-local-send-');
+    addTearDown(() => directory.delete(recursive: true));
+    final db = await openStore(directory: directory.path);
+    try {
+      final chat = Chat(guid: 'private-chat')
+        ..ckSyncState = true ..ckRecordId = 'private-chat-record';
+      db.box<Chat>().put(chat);
+      final message = Message(guid: 'private-message', text: 'private text',
+        attributedBody: [AttributedBody.raw('private text')])
+        ..ckSyncState = true ..ckRecordId = 'private-message-record';
+      message.chat.target = chat;
+      final messageId = db.box<Message>().put(message);
+      db.box<CloudSyncLocalSendIntentEntity>().put(CloudSyncLocalSendIntentEntity(
+        intentKey: 'private-intent', accountFingerprint: 'A' * 43, writerEpoch: 1,
+        localMessageId: messageId, messageGuidHash: 'B' * 64, sourceSha256: 'C' * 64,
+        state: 2, createdAtMs: 1, updatedAtMs: 1));
+    } finally { db.close(); }
+    final report = await inspectCloudSyncControlState(directory);
+    expect((report['outboundControl'] as Map)['journalMessageRows'],
+        {'present': 1, 'readable': 1, 'legacyMessageCkSynced': 1, 'legacyChatCkSynced': 1});
+    expect(jsonEncode(report), isNot(contains('private-')));
+    expect(jsonEncode(report), isNot(contains('private text')));
+  });
   for (final intactSource in [true, false]) {
     test(
       'identity input inspection preserves source (intact=$intactSource)',
@@ -140,7 +164,11 @@ void main() {
       final before = sha256.convert(await data.readAsBytes());
       final report = await inspectCloudSyncControlState(directory);
       expect(sha256.convert(await data.readAsBytes()), before);
-      expect(report['schema'], 10);
+      expect(report['schema'], 11);
+      expect((report['outboundControl'] as Map)['journalStates'], isEmpty);
+      expect((report['outboundControl'] as Map)['journalMessageRows'],
+          {'present': 0, 'readable': 0, 'legacyMessageCkSynced': 0, 'legacyChatCkSynced': 0});
+      expect((report['outboundControl'] as Map)['operations'], isEmpty);
       expect(report['chatIdentityObservationInputs'], isEmpty);
       final group = (report['inboxGroups'] as List).single as Map;
       expect(group['zones'], ['chatManateeZone']);
