@@ -1173,7 +1173,7 @@ final class ObjectBoxCloudSemanticStoreGateway
               continue;
             }
             if (repairsChatProjection) {
-              if (_hasServiceIdentifierAlias(context, logicalEntityKeyHash)) {
+              if (_hasCompleteChatProjection(context, logicalEntityKeyHash)) {
                 continue;
               }
             } else {
@@ -1555,7 +1555,7 @@ final class ObjectBoxCloudSemanticStoreGateway
     return Map<String, String>.unmodifiable(candidates);
   }
 
-  bool _hasServiceIdentifierAlias(
+  bool _hasCompleteChatProjection(
     _SemanticTransactionContext context,
     String logicalEntityKeyHash,
   ) {
@@ -1578,6 +1578,7 @@ final class ObjectBoxCloudSemanticStoreGateway
     try {
       final rows = query.find();
       var hasAuthoritativeAlias = false;
+      var missingGroupRoute = false;
       for (final row in rows) {
         if (row.bindingKey.startsWith(_legacyChatAliasBindingPrefix)) {
           continue;
@@ -1626,9 +1627,18 @@ final class ObjectBoxCloudSemanticStoreGateway
             row.canonicalGuidLookupHash != expectedLookupHash) {
           throw _failure('projection_repair_alias_ownership_invalid');
         }
+        // Older V2 builds persisted the strong alias but omitted the raw
+        // group ID. Repair it from the same applied protected record, without
+        // changing participants, the snapshot, or either checkpoint cursor.
+        if (row.service == CloudSemanticService.iMessage.name &&
+            !chat!.isRpSms &&
+            chat.style == 43 &&
+            chat.cloudGuid?.isNotEmpty != true) {
+          missingGroupRoute = true;
+        }
         hasAuthoritativeAlias = true;
       }
-      return hasAuthoritativeAlias;
+      return hasAuthoritativeAlias && !missingGroupRoute;
     } finally {
       query.close();
     }

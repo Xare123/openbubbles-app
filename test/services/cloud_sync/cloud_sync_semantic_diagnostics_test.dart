@@ -2,6 +2,16 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_dia
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('group route conflicts report no raw routing identifier', () {
+    final diagnostics = CloudSyncSemanticDiagnosticCollector();
+    diagnostics.record('canonical_chat_group_route_conflict');
+    diagnostics.record('canonical_chat_group_route_conflict:private-group');
+    expect(diagnostics.snapshot(), {
+      'canonical_chat_group_route_conflict': 1,
+      'diagnostic_code_invalid': 1,
+    });
+  });
+
   test('records sorted bounded content-free diagnostic counts', () {
     final diagnostics = CloudSyncSemanticDiagnosticCollector();
 

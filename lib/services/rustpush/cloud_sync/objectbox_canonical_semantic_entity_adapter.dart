@@ -1032,6 +1032,9 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         expectedChat: chat,
       );
     }
+    if (_projectMissingCloudGroupId(chat, payload)) {
+      _chats.put(chat);
+    }
     final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
     for (final alias in payload.aliases) {
       _putChatAlias(
@@ -1258,6 +1261,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     chat.chatIdentifier = payload.chatIdentifier;
     chat.style = style;
     chat.isRpSms = isSms;
+    _projectMissingCloudGroupId(chat, payload);
 
     if (!chat.lockChatName) {
       switch (payload.displayNameState) {
@@ -1317,6 +1321,38 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     }
 
     return CloudCanonicalSemanticMutationReceipt.committed;
+  }
+
+  /// Restore the raw CloudKit route separately from the canonical local GUID.
+  /// This field alone is not outbound provenance. An established, different
+  /// route must be checked against the protected record before any upload; do
+  /// not silently retarget it or block otherwise valid incoming presentation.
+  bool _projectMissingCloudGroupId(Chat chat, CloudChatEntityPayload payload) {
+    final groupId = payload.groupId;
+    if (payload.service != CloudSemanticService.iMessage ||
+        payload.style != CloudSemanticChatStyle.group ||
+        chat.style != 43 ||
+        chat.isRpSms ||
+        chat.guid != payload.canonicalGuid ||
+        chat.guid != 'iMessage;+;${payload.chatIdentifier}' ||
+        chat.chatIdentifier != payload.chatIdentifier ||
+        groupId == null ||
+        groupId.isEmpty ||
+        utf8.encode(groupId).length > 16 * 1024 ||
+        groupId.contains('\u0000') ||
+        !payload.aliases.any(
+          (alias) => alias.kind == CloudSemanticChatAliasKind.groupId,
+        )) {
+      return false;
+    }
+    if (chat.cloudGuid?.isNotEmpty == true) {
+      if (chat.cloudGuid != groupId) {
+        _diagnosticRecorder?.call('canonical_chat_group_route_conflict');
+      }
+      return false;
+    }
+    chat.cloudGuid = groupId;
+    return true;
   }
 
   List<Handle> _resolveParticipantHandles(

@@ -62,6 +62,25 @@ api.MessageInst _wire(Chat chat) => api.MessageInst(
 );
 
 void main() {
+  test('restoring raw CloudKit group ID preserves captured IDS origin', () {
+    final group = _group();
+    final message = _message(group);
+    final wire = _wire(group);
+    final before = CloudSyncLocalSendIdentity.captureWire(message, group, wire)!;
+    for (final rawGroupId in ['raw-apple-group', _guid]) {
+      group.cloudGuid = rawGroupId;
+      final after = CloudSyncLocalSendIdentity.captureWire(
+        message,
+        group,
+        wire,
+        expectedSourceSha256: before.sourceSha256,
+      );
+      expect(after, isNotNull);
+      expect(after!.sourceSha256, before.sourceSha256);
+      expect(after.guidHash, before.guidHash);
+    }
+  });
+
   test('an identified group remains a group with one other member', () {
     final group = _group();
     group.handles.removeLast();

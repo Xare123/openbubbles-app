@@ -44,6 +44,49 @@ continue under a new account.
 
 ## Latest integration checkpoint, 2026-09-07
 
+### Restored group routing is retained and repaired without a history reset
+
+The canonical group Chat projection now fills a missing `Chat.cloudGuid` from
+the validated payload's raw `groupId`, separately from the local
+`iMessage;+;<chatIdentifier>` GUID. It requires the iMessage/style-43 identity
+and the native group-ID alias; it never substitutes `originalGroupId`, the
+canonical GUID, a random ID or a direct/SMS route. Non-UUID raw group IDs remain
+valid. This restores routing data, not outbound authorization.
+
+Already-applied groups are recoverable through the existing protected projection
+repair lane. Its candidate selector previously considered the service alias
+alone sufficient; it now also detects the missing raw group ID. Re-decoding the
+current applied protected record fills only that missing field and repairs
+aliases, leaving the Chat row, message relations, participants, name, snapshot,
+record map, inbox outcomes and checkpoint cursors intact. A completed repair no
+longer selects that chat, including after ObjectBox restart.
+
+An established different raw ID is **not overwritten**. The fixed diagnostic
+`canonical_chat_group_route_conflict` exposes the mismatch without raw values.
+Parent review deliberately kept this separate from incoming presentation:
+blocking a valid incoming name/message path to enforce a future write gate would
+be a read regression. The upcoming write dependency must compare the local route
+and members with the current protected group proof, not trust `cloudGuid` alone.
+Group upload remains disabled; this patch does not turn a conflict into permission.
+
+**TEST-PROVEN, not LIVE-PROVEN:** the parent ran 405 tests across nine impacted
+files, including real ObjectBox applied-record repair/restart, direct/reaction
+dependency regression, merge policy and inbox application. Eight changed Dart
+source/test files analyze cleanly. Focused cases pin non-UUID routing, missing
+field repair, no lineage fallback, direct/SMS exclusion, existing-route conflict,
+unchanged IDS source hashes, and the still-closed group encoder. Evidence:
+`evidence/windows-replay-20260906/group-route-reviewed-regression-20260907.log`
+and `group-route-reviewed-analyzer-20260907.log`. Initial test fixture constructor
+errors were corrected before this passing run. No APK/native-library build,
+personal database, device change or Apple request was involved.
+
+The bounded Meta review located the same dropped route and contributed the
+gateway integration test, which the parent reviewed and reran. Its suggested
+ETag plus a locally computed participant hash was not accepted as evidence of
+protected membership; nor was a blanket new multi-record rejection implemented.
+The remaining next gate is authenticated group route/member freshness, followed
+by restored-group Message admission and exact live readback.
+
 ### Attachment IDS submission now shares retry and pending-row handling
 
 `RustPushBackend.sendAttachment` now uses `_sendPreparedMessage` for V2 outbound
@@ -193,15 +236,15 @@ The native common Message validator accepts a nonempty chat route; this is not
 evidence that any supplied group ID is correct. The shipping mapping is explicit:
 `Chat.applyFromCloud` stores `c.groupId` in `Chat.cloudGuid`; `Message.toCloud`
 uses that raw value for outer `CloudMessage.chatId`, while `MessageProto4.groupId`
-uses the canonical local chat GUID. V2 normally leaves `cloudGuid` unpopulated on
-restored Chats, assigning it only on local-origin adoption. Simply accepting
+uses the canonical local chat GUID. Before the repair above, V2 left `cloudGuid`
+unpopulated on restored Chats, assigning it only on local-origin adoption. Simply accepting
 `iMessage;+;<identifier>` in the plaintext encoder would erase this distinction.
 Also, `build_upsert` currently passes no group metadata digest to the snapshot.
 Requiring that existing optional field now would block every restored group.
 
-Reviewed implementation direction, **not yet implemented**: retain the validated
-raw group ID through the existing canonical projection and existing `cloudGuid`
-field, with a versioned authenticated-projection integrity proof. Prefer that
+The raw group-ID projection is now implemented as described above. The remaining
+implementation direction is a versioned authenticated-projection integrity
+proof over the retained routing data. Prefer that
 over a new native runtime decode/staging API if it proves the same exact route.
 Reject conflicting established identity; do not substitute an arbitrary alias.
 The digest must be reproducible from actually retained data, not an unpersisted

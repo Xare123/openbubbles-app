@@ -4451,6 +4451,241 @@ void main() {
       expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
     },
   );
+
+  test(
+    'repairs missing group route without changing members or sync state',
+    () async {
+      final chatScope = _scope(zone: 'chatManateeZone');
+      final entry = _entry(scope: chatScope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final identityRegistry = TransientCloudCanonicalIdentityRegistry();
+      final activeScope = CloudCanonicalActiveScope(
+        scope: chatScope,
+        generation: entry.generation,
+      );
+      final realAdapter = ObjectBoxCanonicalSemanticEntityAdapter(
+        store: objectBox,
+        activeScopeProvider: () => activeScope,
+        identityResolver: identityRegistry,
+        semanticApplyEnabled: true,
+        allowChatUpserts: true,
+      );
+      final currentGateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: realAdapter,
+        clock: () => now,
+      );
+      const canonicalGuid = 'iMessage;+;groupchat-route-test';
+      const chatIdentifier = 'groupchat-route-test';
+      const rawGroupId = 'raw-group-id-not-a-uuid';
+      const rawOriginalId = 'different-original-id-not-a-uuid';
+      final payload = _chatPayload(
+        includeServiceIdentifierAlias: true,
+        participantHandles: const [
+          'mailto:group-a@example.com',
+          'mailto:group-b@example.com',
+        ],
+        logicalEntityKeyHash: _indexedDigest('group-logical-route-test'),
+        canonicalGuid: canonicalGuid,
+        chatIdentifier: chatIdentifier,
+        aliasKeyHash: _indexedDigest('group-service-alias-route-test'),
+        style: CloudSemanticChatStyle.group,
+        groupId: rawGroupId,
+        originalGroupId: rawOriginalId,
+        extraAliases: [
+          CloudSemanticChatAlias(
+            kind: CloudSemanticChatAliasKind.groupId,
+            keyHash: _indexedDigest('group-alias-route-test'),
+          ),
+          CloudSemanticChatAlias(
+            kind: CloudSemanticChatAliasKind.originalGroupId,
+            keyHash: _indexedDigest('group-original-alias-route-test'),
+          ),
+        ],
+      );
+      final snapshot = _chatSnapshot(
+        logicalEntityKeyHash: payload.logicalEntityKeyHash,
+        encryptedRawRecordReference: entry.change.encryptedPayloadReference!,
+        etagHash: entry.change.etagHash!,
+      );
+      final lease = identityRegistry.bind(
+        CloudDecodedMutation.upsert(
+          scope: chatScope,
+          generation: entry.generation,
+          changeId: entry.change.changeId,
+          snapshot: snapshot,
+          payload: payload,
+        ),
+      );
+      try {
+        await currentGateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: (transaction) {
+            transaction.applyEntity(payload: payload, snapshot: snapshot);
+            transaction.markChangeApplied(entry.change.changeId);
+          },
+        );
+      } finally {
+        lease.release();
+      }
+      var chat = objectBox.box<Chat>().getAll().single;
+      expect(chat.style, 43);
+      expect(chat.cloudGuid, rawGroupId);
+      final chatId = chat.id!;
+      final memberMessage = Message(
+        guid: 'group-route-member-message',
+        dateCreated: now,
+        isFromMe: true,
+      );
+      memberMessage.chat.target = objectBox.box<Chat>().get(chatId);
+      final messageId = objectBox.box<Message>().put(memberMessage);
+      // Simulate the old V2 bug: strong alias persisted, raw route omitted.
+      chat = objectBox.box<Chat>().get(chatId)!;
+      chat.cloudGuid = null;
+      objectBox.box<Chat>().put(chat);
+      expect(objectBox.box<Chat>().get(chatId)!.cloudGuid, isNull);
+      var candidates = await currentGateway
+          .readAppliedProjectionRepairCandidates(
+            scope: chatScope,
+            generation: entry.generation,
+            leaseFence: leaseFence,
+            limit: 8,
+          );
+      expect(candidates, hasLength(1));
+      final repairEntry = candidates.single;
+      final controlBefore = _durableSyncControlFingerprint(objectBox);
+      final membersBefore = objectBox
+          .box<Chat>()
+          .get(chatId)!
+          .handles
+          .map((handle) => handle.address)
+          .toList(growable: false)
+        ..sort();
+      expect(membersBefore, hasLength(2));
+      final displayNameBefore = objectBox.box<Chat>().get(chatId)!.displayName;
+      final repairer = TransactionalCloudInboxApplier(
+        decoder: _FixedDecoder(
+          CloudDecodedMutation.upsert(
+            scope: chatScope,
+            generation: entry.generation,
+            changeId: entry.change.changeId,
+            snapshot: snapshot,
+            payload: payload,
+          ),
+        ),
+        store: currentGateway,
+        identityRegistrar: identityRegistry,
+        activeScopeRevalidator: () async => true,
+      );
+      expect(
+        await repairer.repairAppliedProjections(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        1,
+      );
+      expect(_durableSyncControlFingerprint(objectBox), controlBefore);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(objectBox.box<Chat>().count(), 1);
+      final repaired = objectBox.box<Chat>().get(chatId)!;
+      expect(repaired.guid, canonicalGuid);
+      expect(repaired.chatIdentifier, chatIdentifier);
+      expect(repaired.style, 43);
+      expect(repaired.cloudGuid, rawGroupId);
+      expect(repaired.displayName, displayNameBefore);
+      final membersAfter = repaired.handles
+          .map((handle) => handle.address)
+          .toList(growable: false)
+        ..sort();
+      expect(membersAfter, membersBefore);
+      expect(
+        objectBox.box<Message>().get(messageId)!.chat.targetId,
+        chatId,
+      );
+      expect(
+        await currentGateway.readAppliedProjectionRepairCandidates(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+      final changedSnapshot = CloudSemanticSnapshot(
+        kind: CloudEntityKind.chat,
+        logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+        groupVersion: 1,
+        etagHash: snapshot.etagHash,
+        encryptedRawRecordReference: snapshot.encryptedRawRecordReference,
+      );
+      final changedLease = identityRegistry.bind(
+        CloudDecodedMutation.upsert(
+          scope: chatScope,
+          generation: entry.generation,
+          changeId: entry.change.changeId,
+          snapshot: changedSnapshot,
+          payload: payload,
+        ),
+      );
+      try {
+        await expectLater(
+          currentGateway.repairAppliedProjection(
+            entry: repairEntry,
+            leaseFence: leaseFence,
+            payload: payload,
+            snapshot: changedSnapshot,
+          ),
+          throwsA(
+            isA<CloudSyncFailure>().having(
+              (failure) => failure.safeCode,
+              'safeCode',
+              'projection_repair_snapshot_changed',
+            ),
+          ),
+        );
+      } finally {
+        changedLease.release();
+      }
+      expect(_durableSyncControlFingerprint(objectBox), controlBefore);
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      final reopenedAdapter = ObjectBoxCanonicalSemanticEntityAdapter(
+        store: objectBox,
+        activeScopeProvider: () => activeScope,
+        identityResolver: TransientCloudCanonicalIdentityRegistry(),
+        semanticApplyEnabled: true,
+        allowChatUpserts: true,
+      );
+      final reopenedGateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: reopenedAdapter,
+        clock: () => now,
+      );
+      expect(
+        await reopenedGateway.readAppliedProjectionRepairCandidates(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+      expect(objectBox.box<Chat>().get(chatId)!.cloudGuid, rawGroupId);
+      expect(
+        objectBox.box<Message>().get(messageId)!.chat.targetId,
+        chatId,
+      );
+      expect(_durableSyncControlFingerprint(objectBox), controlBefore);
+    },
+  );
 }
 
 CloudSyncScope _scope({
@@ -4565,6 +4800,9 @@ CloudChatEntityPayload _chatPayload({
   String chatIdentifier = 'iMessage;-;chat',
   String aliasKeyHash = 'H',
   Iterable<CloudSemanticChatAlias> extraAliases = const [],
+  CloudSemanticChatStyle style = CloudSemanticChatStyle.direct,
+  String? groupId,
+  String? originalGroupId,
 }) {
   return CloudChatEntityPayload(
     logicalEntityKeyHash: logicalEntityKeyHash == 'L'
@@ -4585,7 +4823,9 @@ CloudChatEntityPayload _chatPayload({
           ...extraAliases,
         ],
     service: CloudSemanticService.iMessage,
-    style: CloudSemanticChatStyle.direct,
+    style: style,
+    groupId: groupId,
+    originalGroupId: originalGroupId,
   );
 }
 

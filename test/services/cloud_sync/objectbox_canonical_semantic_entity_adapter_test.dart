@@ -252,6 +252,223 @@ void main() {
     expect(aliasRows.single.chatLogicalEntityKeyHash, chatHash);
   });
 
+  test('restores raw group routing without replacing canonical identity', () {
+    const guid = 'iMessage;+;restored-group';
+    resolver.put(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: guid,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowChatUpserts: true,
+    );
+    final payload = _chatPayload(
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: guid,
+      chatIdentifier: 'restored-group',
+      groupId: 'apple-raw-group-not-a-uuid',
+      originalGroupId: 'different-original-lineage',
+      style: CloudSemanticChatStyle.group,
+      participantHandles: const ['mailto:member@example.com'],
+    );
+    adapter.applyEntity(
+      scope: scope,
+      generation: generation,
+      payload: payload,
+      snapshot: _snapshot(CloudEntityKind.chat, chatHash),
+    );
+    final created = store.box<Chat>().getAll().single;
+    expect(created.guid, guid);
+    expect(created.chatIdentifier, 'restored-group');
+    expect(created.cloudGuid, 'apple-raw-group-not-a-uuid');
+    expect(created.cloudGuid, isNot(payload.originalGroupId));
+    expect(created.style, 43);
+    expect(created.handles.single.address, 'member@example.com');
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: guid,
+    );
+    // Same applied source remains repeat-safe; no second conversation.
+    adapter.applyEntity(
+      scope: scope,
+      generation: generation,
+      payload: payload,
+      snapshot: _snapshot(CloudEntityKind.chat, chatHash),
+    );
+    expect(store.box<Chat>().getAll().single.id, created.id);
+    expect(store.box<Chat>().get(created.id!)!.cloudGuid, payload.groupId);
+  });
+
+  test('fills an old missing group route without changing history or members', () {
+    const guid = 'iMessage;+;existing-group';
+    resolver.put(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: guid,
+    );
+    final member = Handle(address: 'old@example.com', service: 'iMessage');
+    member.id = store.box<Handle>().put(member);
+    final chat = Chat(
+      guid: guid,
+      chatIdentifier: 'existing-group',
+      style: 43,
+    )
+      ..groupVersion = 4
+      ..cloudGuid = ''
+      ..handles.add(member);
+    chat.id = store.box<Chat>().put(chat);
+    final message = Message(guid: 'preserved-history')..chat.target = chat;
+    final messageId = store.box<Message>().put(message);
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: guid,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowChatUpserts: true,
+    );
+    adapter.applyEntity(
+      scope: scope,
+      generation: generation,
+      payload: _chatPayload(
+        logicalEntityKeyHash: chatHash,
+        canonicalGuid: guid,
+        chatIdentifier: 'existing-group',
+        groupId: 'raw-existing-group',
+        style: CloudSemanticChatStyle.group,
+        groupVersion: 4,
+        participantHandles: const ['mailto:new@example.com'],
+      ),
+      snapshot: _snapshot(CloudEntityKind.chat, chatHash),
+    );
+    final restored = store.box<Chat>().get(chat.id!)!;
+    expect(restored.cloudGuid, 'raw-existing-group');
+    expect(restored.guid, guid);
+    expect(restored.groupVersion, 4);
+    expect(restored.handles.single.id, member.id);
+    expect(store.box<Message>().get(messageId)!.chat.targetId, chat.id);
+    expect(store.box<Chat>().count(), 1);
+    expect(store.box<Handle>().count(), 1);
+  });
+
+  test('keeps conflicting group route without stopping incoming presentation', () {
+    const guid = 'iMessage;+;route-conflict';
+    resolver.put(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: guid,
+    );
+    final chat = Chat(
+      guid: guid,
+      chatIdentifier: 'route-conflict',
+      style: 43,
+      displayName: 'Before',
+    )..cloudGuid = 'established-route';
+    chat.id = store.box<Chat>().put(chat);
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: guid,
+    );
+    final diagnostics = <String>[];
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      diagnosticRecorder: diagnostics.add,
+      semanticApplyEnabled: true,
+      allowChatUpserts: true,
+    );
+    adapter.applyEntity(
+      scope: scope,
+      generation: generation,
+      payload: _chatPayload(
+        logicalEntityKeyHash: chatHash,
+        canonicalGuid: guid,
+        chatIdentifier: 'route-conflict',
+        groupId: 'different-incoming-route',
+        style: CloudSemanticChatStyle.group,
+        displayName: 'After',
+      ),
+      snapshot: _snapshot(CloudEntityKind.chat, chatHash),
+    );
+    final restored = store.box<Chat>().get(chat.id!)!;
+    expect(restored.cloudGuid, 'established-route');
+    expect(restored.displayName, 'After');
+    expect(diagnostics, ['canonical_chat_group_route_conflict']);
+  });
+
+  for (final incomplete in ['no-gid', 'no-alias', 'direct', 'sms', 'noncanonical']) {
+    test('does not fabricate or copy a group route for $incomplete', () {
+      final guid = incomplete == 'noncanonical'
+          ? 'local-unproven-guid'
+          : '${incomplete == 'sms' ? 'SMS' : 'iMessage'};${incomplete == 'direct' ? '-' : '+'};incomplete';
+      resolver.put(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.chat,
+        logicalEntityKeyHash: chatHash,
+        canonicalGuid: guid,
+      );
+      final adapter = _newAdapter(
+        store: store,
+        activeScopeProvider: () => activeScope,
+        resolver: resolver,
+        semanticApplyEnabled: true,
+        allowChatUpserts: true,
+      );
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _chatPayload(
+          logicalEntityKeyHash: chatHash,
+          canonicalGuid: guid,
+          chatIdentifier: 'incomplete',
+          groupId: incomplete == 'no-gid' ? null : 'raw-group',
+          originalGroupId: 'must-not-use-lineage-fallback',
+          style: incomplete == 'direct'
+              ? CloudSemanticChatStyle.direct
+              : CloudSemanticChatStyle.group,
+          service: incomplete == 'sms'
+              ? CloudSemanticService.sms
+              : CloudSemanticService.iMessage,
+          aliases: incomplete == 'no-alias'
+              ? [CloudSemanticChatAlias(
+                  kind: CloudSemanticChatAliasKind.serviceIdentifier,
+                  keyHash: _testChatAliasHash('incomplete'),
+                )]
+              : null,
+        ),
+        snapshot: _snapshot(CloudEntityKind.chat, chatHash),
+      );
+      expect(store.box<Chat>().getAll().single.cloudGuid, isNull);
+    });
+  }
+
   test('projects exact SMS chats and messages without iMessage aliasing', () {
     final adapter = _newAdapter(
       store: store,
@@ -6547,10 +6764,14 @@ CloudChatEntityPayload _chatPayload({
   CloudSemanticChatStyle style = CloudSemanticChatStyle.direct,
   Iterable<CloudSemanticChatAlias>? aliases,
   int? groupVersion,
+  String? groupId,
+  String? originalGroupId,
 }) => CloudChatEntityPayload(
   logicalEntityKeyHash: logicalEntityKeyHash,
   canonicalGuid: canonicalGuid,
   chatIdentifier: chatIdentifier,
+  groupId: groupId,
+  originalGroupId: originalGroupId,
   displayName: displayName,
   displayNameState: displayNameState,
   participantHandles: participantHandles,
@@ -6561,6 +6782,11 @@ CloudChatEntityPayload _chatPayload({
           kind: CloudSemanticChatAliasKind.serviceIdentifier,
           keyHash: _testChatAliasHash(chatIdentifier),
         ),
+        if (groupId != null)
+          CloudSemanticChatAlias(
+            kind: CloudSemanticChatAliasKind.groupId,
+            keyHash: _testChatAliasHash(groupId),
+          ),
       ],
   service: service,
   style: style,

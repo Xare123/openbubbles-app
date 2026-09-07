@@ -86,6 +86,13 @@ void main() {
     'sms': (m) => m.chat.target!.isRpSms = true,
     'provisional chat': (m) =>
         m.chat.target!.guid = '266571D8-DA74-4C73-A681-9007C946D3AA',
+    'restored group without protected routing proof': (m) {
+      m.chat.target!
+        ..guid = 'iMessage;+;restored-group'
+        ..chatIdentifier = 'restored-group'
+        ..style = 43
+        ..cloudGuid = 'raw-cloudkit-group-id';
+    },
   };
   for (final entry in rejected.entries) {
     test('does not flatten ${entry.key}', () {
