@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:app_links/app_links.dart';
 import 'package:bluebubbles/services/rustpush/icloud_maintenance.dart';
+import 'package:bluebubbles/services/rustpush/imessage_attachment_submission.dart';
 import 'package:bluebubbles/services/rustpush/imessage_initial_submission.dart';
 import 'package:bluebubbles/services/rustpush/imessage_reaction_payload.dart';
 import 'package:bluebubbles/services/rustpush/imessage_reaction_submission.dart';
@@ -1016,18 +1017,23 @@ class RustPushBackend implements BackendService {
 
   @override
   Future<Message> sendAttachment(
-      Chat chat, Message m, bool isAudioMessage, Attachment att,
-      {void Function(int p1, int p2)? onSendProgress,
-      CancelToken? cancelToken}) async {
+    Chat chat,
+    Message m,
+    bool isAudioMessage,
+    Attachment att, {
+    void Function(int p1, int p2)? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
     if (chat.isRpSms && !smsForwardingEnabled()) {
       throw Exception("SMS is not enabled (enable in settings -> user)");
     }
     var stream = api.uploadAttachment(
-        aps: pushService.state!.conn,
-        path: att.getFile().path!,
-        mime: att.mimeType ?? "application/octet-stream",
-        uti: att.uti ?? "public.data",
-        name: att.transferName!);
+      aps: pushService.state!.conn,
+      path: att.getFile().path!,
+      mime: att.mimeType ?? "application/octet-stream",
+      uti: att.uti ?? "public.data",
+      name: att.transferName!,
+    );
     api.Attachment? attachment;
     await for (final event in stream) {
       if (event.attachment != null) {
@@ -1041,21 +1047,38 @@ class RustPushBackend implements BackendService {
       }
     }
     Logger.info("uploaded");
-    var msg = await api.newMsg(
-        conversation: await chat.getConversationData(),
-        sender: await chat.ensureHandle(),
-        message: api.Message.message(api.NormalMessage(
-          parts: api.MessageParts(field0: [
-            if (m.payloadData?.appData?.first.ldText != null)
-              api.IndexedMessagePart(
+    final initialConversation = await chat.getConversationData();
+    final initialSender = await chat.ensureHandle();
+    Future<api.MessageInst> buildWireMessage(
+      api.Attachment wireAttachment,
+    ) async => api.newMsg(
+      // Pending persistence must not make a retry name itself as afterGuid.
+      conversation: api.ConversationData(
+        participants: List.of(initialConversation.participants),
+        cvName: initialConversation.cvName,
+        senderGuid: initialConversation.senderGuid,
+        afterGuid: initialConversation.afterGuid,
+      ),
+      sender: initialSender,
+      message: api.Message.message(
+        api.NormalMessage(
+          parts: api.MessageParts(
+            field0: [
+              if (m.payloadData?.appData?.first.ldText != null)
+                api.IndexedMessagePart(
                   part_: api.MessagePart.object(
-                      m.payloadData!.appData!.first.ldText!)),
-            api.IndexedMessagePart(
-                part_: api.MessagePart.attachment(attachment!))
-          ]),
+                    m.payloadData!.appData!.first.ldText!,
+                  ),
+                ),
+              api.IndexedMessagePart(
+                part_: api.MessagePart.attachment(wireAttachment),
+              ),
+            ],
+          ),
           replyGuid: m.threadOriginatorGuid,
-          replyPart:
-              m.threadOriginatorGuid == null ? null : m.threadOriginatorPart,
+          replyPart: m.threadOriginatorGuid == null
+              ? null
+              : m.threadOriginatorPart,
           effect: m.expressiveSendStyleId,
           service: await getService(chat, forMessage: m),
           subject: m.subject,
@@ -1065,11 +1088,58 @@ class RustPushBackend implements BackendService {
           voice: isAudioMessage,
           scheduled: m.dateScheduled != null
               ? api.ScheduleMode(
-                  ms: m.dateScheduled!.millisecondsSinceEpoch, schedule: true)
+                  ms: m.dateScheduled!.millisecondsSinceEpoch,
+                  schedule: true,
+                )
               : null,
-          embeddedProfile:
-              await pushService.getShareProfileMessageFor(chat.participants),
-        )));
+          embeddedProfile: await pushService.getShareProfileMessageFor(
+            chat.participants,
+          ),
+        ),
+      ),
+    );
+    var msg = await buildWireMessage(attachment!);
+    if (CloudKitWriterOwnership.v2MutationsEnabled &&
+        CloudSyncDevGate.manualOutboundCanaryEnabled &&
+        !chat.isRpSms) {
+      final retryAttachmentData = att.metadata?["rustpush"];
+      if (retryAttachmentData is! String || retryAttachmentData.isEmpty) {
+        throw StateError('imessage_attachment_retry_source_missing');
+      }
+      Future<api.MessageInst> rebuildWireMessage() async {
+        if (att.metadata?["rustpush"] != retryAttachmentData) {
+          throw StateError('imessage_attachment_retry_source_changed');
+        }
+        return buildWireMessage(api.restoreAttachment(data: retryAttachmentData));
+      }
+
+      // Attachment CloudKit admission remains disabled. This only reuses the
+      // ordinary send's stable-ID, pending-row and native-confirmation path.
+      final pendingMessageGuid = m.guid;
+      final Message reflected;
+      try {
+        reflected = await _sendPreparedMessage(
+          chat, m, msg, buildWireMessage: rebuildWireMessage,
+        );
+      } catch (_) {
+        retainAttachmentSubmissionForRetry(
+          chat: chat, message: m, submittedGuid: msg.id,
+        );
+        rethrow;
+      }
+      var replacement = reflected;
+      if (identical(reflected, m)) {
+        // Preserve a stable replacement if reflection was intentionally
+        // skipped or unavailable.
+        replacement = Message.fromMap(m.toMap(includeObjects: true));
+        replacement.chat.target = chat;
+      }
+      // ActionHandler still needs the pending GUID to replace the original
+      // attachment row. Do this only after successful submission: a failure
+      // after stable persistence must retain that stable identity for retry.
+      m.guid = pendingMessageGuid;
+      return replacement;
+    }
     if (m.stagingGuid != null) {
       msg.id = m.stagingGuid!;
     }

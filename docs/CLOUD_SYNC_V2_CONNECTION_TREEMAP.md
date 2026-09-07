@@ -44,6 +44,44 @@ continue under a new account.
 
 ## Latest integration checkpoint, 2026-09-07
 
+### Attachment IDS submission now shares retry and pending-row handling
+
+`RustPushBackend.sendAttachment` now uses `_sendPreparedMessage` for V2 outbound
+Canary iMessage sends only. Its prior direct call ignored the background-send
+return and did not share the stable-ID/pending persistence path. This is a
+transport prerequisite, **not attachment CloudKit admission**: the journal and
+native attachment write gates remain closed until protected asset and record
+staging/readback are implemented.
+
+The first conversation and sender are pinned before persistence and cloned for
+each retry, avoiding a self-referential `afterGuid`. Moved Rust attachments are
+restored from the original serialized IDS metadata; a changed metadata value
+rejects rather than retrying a different blob under the same message ID. The
+caller-only pending GUID is restored after success for ActionHandler's attachment
+replacement, while the persisted message retains its stable GUID. Failure after
+GUID normalization additionally restores the *staging* slot using
+`retainAttachmentSubmissionForRetry`: the shared sender does not reuse a normal
+stable `guid` alone. Pre-submission failure preserves its existing staging ID.
+
+Parent review rejected the initial `finally` restoration and then caught the
+missing post-normalization staging recovery. It also removed unrelated formatter
+churn; an exact comparison, normalizing line endings only, confirms the service
+outside `sendAttachment` is unchanged except the new helper import.
+Alpha/SMS retain their prior submission branch.
+
+**TEST-PROVEN, not LIVE-PROVEN:** 134 tests passed across six focused files,
+including eight attachment source-contract/ObjectBox cases, new-chat and reaction
+submission, journal, runtime and production wiring. ObjectBox cases cover stable
+row preservation, original attachment lookup, background service marker, failures
+before/after normalization, repeat-safe recovery and different-ID rejection.
+The real IDS upload/rebuild/reflection network path is not exercised by these
+tests. Evidence:
+`evidence/windows-replay-20260906/attachment-submission-reviewed-regression-20260907.log`.
+Analysis of service/helper/test found no errors or warnings and four unchanged,
+pre-existing informational brace lints in
+`attachment-submission-reviewed-analyzer-20260907.log`. No APK, Apple upload,
+personal-database access or installed-app change was part of this qualification.
+
 ### First message in a new chat now shares the journaled send path
 
 The normal composer used durable local-send capture, but `RustPushBackend.createChat`
@@ -148,6 +186,35 @@ contain style-43 group fields, but locally generated defaults do not establish
 Apple's accepted initial `cid/gid/ogid/guid`, participant ordering/sender inclusion,
 properties/version/handshake or save behavior. The authorized two-recipient group
 qualification has not been sent. No remote group admission guard was relaxed.
+
+#### Group routing review: avoid conflating raw and canonical identities
+
+The native common Message validator accepts a nonempty chat route; this is not
+evidence that any supplied group ID is correct. The shipping mapping is explicit:
+`Chat.applyFromCloud` stores `c.groupId` in `Chat.cloudGuid`; `Message.toCloud`
+uses that raw value for outer `CloudMessage.chatId`, while `MessageProto4.groupId`
+uses the canonical local chat GUID. V2 normally leaves `cloudGuid` unpopulated on
+restored Chats, assigning it only on local-origin adoption. Simply accepting
+`iMessage;+;<identifier>` in the plaintext encoder would erase this distinction.
+Also, `build_upsert` currently passes no group metadata digest to the snapshot.
+Requiring that existing optional field now would block every restored group.
+
+Reviewed implementation direction, **not yet implemented**: retain the validated
+raw group ID through the existing canonical projection and existing `cloudGuid`
+field, with a versioned authenticated-projection integrity proof. Prefer that
+over a new native runtime decode/staging API if it proves the same exact route.
+Reject conflicting established identity; do not substitute an arbitrary alias.
+The digest must be reproducible from actually retained data, not an unpersisted
+`originalGroupId`, and must handle normalized members and missing/versioned
+fields explicitly. The selected sender's account authorization remains separate
+from mutable group presentation. Same-version membership drift, newer canonical
+sources, stale local members and pinned-record replay need counterexample tests.
+Keep direct v1 binding bytes unchanged.
+
+This exposes two branches: an already restored canonical group needs that route
+proof plus Message admission; a provisional group additionally needs Chat create,
+exact readback and same-row adoption. Do not make existing-group qualification
+wait unnecessarily for group creation, or count either as proving mutations.
 
 ### Own-message reaction dependency, exact-readback proof
 
