@@ -516,10 +516,14 @@ impl CloudCanonicalSnapshot {
     ) -> Result<Self, CloudCanonicalValidationFailure> {
         if edit_parts.len() > MAX_EDITS
             || (entity_kind != CloudCanonicalEntityKind::Message
-                && (!edit_parts.is_empty()
-                    || read_at_millis.is_some()
-                    || delivered_at_millis.is_some()
-                    || retracted_at_millis.is_some()))
+                && (!edit_parts.is_empty() || retracted_at_millis.is_some()))
+            // Reactions are message records and carry their own receipts.
+            // Those timestamps must not mark their parent as read/delivered.
+            || (!matches!(
+                entity_kind,
+                CloudCanonicalEntityKind::Message | CloudCanonicalEntityKind::Reaction
+            )
+                && (read_at_millis.is_some() || delivered_at_millis.is_some()))
             || (entity_kind != CloudCanonicalEntityKind::Chat
                 && (group_version.is_some() || group_metadata_digest.is_some()))
         {
@@ -2777,6 +2781,42 @@ mod tests {
             ),
             Err(CloudCanonicalValidationFailure::InvalidPayload)
         );
+    }
+
+    #[test]
+    fn receipt_timestamps_do_not_enable_other_entity_message_state() {
+        for kind in [
+            CloudCanonicalEntityKind::Chat,
+            CloudCanonicalEntityKind::Attachment,
+            CloudCanonicalEntityKind::GroupPhoto,
+            CloudCanonicalEntityKind::Reaction,
+        ] {
+            for (read, delivered, retracted) in [
+                (Some(1), None, None),
+                (None, Some(1), None),
+                (None, None, Some(1)),
+            ] {
+                let result = CloudCanonicalSnapshot::new(
+                    kind,
+                    hash('L'),
+                    (kind != CloudCanonicalEntityKind::Chat).then(|| hash('P')),
+                    None,
+                    Some(0),
+                    read,
+                    delivered,
+                    Vec::new(),
+                    retracted,
+                    None,
+                    None,
+                    None,
+                    protected(),
+                );
+                assert_eq!(
+                    result.is_ok(),
+                    kind == CloudCanonicalEntityKind::Reaction && retracted.is_none()
+                );
+            }
+        }
     }
 
     #[test]

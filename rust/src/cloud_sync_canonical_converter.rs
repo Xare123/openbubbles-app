@@ -4418,6 +4418,41 @@ mod tests {
     }
 
     #[test]
+    fn reaction_receipt_timestamps_survive_canonical_conversion() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        for associated_type in [2000, 3000] {
+            let mut reaction = reaction_message();
+            reaction.msg_proto.0.associated_message_type = Some(associated_type);
+            reaction.msg_proto.0.date_read = Some(2_000_000_000);
+            reaction.msg_proto.0.date_delivered = Some(1_000_000_000);
+            let outcome = convert_message(
+                &context(&hasher, "server-reaction-receipts", None),
+                &message_presence(),
+                &reaction,
+            );
+            let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+                panic!("reaction receipts must not invalidate its snapshot: {outcome:?}");
+            };
+            let snapshot = mutation.snapshot().unwrap();
+            let Some(CloudCanonicalPayload::Message(payload)) = mutation.payload() else {
+                panic!("expected reaction payload");
+            };
+            assert_eq!(snapshot.entity_kind(), CloudCanonicalEntityKind::Reaction);
+            assert_eq!(snapshot.read_at_millis(), Some(978_307_202_000));
+            assert_eq!(snapshot.delivered_at_millis(), Some(978_307_201_000));
+            assert_eq!(
+                payload.read_at_millis().value(),
+                snapshot.read_at_millis().as_ref()
+            );
+            assert_eq!(
+                payload.delivered_at_millis().value(),
+                snapshot.delivered_at_millis().as_ref()
+            );
+            assert!(snapshot.edit_parts().is_empty());
+        }
+    }
+
+    #[test]
     fn reaction_fixture_carries_parent_metadata_before_parent_exists() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let outcome = convert_message(

@@ -3078,8 +3078,18 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     CloudSemanticService service,
   ) {
     if (raw.isEmpty && fromMe) return null;
-    final normalized = _normalizeHandle(raw);
+    final normalized = _normalizeHandle(
+      raw,
+      allowBusinessUrn: service == CloudSemanticService.iMessage,
+    );
     if (normalized == null) {
+      _diagnosticRecorder?.call(
+        raw.isEmpty
+            ? 'canonical_message_sender_shape_empty'
+            : _businessUrnPattern.hasMatch(raw)
+            ? 'canonical_message_sender_shape_business_urn'
+            : 'canonical_message_sender_shape_other',
+      );
       throw CloudSyncFailure(
         category: CloudFailureCategory.malformedRecord,
         safeCode: 'canonical_message_sender_invalid',
@@ -3204,6 +3214,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   _NormalizedCanonicalHandle? _normalizeHandle(
     String raw, {
     bool allowOpaqueParticipant = false,
+    bool allowBusinessUrn = false,
     CloudSyncSemanticDiagnosticRecorder? onInvalid,
   }) {
     _NormalizedCanonicalHandle? reject(String safeCode) {
@@ -3228,10 +3239,12 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     } else if (lower.startsWith('tel:')) {
       address = raw.substring('tel:'.length);
       email = false;
-    } else if (allowOpaqueParticipant && _businessUrnPattern.hasMatch(raw)) {
-      address = raw;
-      email = false;
-      opaqueParticipant = true;
+    } else if ((allowOpaqueParticipant || allowBusinessUrn) &&
+        _businessUrnPattern.hasMatch(raw)) {
+      // Business iMessages use the same exact URN identity for participants
+      // and senders. Preserve it verbatim, never as a fabricated tel: handle.
+      // This does not admit arbitrary opaque senders or expand upload support.
+      return _NormalizedCanonicalHandle(address: raw, email: false);
     } else {
       if (raw.contains(':')) {
         return reject('canonical_participant_shape_unknown_scheme');

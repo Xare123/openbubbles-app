@@ -939,14 +939,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         !_replyShapeMatches(payload) ||
         payload.replyParentCanonicalGuid != null ||
         payload.subjectState != frb_api.CloudSyncTransientFieldState.absent ||
-        !_fieldStateMatches(payload.bodyState, payload.body) ||
-        payload.bodyState != frb_api.CloudSyncTransientFieldState.absent ||
-        !_collectionFieldStateMatches(
-          payload.attributedBodiesState,
-          payload.attributedBodies,
-        ) ||
-        payload.attributedBodiesState !=
-            frb_api.CloudSyncTransientFieldState.absent ||
+        !_reactionFallbackIsTextOnly(payload) ||
         payload.balloonBundleIdState !=
             frb_api.CloudSyncTransientFieldState.absent ||
         payload.effectState != frb_api.CloudSyncTransientFieldState.absent ||
@@ -1009,6 +1002,43 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       associatedRangeLocation: payload.associatedRangeLocation,
       associatedRangeLength: payload.associatedRangeLength,
     );
+  }
+
+  bool _reactionFallbackIsTextOnly(
+    frb_api.CloudSyncTransientMessagePayload payload,
+  ) {
+    if (!_fieldStateMatches(payload.bodyState, payload.body) ||
+        !_collectionFieldStateMatches(
+          payload.attributedBodiesState,
+          payload.attributedBodies,
+        )) {
+      return false;
+    }
+    // The reaction association, never localized fallback prose or its text
+    // runs, supplies the parent and reaction kind. Preserve fallback content
+    // in the protected source/digest; do not create a second message or copy
+    // it onto the parent. Non-text semantics must not be silently discarded.
+    try {
+      for (final raw in payload.attributedBodies) {
+        final body = _attributedBody(raw);
+        for (final run in body.runs) {
+          if (run.startUtf16 + run.lengthUtf16 > body.text.length ||
+              (run.messagePart != null && run.messagePart! < 0) ||
+              run.attachmentCanonicalGuid != null ||
+              run.attachmentLogicalKeyHash != null ||
+              run.mentionHandle != null ||
+              run.audioTranscript != null ||
+              run.textEffect != null) {
+            return false;
+          }
+        }
+      }
+    } on ArgumentError {
+      return false;
+    } on CloudSemanticDecodeFailure {
+      return false;
+    }
+    return true;
   }
 
   CloudAttachmentEntityPayload _attachmentPayload(

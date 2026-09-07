@@ -178,7 +178,7 @@ Map<String, Object?> _inspectStore(Store store) {
   );
 
   return <String, Object?>{
-    'schema': 6,
+    'schema': 7,
     'canonicalCounts': <String, int>{
       'chats': store.box<Chat>().count(),
       'messages': store.box<Message>().count(),
@@ -591,6 +591,9 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
   var messagesWithAttributedText = 0;
   var messagesWithAttachments = 0;
   var associatedMessages = 0;
+  var associatedMessagesWithMissingOrAmbiguousParent = 0;
+  var associatedMessagesWithMismatchedChat = 0;
+  var associatedMessagesWithMissingParentFlag = 0;
   var eventMessages = 0;
   var messagesWithoutRenderableContent = 0;
   var visibleMessagesWithoutRenderableContent = 0;
@@ -651,7 +654,36 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
     if (hasAttributedBody) messagesWithAttributedBody += 1;
     if (hasAttributedText) messagesWithAttributedText += 1;
     if (hasAttachments) messagesWithAttachments += 1;
-    if (isAssociated) associatedMessages += 1;
+    if (isAssociated) {
+      associatedMessages += 1;
+      final parentQuery =
+          store
+              .box<Message>()
+              .query(
+                Message_.guid.equals(
+                  message.associatedMessageGuid!,
+                  caseSensitive: true,
+                ),
+              )
+              .build()
+            ..limit = 2;
+      try {
+        final parents = parentQuery.find();
+        if (parents.length != 1) {
+          associatedMessagesWithMissingOrAmbiguousParent += 1;
+        } else {
+          final parent = parents.single;
+          if (parent.chat.targetId == 0 || parent.chat.targetId != chatId) {
+            associatedMessagesWithMismatchedChat += 1;
+          }
+          if (!parent.hasReactions) {
+            associatedMessagesWithMissingParentFlag += 1;
+          }
+        }
+      } finally {
+        parentQuery.close();
+      }
+    }
     if (isEvent) eventMessages += 1;
     final projectedBody = text ?? attributedText ?? subject;
     if (projectedBody != null) {
@@ -854,6 +886,12 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
     'messagesWithAttributedText': messagesWithAttributedText,
     'messagesWithAttachments': messagesWithAttachments,
     'associatedMessages': associatedMessages,
+    'associatedMessagesWithMissingOrAmbiguousParent':
+        associatedMessagesWithMissingOrAmbiguousParent,
+    'associatedMessagesWithMismatchedChat':
+        associatedMessagesWithMismatchedChat,
+    'associatedMessagesWithMissingParentFlag':
+        associatedMessagesWithMissingParentFlag,
     'eventMessages': eventMessages,
     'messagesWithoutRenderableContent': messagesWithoutRenderableContent,
     'visibleMessagesWithoutRenderableContent':
@@ -1014,11 +1052,14 @@ final class _InboxGroupAccumulator {
       );
     }
     if (row.status == 3) {
-      if (row.changeType == CloudChangeType.delete.name && row.isTombstone &&
-          row.failureCategory == null && row.preflightCategory == null &&
+      if (row.changeType == CloudChangeType.delete.name &&
+          row.isTombstone &&
+          row.failureCategory == null &&
+          row.preflightCategory == null &&
           row.preflightCode == null) {
         retainedUnclassifiedTombstones++;
-      } else if (row.changeType == CloudChangeType.save.name && !row.isTombstone) {
+      } else if (row.changeType == CloudChangeType.save.name &&
+          !row.isTombstone) {
         retainedSaves++;
       } else {
         retainedOther++;

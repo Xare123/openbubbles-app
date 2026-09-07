@@ -769,6 +769,145 @@ void main() {
   });
 
   test(
+    'reaction fallback text does not become a message or select its parent',
+    () async {
+      final entry = _entry();
+      for (final removed in [false, true]) {
+        bindings.result = _readyReaction(
+          entry,
+          reactionKind: frb.CloudSyncTransientReactionKind.heart,
+          removed: removed,
+          bodyState: frb.CloudSyncTransientFieldState.value,
+          body: 'Fallback text quoting an unrelated-looking message',
+          associatedRangeLocation: 2,
+          associatedRangeLength: 3,
+        );
+        final result = await decoder().decode(entry);
+        final reaction = result.payload! as CloudReactionEntityPayload;
+        expect(reaction.kind, CloudEntityKind.reaction);
+        expect(reaction.parentCanonicalGuid, 'message-guid');
+        expect(reaction.parentLogicalKeyHash, _messageHash);
+        expect(reaction.parentPart, 0);
+        expect(reaction.reactionType, removed ? '-love' : 'love');
+        expect(result.snapshot!.encryptedRawRecordReference, _sourceReference);
+      }
+    },
+  );
+
+  test(
+    'reaction fallback formatted text never supplies the associated part',
+    () async {
+      final entry = _entry();
+      bindings.result = _readyReaction(
+        entry,
+        reactionKind: frb.CloudSyncTransientReactionKind.like,
+        removed: false,
+        attributedBodiesState: frb.CloudSyncTransientFieldState.value,
+        attributedBodies: const [
+          frb.CloudSyncTransientAttributedBody(
+            text: 'Liked 👍',
+            runs: [
+              frb.CloudSyncTransientTextRun(
+                startUtf16: 0,
+                lengthUtf16: 8,
+                messagePart: 9,
+                bold: true,
+              ),
+            ],
+          ),
+        ],
+      );
+      final reaction =
+          (await decoder().decode(entry)).payload!
+              as CloudReactionEntityPayload;
+      expect(reaction.parentPart, 0);
+      expect(reaction.reactionType, 'like');
+    },
+  );
+
+  test(
+    'reaction fallback cannot smuggle non-text semantics or invalid ranges',
+    () async {
+      final entry = _entry();
+      for (final run in [
+        const frb.CloudSyncTransientTextRun(
+          startUtf16: 0,
+          lengthUtf16: 1,
+          attachmentCanonicalGuid: 'attachment',
+          attachmentLogicalKeyHash: _attachmentHash,
+        ),
+        const frb.CloudSyncTransientTextRun(
+          startUtf16: 0,
+          lengthUtf16: 1,
+          attachmentCanonicalGuid: 'attachment',
+        ),
+        const frb.CloudSyncTransientTextRun(
+          startUtf16: 0,
+          lengthUtf16: 1,
+          mentionHandle: 'someone@example.invalid',
+        ),
+        const frb.CloudSyncTransientTextRun(
+          startUtf16: 0,
+          lengthUtf16: 1,
+          audioTranscript: 'hidden transcript',
+        ),
+        const frb.CloudSyncTransientTextRun(
+          startUtf16: 0,
+          lengthUtf16: 1,
+          textEffect: 1,
+        ),
+        const frb.CloudSyncTransientTextRun(startUtf16: -1, lengthUtf16: 1),
+        const frb.CloudSyncTransientTextRun(startUtf16: 0, lengthUtf16: 2),
+        const frb.CloudSyncTransientTextRun(
+          startUtf16: 0,
+          lengthUtf16: 1,
+          messagePart: -1,
+        ),
+      ]) {
+        bindings.result = _readyReaction(
+          entry,
+          reactionKind: frb.CloudSyncTransientReactionKind.heart,
+          removed: false,
+          attributedBodiesState: frb.CloudSyncTransientFieldState.value,
+          attributedBodies: [
+            frb.CloudSyncTransientAttributedBody(text: 'x', runs: [run]),
+          ],
+        );
+        await _expectFailure(
+          decoder().decode(entry),
+          CloudFailureCategory.dependency,
+          safeCode: 'decoder_reaction_shape_unsupported',
+        );
+      }
+    },
+  );
+
+  test(
+    'reaction fallback text still requires matching field presence',
+    () async {
+      final entry = _entry();
+      for (final (state, body) in [
+        (frb.CloudSyncTransientFieldState.value, null),
+        (frb.CloudSyncTransientFieldState.absent, 'unexpected fallback'),
+        (frb.CloudSyncTransientFieldState.explicitClear, 'unexpected fallback'),
+      ]) {
+        bindings.result = _readyReaction(
+          entry,
+          reactionKind: frb.CloudSyncTransientReactionKind.heart,
+          removed: false,
+          bodyState: state,
+          body: body,
+        );
+        await _expectFailure(
+          decoder().decode(entry),
+          CloudFailureCategory.dependency,
+          safeCode: 'decoder_reaction_shape_unsupported',
+        );
+      }
+    },
+  );
+
+  test(
     'defers every incomplete attachment owner identity combination',
     () async {
       final entry = _entry();
@@ -1386,6 +1525,12 @@ frb.CloudSyncTransientDecodeResult _readyReaction(
   frb.CloudSyncTransientFieldState deliveredAtMillisState =
       frb.CloudSyncTransientFieldState.absent,
   int? deliveredAtMillis,
+  frb.CloudSyncTransientFieldState bodyState =
+      frb.CloudSyncTransientFieldState.absent,
+  String? body,
+  frb.CloudSyncTransientFieldState attributedBodiesState =
+      frb.CloudSyncTransientFieldState.absent,
+  List<frb.CloudSyncTransientAttributedBody> attributedBodies = const [],
 }) => frb.CloudSyncTransientDecodeResult(
   protectedSourceReference: _sourceReference,
   generation: BigInt.from(entry.generation),
@@ -1401,8 +1546,10 @@ frb.CloudSyncTransientDecodeResult _readyReaction(
       logicalEntityKeyHash: _reactionHash,
       canonicalGuid: 'reaction-guid',
       createdAtMillis: createdAtMillis,
-      bodyState: frb.CloudSyncTransientFieldState.absent,
-      body: null,
+      bodyState: bodyState,
+      body: body,
+      attributedBodiesState: attributedBodiesState,
+      attributedBodies: attributedBodies,
       associationKind: removed
           ? frb.CloudSyncTransientAssociationKind.reactionRemove
           : frb.CloudSyncTransientAssociationKind.reactionAdd,

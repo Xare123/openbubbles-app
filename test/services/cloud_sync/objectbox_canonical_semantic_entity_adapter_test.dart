@@ -975,7 +975,7 @@ void main() {
     expect(store.box<Message>().count(), 0);
   });
 
-  test('does not accept a business URN as a message sender', () {
+  test('does not accept a malformed business URN as a message sender', () {
     const chatIdentifier = 'iMessage;-;strict-business-sender-chat';
     final chatId = store.box<Chat>().put(
       Chat(
@@ -1008,7 +1008,7 @@ void main() {
           logicalEntityKeyHash: messageHash,
           canonicalGuid: 'message-guid',
           chatIdentifier: chatIdentifier,
-          senderHandle: 'urn:biz:123e4567-e89b-12d3-a456-426614174000',
+          senderHandle: 'urn:biz:not-a-valid-business-identifier',
         ),
         snapshot: _snapshot(CloudEntityKind.message, messageHash),
       ),
@@ -3928,6 +3928,122 @@ void main() {
     expect(message.dateDelivered?.toUtc(), secondDelivered);
   });
 
+  for (final (sender, shape) in [
+    ('', 'empty'),
+    ('urn:biz:not-a-valid-business-identifier', 'other'),
+    ('private unsupported sender', 'other'),
+  ]) {
+    test('classifies rejected $shape sender without logging its value', () {
+      const identifier = 'iMessage;-;sender-shape-chat';
+      final chatId = store.box<Chat>().put(
+        Chat(guid: 'chat-guid', chatIdentifier: identifier, style: 45),
+      );
+      _seedChatOwnershipAndAlias(
+        store,
+        scope: scope,
+        generation: generation,
+        logicalEntityKeyHash: chatHash,
+        canonicalGuid: 'chat-guid',
+        chatIdentifier: identifier,
+        chatId: chatId,
+      );
+      final diagnostics = CloudSyncSemanticDiagnosticCollector();
+      final adapter = _newAdapter(
+        store: store,
+        activeScopeProvider: () => activeScope,
+        resolver: resolver,
+        semanticApplyEnabled: true,
+        allowMessageUpserts: true,
+        diagnosticRecorder: diagnostics.record,
+      );
+      expect(
+        () => adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: _messagePayload(
+            logicalEntityKeyHash: messageHash,
+            canonicalGuid: 'message-guid',
+            chatIdentifier: identifier,
+            senderHandle: sender,
+            knownFlags: _messageFlags(fromMe: false),
+          ),
+          snapshot: _snapshot(CloudEntityKind.message, messageHash),
+        ),
+        throwsA(
+          predicate<CloudSyncFailure>(
+            (failure) => failure.safeCode == 'canonical_message_sender_invalid',
+          ),
+        ),
+      );
+      expect(
+        diagnostics.snapshot()['canonical_message_sender_shape_$shape'],
+        1,
+      );
+      expect(
+        diagnostics.snapshot(),
+        isNot(contains('diagnostic_code_invalid')),
+      );
+      expect(store.box<Message>().count(), 0);
+      expect(store.box<Handle>().count(), 0);
+    });
+  }
+
+  test(
+    'restores a business sender without converting its identity to a telephone',
+    () {
+      const sender = 'urn:biz:11111111-2222-3333-4444-555555555555';
+      const identifier = 'iMessage;-;business-chat';
+      final chatId = store.box<Chat>().put(
+        Chat(guid: 'chat-guid', chatIdentifier: identifier, style: 45),
+      );
+      _seedChatOwnershipAndAlias(
+        store,
+        scope: scope,
+        generation: generation,
+        logicalEntityKeyHash: chatHash,
+        canonicalGuid: 'chat-guid',
+        chatIdentifier: identifier,
+        chatId: chatId,
+      );
+      final adapter = _newAdapter(
+        store: store,
+        activeScopeProvider: () => activeScope,
+        resolver: resolver,
+        semanticApplyEnabled: true,
+        allowMessageUpserts: true,
+      );
+      void apply() => adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: identifier,
+          senderHandle: sender,
+          knownFlags: _messageFlags(fromMe: false),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      );
+      apply();
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: messageHash,
+        canonicalGuid: 'message-guid',
+      );
+      apply();
+      final message = store.box<Message>().getAll().single;
+      expect(message.chat.targetId, chatId);
+      final storedHandle = store.box<Handle>().getAll().single;
+      expect(storedHandle.address, sender);
+      expect(storedHandle.service, 'iMessage');
+      expect(message.handleId, storedHandle.originalROWID);
+      expect(message.text, 'Cloud body');
+    },
+  );
+
   test('message replay cannot hide an already-linked attachment', () {
     const chatIdentifier = 'iMessage;-;attachment-owner-chat';
     final chat = Chat(
@@ -5345,6 +5461,8 @@ void main() {
     'creates and idempotently attaches a reaction to its bare parent GUID',
     () {
       const reactionHash = 'reaction-hash';
+      final readAt = testEpoch.add(const Duration(seconds: 2));
+      final deliveredAt = testEpoch.add(const Duration(seconds: 1));
       resolver.put(
         scope: scope,
         generation: generation,
@@ -5389,6 +5507,8 @@ void main() {
         reactionType: 'emoji',
         associatedEmoji: '❤️',
         knownFlags: _messageFlags(fromMe: false, delivered: true),
+        readAt: readAt,
+        deliveredAt: deliveredAt,
       );
 
       adapter.applyEntity(
@@ -5432,7 +5552,12 @@ void main() {
       expect(reaction.associatedMessageType, 'emoji');
       expect(reaction.associatedMessageEmoji, '❤️');
       expect(reaction.isDelivered, isTrue);
+      expect(reaction.dateRead?.toUtc(), readAt);
+      expect(reaction.dateDelivered?.toUtc(), deliveredAt);
       expect(savedParent.hasReactions, isTrue);
+      expect(savedParent.dateRead, isNull);
+      expect(savedParent.dateDelivered, isNull);
+      expect(savedParent.text, isNull);
       expect(store.box<Handle>().count(), 1);
     },
   );
@@ -6421,6 +6546,8 @@ CloudReactionEntityPayload _reactionPayload({
   String? associatedEmoji = '❤️',
   DateTime? createdAt,
   CloudSemanticKnownMessageFlags? knownFlags,
+  DateTime? readAt,
+  DateTime? deliveredAt,
 }) => CloudReactionEntityPayload(
   logicalEntityKeyHash: logicalEntityKeyHash,
   canonicalGuid: canonicalGuid,
@@ -6433,6 +6560,14 @@ CloudReactionEntityPayload _reactionPayload({
   createdAt: createdAt ?? testEpoch,
   service: CloudSemanticService.iMessage,
   knownFlags: knownFlags ?? _messageFlags(fromMe: false),
+  readAtState: readAt == null
+      ? CloudSemanticFieldState.absent
+      : CloudSemanticFieldState.value,
+  readAt: readAt,
+  deliveredAtState: deliveredAt == null
+      ? CloudSemanticFieldState.absent
+      : CloudSemanticFieldState.value,
+  deliveredAt: deliveredAt,
 );
 
 CloudAttachmentEntityPayload _attachmentPayload({

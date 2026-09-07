@@ -349,6 +349,78 @@ the blocker but are not substitutes for an unavailable current database
 snapshot when the required fields are absent. Do not request passwords,
 hardware identity, a new login, public log uploads, or internet-exposed ADB.
 
+### Reaction and business-sender investigation, September 6 late evening
+
+The next native replay isolated two independent cross-layer contract defects.
+Reaction records carry their own read/delivery timestamps, but the native
+snapshot validator previously admitted these only for ordinary Messages. A
+regression test first reproduced `InvalidCanonicalPayload`; the narrow repair
+admits reaction receipts without admitting reaction edits/retractions or
+applying receipts to the parent. All 290 native CloudKit tests pass. The warm
+native test build took 31.54 seconds and test execution took 1.10 seconds.
+
+The first live replay after that repair proved why native readiness is not
+projection success: 491 invalid snapshots disappeared, but Dart then rejected
+the same reactions' localized fallback bodies. Its reaction-shape failures rose
+from 210 to 701, and no new records applied. The Dart decoder now validates
+text-only fallback content while taking parent identity and reaction type only
+from the structured association. Attachment, mention, transcript, text-effect,
+invalid range, and inconsistent field-state payloads remain rejected. Native
+protected bytes and digests remain the source of truth; no fallback text is
+copied onto a parent or projected as an extra Message.
+
+That run also proved all 58 invalid Message senders had the exact supported
+business-URN shape already used for Chat participants. The projection adapter
+now accepts that same strict UUID-shaped `urn:biz:` sender for iMessage only,
+preserves its spelling, and still rejects malformed or arbitrary opaque
+senders. This changes neither recipient authorization nor outbound support.
+The combined focused suite passes 138 tests; the frozen full CloudKit Dart
+suite passes 1,734 tests and the changed Dart files analyze without issues.
+The existing ObjectBox reaction idempotency test also now verifies that both
+receipt timestamps persist on the reaction while the parent's receipts and
+body remain unchanged; all 97 adapter tests pass with that assertion.
+
+The combined live repair completed at 02:35:40Z September 7. Across its initial
+pass and retained sweep, it recovered **608 Reaction, 58 ordinary Message and
+6 Attachment records**. The final sweep alone applied 591 Message-zone records
+and one Attachment, so that report alone is not the run total. Offline durable
+inspection proves 699 Chats, 13,235 Message rows (including 608 reactions),
+2,376 Attachments and 16,310 matching snapshots/maps/replay rows. The same one
+pre-existing non-CloudKit blank Message remains; there are no new blank rows
+or text-corruption indicators. Chat ordering is exact for all 545 Chats with
+visible history. Source database SHA-256 remained unchanged by inspection.
+
+A same-binary restart/repeat completed at 02:39:23Z: both network and local
+sweep reports applied zero rows across all three zones. Outbox stayed zero,
+remote saves/deletes stayed disabled, and no ordering repair was needed.
+These results qualify this repair's Windows projection and replay, not Android
+presentation, remote writes, or complete historical semantic support. The
+remaining Message blocking-save count is 2,070; 181 unresolved Chat references
+remain distinct from the now-resolved sender and reaction-shape failures.
+
+Writer review decision: keep the fresh-Chat admission barrier. An exact lookup
+of a newly allocated record ID cannot establish that an unresolved differently
+named Chat does not already own the same recipient. Message writes into an
+already restored, revision-proven Chat have a narrower existing admission path,
+but still require genuine native-send journal provenance and sender authority.
+The read-only Windows harness does not restore IDS SharedPushState; a successful
+read run does not qualify that write path. An offline real-profile check proves
+all 133 restored direct iMessage Chats satisfy their exact revision-dependent
+binding before and after reopening, but none belongs to the currently approved
+outbound test recipient. Do not select a different recipient as a shortcut.
+
+A read-only agent review proposed authenticated, nonprojecting Chat identity
+observations as a future way to prove target disjointness. The parent accepts
+the invariants as design constraints, not implementation approval or a passed
+gate: bind observations to account/store, zone, generation, record revision,
+ETag, source and digest; validate every resolver-relevant identity, including
+legacy group identifiers and participant normalization; preserve collisions;
+and require current captured-head coverage with atomic revalidation through
+submission. Unknown service remains unknown. Never mark an observation applied
+or advance an applied checkpoint. Missing/ambiguous observations still block,
+and even complete observations do not exclude a concurrently created remote
+Chat. No writer barrier was changed by this review.
+
 ### Windows replay refresh, September 6 evening
 
 First current-source replay completed at 01:10:26Z September 7 (September 6
