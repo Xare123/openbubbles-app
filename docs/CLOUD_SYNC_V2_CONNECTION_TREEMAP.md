@@ -192,6 +192,92 @@ Initial repair order (superseded by the narrower September 6 repair below):
 
 ### Windows write fast loop: use now for contract repair
 
+#### Current boundary review: source coverage is not write authority
+
+The Windows inspector now captures a bounded, immutable Chat-journal
+read set. On the saved profile it found **13 retained saved Chats and 81 retained
+tombstones**, generation 1, fetched sequence 793 and applied sequence 55.
+Every retained save has its protected source and revision identifiers available
+for native observation. This does **not** mean any of those identities have been
+decrypted or proved disjoint from the intended recipient. Inspector schema 10
+explicitly emits `writeAuthorized: false`; the app's writer does not consume
+this diagnostic or bypass its existing admission checks.
+
+```text
+Authenticated Chat journal
+  + exact scope/generation/token/revision
+  + contiguous terminal saved/deleted rows
+  + every retained save's protected source
+  -> stable observation inputs (implemented; diagnostic only)
+       -> native full-identity comparison (not implemented)
+       -> atomic candidate and source revalidation (not wired)
+       -> ordinary-send/manual provenance and writer admission (still fenced)
+
+Concurrent remote Chat creation remains possible after any observation
+  -> per-record revision ownership + same-conversation convergence (still gap)
+       -> protected exact Chat readback
+       -> Message create/readback/restart/no-extra-save qualification
+```
+
+Do not add a chain of exclusion heuristics in place of that convergence repair.
+An RCS or iMessageLite label does not prove recipient disjointness: GUID,
+CID, GID, original GID, legacy group identifiers and full participant identity
+can still overlap historical lookup paths. Native comparison must inspect those
+fields before service filtering/defaults, retain unknown/malformed cases, and
+return a candidate-specific result rather than persistent plaintext identities.
+Successful observation cannot exclude an unseen or concurrently created server
+record and must never mark retained history applied.
+
+The read set includes all generations in its bounded scan, rejects unresolved
+older rows and all future-generation rows, and invalidates after source/token/
+classification changes or Store reopen. It preserves every journal row and
+checkpoint. A bounded reviewer identified a future-generation acceptance bug
+and a nondiscriminating size-limit test; both were corrected. The reviewer was
+closed and shutdown verified. It created no worktree, logs or unique files;
+supported session deletion was unavailable, so shared session storage was not
+changed. No agent remains active for this review.
+
+This review also reproduced a real canonical mutation defect: a second update
+for the **same server record and GUID** could replace a direct conversation's
+recipient, leaving its existing history attached. Both before- and after-reopen
+tests accepted the invalid update before the fix. The canonical adapter now
+rejects a different nonempty direct-chat identifier with
+`canonical_chat_direct_recipient_conflict`, preserving the Chat, participants,
+Message relations, alias ownership, record map and checkpoint via rollback.
+Ordinary same-recipient updates still pass. This is a prerequisite ownership
+repair, **not** implementation of duplicate-record convergence. Group mutation
+rules and missing-identifier handling are unchanged.
+
+Source anchors: `cloud_sync_chat_identity_read_set.dart`,
+`inspect_cloud_sync_control_state.dart::_inspectChatIdentityInputs`,
+`objectbox_canonical_semantic_entity_adapter.dart::_applyChatUpsert`,
+`objectbox_cloud_semantic_store_gateway.dart::bindRecordIdentity`, and
+`cloud_sync_outbound_chat_binding.dart::_requireRestoredChatById`.
+
+The smallest remaining convergence change must keep server-record revisions
+separate from canonical conversation ownership. Do not simply remove
+`semantic_record_mapping_conflict`: snapshot raw references, replay receipt
+validation, dependency bindings and exact write readback currently all assume
+one mapped record. Preserve each source's ETag/protected payload, reject
+cross-account/recipient collisions, and qualify interleaved duplicate updates,
+restart, rollback and pending-send behavior before widening fresh admission.
+Windows live-write composition also remains absent; do not fabricate an IDS
+confirmation to bypass the stricter manual adapter.
+
+Verification: **1,775 tests passed in 84 seconds** (the complete CloudKit Dart
+suite plus four real-ObjectBox inspector tests); focused analyzer and
+`git diff --check` passed. The two recipient-retargeting cases failed before
+the repair. An intermediate suite correctly caught the missing diagnostic
+allowlist entry; the entry was added and the full suite rerun successfully.
+Evidence: `evidence/windows-replay-20260906/direct-recipient-before.log` and
+`chat-write-boundary-full-suite.log`. C: had 58.06 GiB free, no deletion was
+needed. No remote writes/sends, account changes, APK/GCE builds or Alpha/Pixel
+mutations were performed. These are Windows source/contract qualifications,
+not a live Apple write/readback success or a production-ready declaration.
+Final saved-profile inspection (`chat-write-boundary-live-inspection.log`)
+confirmed the same 13/81 retained counts with the corrected collector; the
+original database's SHA-256 was unchanged before and after the copy inspection.
+
 The user requested Windows-based progress while the Pixel is unavailable.
 The existing Windows app harness has read, drain, attachment and projection
 viewer operations, not a live-write operation. Its launcher does not opt into

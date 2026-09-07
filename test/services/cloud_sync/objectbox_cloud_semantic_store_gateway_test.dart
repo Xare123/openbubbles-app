@@ -2308,6 +2308,7 @@ void main() {
   for (final reopen in [false, true]) {
     for (final scenario in [
       'same record update',
+      'changed direct recipient',
       'second record',
       'second alias owner',
     ]) {
@@ -2401,7 +2402,9 @@ void main() {
           objectBox.close();
           objectBox = await openStore(directory: directory.path);
         }
-        final sameRecord = scenario == 'same record update';
+        final changedRecipient = scenario == 'changed direct recipient';
+        final sameRecord = scenario == 'same record update' || changedRecipient;
+        final accepted = scenario == 'same record update';
         final secondOwner = scenario == 'second alias owner';
         final second = _entry(
           scope: chatScope,
@@ -2437,18 +2440,22 @@ void main() {
           canonicalGuid: secondOwner
               ? 'direct-chat-b'
               : firstPayload.canonicalGuid,
-          chatIdentifier: recipient,
-          participantHandles: const [recipient],
+          chatIdentifier: changedRecipient ? 'other@example.com' : recipient,
+          participantHandles: changedRecipient
+              ? const ['other@example.com']
+              : const [recipient],
         );
         final beforeSecond = _durableSyncControlFingerprint(objectBox);
-        if (sameRecord) {
+        if (accepted) {
           await project(second, secondPayload);
         } else {
           await expectLater(
             project(second, secondPayload),
             throwsA(
               _failureCode(
-                secondOwner
+                changedRecipient
+                    ? 'canonical_chat_direct_recipient_conflict'
+                    : secondOwner
                     ? 'canonical_chat_alias_conflict'
                     : 'semantic_record_mapping_conflict',
               ),
@@ -2466,6 +2473,8 @@ void main() {
         expect(chats, hasLength(1));
         expect(chats.single.id, firstChat.id);
         expect(chats.single.guid, firstPayload.canonicalGuid);
+        expect(chats.single.chatIdentifier, recipient);
+        expect(chats.single.handles.map((handle) => handle.address), [recipient]);
         final preserved = objectBox.box<Message>().get(messageId)!;
         expect(preserved.chat.targetId, firstChat.id);
         expect(preserved.text, 'Keep this history');
@@ -2474,12 +2483,12 @@ void main() {
         expect(map.serverRecordIdHash, first.change.recordIdHash);
         expect(
           map.etagHash,
-          sameRecord ? second.change.etagHash : first.change.etagHash,
+          accepted ? second.change.etagHash : first.change.etagHash,
         );
         expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 1);
         expect(
           objectBox.box<CloudSemanticReplayEntity>().count(),
-          sameRecord ? 2 : 1,
+          accepted ? 2 : 1,
         );
         expect(
           objectBox
@@ -2487,7 +2496,7 @@ void main() {
               .getAll()
               .single
               .appliedSequence,
-          sameRecord ? 2 : 1,
+          accepted ? 2 : 1,
         );
         expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
         expect(
@@ -2496,7 +2505,7 @@ void main() {
               .getAll()
               .singleWhere((row) => row.fetchSequence == 2)
               .status,
-          sameRecord
+          accepted
               ? CloudInboxStatus.applied.index
               : CloudInboxStatus.pending.index,
         );

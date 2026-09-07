@@ -1132,6 +1132,19 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         safeCode: 'canonical_chat_service_conflict',
       );
     }
+    if (chat != null &&
+        style == 45 &&
+        chat.chatIdentifier?.isNotEmpty == true &&
+        chat.chatIdentifier != payload.chatIdentifier) {
+      // A shared canonical GUID is not permission to retarget a direct chat.
+      // Keep its history, participant relations and old alias ownership intact.
+      // Recipient equivalence needs explicit evidence; do not lowercase or
+      // normalize two different identifiers into a match at this boundary.
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_chat_direct_recipient_conflict',
+      );
+    }
     if (!isCreate &&
         payload.displayNameState == CloudSemanticFieldState.explicitClear &&
         !_allowExistingChatDisplayNameClears &&

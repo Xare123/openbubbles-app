@@ -20,6 +20,7 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'canonical_attachment_relation_conflict',
     'canonical_attachment_size_invalid',
     'canonical_chat_alias_conflict',
+    'canonical_chat_direct_recipient_conflict',
     'canonical_chat_alias_conflict_binding_owner',
     'canonical_chat_alias_conflict_binding_target',
     'canonical_chat_alias_conflict_duplicate_binding_rows',

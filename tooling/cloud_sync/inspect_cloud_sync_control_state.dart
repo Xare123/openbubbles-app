@@ -7,6 +7,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_materi
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_source_resolver.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identity_read_set.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 
 const _pageSize = 256;
@@ -178,7 +179,7 @@ Map<String, Object?> _inspectStore(Store store) {
   );
 
   return <String, Object?>{
-    'schema': 9,
+    'schema': 10,
     'canonicalCounts': <String, int>{
       'chats': store.box<Chat>().count(),
       'messages': store.box<Message>().count(),
@@ -196,11 +197,51 @@ Map<String, Object?> _inspectStore(Store store) {
     'legacyChatShapeCounts': legacyChatShapeCounts,
     'presentationFidelityCounts': presentationFidelityCounts,
     'semanticOwnershipCounts': semanticOwnershipCounts,
+    'chatIdentityObservationInputs': _inspectChatIdentityInputs(store),
     'checkpoints': checkpoints,
     'inboxGroups': inboxGroups,
     'replayOutcomes': replayOutcomes,
     'replaySafeCodes': replaySafeCodes,
   };
+}
+
+List<Map<String, Object?>> _inspectChatIdentityInputs(Store store) {
+  final query = store.box<CloudSyncCheckpointEntity>().query(
+    CloudSyncCheckpointEntity_.zone.equals('chatManateeZone').and(
+      CloudSyncCheckpointEntity_.persistenceLane.equals('semantic'),
+    ),
+  ).build();
+  try {
+    return query.find().map((checkpoint) {
+      try {
+        final scope = CloudSyncScope(
+          accountFingerprint: checkpoint.accountFingerprint,
+          container: checkpoint.container, database: checkpoint.database,
+          zone: checkpoint.zone, schemaVersion: checkpoint.schemaVersion,
+          persistenceLane: CloudSyncPersistenceLane.semantic,
+        );
+        final inputs = CloudSyncChatIdentityReadSet.capture(store, scope);
+        inputs.requireUnchanged(store);
+        return <String, Object?>{
+          'status': 'readyForNativeObservation',
+          'generation': inputs.generation,
+          'fetchedSequence': inputs.fetchedSequence,
+          'appliedSequence': inputs.appliedSequence,
+          'retainedSaves': inputs.retainedSaves.length,
+          'retainedTombstones': inputs.retainedTombstones,
+          'writeAuthorized': false,
+        };
+      } catch (error) {
+        return <String, Object?>{
+          'status': 'blocked',
+          'safeCode': cloudSyncV2SafeFailureCode(error),
+          'writeAuthorized': false,
+        };
+      }
+    }).toList(growable: false);
+  } finally {
+    query.close();
+  }
 }
 
 Map<String, int> _inspectPresentationFidelity(Store store) {
