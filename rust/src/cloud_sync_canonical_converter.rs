@@ -1354,12 +1354,31 @@ fn validated_edit_timestamp(value: f64) -> Result<i64, CloudCanonicalConversionO
             CloudCanonicalQuarantineReason::MalformedMessageSummary,
         ));
     }
-    if value.fract() != 0.0 || value < APPLE_EPOCH_OFFSET_MILLIS as f64 {
+    // Apple's summary `ec[].d` is fractional seconds since 2001. The legacy
+    // OpenBubbles encoder instead writes whole Unix milliseconds. Their valid
+    // ranges through year 9999 do not overlap, so retain the already-supported
+    // legacy form without guessing an epoch from the current wall clock.
+    if value >= APPLE_EPOCH_OFFSET_MILLIS as f64 && value.fract() == 0.0 {
+        return Ok(value as i64);
+    }
+    let maximum_apple_seconds =
+        (MAX_CANONICAL_TIMESTAMP_MILLIS - APPLE_EPOCH_OFFSET_MILLIS) as f64 / 1000.0;
+    if value == 0.0 || value > maximum_apple_seconds {
         return Err(CloudCanonicalConversionOutcome::Deferred(
             CloudCanonicalDeferredReason::UnprovenEditTimestamp,
         ));
     }
-    Ok(value as i64)
+    // Match the ordinary Message nanosecond-to-millisecond conversion: keep
+    // the containing millisecond, never invent precision or round into a later
+    // instant. Raw fractions remain losslessly available in protected bytes.
+    let millis = (value * 1000.0).floor() as i64;
+    let unix_millis = APPLE_EPOCH_OFFSET_MILLIS + millis;
+    if unix_millis > MAX_CANONICAL_TIMESTAMP_MILLIS {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedMessageSummary,
+        ));
+    }
+    Ok(unix_millis)
 }
 
 fn decode_message_summary(
@@ -3841,6 +3860,102 @@ mod tests {
                 .map(CloudCanonicalEditPartSnapshot::modified_at_millis)
                 .collect::<Vec<_>>(),
             vec![1_720_000_000_300, 1_720_000_000_100, 1_720_000_000_200]
+        );
+    }
+
+    #[test]
+    fn apple_epoch_fractional_edit_dates_project_with_millisecond_precision() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut summary = MessageSummaryInfo {
+            ep: vec![0],
+            ..Default::default()
+        };
+        summary.ec.insert(
+            "0".to_owned(),
+            vec![
+                WireMessageEdit {
+                    t: plain_encoded_attributed_body("base"),
+                    d: 779_000_100.25,
+                    bcg: None,
+                },
+                WireMessageEdit {
+                    t: plain_encoded_attributed_body("edited"),
+                    d: 779_000_110.75,
+                    bcg: None,
+                },
+            ],
+        );
+        let mut message = normal_message(Some("base"));
+        message.time = 779_000_100_250_000_000;
+        message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
+        let outcome = convert_message(
+            &context(&hasher, "server-apple-edit-dates", None),
+            &message_presence(),
+            &message,
+        );
+        let payload = message_payload(&outcome);
+        let expected = vec![1_757_307_300_250, 1_757_307_310_750];
+        assert_eq!(payload.edit_count(), 2);
+        assert_eq!(
+            payload
+                .edits()
+                .iter()
+                .map(CloudCanonicalMessageEdit::modified_at_millis)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = &outcome else {
+            unreachable!("payload helper proved readiness");
+        };
+        assert_eq!(
+            mutation
+                .snapshot()
+                .unwrap()
+                .edit_parts()
+                .iter()
+                .map(CloudCanonicalEditPartSnapshot::modified_at_millis)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            validated_edit_timestamp(779_000_100.2509),
+            Ok(1_757_307_300_250)
+        );
+        assert_eq!(
+            validated_edit_timestamp(1_757_307_300_250.0),
+            Ok(1_757_307_300_250)
+        );
+        assert_eq!(validated_edit_timestamp(779_000_100.0), Ok(1_757_307_300_000));
+    }
+
+    #[test]
+    fn edit_timestamp_ranges_never_saturate_or_guess_unsupported_units() {
+        for value in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            -1.0,
+            MAX_CANONICAL_TIMESTAMP_MILLIS as f64 + 1.0,
+        ] {
+            assert!(matches!(
+                validated_edit_timestamp(value),
+                Err(CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedMessageSummary
+                ))
+            ));
+        }
+        for value in [0.0, 253_000_000_000.0, 1_757_307_300_250.5] {
+            assert!(matches!(
+                validated_edit_timestamp(value),
+                Err(CloudCanonicalConversionOutcome::Deferred(
+                    CloudCanonicalDeferredReason::UnprovenEditTimestamp
+                ))
+            ));
+        }
+        assert_eq!(validated_edit_timestamp(1.25), Ok(978_307_201_250));
+        assert_eq!(
+            validated_edit_timestamp(MAX_CANONICAL_TIMESTAMP_MILLIS as f64),
+            Ok(MAX_CANONICAL_TIMESTAMP_MILLIS)
         );
     }
 

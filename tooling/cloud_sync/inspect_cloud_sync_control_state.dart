@@ -178,7 +178,7 @@ Map<String, Object?> _inspectStore(Store store) {
   );
 
   return <String, Object?>{
-    'schema': 7,
+    'schema': 8,
     'canonicalCounts': <String, int>{
       'chats': store.box<Chat>().count(),
       'messages': store.box<Message>().count(),
@@ -594,6 +594,12 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
   var associatedMessagesWithMissingOrAmbiguousParent = 0;
   var associatedMessagesWithMismatchedChat = 0;
   var associatedMessagesWithMissingParentFlag = 0;
+  var messagesWithEditHistory = 0;
+  var editHistoryEntries = 0;
+  var editHistoryEntriesWithText = 0;
+  var editHistoryEntriesWithInvalidTimestamp = 0;
+  var editHistoryEntriesBeforeMessageCreation = 0;
+  var editHistoryEntriesWithInvalidUnicode = 0;
   var eventMessages = 0;
   var messagesWithoutRenderableContent = 0;
   var visibleMessagesWithoutRenderableContent = 0;
@@ -627,6 +633,36 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
     }
     final chatId = message.chat.targetId;
     final createdAt = message.dateCreated;
+    var hasEditHistory = false;
+    for (final summary in message.messageSummaryInfo) {
+      for (final edits in summary.editedContent.values) {
+        for (final edit in edits) {
+          hasEditHistory = true;
+          editHistoryEntries += 1;
+          final date = edit.date;
+          if (date == null ||
+              !date.isFinite ||
+              date < 978307200000 ||
+              date > 253402300799999) {
+            editHistoryEntriesWithInvalidTimestamp += 1;
+          } else if (createdAt != null &&
+              date < createdAt.millisecondsSinceEpoch) {
+            editHistoryEntriesBeforeMessageCreation += 1;
+          }
+          final text = edit.text?.values.map((body) => body.string).join(' ');
+          if (_normalizedProjectionCandidate(text) != null) {
+            editHistoryEntriesWithText += 1;
+          }
+          if (text != null &&
+              (_hasUnpairedUtf16Surrogate(text) ||
+                  _hasUnexpectedControlCharacter(text) ||
+                  text.contains('\u{fffd}'))) {
+            editHistoryEntriesWithInvalidUnicode += 1;
+          }
+        }
+      }
+    }
+    if (hasEditHistory) messagesWithEditHistory += 1;
     if (chatId != 0 && createdAt != null && message.dateDeleted == null) {
       final previous = latestVisibleMessageDateByChatId[chatId];
       if (previous == null || createdAt.isAfter(previous)) {
@@ -892,6 +928,15 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
         associatedMessagesWithMismatchedChat,
     'associatedMessagesWithMissingParentFlag':
         associatedMessagesWithMissingParentFlag,
+    'messagesWithEditHistory': messagesWithEditHistory,
+    'editHistoryEntries': editHistoryEntries,
+    'editHistoryEntriesWithText': editHistoryEntriesWithText,
+    'editHistoryEntriesWithInvalidTimestamp':
+        editHistoryEntriesWithInvalidTimestamp,
+    'editHistoryEntriesBeforeMessageCreation':
+        editHistoryEntriesBeforeMessageCreation,
+    'editHistoryEntriesWithInvalidUnicode':
+        editHistoryEntriesWithInvalidUnicode,
     'eventMessages': eventMessages,
     'messagesWithoutRenderableContent': messagesWithoutRenderableContent,
     'visibleMessagesWithoutRenderableContent':

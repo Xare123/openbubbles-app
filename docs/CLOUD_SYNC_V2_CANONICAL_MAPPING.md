@@ -9,7 +9,7 @@ tags:
   - cloudkit
   - reconciliation
   - privacy
-timestamp: 2026-08-01
+timestamp: 2026-09-06
 ---
 
 # Cloud Sync V2 Canonical Mapping
@@ -414,7 +414,7 @@ not a replacement message and must not overwrite immutable original content.
 | Summary field | Canonical target | Rule | Status |
 |---|---|---|---|
 | `ec[part][]` | `editedContent[part]` | Part key must be a validated decimal part. Decode every `MessageEdit.t` as attributed content. Order by validated edit date, retain duplicates idempotently by digest. | Proposed |
-| `MessageEdit.d` | `EditedContent.date`, edit-part modified time | Validate finite Apple timestamp representation. Never substitute local now. | Proposed |
+| `MessageEdit.d` | `EditedContent.date`, edit-part modified time | Native Apple form is fractional seconds since 2001, converted to its containing Unix millisecond. Preserve existing whole Unix milliseconds from the legacy OpenBubbles encoder. The supported ranges through year 9999 are disjoint; reject nonfinite, negative and overflow values, and defer zero, fractional Unix-ms or the unsupported gap. Never substitute local now. Protected bytes retain original precision. | Native regression/full suite and Windows projection proven; Pixel and edit writes not qualified |
 | `MessageEdit.bcg` | no safe target | Preserve protected. Meaning is unverified. | Blocked |
 | `ep` | `editedParts` | Deduplicate validated non-negative parts. A listed part without usable edit content is a conflict or deferred subfield. | Proposed |
 | `otr[part].lo/le` | `originalTextRange[part]` | Validate non-negative range and bounds against original content when available. | Proposed |

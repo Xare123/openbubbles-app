@@ -162,6 +162,7 @@ final class CloudSyncManualSemanticPullSampler {
   static const maximumLegacyOwnershipRepairCandidates = 4096;
   static const retainedProjectionSweepBatchSize = 32;
   static const maximumRetainedProjectionSweepBatches = 4096;
+  static const maximumRetainedProjectionSweepRounds = 3;
   static const maximumConfirmedRemotePasses = 16;
   static const maximumTransientSessionRetries = 2;
   static const maximumTransientRetryWait = Duration(seconds: 60);
@@ -723,45 +724,63 @@ final class CloudSyncManualSemanticPullSampler {
     required CloudSyncCancellationToken cancellationToken,
     required CloudSyncSemanticSessionReportPersist persistReport,
   }) async {
-    final progress = <String, _CloudSyncProjectionSweepProgress>{};
-    for (final zone in zones) {
-      final bound = proof.bounds[zone];
-      if (bound == null || bound.scope.zone != zone) {
-        throw StateError('cloud_sync_projection_sweep_bound_missing');
-      }
-      final state = progress[zone] = _CloudSyncProjectionSweepProgress();
-      while (state.cursor < bound.throughFetchSequence) {
-        _throwIfCancelled(cancellationToken);
-        if (state.batches >= maximumRetainedProjectionSweepBatches) {
-          throw StateError('cloud_sync_projection_sweep_batch_limit');
+    final progress = <String, _CloudSyncProjectionSweepProgress>{
+      for (final zone in zones) zone: _CloudSyncProjectionSweepProgress(),
+    };
+    for (var round = 0; round < maximumRetainedProjectionSweepRounds; round++) {
+      var roundReprojected = 0;
+      var roundRetained = 0;
+      for (final zone in zones) {
+        final bound = proof.bounds[zone];
+        if (bound == null || bound.scope.zone != zone) {
+          throw StateError('cloud_sync_projection_sweep_bound_missing');
         }
-        final (result, diagnostics) = await _executeConfirmedSessionWithContext(
-          (session) => _projectRetainedWindow(
-            session: session,
-            proof: proof,
-            bound: bound,
-            cursor: state.cursor,
-            batchSize: batchSize,
-          ),
-          cancellationToken: cancellationToken,
-        );
-        // The cursor is progress, not authority. Advance only after the
-        // window's lease and native pause have both been released. A process
-        // restart may safely replay retained rows; it cannot skip them.
-        state.batches++;
-        state.examined += result.examined;
-        state.reprojected += result.reprojected;
-        state.retained += result.retained;
-        state.cursor = result.lastExaminedSequence;
-        for (final entry in diagnostics.entries) {
-          state.diagnostics.update(
-            entry.key,
-            (value) => value + entry.value,
-            ifAbsent: () => entry.value,
+        final state = progress[zone]!;
+        state.cursor = 0;
+        while (state.cursor < bound.throughFetchSequence) {
+          _throwIfCancelled(cancellationToken);
+          // The batch budget is cumulative across rounds, not reset by a
+          // parent being restored later than its dependent record.
+          if (state.batches >= maximumRetainedProjectionSweepBatches) {
+            throw StateError('cloud_sync_projection_sweep_batch_limit');
+          }
+          final (
+            result,
+            diagnostics,
+          ) = await _executeConfirmedSessionWithContext(
+            (session) => _projectRetainedWindow(
+              session: session,
+              proof: proof,
+              bound: bound,
+              cursor: state.cursor,
+              batchSize: batchSize,
+            ),
+            cancellationToken: cancellationToken,
           );
+          // The cursor is progress, not authority. Advance only after the
+          // window's lease and native pause have both been released. A process
+          // restart may safely replay retained rows; it cannot skip them.
+          state.batches++;
+          state.examined += result.examined;
+          state.reprojected += result.reprojected;
+          state.retained += result.retained;
+          state.cursor = result.lastExaminedSequence;
+          roundReprojected += result.reprojected;
+          roundRetained += result.retained;
+          for (final entry in diagnostics.entries) {
+            state.diagnostics.update(
+              entry.key,
+              (value) => value + entry.value,
+              ifAbsent: () => entry.value,
+            );
+          }
+          if (!result.hasMoreWithinBound) break;
         }
-        if (!result.hasMoreWithinBound) break;
       }
+      // Bounded follow-up rounds can resolve children visited before their
+      // parents. Reuse the captured head, never another network fetch. Stop
+      // once no local progress is possible; unresolved rows remain retained.
+      if (roundReprojected == 0 || roundRetained == 0) break;
     }
 
     // Read all final backlog counts and persist the aggregate while holding a

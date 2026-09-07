@@ -648,6 +648,96 @@ void main() {
     },
   );
 
+  for (final chainLength in [2, 5]) {
+    test(
+      'local sweep resolves late parents with bounded rounds ($chainLength)',
+      () async {
+        final stores = <String, InMemoryCloudSyncStore>{
+          for (final zone in CloudSyncManualSemanticPullSampler.zones)
+            zone: InMemoryCloudSyncStore(),
+        };
+        final scope = _semanticScope('messageManateeZone');
+        await _seedRetainedSaves(
+          stores[scope.zone]!,
+          scope,
+          count: chainLength,
+        );
+        final before = await stores[scope.zone]!.readCheckpoint(scope);
+        final pause = _RecordingNativeWriterPause();
+        final projected = <int>{};
+        var windows = 0;
+        var transports = 0;
+        final sampler = _catchUpSampler(
+          privateStorageDirectory: privateStorageDirectory,
+          stores: stores,
+          operationFenceStore: InMemoryCloudSyncStore(),
+          nativeWriterPause: pause,
+          onCreateRawTransport: (_) => transports++,
+          onReprojectWindow:
+              (
+                requestedScope,
+                generation,
+                leaseFence,
+                cursor,
+                bound,
+                limit,
+              ) async {
+                windows++;
+                expect(requestedScope, scope);
+                expect(cursor, 0);
+                expect(bound, chainLength);
+                expect(transports, 3, reason: 'local retries must not refetch');
+                expect(pause.pauseCalls, windows + 1);
+                expect(pause.resumeCalls, windows);
+                var examined = 0;
+                var applied = 0;
+                // A reverse dependency chain: each child precedes its parent.
+                for (var sequence = 1; sequence <= chainLength; sequence++) {
+                  if (projected.contains(sequence)) continue;
+                  examined++;
+                  if (sequence == chainLength ||
+                      projected.contains(sequence + 1)) {
+                    projected.add(sequence);
+                    applied++;
+                  }
+                }
+                return CloudRetainedProjectionWindowResult(
+                  examined: examined,
+                  reprojected: applied,
+                  retained: examined - applied,
+                  lastExaminedSequence: bound,
+                  hasMoreWithinBound: false,
+                );
+              },
+        );
+        final result = await sampler.runConfirmedCatchUpAndPersist(
+          persistReport: (report) async => report.mode.wireName,
+        );
+        final expectedRounds = chainLength == 2 ? 2 : 3;
+        expect(windows, expectedRounds);
+        expect(projected.length, expectedRounds);
+        expect(projected.contains(1), chainLength == 2);
+        expect(transports, 3);
+        expect(pause.pauseCalls, expectedRounds + 2);
+        expect(pause.resumeCalls, pause.pauseCalls);
+        expect(result.remotePasses, 1);
+        final report = result.projectionReport!.zones.singleWhere(
+          (zone) => zone.zoneLabel == 'messages',
+        );
+        expect(report.applied, expectedRounds);
+        expect(report.projectionBatches, expectedRounds);
+        // This scheduler fake does not persist canonical entities. The final
+        // report must read the store, not claim completeness from callbacks.
+        expect(report.retainedUnprojected, chainLength);
+        expect(report.status, CloudSyncRunStatus.degraded);
+        final after = await stores[scope.zone]!.readCheckpoint(scope);
+        expect(after.fetchedSequence, before.fetchedSequence);
+        expect(after.fetchedToken, before.fetchedToken);
+        expect(sampler.isActive, isFalse);
+      },
+    );
+  }
+
   test(
     'transient server failure resumes writers before a fresh confirmed session',
     () async {

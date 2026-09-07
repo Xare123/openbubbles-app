@@ -4,7 +4,7 @@ title: OpenBubbles Cloud Sync V2 Provenance Ledger
 description: Per-idea record of borrowed protocol facts and patterns, their source licence, whether code or only a concept was taken, and the file that implements each one.
 resource: openbubbles-app
 tags: [licensing, provenance, cloudkit, sspl, apache-2.0, compliance]
-timestamp: 2026-08-22
+timestamp: 2026-09-06
 ---
 
 # Cloud Sync V2 provenance ledger
@@ -102,6 +102,13 @@ where possible with Apple's public CloudKit documentation.
 | 32 | A server-record-changed conflict supplies client, server, and ancestor records; a retry must merge onto the server record because it owns the current change tag | [Apple `serverRecordChanged`](https://developer.apple.com/documentation/cloudkit/ckerror/serverrecordchanged) | Apple documentation | Fact only | The private writer needs fixture-proven predecessor ETag/change-tag fields and a typed conflict result before writes can be enabled. |
 | 33 | Database and record-zone change tokens are opaque, persistable, and not interchangeable; token expiry requires a scoped refetch rather than interpreting token contents | [Apple `CKFetchDatabaseChangesOperation`](https://developer.apple.com/documentation/cloudkit/ckfetchdatabasechangesoperation), [Apple `CKFetchRecordZoneChangesOperation`](https://developer.apple.com/documentation/cloudkit/ckfetchrecordzonechangesoperation) | Apple documentation | Fact only | Keep token bytes protected and stream-scoped. Expiry must preserve local rows, reset only the affected checkpoint, and restart that stream from no token. |
 | 34 | CloudKit subscriptions are change hints, not complete change records, and notifications may be coalesced | [Apple `CKDatabaseSubscription`](https://developer.apple.com/documentation/cloudkit/ckdatabasesubscription), [Apple `CKRecordZoneSubscription`](https://developer.apple.com/documentation/cloudkit/ckrecordzonesubscription) | Apple documentation | Fact only | Poll/fetch remains authoritative. Subscription setup must be idempotent and cannot replace checkpointed page fetching. |
+
+### Edit dates and satellite-service identification, September 6
+
+| # | Fact taken | Source | Licence | Code or concept | Implemented in |
+| --- | --- | --- | --- | --- | --- |
+| 35 | Summary `ec[part][].d` represents fractional seconds in Apple's 2001 epoch, distinct from the whole Unix milliseconds emitted by the existing OpenBubbles legacy encoder | [imessage-exporter edit parser](https://github.com/ReagentX/imessage-exporter/blob/4d90fc8d20a745c0a8acc1e01c0631c4bab89cb4/imessage-database/src/message_types/edited.rs), [date utilities](https://github.com/ReagentX/imessage-exporter/blob/4d90fc8d20a745c0a8acc1e01c0631c4bab89cb4/imessage-database/src/util/dates.rs), [Apple CFAbsoluteTime](https://developer.apple.com/documentation/corefoundation/cfabsolutetime), independently matched to four authenticated local CloudKit records' creation times | GPL-3.0; Apple documentation; user-authorized local evidence | Protocol fact only, no source or fixture copied. In particular, the exporter's whole-second truncation is not reused. | `rust/src/cloud_sync_canonical_converter.rs::validated_edit_timestamp`: independent finite/range validation, deterministic containing-millisecond conversion, preserved legacy whole-Unix-ms path and protected fractional source |
+| 36 | `iMessageLite` identifies satellite messaging, not a malformed spelling of `iMessage` | [imessage-database service model](https://docs.rs/imessage-database/latest/src/imessage_database/tables/messages/models.rs.html), independently observed as the exact service on all three retained unknown-service Chats | GPL-3.0; user-authorized local evidence | Fact only | No service coercion or writer admission implemented. Prevents treating satellite Chats as proven ordinary-iMessage Chat identities. |
 
 ## Sources deliberately not used
 

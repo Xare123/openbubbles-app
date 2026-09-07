@@ -55,7 +55,7 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | --- | --- |
 | Message history and conversation projection | User has observed restored readable chats; sustained incremental/restart behavior must be qualified on the release candidate. |
 | Photos, video, GIF and documents | Photos and video playback are user-confirmed. Installed `dcef0e9bf` automatically fetched three gallery attachments after navigation/scrolling without card taps. One HEIC still fails exact-size validation. GIF support is explicitly deferred; attachments are preserved, not deleted or hidden. Each media surface/type still needs user-facing validation, not metadata-only success. |
-| Chat-first ordinary text writing | Installed `98772e7d2` still deferred after native confirmation. The local tombstone-only admission repair below passes the complete 1,722-test CloudKit suite; it is not installed or live-write qualified. Windows inspection proves 81 retained deletions plus 44 unresolved Chat saves, which remain blocking. |
+| Chat-first ordinary text writing | Installed `98772e7d2` still deferred after native confirmation. The local tombstone-only admission repair is not installed or live-write qualified. Current Windows inspection proves 81 retained deletions plus 13 unresolved Chat saves (10 RCS and 3 satellite/iMessageLite). Fresh Chat creation remains blocked; the approved test recipient has no already-restored Chat in this Windows profile. |
 | Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
 | Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
@@ -348,6 +348,117 @@ log can contain the final per-zone semantic report. These exports may narrow
 the blocker but are not substitutes for an unavailable current database
 snapshot when the required fields are absent. Do not request passwords,
 hardware identity, a new login, public log uploads, or internet-exposed ADB.
+
+### Edit-date and satellite-service evidence, September 6
+
+A bounded, temporary Windows-only shape probe inspected three Chat service
+labels and four edit-history numeric arrays, never message bodies. All three
+previously unrecognized Chat services are exactly `iMessageLite`. Independent
+service-model evidence identifies this as satellite messaging. No Chat was
+coerced to ordinary iMessage and no writer barrier was relaxed. Ten retained
+RCS Chats remain a separate known exclusion. Temporary raw-label/date logging
+was removed from source before any shared build or commit.
+
+The first edit timestamp in each of the four sampled histories agrees with
+the record's Apple-epoch nanosecond creation time divided by one billion. The
+records use fractional Apple seconds, not whole Unix milliseconds. The old
+validator deferred every such edit date, accounting for 482 pending records
+in the preceding sweep. Public primary implementation and Apple epoch sources
+are linked with licensing boundaries in provenance entries 35-36.
+
+An independently written converter now handles that wire form at millisecond
+precision and preserves the existing legacy whole-Unix-millisecond form. It
+does not use wall-clock plausibility guesses or discard edit bodies. Nonfinite,
+negative and overflow values remain malformed; zero and unsupported ranges or
+legacy submillisecond values remain deferred. A synthetic end-to-end edit test
+failed before the fix, then all 292 native CloudKit tests passed. Build time
+was 26.96 seconds and test execution 1.05 seconds.
+
+The signed Windows replay built in 68.5 seconds and completed at 02:51:56Z
+September 7. Its two passes recovered **241 ordinary Message records and 15
+Reaction records**, with no additional Chat or Attachment records. The
+edit-time failure disappeared. Some newly decodable records still cannot apply
+because their Chat/parent is unresolved; the final blocking-save count is 1,814,
+not zero. This is not a claim that every deferred record was restored.
+
+The offline inspected profile contains 13,491 Message rows, 699 Chats and 2,376
+Attachments. There are 248 Messages with edit history containing 528 text-bearing
+entries. None has an invalid date, an edit date before its message creation,
+or invalid Unicode/control/replacement characters. These are current totals,
+not a claim that all 248 histories are newly recovered. All 623 reactions have
+an exact unique parent in the same Chat and a matching parent reaction flag.
+The single pre-existing non-CloudKit blank row is unchanged. Source SHA-256
+before/after offline inspection matches; remote saves/deletes and outbox remain
+zero. A same-binary restart/repeat completed at 02:55:06Z: it applied ten
+additional Message-zone records (one initial-pass, nine retained-sweep), needed
+no Chat-order repair and left outbox zero. Offline readback reconciled all ten
+as new Reaction snapshots, bringing the total to 633 with no missing/ambiguous
+parent, cross-Chat association or absent parent reaction flag. Ordinary Message
+snapshots stayed at 12,868. Both reports fetched zero new records. This is local
+dependency resolution, not evidence of a newly delivered server notification.
+The date repair is not yet installed or visually qualified on Pixel.
+
+The catch-up scheduler previously swept retained records only once. A child
+visited before its parent could remain retained until another user-initiated
+run. Catch-up now permits at most three local rounds at the same captured head,
+repeating only after a round both projects records and leaves retained records.
+Zero progress stops immediately. The per-zone batch budget is cumulative;
+every window still revalidates account/checkpoint/outbox and releases its
+native pause and coordinator lease. No new transport is constructed by these
+rounds. Final backlog counts come from durable storage, not attempt counters;
+reaching the round cap is not proof of a complete restore. Synthetic reverse
+dependency chains of two and five records failed before this change and pass
+afterward, including the three-round cap and fresh-session/transport checks.
+
+Do not conflate remote wake-up with local dependency retry. Apple's public
+[record-zone subscription documentation](https://developer.apple.com/documentation/cloudkit/ckrecordzonesubscription)
+describes coalesced notifications as hints to fetch changes, not an exhaustive
+list of changed records or dependent children. The intended investigation flow
+is notification/foreground trigger -> token-based fetch -> durable raw records
+-> conversion -> parent/child projection -> presentation. This public behavior
+does not establish every detail of the private Messages subscription protocol.
+A future targeted dependency queue could avoid revisiting unrelated retained
+rows, but is not required to safely close this bounded local ordering gap.
+
+**Proposed next optimization, not implemented:** use a reverse dependency
+index and bounded ready queue rather than recursively completing one branch
+before visiting another. A committed parent projection makes its waiting
+children eligible; successful children can make their dependents eligible.
+Only requeue on a relevant identity/revision change, deduplicate entries, and
+retain blocked work across restart. Reconstruct or reconcile the index from
+protected retained records after a crash. Multiple dependencies must all be
+satisfied, and cycles/missing records must not stall unrelated branches.
+Dependency identities remain account/scope/generation-bound and do not confer
+permission to write to CloudKit. Continue batching network deltas independently;
+do not assume a parent enumerates its children or issue one network request
+per dependency edge. Keep a bounded sweep as recovery for incomplete index
+coverage, not the normal response to every parent change.
+
+This recommendation is an engineering inference, not a claim to reproduce
+Apple Messages internals. Apple's [CKSyncEngine session](https://developer.apple.com/videos/play/wwdc2023/10188/)
+describes push-triggered scheduled batch fetching, local persistence and saved
+restart state. Its [fetched-record event contract](https://developer.apple.com/documentation/cloudkit/cksyncengine-5sie5/event/fetchedrecordzonechanges)
+explicitly does not guarantee record-change order. Qualify the current bounded
+repair before expanding it; measure repeated local decode cost to decide whether
+the dependency index justifies its extra state and recovery requirements.
+
+Combined validation: all 1,736 CloudKit Dart tests pass and targeted analysis
+is clean. The signed Windows build took 77.2 seconds; its read-only run ended
+at 03:10:11Z September 7 with zero fetched/applied records in both the remote
+pass and local sweep. Exactly one sweep ran (1 Chat, 57 Message and 36
+Attachment windows), then stopped on zero progress. Outbox stayed zero and
+remote saves/deletes stayed disabled. Offline source-hash-locked inspection
+confirmed unchanged totals: 699 Chats, 13,501 Message rows including 633
+reactions, and 2,376 Attachments. Reaction-parent and edit-history quality
+counters remain clean. Retained unresolved data still exists; this confirms
+repeat stability for the current repair, not production completion or write
+qualification.
+
+The date compatibility decoder does not qualify edit uploads. The existing
+legacy `Message.toCloud` path passes internal Unix milliseconds into `d`; any
+future V2 edit encoder must deliberately emit Apple's seconds representation
+rather than inherit that legacy discrepancy. Current native V2 writes still
+admit only plain text.
 
 ### Reaction and business-sender investigation, September 6 late evening
 
