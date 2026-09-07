@@ -399,6 +399,29 @@ final class CloudSyncManualSemanticPullSampler {
     (session) => action(session.runRemotePass),
   );
 
+  /// Reuses the semantic session's preflight, exact authentication, native
+  /// writer pause and release handling without fetching or projecting a page.
+  /// The callback must await all work and must not retain the pause token.
+  Future<T> runConfirmedReadOnlyObservation<T>(
+    Future<T> Function(CloudSyncNativeAuthSnapshot auth, Object pauseToken)
+    action,
+  ) => _runConfirmedSessionWithContext((session) async {
+    await _requireSameAuth(session.ensuredAuth);
+    _validatePreflight(await _readPreflight());
+    final auth = await _prepareAuthSnapshot(
+      session.pauseToken,
+      session.ensuredAuth,
+    );
+    if (auth == null || !session.ensuredAuth.sameIdentity(auth)) {
+      throw StateError('account_changed');
+    }
+    await _requireSameAuth(auth);
+    final result = await action(auth, session.pauseToken);
+    await _requireSameAuth(auth);
+    CloudKitOperationInterlock.throwIfActiveFenceLost();
+    return result;
+  });
+
   Future<T> _runConfirmedSessionWithContext<T>(
     Future<T> Function(_CloudSyncConfirmedSessionContext session) action,
   ) async {

@@ -3,3 +3,4 @@
 //
 
 pub mod api;
+pub mod cloud_sync_chat_identity;

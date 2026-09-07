@@ -728,7 +728,7 @@ impl CloudRawRecordPresence {
             .contains(&(outer_field.to_owned(), nested_field.to_owned()))
     }
 
-    fn nested_field(&self, outer_field: &str, nested_field: &str) -> CloudNestedPresence {
+    pub(crate) fn nested_field(&self, outer_field: &str, nested_field: &str) -> CloudNestedPresence {
         match self.field(outer_field) {
             CloudRawFieldPresence::Absent => CloudNestedPresence::OuterAbsent,
             CloudRawFieldPresence::PresentWithoutValue => CloudNestedPresence::OuterWithoutValue,
@@ -762,7 +762,7 @@ impl Debug for CloudRawRecordPresence {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CloudNestedPresence {
+pub(crate) enum CloudNestedPresence {
     OuterAbsent,
     OuterWithoutValue,
     Unavailable,

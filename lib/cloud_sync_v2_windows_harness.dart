@@ -12,6 +12,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_produc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identity_read_set.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_preflight.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
@@ -22,6 +24,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pul
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart'
+    as identity_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/src/rust/lib.dart' as rustlib;
 import 'package:bluebubbles/utils/logger/logger.dart';
@@ -94,7 +98,8 @@ enum CloudSyncV2WindowsHarnessOperation {
   attachmentProbe,
   attachmentReuseProbe,
   projectionViewer,
-  projectionDetailViewer;
+  projectionDetailViewer,
+  chatIdentityObservation;
 
   static CloudSyncV2WindowsHarnessOperation parse(List<String> arguments) {
     return CloudSyncV2WindowsHarnessLaunch.parse(arguments).operation;
@@ -382,6 +387,50 @@ List<_CloudSyncProjectionMessage> _cloudSyncV2WindowsReadProjectionMessages(
   });
 }
 
+/// Pure construction for a read-only identity comparison, never staging.
+@visibleForTesting
+api.CloudChat cloudSyncV2WindowsChatObservationCandidate(String encoded) {
+  const invalid = 'cloud_sync_chat_observation_candidate_invalid';
+  if (encoded.length > 8192) throw StateError(invalid);
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(encoded);
+  } catch (_) {
+    throw StateError(invalid);
+  }
+  if (decoded is! Map<String, dynamic> ||
+      decoded.length != 3 ||
+      !decoded.keys.toSet().containsAll(['recipient', 'sender', 'groupId'])) {
+    throw StateError(invalid);
+  }
+  for (final value in decoded.values) {
+    if (value is! String ||
+        value.isEmpty ||
+        value.length > 4096 ||
+        value.trim() != value ||
+        value.codeUnits.any((c) => c < 32 || c == 127)) {
+      throw StateError(invalid);
+    }
+  }
+  final recipient = decoded['recipient'] as String;
+  final group = decoded['groupId'] as String;
+  return api.CloudChat(
+    style: 45,
+    isFiltered: 0,
+    successfulQuery: 1,
+    state: 3,
+    chatIdentifier: recipient,
+    groupId: group,
+    originalGroupId: group,
+    serviceName: 'iMessage',
+    participants: [api.CloudParticipant(uri: recipient)],
+    prop001: const api.CloudProp001(syndicationType: 0),
+    lastReadMessageTimestamp: 0,
+    lastAddressedHandle: decoded['sender'] as String,
+    guid: 'iMessage;-;$recipient',
+  );
+}
+
 final class CloudSyncV2WindowsHarnessLaunch {
   const CloudSyncV2WindowsHarnessLaunch({
     required this.operation,
@@ -437,6 +486,13 @@ final class CloudSyncV2WindowsHarnessLaunch {
             throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
           }
           operation = CloudSyncV2WindowsHarnessOperation.projectionDetailViewer;
+          operationSeen = true;
+        case 'observe-chat-identity':
+          if (operationSeen) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          operation =
+              CloudSyncV2WindowsHarnessOperation.chatIdentityObservation;
           operationSeen = true;
         default:
           if (!argument.startsWith(launchIdArgumentPrefix) ||
@@ -495,6 +551,7 @@ enum _CloudSyncV2WindowsHarnessResumeOperation {
   semanticDrain,
   attachmentProbe,
   attachmentReuseProbe,
+  chatIdentityObservation,
 }
 
 Future<void> _harnessStatusWriteTail = Future<void>.value();
@@ -956,6 +1013,8 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         return;
       case CloudSyncV2WindowsHarnessOperation.projectionDetailViewer:
         return;
+      case CloudSyncV2WindowsHarnessOperation.chatIdentityObservation:
+        await _runChatIdentityObservation();
     }
   }
 
@@ -1109,6 +1168,8 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         await _runAttachmentProbe();
       case _CloudSyncV2WindowsHarnessResumeOperation.attachmentReuseProbe:
         await _runAttachmentProbe(requireAlreadyReferenced: true);
+      case _CloudSyncV2WindowsHarnessResumeOperation.chatIdentityObservation:
+        await _runChatIdentityObservation();
       case null:
         await _runRequestedLaunchOperation();
     }
@@ -1318,6 +1379,125 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
             'content_unchanged=$requireAlreadyReferenced',
       );
       _resumeAfterTwoFactor = null;
+    } catch (error) {
+      if (await _handleMissingReadAuthentication(error)) return;
+      _showFailure(error);
+    }
+  }
+
+  Future<void> _runChatIdentityObservation() async {
+    final adapter = _adapter;
+    if (_busy || adapter == null) return;
+    _resumeAfterTwoFactor =
+        _CloudSyncV2WindowsHarnessResumeOperation.chatIdentityObservation;
+    setState(() {
+      _busy = true;
+      _status = 'Observing retained Chat identities. No writes.';
+    });
+    try {
+      // The candidate stays in the isolated private profile, never argv/logs.
+      final file = File(
+        path.join(
+          fs.appDocDir.path,
+          'cloud-sync-v2',
+          'chat-observation-candidate.json',
+        ),
+      );
+      if (await file.length() > 8192) {
+        throw StateError('cloud_sync_chat_observation_candidate_invalid');
+      }
+      final candidate = cloudSyncV2WindowsChatObservationCandidate(
+        await file.readAsString(),
+      );
+      await _setRuntimeStage('chat-identity-observation', state: 'running');
+      final counts = await adapter.sampler.runConfirmedReadOnlyObservation((
+        auth,
+        pauseToken,
+      ) async {
+        final client = auth.cloudMessagesClient;
+        if (pauseToken is! BigInt ||
+            client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+          throw StateError('cloud_sync_chat_observation_session_invalid');
+        }
+        final readSet = CloudSyncChatIdentityReadSet.capture(
+          Database.store,
+          CloudSyncScope(
+            accountFingerprint: auth.accountFingerprint,
+            container: 'com.apple.messages.cloud',
+            database: 'private',
+            zone: 'chatManateeZone',
+            persistenceLane: CloudSyncPersistenceLane.semantic,
+          ),
+        );
+        final counts = <String, Object?>{
+          'version': 1,
+          'write_authorized': false,
+          'retained_saves': readSet.retainedSaves.length,
+          'retained_tombstones': readSet.retainedTombstones,
+          'overlaps': 0,
+          'disjoint': 0,
+          'incomplete': 0,
+          'failed': 0,
+        };
+        String? candidateBinding;
+        for (final source in readSet.retainedSaves) {
+          readSet.requireUnchanged(Database.store);
+          final result = await identity_api
+              .cloudSyncObserveProtectedChatIdentity(
+                cloudMessagesClient: client,
+                nativeWriterPauseToken: pauseToken,
+                storageDirectory: fs.appDocDir.path,
+                expectedAccountFingerprint: auth.accountFingerprint,
+                expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+                generation: BigInt.from(readSet.generation),
+                readSetFenceSha256: readSet.fenceSha256,
+                candidate: candidate,
+                source: identity_api.CloudSyncChatIdentitySourceInput(
+                  changeIdHash: source.changeIdHash,
+                  recordIdHash: source.recordIdHash,
+                  etagHash: source.etagHash,
+                  payloadSha256: source.payloadSha256,
+                serverModifiedAtMillis: source.serverModifiedAtMs <= 0
+                    ? null
+                    : source.serverModifiedAtMs,
+                  protectedRawEnvelopeReference:
+                      source.encryptedPayloadReference,
+                ),
+              );
+          readSet.requireUnchanged(Database.store);
+          if (result.failureCode != null) {
+            counts['failed'] = (counts['failed']! as int) + 1;
+            final key = 'failure_${result.failureCode!.name}';
+            counts[key] = ((counts[key] as int?) ?? 0) + 1;
+            continue;
+          }
+          if (result.comparison == null ||
+              result.nativeSessionId != auth.nativeSessionId ||
+              result.candidateBindingHash == null ||
+              result.sourceBindingHash == null ||
+              (candidateBinding != null &&
+                  candidateBinding != result.candidateBindingHash)) {
+            throw StateError('cloud_sync_chat_observation_binding_invalid');
+          }
+          candidateBinding = result.candidateBindingHash;
+          final key = result.comparison!.name;
+          counts[key] = (counts[key]! as int) + 1;
+        }
+        readSet.requireUnchanged(Database.store);
+        return counts;
+      });
+      await _setRuntimeStage(
+        'chat-identity-observation-complete',
+        state: 'finished',
+        detail: jsonEncode(counts),
+      );
+      _resumeAfterTwoFactor = null;
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _status = 'Observation complete. No CloudKit writes were authorized.';
+        });
+      }
     } catch (error) {
       if (await _handleMissingReadAuthentication(error)) return;
       _showFailure(error);

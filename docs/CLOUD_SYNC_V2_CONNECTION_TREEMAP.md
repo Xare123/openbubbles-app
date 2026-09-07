@@ -192,6 +192,74 @@ Initial repair order (superseded by the narrower September 6 repair below):
 
 ### Windows write fast loop: use now for contract repair
 
+#### Candidate-specific native Chat observation, live Windows qualification passed
+
+`api/cloud_sync_chat_identity.rs` now exposes a separate read-only observer.
+It reuses the strict transient decoder through account/store/generation,
+protected-envelope digest/revision checks, cached exact PCS zone and typed Chat
+decryption, then compares identity **before** the projection service filter.
+RCS/SMS/satellite service labels alone never establish that a saved Chat is
+unrelated. GUID, CID, GID, OGID, participants and the decrypted
+`legacyGroupIdentifiers` lineage are compared conservatively. Missing required
+fields or unknown identity shapes remain incomplete, not disjoint.
+
+```text
+isolated Windows candidate + immutable Chat journal read-set
+  -> existing semantic preflight/authentication/native writer-pause session
+  -> exact protected saved Chat -> strict PCS decode
+  -> compare known identities before service exclusion
+  -> keyed candidate/source/session/read-set correlation + classification
+  -> revalidate authentication and unchanged journal
+  -> content-free observation counts; NO write permission or projection
+```
+
+The observer accepts only saved Chat revisions with an ETag, never tombstones
+or message/attachment streams. Ordinary semantic decode and attachment
+materialization reject observation outcomes. The Windows harness operation
+`observe-chat-identity` reads an explicitly prepared candidate from its private
+profile, observes retained saves, and reports counts with `write_authorized:
+false`. It does not fetch a history page, create an outbox operation, alter
+projection status or send a message. The candidate is never a command-line
+argument or report field. The sampler's shared session releases its pause on
+callback failure and rejects authentication changes before returning a result.
+
+Live Windows qualification observed all **13 retained Chat saves** against the
+explicitly approved test candidate: **13 disjoint, zero overlaps, zero incomplete
+comparisons and zero failures**. The 81 retained tombstones remain retained.
+The private candidate and observation are diagnostic, not a prepared send or
+write authority. Evidence: `evidence/windows-replay-20260906/` files
+`chat-identity-observation-live.json` and `chat-identity-live-run-pinned.log`.
+The before/after offline-copy control reports are exactly equal, including
+699 Chats, 13,642 Messages, 2,417 Attachments, checkpoints and an empty outbox.
+
+Final qualification: **302 native CloudKit tests**, **1,831 Dart/ObjectBox
+tests**, changed-file analysis and Windows launcher behavioral tests passed.
+Native evidence: `evidence/windows-native-tests/20260906-233345-59f78f78/`;
+Dart evidence: `chat-identity-final-suite.log` in the replay evidence folder.
+One new test first caught a snake-case versus camel-case plist key error; the
+comparator now uses the actual `legacyGroupIdentifiers` key. Candidate-specific
+admission, lease/submission revalidation, restart and live write/readback remain
+unqualified. Do not persist this diagnostic result as a write permit.
+
+The local bridge generator initially failed on inherited `RUST_LOG=warn`
+(FRB 2.3 accepts info/debug) and the unsigned installed Cargo expansion helper.
+The existing registry-installed ARM64 `cargo-expand 1.0.124` was signed with
+the established local development certificate and its signature verified;
+Smart App Control remains enabled. Its pre-sign SHA-256 was
+`59992B3DFB837EE7F100451001F7F16F7253F11F13E53DD7E349CBC3B649563A`, post-sign
+`DE5AE3D22511E8608AE3DDBB8C6A2D91F86835A5158713A91689EA2F6F58EA4E`.
+The test helper now supports optional binding regeneration in the same ARM64
+SDK/cache environment, preserving and restoring its environment overrides.
+The helper applies the same six-duplicate SSE cleanup and diagnostic
+normalization as CI. Generator expansion warmed a separate check profile in
+about 7m24s; the final native test rebuild took 27.15s and tests took 2.74s.
+The Windows launcher now explicitly pins the same native debug/incremental,
+compiler-wrapper and Rust flag settings instead of inheriting a different
+profile. An initial mismatched build was stopped by its verified process tree
+before app launch. With the corrected settings the Windows app built in
+**71.4 seconds**, completed the observer and closed itself. No Android build,
+remote mutation, security-policy change or history reset was used.
+
 #### Direct-Chat record membership: implemented, development opt-in only
 
 The Windows Dart/ObjectBox path now separates physical CloudKit record

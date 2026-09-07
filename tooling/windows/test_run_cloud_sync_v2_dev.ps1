@@ -498,6 +498,21 @@ try {
         -Condition $attachmentReuseProcess.HasExited `
         -Message 'The verified attachment reuse probe harness was not closed.'
 
+    $identityProcess = Start-TestHarnessProcess -Executable $testExecutable
+    $children.Add($identityProcess)
+    $identityPath = Join-Path $testDirectory 'chat-identity-observation-status.json'
+    Write-TestHarnessStatus -Path $identityPath -LaunchId $firstLaunchId `
+        -ProcessId $identityProcess.Id -State finished `
+        -Stage chat-identity-observation-complete
+    Wait-HarnessOperation -Process $identityProcess `
+        -ExpectedExecutable $testExecutable -StatusPath $identityPath `
+        -LaunchStartedUtc ([datetime]::UtcNow.AddSeconds(-1)) `
+        -BaselineWriteUtc ([datetime]::MinValue) -ExpectedLaunchId $firstLaunchId `
+        -ExpectedOperation chat-identity-observation -TimeoutSeconds 5
+    $identityProcess.Refresh()
+    Assert-True -Condition $identityProcess.HasExited `
+        -Message 'The verified read-only Chat observation harness was not closed.'
+
     Write-Host 'Cloud Sync V2 Windows launcher behavioral tests passed.'
 }
 finally {

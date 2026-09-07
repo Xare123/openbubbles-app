@@ -7,6 +7,7 @@
 // ignore_for_file: argument_type_not_assignable
 
 import 'api/api.dart';
+import 'api/cloud_sync_chat_identity.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
@@ -1513,6 +1514,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncChatIdentityComparison
+  dco_decode_box_autoadd_cloud_sync_chat_identity_comparison(dynamic raw);
+
+  @protected
+  CloudSyncChatIdentitySourceInput
+  dco_decode_box_autoadd_cloud_sync_chat_identity_source_input(dynamic raw);
+
+  @protected
   CloudSyncOutboundFailureClass
   dco_decode_box_autoadd_cloud_sync_outbound_failure_class(dynamic raw);
 
@@ -1964,6 +1973,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentMaterializationResult
   dco_decode_cloud_sync_attachment_materialization_result(dynamic raw);
+
+  @protected
+  CloudSyncChatIdentityComparison
+  dco_decode_cloud_sync_chat_identity_comparison(dynamic raw);
+
+  @protected
+  CloudSyncChatIdentityResult dco_decode_cloud_sync_chat_identity_result(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncChatIdentitySourceInput
+  dco_decode_cloud_sync_chat_identity_source_input(dynamic raw);
 
   @protected
   CloudSyncNativeAuthMetadata dco_decode_cloud_sync_native_auth_metadata(
@@ -2892,6 +2914,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_opt_box_autoadd_cloud_sync_attachment_materialization_failure_code(
     dynamic raw,
   );
+
+  @protected
+  CloudSyncChatIdentityComparison?
+  dco_decode_opt_box_autoadd_cloud_sync_chat_identity_comparison(dynamic raw);
 
   @protected
   CloudSyncOutboundFailureClass?
@@ -4983,6 +5009,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncChatIdentityComparison
+  sse_decode_box_autoadd_cloud_sync_chat_identity_comparison(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncChatIdentitySourceInput
+  sse_decode_box_autoadd_cloud_sync_chat_identity_source_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncOutboundFailureClass
   sse_decode_box_autoadd_cloud_sync_outbound_failure_class(
     SseDeserializer deserializer,
@@ -5576,6 +5614,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentMaterializationResult
   sse_decode_cloud_sync_attachment_materialization_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncChatIdentityComparison
+  sse_decode_cloud_sync_chat_identity_comparison(SseDeserializer deserializer);
+
+  @protected
+  CloudSyncChatIdentityResult sse_decode_cloud_sync_chat_identity_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncChatIdentitySourceInput
+  sse_decode_cloud_sync_chat_identity_source_input(
     SseDeserializer deserializer,
   );
 
@@ -6646,6 +6699,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentMaterializationFailureCode?
   sse_decode_opt_box_autoadd_cloud_sync_attachment_materialization_failure_code(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncChatIdentityComparison?
+  sse_decode_opt_box_autoadd_cloud_sync_chat_identity_comparison(
     SseDeserializer deserializer,
   );
 
@@ -9140,6 +9199,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_chat_identity_comparison(
+    CloudSyncChatIdentityComparison self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_sync_chat_identity_source_input(
+    CloudSyncChatIdentitySourceInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_outbound_failure_class(
     CloudSyncOutboundFailureClass self,
     SseSerializer serializer,
@@ -9854,6 +9925,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_attachment_materialization_result(
     CloudSyncAttachmentMaterializationResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_chat_identity_comparison(
+    CloudSyncChatIdentityComparison self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_chat_identity_result(
+    CloudSyncChatIdentityResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_chat_identity_source_input(
+    CloudSyncChatIdentitySourceInput self,
     SseSerializer serializer,
   );
 
@@ -11134,6 +11223,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_opt_box_autoadd_cloud_sync_attachment_materialization_failure_code(
     CloudSyncAttachmentMaterializationFailureCode? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_chat_identity_comparison(
+    CloudSyncChatIdentityComparison? self,
     SseSerializer serializer,
   );
 

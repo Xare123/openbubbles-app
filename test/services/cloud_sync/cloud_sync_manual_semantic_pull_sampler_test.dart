@@ -307,6 +307,61 @@ void main() {
     );
   });
 
+  for (final outcome in [
+    'success',
+    'replaced-auth',
+    'callback-failure',
+    'preflight-blocked',
+  ]) {
+    test(
+      'read-only observation $outcome never fetches or projects and releases pause',
+      () async {
+        var auth = _auth();
+        var callbacks = 0;
+        final nativePause = _RecordingNativeWriterPause();
+        final sampler = _sampler(
+          privateStorageDirectory: privateStorageDirectory,
+          operationFenceStore: InMemoryCloudSyncStore(),
+          nativeWriterPause: nativePause,
+          readPreflight: () async =>
+              _readyState(outboxCount: outcome == 'preflight-blocked' ? 1 : 0),
+          readAuthSnapshot: () async => auth,
+          createStore: (_) async =>
+              throw StateError('must not create zone store'),
+          createRawTransport: (_, _, _) async =>
+              throw StateError('must not fetch'),
+          createInboxApplier: (_, _, _) async =>
+              throw StateError('must not project'),
+        );
+        final action = sampler.runConfirmedReadOnlyObservation((
+          observed,
+          pause,
+        ) async {
+          callbacks++;
+          expect(observed.sameIdentity(auth), isTrue);
+          expect(pause, same(nativePause.token));
+          CloudKitOperationInterlock.requireActive(
+            CloudKitOperationKind.v2SemanticRead,
+          );
+          if (outcome == 'replaced-auth') auth = _auth(session: 'replacement');
+          if (outcome == 'callback-failure') {
+            throw StateError('observation failed');
+          }
+          return 13;
+        });
+        if (outcome == 'success') {
+          expect(await action, 13);
+        } else {
+          await expectLater(action, throwsStateError);
+        }
+        expect(callbacks, outcome == 'preflight-blocked' ? 0 : 1);
+        expect(nativePause.pauseCalls, 1);
+        expect(nativePause.resumeCalls, 1);
+        expect(sampler.isActive, isFalse);
+      },
+    );
+  }
+
   test(
     'oversized settled outbox stops before store or transport creation',
     () async {

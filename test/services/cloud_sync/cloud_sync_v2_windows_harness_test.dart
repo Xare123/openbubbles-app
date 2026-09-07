@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:bluebubbles/cloud_sync_v2_windows_harness.dart';
 import 'package:bluebubbles/database/models.dart';
@@ -8,6 +9,55 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   const launchId = '0123456789abcdef0123456789abcdef';
+
+  test(
+    'read-only chat observation has a distinct launch mode and exact candidate',
+    () {
+      expect(
+        CloudSyncV2WindowsHarnessLaunch.parse(const [
+          'observe-chat-identity',
+          '--launch-id=$launchId',
+        ]).operation,
+        CloudSyncV2WindowsHarnessOperation.chatIdentityObservation,
+      );
+      const input = <String, String>{
+        'recipient': '+15555550101',
+        'sender': 'owner@example.invalid',
+        'groupId': 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+      };
+      final candidate = cloudSyncV2WindowsChatObservationCandidate(
+        jsonEncode(input),
+      );
+      expect(candidate.guid, 'iMessage;-;+15555550101');
+      expect(candidate.participants.single.uri, input['recipient']);
+      expect(candidate.groupId, input['groupId']);
+      expect(candidate.originalGroupId, candidate.groupId);
+      expect(candidate.lastAddressedHandle, input['sender']);
+      for (final bad in [
+        '{}',
+        'not json',
+        '[]',
+        'x' * 8193,
+        jsonEncode({...input, 'recipient': ''}),
+        jsonEncode({...input, 'sender': 3}),
+        jsonEncode({...input, 'recipient': ' +15555550101'}),
+        jsonEncode({...input, 'extra': 'ignored fields are not accepted'}),
+      ]) {
+        expect(
+          () => cloudSyncV2WindowsChatObservationCandidate(bad),
+          throwsStateError,
+        );
+      }
+      expect(
+        () => CloudSyncV2WindowsHarnessLaunch.parse(const [
+          'observe-chat-identity',
+          'run-once',
+          '--launch-id=$launchId',
+        ]),
+        throwsStateError,
+      );
+    },
+  );
 
   test(
     'parses interactive, run-once, drain, attachment probes, and viewers',

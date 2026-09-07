@@ -194,6 +194,7 @@ pub mod api;
 mod cloud_sync_attachment_materialization;
 mod cloud_sync_canonical_converter;
 mod cloud_sync_canonical_dto;
+mod cloud_sync_chat_identity;
 mod cloud_sync_native_fetch;
 mod cloud_sync_outbound;
 mod cloud_sync_outbound_chat;

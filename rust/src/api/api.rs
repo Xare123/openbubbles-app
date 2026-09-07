@@ -1662,7 +1662,7 @@ fn map_cloud_sync_outbound_failure_class(
     }
 }
 
-fn cloud_sync_auth_identity_remains_exact(
+pub(super) fn cloud_sync_auth_identity_remains_exact(
     before: &CloudSyncNativeAuthMetadata,
     after: &CloudSyncNativeAuthMetadata,
     expected_account_fingerprint: &str,
@@ -5453,7 +5453,7 @@ fn map_cloud_sync_transient_quarantine(
     }
 }
 
-fn map_cloud_sync_transient_failure(
+pub(super) fn map_cloud_sync_transient_failure(
     failure: crate::cloud_sync_transient_bridge::CloudTransientBridgeFailure,
 ) -> CloudSyncTransientFailureCode {
     use crate::cloud_sync_transient_bridge::CloudTransientBridgeFailure as Native;
@@ -5685,6 +5685,11 @@ pub async fn cloud_sync_decode_protected_change(
                 quarantine_diagnostic_safe_code: None,
                 failure_code: None,
             }
+        }
+        CloudTransientDecodeOutcome::ChatIdentityObserved(_) => {
+            // Observation is never a canonical mutation or projection success.
+            failure_result.failure_code = Some(CloudSyncTransientFailureCode::InvalidRequest);
+            failure_result
         }
         CloudTransientDecodeOutcome::OutOfScopeService(service) => {
             let mut result =

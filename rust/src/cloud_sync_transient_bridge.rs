@@ -35,6 +35,9 @@ use crate::{
         MAX_RAW_RECORD_BYTES,
     },
     cloud_sync_protector,
+    cloud_sync_chat_identity::{
+        observe_chat_identity, validate_chat_identity_candidate, CloudChatIdentityObservation,
+    },
     cloud_sync_semantic_identity::CloudSemanticIdentifierHasher,
 };
 use flate2::bufread::GzDecoder;
@@ -257,6 +260,7 @@ fn malformed_record_at(stage: &'static str) -> CloudTransientBridgeFailure {
 
 pub(crate) enum CloudTransientDecodeOutcome {
     Ready(Box<CloudCanonicalMutation>),
+    ChatIdentityObserved(CloudChatIdentityObservation),
     OutOfScopeService(CloudCanonicalOutOfScopeService),
     Deferred(crate::cloud_sync_canonical_converter::CloudCanonicalDeferredReason),
     Quarantined(CloudCanonicalQuarantineReason),
@@ -368,6 +372,10 @@ impl std::fmt::Debug for CloudTransientDecodeOutcome {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Ready(_) => formatter.write_str("CloudTransientDecodeOutcome::Ready(redacted)"),
+            Self::ChatIdentityObserved(observation) => formatter
+                .debug_tuple("CloudTransientDecodeOutcome::ChatIdentityObserved")
+                .field(observation)
+                .finish(),
             Self::OutOfScopeService(service) => formatter
                 .debug_tuple("CloudTransientDecodeOutcome::OutOfScopeService")
                 .field(service)
@@ -1974,6 +1982,7 @@ pub(crate) async fn cloud_sync_decode_transient_record(
         request,
         CloudTransientPcsAccess::LookupOnly,
         None,
+        None,
     )
     .await
 }
@@ -1991,6 +2000,7 @@ pub(crate) async fn cloud_sync_decode_transient_record_cached_only(
         request,
         CloudTransientPcsAccess::CachedOnly,
         Some(read_authentication_permit),
+        None,
     )
     .await
 }
@@ -2001,12 +2011,58 @@ enum CloudTransientPcsAccess {
     CachedOnly,
 }
 
+fn validate_chat_identity_request(
+    request: &CloudTransientDecodeRequest,
+    candidate: &CloudChat,
+) -> Result<(), CloudTransientBridgeFailure> {
+    if request.stream != CloudNativeStream::Chats
+        || request.expected_change_kind != CloudTransientExpectedChangeKind::Save
+        || request.expected_etag_hash.is_none()
+        || request.tombstone_mapping.is_some()
+        || validate_chat_identity_candidate(candidate).is_err()
+    {
+        return Err(CloudTransientBridgeFailure::InvalidRequest);
+    }
+    Ok(())
+}
+
+/// Candidate-specific observation of a retained SAVE, using the exact same
+/// protected source and strict PCS parser as projection, before service policy.
+/// Requires warm read authentication; cannot fetch keys, project, or authorize
+/// writes. Callers must separately revalidate auth and their journal read-set.
+pub(crate) async fn cloud_sync_observe_chat_identity_cached_only(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    read_authentication_permit: &CloudKitReadAuthenticationPermit<'_>,
+    request: CloudTransientDecodeRequest,
+    candidate: &CloudChat,
+) -> CloudTransientDecodeOutcome {
+    if let Err(failure) = validate_chat_identity_request(&request, candidate) {
+        return CloudTransientDecodeOutcome::Failure(failure);
+    }
+    cloud_sync_decode_transient_record_with_pcs_access(
+        cloud_messages_client,
+        request,
+        CloudTransientPcsAccess::CachedOnly,
+        Some(read_authentication_permit),
+        Some(candidate),
+    ).await
+}
+
 async fn cloud_sync_decode_transient_record_with_pcs_access(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     request: CloudTransientDecodeRequest,
     pcs_access: CloudTransientPcsAccess,
     read_authentication_permit: Option<&CloudKitReadAuthenticationPermit<'_>>,
+    identity_candidate: Option<&CloudChat>,
 ) -> CloudTransientDecodeOutcome {
+    if let Some(candidate) = identity_candidate {
+        if pcs_access != CloudTransientPcsAccess::CachedOnly
+            || read_authentication_permit.is_none()
+            || validate_chat_identity_request(&request, candidate).is_err()
+        {
+            return CloudTransientDecodeOutcome::Failure(CloudTransientBridgeFailure::InvalidRequest);
+        }
+    }
     let Some(storage_directory) = request.storage_directory.to_str().map(str::to_owned) else {
         return CloudTransientDecodeOutcome::Failure(CloudTransientBridgeFailure::InvalidRequest);
     };
@@ -2311,6 +2367,12 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 Ok(value) => value,
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
+            if let Some(candidate) = identity_candidate {
+                return match observe_chat_identity(candidate, &chat, &presence, &hasher) {
+                    Ok(observation) => CloudTransientDecodeOutcome::ChatIdentityObserved(observation),
+                    Err(()) => CloudTransientDecodeOutcome::Failure(CloudTransientBridgeFailure::InvalidRequest),
+                };
+            }
             let (converted, diagnostic) = convert_chat_with_diagnostic(&context, &presence, &chat);
             let converter_quarantined =
                 matches!(&converted, CloudCanonicalConversionOutcome::Quarantined(_));
@@ -3429,6 +3491,64 @@ mod tests {
             result.err(),
             Some(CloudTransientBridgeFailure::InvalidRequest)
         );
+    }
+
+    #[test]
+    fn identity_observer_requires_exact_saved_chat_revision_and_valid_candidate() {
+        let directory = tempfile::tempdir().unwrap();
+        let request = CloudTransientDecodeRequest::new(
+            directory.path().to_path_buf(), digest('a'),
+            format!("obcs2.store.{}", digest('b')),
+            "com.apple.messages.cloud".into(), "private".into(),
+            "chatManateeZone".into(), "messages".into(), 2,
+            CloudNativeStream::Chats, 7, CloudTransientExpectedChangeKind::Save,
+            digest('c'), digest('d'), Some(digest('e')), "e".repeat(64),
+            Some(1), None, format!("obcs2.ref.{}", digest('f')), None,
+        ).unwrap();
+        let candidate = CloudChat {
+            guid: "iMessage;-;+15555550101".into(),
+            chat_identifier: "+15555550101".into(),
+            group_id: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".into(),
+            original_group_id: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".into(),
+            service_name: "iMessage".into(), style: 45, state: 3, successful_query: 1,
+            participants: vec![CloudParticipant { uri: "+15555550101".into() }],
+            last_addressed_handle: "owner@example.invalid".into(), ..Default::default()
+        };
+        assert_eq!(validate_chat_identity_request(&request, &candidate), Ok(()));
+        for corrupt in [0, 1, 2, 3, 4] {
+            let mut invalid = request.clone();
+            match corrupt {
+                0 => invalid.stream = CloudNativeStream::Messages,
+                1 => invalid.expected_change_kind = CloudTransientExpectedChangeKind::Delete,
+                2 => invalid.expected_change_kind = CloudTransientExpectedChangeKind::Quarantined,
+                3 => invalid.expected_etag_hash = None,
+                _ => invalid.tombstone_mapping = Some(CloudTransientTombstoneMapping::new(
+                    CloudCanonicalEntityKind::Chat, digest('g')).unwrap()),
+            }
+            assert_eq!(validate_chat_identity_request(&invalid, &candidate),
+                Err(CloudTransientBridgeFailure::InvalidRequest));
+        }
+        let invalid = CloudChat { participants: vec![], ..candidate };
+        assert_eq!(validate_chat_identity_request(&request, &invalid),
+            Err(CloudTransientBridgeFailure::InvalidRequest));
+    }
+
+    #[test]
+    fn identity_observer_uses_strict_cached_decode_before_service_projection() {
+        let source = include_str!("cloud_sync_transient_bridge.rs");
+        let wrapper = source.split("pub(crate) async fn cloud_sync_observe_chat_identity_cached_only")
+            .nth(1).unwrap().split("async fn cloud_sync_decode_transient_record_with_pcs_access")
+            .next().unwrap();
+        assert!(wrapper.contains("validate_chat_identity_request(&request, candidate)"));
+        assert!(wrapper.contains("CloudTransientPcsAccess::CachedOnly"));
+        assert!(wrapper.contains("Some(read_authentication_permit)"));
+        let body = source.split("async fn cloud_sync_decode_transient_record_with_pcs_access")
+            .nth(1).unwrap().split("#[cfg(test)]").next().unwrap();
+        let bind = body.find("bind_envelope(&request, &envelope, &hasher)").unwrap();
+        let decode = body.find("decode_cloud_chat_record(&record, &strict_record_key)").unwrap();
+        let observe = body.find("observe_chat_identity(candidate, &chat, &presence, &hasher)").unwrap();
+        let project = body.find("convert_chat_with_diagnostic(&context, &presence, &chat)").unwrap();
+        assert!(bind < decode && decode < observe && observe < project);
     }
 
     #[test]

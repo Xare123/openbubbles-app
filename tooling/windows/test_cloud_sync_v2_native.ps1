@@ -7,7 +7,9 @@ param(
     [string] $CacheRoot = 'C:\Codex\OpenBubblesReview\build-cache\ck2-win-arm64',
     [string] $EvidenceRoot = 'C:\Codex\OpenBubblesReview\evidence\windows-native-tests',
     [string] $SignTool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\arm64\signtool.exe',
-    [string] $SigningThumbprint = '8240557965890665F3B49E5FEC83D511CA4F2C9D'
+    [string] $SigningThumbprint = '8240557965890665F3B49E5FEC83D511CA4F2C9D',
+    [switch] $RegenerateBindings,
+    [string] $BridgeCodegen = 'C:\Codex\Toolchains\frb-codegen-2.3.0-x64\bin\flutter_rust_bridge_codegen.exe'
 )
 
 # Offline native tests, sharing the exact Windows harness build context.
@@ -71,6 +73,8 @@ $buildEnvironment = @{
     OPENBUBBLES_PROC_MACRO_SIGNTOOL = $SignTool
     OPENBUBBLES_PROC_MACRO_SIGNING_THUMBPRINT = $SigningThumbprint
     CARGO_BUILD_JOBS = '4'
+    CARGO_TARGET_DIR = $nativeCache
+    CARGO_BUILD_TARGET = 'aarch64-pc-windows-msvc'
     CARGO_PROFILE_DEV_DEBUG = '0'
     CARGO_PROFILE_DEV_INCREMENTAL = 'false'
     # A space explicitly overrides rust/.cargo/config.toml with zero flags.
@@ -91,6 +95,8 @@ $buildEnvironment = @{
     PROTOC = $protoc
     LANG = 'C'
     LC_ALL = 'C'
+    # FRB 2.3 accepts only info/debug, not a host's inherited warn filter.
+    RUST_LOG = 'info'
     Path = "C:\Codex\Toolchains\nuget;$(Join-Path $CargoHome 'bin');$safePath;C:\Strawberry\perl\bin;C:\Codex\Toolchains\LLVM-22.1.8-woa64-portable\bin"
     CC = $null; CXX = $null; AR = $null; LD = $null
     RANLIB = $null; CFLAGS = $null; CXXFLAGS = $null
@@ -115,6 +121,23 @@ try {
         } else {
             [Environment]::SetEnvironmentVariable($name, $buildEnvironment[$name], 'Process')
         }
+    }
+    if ($RegenerateBindings) {
+        if (-not (Test-Path -LiteralPath $BridgeCodegen -PathType Leaf)) {
+            throw 'The pinned Flutter Rust Bridge generator is unavailable.'
+        }
+        $env:Path = 'C:\Codex\Toolchains\flutter-3.44.8-arm64\bin;' + $env:Path
+        $codegenLog = Join-Path $runDirectory 'codegen.log'
+        & $BridgeCodegen generate --config-file flutter_rust_bridge.yaml *> $codegenLog
+        if ($LASTEXITCODE -ne 0) {
+            Get-Content -LiteralPath $codegenLog -Tail 12
+            throw "Bridge generation failed. See $codegenLog"
+        }
+        # Match the established CI post-generation contract, not raw FRB output.
+        & .\tooling\frb\guard_generated_sse_impls.ps1 -Mode Deduplicate -ExpectedRemovalCount 6
+        & .\tooling\frb\guard_generated_sse_impls.ps1 -Mode Verify
+        & .\tooling\frb\normalize_generated_diagnostics.ps1 -Mode Normalize
+        & .\tooling\frb\normalize_generated_diagnostics.ps1 -Mode Verify
     }
     $buildWatch = [Diagnostics.Stopwatch]::StartNew()
     & $cargo test --manifest-path rust/Cargo.toml --locked `

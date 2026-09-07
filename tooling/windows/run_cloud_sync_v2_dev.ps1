@@ -22,6 +22,7 @@ param(
     [switch] $AttachmentProbeReuse,
     [switch] $ProjectionViewer,
     [switch] $ProjectionDetailViewer,
+    [switch] $ChatIdentityObservation,
     [ValidateRange(30, 3600)]
     [int] $RunOnceTimeoutSeconds = 600,
     [ValidateRange(60, 7200)]
@@ -41,7 +42,8 @@ $selectedOperations = @(
         $AttachmentProbe,
         $AttachmentProbeReuse,
         $ProjectionViewer,
-        $ProjectionDetailViewer
+        $ProjectionDetailViewer,
+        $ChatIdentityObservation
     ) | Where-Object { $_ }
 )
 if ($selectedOperations.Count -gt 1) {
@@ -536,7 +538,8 @@ function Wait-HarnessOperation {
             'run-once',
             'drain',
             'attachment-probe',
-            'attachment-reuse-probe'
+            'attachment-reuse-probe',
+            'chat-identity-observation'
         )]
         [string] $ExpectedOperation,
         [Parameter(Mandatory)][int] $TimeoutSeconds
@@ -563,6 +566,9 @@ function Wait-HarnessOperation {
                 }
                 elseif ($ExpectedOperation -eq 'attachment-reuse-probe') {
                     $status.stage -eq 'attachment-reuse-probe-complete'
+                }
+                elseif ($ExpectedOperation -eq 'chat-identity-observation') {
+                    $status.stage -eq 'chat-identity-observation-complete'
                 }
                 else {
                     $status.stage -eq 'semantic-pull'
@@ -739,6 +745,22 @@ $previousRustupHome = $env:RUSTUP_HOME
 $previousCargoKitCache = $env:CARGOKIT_TARGET_TEMP_DIR_OVERRIDE
 $previousLang = $env:LANG
 $previousLcAll = $env:LC_ALL
+# Match the qualified native-test profile across fresh shells. Inheriting the
+# default Rust debug/incremental settings creates a second dependency tree.
+$nativeEnvironment = @{
+    CARGO_BUILD_JOBS = '4'
+    CARGO_PROFILE_DEV_DEBUG = '0'
+    CARGO_PROFILE_DEV_INCREMENTAL = 'false'
+    RUSTFLAGS = ' '
+    CARGO_ENCODED_RUSTFLAGS = $null
+    RUSTC_WRAPPER = (Join-Path $cargoKitCache 'proc_macro_signing_wrapper_delayed.exe')
+    OPENBUBBLES_PROC_MACRO_SIGNTOOL = $SignTool
+    OPENBUBBLES_PROC_MACRO_SIGNING_THUMBPRINT = $SigningThumbprint
+}
+$previousNativeEnvironment = @{}
+foreach ($name in $nativeEnvironment.Keys) {
+    $previousNativeEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
 $gnuOverrides = @("CC", "CXX", "AR", "LD", "RANLIB", "CFLAGS", "CXXFLAGS")
 $previousGnuOverrides = @{}
 foreach ($gnuOverride in $gnuOverrides) {
@@ -749,6 +771,16 @@ foreach ($gnuOverride in $gnuOverrides) {
 }
 try {
     $env:OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS = "1"
+    if (-not (Test-Path -LiteralPath $nativeEnvironment.RUSTC_WRAPPER -PathType Leaf)) {
+        throw 'The qualified native signing wrapper is unavailable.'
+    }
+    foreach ($name in $nativeEnvironment.Keys) {
+        if ($null -eq $nativeEnvironment[$name]) {
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+        } else {
+            [Environment]::SetEnvironmentVariable($name, $nativeEnvironment[$name], 'Process')
+        }
+    }
     $env:FLUTTER_ROOT = $FlutterRoot
     $env:CARGO_HOME = $CargoHome
     $env:RUSTUP_HOME = $RustupHome
@@ -869,12 +901,16 @@ try {
     elseif ($ProjectionDetailViewer) {
         $harnessArguments = @("view-projection-detail") + $harnessArguments
     }
+    elseif ($ChatIdentityObservation) {
+        $harnessArguments = @("observe-chat-identity") + $harnessArguments
+    }
     $startParameters = @{
         FilePath = $runner
         WorkingDirectory = $runnerDirectory
         PassThru = $true
         ArgumentList = $harnessArguments
     }
+    if ($ChatIdentityObservation) { $startParameters.WindowStyle = 'Hidden' }
     $statusPath = Join-Path $profile "cloud-sync-v2\windows-harness-status.json"
     $statusBaselineWriteUtc = [datetime]::MinValue
     if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
@@ -895,7 +931,7 @@ try {
         throw "The Windows Cloud Sync V2 harness exited during startup."
     }
     Write-Host "Cloud Sync V2 Windows harness started (PID $($process.Id))."
-    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse) {
+    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse -or $ChatIdentityObservation) {
         $operationTimeoutSeconds = if ($Drain) {
             $DrainTimeoutSeconds
         }
@@ -918,6 +954,8 @@ try {
                 'attachment-probe'
             } elseif ($AttachmentProbeReuse) {
                 'attachment-reuse-probe'
+            } elseif ($ChatIdentityObservation) {
+                'chat-identity-observation'
             } else {
                 'run-once'
             }) `
@@ -925,6 +963,13 @@ try {
     }
 }
 finally {
+    foreach ($name in $previousNativeEnvironment.Keys) {
+        if ($null -eq $previousNativeEnvironment[$name]) {
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+        } else {
+            [Environment]::SetEnvironmentVariable($name, $previousNativeEnvironment[$name], 'Process')
+        }
+    }
     if ($null -eq $previousHarnessMode) {
         Remove-Item Env:OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS `
             -ErrorAction SilentlyContinue

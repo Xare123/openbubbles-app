@@ -548,7 +548,8 @@ fn require_attachment_mutation(
         CloudTransientDecodeOutcome::Failure(failure) => Err(map_decode_failure(failure)),
         // SMS/RCS projections, deferred records, and quarantined records are
         // never attachment capabilities. Keep every one outside the MMCS path.
-        CloudTransientDecodeOutcome::OutOfScopeService(_)
+        CloudTransientDecodeOutcome::ChatIdentityObserved(_)
+        | CloudTransientDecodeOutcome::OutOfScopeService(_)
         | CloudTransientDecodeOutcome::Deferred(_)
         | CloudTransientDecodeOutcome::Quarantined(_)
         | CloudTransientDecodeOutcome::QuarantinedWithDiagnostic(_, _) => {
