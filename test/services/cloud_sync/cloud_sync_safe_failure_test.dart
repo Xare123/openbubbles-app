@@ -64,6 +64,10 @@ void main() {
       'cloud_sync_local_send_consumer_busy',
       'cloud_sync_local_send_selection_changed',
       'cloud_sync_local_send_chat_changed',
+      'cloud_sync_local_send_chat_not_ready',
+      'cloud_sync_local_send_parent_not_ready',
+      'cloud_sync_local_send_journal_required',
+      'cloud_sync_reaction_requires_local_send',
       'cloud_sync_local_send_chat_readback_pending',
     ]) {
       expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
@@ -75,6 +79,18 @@ void main() {
   });
 
   test('exposes only reviewed state failure codes', () {
+    expect(
+      cloudSyncV2SafeFailureCodeForCandidate(
+        'cloud_sync_windows_native_initialization_failed',
+      ),
+      'cloud_sync_windows_native_initialization_failed',
+    );
+    expect(
+      cloudSyncV2SafeFailureCodeForCandidate(
+        'cloud_sync_windows_native_initialization_failed: private details',
+      ),
+      'cloud_sync_unknown_failure',
+    );
     expect(
       cloudSyncV2SafeFailureCode(StateError('legacy_sync_active')),
       'legacy_sync_active',

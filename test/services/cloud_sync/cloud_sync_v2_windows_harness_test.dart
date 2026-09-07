@@ -8,6 +8,35 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('native bootstrap failures are distinct from account failures', () {
+    for (final error in <Object>[
+      ArgumentError("Failed to load dynamic library 'rust_lib_bluebubbles.dll': "
+          'An Application Control policy has blocked this file. (error code: 4551)'),
+      ArgumentError('dynamic library was not found at a private path'),
+      StateError('cloud_sync_native_auth_credentials_rejected'),
+    ]) {
+      expect(
+        cloudSyncV2WindowsHarnessStartupFailureCode('native-library-loading', error),
+        'cloud_sync_windows_native_initialization_failed',
+      );
+    }
+  });
+
+  test('later startup failures retain only their reviewed code', () {
+    expect(
+      cloudSyncV2WindowsHarnessStartupFailureCode(
+        'rust-ready', StateError('cloud_sync_native_auth_credentials_rejected'),
+      ),
+      'cloud_sync_native_auth_credentials_rejected',
+    );
+    expect(
+      cloudSyncV2WindowsHarnessStartupFailureCode(
+        'database-ready', ArgumentError('private path or account content'),
+      ),
+      'cloud_sync_unknown_failure',
+    );
+  });
+
   test('staged diagnostics create fresh owned native wrappers for every bridge call', () {
     final source = File('lib/cloud_sync_v2_windows_harness.dart').readAsStringSync();
     final start = source.indexOf('Future<void> _runChatIdentityObservation()');

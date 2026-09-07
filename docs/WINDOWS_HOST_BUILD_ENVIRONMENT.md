@@ -108,7 +108,26 @@ different and unrelated-looking message:
 msys perl makes `make` fail with `0xc0000135` (DLL not found). Order `PATH` so
 Git's `usr\bin` precedes Strawberry rather than removing Strawberry.
 
-## Host policy: Smart App Control blocks `cargo test` on the main crate
+## Host policy: Smart App Control can block new native binaries
+
+**September 7, 2026 update:** the reaction-integrated Windows harness built at
+`454a2c08e` cannot load `rust_lib_bluebubbles.dll` (error 4551). This DLL has a
+valid local Authenticode signature from `OpenBubbles ARM64 Development`, but
+Code Integrity event 3077 identifies the enforcing
+`VerifiedAndReputableDesktop` policy blocking it. The failure occurs during
+native initialization, before opening the database or Apple session.
+The older successful native tests and release builds below are historical
+results, not a guarantee that every subsequent binary will be accepted.
+
+Microsoft's [signing guidance](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control)
+states that Smart App Control considers certificates from trusted providers.
+Local signature verification alone does not satisfy that trust requirement.
+Keep Smart App Control enabled. A trusted signed artifact or separately approved
+test host is needed for this blocked launch; do not change policy, credentials
+or registration in response to this loader failure. See the connection treemap
+for the preserved build, status and Code Integrity evidence.
+
+### Earlier native-test observations
 
 This host runs Smart App Control in enforcement mode
 (`HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy` →

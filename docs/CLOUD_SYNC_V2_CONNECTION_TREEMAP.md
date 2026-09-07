@@ -44,6 +44,44 @@ continue under a new account.
 
 ## Latest integration checkpoint, 2026-09-07
 
+### New Windows replay is host-blocked, not authentication-failed
+
+The reaction-integrated `454a2c08e` Windows build completed and its DLL has a
+valid Authenticode signature, but the replay launched at `17:24:01Z` failed
+inside `RustLib.init`, before database opening or Apple authentication.
+Windows returned loader error 4551. Code Integrity event 3077 identifies
+`VerifiedAndReputableDesktop` blocking `rust_lib_bluebubbles.dll`; correlated
+3089 records signing level 1 and raw verification error 18. The signer and
+issuer are the same local development certificate. This is not evidence that
+the account, restored history, reaction protocol or registration regressed.
+
+The preceding successful replay below predates this native reaction build.
+Do not transfer that result to the new DLL. Microsoft's
+[Smart App Control signing guidance](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control)
+requires a trusted provider for certificate-based acceptance; a local
+`Get-AuthenticodeSignature` success is not that proof. Keep the policy enabled.
+Resume live Windows qualification with a legitimately trusted signed artifact
+or an approved separate test environment, not repeated blind builds or policy
+changes. Do not move personal authentication material to cloud CI by inference.
+
+The failed status was preserved byte-for-byte, with matching SHA-256, in
+project-root `evidence/windows-replay-20260906/`:
+`windows-reaction-integration-plaintext-replay-20260907-status.json` and
+`windows-reaction-integration-20260907-code-integrity.json`. The corresponding
+build/run log is `windows-reaction-integration-plaintext-replay-20260907.log`.
+The process exited; neither immutable request claim was changed or resubmitted.
+
+Local diagnostics now preserve the reviewed Chat-not-ready, parent-not-ready,
+missing-journal and journal-required-reaction failure codes instead of collapsing
+them to `cloud_sync_unknown_failure`. The Windows harness records a distinct
+`native-library-loading` stage and a fixed native-initialization failure code,
+without classifying arbitrary loader text as an Apple credential error. The
+focused diagnostics/harness tests pass **44 cases**; evidence is
+`reaction-diagnostic-boundaries-20260907.log` in the same directory. Scoped
+analysis reports **no issues** in
+`reaction-diagnostic-boundaries-analyzer-20260907.log`. This changes reporting
+only, not authentication, dependency requirements or send authority.
+
 ### Production scope, clarified by the user
 
 The completion target covers both reads and writes and the application features
@@ -195,6 +233,31 @@ gate; the separate native suite above covers the latter offline. Evidence:
 `reaction-upload-analyzer-clean-20260907.log` and
 `reaction-encoder-native-bridge-20260907.log` in the same evidence folder.
 No APK or live account state changed in this integration checkpoint.
+
+Source comparison still leaves two reaction wire-shape questions for live
+qualification: the legacy uploader invents a single-space text/attributed body
+and derives associated ranges for part targets, while the V2 encoder omits both.
+The numeric tapback vocabulary and existing protobuf tags match. Legacy-generated
+values are not Apple-origin evidence. Do not copy them or relax exact readback
+solely to make the local paths agree. Apple save/readback and independent-reader
+behavior must decide whether these optional fields are necessary.
+
+The follow-up provenance review found real Apple-origin localized reaction
+fallback content in the September 6 replay documented below. That semantic
+evidence cannot distinguish raw `msgProto.text` from attributed-body presence;
+the decoder accepts both text-only representations. The fixtures that isolate
+each representation are synthetic. Real Apple-origin associated-range presence
+was not found in the reviewed docs/tests. Do not label those fixtures as captures.
+
+Another explicit qualification limit is the current restored-parent requirement:
+`_requireRestoredParent` requires an owned Message snapshot, record map and latest
+applied inbox revision. An outgoing parent's confirmed save/readback alone is
+not this proof. The observed lack of change-feed self-echo means a newly sent
+parent can stay ineligible for reactions despite remote existence. Before using
+the controlled new-message claims as reaction targets, qualify a durable parent
+origin based on exact authenticated readback, or ingest a genuine fetched parent
+through the existing projector. Do not fabricate inbox progress, clear cursors,
+or accept an ordinary local Message row as remote proof.
 
 The signed Windows replay of existing request `qualification-20260907-02`
 completed at `2026-09-07T16:09:38Z` after an 81-second build. Its existing claim

@@ -60,6 +60,8 @@ Future<void> main(List<String> arguments) async {
   var stage = 'profile-configured';
   await _writeHarnessStatus(state: 'initializing', stage: stage);
   try {
+    stage = 'native-library-loading';
+    await _writeHarnessStatus(state: 'initializing', stage: stage);
     await RustLib.init();
     stage = 'rust-ready';
     await _writeHarnessStatus(state: 'initializing', stage: stage);
@@ -87,7 +89,7 @@ Future<void> main(List<String> arguments) async {
     await _writeHarnessStatus(
       state: 'failed',
       stage: stage,
-      safeCode: cloudSyncV2SafeFailureCode(error),
+      safeCode: cloudSyncV2WindowsHarnessStartupFailureCode(stage, error),
       errorType: error.runtimeType.toString(),
       detail: _sanitizeHarnessDetail(error.toString()),
       stack: _sanitizeHarnessDetail(stackTrace.toString(), maxLength: 4000),
@@ -95,6 +97,13 @@ Future<void> main(List<String> arguments) async {
     rethrow;
   }
 }
+
+/// A bridge load failure occurs before opening the database or Apple session.
+/// Do not infer an authentication failure or forward arbitrary exception text.
+String cloudSyncV2WindowsHarnessStartupFailureCode(String stage, Object error) =>
+    stage == 'native-library-loading'
+        ? 'cloud_sync_windows_native_initialization_failed'
+        : cloudSyncV2SafeFailureCode(error);
 
 enum CloudSyncV2WindowsHarnessOperation {
   interactive,

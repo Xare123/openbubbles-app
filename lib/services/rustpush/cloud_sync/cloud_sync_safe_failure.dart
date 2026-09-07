@@ -285,6 +285,7 @@ final class CloudSyncSemanticDrainUnsafeReportException implements Exception {
 }
 
 const _cloudSyncV2SafeFailureCodes = <String>{
+  'cloud_sync_windows_native_initialization_failed',
   'cloud_sync_windows_sender_profile_required',
   'cloud_sync_windows_sender_account_unavailable',
   'cloud_sync_windows_sender_hardware_unavailable',
@@ -324,6 +325,10 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_local_send_consumer_busy',
   'cloud_sync_local_send_selection_changed',
   'cloud_sync_local_send_chat_changed',
+  'cloud_sync_local_send_chat_not_ready',
+  'cloud_sync_local_send_parent_not_ready',
+  'cloud_sync_local_send_journal_required',
+  'cloud_sync_reaction_requires_local_send',
   'cloud_sync_local_send_chat_binding_changed',
   'cloud_sync_local_send_chat_journal_missing',
   'cloud_sync_outbound_chat_source_retired',
