@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/imessage_initial_submission.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_encoder.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
@@ -1091,7 +1092,7 @@ void main() {
       final shapeChat = _chat(isRpSms: true);
       return (message: _message(chat: shapeChat), chat: shapeChat);
     },
-    'group': () {
+    'two members incorrectly marked as a direct chat': () {
       final shapeChat = _chat(
         participants: [
           _handle('person@example.com'),
@@ -1329,7 +1330,7 @@ void main() {
     });
   }
 
-  test('initial-message factory preserves unsupported formatting and group guards', () {
+  test('initial-message factory preserves formatting and malformed group guards', () {
     final body = AttributedBody(
       string: 'ordinary text',
       runs: [Run(range: [0, 13], attributes: Attributes(messagePart: 0, bold: true))],
@@ -1346,6 +1347,67 @@ void main() {
     expect(CloudSyncLocalSendIdentity.capture(pending, group, _guidA), isNull);
     expect(CloudSyncLocalSendIdentity.capture(pending, _chat(isRpSms: true), _guidA), isNull);
   });
+
+  for (final provisional in [false, true]) {
+    test('group plaintext origin survives restart without authorizing an upload: $provisional', () async {
+      const origin = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+      final group = _chat(participants: [
+        _handle('first@example.com'), _handle('second@example.com'),
+      ])
+        ..guid = provisional ? origin : 'iMessage;+;chat-group'
+        ..chatIdentifier = provisional ? null : 'chat-group'
+        ..style = provisional ? null : 43;
+      _persistChat(store, group);
+      final message = createPendingInitialIMessage(
+        AttributedBody.raw('ordinary text'), createdAt: _time(2),
+        sender: _handle('me@example.com'),
+      )..chat.target = group;
+      final wire = _wire(group);
+      wire.conversation!.participants = [
+        'mailto:second@example.com', 'mailto:first@example.com',
+        'mailto:me@example.com',
+      ];
+      final initial = CloudSyncLocalSendIdentity.capture(message, group, wire.id)!;
+      final identity = journal.captureSubmissionWire(
+        message: message, chat: group, wire: wire,
+        initialSourceSha256: initial.sourceSha256,
+      )!;
+      message.stagingGuid = wire.id;
+      journal.saveSubmission(
+        identity: identity, newlyGeneratedGuid: true,
+        persistMessage: () => store.box<Message>().put(message), now: _time(2),
+      );
+      expect(journal.readReady(), isEmpty);
+      await reopen();
+      final id = confirmNative()!;
+      journal.promoteIdsConfirmedDeferred(
+        intentId: id, currentAuth: _auth(Object()), now: _time(5),
+      );
+      if (provisional) {
+        // Models only the same-row result of future authenticated group Chat
+        // adoption. This fixture is not proof that group creation works.
+        final adopted = store.box<Chat>().get(group.id!)!
+          ..guid = 'iMessage;+;chat-group'
+          ..chatIdentifier = 'chat-group'
+          ..cloudGuid = origin
+          ..style = 43;
+        store.box<Chat>().put(adopted);
+      }
+      await reopen();
+      final source = journal.readForAdmission(id);
+      expect(source.sourceSha256, identity.sourceSha256);
+      expect(source.message!.text, 'ordinary text');
+      expect(source.message!.chat.targetId, group.id);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 1);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(() => encodeCloudSyncLocalSendPlainText(source.message!), throwsStateError);
+      final changed = source.message!.chat.target!;
+      changed.handles.add(_handle('other@example.com'));
+      store.box<Chat>().put(changed);
+      expect(() => journal.readForAdmission(id), throwsStateError);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 1);
+    });
+  }
 
   test(
     'provisional identity rejects a different row, sender, text or original GUID',

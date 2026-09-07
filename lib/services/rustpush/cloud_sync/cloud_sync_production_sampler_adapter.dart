@@ -1029,6 +1029,7 @@ final class CloudSyncProductionLocalSendAdapter {
       return CloudSyncLocalSendConsumerResult(
         admitted: result.admitted, deferred: result.deferred,
         outboxBlocked: result.outboxBlocked,
+        candidateLimitReached: result.candidateLimitReached,
         chatReadbackPending: chatReadbackPending && !result.outboxBlocked,
         deferredReasons: result.deferredReasons,
       );

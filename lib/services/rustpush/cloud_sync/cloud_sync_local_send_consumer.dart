@@ -107,6 +107,7 @@ final class CloudSyncLocalSendConsumer {
     return CloudSyncLocalSendConsumerResult(
       admitted: admitted,
       deferred: deferred,
+      candidateLimitReached: candidates.length == maximumIntents,
       deferredReasons: Map.unmodifiable(deferredReasons),
     );
   }
@@ -184,12 +185,17 @@ final class CloudSyncLocalSendConsumerResult {
     this.deferred = 0,
     this.outboxBlocked = false,
     this.chatReadbackPending = false,
+    this.candidateLimitReached = false,
     this.deferredReasons = const {},
   });
 
   final int admitted;
   final int deferred;
   final bool outboxBlocked;
+
+  /// A full, completely examined batch may leave eligible origins beyond the
+  /// selection limit. Continue fair rotation without no-progress backoff.
+  final bool candidateLimitReached;
 
   /// Fixed, allowlisted codes only, aggregated per pass. Never identifiers,
   /// message text or raw exception/server content.

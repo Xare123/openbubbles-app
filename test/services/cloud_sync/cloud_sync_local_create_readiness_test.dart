@@ -53,6 +53,35 @@ void main() {
     });
     tearDown(() async => fixture.close());
 
+    test('full deferred batches report continuation and rotate past the head', () async {
+      final firstId = fixture.intentId;
+      fixture._createConfirmedIntent(
+        guid: '22222222-2222-4222-8222-222222222222',
+        existingChat: fixture.local.chat.target,
+      );
+      final secondId = fixture.intentId;
+      final considered = <int>[];
+      final worker = consumer(
+        drain: () async => true,
+        admit: (id) async {
+          considered.add(id);
+          throw StateError('cloud_sync_local_send_chat_readback_pending');
+        },
+      );
+      final first = await worker.runOnce(maximumIntents: 1);
+      final second = await worker.runOnce(maximumIntents: 1);
+      expect(considered, [firstId, secondId]);
+      expect(first.candidateLimitReached, true);
+      expect(second.candidateLimitReached, true);
+      expect(first.outboxBlocked, false);
+      expect(second.outboxBlocked, false);
+      final exhausted = await worker.runOnce(maximumIntents: 3);
+      expect(exhausted.candidateLimitReached, false);
+      expect(exhausted.deferred, 2);
+      expect(fixture.transport.stageCalls, 0);
+      expect(fixture.objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+    });
+
     for (final exact in [false, true]) {
       for (final known in [false, true]) {
         test(

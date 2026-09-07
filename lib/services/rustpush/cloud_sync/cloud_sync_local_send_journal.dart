@@ -10,6 +10,7 @@ import 'cloud_operation_identity.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
+import 'cloud_sync_group_send_route.dart';
 import 'cloud_sync_reaction_send_identity.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloudkit_writer_authority.dart';
@@ -25,13 +26,16 @@ final class CloudSyncLocalSendIdentity {
     this.sourceSha256,
     this._usesProvisionalOrigin, {
     bool isReaction = false,
-  }) : _isReaction = isReaction;
+    CloudSyncGroupSendRoute? groupRoute,
+  }) : _isReaction = isReaction,
+       _groupRoute = groupRoute;
 
   final String _guid;
   final String guidHash;
   final String sourceSha256;
   final bool _usesProvisionalOrigin;
   final bool _isReaction;
+  final CloudSyncGroupSendRoute? _groupRoute;
 
   /// Explicit local reaction provenance. Plain-text capture remains unchanged.
   /// Temporary/staging GUIDs are bookkeeping only; saveSubmission separately
@@ -187,6 +191,51 @@ final class CloudSyncLocalSendIdentity {
       end += run.range.last;
       if (end > text.length) return null;
     }
+    final group = CloudSyncGroupSendRoute.capture(chat);
+    if (group != null) {
+      if (end != text.length) return null;
+      // Distinct domains keep all existing direct-chat hashes unchanged. The
+      // provisional form survives only a proven same-row Chat adoption. Local
+      // capture is not upload permission: group encoding/dependency gates are
+      // deliberately still required by outbound admission.
+      final canonicalHash = _digest([
+        'cloud-sync-local-send-group-v1',
+        stableGuid,
+        text,
+        group.chatId,
+        group.guid,
+        group.identifier,
+        group.members,
+        group.sender,
+      ]);
+      final originHash = group.originalGuid == null
+          ? null
+          : _digest([
+              'cloud-sync-local-send-group-origin-v1',
+              stableGuid,
+              text,
+              group.chatId,
+              group.originalGuid,
+              group.members,
+              group.sender,
+            ]);
+      final sourceHash = group.provisional
+          ? originHash
+          : expectedSourceSha256 != null && expectedSourceSha256 == originHash
+              ? originHash
+              : canonicalHash;
+      if (sourceHash == null ||
+          (expectedSourceSha256 != null && expectedSourceSha256 != sourceHash)) {
+        return null;
+      }
+      return CloudSyncLocalSendIdentity._(
+        stableGuid,
+        _digest(['cloud-sync-local-send-guid-v1', stableGuid]),
+        sourceHash,
+        sourceHash == originHash,
+        groupRoute: group,
+      );
+    }
     final provisional = _uuid.hasMatch(chat.guid);
     if (end != text.length ||
         (chat.style != 45 && !(provisional && chat.style == null)) ||
@@ -297,11 +346,12 @@ final class CloudSyncLocalSendIdentity {
     if (identity == null ||
         wire.verificationFailed ||
         wire.target != null ||
-        (identity._usesProvisionalOrigin
-            ? wire.sender == null ||
-                  !_compatibleRoutePrefix(wire.sender!) ||
-                  _bareSender(wire.sender!) != _bareSender(chat.usingHandle!)
-            : wire.sender != chat.usingHandle) ||
+        (identity._groupRoute == null &&
+            (identity._usesProvisionalOrigin
+                ? wire.sender == null ||
+                      !_compatibleRoutePrefix(wire.sender!) ||
+                      _bareSender(wire.sender!) != _bareSender(chat.usingHandle!)
+                : wire.sender != chat.usingHandle)) ||
         wire.message is! api.Message_Message) {
       return null;
     }
@@ -335,6 +385,13 @@ final class CloudSyncLocalSendIdentity {
         return null;
       }
       text.write(part.field0);
+    }
+    final group = identity._groupRoute;
+    if (group != null) {
+      return text.toString() == message.text &&
+              group.matchesWire(wire, usesOriginalGuid: identity._usesProvisionalOrigin)
+          ? identity
+          : null;
     }
     final recipient = chat.handles.single.address;
     final expectedParticipants = [

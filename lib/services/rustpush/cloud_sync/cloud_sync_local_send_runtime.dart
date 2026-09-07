@@ -45,13 +45,20 @@ final class CloudSyncLocalSendRuntime {
           _prepared = true;
         }
         final result = await _drain();
-        _retryExponent = 0;
+        // Admission progress or an empty queue resets backoff. A retained,
+        // dependency-blocked origin must not poll every minute forever.
+        final progressed = result.admitted > 0 ||
+            (result.candidateLimitReached && !result.outboxBlocked);
+        if (progressed ||
+            (!result.outboxBlocked && result.deferred == 0)) {
+          _retryExponent = 0;
+        }
         if (!_disposed &&
             !cancellation.isCancelled &&
             (result.outboxBlocked ||
                 result.admitted > 0 ||
                 result.deferred > 0)) {
-          _scheduleRetry(retryDelay);
+          _scheduleRetry(progressed ? retryDelay : _nextRetryDelay());
         }
         return CloudSyncRunResult(
           status: result.outboxBlocked
@@ -92,9 +99,14 @@ final class CloudSyncLocalSendRuntime {
       // existing recovery path or a fresh explicit event, not a generic retry.
       return null;
     }
+    final delay = _nextRetryDelay();
+    return hint != null && hint > delay ? hint : delay;
+  }
+
+  Duration _nextRetryDelay() {
     final delay = retryDelay * (1 << _retryExponent);
     if (_retryExponent < 4) _retryExponent++;
-    return hint != null && hint > delay ? hint : delay;
+    return delay;
   }
 
   void _scheduleRetry(Duration delay) {

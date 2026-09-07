@@ -93,6 +93,40 @@ remains unresolved; do not count the earlier successful executable as this build
 
 ### Group writes remain a separate, mapped dependency chain
 
+**Local origin TEST-PROVEN, remote group writes still GAP:** group plaintext
+can now enter the existing pending/IDS-confirmed journal under distinct
+`cloud-sync-local-send-group-v1` and `cloud-sync-local-send-group-origin-v1`
+hash domains. Direct-message hash inputs remain unchanged. The source pins the
+saved Chat row, canonical or original identity, exact normalized member set,
+sender and text. Actual IDS wire participants and sender GUID must agree.
+Member ordering and matching `tel:`/`mailto:` prefixes do not change that source;
+duplicates, wrong schemes, changed routes/text and missing members are rejected.
+A canonical style-43 chat with one remaining other member stays a group; one
+member is not enough to invent a provisional group.
+
+The existing submission journal now proves pending persistence, native
+confirmation, restart and same-row provisional-to-canonical identity retention
+with synthetic ObjectBox data. The adoption fixture does not prove Apple group
+creation. Group encoding and protected Chat dependency checks still reject
+remote admission, leaving the origin intact for the following work.
+
+The local-send runtime also backs off non-progressing partial batches and
+blocked outboxes at 1, 2, 4, 8, then at most 16 minutes with the default settings.
+Fresh events still request a prompt coalesced pass. Successful admission or an
+empty queue resets the backoff. Completely examined full batches keep the
+normal one-minute continuation so blocked rows cannot delay the unexamined tail;
+fair durable selection still rotates them. This does not skip unresolved native
+outcomes, drop unsupported intents, or pretend dependencies are ready.
+
+Qualification: **340 tests passed across nine files**, including group wire
+identity, real journal restart, direct/reaction regression, local-create
+readiness, fair full-batch rotation, fake-clock backoff, outbound admission,
+production composition and parent dependencies. Focused analysis of all nine
+changed source/test items reports no issues. Evidence:
+`evidence/windows-replay-20260906/group-source-worker-verified-regression-20260907.log`
+and `group-source-worker-analyzer-20260907.log`. No native build, personal DB,
+Apple save, APK or device installation was part of this qualification.
+
 The reviewed next stages are not permission to remove direct-message checks:
 
 1. Versioned group local-send identity over the original Chat UUID, exact members,
@@ -105,15 +139,15 @@ The reviewed next stages are not permission to remove direct-message checks:
 5. Group Message upload, exact readback and independent-device display, then
    membership/name changes as distinct mutations rather than plaintext events.
 
-Source boundaries: `CloudSyncLocalSendIdentity.capture/captureWire` currently
-accept only direct plaintext; `CloudSyncOutboundChatOrigin.capture`,
+Source boundaries: `CloudSyncLocalSendIdentity.capture/captureWire` now accept
+direct and group plaintext local origins; `CloudSyncOutboundChatOrigin.capture`,
 `CloudSyncOutboundChatAdmissionCoordinator` and native `validate_direct_chat_create`
 are direct-only; `requireCloudSyncRestoredDirectChat` requires style 45 and an
 applied canonical direct Chat. The native CloudChat model and legacy `Chat.toCloud`
 contain style-43 group fields, but locally generated defaults do not establish
 Apple's accepted initial `cid/gid/ogid/guid`, participant ordering/sender inclusion,
 properties/version/handshake or save behavior. The authorized two-recipient group
-qualification has not been sent. No group guard was relaxed by the new-chat fix.
+qualification has not been sent. No remote group admission guard was relaxed.
 
 ### Own-message reaction dependency, exact-readback proof
 

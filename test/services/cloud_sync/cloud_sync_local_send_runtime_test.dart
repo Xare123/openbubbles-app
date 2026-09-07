@@ -283,6 +283,92 @@ void main() {
     });
   });
 
+  for (final blocked in [false, true]) {
+    test('no-progress passes back off to a bounded retry: blocked=$blocked', () {
+      fakeAsync((time) {
+        var calls = 0;
+        final runtime = CloudSyncLocalSendRuntime(
+          debounce: Duration.zero,
+          drain: () async {
+            calls++;
+            return CloudSyncLocalSendConsumerResult(
+              deferred: blocked ? 0 : 1,
+              outboxBlocked: blocked,
+            );
+          },
+          onError: (_, __) => fail('unexpected failure'),
+        );
+        runtime.request(CloudSyncTrigger.startup);
+        time.elapse(Duration.zero);
+        expect(calls, 1);
+        for (final minutes in [1, 2, 4, 8, 16, 16]) {
+          final before = calls;
+          time.elapse(Duration(minutes: minutes) - const Duration(seconds: 1));
+          expect(calls, before);
+          time.elapse(const Duration(seconds: 1));
+          expect(calls, before + 1);
+        }
+        unawaited(runtime.dispose());
+        time.flushMicrotasks();
+        time.elapse(const Duration(days: 1));
+        expect(calls, 7);
+      });
+    });
+  }
+
+  test('fresh work bypasses delayed retry and admission progress resets it', () {
+    fakeAsync((time) {
+      var calls = 0;
+      final runtime = CloudSyncLocalSendRuntime(
+        debounce: Duration.zero,
+        drain: () async => switch (++calls) {
+          <= 4 => const CloudSyncLocalSendConsumerResult(deferred: 1),
+          5 => const CloudSyncLocalSendConsumerResult(admitted: 1, deferred: 1),
+          _ => const CloudSyncLocalSendConsumerResult(),
+        },
+        onError: (_, __) => fail('unexpected failure'),
+      );
+      runtime.request(CloudSyncTrigger.startup);
+      time.elapse(const Duration(minutes: 7));
+      expect(calls, 4);
+      runtime.request(CloudSyncTrigger.localOutbox);
+      time.elapse(Duration.zero);
+      expect(calls, 5);
+      time.elapse(const Duration(seconds: 59));
+      expect(calls, 5);
+      time.elapse(const Duration(seconds: 1));
+      expect(calls, 6);
+      time.elapse(const Duration(hours: 1));
+      expect(calls, 6);
+      unawaited(runtime.dispose());
+      time.flushMicrotasks();
+    });
+  });
+
+  test('full deferred batches keep rotating to reach eligible later sends', () {
+    fakeAsync((time) {
+      var calls = 0;
+      final runtime = CloudSyncLocalSendRuntime(
+        debounce: Duration.zero,
+        drain: () async => switch (++calls) {
+          <= 4 => const CloudSyncLocalSendConsumerResult(
+            deferred: 20, candidateLimitReached: true,
+          ),
+          5 => const CloudSyncLocalSendConsumerResult(admitted: 1),
+          _ => const CloudSyncLocalSendConsumerResult(),
+        },
+        onError: (_, __) => fail('unexpected failure'),
+      );
+      runtime.request(CloudSyncTrigger.startup);
+      time.elapse(const Duration(minutes: 5));
+      expect(calls, 6);
+      time.elapse(const Duration(hours: 1));
+      expect(calls, 6);
+      unawaited(runtime.dispose());
+      time.flushMicrotasks();
+    });
+  });
+
   test('identity failure is surfaced and waits for a new explicit trigger', () {
     fakeAsync((time) {
       var errors = 0;
