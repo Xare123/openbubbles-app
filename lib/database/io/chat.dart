@@ -974,7 +974,7 @@ class Chat {
     return configMask;
   }
 
-  void fixZenModeShared() async {
+  Future<void> fixZenModeShared() async {
     if (!ss.settings.enableShareZen.value) return;
     bool wantsZenMode = (shareZenMode ?? true) &&
         participants.firstOrNull?.contact?.isShared == false;

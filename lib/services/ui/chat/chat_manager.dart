@@ -6,9 +6,9 @@ import 'package:bluebubbles/helpers/group_participant_helpers.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:dio/dio.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/services/rustpush/optional_apple_lookup.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:get/get.dart' hide Response;
-import 'package:tuple/tuple.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 
 ChatManager cm = Get.isRegistered<ChatManager>() ? Get.find<ChatManager>() : Get.put(ChatManager());
@@ -16,6 +16,7 @@ ChatManager cm = Get.isRegistered<ChatManager>() ? Get.find<ChatManager>() : Get
 class ChatManager extends GetxService {
   ChatLifecycleManager? activeChat;
   api.ChannelInterestToken? provider;
+  final OptionalLookupFence _optionalLookupFence = OptionalLookupFence();
   final Map<String, ChatLifecycleManager> _chatControllers = {};
 
   /// Same as setAllInactive but but removes lastOpenedChat from prefs on next frame
@@ -28,6 +29,7 @@ class ChatManager extends GetxService {
       activeChat = null;
       provider?.dispose();
       provider = null;
+      _optionalLookupFence.cancel();
     } else {
       skip = activeChat?.chat.guid;
     }
@@ -60,23 +62,53 @@ class ChatManager extends GetxService {
     eventDispatcher.emit("update-highlight", chat.guid);
     Logger.debug('Setting active chat to ${chat.guid} (${chat.displayName})');
 
-    (() async {
+    final lookupGeneration = _optionalLookupFence.begin();
+    provider?.dispose();
+    provider = null;
+    unawaited(() async {
       if (!chat.isIMessage) return;
-      var statuskit = pushService.state?.icloudServices?.statuskitClient;
-      if (statuskit == null) return;
-      Logger.info("ensuring keys");
-      var participants = (await chat.getConversationData()).participants;
-      var targets = await pushService.doValidateTargets(participants, await chat.ensureHandle());
-      Logger.info("finished ensuring keys ${targets.length}/${participants.length}");
-      if (chat.participants.length == 1) {
-        participants.remove(await chat.ensureHandle());
-        Logger.info("showing interest in handle ${participants[0]}");
-        provider?.dispose();
-        provider = await api.requestHandles(status: statuskit, to: [participants[0]]);
-        Logger.info("showed interest in handles");
-        chat.fixZenModeShared();
-      }
-    })();
+      final accountState = pushService.state;
+      final client = accountState?.client;
+      final statuskit = accountState?.icloudServices?.statuskitClient;
+      final selectedHandle = chat.usingHandle;
+      final peers = chat.getRustHandlesExcludingMine();
+      bool contextIsCurrent() =>
+          _optionalLookupFence.isCurrent(lookupGeneration) &&
+          identical(pushService.state, accountState) &&
+          activeChat?.chat.guid == chat.guid &&
+          optionalAppleRouteMatches(
+            capturedHandle: selectedHandle,
+            currentHandle: activeChat?.chat.usingHandle,
+            capturedPeers: peers,
+            currentPeers: activeChat?.chat.getRustHandlesExcludingMine() ?? const [],
+          );
+      if (client == null || statuskit == null) return;
+      final sender = await validateOptionalAppleHandle(
+        selectedHandle: selectedHandle,
+        getLiveHandles: () => api.getHandles(state: client),
+      );
+      if (sender == null || !contextIsCurrent()) return;
+      if (peers.isEmpty) return;
+      final targets = await api.validateTargets(state: client, targets: peers, sender: sender);
+      if (!contextIsCurrent()) return;
+      Logger.info("Finished optional recipient capability lookup (${targets.length}/${peers.length})");
+      if (chat.participants.length != 1 || peers.length != 1 || peers.first == sender) return;
+      final lateProvider = await api.requestHandles(status: statuskit, to: [peers.first]);
+      final acceptedProvider = _optionalLookupFence.acceptResource<api.ChannelInterestToken>(
+        generation: lookupGeneration,
+        resource: lateProvider,
+        contextIsCurrent: contextIsCurrent(),
+        dispose: (token) => token.dispose(),
+      );
+      if (acceptedProvider == null) return;
+      provider?.dispose();
+      provider = acceptedProvider;
+      unawaited(chat.fixZenModeShared().catchError((_) {
+        Logger.warn("Optional status sharing refresh failed");
+      }));
+    }().catchError((_) {
+      Logger.warn("Optional chat capability lookup failed");
+    }));
 
     createChatController(chat, active: true);
     if (clearNotifications) {

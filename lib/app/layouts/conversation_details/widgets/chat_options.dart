@@ -12,6 +12,7 @@ import 'package:bluebubbles/app/layouts/settings/pages/theming/avatar/avatar_cro
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -335,7 +336,11 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                       chat.shareZenMode = value;
                       chat.save(updateShareZenMode: true);
                       setState(() {});
-                      chat.fixZenModeShared();
+                      try {
+                        await chat.fixZenModeShared();
+                      } catch (_) {
+                        Logger.warn("Status sharing update failed");
+                      }
                     },
                     backgroundColor: tileColor,
                   ),

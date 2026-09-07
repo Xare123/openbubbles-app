@@ -148,7 +148,9 @@ class LifecycleService extends GetxService with WidgetsBindingObserver {
     }
     if (cm.activeChat != null) {
       cm.activeChat!.chat.toggleHasUnread(false);
-      cm.activeChat!.chat.fixZenModeShared();
+      unawaited(cm.activeChat!.chat.fixZenModeShared().catchError((_) {
+        Logger.warn("Status sharing refresh failed while resuming");
+      }));
       ConversationViewController _cvc = cvc(cm.activeChat!.chat);
       if (!_cvc.showingOverlays && _cvc.editing.isEmpty) {
         _cvc.lastFocusedNode.requestFocus();

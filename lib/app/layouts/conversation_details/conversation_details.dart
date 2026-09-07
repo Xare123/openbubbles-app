@@ -15,6 +15,8 @@ import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/services/rustpush/optional_apple_lookup.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/cupertino.dart';
@@ -64,12 +66,38 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
     cvc(widget.chat).showingOverlays = true;
     mediaPager = ConversationMediaPager(chat: chat)..addListener(_onMediaChanged);
 
-    (() async {
-      var data = await chat.getConversationData();
-      ftSupportedParticipants = await api.validateTargetsFacetime(
-          state: pushService.state!.client, targets: data.participants, sender: await chat.ensureHandle());
-      setState(() {});
-    })();
+    unawaited(() async {
+      if (!chat.isIMessage) return;
+      final accountState = pushService.state;
+      final client = accountState?.client;
+      final chatGuid = chat.guid;
+      final selectedHandle = chat.usingHandle;
+      final peers = chat.getRustHandlesExcludingMine();
+      bool contextIsCurrent() => mounted &&
+          identical(pushService.state, accountState) && chat.guid == chatGuid &&
+          optionalAppleRouteMatches(
+            capturedHandle: selectedHandle,
+            currentHandle: chat.usingHandle,
+            capturedPeers: peers,
+            currentPeers: chat.getRustHandlesExcludingMine(),
+          );
+      if (client == null) return;
+      final sender = await validateOptionalAppleHandle(
+        selectedHandle: selectedHandle,
+        getLiveHandles: () => api.getHandles(state: client),
+      );
+      if (sender == null || !contextIsCurrent()) return;
+      if (peers.isEmpty) return;
+      final supported = await api.validateTargetsFacetime(
+        state: client,
+        targets: peers,
+        sender: sender,
+      );
+      if (!contextIsCurrent()) return;
+      setState(() => ftSupportedParticipants = supported);
+    }().catchError((_) {
+      Logger.warn("Optional FaceTime capability lookup failed");
+    }));
 
     if (!kIsWeb) {
       final chatQuery = Database.chats.query(Chat_.guid.equals(chat.guid)).watch();
@@ -77,7 +105,7 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
         final _chat = await runAsync(() {
           return Database.chats.get(chat.id!);
         });
-        if (_chat != null) {
+        if (mounted && _chat != null) {
           final update = _chat.getTitle() != chat.title || _chat.participants.length != chat.participants.length;
           chat = _chat.merge(chat);
           if (update) {
@@ -87,6 +115,7 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
       });
     } else {
       sub = WebListeners.chatUpdate.listen((_chat) {
+        if (!mounted) return;
         final update = _chat.getTitle() != chat.title || _chat.participants.length != chat.participants.length;
         chat = _chat.merge(chat);
         if (update) {
