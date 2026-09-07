@@ -16293,7 +16293,8 @@ let api_expected_protected_store_identity = <String>::sse_decode(&mut deserializ
 let api_generation = <u64>::sse_decode(&mut deserializer);
 let api_read_set_fence_sha256 = <String>::sse_decode(&mut deserializer);
 let api_candidate = <crate::api::api::CloudChat>::sse_decode(&mut deserializer);
-let api_source = <crate::api::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
+let api_source = <crate::api::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput>::sse_decode(&mut deserializer);
+let api_staged_candidate = <Option<crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate>>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
                     transform_result_sse::<_, ()>((move || async move {
                         let mut api_cloud_messages_client_guard = None;
 let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_cloud_messages_client, 0, false)]);
@@ -16304,7 +16305,7 @@ let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decod
             }
         }
         let api_cloud_messages_client_guard = api_cloud_messages_client_guard.unwrap();
- let output_ok = Result::<_,()>::Ok(crate::api::cloud_sync_chat_identity::cloud_sync_observe_protected_chat_identity(&*api_cloud_messages_client_guard, api_native_writer_pause_token, api_storage_directory, api_expected_account_fingerprint, api_expected_protected_store_identity, api_generation, api_read_set_fence_sha256, api_candidate, api_source).await)?;   Ok(output_ok)
+ let output_ok = Result::<_,()>::Ok(crate::api::cloud_sync_chat_identity::cloud_sync_observe_protected_chat_identity(&*api_cloud_messages_client_guard, api_native_writer_pause_token, api_storage_directory, api_expected_account_fingerprint, api_expected_protected_store_identity, api_generation, api_read_set_fence_sha256, api_candidate, api_source, api_staged_candidate).await)?;   Ok(output_ok)
                     })().await)
                 } })
 }
@@ -19859,6 +19860,7 @@ impl SseDecode for crate::api::cloud_sync_chat_identity::CloudSyncChatIdentityRe
             crate::api::cloud_sync_chat_identity::CloudSyncChatIdentityComparison,
         >>::sse_decode(deserializer);
         let mut var_candidateBindingHash = <Option<String>>::sse_decode(deserializer);
+        let mut var_stagedCandidateBindingHash = <Option<String>>::sse_decode(deserializer);
         let mut var_sourceBindingHash = <Option<String>>::sse_decode(deserializer);
         let mut var_nativeSessionId = <Option<String>>::sse_decode(deserializer);
         let mut var_failureCode =
@@ -19866,6 +19868,7 @@ impl SseDecode for crate::api::cloud_sync_chat_identity::CloudSyncChatIdentityRe
         return crate::api::cloud_sync_chat_identity::CloudSyncChatIdentityResult {
             comparison: var_comparison,
             candidate_binding_hash: var_candidateBindingHash,
+            staged_candidate_binding_hash: var_stagedCandidateBindingHash,
             source_binding_hash: var_sourceBindingHash,
             native_session_id: var_nativeSessionId,
             failure_code: var_failureCode,
@@ -20507,6 +20510,22 @@ impl SseDecode for crate::api::api::CloudSyncRawSystemFields {
             created_at: var_createdAt,
             modified_at: var_modifiedAt,
             permission: var_permission,
+        };
+    }
+}
+
+impl SseDecode for crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_protectedPayloadReference = <String>::sse_decode(deserializer);
+        let mut var_payloadSha256 = <String>::sse_decode(deserializer);
+        let mut var_recordIdHash = <String>::sse_decode(deserializer);
+        let mut var_logicalEntityKeyHash = <String>::sse_decode(deserializer);
+        return crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate {
+            protected_payload_reference: var_protectedPayloadReference,
+            payload_sha256: var_payloadSha256,
+            record_id_hash: var_recordIdHash,
+            logical_entity_key_hash: var_logicalEntityKeyHash,
         };
     }
 }
@@ -24167,6 +24186,19 @@ impl SseDecode for Option<crate::api::api::CloudSyncRawSystemFields> {
     }
 }
 
+impl SseDecode
+    for Option<crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::api::CloudSyncTransientAttachmentPayload> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -24418,6 +24450,7 @@ impl SseDecode for Option<i32> {
         }
     }
 }
+
 
 impl SseDecode for Option<crate::api::api::IMessagePosterRecord> {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -24792,6 +24825,7 @@ impl SseDecode for Option<u32> {
         }
     }
 }
+
 
 impl SseDecode for Option<crate::api::api::UpdateAccountFinish> {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -26067,6 +26101,7 @@ impl SseDecode for (String, crate::api::api::SyncStatus) {
         return (var_field0, var_field1);
     }
 }
+
 
 impl SseDecode for (String, crate::api::api::UpdateAccountFinish) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -28930,6 +28965,9 @@ impl flutter_rust_bridge::IntoDart
         [
             self.comparison.into_into_dart().into_dart(),
             self.candidate_binding_hash.into_into_dart().into_dart(),
+            self.staged_candidate_binding_hash
+                .into_into_dart()
+                .into_dart(),
             self.source_binding_hash.into_into_dart().into_dart(),
             self.native_session_id.into_into_dart().into_dart(),
             self.failure_code.into_into_dart().into_dart(),
@@ -29810,6 +29848,37 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncRawSystemFields
     for crate::api::api::CloudSyncRawSystemFields
 {
     fn into_into_dart(self) -> crate::api::api::CloudSyncRawSystemFields {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart
+    for crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate
+{
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.protected_payload_reference
+                .into_into_dart()
+                .into_dart(),
+            self.payload_sha256.into_into_dart().into_dart(),
+            self.record_id_hash.into_into_dart().into_dart(),
+            self.logical_entity_key_hash.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate
+{
+}
+impl
+    flutter_rust_bridge::IntoIntoDart<
+        crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate,
+    > for crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate
+{
+    fn into_into_dart(
+        self,
+    ) -> crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate {
         self
     }
 }
@@ -36031,6 +36100,7 @@ impl SseEncode for crate::api::cloud_sync_chat_identity::CloudSyncChatIdentityRe
             serializer,
         );
         <Option<String>>::sse_encode(self.candidate_binding_hash, serializer);
+        <Option<String>>::sse_encode(self.staged_candidate_binding_hash, serializer);
         <Option<String>>::sse_encode(self.source_binding_hash, serializer);
         <Option<String>>::sse_encode(self.native_session_id, serializer);
         <Option<crate::api::api::CloudSyncTransientFailureCode>>::sse_encode(
@@ -36537,6 +36607,16 @@ impl SseEncode for crate::api::api::CloudSyncRawSystemFields {
         <Option<f64>>::sse_encode(self.created_at, serializer);
         <Option<f64>>::sse_encode(self.modified_at, serializer);
         <Option<u32>>::sse_encode(self.permission, serializer);
+    }
+}
+
+impl SseEncode for crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.protected_payload_reference, serializer);
+        <String>::sse_encode(self.payload_sha256, serializer);
+        <String>::sse_encode(self.record_id_hash, serializer);
+        <String>::sse_encode(self.logical_entity_key_hash, serializer);
     }
 }
 
@@ -39363,6 +39443,18 @@ impl SseEncode for Option<crate::api::api::CloudSyncRawSystemFields> {
     }
 }
 
+impl SseEncode
+    for Option<crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::cloud_sync_chat_identity::CloudSyncStagedChatIdentityCandidate>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::api::CloudSyncTransientAttachmentPayload> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -39562,6 +39654,7 @@ impl SseEncode for Option<i32> {
         }
     }
 }
+
 
 impl SseEncode for Option<crate::api::api::IMessagePosterRecord> {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -39882,6 +39975,7 @@ impl SseEncode for Option<u32> {
         }
     }
 }
+
 
 impl SseEncode for Option<crate::api::api::UpdateAccountFinish> {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -40918,6 +41012,7 @@ impl SseEncode for (String, crate::api::api::SyncStatus) {
         <crate::api::api::SyncStatus>::sse_encode(self.1, serializer);
     }
 }
+
 
 impl SseEncode for (String, crate::api::api::UpdateAccountFinish) {
     // Codec=Sse (Serialization based), see doc to use other codecs

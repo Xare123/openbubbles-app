@@ -1,6 +1,7 @@
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 
 import 'cloud_sync_local_send_journal.dart';
+import 'cloud_sync_chat_identity_evidence.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloud_sync_outbound_staging.dart';
@@ -10,16 +11,20 @@ import 'objectbox_cloud_sync_store.dart';
 /// owns leasing, remote permission, submission and uncertain-outcome recovery.
 final class CloudSyncOutboundChatAdmissionCoordinator {
   const CloudSyncOutboundChatAdmissionCoordinator({
-    required ObjectBoxCloudSyncStore store,
-    required CloudSyncOutboundChatStagingTransport transport,
-    required Future<void> Function() ensureProtectedStoreRecovered,
-  }) : _store = store,
-       _transport = transport,
-       _ensureProtectedStoreRecovered = ensureProtectedStoreRecovered;
+    required this._store,
+    required this._transport,
+    required this._ensureProtectedStoreRecovered,
+    this._observeChatIdentity,
+  });
 
   final ObjectBoxCloudSyncStore _store;
   final CloudSyncOutboundChatStagingTransport _transport;
   final Future<void> Function() _ensureProtectedStoreRecovered;
+  final Future<CloudSyncChatIdentityEvidence?> Function(
+    CloudSyncOutboundChatOrigin origin,
+    CloudSyncProtectedOutboundStageData stage,
+  )?
+  _observeChatIdentity;
 
   Future<CloudOutboxOperation> admitChat(
     CloudSyncScope scope, {
@@ -31,13 +36,10 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
     api.CloudChat Function(CloudSyncOutboundChatOrigin)? encode,
   }) => _transport.runOutboundAdmissionExclusive(() async {
     await _ensureProtectedStoreRecovered();
-    final existing = await authFence.run(
-      () {
-        validateLocalOrigin?.call();
-        return _store.readOutboundChatCreateForLocalRow(scope, chatId);
-      },
-      accountFingerprint: scope.accountFingerprint,
-    );
+    final existing = await authFence.run(() {
+      validateLocalOrigin?.call();
+      return _store.readOutboundChatCreateForLocalRow(scope, chatId);
+    }, accountFingerprint: scope.accountFingerprint);
     if (existing != null) {
       if (_store.isRetiredUnsubmittedChatCreate(existing)) {
         throw StateError('cloud_sync_outbound_chat_source_retired');
@@ -46,8 +48,17 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
     }
 
     final origin = await authFence.run(
-      () => _store.captureFreshOutboundChatOrigin(
-        scope, chatId, localSendSource: localSendSource),
+      () => _observeChatIdentity != null && localSendSource != null
+          ? _store.captureOutboundChatObservationOrigin(
+              scope,
+              chatId,
+              localSendSource: localSendSource,
+            )
+          : _store.captureFreshOutboundChatOrigin(
+              scope,
+              chatId,
+              localSendSource: localSendSource,
+            ),
       accountFingerprint: scope.accountFingerprint,
     );
     final candidate = (encode ?? _encodeOrigin)(origin);
@@ -65,6 +76,7 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
     final stage = await _transport.stageOutboundChat(scope, chat: candidate);
     var adopted = false;
     try {
+      final identityEvidence = await _observeChatIdentity?.call(origin, stage);
       final operation = await authFence.run(
         () => _store.admitProtectedOutboundChatCreate(
           draft: CloudOutboxDraft(
@@ -89,6 +101,7 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
           origin: origin,
           localSendSource: localSendSource,
           validateLocalOrigin: validateLocalOrigin,
+          identityEvidence: identityEvidence,
         ),
         accountFingerprint: scope.accountFingerprint,
       );

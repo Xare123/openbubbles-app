@@ -317,6 +317,14 @@ final class CloudSyncLocalSendAuthFence {
   final CloudSyncNativeAuthSnapshotReader _capture;
   final bool Function() _stillCurrent;
 
+  /// Synchronous lifetime check after the native capture in [run]. Never a
+  /// substitute for capturing native authentication before an awaited write.
+  void requireCurrentBinding(CloudSyncNativeAuthSnapshot expected) {
+    if (!_expected.sameIdentity(expected) || !_stillCurrent()) {
+      throw StateError('cloud_sync_local_send_identity_changed');
+    }
+  }
+
   Future<T> run<T>(T Function() persist, {String? accountFingerprint}) async {
     if (!_stillCurrent() ||
         (accountFingerprint != null &&

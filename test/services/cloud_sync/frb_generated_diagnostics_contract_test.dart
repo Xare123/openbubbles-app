@@ -24,8 +24,16 @@ String _fixture([List<String>? diagnostics]) {
   ].join('\n');
 }
 
-ProcessResult _runNormalizer(File file, String mode) {
+ProcessResult _runNormalizer(File file, String mode, {bool strict = false}) {
   final powershell = Platform.isWindows ? 'pwsh.exe' : 'pwsh';
+  if (strict) {
+    String quote(String value) => "'${value.replaceAll("'", "''")}'";
+    return Process.runSync(powershell, [
+      '-NoProfile', '-Command',
+      'Set-StrictMode -Version Latest; & ${quote(_normalizerPath)} '
+          '-Mode ${quote(mode)} -GeneratedDart ${quote(file.path)}',
+    ]);
+  }
   return Process.runSync(powershell, <String>[
     '-NoProfile',
     '-File',
@@ -41,6 +49,18 @@ String _resultOutput(ProcessResult result) =>
     '${result.stdout}\n${result.stderr}';
 
 void main() {
+  test('normalizer supports caller StrictMode with empty and singleton matches', () {
+    final directory = Directory.systemTemp.createTempSync('frb-strict-contract-');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    for (final diagnostics in [_diagnostics, _diagnostics.sublist(0, 4)]) {
+      final file = File('${directory.path}${Platform.pathSeparator}api.dart')
+        ..writeAsStringSync(_fixture(diagnostics));
+      final normalize = _runNormalizer(file, 'Normalize', strict: true);
+      expect(normalize.exitCode, 0, reason: _resultOutput(normalize));
+      final verify = _runNormalizer(file, 'Verify', strict: true);
+      expect(verify.exitCode, 0, reason: _resultOutput(verify));
+    }
+  });
   test('FRB workflow triggers cover the normalizer tooling', () {
     final workflow = File(_workflowPath).readAsStringSync();
     final pushStart = workflow.indexOf('  push:');

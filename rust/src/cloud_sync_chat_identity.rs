@@ -82,6 +82,21 @@ pub(crate) fn validate_chat_identity_candidate(candidate: &CloudChat) -> Result<
     Ok(())
 }
 
+pub(crate) fn chat_identity_candidate_binding(
+    candidate: &CloudChat,
+    hasher: &CloudSemanticIdentifierHasher,
+) -> Result<String, ()> {
+    validate_chat_identity_candidate(candidate)?;
+    let binding = serde_json::to_string(candidate).map_err(|_| ())?;
+    if binding.len() > 16 * 1024 {
+        return Err(());
+    }
+    Ok(hasher.digest(
+        b"OpenBubbles Cloud Sync V2 Chat observation candidate v1\0",
+        &binding,
+    ))
+}
+
 /// The caller must run the authenticated, strict PCS/record parser first.
 /// The returned keyed binding covers the exact candidate, not only a service
 /// label. An error means invalid candidate; incomplete source remains unknown.
@@ -100,14 +115,7 @@ pub(crate) fn observe_chat_identity(
         candidate.original_group_id.as_str(),
         candidate.last_addressed_handle.as_str(),
     ];
-    let binding = serde_json::to_string(candidate).map_err(|_| ())?;
-    if binding.len() > 16 * 1024 {
-        return Err(());
-    }
-    let candidate_binding_hash = hasher.digest(
-        b"OpenBubbles Cloud Sync V2 Chat observation candidate v1\0",
-        &binding,
-    );
+    let candidate_binding_hash = chat_identity_candidate_binding(candidate, hasher)?;
     let observed = |comparison| {
         Ok(CloudChatIdentityObservation {
             comparison,

@@ -1506,6 +1506,7 @@ abstract class RustLibApi extends BaseApi {
     required String readSetFenceSha256,
     required CloudChat candidate,
     required CloudSyncChatIdentitySourceInput source,
+    CloudSyncStagedChatIdentityCandidate? stagedCandidate,
   });
 
   RustArcIncrementStrongCountFnType
@@ -12842,6 +12843,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String readSetFenceSha256,
     required CloudChat candidate,
     required CloudSyncChatIdentitySourceInput source,
+    CloudSyncStagedChatIdentityCandidate? stagedCandidate,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -12860,6 +12862,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_box_autoadd_cloud_chat(candidate, serializer);
           sse_encode_box_autoadd_cloud_sync_chat_identity_source_input(
             source,
+            serializer,
+          );
+          sse_encode_opt_box_autoadd_cloud_sync_staged_chat_identity_candidate(
+            stagedCandidate,
             serializer,
           );
           pdeCallFfi(
@@ -12885,6 +12891,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           readSetFenceSha256,
           candidate,
           source,
+          stagedCandidate,
         ],
         apiImpl: this,
       ),
@@ -12905,6 +12912,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "readSetFenceSha256",
           "candidate",
           "source",
+          "stagedCandidate",
         ],
       );
 
@@ -15890,6 +15898,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncStagedChatIdentityCandidate
+  dco_decode_box_autoadd_cloud_sync_staged_chat_identity_candidate(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_cloud_sync_staged_chat_identity_candidate(raw);
+  }
+
+  @protected
   CloudSyncTransientAttachmentPayload
   dco_decode_box_autoadd_cloud_sync_transient_attachment_payload(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -16788,18 +16805,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return CloudSyncChatIdentityResult(
       comparison:
           dco_decode_opt_box_autoadd_cloud_sync_chat_identity_comparison(
             arr[0],
           ),
       candidateBindingHash: dco_decode_opt_String(arr[1]),
-      sourceBindingHash: dco_decode_opt_String(arr[2]),
-      nativeSessionId: dco_decode_opt_String(arr[3]),
+      stagedCandidateBindingHash: dco_decode_opt_String(arr[2]),
+      sourceBindingHash: dco_decode_opt_String(arr[3]),
+      nativeSessionId: dco_decode_opt_String(arr[4]),
       failureCode: dco_decode_opt_box_autoadd_cloud_sync_transient_failure_code(
-        arr[4],
+        arr[5],
       ),
     );
   }
@@ -17268,6 +17286,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       createdAt: dco_decode_opt_box_autoadd_f_64(arr[1]),
       modifiedAt: dco_decode_opt_box_autoadd_f_64(arr[2]),
       permission: dco_decode_opt_box_autoadd_u_32(arr[3]),
+    );
+  }
+
+  @protected
+  CloudSyncStagedChatIdentityCandidate
+  dco_decode_cloud_sync_staged_chat_identity_candidate(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return CloudSyncStagedChatIdentityCandidate(
+      protectedPayloadReference: dco_decode_String(arr[0]),
+      payloadSha256: dco_decode_String(arr[1]),
+      recordIdHash: dco_decode_String(arr[2]),
+      logicalEntityKeyHash: dco_decode_String(arr[3]),
     );
   }
 
@@ -19974,6 +20007,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return raw == null
         ? null
         : dco_decode_box_autoadd_cloud_sync_raw_system_fields(raw);
+  }
+
+  @protected
+  CloudSyncStagedChatIdentityCandidate?
+  dco_decode_opt_box_autoadd_cloud_sync_staged_chat_identity_candidate(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_cloud_sync_staged_chat_identity_candidate(raw);
   }
 
   @protected
@@ -25284,6 +25328,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncStagedChatIdentityCandidate
+  sse_decode_box_autoadd_cloud_sync_staged_chat_identity_candidate(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_cloud_sync_staged_chat_identity_candidate(deserializer));
+  }
+
+  @protected
   CloudSyncTransientAttachmentPayload
   sse_decode_box_autoadd_cloud_sync_transient_attachment_payload(
     SseDeserializer deserializer,
@@ -26349,6 +26402,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           deserializer,
         );
     var var_candidateBindingHash = sse_decode_opt_String(deserializer);
+    var var_stagedCandidateBindingHash = sse_decode_opt_String(deserializer);
     var var_sourceBindingHash = sse_decode_opt_String(deserializer);
     var var_nativeSessionId = sse_decode_opt_String(deserializer);
     var var_failureCode =
@@ -26358,6 +26412,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return CloudSyncChatIdentityResult(
       comparison: var_comparison,
       candidateBindingHash: var_candidateBindingHash,
+      stagedCandidateBindingHash: var_stagedCandidateBindingHash,
       sourceBindingHash: var_sourceBindingHash,
       nativeSessionId: var_nativeSessionId,
       failureCode: var_failureCode,
@@ -26945,6 +27000,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       createdAt: var_createdAt,
       modifiedAt: var_modifiedAt,
       permission: var_permission,
+    );
+  }
+
+  @protected
+  CloudSyncStagedChatIdentityCandidate
+  sse_decode_cloud_sync_staged_chat_identity_candidate(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_protectedPayloadReference = sse_decode_String(deserializer);
+    var var_payloadSha256 = sse_decode_String(deserializer);
+    var var_recordIdHash = sse_decode_String(deserializer);
+    var var_logicalEntityKeyHash = sse_decode_String(deserializer);
+    return CloudSyncStagedChatIdentityCandidate(
+      protectedPayloadReference: var_protectedPayloadReference,
+      payloadSha256: var_payloadSha256,
+      recordIdHash: var_recordIdHash,
+      logicalEntityKeyHash: var_logicalEntityKeyHash,
     );
   }
 
@@ -30680,6 +30753,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_cloud_sync_raw_system_fields(
+        deserializer,
+      ));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  CloudSyncStagedChatIdentityCandidate?
+  sse_decode_opt_box_autoadd_cloud_sync_staged_chat_identity_candidate(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_cloud_sync_staged_chat_identity_candidate(
         deserializer,
       ));
     } else {
@@ -36697,6 +36786,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_staged_chat_identity_candidate(
+    CloudSyncStagedChatIdentityCandidate self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_cloud_sync_staged_chat_identity_candidate(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_transient_attachment_payload(
     CloudSyncTransientAttachmentPayload self,
     SseSerializer serializer,
@@ -37798,6 +37896,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       serializer,
     );
     sse_encode_opt_String(self.candidateBindingHash, serializer);
+    sse_encode_opt_String(self.stagedCandidateBindingHash, serializer);
     sse_encode_opt_String(self.sourceBindingHash, serializer);
     sse_encode_opt_String(self.nativeSessionId, serializer);
     sse_encode_opt_box_autoadd_cloud_sync_transient_failure_code(
@@ -38250,6 +38349,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_f_64(self.createdAt, serializer);
     sse_encode_opt_box_autoadd_f_64(self.modifiedAt, serializer);
     sse_encode_opt_box_autoadd_u_32(self.permission, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_sync_staged_chat_identity_candidate(
+    CloudSyncStagedChatIdentityCandidate self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.protectedPayloadReference, serializer);
+    sse_encode_String(self.payloadSha256, serializer);
+    sse_encode_String(self.recordIdHash, serializer);
+    sse_encode_String(self.logicalEntityKeyHash, serializer);
   }
 
   @protected
@@ -41370,6 +41481,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_cloud_sync_raw_system_fields(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_staged_chat_identity_candidate(
+    CloudSyncStagedChatIdentityCandidate? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_cloud_sync_staged_chat_identity_candidate(
+        self,
+        serializer,
+      );
     }
   }
 

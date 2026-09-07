@@ -13,6 +13,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observabilit
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identity_evidence.dart';
+import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart' as identity_api;
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_selection.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_origin.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_admission.dart';
@@ -441,6 +443,13 @@ void main() {
     'source during stage',
     'tombstone during stage',
     'proof before lease',
+    'observed history success',
+    'observed history restart',
+    'observed history stale before lease',
+    'observed history revoked before lease',
+    'observed history stale before submit',
+    'observed history missing before submit',
+    'observed history source during stage',
     'missing journal before lease',
     'missing journal before submit',
     'source before lease',
@@ -465,6 +474,9 @@ void main() {
         // Real persistence/admission/projection, synthetic native edges only.
         // Does not execute service attachment-lock release or live CloudKit.
         final writerScope = CloudKitWriterScope(accountFingerprint: 'A' * 43);
+        final observedHistory = mutation.startsWith('observed history');
+        CloudSyncChatIdentityEvidence? identityEvidence;
+        var currentBinding = true;
         late CloudSyncLocalSendJournal journal;
         void bindJournal() {
           final authority = ObjectBoxCloudKitWriterAuthority.forTest(
@@ -498,6 +510,7 @@ void main() {
             protector: _Protector(),
             clock: () => _now,
             localSendJournal: journal,
+            readChatIdentityEvidence: observedHistory ? (_) => identityEvidence : null,
           );
         }
 
@@ -542,9 +555,39 @@ void main() {
         final fence = CloudSyncLocalSendAuthFence(
           expected: expected,
           capture: () async => current,
-          stillCurrent: () => true,
+          stillCurrent: () => currentBinding,
         );
         final transport = _CombinedStaging();
+        CloudSyncProtectedOutboundStageData? observedStage;
+        Future<CloudSyncChatIdentityEvidence?> observeIdentity(
+          CloudSyncOutboundChatOrigin origin,
+          CloudSyncProtectedOutboundStageData stage,
+        ) async {
+          observedStage = stage;
+          identityEvidence = await CloudSyncChatIdentityEvidence.observe(
+            store: db, origin: origin, stage: stage,
+            auth: expected, authFence: fence,
+            observer: (readSet, retained, actualStage, actualOrigin) async {
+              expect(identical(actualStage, stage), isTrue);
+              expect(actualOrigin.binding(readSet.generation), origin.binding(readSet.generation));
+              if (mutation == 'observed history source during stage') {
+                final row = db.box<CloudInboxChangeEntity>().getAll()
+                    .singleWhere((r) => r.zone == 'chatManateeZone');
+                db.box<CloudInboxChangeEntity>().put(row..etagHash = 'Z' * 43);
+              }
+              // Only the native PCS edge is synthetic. All ObjectBox gates,
+              // journal capabilities, restarts and transaction rollback are real.
+              return identity_api.CloudSyncChatIdentityResult(
+                comparison: identity_api.CloudSyncChatIdentityComparison.disjoint,
+                candidateBindingHash: 'I' * 43,
+                stagedCandidateBindingHash: 'J' * 43,
+                sourceBindingHash: retained.changeIdHash,
+                nativeSessionId: expected.nativeSessionId,
+              );
+            },
+          );
+          return identityEvidence;
+        }
         var source = journal.readForAdmission(intentId);
         CloudSyncLocalSendExactSelection newSelection() =>
             CloudSyncLocalSendExactSelection(
@@ -570,6 +613,7 @@ void main() {
           await retainHistory('attachmentManateeZone');
           await retainHistory('messageManateeZone', tombstone: true);
         }
+        if (observedHistory) await retainHistory('chatManateeZone');
         const independentChatHistory = {
           'retained Chat tombstone',
           'retained Chat reader tombstone',
@@ -710,6 +754,7 @@ void main() {
             CloudSyncOutboundChatAdmissionCoordinator(
               store: sync, transport: transport,
               ensureProtectedStoreRecovered: () async {},
+              observeChatIdentity: observedHistory ? observeIdentity : null,
             ).admitChat(_scope(), chatId: chatId,
               createdAt: source.createdAtUtc, authFence: fence,
               localSendSource: source, encode: (_) => _FakeChat());
@@ -737,6 +782,7 @@ void main() {
               store: sync,
               transport: transport,
               ensureProtectedStoreRecovered: () async {},
+              observeChatIdentity: observedHistory ? observeIdentity : null,
             ).admitChat(
               _scope(),
               chatId: chatId,
@@ -1006,6 +1052,24 @@ void main() {
           leaseDuration: const Duration(minutes: 1),
           allowedActions: const {CloudOutboxAction.save},
         );
+        if (observedHistory) {
+          // Adoption changed the mutation revision. Its old evidence must not
+          // lease the operation; restarting must not revive that evidence.
+          if (mutation == 'observed history restart') {
+            await restart();
+            bindJournal();
+          }
+          await expectLater(leaseChat(), throwsStateError);
+          expect(outbox().state, CloudOutboxStatus.pending.index);
+          if (mutation != 'observed history stale before lease') {
+            await observeIdentity(
+              CloudSyncOutboundChatOrigin.capture(
+                scope: _scope(), chat: db.box<Chat>().get(chatId)!),
+              observedStage!,
+            );
+          }
+          if (mutation == 'observed history revoked before lease') currentBinding = false;
+        }
         if (mutation.endsWith('before lease')) {
           await expectLater(leaseChat(), mutation.startsWith('missing journal')
             ? throwsA(isA<StateError>().having((error) => error.message, 'code',
@@ -1020,6 +1084,13 @@ void main() {
         if (mutation == 'payload before submit') {
           db.box<CloudOutboxOperationEntity>().put(outbox()..payloadSha256 = 'e' * 64);
         }
+        if (mutation == 'observed history stale before submit') {
+          final row = db.box<CloudSyncCheckpointEntity>().getAll()
+              .singleWhere((c) => c.zone == 'chatManateeZone');
+          row.mutationRevisionCounter++;
+          db.box<CloudSyncCheckpointEntity>().put(row);
+        }
+        if (mutation == 'observed history missing before submit') identityEvidence = null;
         if (mutation == 'duplicate before submit') duplicateChat();
         if (mutation == 'missing journal before submit') bindStore();
         if (mutation == 'tombstone before submit') {
@@ -1261,7 +1332,7 @@ void main() {
           db.box<CloudOutboxOperationEntity>().put(foreign);
         }
         if (mutation != 'none' && mutation != 'shared Chat' && mutation != 'unrelated history' &&
-            !independentChatHistory.contains(mutation)) {
+            !independentChatHistory.contains(mutation) && !observedHistory) {
           await expectLater(
             admitMessage(),
             throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())),

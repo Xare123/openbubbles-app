@@ -8,8 +8,8 @@ import '../lib.dart';
 import 'api.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `failure`, `valid_read_set_fence`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `eq`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `failure`, `valid_read_set_fence`, `verify_staged_candidate`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `fmt`
 
 /// No keychain synchronization, remote lookup/save/delete, local projection or
 /// admission. Requires a warmed exact Chat zone under an active writer pause.
@@ -24,6 +24,7 @@ Future<CloudSyncChatIdentityResult> cloudSyncObserveProtectedChatIdentity({
   required String readSetFenceSha256,
   required CloudChat candidate,
   required CloudSyncChatIdentitySourceInput source,
+  CloudSyncStagedChatIdentityCandidate? stagedCandidate,
 }) => RustLib.instance.api
     .crateApiCloudSyncChatIdentityCloudSyncObserveProtectedChatIdentity(
       cloudMessagesClient: cloudMessagesClient,
@@ -35,6 +36,7 @@ Future<CloudSyncChatIdentityResult> cloudSyncObserveProtectedChatIdentity({
       readSetFenceSha256: readSetFenceSha256,
       candidate: candidate,
       source: source,
+      stagedCandidate: stagedCandidate,
     );
 
 enum CloudSyncChatIdentityComparison { overlaps, disjoint, incomplete }
@@ -45,6 +47,7 @@ enum CloudSyncChatIdentityComparison { overlaps, disjoint, incomplete }
 class CloudSyncChatIdentityResult {
   final CloudSyncChatIdentityComparison? comparison;
   final String? candidateBindingHash;
+  final String? stagedCandidateBindingHash;
   final String? sourceBindingHash;
   final String? nativeSessionId;
   final CloudSyncTransientFailureCode? failureCode;
@@ -52,6 +55,7 @@ class CloudSyncChatIdentityResult {
   const CloudSyncChatIdentityResult({
     this.comparison,
     this.candidateBindingHash,
+    this.stagedCandidateBindingHash,
     this.sourceBindingHash,
     this.nativeSessionId,
     this.failureCode,
@@ -61,6 +65,7 @@ class CloudSyncChatIdentityResult {
   int get hashCode =>
       comparison.hashCode ^
       candidateBindingHash.hashCode ^
+      stagedCandidateBindingHash.hashCode ^
       sourceBindingHash.hashCode ^
       nativeSessionId.hashCode ^
       failureCode.hashCode;
@@ -72,6 +77,7 @@ class CloudSyncChatIdentityResult {
           runtimeType == other.runtimeType &&
           comparison == other.comparison &&
           candidateBindingHash == other.candidateBindingHash &&
+          stagedCandidateBindingHash == other.stagedCandidateBindingHash &&
           sourceBindingHash == other.sourceBindingHash &&
           nativeSessionId == other.nativeSessionId &&
           failureCode == other.failureCode;
@@ -119,4 +125,37 @@ class CloudSyncChatIdentitySourceInput {
           payloadLength == other.payloadLength &&
           serverModifiedAtMillis == other.serverModifiedAtMillis &&
           protectedRawEnvelopeReference == other.protectedRawEnvelopeReference;
+}
+
+/// The original immutable outbound envelope, never a replacement Chat or new
+/// server record. Opening this value performs no adoption or remote operation.
+class CloudSyncStagedChatIdentityCandidate {
+  final String protectedPayloadReference;
+  final String payloadSha256;
+  final String recordIdHash;
+  final String logicalEntityKeyHash;
+
+  const CloudSyncStagedChatIdentityCandidate({
+    required this.protectedPayloadReference,
+    required this.payloadSha256,
+    required this.recordIdHash,
+    required this.logicalEntityKeyHash,
+  });
+
+  @override
+  int get hashCode =>
+      protectedPayloadReference.hashCode ^
+      payloadSha256.hashCode ^
+      recordIdHash.hashCode ^
+      logicalEntityKeyHash.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncStagedChatIdentityCandidate &&
+          runtimeType == other.runtimeType &&
+          protectedPayloadReference == other.protectedPayloadReference &&
+          payloadSha256 == other.payloadSha256 &&
+          recordIdHash == other.recordIdHash &&
+          logicalEntityKeyHash == other.logicalEntityKeyHash;
 }

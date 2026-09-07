@@ -4,7 +4,7 @@ title: Cloud Sync V2 Connection Treemap and Recovery State Machine
 description: Source-linked end-to-end model for safely authenticating, fetching, decoding, journaling, projecting, recovering, and validating Messages in iCloud data.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-06
+timestamp: 2026-09-07
 ---
 
 # Cloud Sync V2 connection treemap and recovery state machine
@@ -260,7 +260,43 @@ before app launch. With the corrected settings the Windows app built in
 **71.4 seconds**, completed the observer and closed itself. No Android build,
 remote mutation, security-policy change or history reset was used.
 
-Write-integration order, based on the current call graph:
+#### Staged identity evidence across write transactions, Windows contract passed
+
+The native observer now optionally opens the original outbound Chat envelope,
+verifies its payload digest, physical record hash and logical key, and compares
+every candidate field with that protected payload. It rechecks the envelope
+after awaited source decoding. Diagnostic, unstaged observations have no staged
+binding and cannot become `CloudSyncChatIdentityEvidence`.
+
+The Dart evidence collector requires complete disjoint results, unique source
+bindings, one candidate/stage/session, unchanged journal and unchanged local
+origin. Its evidence exists only in memory. Admission, leasing and submission
+check the same exact stage and read-set inside their ObjectBox transactions.
+Adoption changes the checkpoint revision, invalidating initial evidence; a
+fresh native observation is required before leasing. Reopening the store
+also invalidates previous evidence. No checkpoint field was removed, new
+database entity added, retained record relabeled or tombstone applied.
+
+**303 native tests passed** (including a real Windows protected-storage staged
+round trip); **148 targeted Dart tests and the 1,860-test CloudKit/ObjectBox
+suite passed**, with clean changed-file analysis. The new end-to-end fixtures
+cover confirmed local-send origin, retained Chat history, admission, rejected
+stale evidence, refresh, lease, submission, Chat readback, restart and subsequent
+Message admission. Native PCS/network results are synthetic in those Dart
+fixtures, not evidence of a live Apple upload. Evidence is in
+`evidence/windows-native-tests/20260907-000100-4a4eaa3b/` and the replay folder's
+`staged-chat-contract-tests.log`, `staged-chat-full-suite.log` and
+`staged-chat-analyzer.log`. Native rebuild/tests took 28.59s/2.45s; the full Dart
+suite took 84s.
+
+Bridge generation exposed a PowerShell strict-mode array-unwrapping defect in
+the diagnostic normalizer. Conditional output is now captured as an array;
+both empty and singleton matches are covered by a dedicated strict-mode test.
+The existing exact diagnostic allowlist and byte-preservation checks remain.
+
+The optional observation/evidence callbacks are **not wired into either live
+production composition yet**. Their default remains the original applied-save
+gate. Next integration follows this call graph:
 
 1. Bind observations to the actual staged Chat, not the diagnostic JSON or a
    mutable Dart `CloudChat` object. `open_staged_outbound_chat` already verifies
@@ -282,8 +318,10 @@ Write-integration order, based on the current call graph:
    before enabling this in Windows, then qualify Android separately.
 
 Admission alone is not a useful partial rollout: it could put a pending write
-in front of the semantic reads needed to release that same write. These gates
-therefore remain unchanged while their replacement is qualified together.
+in front of the semantic reads needed to release that same write. Enable the
+new callbacks only together with selected-outbox observation refresh and the
+corresponding write-owner/native-pause lifecycle. Then qualify live Windows
+Chat/Message readback and no-extra-save recovery before Android activation.
 
 #### Direct-Chat record membership: implemented, development opt-in only
 

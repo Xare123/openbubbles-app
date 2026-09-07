@@ -204,11 +204,11 @@ $prologueRegionIndices = @(
 $diagnosticLines = [System.Collections.Generic.List[object]]::new()
 for ($index = 0; $index -lt $lineRecords.Count; $index++) {
     $line = $lineRecords[$index].Text
-    $matchedSpecs = if ($line.Length -eq 0) {
-        @()
-    } else {
-        @(Get-AllowlistedMatches -Line $line)
-    }
+    # Capture the conditional's output as an array. PowerShell unwraps an
+    # empty or singleton branch, which breaks .Count under caller StrictMode.
+    $matchedSpecs = @(
+        if ($line.Length -ne 0) { Get-AllowlistedMatches -Line $line }
+    )
     if ($matchedSpecs.Count -gt 1) {
         throw "Generated Dart diagnostic matches multiple allowlisted classes at line $($index + 1)"
     }

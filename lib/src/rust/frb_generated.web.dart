@@ -1577,6 +1577,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncStagedChatIdentityCandidate
+  dco_decode_box_autoadd_cloud_sync_staged_chat_identity_candidate(dynamic raw);
+
+  @protected
   CloudSyncTransientAttachmentPayload
   dco_decode_box_autoadd_cloud_sync_transient_attachment_payload(dynamic raw);
 
@@ -2122,6 +2126,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudSyncRawSystemFields dco_decode_cloud_sync_raw_system_fields(dynamic raw);
+
+  @protected
+  CloudSyncStagedChatIdentityCandidate
+  dco_decode_cloud_sync_staged_chat_identity_candidate(dynamic raw);
 
   @protected
   CloudSyncTransientAssociationKind
@@ -2971,6 +2979,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncRawSystemFields?
   dco_decode_opt_box_autoadd_cloud_sync_raw_system_fields(dynamic raw);
+
+  @protected
+  CloudSyncStagedChatIdentityCandidate?
+  dco_decode_opt_box_autoadd_cloud_sync_staged_chat_identity_candidate(
+    dynamic raw,
+  );
 
   @protected
   CloudSyncTransientAttachmentPayload?
@@ -5094,6 +5108,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncStagedChatIdentityCandidate
+  sse_decode_box_autoadd_cloud_sync_staged_chat_identity_candidate(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncTransientAttachmentPayload
   sse_decode_box_autoadd_cloud_sync_transient_attachment_payload(
     SseDeserializer deserializer,
@@ -5795,6 +5815,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudSyncRawSystemFields sse_decode_cloud_sync_raw_system_fields(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncStagedChatIdentityCandidate
+  sse_decode_cloud_sync_staged_chat_identity_candidate(
     SseDeserializer deserializer,
   );
 
@@ -6774,6 +6800,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncRawSystemFields?
   sse_decode_opt_box_autoadd_cloud_sync_raw_system_fields(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncStagedChatIdentityCandidate?
+  sse_decode_opt_box_autoadd_cloud_sync_staged_chat_identity_candidate(
     SseDeserializer deserializer,
   );
 
@@ -9289,6 +9321,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_staged_chat_identity_candidate(
+    CloudSyncStagedChatIdentityCandidate self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_transient_attachment_payload(
     CloudSyncTransientAttachmentPayload self,
     SseSerializer serializer,
@@ -10141,6 +10179,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_raw_system_fields(
     CloudSyncRawSystemFields self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_staged_chat_identity_candidate(
+    CloudSyncStagedChatIdentityCandidate self,
     SseSerializer serializer,
   );
 
@@ -11301,6 +11345,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_cloud_sync_raw_system_fields(
     CloudSyncRawSystemFields? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_staged_chat_identity_candidate(
+    CloudSyncStagedChatIdentityCandidate? self,
     SseSerializer serializer,
   );
 

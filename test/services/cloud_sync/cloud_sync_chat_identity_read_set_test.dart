@@ -2,6 +2,14 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identity_read_set.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identity_evidence.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_origin.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_staging.dart';
+import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart'
+    as native;
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -80,6 +88,232 @@ void main() {
   tearDown(() async {
     store.close();
     await directory.delete(recursive: true);
+  });
+
+  group('staged candidate coverage', () {
+    late CloudSyncOutboundChatOrigin origin;
+    late CloudSyncProtectedOutboundStageData stage;
+    late CloudSyncNativeAuthSnapshot auth;
+    late CloudSyncNativeAuthSnapshot currentAuth;
+    late CloudSyncLocalSendAuthFence authFence;
+    var alive = true;
+    setUp(() {
+      alive = true;
+      final chat =
+          Chat(
+              guid: 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+              usingHandle: 'owner@example.invalid',
+              style: 45,
+            )
+            ..handles.add(
+              Handle(address: 'recipient@example.invalid', service: 'iMessage'),
+            );
+      store.box<Chat>().put(chat);
+      origin = CloudSyncOutboundChatOrigin.capture(scope: scope, chat: chat);
+      stage = CloudSyncProtectedOutboundStageData(
+        logicalEntityKeyHash: hash(901),
+        serverRecordIdHash: hash(902),
+        payloadSha256: 'b' * 64,
+        protectedEnvelopeReference: 'obcs2.ref.${hash(903)}',
+        leaseReference: 'obcs2.lease.${'a' * 32}',
+      );
+      auth = CloudSyncNativeAuthSnapshot.fromNative(
+        nativeSessionId: 'synthetic-session',
+        accountFingerprint: scope.accountFingerprint,
+        protectedStoreIdentity: 'obcs2.store.${hash(904)}',
+        cloudMessagesClient: Object(),
+      );
+      currentAuth = auth;
+      authFence = CloudSyncLocalSendAuthFence(
+        expected: auth,
+        capture: () async => currentAuth,
+        stillCurrent: () => alive,
+      );
+    });
+    native.CloudSyncChatIdentityResult result(
+      CloudSyncChatIdentitySource source,
+    ) => native.CloudSyncChatIdentityResult(
+      comparison: native.CloudSyncChatIdentityComparison.disjoint,
+      candidateBindingHash: hash(950),
+      stagedCandidateBindingHash: hash(951),
+      sourceBindingHash: source.changeIdHash,
+      nativeSessionId: auth.nativeSessionId,
+    );
+    Future<CloudSyncChatIdentityEvidence?> observe({
+      CloudSyncStagedChatIdentityObserver? observer,
+    }) => CloudSyncChatIdentityEvidence.observe(
+      store: store,
+      origin: origin,
+      stage: stage,
+      auth: auth,
+      authFence: authFence,
+      observer:
+          observer ??
+          (readSet, source, candidate, local) async => result(source),
+    );
+    void check(CloudSyncChatIdentityEvidence evidence, {String changed = ''}) =>
+        store.runInTransaction(
+          TxMode.write,
+          () => evidence.requireMatches(
+            store: store,
+            origin: origin,
+            logicalEntityKeyHash: changed == 'logical'
+                ? hash(999)
+                : stage.logicalEntityKeyHash,
+            serverRecordIdHash: changed == 'record'
+                ? hash(999)
+                : stage.serverRecordIdHash,
+            payloadSha256: changed == 'payload'
+                ? 'c' * 64
+                : stage.payloadSha256,
+            protectedEnvelopeReference: changed == 'envelope'
+                ? 'obcs2.ref.${hash(999)}'
+                : stage.protectedEnvelopeReference,
+            leaseReference: changed == 'lease'
+                ? 'obcs2.lease.${'b' * 32}'
+                : stage.leaseReference,
+          ),
+        );
+
+    test(
+      'complete coverage is ephemeral and does not apply or write anything',
+      () async {
+        final evidence = (await observe())!;
+        check(evidence);
+        expect(evidence.toString(), 'CloudSyncChatIdentityEvidence(redacted)');
+        expect(saved().status, CloudInboxStatus.retainedUnprojected.index);
+        expect(checkpoint().appliedSequence, 1);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      },
+    );
+    test(
+      'an empty saved set needs no exception to applied-save admission',
+      () async {
+        store.box<CloudInboxChangeEntity>().put(saved()..status = 1);
+        expect(
+          await observe(
+            observer: (_, __, ___, ____) async =>
+                throw StateError('unexpected'),
+          ),
+          isNull,
+        );
+      },
+    );
+    for (final defect in [
+      'failure',
+      'overlap',
+      'incomplete',
+      'no comparison',
+      'session',
+      'candidate hash',
+      'diagnostic only',
+      'source hash',
+      'repeated source',
+      'changed candidate',
+      'changed stage',
+    ]) {
+      test('rejects $defect without partial coverage', () async {
+        store.box<CloudInboxChangeEntity>().put(row(4));
+        store.box<CloudSyncCheckpointEntity>().put(
+          checkpoint()..fetchedSequence = 4,
+        );
+        var calls = 0;
+        await expectLater(
+          observe(
+            observer: (_, source, __, ___) async {
+              calls++;
+              final last = calls == 2;
+              return native.CloudSyncChatIdentityResult(
+                comparison: defect == 'overlap'
+                    ? native.CloudSyncChatIdentityComparison.overlaps
+                    : defect == 'incomplete'
+                    ? native.CloudSyncChatIdentityComparison.incomplete
+                    : defect == 'no comparison'
+                    ? null
+                    : native.CloudSyncChatIdentityComparison.disjoint,
+                failureCode: defect == 'failure'
+                    ? api.CloudSyncTransientFailureCode.invalidRequest
+                    : null,
+                nativeSessionId: defect == 'session'
+                    ? 'changed'
+                    : auth.nativeSessionId,
+                candidateBindingHash: defect == 'candidate hash'
+                    ? ''
+                    : defect == 'changed candidate' && last
+                    ? hash(999)
+                    : hash(950),
+                stagedCandidateBindingHash: defect == 'diagnostic only'
+                    ? null
+                    : defect == 'changed stage' && last
+                    ? hash(999)
+                    : hash(951),
+                sourceBindingHash: defect == 'source hash'
+                    ? ''
+                    : defect == 'repeated source'
+                    ? hash(999)
+                    : source.changeIdHash,
+              );
+            },
+          ),
+          throwsStateError,
+        );
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(checkpoint().appliedSequence, 1);
+      });
+    }
+    for (final field in ['logical', 'record', 'payload', 'envelope', 'lease']) {
+      test(
+        'rejects changed staged $field at the transaction boundary',
+        () async {
+          final evidence = (await observe())!;
+          expect(() => check(evidence, changed: field), throwsStateError);
+        },
+      );
+    }
+    test('rejects a lost session after observation', () async {
+      final evidence = (await observe())!;
+      alive = false;
+      expect(() => check(evidence), throwsStateError);
+    });
+    test('rechecks native authentication after awaited comparison', () async {
+      await expectLater(
+        observe(
+          observer: (_, source, __, ___) async {
+            currentAuth = CloudSyncNativeAuthSnapshot.fromNative(
+              nativeSessionId: 'changed-native-session',
+              accountFingerprint: auth.accountFingerprint,
+              protectedStoreIdentity: auth.protectedStoreIdentity,
+              cloudMessagesClient: auth.cloudMessagesClient,
+            );
+            return result(source);
+          },
+        ),
+        throwsStateError,
+      );
+    });
+    test('rechecks local candidate after awaited comparison', () async {
+      await expectLater(
+        observe(
+          observer: (_, source, __, ___) async {
+            final chat = store.box<Chat>().get(origin.chatId)!;
+            store.box<Chat>().put(
+              chat..usingHandle = 'different@example.invalid',
+            );
+            return result(source);
+          },
+        ),
+        throwsA(isA<CloudSyncFailure>()),
+      );
+    });
+    test('does not turn a thrown native error into coverage', () async {
+      await expectLater(
+        observe(
+          observer: (_, __, ___, ____) async =>
+              throw StateError('native failed'),
+        ),
+        throwsStateError,
+      );
+    });
   });
 
   test(
