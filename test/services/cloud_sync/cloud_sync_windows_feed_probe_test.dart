@@ -55,6 +55,26 @@ void main() {
       throwsStateError,
     );
   });
+  test(
+    'version two binds snapshot to exact write request, not newest outbox',
+    () {
+      final request = {
+        'version': 2,
+        'writeRequestId': 'fixture-02',
+        'snapshot': 'windows-write-before-fixture-02',
+      };
+      expect(cloudSyncWindowsFeedProbeSnapshot(request), request['snapshot']);
+      for (final id in ['../alpha', '', 'fixture-01']) {
+        expect(
+          () => cloudSyncWindowsFeedProbeSnapshot({
+            ...request,
+            'writeRequestId': id,
+          }),
+          throwsStateError,
+        );
+      }
+    },
+  );
 
   test('probe cannot commit, project, send or change a checkpoint', () {
     final source = File(
@@ -72,7 +92,12 @@ void main() {
     }
     expect(source, contains('cloudSyncFetchProtectedPageUnderWriterPause('));
     expect(source, contains('cloudSyncRollbackProtectedPageLease('));
-    expect(source, matches(RegExp(r'finally\s*\{\s*await pause\.resume\(pauseToken\);\s*\}')));
+    expect(
+      source,
+      matches(
+        RegExp(r'finally\s*\{\s*await pause\.resume\(pauseToken\);\s*\}'),
+      ),
+    );
     expect(
       source,
       contains('cloud_sync_windows_feed_probe_checkpoint_changed'),

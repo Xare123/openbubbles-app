@@ -552,6 +552,87 @@ Validation: 311 native tests and 1,902 Dart tests passed, as did launcher
 behavioral tests and analysis of the changed Windows Dart sources. No Android
 build, Alpha operation, remote repository push, or additional IDS send occurred.
 
+#### Controlled existing-conversation write, September 7
+
+The next Windows qualification sent **one additional real IDS test message**
+to the authorized test recipient, using the exact prior journal message's
+existing conversation. The earlier request was not resent. Version-two private
+write requests bind the predecessor request into their immutable request hash;
+version-one bindings remain unchanged. The selector rejects other accounts,
+recipients, senders, unconfirmed journal entries, and ambiguous chat ownership.
+Normal production admission and exact readback remain the write authority.
+
+The Windows composition now captures the Message checkpoint **before** message
+creation and submission. It preserves account/generation/sequence metadata,
+the application-encrypted reference, and a checksum-verified copy of the
+opaque native protected file. The live snapshot occupies 1,823 bytes. A
+partial/existing snapshot fails closed instead of being overwritten. The
+probe reads its exact journal-adopted Message operation, not the newest or
+only outbox row. It still never commits returned records or tokens.
+
+This qualification's protected reference remained live throughout the probe.
+The retained native file is rollback/diagnostic evidence, not an implemented
+API for replay after native retirement. Do not copy it back into the active
+native store to make a later probe pass.
+
+| Gate | Result |
+| --- | --- |
+| Native send, existing conversation | Confirmed once |
+| Protected Message admission/save/exact readback | Confirmed in the first pass; no Chat dependency wait |
+| Original pre-send checkpoint, normal request | Valid token, zero changes, terminal |
+| Same cursor, explicit self-inclusion and either direction | Zero changes, terminal |
+| Fresh newest-first page | 200 changes, exact saved Message matched once |
+| Experimental change types absent, 1, or 2 | Successful responses, zero changes from the same cursor |
+| Experimental omission of five device-header fields | Request failed; inconclusive, not an empty successful page |
+
+The enum and header experiments were removed after this comparison. They
+did not establish a production fix. Their content-free evidence is retained as
+`windows-message-feed-types-02-status.json` and
+`windows-message-feed-header-02-status.json` in the private Windows replay
+evidence folder. Ordinary causal results are in
+`windows-message-feed-causal-02-status.json`. Production request defaults,
+headers, hardware identity, registration, and checkpoints are unchanged.
+
+The control database contains two adopted/readable local journal messages and
+three confirmed operations (one Chat, two Messages), with no active write
+leases or retained receipts. Canonical counts are 700 chats, 13,644 messages,
+and 2,417 attachments. There are no duplicate GUID groups, cross-kind GUID
+collisions, or messages without chats. The 6,653 retained inbox changes and
+checkpoint sequences are unchanged. One chat's latest-message date is behind
+its newest message in this direct Windows composition; do not infer normal
+app presentation fidelity from the headless journal insertion alone.
+
+**Decision:** the missing incremental self-echo is reproducible with a causal
+pre-send cursor. Missing backups and an intermediate Chat convergence read
+are no longer sufficient explanations. Do not claim an independently
+authenticated Apple device has displayed either test message. The next
+decisive comparison is an independent reader, plus another-device-origin
+change at a preserved cursor, not more guessed request flags or a full-history
+reset. The outbound receipt already preserves the server mapping and etag;
+absence of an inbound self-echo is not loss of that receipt.
+
+The focused research review distinguishes origin-suppressed **notifications**
+from zone-change fetches in Apple's
+[Remote Records](https://developer.apple.com/documentation/cloudkit/remote-records)
+and [sample private-database sync](https://github.com/apple/sample-cloudkit-privatedb-sync).
+No authoritative Apple mapping of the private change-type integers was found.
+Public SDK guidance is not proof of private Manatee self-echo behavior.
+
+Validation: 1,906 Dart tests, 311 final native tests, launcher behavioral
+checks, and both offline control-store inspections passed. Restarting the
+same immutable second request admitted zero new operations. The canonical
+counts, two readable journal messages, three confirmed operations, and settled
+outbox audit fingerprint were unchanged across restart:
+`9e0e24a4fea27b40ecdeba628f8fac1268e71a8c90da407045781126d691daa0`.
+No duplicate GUID or orphan-message regression appeared. The saved `os_config`
+matches the pre-write hardware backup exactly; normal authentication caches
+can change and are not claimed byte-identical. All live harness processes
+exited, and no Alpha operation, Android/GCE build, or repository push occurred.
+
+The read-only Sol research agent was reviewed and closed; shutdown was
+verified. Its transcript is retained because supported session deletion is
+unavailable, and no dedicated worktree or build cache was created for it.
+
 Validation: 310 native tests, 1,898 full CloudKit Dart/inspector tests, and
 15 additional real signed-library bridge cases passed. The subsequent expanded
 inspector has five passing cases. Diagnostics and evidence contain aggregates

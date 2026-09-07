@@ -3395,6 +3395,7 @@ pub(crate) async fn cloud_sync_windows_probe_feed(
         if !Arc::ptr_eq(&active, &container) {
             return Err(anyhow::anyhow!("cloud_sync_windows_feed_probe_auth_failed"));
         }
+        let requested_token = continuation.clone();
         let operation = windows_feed_probe_request(zone.clone(), continuation, newest, include_self);
         let response = tokio::time::timeout(FETCH_DEADLINE,
             container.perform_semantic_read_only(&rustpush::cloudkit::CloudKitSession::new(), operation),
@@ -3422,6 +3423,9 @@ pub(crate) async fn cloud_sync_windows_probe_feed(
             "status": response.status(), "deltas": response.changed_deltas.len(),
             "obligations": response.sync_obligations.len(),
             "shares": response.changed_shares.len(),
+            "response_token_present": response.sync_continuation_token.is_some(),
+            "response_token_matches_input": response.sync_continuation_token == requested_token,
+            "client_token_present": response.client_change_token.is_some(),
             "pending_archived": response.pending_archived_records,
             "zone_attributes": response.zone_attributes_changes.is_some()}));
     }
@@ -3447,6 +3451,7 @@ mod windows_feed_probe_tests {
         assert_eq!(probe.0.newest_first, Some(true));
         assert_eq!(probe.0.requested_changes_types, ordinary.0.requested_changes_types);
     }
+
 }
 
 pub(crate) async fn cloud_sync_fetch_protected_page(
