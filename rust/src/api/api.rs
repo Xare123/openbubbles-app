@@ -4021,6 +4021,40 @@ fn map_cloud_sync_protected_page(
     }
 }
 
+/// Windows-only read diagnostic. Compares bounded feed variants without
+/// persisting tokens, projecting records, or returning account content.
+pub async fn cloud_sync_windows_probe_message_feed(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    native_writer_pause_token: u64,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    generation: u64,
+    checkpoint_reference: String,
+    expected_record_id_hash: String,
+) -> anyhow::Result<String> {
+    use crate::cloud_sync_native_fetch::{CloudNativeFetchRequest, CloudNativeProtectionScope, CloudNativeStream};
+    if !is_cloud_sync_windows_dev_profile(&storage_directory) || generation == 0 ||
+        expected_record_id_hash.len() != 43 || !expected_record_id_hash.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')) {
+        return Err(anyhow!("cloud_sync_windows_feed_probe_request_invalid"));
+    }
+    let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
+        .map_err(|_| anyhow!("cloud_sync_windows_feed_probe_auth_failed"))?;
+    let auth = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await
+        .map_err(|_| anyhow!("cloud_sync_windows_feed_probe_auth_failed"))?;
+    if auth.account_fingerprint != expected_account_fingerprint {
+        return Err(anyhow!("cloud_sync_windows_feed_probe_account_mismatch"));
+    }
+    let scope = CloudNativeProtectionScope::new(auth.account_fingerprint, CloudNativeStream::Messages)
+        .map_err(|_| anyhow!("cloud_sync_windows_feed_probe_request_invalid"))?;
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.clone())
+        .map_err(|_| anyhow!("cloud_sync_windows_feed_probe_protector_failed"))?;
+    let request = CloudNativeFetchRequest::new(CloudNativeStream::Messages, &scope,
+        generation, Some(&checkpoint_reference), 200);
+    crate::cloud_sync_native_fetch::cloud_sync_windows_probe_feed(cloud_messages_client,
+        &permit, PathBuf::from(storage_directory), &hasher, &request, &expected_record_id_hash).await
+}
+
 /// Fetches and protects one bounded CloudKit page for the separately compile-
 /// gated, non-projecting shadow diagnostic. Semantic projection must use
 /// `cloud_sync_fetch_protected_page_under_writer_pause` instead.

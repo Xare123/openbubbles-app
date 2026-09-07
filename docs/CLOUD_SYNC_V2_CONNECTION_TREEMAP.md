@@ -492,6 +492,66 @@ or project this record while saving. The shared changes request leaves
 not a proven cause or permission to alter the protocol. Chat self-write feedback
 already worked, so test contrary evidence before adopting that explanation.
 
+#### Windows bounded feed comparison, September 7
+
+The `-MessageFeedProbe` Windows-only operation now makes a non-projecting
+comparison using the existing isolated account and protected checkpoints. It
+does not initialize IDS, send a message, save a record, change a checkpoint,
+or adopt a returned token. Protected-page probe leases are rolled back. The
+native wire comparison returns counts and fixed flags, not record contents,
+identifiers, credentials, or tokens. The production request defaults remain
+unchanged.
+
+Live result at 09:09Z:
+
+| Read | Records | Exact saved Message matches | Terminal |
+| --- | ---: | ---: | --- |
+| Current checkpoint, normal request | 0 | 0 | Yes |
+| Current checkpoint, explicitly include calling-device changes | 0 | 0 | Yes |
+| Current checkpoint, newest-first and explicitly include calling-device changes (09:13Z repeat) | 0 | 0 | Yes |
+| Fresh newest-first page, default self-change setting | 200 | 1 | No |
+| Fresh newest-first page, explicitly include calling-device changes | 200 | 1 | No |
+
+All successful native responses reported zero changed deltas, obligations,
+shares, or zone-attribute changes. The existing checkpoint remained unchanged.
+This proves **fresh feed visibility** of the saved Message as well as its
+previous exact-name readback. It does not prove that an independent Apple
+device rendered it or that incremental catch-up is correct. In particular,
+setting `ignoreCallingDeviceChanges=false` on the existing checkpoint did not
+recover it, so that is not a demonstrated fix.
+
+The pre-write ObjectBox snapshot could be opened, but its old protected token
+reference returned `invalidCheckpoint`. Superseded native token files are
+retired by the normal page lifecycle; an ObjectBox-only backup must not be
+described as a complete historical-cursor backup. Do not restore it over the
+live store or reset progress to force a passing read.
+
+Apple distinguishes the server change token (subsequent incremental fetches)
+from the client change token (the latest client-supplied write marker) in
+[recordZoneChangeTokensUpdatedBlock](https://developer.apple.com/documentation/cloudkit/ckfetchrecordzonechangesoperation/recordzonechangetokensupdatedblock).
+This rejects the suggestion to substitute `clientChangeToken` for the server
+continuation token merely because of the field names. It is public-API
+guidance, not a full specification of the private Manatee wire protocol.
+
+The 09:13Z repeat also returned no incremental change with the opposite
+requested direction. Neither a direction flip nor explicit self-change
+inclusion is an evidenced fix. The outbox confirmation path already commits a
+server record map and exact etag, independently of semantic inbox snapshots;
+do not confuse absence of a self-echo snapshot with absence of the durable
+write receipt or local ownership mapping.
+
+Next: audit checkpoint creation/advancement and local-save ownership before
+changing production behavior. Further controlled write qualification must
+preserve the opaque native checkpoint files as well as the ObjectBox snapshot
+so before/after causality can be tested. Avoid a full history rescan or another
+send just to mask this gap. `windows-message-feed-variants-status.json` and
+`windows-message-feed-direction-status.json` in the private replay evidence
+folder contain the content-free live results.
+
+Validation: 311 native tests and 1,902 Dart tests passed, as did launcher
+behavioral tests and analysis of the changed Windows Dart sources. No Android
+build, Alpha operation, remote repository push, or additional IDS send occurred.
+
 Validation: 310 native tests, 1,898 full CloudKit Dart/inspector tests, and
 15 additional real signed-library bridge cases passed. The subsequent expanded
 inspector has five passing cases. Diagnostics and evidence contain aggregates

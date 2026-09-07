@@ -528,6 +528,25 @@ try {
     Assert-True -Condition $stagedIdentityProcess.HasExited `
         -Message 'The verified staged Chat observation harness was not closed.'
 
+    foreach ($case in @(
+        @{ Operation = 'message-feed-probe'; Stage = 'message-feed-probe-complete' },
+        @{ Operation = 'local-write'; Stage = 'windows-local-write-pass-complete' }
+    )) {
+        $modeProcess = Start-TestHarnessProcess -Executable $testExecutable
+        $children.Add($modeProcess)
+        $modePath = Join-Path $testDirectory ($case.Operation + '-status.json')
+        Write-TestHarnessStatus -Path $modePath -LaunchId $firstLaunchId `
+            -ProcessId $modeProcess.Id -State finished -Stage $case.Stage
+        Wait-HarnessOperation -Process $modeProcess `
+            -ExpectedExecutable $testExecutable -StatusPath $modePath `
+            -LaunchStartedUtc ([datetime]::UtcNow.AddSeconds(-1)) `
+            -BaselineWriteUtc ([datetime]::MinValue) -ExpectedLaunchId $firstLaunchId `
+            -ExpectedOperation $case.Operation -TimeoutSeconds 5
+        $modeProcess.Refresh()
+        Assert-True -Condition $modeProcess.HasExited `
+            -Message 'The verified one-shot harness was not closed.'
+    }
+
     Write-Host 'Cloud Sync V2 Windows launcher behavioral tests passed.'
 }
 finally {

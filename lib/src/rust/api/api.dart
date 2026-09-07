@@ -300,6 +300,26 @@ Future<CloudSyncOutboundReconcileResult> cloudSyncReconcileChatCreate({
   input: input,
 );
 
+/// Windows-only read diagnostic. Compares bounded feed variants without
+/// persisting tokens, projecting records, or returning account content.
+Future<String> cloudSyncWindowsProbeMessageFeed({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required BigInt generation,
+  required String checkpointReference,
+  required String expectedRecordIdHash,
+}) => RustLib.instance.api.crateApiApiCloudSyncWindowsProbeMessageFeed(
+  cloudMessagesClient: cloudMessagesClient,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  generation: generation,
+  checkpointReference: checkpointReference,
+  expectedRecordIdHash: expectedRecordIdHash,
+);
+
 /// Fetches and protects one bounded CloudKit page for the separately compile-
 /// gated, non-projecting shadow diagnostic. Semantic projection must use
 /// `cloud_sync_fetch_protected_page_under_writer_pause` instead.

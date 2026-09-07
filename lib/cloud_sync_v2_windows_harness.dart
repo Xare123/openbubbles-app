@@ -36,6 +36,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 import 'cloud_sync_v2_windows_local_write.dart';
+import 'cloud_sync_v2_windows_feed_probe.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -105,7 +106,8 @@ enum CloudSyncV2WindowsHarnessOperation {
   projectionDetailViewer,
   chatIdentityObservation,
   stagedChatIdentityObservation,
-  localWrite;
+  localWrite,
+  messageFeedProbe;
 
   static CloudSyncV2WindowsHarnessOperation parse(List<String> arguments) {
     return CloudSyncV2WindowsHarnessLaunch.parse(arguments).operation;
@@ -498,6 +500,12 @@ final class CloudSyncV2WindowsHarnessLaunch {
             throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
           }
           operation = CloudSyncV2WindowsHarnessOperation.localWrite;
+          operationSeen = true;
+        case 'probe-message-feed':
+          if (operationSeen) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          operation = CloudSyncV2WindowsHarnessOperation.messageFeedProbe;
           operationSeen = true;
         case 'observe-chat-identity':
         case 'observe-staged-chat-identity':
@@ -1032,6 +1040,16 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         await _runChatIdentityObservation();
       case CloudSyncV2WindowsHarnessOperation.localWrite:
         await _runLocalWrite();
+      case CloudSyncV2WindowsHarnessOperation.messageFeedProbe:
+        final client = _activeClient;
+        if (client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+          throw StateError('cloud_sync_windows_feed_probe_client_missing');
+        }
+        await _setRuntimeStage('message-feed-probe', state: 'running');
+        final result = await cloudSyncWindowsProbeMessageFeed(
+          profile: fs.appDocDir, client: client);
+        await _setRuntimeStage('message-feed-probe-complete', state: 'finished',
+          detail: jsonEncode(result));
     }
   }
 

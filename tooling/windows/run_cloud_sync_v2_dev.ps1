@@ -25,6 +25,7 @@ param(
     [switch] $ChatIdentityObservation,
     [switch] $StagedChatIdentityObservation,
     [switch] $LocalWrite,
+    [switch] $MessageFeedProbe,
     [ValidateRange(30, 3600)]
     [int] $RunOnceTimeoutSeconds = 600,
     [ValidateRange(60, 7200)]
@@ -47,7 +48,8 @@ $selectedOperations = @(
         $ProjectionDetailViewer,
         $ChatIdentityObservation,
         $StagedChatIdentityObservation,
-        $LocalWrite
+        $LocalWrite,
+        $MessageFeedProbe
     ) | Where-Object { $_ }
 )
 if ($selectedOperations.Count -gt 1) {
@@ -545,7 +547,8 @@ function Wait-HarnessOperation {
             'attachment-reuse-probe',
             'chat-identity-observation',
             'staged-chat-identity-observation',
-            'local-write'
+            'local-write',
+            'message-feed-probe'
         )]
         [string] $ExpectedOperation,
         [Parameter(Mandatory)][int] $TimeoutSeconds
@@ -581,6 +584,9 @@ function Wait-HarnessOperation {
                 }
                 elseif ($ExpectedOperation -eq 'local-write') {
                     $status.stage -eq 'windows-local-write-pass-complete'
+                }
+                elseif ($ExpectedOperation -eq 'message-feed-probe') {
+                    $status.stage -eq 'message-feed-probe-complete'
                 }
                 else {
                     $status.stage -eq 'semantic-pull'
@@ -927,13 +933,16 @@ try {
     elseif ($LocalWrite) {
         $harnessArguments = @("local-write") + $harnessArguments
     }
+    elseif ($MessageFeedProbe) {
+        $harnessArguments = @("probe-message-feed") + $harnessArguments
+    }
     $startParameters = @{
         FilePath = $runner
         WorkingDirectory = $runnerDirectory
         PassThru = $true
         ArgumentList = $harnessArguments
     }
-    if ($ChatIdentityObservation -or $StagedChatIdentityObservation -or $LocalWrite) { $startParameters.WindowStyle = 'Hidden' }
+    if ($ChatIdentityObservation -or $StagedChatIdentityObservation -or $LocalWrite -or $MessageFeedProbe) { $startParameters.WindowStyle = 'Hidden' }
     $statusPath = Join-Path $profile "cloud-sync-v2\windows-harness-status.json"
     $statusBaselineWriteUtc = [datetime]::MinValue
     if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
@@ -954,7 +963,7 @@ try {
         throw "The Windows Cloud Sync V2 harness exited during startup."
     }
     Write-Host "Cloud Sync V2 Windows harness started (PID $($process.Id))."
-    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse -or $ChatIdentityObservation -or $StagedChatIdentityObservation -or $LocalWrite) {
+    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse -or $ChatIdentityObservation -or $StagedChatIdentityObservation -or $LocalWrite -or $MessageFeedProbe) {
         $operationTimeoutSeconds = if ($Drain) {
             $DrainTimeoutSeconds
         }
@@ -983,6 +992,8 @@ try {
                 'staged-chat-identity-observation'
             } elseif ($LocalWrite) {
                 'local-write'
+            } elseif ($MessageFeedProbe) {
+                'message-feed-probe'
             } else {
                 'run-once'
             }) `

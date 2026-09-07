@@ -3353,6 +3353,102 @@ fn decode_previous_checkpoint(
     }
 }
 
+fn windows_feed_probe_request(
+    zone: rustpush::cloudkit_proto::RecordZoneIdentifier,
+    token: Option<Vec<u8>>,
+    newest_first: bool,
+    include_self: bool,
+) -> rustpush::cloudkit::FetchRecordChangesOperation {
+    let mut operation = rustpush::cloudkit::FetchRecordChangesOperation::new_with_limit(
+        zone, token, &rustpush::cloudkit::NO_ASSETS, 200,
+    );
+    operation.0.newest_first = Some(newest_first);
+    if include_self { operation.0.ignore_calling_device_changes = Some(false); }
+    operation
+}
+
+/// Read-only comparison, invoked only by the Windows dev-profile API. It does
+/// not protect, journal, retire, or adopt any returned token or record.
+pub(crate) async fn cloud_sync_windows_probe_feed(
+    client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    permit: &CloudKitReadAuthenticationPermit<'_>,
+    directory: PathBuf,
+    hasher: &CloudSemanticIdentifierHasher,
+    request: &CloudNativeFetchRequest<'_>,
+    target: &str,
+) -> anyhow::Result<String> {
+    let store = PlatformCloudNativeProtectedStore::new(directory);
+    let token = decode_previous_checkpoint(&store, request)
+        .map_err(|_| anyhow::anyhow!("cloud_sync_windows_feed_probe_checkpoint_invalid"))?;
+    let container = client.get_cached_container_for_read_authentication(permit).await
+        .map_err(|_| anyhow::anyhow!("cloud_sync_windows_feed_probe_auth_failed"))?;
+    let zone = container.private_zone("messageManateeZone".to_owned());
+    let mut results = Vec::new();
+    for (label, continuation, newest, include_self) in [
+        ("current_include_self", token.clone(), false, true),
+        ("current_newest_include_self", token, true, true),
+        ("newest_default", None, true, false),
+        ("newest_include_self", None, true, true),
+    ] {
+        let active = client.get_cached_container_for_read_authentication(permit).await
+            .map_err(|_| anyhow::anyhow!("cloud_sync_windows_feed_probe_auth_failed"))?;
+        if !Arc::ptr_eq(&active, &container) {
+            return Err(anyhow::anyhow!("cloud_sync_windows_feed_probe_auth_failed"));
+        }
+        let operation = windows_feed_probe_request(zone.clone(), continuation, newest, include_self);
+        let response = tokio::time::timeout(FETCH_DEADLINE,
+            container.perform_semantic_read_only(&rustpush::cloudkit::CloudKitSession::new(), operation),
+        ).await;
+        let (_, response) = match response {
+            Ok(Ok(response)) => response,
+            _ => {
+                results.push(serde_json::json!({"mode": label, "failed": true}));
+                continue;
+            }
+        };
+        let active = client.get_cached_container_for_read_authentication(permit).await
+            .map_err(|_| anyhow::anyhow!("cloud_sync_windows_feed_probe_auth_failed"))?;
+        if !Arc::ptr_eq(&active, &container) {
+            return Err(anyhow::anyhow!("cloud_sync_windows_feed_probe_auth_failed"));
+        }
+        if response.change.len() > 200 {
+            return Err(anyhow::anyhow!("cloud_sync_windows_feed_probe_page_oversized"));
+        }
+        let matches = response.change.iter().filter(|change| change.identifier.as_ref()
+            .and_then(|id| id.value.as_ref()).and_then(|value| value.name.as_deref())
+            .is_some_and(|name| hasher.server_record_id_hash(name) == target)).count();
+        results.push(serde_json::json!({"mode": label, "failed": false,
+            "changes": response.change.len(), "target_matches": matches,
+            "status": response.status(), "deltas": response.changed_deltas.len(),
+            "obligations": response.sync_obligations.len(),
+            "shares": response.changed_shares.len(),
+            "pending_archived": response.pending_archived_records,
+            "zone_attributes": response.zone_attributes_changes.is_some()}));
+    }
+    Ok(serde_json::json!({"reads": results}).to_string())
+}
+
+#[cfg(test)]
+mod windows_feed_probe_tests {
+    use super::*;
+
+    #[test]
+    fn cloud_sync_windows_feed_probe_changes_only_explicit_read_options() {
+        let zone = Default::default();
+        let ordinary = windows_feed_probe_request(zone, Some(vec![1, 2]), false, false);
+        assert_eq!(ordinary.0.sync_continuation_token, Some(vec![1, 2]));
+        assert_eq!(ordinary.0.ignore_calling_device_changes, None);
+        assert_eq!(ordinary.0.newest_first, Some(false));
+        assert_eq!(ordinary.0.max_changes, Some(200));
+        assert_eq!(ordinary.0.assets_to_download.unwrap().all_assets, Some(false));
+        let probe = windows_feed_probe_request(Default::default(), None, true, true);
+        assert_eq!(probe.0.sync_continuation_token, None);
+        assert_eq!(probe.0.ignore_calling_device_changes, Some(false));
+        assert_eq!(probe.0.newest_first, Some(true));
+        assert_eq!(probe.0.requested_changes_types, ordinary.0.requested_changes_types);
+    }
+}
+
 pub(crate) async fn cloud_sync_fetch_protected_page(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     read_authentication_permit: Option<&CloudKitReadAuthenticationPermit<'_>>,
