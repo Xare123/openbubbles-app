@@ -10,6 +10,21 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('native outbound errors retain only fixed reviewed codes', () {
+    for (final suffix in [
+      'invalid_scope', 'invalid_request', 'unsupported_message',
+      'malformed_message', 'oversized_message', 'protected_storage',
+      'binding_mismatch', 'native_auth_unavailable', 'native_prepare_failed',
+      'already_consumed', 'correlation_mismatch', 'mutation_capability_invalid',
+    ]) {
+      final code = 'cloud_sync_outbound_$suffix';
+      expect(cloudSyncV2SafeFailureCode(CloudSyncFailure(
+        category: CloudFailureCategory.authorization, safeCode: code)), code);
+      expect(cloudSyncV2SafeFailureCode(CloudSyncFailure(
+        category: CloudFailureCategory.authorization, safeCode: '${code}_private_token')),
+        'cloud_sync_unknown_failure');
+    }
+  });
   test('staged Chat evidence errors stay actionable without exposing content', () {
     for (final code in ['cloud_sync_chat_identity_candidate_invalid',
       'cloud_sync_chat_identity_candidate_changed', 'cloud_sync_chat_identity_evidence_required',

@@ -1684,6 +1684,28 @@ fn cloud_sync_outbound_failure_result(
     }
 }
 
+// Never format a PushError here: delegate/plist/HTTP errors may contain
+// credentials or record contents. Preserve a bounded, closed vocabulary.
+fn cloud_sync_writer_preparation_failure_code(mut error: &PushError) -> &'static str {
+    for _ in 0..8 {
+        match error {
+            PushError::DoNotRetry(inner) => error = inner,
+            PushError::BatchError(inner) => error = inner,
+            PushError::ResourceFailure(inner) => error = &inner.error,
+            PushError::TokenMissing => return "token-missing",
+            PushError::CloudKitWarmAuthenticationRequired => return "warm-auth-required",
+            PushError::DelegateLoginFailed(_, _, _) => return "delegate-login-failed",
+            PushError::AuthError(_) => return "authentication-rejected",
+            PushError::UnauthorizedAccountError => return "account-identity-unavailable",
+            PushError::DecryptionKeyNotFound(_) | PushError::CloudKeyNotFound { .. } => {
+                return "pcs-key-missing";
+            }
+            _ => return cloud_sync_failure_category(error).1,
+        }
+    }
+    "error-wrapper-limit"
+}
+
 /// Converts one transient outgoing iMessage into a protected, crash-recoverable
 /// outbox payload and stable server-record mapping. Message content and the raw
 /// server record name remain native-only.
@@ -1715,7 +1737,10 @@ pub async fn cloud_sync_stage_outbound_message(
         .await
     {
         Ok(binding) => binding,
-        Err(_) => {
+        Err(error) => {
+            warn!("Cloud Sync writer preparation failed kind=message cause={}",
+                cloud_sync_writer_preparation_failure_code(&error));
+            log::logger().flush();
             return cloud_sync_outbound_failure_result(
                 CloudSyncOutboundSafeCode::NativeAuthUnavailable,
             )
@@ -1802,7 +1827,10 @@ pub async fn cloud_sync_stage_outbound_chat(
         .await
     {
         Ok(binding) => binding,
-        Err(_) => {
+        Err(error) => {
+            warn!("Cloud Sync writer preparation failed kind=chat cause={}",
+                cloud_sync_writer_preparation_failure_code(&error));
+            log::logger().flush();
             return cloud_sync_outbound_failure_result(
                 CloudSyncOutboundSafeCode::NativeAuthUnavailable,
             )
@@ -11126,6 +11154,29 @@ fn cloud_sync_failure_category(error: &PushError) -> (CloudSyncRawFailureCategor
 #[cfg(test)]
 mod cloud_sync_failure_mapping_tests {
     use super::*;
+
+    #[test]
+    fn writer_preparation_diagnostics_never_format_private_error_contents() {
+        let cases = [
+            (PushError::TokenMissing, "token-missing"),
+            (PushError::CloudKitWarmAuthenticationRequired, "warm-auth-required"),
+            (PushError::DelegateLoginFailed("private-delegate".into(), 123,
+                "private-response".into()), "delegate-login-failed"),
+            (PushError::AuthError(Value::String("private-token".into())),
+                "authentication-rejected"),
+            (PushError::CloudKeyNotFound { zone: "private-zone".into(), class: "private-class".into() },
+                "pcs-key-missing"),
+            (PushError::CloudKitHttpError { status: 503, retry_after: None }, "http-server"),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(cloud_sync_writer_preparation_failure_code(&error), expected);
+            let wrapped = PushError::DoNotRetry(Box::new(PushError::BatchError(Arc::new(error))));
+            assert_eq!(cloud_sync_writer_preparation_failure_code(&wrapped), expected);
+        }
+        let mut deep = PushError::TokenMissing;
+        for _ in 0..8 { deep = PushError::DoNotRetry(Box::new(deep)); }
+        assert_eq!(cloud_sync_writer_preparation_failure_code(&deep), "error-wrapper-limit");
+    }
 
     #[test]
     fn continuation_no_progress_is_nonretryable_protocol_failure() {
