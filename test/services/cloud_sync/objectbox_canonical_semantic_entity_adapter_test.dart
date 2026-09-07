@@ -1158,6 +1158,134 @@ void main() {
     }
   });
 
+  test('preserves edit history when the current message is shorter', () {
+    const chatIdentifier = 'iMessage;-;shortening-edit-chat';
+    const originalText = 'Synthetic original message 😀';
+    const currentText = 'OK';
+    final originalDate = testEpoch.add(const Duration(milliseconds: 123));
+    final editedDate = originalDate.add(const Duration(seconds: 5));
+    final chatId = store.box<Chat>().put(
+      Chat(guid: 'chat-guid', chatIdentifier: chatIdentifier, style: 45),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'chat-guid',
+      chatIdentifier: chatIdentifier,
+      chatId: chatId,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    CloudSemanticAttributedBody attributedBody(String text) =>
+        CloudSemanticAttributedBody(
+          text: text,
+          runs: [
+            CloudSemanticTextRun(
+              startUtf16: 0,
+              lengthUtf16: text.length,
+              messagePart: 0,
+              attachmentCanonicalGuid: null,
+              attachmentLogicalKeyHash: null,
+              mentionHandle: null,
+              audioTranscript: null,
+              textEffect: null,
+              bold: null,
+              italic: null,
+              strikethrough: null,
+              underline: null,
+            ),
+          ],
+        );
+
+    // Both the original range and its historical run exceed the current body.
+    // They describe the original text, not offsets into the shortened message.
+    expect(originalText.length, greaterThan(currentText.length));
+    final payload = CloudMessageEntityPayload(
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+      chatAliasKeyHash: _testChatAliasHash(chatIdentifier),
+      chatIdentifier: chatIdentifier,
+      body: currentText,
+      senderHandle: 'mailto:sender@example.invalid',
+      createdAt: originalDate,
+      service: CloudSemanticService.iMessage,
+      knownFlags: _messageFlags(fromMe: false),
+      attributedBodiesState: CloudSemanticFieldState.value,
+      attributedBodies: [attributedBody(currentText)],
+      editsState: CloudSemanticFieldState.value,
+      edits: [
+        CloudSemanticMessageEdit(
+          part: 0,
+          revision: 0,
+          bodies: [attributedBody(originalText)],
+          modifiedAt: originalDate,
+          originalRangeLocation: 0,
+          originalRangeLength: originalText.length,
+        ),
+        CloudSemanticMessageEdit(
+          part: 0,
+          revision: 1,
+          bodies: [attributedBody(currentText)],
+          modifiedAt: editedDate,
+          originalRangeLocation: 0,
+          originalRangeLength: originalText.length,
+        ),
+      ],
+    );
+
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: payload,
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+
+    // Read back from ObjectBox to cover summary serialization as well as apply.
+    final message = store.box<Message>().getAll().single;
+    expect(message.text, currentText);
+    expect(message.dateCreated?.toUtc(), originalDate);
+    expect(message.attributedBody.single.string, currentText);
+    expect(message.attributedBody.single.runs.single.range, [
+      0,
+      currentText.length,
+    ]);
+    final summary = message.messageSummaryInfo.single;
+    expect(summary.editedParts, [0]);
+    expect(summary.retractedParts, isEmpty);
+    expect(summary.originalTextRange, {
+      '0': [0, originalText.length],
+    });
+    final history = summary.editedContent['0']!;
+    expect(history, hasLength(2));
+    expect(history.first.text!.values.single.string, originalText);
+    expect(history.first.date, originalDate.millisecondsSinceEpoch.toDouble());
+    expect(history.first.text!.values.single.runs.single.range, [
+      0,
+      originalText.length,
+    ]);
+    expect(history.last.text!.values.single.string, currentText);
+    expect(history.last.date, editedDate.millisecondsSinceEpoch.toDouble());
+    expect(history.last.text!.values.single.runs.single.range, [
+      0,
+      currentText.length,
+    ]);
+
+    // The presentation model must also use each version's own text ranges.
+    final part = message.buildMessageParts().single;
+    expect(part.text, currentText);
+    expect(part.edits.single.text, originalText);
+  });
+
   for (final cloudAliasIdentifier in const [
     'cloud-group-id',
     'iMessage;+;cloud-group-id',

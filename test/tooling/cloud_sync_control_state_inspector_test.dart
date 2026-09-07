@@ -54,7 +54,7 @@ void main() {
       final before = sha256.convert(await data.readAsBytes());
       final report = await inspectCloudSyncControlState(directory);
       expect(sha256.convert(await data.readAsBytes()), before);
-      expect(report['schema'], 6);
+      expect(report['schema'], 9);
       final group = (report['inboxGroups'] as List).single as Map;
       expect(group['zones'], ['chatManateeZone']);
       expect(group['rows'], 7);
@@ -70,4 +70,38 @@ void main() {
       expect(jsonEncode(report), isNot(contains('private-')));
     },
   );
+
+  test('distinguishes rendered unsends from genuinely blank messages', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'cloud-inspector-retraction-test-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final db = await openStore(directory: directory.path);
+    try {
+      final retraction = MessageSummaryInfo.empty()..retractedParts = [0];
+      db.box<Message>().putMany([
+        Message(guid: 'private-unsent', messageSummaryInfo: [retraction]),
+        Message(guid: 'private-blank'),
+        Message(
+          guid: 'private-unrendered-summary',
+          messageSummaryInfo: [MessageSummaryInfo.empty(), retraction],
+        ),
+      ]);
+    } finally {
+      db.close();
+    }
+    final data = File('${directory.path}${Platform.pathSeparator}data.mdb');
+    final before = sha256.convert(await data.readAsBytes());
+    final report = await inspectCloudSyncControlState(directory);
+    expect(sha256.convert(await data.readAsBytes()), before);
+    final shapes = report['legacyChatShapeCounts'] as Map;
+    // Keep the raw content count comparable with older inspector reports.
+    expect(shapes['visibleMessagesWithoutRenderableContent'], 3);
+    expect(shapes['messagesWithRetractionMetadata'], 2);
+    expect(shapes['messagesWithUnrenderedRetractions'], 1);
+    expect(shapes['messagesWithRetractionPartBuildFailure'], 0);
+    expect(shapes['contentlessMessagesWithRetractionPlaceholder'], 1);
+    expect(shapes['visibleMessagesWithoutContentOrRetraction'], 2);
+    expect(jsonEncode(report), isNot(contains('private-')));
+  });
 }

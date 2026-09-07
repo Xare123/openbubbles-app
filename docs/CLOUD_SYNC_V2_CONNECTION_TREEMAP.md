@@ -351,6 +351,84 @@ hardware identity, a new login, public log uploads, or internet-exposed ADB.
 
 ### Edit-date and satellite-service evidence, September 6
 
+**Follow-up, original summary ranges:** two native assumptions rejected valid
+records: all `otr` parts had to be in `ep`, and original range endpoints had to
+fit the current message body. Independent implementation evidence distinguishes
+the full original-part catalog from the subset carrying edit history. A
+temporary Windows-only probe confirmed both conditions in retained records;
+for a shortened message it also confirmed the historical range length exactly
+matched the first edit-history body. The probe emitted only bounded closed-set
+reason codes, not text/identifiers, and was removed from source after the run.
+The first probe used an info level filtered by the bounded Windows logger;
+its missing output was not treated as negative evidence. The second probe
+confirmed reason codes 1, 3 and 5 at 03:21:51Z September 7.
+
+Synthetic shortening and untouched-part tests failed before the repair
+(`windows-native-tests/20260906-201929-db46addb/tests.log`). The source repair
+removes those two unsupported assumptions while retaining decimal-key,
+overflow, size, edit-part consistency and edit/retraction conflict checks.
+Untouched ranges do not create edits or clear existing state. The downstream
+ObjectBox regression independently stores and reads both original/current
+versions and their dates, then builds display parts without indexing current
+text using old ranges. No Dart production changes were needed. Agent Lorentz's
+single test-file change was reviewed and retained; the agent was closed and
+shutdown verified. No dedicated worktree or logs were created; supported
+session deletion was unavailable, so shared session storage was not altered.
+
+The repaired native converter passed **295 CloudKit tests**, including the
+two formerly failing cases and the untouched-range/overflow counterexamples.
+The complete **1,737-test CloudKit Dart suite** passed, and the focused adapter
+analyzer was clean. The temporary shape probe is absent from the qualified
+source and rebuilt executable.
+
+The Windows replay completed at 03:33:34Z September 7. Its initial pass plus
+three bounded local dependency rounds recovered **134 ordinary Message,
+7 Reaction and 41 Attachment records**, with zero newly fetched records.
+The durable database contains 699 Chats, 13,642 Message rows (including 640
+reactions), 2,417 Attachments, and 16,758 matching snapshots/maps/replay rows.
+All 640 reactions retain exactly one same-Chat parent with the reaction flag;
+all 546 Chats with visible history have the correct latest-message date.
+There are 318 messages with edit history, 684 history entries with text, zero
+invalid history dates/Unicode, and zero edits preceding message creation.
+Outbox remains zero; remote saves and deletes remain disabled. Reports:
+`obcs2-semantic-1788751740181354.json` (initial) and
+`obcs2-semantic-1788752013746597.json` (local rounds).
+
+The first inspection appeared to introduce 60 blank messages. Instead of
+accepting a row-count increase as success, inspection exercised the real
+`Message.buildMessageParts` path: all 60 have valid retraction metadata and
+produce unsent placeholders. The same one pre-existing non-CloudKit blank
+remains. Inspector schema 9 retains the old raw content counts and adds
+separate retraction/placeholder/failure counts. A synthetic later-summary
+counterexample ensures metadata alone is not counted as rendering success.
+Three multipart retraction builds remain unverified in the offline inspector;
+an exception there is reported separately, not called an installed-app defect.
+The inspector test's stale schema-6 assertion was also updated. Both tooling
+tests pass and analyzer is clean. The original database hash stayed unchanged
+by inspection. These checks are not a Pixel UI qualification or a write gate.
+
+The same-binary restart/repeat finished at 03:39:56Z September 7: zero fetched
+or applied records in every zone, one local round only, and unchanged database
+counts. Its final report is `obcs2-semantic-1788752395169627.json`; the initial
+report is `obcs2-semantic-1788752308908559.json`. The single-round diagnostics
+now report one malformed-message-summary rejection rather than 137 before
+this repair. That remaining record is still retained, not guessed or dropped.
+The final schema-9 inspection reports 65 messages with retraction metadata,
+60 contentless messages with proven unsent placeholders, zero successfully
+built messages missing their retraction placeholders, and three offline
+part-build failures still requiring app-level verification. Evidence remains
+under `evidence/windows-replay-20260906/summary-range-*`. Both Windows processes
+exited; C: had 58.91 GiB free. No APK, remote save/send/delete, Alpha change or
+account reset was performed.
+
+Next critical path: qualify conversation identity and ordinary-message
+upload/readback, including retained saved-Chat collision and restart cases.
+Do not spend another broad schema pass merely trying to make every retained
+historical record project. Complete old-history projection is not evidence of
+correct writing; the remaining malformed record does not authorize weakening
+the fresh-Chat identity barrier. Preserve excluded and unresolved data while
+closing that specific safety contract.
+
 A bounded, temporary Windows-only shape probe inspected three Chat service
 labels and four edit-history numeric arrays, never message bodies. All three
 previously unrecognized Chat services are exactly `iMessageLite`. Independent

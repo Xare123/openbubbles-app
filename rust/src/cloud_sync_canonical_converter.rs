@@ -496,7 +496,6 @@ struct DecodedRunAttributes {
 
 struct DecodedAttributedContent {
     field: CloudCanonicalField<Vec<CloudCanonicalAttributedBody>>,
-    maximum_utf16_length: Option<u32>,
 }
 
 struct DecodedMessageSummary {
@@ -1296,7 +1295,6 @@ fn decode_attributed_content(
     let Some(raw) = raw else {
         return Ok(DecodedAttributedContent {
             field: CloudCanonicalField::Absent,
-            maximum_utf16_length: None,
         });
     };
     if raw.is_empty() {
@@ -1315,25 +1313,21 @@ fn decode_attributed_content(
     if values.is_empty() {
         return Ok(DecodedAttributedContent {
             field: CloudCanonicalField::ExplicitClear,
-            maximum_utf16_length: Some(0),
         });
     }
     let mut bodies = Vec::with_capacity(values.len());
-    let mut maximum_utf16_length = 0u32;
     for value in values {
         let BoundedStreamValue::Object(Some(object)) = value else {
             return Err(CloudCanonicalConversionOutcome::Quarantined(
                 CloudCanonicalQuarantineReason::MalformedAttributedBody,
             ));
         };
-        let (body, utf16_length) =
+        let (body, _) =
             decode_attributed_body_object(context, message_guid, &decoder, object)?;
-        maximum_utf16_length = maximum_utf16_length.max(utf16_length);
         bodies.push(body);
     }
     Ok(DecodedAttributedContent {
         field: CloudCanonicalField::Value(bodies),
-        maximum_utf16_length: Some(maximum_utf16_length),
     })
 }
 
@@ -1385,7 +1379,6 @@ fn decode_message_summary(
     context: &CloudCanonicalConversionContext<'_>,
     message_guid: &str,
     raw: Option<&[u8]>,
-    original_maximum_utf16_length: Option<u32>,
 ) -> Result<DecodedMessageSummary, CloudCanonicalConversionOutcome> {
     let Some(raw) = raw else {
         return Ok(DecodedMessageSummary {
@@ -1486,14 +1479,11 @@ fn decode_message_summary(
             parse_decimal_part(&wire_part).ok_or(CloudCanonicalConversionOutcome::Quarantined(
                 CloudCanonicalQuarantineReason::MalformedMessageSummary,
             ))?;
-        if !declared_edit_parts.contains(&part)
-            || range.lo.checked_add(range.le).is_none()
-            || original_maximum_utf16_length.is_some_and(|maximum| {
-                range
-                    .lo
-                    .checked_add(range.le)
-                    .is_none_or(|end| end > maximum)
-            })
+        // `otr` describes original message parts, including untouched parts.
+        // Its historical offsets do not index the current body: a valid edit
+        // can shorten the text. Validate arithmetic without inventing an edit
+        // for every range. Unprojected range metadata stays in protected bytes.
+        if range.lo.checked_add(range.le).is_none()
             || original_ranges.insert(part, (range.lo, range.le)).is_some()
         {
             return Err(CloudCanonicalConversionOutcome::Quarantined(
@@ -2675,17 +2665,10 @@ pub(crate) fn convert_message(
             Ok(value) => value,
             Err(outcome) => return outcome,
         };
-    let original_maximum_utf16_length = attributed_content.maximum_utf16_length.or_else(|| {
-        proto
-            .text
-            .as_ref()
-            .and_then(|value| u32::try_from(value.encode_utf16().count()).ok())
-    });
     let message_summary = match decode_message_summary(
         context,
         &message.guid,
         proto.message_summary_info.as_deref(),
-        original_maximum_utf16_length,
     ) {
         Ok(value) => value,
         Err(outcome) => return outcome,
@@ -3861,6 +3844,130 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![1_720_000_000_300, 1_720_000_000_100, 1_720_000_000_200]
         );
+    }
+
+    #[test]
+    fn summary_original_range_survives_a_shortened_current_body() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let original = "A longer original message";
+        let mut summary = MessageSummaryInfo {
+            ep: vec![0],
+            ..Default::default()
+        };
+        summary.ec.insert(
+            "0".to_owned(),
+            vec![
+                WireMessageEdit {
+                    t: plain_encoded_attributed_body(original),
+                    d: 779_000_100.0,
+                    bcg: None,
+                },
+                WireMessageEdit {
+                    t: plain_encoded_attributed_body("short"),
+                    d: 779_000_110.0,
+                    bcg: None,
+                },
+            ],
+        );
+        let original_length = original.encode_utf16().count() as u32;
+        summary.otr.insert(
+            "0".to_owned(),
+            MessageEditRange { lo: 0, le: original_length },
+        );
+        let mut message = normal_message(Some("short"));
+        message.msg_proto.0.attributed_body = Some(plain_encoded_attributed_body("short"));
+        message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
+        let outcome = convert_message(
+            &context(&hasher, "server-shortened-edit", None),
+            &message_presence(),
+            &message,
+        );
+        let payload = message_payload(&outcome);
+        assert_eq!(payload.edit_count(), 2);
+        for edit in payload.edits() {
+            assert_eq!(edit.original_range(), Some((0, original_length)));
+        }
+    }
+
+    #[test]
+    fn summary_original_ranges_can_include_unedited_parts_without_inventing_edits() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut summary = MessageSummaryInfo {
+            ep: vec![1],
+            ..Default::default()
+        };
+        summary.ec.insert(
+            "1".to_owned(),
+            vec![WireMessageEdit {
+                t: plain_encoded_attributed_body("tail"),
+                d: 779_000_100.0,
+                bcg: None,
+            }],
+        );
+        summary.otr.insert("0".to_owned(), MessageEditRange { lo: 0, le: 6 });
+        summary.otr.insert("1".to_owned(), MessageEditRange { lo: 6, le: 4 });
+        let mut message = normal_message(Some("prefix tail"));
+        message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
+        let outcome = convert_message(
+            &context(&hasher, "server-partial-edit", None),
+            &message_presence(),
+            &message,
+        );
+        let payload = message_payload(&outcome);
+        assert_eq!(payload.edit_count(), 1);
+        assert_eq!(payload.edits()[0].part(), 1);
+        assert_eq!(payload.edits()[0].original_range(), Some((6, 4)));
+
+        summary.otr.insert(
+            "0".to_owned(),
+            MessageEditRange { lo: u32::MAX, le: 1 },
+        );
+        message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-range-overflow", None),
+                &message_presence(),
+                &message,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedMessageSummary
+            )
+        );
+    }
+
+    #[test]
+    fn summary_original_ranges_alone_do_not_invent_edit_or_clear_state() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut summary = MessageSummaryInfo::default();
+        summary.otr.insert("0".to_owned(), MessageEditRange { lo: 0, le: 4 });
+        let mut message = normal_message(Some("base"));
+        message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
+        let outcome = convert_message(
+            &context(&hasher, "server-original-only", None),
+            &message_presence(),
+            &message,
+        );
+        let payload = message_payload(&outcome);
+        assert_eq!(payload.edit_count(), 0);
+        assert_eq!(
+            payload.edits_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Absent
+        );
+        for invalid_part in ["-1", "01", "4294967296"] {
+            summary.otr.clear();
+            summary.otr.insert(invalid_part.to_owned(), MessageEditRange { lo: 0, le: 4 });
+            message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
+            assert_eq!(
+                convert_message(
+                    &context(&hasher, "server-invalid-original-part", None),
+                    &message_presence(),
+                    &message,
+                ),
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedMessageSummary
+                )
+            );
+        }
     }
 
     #[test]

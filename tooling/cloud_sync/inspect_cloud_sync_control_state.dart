@@ -178,7 +178,7 @@ Map<String, Object?> _inspectStore(Store store) {
   );
 
   return <String, Object?>{
-    'schema': 8,
+    'schema': 9,
     'canonicalCounts': <String, int>{
       'chats': store.box<Chat>().count(),
       'messages': store.box<Message>().count(),
@@ -600,6 +600,11 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
   var editHistoryEntriesWithInvalidTimestamp = 0;
   var editHistoryEntriesBeforeMessageCreation = 0;
   var editHistoryEntriesWithInvalidUnicode = 0;
+  var messagesWithRetractionMetadata = 0;
+  var messagesWithUnrenderedRetractions = 0;
+  var messagesWithRetractionPartBuildFailure = 0;
+  var contentlessMessagesWithRetractionPlaceholder = 0;
+  var visibleMessagesWithoutContentOrRetraction = 0;
   var eventMessages = 0;
   var messagesWithoutRenderableContent = 0;
   var visibleMessagesWithoutRenderableContent = 0;
@@ -663,6 +668,34 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
       }
     }
     if (hasEditHistory) messagesWithEditHistory += 1;
+    final retractedParts = message.messageSummaryInfo
+        .expand((summary) => summary.retractedParts)
+        .toSet();
+    var hasRetractionPlaceholder = false;
+    if (retractedParts.isNotEmpty) {
+      messagesWithRetractionMetadata += 1;
+      var partBuildFailed = false;
+      // Exercise the same part builder used by the conversation view. Merely
+      // having retraction metadata must not excuse an unrenderable blank row.
+      try {
+        final renderedParts = message.buildMessageParts()
+            .where((part) => part.isUnsent)
+            .map((part) => part.part)
+            .toSet();
+        hasRetractionPlaceholder = retractedParts.every(
+          (part) => part >= 0 && renderedParts.contains(part),
+        );
+      } catch (_) {
+        // Some multipart attachment paths require live presentation services.
+        // A failed offline build is unverified, not a successful placeholder
+        // or proof that the installed application cannot render the row.
+        partBuildFailed = true;
+        messagesWithRetractionPartBuildFailure += 1;
+      }
+      if (!hasRetractionPlaceholder && !partBuildFailed) {
+        messagesWithUnrenderedRetractions += 1;
+      }
+    }
     if (chatId != 0 && createdAt != null && message.dateDeleted == null) {
       final previous = latestVisibleMessageDateByChatId[chatId];
       if (previous == null || createdAt.isAfter(previous)) {
@@ -757,8 +790,14 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
         !isAssociated &&
         !isEvent) {
       messagesWithoutRenderableContent += 1;
+      if (hasRetractionPlaceholder) {
+        contentlessMessagesWithRetractionPlaceholder += 1;
+      }
       if (message.dateDeleted == null) {
         visibleMessagesWithoutRenderableContent += 1;
+        if (!hasRetractionPlaceholder) {
+          visibleMessagesWithoutContentOrRetraction += 1;
+        }
       } else {
         deletedMessagesWithoutRenderableContent += 1;
       }
@@ -937,6 +976,14 @@ Map<String, int> _inspectLegacyChatShapes(Store store) {
         editHistoryEntriesBeforeMessageCreation,
     'editHistoryEntriesWithInvalidUnicode':
         editHistoryEntriesWithInvalidUnicode,
+    'messagesWithRetractionMetadata': messagesWithRetractionMetadata,
+    'messagesWithUnrenderedRetractions': messagesWithUnrenderedRetractions,
+    'messagesWithRetractionPartBuildFailure':
+        messagesWithRetractionPartBuildFailure,
+    'contentlessMessagesWithRetractionPlaceholder':
+        contentlessMessagesWithRetractionPlaceholder,
+    'visibleMessagesWithoutContentOrRetraction':
+        visibleMessagesWithoutContentOrRetraction,
     'eventMessages': eventMessages,
     'messagesWithoutRenderableContent': messagesWithoutRenderableContent,
     'visibleMessagesWithoutRenderableContent':
