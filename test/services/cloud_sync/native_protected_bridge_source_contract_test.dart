@@ -103,6 +103,12 @@ void main() {
         lessThan(stagedComposition.indexOf('NativeProtectedCloudSyncTransport(')));
       expect(stagedComposition, contains('await transport.rollbackOutboundLease(staged.leaseReference)'));
       expect(stagedComposition, contains('CloudSyncWriteChatIdentitySession('));
+      // Restored credentials are cold in a fresh Windows process. Establish
+      // read authentication under the interlock BEFORE capturing its identity.
+      expect(stagedComposition.indexOf('interlock.runExclusive('),
+        lessThan(stagedComposition.indexOf('await authBinding.ensureReadAuthentication(')));
+      expect(stagedComposition.indexOf('await authBinding.ensureReadAuthentication('),
+        lessThan(stagedComposition.indexOf('await authProvider.capture()')));
       for (final forbidden in ['commitOutboundLease(', 'stageOutboundMessage(',
         'admitProtectedOutbound', 'CloudSyncEngine(', 'flushOutbox(']) {
         expect(stagedComposition, isNot(contains(forbidden)));

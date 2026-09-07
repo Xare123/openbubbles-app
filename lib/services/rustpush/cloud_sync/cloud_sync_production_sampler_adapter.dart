@@ -1051,12 +1051,21 @@ Future<T> cloudSyncObserveStagedChat<T>({
   final authProvider = CloudSyncProductionAuthSnapshotProvider(
     readActiveClient: readActiveClient, nativeAuthBinding: authBinding,
     privateStorageDirectory: privateStorageDirectory);
-  final auth = await authProvider.capture();
-  if (auth == null) throw StateError('account_unavailable');
   final durable = ObjectBoxCloudSyncStore(store: objectBox,
     protector: RustCloudSyncProtector(storageDirectory: privateStorageDirectory));
   final interlock = CloudKitOperationInterlock(
     privateStorageDirectory: privateStorageDirectory, fenceStore: durable);
+  return interlock.runExclusive(kind: CloudKitOperationKind.v2ReadWrite, action: () async {
+  // As in the working semantic reader: restored credentials are cold until
+  // ensureReadAuthentication establishes the native account binding. Taking
+  // the snapshot first reports identity_mismatch on a valid fresh process.
+  final client = readActiveClient();
+  if (client == null) throw StateError('account_unavailable');
+  await authBinding.ensureReadAuthentication(cloudMessagesClient: client,
+    privateStorageDirectory: privateStorageDirectory);
+  if (!identical(client, readActiveClient())) throw StateError('account_changed');
+  final auth = await authProvider.capture();
+  if (auth == null) throw StateError('account_unavailable');
   final transport = NativeProtectedCloudSyncTransport(
     cloudMessagesClient: auth.cloudMessagesClient, storageDirectory: privateStorageDirectory,
     protectedStoreIdentity: auth.protectedStoreIdentity);
@@ -1080,8 +1089,7 @@ Future<T> cloudSyncObserveStagedChat<T>({
     warmReadAuthentication: (token) => authBinding.warmReadAuthenticationUnderWriterPause(
       cloudMessagesClient: auth.cloudMessagesClient, pauseToken: token));
   try {
-    return await interlock.runExclusive(kind: CloudKitOperationKind.v2ReadWrite,
-      action: () => transport.runOutboundAdmissionExclusive(() async {
+    return await transport.runOutboundAdmissionExclusive(() async {
         await validate();
         final staged = await transport.stageOutboundChat(scope, chat: candidate);
         try {
@@ -1089,10 +1097,11 @@ Future<T> cloudSyncObserveStagedChat<T>({
         } finally {
           await transport.rollbackOutboundLease(staged.leaseReference);
         }
-      }));
+      });
   } finally {
     await transport.quiesceNativeOperations();
   }
+  });
 }
 
 /// Production composition for the separately gated one-text outbound canary.
