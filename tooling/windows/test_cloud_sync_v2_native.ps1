@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^(cloud_sync_[A-Za-z0-9_:]*|desktop_native_logging::tests)$')]
+    [ValidatePattern('^(cloud_sync_[A-Za-z0-9_:]*|cloud_message[A-Za-z0-9_:]*|desktop_native_logging::tests)$')]
     [string] $TestFilter = 'cloud_sync_',
+    [ValidateSet('rust_lib_bluebubbles', 'rustpush')]
+    [string] $TestPackage = 'rust_lib_bluebubbles',
     [string] $CargoHome = 'C:\Codex\Toolchains\cargo',
     [string] $RustupHome = 'C:\Codex\Toolchains\rustup',
     [string] $CacheRoot = 'C:\Codex\OpenBubblesReview\build-cache\ck2-win-arm64',
@@ -140,7 +142,11 @@ try {
         & .\tooling\frb\normalize_generated_diagnostics.ps1 -Mode Verify
     }
     $buildWatch = [Diagnostics.Stopwatch]::StartNew()
+    # Test the native dependency itself without creating another Cargo cache
+    # or changing the Windows application's feature/build environment.
+    $packageArguments = @('--package', $TestPackage)
     & $cargo test --manifest-path rust/Cargo.toml --locked `
+        @packageArguments `
         --target aarch64-pc-windows-msvc --target-dir $nativeCache `
         --lib --no-run --message-format=json 1> $buildJson 2> $buildLog
     $buildSeconds = [Math]::Round($buildWatch.Elapsed.TotalSeconds, 2)
@@ -151,7 +157,7 @@ try {
     $artifacts = @(foreach ($line in [IO.File]::ReadLines($buildJson)) {
         $message = $line | ConvertFrom-Json
         if ($message.reason -eq 'compiler-artifact' -and
-            $message.target.name -eq 'rust_lib_bluebubbles' -and
+            $message.target.name -eq $TestPackage -and
             $message.profile.test -and $message.executable) {
             $message.executable
         }
@@ -160,7 +166,7 @@ try {
     $binary = Get-Item -LiteralPath $artifacts[0]
     $expectedParent = [IO.Path]::GetFullPath((Join-Path $nativeCache 'aarch64-pc-windows-msvc\debug\deps'))
     if ($binary.DirectoryName -ne $expectedParent -or
-        $binary.Name -notmatch '^rust_lib_bluebubbles-[0-9a-f]+\.exe$' -or
+        $binary.Name -notmatch ('^' + [regex]::Escape($TestPackage) + '-[0-9a-f]+\.exe$') -or
         ($binary.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
         throw 'Unexpected native test artifact; refusing to sign or execute it.'
     }
@@ -181,6 +187,7 @@ try {
         throw "Native test selection failed or ran no tests. See $testLog"
     }
     [pscustomobject]@{
+        Package = $TestPackage
         Filter = $TestFilter
         BuildSeconds = $buildSeconds
         TestSeconds = $testSeconds
