@@ -109,6 +109,16 @@ void main() {
         lessThan(stagedComposition.indexOf('await authBinding.ensureReadAuthentication(')));
       expect(stagedComposition.indexOf('await authBinding.ensureReadAuthentication('),
         lessThan(stagedComposition.indexOf('await authProvider.capture()')));
+      const lookupPreparation = 'await session.run<void>((_) async {})';
+      expect(stagedComposition, contains(lookupPreparation));
+      expect(stagedComposition.indexOf(lookupPreparation),
+        lessThan(stagedComposition.indexOf('await transport.stageOutboundChat(')));
+      final recoveryStart = localSendComposition.indexOf('Future<void> recoverProtectedStore()');
+      expect(recoveryStart, greaterThan(0));
+      final recoveryEnd = localSendComposition.indexOf('Future<CloudSyncChatIdentityEvidence?>', recoveryStart);
+      expect(recoveryEnd, greaterThan(recoveryStart));
+      expect(localSendComposition.substring(recoveryStart, recoveryEnd),
+        contains('await identitySession.run<void>((_) async {})'));
       for (final forbidden in ['commitOutboundLease(', 'stageOutboundMessage(',
         'admitProtectedOutbound', 'CloudSyncEngine(', 'flushOutbox(']) {
         expect(stagedComposition, isNot(contains(forbidden)));

@@ -87,6 +87,22 @@ void main() {
     expect(events, isEmpty);
   });
 
+  test('cold lookup preparation releases before stage then observes under a new pause', () async {
+    await interlock.runExclusive(kind: CloudKitOperationKind.v2ReadWrite, action: () async {
+      await session.run<void>((_) async {});
+      expect(events, contains('warm'));
+      expect(pause.active, isFalse);
+      events.add('stage');
+      await session.run((_) async {
+        expect(pause.active, isTrue);
+        events.add('observe');
+      });
+    });
+    expect(events.where((e) => ['warm', 'resume', 'stage', 'observe'].contains(e)),
+      ['warm', 'resume', 'stage', 'warm', 'observe', 'resume']);
+    expect(pause.active, isFalse);
+  });
+
   test('semantic read mode cannot nest a queued-write observation', () async {
     await expectLater(
       interlock.runExclusive(

@@ -794,11 +794,6 @@ final class CloudSyncProductionLocalSendAdapter {
         );
       }, accountFingerprint: scope.accountFingerprint);
     }
-    Future<void> recoverProtectedStore() async {
-      await validateSelection();
-      await lifecycle.ensureRecoveredBeforeWrite();
-      await validateSelection();
-    }
     final identitySession = CloudSyncWriteChatIdentitySession(
       exclusion: interlock,
       nativePause: FrbCloudSyncNativeWriterPause(),
@@ -810,6 +805,15 @@ final class CloudSyncProductionLocalSendAdapter {
           .warmReadAuthenticationUnderWriterPause(
             cloudMessagesClient: auth.cloudMessagesClient, pauseToken: token),
     );
+    Future<void> recoverProtectedStore() async {
+      await validateSelection();
+      await lifecycle.ensureRecoveredBeforeWrite();
+      // Native staging opens its own general writer container, but its PCS
+      // lookup needs warmed read-only Keychain/Securityd containers. Release
+      // the read pause before staging, never borrow it as write authority.
+      await identitySession.run<void>((_) async {});
+      await validateSelection();
+    }
     Future<CloudSyncChatIdentityEvidence?> observeChatIdentity(
       CloudSyncOutboundChatOrigin origin,
       CloudSyncProtectedOutboundStageData stage,
@@ -1091,6 +1095,9 @@ Future<T> cloudSyncObserveStagedChat<T>({
   try {
     return await transport.runOutboundAdmissionExclusive(() async {
         await validate();
+        // Cold processes have credentials but no read-only Keychain container.
+        // Prepare lookup dependencies and release the pause BEFORE staging.
+        await session.run<void>((_) async {});
         final staged = await transport.stageOutboundChat(scope, chat: candidate);
         try {
           return await session.run((token) => observe(auth, token, staged));
