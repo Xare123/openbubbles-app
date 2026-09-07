@@ -36,13 +36,13 @@ continue under a new account.
 
 | Status | Meaning |
 | --- | --- |
-| `LIVE-PROVEN` | A content-free report or device trace has exercised the boundary on the Pixel. |
+| `LIVE-PROVEN` | A content-free report or device trace has exercised the boundary on the named platform. Windows proof does not imply Pixel or another Apple device passed. |
 | `TEST-PROVEN` | Focused source-contract or behavioral tests cover the boundary, but current-device proof is incomplete. |
 | `REPAIRED; LIVE PROOF PENDING` | Source contains the intended repair; generated bindings, signed APK, or device proof remains. |
 | `IN REPAIR` | A concrete counterexample invalidated the prior candidate and the replacement has not passed every gate yet. |
 | `GAP / POLICY DECISION` | The safe behavior is not wired end to end or needs an explicit product decision. |
 
-## Latest integration checkpoint, 2026-09-06
+## Latest integration checkpoint, 2026-09-07
 
 ### Production scope, clarified by the user
 
@@ -55,11 +55,127 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | --- | --- |
 | Message history and conversation projection | User has observed restored readable chats; sustained incremental/restart behavior must be qualified on the release candidate. |
 | Photos, video, GIF and documents | Photos and video playback are user-confirmed. Installed `dcef0e9bf` automatically fetched three gallery attachments after navigation/scrolling without card taps. One HEIC still fails exact-size validation. GIF support is explicitly deferred; attachments are preserved, not deleted or hidden. Each media surface/type still needs user-facing validation, not metadata-only success. |
-| Chat-first ordinary text writing | Windows September 7 qualification now proves one real IDS send, a new Chat save/exact readback/canonical adoption, and the dependent Message save/exact readback. Restart reuses the journal without another send or save. Retained historical evidence stays intact. Ordinary Message change-feed convergence and independent-device presentation still require proof. See the genuine Windows local-send qualification below. This is not yet installed on Pixel. |
+| Chat-first ordinary text writing | Windows September 7 qualification proves two real IDS sends: one new conversation and one message in that exact existing conversation. One Chat and two Messages have confirmed saves and exact readbacks; restart reuses the journal without another send or save. The preserved pre-send cursor returns no self-echo while a fresh newest-first page contains the second Message. Independent-reader visibility and ordinary incremental convergence remain unproven. See the controlled existing-conversation qualification below. This is not yet installed on Pixel. |
 | Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
 | Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
 | Ongoing sync and account lifecycle | Missing automatic writer setup is repaired and installed in `463a19881`; fresh logs and a stable database now prove V2 ownership and worker readiness. Automatic save/readback remains unverified. Native send callbacks have a pre-journal process-death gap. Background/foreground transitions, account repair, expiry, restart, unknown outcomes and multi-device convergence remain release gates. |
+
+### Current dependency order and test economy
+
+Keep the full read/write scope above. Do not treat the growing count of unit
+tests, a successful exact record read, or an enabled upload switch as production
+qualification. Work follows the missing dependency, not a new APK for each edit:
+
+1. **Ordinary write convergence:** retain the two immutable test requests and
+   confirmed receipts. The next useful live observation is another authenticated
+   reader or another-device-origin change at a preserved cursor. Repeating the
+   same self-echo request with guessed flags adds no decisive evidence.
+2. **Reaction provenance and encoding:** persist the reaction's own row and
+   intent before submission; bind the native confirmation to that reaction's
+   GUID; retain remove as an event, not a deletion. Bind the parent GUID and
+   nullable part separately. Verify parent readiness, Reaction-kind mapping,
+   immutable envelope, exact readback and replay together before enabling it.
+3. **Other write families:** edits/undo, attachments and group state require
+   their own mutation identity, ownership/conflict and recovery contracts.
+   Standard tapbacks are an implementation slice, not permission to omit these
+   requirements from completion. GIF handling remains the user's explicit
+   deferral; SMS/MMS/RCS remain out of scope.
+4. **Release qualification:** run sustained incremental/restart, account and
+   lifecycle cases on the actual release candidate, then test Pixel surfaces.
+   Batch reviewed changes into one APK; use cached Windows tests first and
+   cloud runners for clean/heavy matrices.
+
+The Store Windows profile was inventoried by filename on September 7. It has
+CloudKit/keychain cache files but lacks the required hardware and keystore
+files. The shared portable profile also lacks a complete authentication set.
+Neither is a verified independent reader. Do not combine historical backups
+or replace the working isolated profile to manufacture this test.
+
+**Restored-chat usability:** the September 6 optional lookup exceptions are
+independent of CloudKit record decoding. A local fix now captures account,
+sender and recipients, rejects stale navigation/route results, disposes late
+presence tokens and catches optional capability failures. Missing/stale sender
+handles no longer cause an optional lookup to select a replacement sender.
+`fixZenModeShared` now returns an awaitable future with explicit error handling
+at all three callers; its existing invitation/reset policy is unchanged.
+Twelve targeted helper/handle tests pass. Real window interaction remains a
+qualification step; this does not claim FaceTime media transport is repaired.
+
+### Reaction write investigation, September 7
+
+Two separate defects were verified in the live send path. `sendTapback`
+coerced a nullable target part to zero. The existing native IDS encoder in
+`rustpush/src/imessage/messages.rs` explicitly distinguishes a bare GUID from
+`p:0/<guid>`, so this conversion changes the target. A tested payload builder
+now preserves the requested part for both add and remove, including null.
+Three payload tests and five existing reaction-helper tests pass. No test
+reaction has been sent to a real recipient for this change.
+
+The second defect is not yet repaired: `sendTapback` sends before reflecting
+the reaction row and bypasses the local-send journal. `SendConfirm` looks up
+the reaction's own UUID and returns if no row exists. A fast callback can
+therefore precede the row; neither a successful parent send nor a reflected
+row establishes reaction delivery. Reflection retains remove as its own
+reaction event, not deletion of the parent or prior add.
+
+The proposed minimal native contract for the standard six add/remove types
+is currently **test-only**. It reuses the canonical parent parser, preserves
+part absence, rejects malformed/partial ranges and unrelated payload fields,
+and keeps type-2 staging disabled. It is not Apple acceptance evidence.
+The native suite passes 319 tests, including eight new reaction-contract
+cases. Compile/test took approximately 31/2 seconds on the cached Windows
+toolchain. The first integration run failed on a duplicate import introduced
+by the parent; the corrected run passed. Evidence:
+`evidence/windows-native-tests/20260907-084617-eac61992/` (project root).
+
+The Dart reaction identity foundation now passes 16 focused tests and analysis
+with no issues. It checks the own GUID, bare parent, nullable part, standard-six
+kind, bound local Chat and exact native sender/recipient multiset. It remains
+unconnected to live journaling or native admission. The combined CloudKit,
+inspector, handle/optional-lookup and reaction-helper suite passes **1,942 tests**
+in 93 seconds. These tests do not prove Apple accepts reaction writes.
+
+The signed Windows replay of existing request `qualification-20260907-02`
+completed at `2026-09-07T16:09:38Z` after an 81-second build. Its existing claim
+skipped sender registration and IDS submission. Admission found no new work;
+the offline post-run inspector retained the same settled fingerprint as the
+earlier qualification: two adopted/readable journal rows and three confirmed
+save operations, with no active leases or retained receipts. No new message
+was sent and Alpha was untouched. Evidence under project-root
+`evidence/windows-replay-20260906/`:
+
+- `combined-regression-20260907-identity.log`
+- `windows-existing-chat-replay-reviewed-20260907.log`
+- `windows-existing-chat-replay-reviewed-20260907-status.json`
+- `windows-existing-chat-replay-reviewed-20260907-inspection.log`
+
+The end-to-end enabling patch must cover all of these together:
+
+- Capture and persist the reaction row plus an immutable intent before send,
+  with explicit async and synchronous native-confirmation handling. A failed
+  native send must not become a confirmed reaction in either UI or CloudKit.
+  `ActionHandler.sendMessage` already owns the temporary reaction `m`, but
+  passes only the parent, reaction and part to `BackendService.sendTapback`.
+  The integration must carry that original pending row through the backend
+  and journal, preserving the caller's subsequent `matchMessageWithExisting`
+  and failure handling. Do not insert an unrelated second reaction row.
+- Revalidate the native wire's complete recipient/sender route, reaction GUID,
+  parent GUID, nullable part and add/remove kind. Preserve existing plaintext
+  source hashes and already admitted operations.
+- Require the exact parent Message and Chat mappings to be ready before
+  admission. Parent GUID determines its logical key; part selects a target
+  within that parent and does not change the parent's key.
+- Use canonical **Reaction** keys consistently in native staging,
+  `cloud_sync_prepare_message_create` and `cloud_sync_reconcile_message_create`.
+  The current code
+  hardcodes **Message** in all three places. The generic initial-create
+  operation identity can remain shared; there is no need to invent another
+  mutation-ID system or new message DTO merely to carry reactions.
+- Reuse the existing protected message envelope and strict exact readback,
+  with explicit compatibility for existing version-two plaintext envelopes.
+  Prove restart/no-extra-send/no-extra-save and independent-reader behavior
+  before reporting reaction sync as working.
 
 ### Conversation Documents list: internal payload classification repaired locally
 

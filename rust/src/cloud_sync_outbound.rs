@@ -16,6 +16,9 @@ use rustpush::cloud_messages::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+#[cfg(test)]
+use crate::cloud_sync_canonical_dto::{parse_associated_parent, CloudCanonicalReactionKind};
+
 use crate::cloud_sync_native_fetch::{
     cloud_sync_open_protected_outbound_message, cloud_sync_stage_protected_outbound_envelope,
 };
@@ -239,11 +242,15 @@ pub(crate) fn verify_message_readback(
         return Err(CloudSyncOutboundFailure::BindingMismatch);
     }
     if actual.utm != expected.utm {
-        let value = expected.utm.ok_or(CloudSyncOutboundFailure::BindingMismatch)?;
+        let value = expected
+            .utm
+            .ok_or(CloudSyncOutboundFailure::BindingMismatch)?;
         if value < UNIX_EPOCH + Duration::from_secs(978307200) {
             return Err(CloudSyncOutboundFailure::MalformedMessage);
         }
-        let wire = value.to_value().ok_or(CloudSyncOutboundFailure::MalformedMessage)?;
+        let wire = value
+            .to_value()
+            .ok_or(CloudSyncOutboundFailure::MalformedMessage)?;
         if actual.utm != SystemTime::from_value(&wire) {
             return Err(CloudSyncOutboundFailure::BindingMismatch);
         }
@@ -257,18 +264,42 @@ pub(crate) fn verify_message_readback(
 }
 
 /// Closed-set mismatch labels only. No values, hashes, record names or text.
-pub(crate) fn message_readback_differences(expected: &CloudMessage, actual: &CloudMessage) -> Vec<&'static str> {
+pub(crate) fn message_readback_differences(
+    expected: &CloudMessage,
+    actual: &CloudMessage,
+) -> Vec<&'static str> {
     let mut fields = Vec::new();
     macro_rules! check {
         ($($field:ident),+ $(,)?) => { $(if expected.$field != actual.$field { fields.push(stringify!($field)); })+ };
     }
-    check!(utm, error, chat_id, sender, time, destination_caller_id, guid, service);
-    if expected.flags.bits() != actual.flags.bits() { fields.push("flags"); }
-    if expected.r#type != actual.r#type { fields.push("message_type"); }
-    if expected.msg_proto.0 != actual.msg_proto.0 { fields.push("msg_proto"); }
-    if expected.msg_proto_2.as_ref().map(|p| &p.0) != actual.msg_proto_2.as_ref().map(|p| &p.0) { fields.push("msg_proto_2"); }
-    if expected.msg_proto_3.as_ref().map(|p| &p.0) != actual.msg_proto_3.as_ref().map(|p| &p.0) { fields.push("msg_proto_3"); }
-    if expected.msg_proto_4.as_ref().map(|p| &p.0) != actual.msg_proto_4.as_ref().map(|p| &p.0) { fields.push("msg_proto_4"); }
+    check!(
+        utm,
+        error,
+        chat_id,
+        sender,
+        time,
+        destination_caller_id,
+        guid,
+        service
+    );
+    if expected.flags.bits() != actual.flags.bits() {
+        fields.push("flags");
+    }
+    if expected.r#type != actual.r#type {
+        fields.push("message_type");
+    }
+    if expected.msg_proto.0 != actual.msg_proto.0 {
+        fields.push("msg_proto");
+    }
+    if expected.msg_proto_2.as_ref().map(|p| &p.0) != actual.msg_proto_2.as_ref().map(|p| &p.0) {
+        fields.push("msg_proto_2");
+    }
+    if expected.msg_proto_3.as_ref().map(|p| &p.0) != actual.msg_proto_3.as_ref().map(|p| &p.0) {
+        fields.push("msg_proto_3");
+    }
+    if expected.msg_proto_4.as_ref().map(|p| &p.0) != actual.msg_proto_4.as_ref().map(|p| &p.0) {
+        fields.push("msg_proto_4");
+    }
     fields
 }
 
@@ -434,13 +465,10 @@ fn decode_optional_proto<T: Message + Default>(
         .transpose()
 }
 
-fn validate_cloud_message(message: &CloudMessage) -> Result<(), CloudSyncOutboundFailure> {
-    // The first production gate is intentionally one ordinary, outgoing
-    // iMessage text record. Reactions, edits, app balloons, attachments, SMS,
-    // and scheduled messages remain disabled until their own fixtures pass.
-    if message.r#type != 1 || message.service != "iMessage" {
-        return Err(CloudSyncOutboundFailure::UnsupportedMessage);
-    }
+// Shared outbound shape checks used by both the live plaintext gate and the
+// gated reaction candidate. Extracted verbatim from validate_cloud_message;
+// behavior and error kinds are unchanged for the type-1 path.
+fn validate_common_outbound_route(message: &CloudMessage) -> Result<(), CloudSyncOutboundFailure> {
     if message.chat_id.is_empty()
         || message.destination_caller_id.is_empty()
         || message.guid.is_empty()
@@ -457,13 +485,18 @@ fn validate_cloud_message(message: &CloudMessage) -> Result<(), CloudSyncOutboun
     if (message.flags.bits() & !ORDINARY_OUTBOUND_FLAG_BITS) != 0 {
         return Err(CloudSyncOutboundFailure::UnsupportedMessage);
     }
+    Ok(())
+}
+
+fn validate_common_outbound_sizes(message: &CloudMessage) -> Result<(), CloudSyncOutboundFailure> {
+    let nul = char::from(0);
     for value in [
         message.chat_id.as_str(),
         message.destination_caller_id.as_str(),
         message.guid.as_str(),
         message.service.as_str(),
     ] {
-        if value.len() > MAX_IDENTIFIER_BYTES || value.contains('\0') {
+        if value.len() > MAX_IDENTIFIER_BYTES || value.contains(nul) {
             return Err(CloudSyncOutboundFailure::OversizedMessage);
         }
     }
@@ -492,6 +525,54 @@ fn validate_cloud_message(message: &CloudMessage) -> Result<(), CloudSyncOutboun
     {
         return Err(CloudSyncOutboundFailure::OversizedMessage);
     }
+    Ok(())
+}
+
+fn validate_shared_outbound_extension_metadata(
+    message: &CloudMessage,
+) -> Result<(), CloudSyncOutboundFailure> {
+    if message
+        .msg_proto_2
+        .as_ref()
+        .is_some_and(|value| value.0.reply.is_some())
+        || message.msg_proto_3.as_ref().is_some_and(|value| {
+            value.0.unk2.is_some_and(|field| field != 0)
+                || value.0.unk3.is_some_and(|field| field != 0)
+        })
+    {
+        return Err(CloudSyncOutboundFailure::UnsupportedMessage);
+    }
+    if let Some(proto4) = message.msg_proto_4.as_ref().map(|value| &value.0) {
+        if proto4.associated_message_emoji.is_some()
+            || proto4.schedule_type.is_some_and(|value| value != 0)
+            || proto4.schedule_state.is_some_and(|value| value != 0)
+            || proto4
+                .sent_or_received_off_grid
+                .is_some_and(|value| value != 0)
+            || proto4
+                .service
+                .as_deref()
+                .is_some_and(|value| value != "iMessage")
+        {
+            return Err(CloudSyncOutboundFailure::UnsupportedMessage);
+        }
+        if let Some(group_id) = proto4.group_id.as_deref() {
+            validate_identifier(group_id)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_cloud_message(message: &CloudMessage) -> Result<(), CloudSyncOutboundFailure> {
+    // The first production gate is intentionally one ordinary, outgoing
+    // iMessage text record. Reactions, edits, app balloons, attachments, SMS,
+    // and scheduled messages remain disabled until their own fixtures pass.
+    if message.r#type != 1 || message.service != "iMessage" {
+        return Err(CloudSyncOutboundFailure::UnsupportedMessage);
+    }
+    validate_common_outbound_route(message)?;
+    validate_common_outbound_sizes(message)?;
+    let proto = &message.msg_proto.0;
     // The first canary is plain text only. An attributed body is a separate
     // NSKeyedArchiver/styling payload and must not enter this encoder yet.
     if proto
@@ -523,39 +604,189 @@ fn validate_cloud_message(message: &CloudMessage) -> Result<(), CloudSyncOutboun
     {
         return Err(CloudSyncOutboundFailure::UnsupportedMessage);
     }
-    if message
-        .msg_proto_2
-        .as_ref()
-        .is_some_and(|value| value.0.reply.is_some())
-        || message.msg_proto_3.as_ref().is_some_and(|value| {
-            value.0.unk2.is_some_and(|field| field != 0)
-                || value.0.unk3.is_some_and(|field| field != 0)
-        })
+    validate_shared_outbound_extension_metadata(message)?;
+    Ok(())
+}
+
+// Proposed outbound reaction contract, compiled only in tests until the
+// provenance, parent dependency and Reaction-key admission are integrated.
+// The live gate still rejects every type-2 record.
+// Rationale: inbound build_association already yields a canonical Reaction
+// entity for associated types 2000-2006 (add) and 3000-3006 (remove), and
+// parse_associated_parent accepts bare, p: and bp: parent wires. This
+// candidate mirrors that contract for the standard six tapbacks only
+// (indices 0-5; emoji index 6 and sticker index 7 stay explicitly rejected
+// as next coverage). Main wires it into a versioned envelope, Dart
+// confirmation, and admission only after end-to-end review.
+// Reaction kinds reuse the canonical inbound vocabulary
+// (CloudCanonicalReactionKind); no parallel enum is kept here.
+
+// Validated reaction coordinates. parent_part preserves the exact wire:
+// None for a bare GUID (whole-message target) versus Some(0) for an
+// explicit part-zero wire. Never inferred from the range.
+#[cfg(test)]
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct CandidateReactionDescriptor {
+    kind: CloudCanonicalReactionKind,
+    remove: bool,
+    parent_guid: String,
+    parent_part: Option<u32>,
+    range_location: Option<u32>,
+    range_length: Option<u32>,
+}
+
+#[cfg(test)]
+impl CandidateReactionDescriptor {
+    pub(crate) fn kind(&self) -> CloudCanonicalReactionKind {
+        self.kind
+    }
+    pub(crate) fn is_remove(&self) -> bool {
+        self.remove
+    }
+    pub(crate) fn parent_guid(&self) -> &str {
+        &self.parent_guid
+    }
+    pub(crate) fn parent_part(&self) -> Option<u32> {
+        self.parent_part
+    }
+    pub(crate) fn range_location(&self) -> Option<u32> {
+        self.range_location
+    }
+    pub(crate) fn range_length(&self) -> Option<u32> {
+        self.range_length
+    }
+}
+
+#[cfg(test)]
+impl std::fmt::Debug for CandidateReactionDescriptor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("CandidateReactionDescriptor(redacted)")
+    }
+}
+
+// No extra entity-kind surface: the canonical association already owns the
+// Reaction kind mapping, so nothing is added until integration needs it.
+#[cfg(test)]
+pub(crate) fn validate_candidate_reaction_message(
+    message: &CloudMessage,
+) -> Result<CandidateReactionDescriptor, CloudSyncOutboundFailure> {
+    // Proposed minimal reaction encoding only: outbound reactions are always
+    // the explicit type-2 record. Outer 0/1 are not inferred from the
+    // permissive inbound family, and nothing here claims Apple acceptance.
+    if message.r#type != 2 || message.service != "iMessage" {
+        return Err(CloudSyncOutboundFailure::UnsupportedMessage);
+    }
+    validate_common_outbound_route(message)?;
+    validate_common_outbound_sizes(message)?;
+    let proto = &message.msg_proto.0;
+    if proto.text.as_deref().is_some_and(|v| !v.is_empty())
+        || proto
+            .attributed_body
+            .as_ref()
+            .is_some_and(|v| !v.is_empty())
     {
         return Err(CloudSyncOutboundFailure::UnsupportedMessage);
     }
-    if let Some(proto4) = message.msg_proto_4.as_ref().map(|value| &value.0) {
-        if proto4.associated_message_emoji.is_some()
-            || proto4.schedule_type.is_some_and(|value| value != 0)
-            || proto4.schedule_state.is_some_and(|value| value != 0)
-            || proto4
-                .sent_or_received_off_grid
-                .is_some_and(|value| value != 0)
-            || proto4
-                .service
-                .as_deref()
-                .is_some_and(|value| value != "iMessage")
-        {
-            return Err(CloudSyncOutboundFailure::UnsupportedMessage);
-        }
-        if let Some(group_id) = proto4.group_id.as_deref() {
-            // TODO: Message.toCloud currently emits groupId for DMs. Do not
-            // infer one-to-one versus group chat from its presence until the
-            // V2 wire contract is defined and covered by a real fixture.
-            validate_identifier(group_id)?;
+    if proto.unk1 != 1
+        || proto.unk10.is_some_and(|v| v != 0)
+        || proto.unk11.is_some_and(|v| v != 0)
+        || proto.unk14.is_some_and(|v| v != 0)
+        || proto.subject.is_some()
+        || proto.effect.is_some()
+        || proto.balloon_bundle_id.is_some()
+        || proto.payload_data.is_some()
+        || proto.message_summary_info.is_some()
+    {
+        return Err(CloudSyncOutboundFailure::UnsupportedMessage);
+    }
+    let atype = proto
+        .associated_message_type
+        .ok_or(CloudSyncOutboundFailure::UnsupportedMessage)?;
+    let (remove, index) = match atype {
+        2000..=2005 => (false, atype - 2000),
+        3000..=3005 => (true, atype - 3000),
+        _ => return Err(CloudSyncOutboundFailure::UnsupportedMessage),
+    };
+    let kind = match index {
+        0 => CloudCanonicalReactionKind::Heart,
+        1 => CloudCanonicalReactionKind::Like,
+        2 => CloudCanonicalReactionKind::Dislike,
+        3 => CloudCanonicalReactionKind::Laugh,
+        4 => CloudCanonicalReactionKind::Emphasize,
+        5 => CloudCanonicalReactionKind::Question,
+        _ => return Err(CloudSyncOutboundFailure::UnsupportedMessage),
+    };
+    let wire = proto
+        .associated_message_guid
+        .as_deref()
+        .ok_or(CloudSyncOutboundFailure::MalformedMessage)?;
+    let parsed =
+        parse_associated_parent(wire).map_err(|_| CloudSyncOutboundFailure::MalformedMessage)?;
+    validate_identifier(parsed.parent_guid())?;
+    if parsed.parent_guid() == message.guid {
+        return Err(CloudSyncOutboundFailure::MalformedMessage);
+    }
+    let (rloc, rlen) = (
+        proto.associated_message_range_location,
+        proto.associated_message_range_length,
+    );
+    if rloc.is_some() != rlen.is_some() {
+        return Err(CloudSyncOutboundFailure::MalformedMessage);
+    }
+    if let (Some(s), Some(l)) = (rloc, rlen) {
+        if s.checked_add(l).is_none() {
+            return Err(CloudSyncOutboundFailure::MalformedMessage);
         }
     }
-    Ok(())
+    // A future envelope must hash the parent GUID only for the parent
+    // logical key; the optional part is separate target semantics.
+    validate_shared_outbound_extension_metadata(message)?;
+    Ok(CandidateReactionDescriptor {
+        kind,
+        remove,
+        parent_guid: parsed.parent_guid().to_owned(),
+        parent_part: parsed.parent_part(),
+        range_location: rloc,
+        range_length: rlen,
+    })
+}
+
+// Parent parsing reuses parse_associated_parent from the canonical DTO so the
+// candidate never drifts from the inbound wire vocabulary.
+
+// Exact candidate readback labels: base message fields plus association fields.
+#[cfg(test)]
+pub(crate) fn candidate_reaction_readback_differences(
+    expected: &CloudMessage,
+    actual: &CloudMessage,
+) -> Vec<&'static str> {
+    let mut fields = message_readback_differences(expected, actual);
+    let pe = &expected.msg_proto.0;
+    let pa = &actual.msg_proto.0;
+    if pe.associated_message_type != pa.associated_message_type {
+        fields.push("associated_message_type");
+    }
+    if pe.associated_message_guid != pa.associated_message_guid {
+        fields.push("associated_message_guid");
+    }
+    if pe.associated_message_range_location != pa.associated_message_range_location {
+        fields.push("associated_message_range_location");
+    }
+    if pe.associated_message_range_length != pa.associated_message_range_length {
+        fields.push("associated_message_range_length");
+    }
+    if expected
+        .msg_proto_4
+        .as_ref()
+        .map(|v| &v.0.associated_message_emoji)
+        != actual
+            .msg_proto_4
+            .as_ref()
+            .map(|v| &v.0.associated_message_emoji)
+    {
+        fields.push("associated_message_emoji");
+    }
+    fields
 }
 
 fn sha256_hex(value: &[u8]) -> String {
@@ -749,8 +980,12 @@ mod tests {
     struct IdentityEncryptor;
 
     impl rustpush::cloudkit_proto::CloudKitEncryptor for IdentityEncryptor {
-        fn encrypt_data(&self, data: &[u8], _: &str) -> Vec<u8> { data.to_vec() }
-        fn decrypt_data(&self, data: &[u8], _: &str) -> Vec<u8> { data.to_vec() }
+        fn encrypt_data(&self, data: &[u8], _: &str) -> Vec<u8> {
+            data.to_vec()
+        }
+        fn decrypt_data(&self, data: &[u8], _: &str) -> Vec<u8> {
+            data.to_vec()
+        }
     }
 
     fn cloudkit_roundtrip(message: &CloudMessage) -> CloudMessage {
@@ -777,9 +1012,18 @@ mod tests {
         // Reproduces the old false conflict through the real record serializer.
         assert_ne!(expected.utm, actual.utm);
         assert_eq!(message_readback_differences(&expected, &actual), ["utm"]);
-        assert_ne!(outbound_message_payload_sha256(actual.clone(), "RECORD").unwrap(), digest);
-        assert_eq!(verify_message_readback(actual, &expected, "RECORD", &digest).unwrap(), digest);
-        assert_eq!(verify_message_readback(expected.clone(), &expected, "RECORD", &digest).unwrap(), digest);
+        assert_ne!(
+            outbound_message_payload_sha256(actual.clone(), "RECORD").unwrap(),
+            digest
+        );
+        assert_eq!(
+            verify_message_readback(actual, &expected, "RECORD", &digest).unwrap(),
+            digest
+        );
+        assert_eq!(
+            verify_message_readback(expected.clone(), &expected, "RECORD", &digest).unwrap(),
+            digest
+        );
     }
 
     #[test]
@@ -788,18 +1032,26 @@ mod tests {
         let expected = readback_fixture();
         let actual = cloudkit_roundtrip(&expected);
         let digest = outbound_message_payload_sha256(expected.clone(), "RECORD").unwrap();
-        for utm in [None, actual.utm.map(|time| time - Duration::from_nanos(100)),
-            actual.utm.map(|time| time + Duration::from_millis(1))] {
+        for utm in [
+            None,
+            actual.utm.map(|time| time - Duration::from_nanos(100)),
+            actual.utm.map(|time| time + Duration::from_millis(1)),
+        ] {
             let mut changed = actual.clone();
             changed.utm = utm;
-            assert_eq!(verify_message_readback(changed, &expected, "RECORD", &digest),
-                Err(CloudSyncOutboundFailure::BindingMismatch));
+            assert_eq!(
+                verify_message_readback(changed, &expected, "RECORD", &digest),
+                Err(CloudSyncOutboundFailure::BindingMismatch)
+            );
         }
         let mut missing_expected = expected.clone();
         missing_expected.utm = None;
-        let missing_digest = outbound_message_payload_sha256(missing_expected.clone(), "RECORD").unwrap();
-        assert_eq!(verify_message_readback(actual, &missing_expected, "RECORD", &missing_digest),
-            Err(CloudSyncOutboundFailure::BindingMismatch));
+        let missing_digest =
+            outbound_message_payload_sha256(missing_expected.clone(), "RECORD").unwrap();
+        assert_eq!(
+            verify_message_readback(actual, &missing_expected, "RECORD", &missing_digest),
+            Err(CloudSyncOutboundFailure::BindingMismatch)
+        );
     }
 
     #[test]
@@ -821,13 +1073,19 @@ mod tests {
         for mutate in mutations {
             let mut changed = actual.clone();
             mutate(&mut changed);
-            assert_eq!(verify_message_readback(changed, &expected, "RECORD", &digest),
-                Err(CloudSyncOutboundFailure::BindingMismatch));
+            assert_eq!(
+                verify_message_readback(changed, &expected, "RECORD", &digest),
+                Err(CloudSyncOutboundFailure::BindingMismatch)
+            );
         }
-        assert_eq!(verify_message_readback(actual.clone(), &expected, "OTHER", &digest),
-            Err(CloudSyncOutboundFailure::BindingMismatch));
-        assert_eq!(verify_message_readback(actual, &expected, "RECORD", &"0".repeat(64)),
-            Err(CloudSyncOutboundFailure::BindingMismatch));
+        assert_eq!(
+            verify_message_readback(actual.clone(), &expected, "OTHER", &digest),
+            Err(CloudSyncOutboundFailure::BindingMismatch)
+        );
+        assert_eq!(
+            verify_message_readback(actual, &expected, "RECORD", &"0".repeat(64)),
+            Err(CloudSyncOutboundFailure::BindingMismatch)
+        );
     }
 
     #[test]
@@ -965,5 +1223,193 @@ mod tests {
             encode_outbound_message(oversized, "SERVER-RECORD").unwrap_err(),
             CloudSyncOutboundFailure::OversizedMessage
         );
+    }
+
+    // Proposed minimal reaction encoding for tests only: explicit type-2, no
+    // body, association wire under test. Not a claim of Apple acceptance.
+    fn candidate_fixture(associated_type: u32, parent_wire: &str) -> CloudMessage {
+        let mut message = fixture();
+        message.r#type = 2;
+        message.guid = "reaction-guid".to_owned();
+        message.msg_proto.0.text = None;
+        message.msg_proto.0.attributed_body = None;
+        message.msg_proto.0.associated_message_type = Some(associated_type);
+        message.msg_proto.0.associated_message_guid = Some(parent_wire.to_owned());
+        message.msg_proto.0.associated_message_range_location = Some(0);
+        message.msg_proto.0.associated_message_range_length = Some(4);
+        message
+    }
+
+    #[test]
+    fn candidate_validator_accepts_six_tapbacks_add_and_remove() {
+        let kinds = [
+            (2000, CloudCanonicalReactionKind::Heart),
+            (2001, CloudCanonicalReactionKind::Like),
+            (2002, CloudCanonicalReactionKind::Dislike),
+            (2003, CloudCanonicalReactionKind::Laugh),
+            (2004, CloudCanonicalReactionKind::Emphasize),
+            (2005, CloudCanonicalReactionKind::Question),
+        ];
+        for (atype, kind) in kinds {
+            let d =
+                validate_candidate_reaction_message(&candidate_fixture(atype, "p:0/parent-guid"))
+                    .expect("tapback add");
+            assert_eq!(d.kind(), kind);
+            assert!(!d.is_remove());
+            assert_eq!(d.parent_guid(), "parent-guid");
+            assert_eq!(d.parent_part(), Some(0));
+            assert_eq!(d.range_location(), Some(0));
+            assert_eq!(d.range_length(), Some(4));
+            // No extra entity-kind surface: the canonical association already owns the Reaction mapping.
+        }
+        for atype in 3000..=3005 {
+            let d =
+                validate_candidate_reaction_message(&candidate_fixture(atype, "p:0/parent-guid"))
+                    .expect("tapback remove");
+            assert!(d.is_remove());
+        }
+    }
+
+    #[test]
+    fn candidate_validator_rejects_emoji_sticker_and_unknown_types() {
+        for atype in [0, 2, 9999, 2006, 2007, 3006, 3007, 4000] {
+            assert_eq!(
+                validate_candidate_reaction_message(&candidate_fixture(atype, "p:0/parent-guid"))
+                    .unwrap_err(),
+                CloudSyncOutboundFailure::UnsupportedMessage,
+            );
+        }
+        let mut missing = candidate_fixture(2000, "p:0/parent-guid");
+        missing.msg_proto.0.associated_message_type = None;
+        assert_eq!(
+            validate_candidate_reaction_message(&missing).unwrap_err(),
+            CloudSyncOutboundFailure::UnsupportedMessage,
+        );
+    }
+
+    #[test]
+    fn candidate_validator_keeps_bare_partless_distinct_from_part_zero() {
+        let bare = validate_candidate_reaction_message(&candidate_fixture(2001, "parent-guid"))
+            .expect("bare");
+        assert_eq!(bare.parent_part(), None);
+        let zero = validate_candidate_reaction_message(&candidate_fixture(2001, "p:0/parent-guid"))
+            .expect("part zero");
+        assert_eq!(zero.parent_part(), Some(0));
+        assert_eq!(bare.parent_guid(), zero.parent_guid());
+        assert_ne!(bare.parent_part(), zero.parent_part());
+        let bubble =
+            validate_candidate_reaction_message(&candidate_fixture(2001, "bp:2/parent-guid"))
+                .expect("bubble part");
+        assert_eq!(bubble.parent_part(), Some(2));
+    }
+
+    #[test]
+    fn candidate_validator_rejects_malformed_parents_and_self_parent() {
+        for wire in [
+            "bpdi:0/parent-guid",
+            "p:/parent-guid",
+            "p:01/parent-guid",
+            "p:0/",
+            "p:0/a/b",
+            "x/y",
+            "r:0:parent-guid",
+        ] {
+            assert_eq!(
+                validate_candidate_reaction_message(&candidate_fixture(2000, wire)).unwrap_err(),
+                CloudSyncOutboundFailure::MalformedMessage,
+            );
+        }
+        let mut missing = candidate_fixture(2000, "p:0/parent-guid");
+        missing.msg_proto.0.associated_message_guid = None;
+        assert_eq!(
+            validate_candidate_reaction_message(&missing).unwrap_err(),
+            CloudSyncOutboundFailure::MalformedMessage,
+        );
+        assert_eq!(
+            validate_candidate_reaction_message(&candidate_fixture(2000, "p:0/reaction-guid"))
+                .unwrap_err(),
+            CloudSyncOutboundFailure::MalformedMessage,
+        );
+    }
+
+    #[test]
+    fn candidate_validator_requires_complete_range_without_overflow() {
+        let mut partial = candidate_fixture(2000, "p:0/parent-guid");
+        partial.msg_proto.0.associated_message_range_length = None;
+        assert_eq!(
+            validate_candidate_reaction_message(&partial).unwrap_err(),
+            CloudSyncOutboundFailure::MalformedMessage,
+        );
+        let mut overflow = candidate_fixture(2000, "p:0/parent-guid");
+        overflow.msg_proto.0.associated_message_range_location = Some(u32::MAX);
+        overflow.msg_proto.0.associated_message_range_length = Some(1);
+        assert_eq!(
+            validate_candidate_reaction_message(&overflow).unwrap_err(),
+            CloudSyncOutboundFailure::MalformedMessage,
+        );
+        let mut absent = candidate_fixture(2000, "parent-guid");
+        absent.msg_proto.0.associated_message_range_location = None;
+        absent.msg_proto.0.associated_message_range_length = None;
+        let d = validate_candidate_reaction_message(&absent).expect("rangeless");
+        assert_eq!(d.range_location(), None);
+        assert_eq!(d.parent_part(), None);
+    }
+
+    #[test]
+    fn candidate_validator_rejects_body_and_emoji_payload() {
+        let mut bodied = candidate_fixture(2000, "p:0/parent-guid");
+        bodied.msg_proto.0.text = Some("tapback".to_owned());
+        assert_eq!(
+            validate_candidate_reaction_message(&bodied).unwrap_err(),
+            CloudSyncOutboundFailure::UnsupportedMessage,
+        );
+        let mut emoji = candidate_fixture(2000, "p:0/parent-guid");
+        emoji
+            .msg_proto_4
+            .as_mut()
+            .unwrap()
+            .0
+            .associated_message_emoji = Some("grin".to_owned());
+        assert_eq!(
+            validate_candidate_reaction_message(&emoji).unwrap_err(),
+            CloudSyncOutboundFailure::UnsupportedMessage,
+        );
+    }
+
+    #[test]
+    fn live_gate_still_rejects_reactions_without_changing_plaintext_path() {
+        // The candidate is a proposed minimal encoding, not an Apple
+        // acceptance claim: the live gate admits nothing new.
+        assert_eq!(
+            encode_outbound_message(candidate_fixture(2000, "p:0/parent-guid"), "SERVER-RECORD")
+                .unwrap_err(),
+            CloudSyncOutboundFailure::UnsupportedMessage,
+        );
+        // Serialization stability rests on the untouched encode/decode bodies
+        // plus the existing plaintext roundtrip tests above, not on any
+        // self-comparison here.
+        assert!(encode_outbound_message(fixture(), "SERVER-RECORD").is_ok());
+    }
+
+    #[test]
+    fn candidate_readback_reports_exact_association_drift() {
+        let expected = candidate_fixture(2001, "p:0/parent-guid");
+        assert!(candidate_reaction_readback_differences(&expected, &expected).is_empty());
+        let mut t = expected.clone();
+        t.msg_proto.0.associated_message_type = Some(2002);
+        assert!(candidate_reaction_readback_differences(&expected, &t)
+            .contains(&"associated_message_type"));
+        let mut g = expected.clone();
+        g.msg_proto.0.associated_message_guid = Some("p:0/other-guid".to_owned());
+        assert!(candidate_reaction_readback_differences(&expected, &g)
+            .contains(&"associated_message_guid"));
+        let mut r = expected.clone();
+        r.msg_proto.0.associated_message_range_length = Some(5);
+        assert!(candidate_reaction_readback_differences(&expected, &r)
+            .contains(&"associated_message_range_length"));
+        let mut e = expected.clone();
+        e.msg_proto_4.as_mut().unwrap().0.associated_message_emoji = Some("grin".to_owned());
+        assert!(candidate_reaction_readback_differences(&expected, &e)
+            .contains(&"associated_message_emoji"));
     }
 }

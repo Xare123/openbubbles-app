@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:app_links/app_links.dart';
 import 'package:bluebubbles/services/rustpush/icloud_maintenance.dart';
+import 'package:bluebubbles/services/rustpush/imessage_reaction_payload.dart';
 import 'package:bluebubbles/services/rustpush/registration_recovery.dart';
 import 'package:async_task/async_task_extension.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/conversation_list.dart';
@@ -1763,16 +1764,14 @@ class RustPushBackend implements BackendService {
     var msg = await api.newMsg(
         conversation: await chat.getConversationData(),
         sender: await chat.ensureHandle(),
-        message: api.Message.react(api.ReactMessage(
-            toUuid: selected.guid!,
-            toPart: repPart ?? 0,
+        message: buildIMessageReactionPayload(
+            parentGuid: selected.guid!,
+            parentPart: repPart,
             embeddedProfile:
                 await pushService.getShareProfileMessageFor(chat.participants),
-            toText: selected.text ?? "",
-            reaction: api.ReactMessageType.react(
-                reaction: reactionMap[reaction]?.call() ??
-                    api.Reaction.emoji(reaction),
-                enable: enabled))));
+            parentText: selected.text ?? "",
+            reaction: reactionMap[reaction]?.call() ?? api.Reaction.emoji(reaction),
+            enable: enabled));
     await sendMsg(msg);
     msg.sentTimestamp = DateTime.now().millisecondsSinceEpoch;
     return (await pushService.reflectMessageDyn(msg))!;
