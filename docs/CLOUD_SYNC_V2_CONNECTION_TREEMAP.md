@@ -339,6 +339,8 @@ Android activation.
 ```text
 confirmed local-send intent + V2 owner + exact account/store/client
   -> v2ReadWrite interlock
+  -> ensure read auth -> native pause -> warm read-only Keychain/PCS -> resume
+  -> general Messages container + writer-only existing-zone PCS fetch
   -> original Chat staged once (or recover exact queued stage after restart)
   -> ensure cached read authentication before native pause
   -> native pause -> warm PCS/read auth -> observe ALL retained saved identities
@@ -372,6 +374,50 @@ This mode closes the gap between synthetic staged fixtures and the previous
 unstaged live observation. It is NOT the eventual live-write test: the Windows
 harness still restores only CloudKit authentication, not ordinary IDS sending.
 Do not fabricate a send receipt to enter the ordinary-send exception.
+
+#### Cold Windows staging qualified, September 7
+
+Two separate process launches of `2853ca987` (native `rustpush` `2274cee`)
+successfully staged the actual production Chat shape, checked all **13 retained
+saved identities** against that protected payload, and rolled back the local
+stage. Both returned **13 disjoint, 0 overlaps, 0 incomplete, 0 failed**;
+81 retained tombstones remained unchanged. Neither run authorized a remote
+write. Both post-run ObjectBox aggregate reports exactly matched the
+pre-run report: 699 Chats, 13,642 Messages, 2,417 Attachments, outbox 0.
+
+The live cold-start checks exposed and resolved three distinct boundaries:
+
+1. Establish restored read authentication before capturing native identity.
+2. Warm read-only Keychain dependencies before staging, then release the read
+   pause. Crucially, the general writer container cannot call the semantic-only
+   zone-fetch transport. `WriterLookupOnly` now fetches its existing Chat/Message
+   PCS zone with general authentication, while preserving lookup-only trust/key
+   access, exact private container/account/zone-owner checks and no zone creation.
+   A cached legacy PCS configuration could previously hide this wrong routing.
+3. FRB consumes the owned `proto001` wrapper. The Windows diagnostic now creates
+   a fresh wrapper for staging and each observation, keeping the same immutable
+   logical identity and original protected stage. The production observer already
+   re-encodes each candidate; it never restages an admitted operation.
+
+Qualification: 304 native bridge tests, 68 native CloudKit tests, 48 native
+Message/Chat tests, and the final full **1,879-test Dart suite** passed. Changed
+Dart analysis and Windows launcher behavioral checks passed. The Windows native helper
+can now test `rustpush` directly with `-TestPackage rustpush` using the same pinned
+features and Cargo cache. The successful Windows builds took **39.4s**, then
+**15.2s** for the unchanged-source repeat, not an APK rebuild cycle.
+
+Evidence: `writer-staged-identity-live-qualification.json`,
+`writer-native-owned-candidate-live.log`,
+`writer-native-owned-candidate-cold-repeat.log`, and
+`writer-pcs-routing-after-flutter.log` and `writer-staging-cold-repeat-after-flutter.log`
+under the private replay evidence folder.
+The receipt is `2853ca987d9a-dirty-01ba4719c80b`; the suffix records the pre-existing
+EOL-only generated-file status, not an uncommitted functional patch.
+
+**Still not a live write pass:** ordinary-send journal admission, queued restart,
+Chat save/readback/convergence, dependent Message save/readback and zero-extra-save
+recovery remain the next qualification. Do not activate Android or production
+uploads solely because protected staging is now live-proven.
 
 #### Direct-Chat record membership: implemented, development opt-in only
 
