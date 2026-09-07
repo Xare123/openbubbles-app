@@ -114,7 +114,7 @@ void main() {
       CloudSyncGroupSendRoute.capture(
         group,
       )!.routingMetadataDigest(groupVersion: group.groupVersion),
-      '93c2647f1461d69703edb5cc5a0eaed7130b2f7f3934db089bd518fa4b2599bd',
+      '745cda1e196792998ef8b585fec5b2d6e6d96cf5960af0a261740a769c44dd4b',
     );
   });
 

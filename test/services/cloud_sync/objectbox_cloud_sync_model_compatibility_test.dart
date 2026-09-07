@@ -265,6 +265,7 @@ void main() {
           'admittedOperationId',
           'admittedBindingSha256',
           'admittedChatBinding',
+          'confirmedReadbackBindingSha256',
         ].contains(property['name']),
       );
       intentModel['lastPropertyId'] = '10:3816774319385985138';
@@ -334,7 +335,10 @@ void main() {
           (entity) => entity['name'] == 'CloudSyncLocalSendIntentEntity',
         );
     (intentModel['properties'] as List).removeWhere(
-      (property) => property['name'] == 'admittedChatBinding',
+      (property) => [
+        'admittedChatBinding',
+        'confirmedReadbackBindingSha256',
+      ].contains(property['name']),
     );
     intentModel['lastPropertyId'] = '12:8651771725641056063';
     final previous = obx.ModelDefinition(
