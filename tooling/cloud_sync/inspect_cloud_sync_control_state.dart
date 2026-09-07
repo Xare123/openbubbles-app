@@ -22,6 +22,8 @@ const _failureCategories = <String>{
   'localStorage',
   'cancelled',
   'unknown',
+  'unsupportedService',
+  'outOfScopeService',
 };
 const _streamKinds = <String>{'messages', 'profiles'};
 const _persistenceLanes = <String>{'legacy', 'shadow', 'semantic'};
@@ -176,7 +178,7 @@ Map<String, Object?> _inspectStore(Store store) {
   );
 
   return <String, Object?>{
-    'schema': 5,
+    'schema': 6,
     'canonicalCounts': <String, int>{
       'chats': store.box<Chat>().count(),
       'messages': store.box<Message>().count(),
@@ -990,12 +992,17 @@ void _scanPaged<T>(Query<T> query, void Function(T row) visit) {
 
 final class _InboxGroupAccumulator {
   int rowCount = 0;
+  final zones = <String>{};
   final statuses = <String, int>{};
   final failureCategories = <String, int>{};
+  int retainedSaves = 0;
+  int retainedUnclassifiedTombstones = 0;
+  int retainedOther = 0;
   _BarrierMetadata? firstBarrier;
 
   void add(CloudInboxChangeEntity row, {required DateTime now}) {
     rowCount += 1;
+    zones.add(_allowlistedOrInvalid(row.zone, _cloudZones));
     final status = _statusName(row.status);
     statuses.update(status, (count) => count + 1, ifAbsent: () => 1);
     if (row.failureCategory case final category?) {
@@ -1006,6 +1013,17 @@ final class _InboxGroupAccumulator {
         ifAbsent: () => 1,
       );
     }
+    if (row.status == 3) {
+      if (row.changeType == CloudChangeType.delete.name && row.isTombstone &&
+          row.failureCategory == null && row.preflightCategory == null &&
+          row.preflightCode == null) {
+        retainedUnclassifiedTombstones++;
+      } else if (row.changeType == CloudChangeType.save.name && !row.isTombstone) {
+        retainedSaves++;
+      } else {
+        retainedOther++;
+      }
+    }
     if (row.status == 1 || row.status == 3) return;
     final candidate = _BarrierMetadata.fromRow(row, now: now);
     if (firstBarrier == null || candidate.sequence < firstBarrier!.sequence) {
@@ -1015,9 +1033,13 @@ final class _InboxGroupAccumulator {
 
   Map<String, Object?> toJson({required int groupOrdinal}) => <String, Object?>{
     'groupOrdinal': groupOrdinal,
+    'zones': zones.toList()..sort(),
     'rows': rowCount,
     'statuses': statuses,
     'failureCategories': failureCategories,
+    'retainedSaves': retainedSaves,
+    'retainedUnclassifiedTombstones': retainedUnclassifiedTombstones,
+    'retainedOther': retainedOther,
     'firstBarrier': firstBarrier?.toJson(),
   };
 }

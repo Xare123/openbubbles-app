@@ -2305,6 +2305,205 @@ void main() {
     },
   );
 
+  for (final reopen in [false, true]) {
+    for (final scenario in [
+      'same record update',
+      'second record',
+      'second alias owner',
+    ]) {
+      test('direct Chat readback $scenario (reopen=$reopen)', () async {
+        // Characterize the real projection boundary before relaxing fresh-send
+        // admission. Transport/authentication are synthetic; the identity
+        // registry, canonical adapter, transactions and durable maps are real.
+        final chatScope = _scope(
+          zone: 'chatManateeZone',
+          persistenceLane: CloudSyncPersistenceLane.semanticV2,
+        );
+        final registry = TransientCloudCanonicalIdentityRegistry();
+        final activeScope = CloudCanonicalActiveScope(
+          scope: chatScope,
+          generation: leaseFence.generation,
+        );
+        ObjectBoxCloudSemanticStoreGateway realGateway() =>
+            ObjectBoxCloudSemanticStoreGateway(
+              store: objectBox,
+              canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(
+                store: objectBox,
+                activeScopeProvider: () => activeScope,
+                identityResolver: registry,
+                semanticApplyEnabled: true,
+                allowChatUpserts: true,
+              ),
+              clock: () => now,
+            );
+        Future<void> project(
+          CloudInboxEntry entry,
+          CloudChatEntityPayload payload,
+        ) async {
+          final snapshot = _chatSnapshot(
+            logicalEntityKeyHash: payload.logicalEntityKeyHash,
+            etagHash: entry.change.etagHash!,
+            encryptedRawRecordReference:
+                entry.change.encryptedPayloadReference!,
+          );
+          final identityLease = registry.bind(
+            CloudDecodedMutation.upsert(
+              scope: chatScope,
+              generation: entry.generation,
+              changeId: entry.change.changeId,
+              snapshot: snapshot,
+              payload: payload,
+            ),
+          );
+          try {
+            await realGateway().writeTransaction<void>(
+              entry: entry,
+              leaseFence: leaseFence,
+              action: (transaction) {
+                transaction.applyEntity(payload: payload, snapshot: snapshot);
+                transaction.markChangeApplied(entry.change.changeId);
+              },
+            );
+          } finally {
+            identityLease.release();
+          }
+        }
+
+        const recipient = 'peer@example.com';
+        final first = _entry(scope: chatScope);
+        _seedDurableFence(
+          objectBox,
+          entry: first,
+          leaseFence: leaseFence,
+          now: now,
+        );
+        final checkpoint =
+            objectBox.box<CloudSyncCheckpointEntity>().getAll().single
+              ..persistenceLane = chatScope.persistenceLane.name;
+        objectBox.box<CloudSyncCheckpointEntity>().put(checkpoint);
+        final firstPayload = _chatPayload(
+          includeServiceIdentifierAlias: true,
+          canonicalGuid: 'direct-chat-a',
+          chatIdentifier: recipient,
+          participantHandles: const [recipient],
+        );
+        await project(first, firstPayload);
+        final firstChat = objectBox.box<Chat>().getAll().single;
+        final message = Message(
+          guid: 'preserved-test-message',
+          text: 'Keep this history',
+        )..chat.targetId = firstChat.id!;
+        final messageId = objectBox.box<Message>().put(message);
+        final firstMap = objectBox.box<CloudRecordMapEntity>().getAll().single;
+        expect(firstMap.serverRecordIdHash, first.change.recordIdHash);
+
+        if (reopen) {
+          objectBox.close();
+          objectBox = await openStore(directory: directory.path);
+        }
+        final sameRecord = scenario == 'same record update';
+        final secondOwner = scenario == 'second alias owner';
+        final second = _entry(
+          scope: chatScope,
+          sequence: 2,
+          batchId: 'batch-2',
+          changeId: _indexedDigest('change-2'),
+          recordIdHash: sameRecord
+              ? first.change.recordIdHash
+              : _indexedDigest('record-2'),
+          etagHash: _indexedDigest('etag-2'),
+          payloadSha256: _sha256('payload-2'),
+          encryptedServerRecordId: sameRecord
+              ? first.change.encryptedServerRecordId
+              : _indexedProtectedReference('server-2'),
+          protectedSystemFieldsReference: _indexedProtectedReference(
+            'fields-2',
+          ),
+          encryptedPayloadReference: _indexedProtectedReference('payload-2'),
+        );
+        objectBox.runInTransaction(TxMode.write, () {
+          final checkpoint =
+              objectBox.box<CloudSyncCheckpointEntity>().getAll().single
+                ..lastBatchId = second.batchId
+                ..fetchedSequence = 2;
+          objectBox.box<CloudSyncCheckpointEntity>().put(checkpoint);
+          _putPendingInboxEntry(objectBox, entry: second, now: now);
+        });
+        final secondPayload = _chatPayload(
+          includeServiceIdentifierAlias: true,
+          logicalEntityKeyHash: secondOwner
+              ? _indexedDigest('logical-2')
+              : firstPayload.logicalEntityKeyHash,
+          canonicalGuid: secondOwner
+              ? 'direct-chat-b'
+              : firstPayload.canonicalGuid,
+          chatIdentifier: recipient,
+          participantHandles: const [recipient],
+        );
+        final beforeSecond = _durableSyncControlFingerprint(objectBox);
+        if (sameRecord) {
+          await project(second, secondPayload);
+        } else {
+          await expectLater(
+            project(second, secondPayload),
+            throwsA(
+              _failureCode(
+                secondOwner
+                    ? 'canonical_chat_alias_conflict'
+                    : 'semantic_record_mapping_conflict',
+              ),
+            ),
+          );
+          expect(
+            _durableSyncControlFingerprint(objectBox),
+            beforeSecond,
+            reason:
+                'A failed duplicate must not partially adopt ownership or advance the cursor',
+          );
+        }
+
+        final chats = objectBox.box<Chat>().getAll();
+        expect(chats, hasLength(1));
+        expect(chats.single.id, firstChat.id);
+        expect(chats.single.guid, firstPayload.canonicalGuid);
+        final preserved = objectBox.box<Message>().get(messageId)!;
+        expect(preserved.chat.targetId, firstChat.id);
+        expect(preserved.text, 'Keep this history');
+        expect(objectBox.box<CloudRecordMapEntity>().count(), 1);
+        final map = objectBox.box<CloudRecordMapEntity>().getAll().single;
+        expect(map.serverRecordIdHash, first.change.recordIdHash);
+        expect(
+          map.etagHash,
+          sameRecord ? second.change.etagHash : first.change.etagHash,
+        );
+        expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 1);
+        expect(
+          objectBox.box<CloudSemanticReplayEntity>().count(),
+          sameRecord ? 2 : 1,
+        );
+        expect(
+          objectBox
+              .box<CloudSyncCheckpointEntity>()
+              .getAll()
+              .single
+              .appliedSequence,
+          sameRecord ? 2 : 1,
+        );
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(
+          objectBox
+              .box<CloudInboxChangeEntity>()
+              .getAll()
+              .singleWhere((row) => row.fetchSequence == 2)
+              .status,
+          sameRecord
+              ? CloudInboxStatus.applied.index
+              : CloudInboxStatus.pending.index,
+        );
+      });
+    }
+  }
+
   test(
     'generation-zero record maps fail closed without identity adoption',
     () async {

@@ -1756,7 +1756,7 @@ class ObjectBoxCloudSyncStore
       _requireChatCreateJournal().validateChatCreateSource(
         _store, scope, chatId, localSendSource);
       _requireMessagesCloudAccountProjectionReadyLocked(
-        scope, allowRetainedForFreshCreate: true, requireFullyProjectedChat: true);
+        scope, allowRetainedForFreshCreate: true, requireResolvedChatSaves: true);
     }
     final chat = _store.box<Chat>().get(chatId);
     if (chat == null) {
@@ -1983,7 +1983,7 @@ class ObjectBoxCloudSyncStore
         _requireChatCreateJournal().validateChatCreateSource(
           _store, draft.scope, chatOrigin.chatId, chatLocalSendSource);
         _requireMessagesCloudAccountProjectionReadyLocked(draft.scope,
-          allowRetainedForFreshCreate: true, requireFullyProjectedChat: true,
+          allowRetainedForFreshCreate: true, requireResolvedChatSaves: true,
           freshRecordIdHash: draft.serverRecordIdHash);
         _requireNoPriorChatIdentityLocked(chatOrigin,
           logicalEntityKeyHash: draft.logicalEntityKeyHash,
@@ -3609,9 +3609,9 @@ class ObjectBoxCloudSyncStore
   CloudSyncLocalSendJournal _requireChatCreateJournal() =>
       _localSendJournal ?? (throw StateError('cloud_sync_local_send_chat_journal_missing'));
 
-  /// Chat record names are random, but the recipient identity is not. Full
-  /// Chat projection is required separately; retain and reject known earlier
-  /// identity even if its local row was deleted or its generation was reset.
+  /// Chat record names are random, but the recipient identity is not. Saved
+  /// Chat identities must be resolved separately. Retain and reject known
+  /// earlier identity even if its row was deleted or its generation was reset.
   void _requireNoPriorChatIdentityLocked(
     CloudSyncOutboundChatOrigin origin, {
     String? logicalEntityKeyHash,
@@ -3705,7 +3705,7 @@ class ObjectBoxCloudSyncStore
         throw _storageFailure('cloud_sync_outbound_chat_origin_changed');
       }
       _requireMessagesCloudAccountProjectionReadyLocked(scope,
-        allowRetainedForFreshCreate: true, requireFullyProjectedChat: true,
+        allowRetainedForFreshCreate: true, requireResolvedChatSaves: true,
         freshRecordIdHash: operation.serverRecordIdHash);
       _requireNoPriorChatIdentityLocked(origin,
         logicalEntityKeyHash: operation.logicalEntityKeyHash,
@@ -3736,7 +3736,7 @@ class ObjectBoxCloudSyncStore
   void _requireMessagesCloudAccountProjectionReadyLocked(
     CloudSyncScope scope, {
     bool allowRetainedForFreshCreate = false,
-    bool requireFullyProjectedChat = false,
+    bool requireResolvedChatSaves = false,
     String? freshRecordIdHash,
   }) {
     if (!_isMessagesCloudSemanticScope(scope)) return;
@@ -3756,10 +3756,13 @@ class ObjectBoxCloudSyncStore
         throw _storageFailure('messages_cloud_account_projection_incomplete');
       }
       _validateCheckpointScope(checkpoint, siblingScope);
-      // A direct Chat dependency can be independent of terminal Message or
-      // attachment debt, never of undecoded/deleted Chat identity history.
-      final allowRetained = allowRetainedForFreshCreate &&
-          (!requireFullyProjectedChat || zone != 'chatManateeZone');
+      // A journal-proven new send may create a new random Chat record after
+      // unrelated deletions. This grants no old-message replay or deletion
+      // permission. Undecoded Chat saves still block: they may own this same
+      // recipient, and duplicate-record convergence is not yet implemented.
+      final allowRetained = allowRetainedForFreshCreate;
+      final requireResolvedSaves = requireResolvedChatSaves &&
+          zone == 'chatManateeZone';
       // Retention is not completed projection. Only a journal-proven initial
       // create may be independent of unrelated history. It still cannot
       // recreate a record with an observed deletion; all other writes keep
@@ -3790,7 +3793,9 @@ class ObjectBoxCloudSyncStore
           checkpoint.appliedSequence < 0 ||
           checkpoint.appliedSequence > checkpoint.fetchedSequence ||
           (allowRetained
-              ? !_isCompleteTerminalInboxJournalLocked(siblingScope, checkpoint)
+              ? (!_isCompleteTerminalInboxJournalLocked(siblingScope, checkpoint) ||
+                  (requireResolvedSaves &&
+                      !_hasOnlyAppliedChatSavesLocked(siblingScope, checkpoint)))
               : (checkpoint.appliedSequence != checkpoint.fetchedSequence ||
                     !_isCompleteAppliedInboxJournalLocked(
                       siblingScope,
@@ -3800,6 +3805,22 @@ class ObjectBoxCloudSyncStore
       }
     }
   }
+
+  /// A retained tombstone is not an applied deletion. It stays in the inbox
+  /// with its exact record identity and does not advance the applied floor.
+  /// Only those structurally valid terminal deletions may be independent of a
+  /// fresh Chat. Every save must have completed projection, even if its decoder
+  /// classified it as unsupported or out of scope.
+  bool _hasOnlyAppliedChatSavesLocked(
+    CloudSyncScope scope,
+    CloudSyncCheckpointEntity checkpoint,
+  ) => _findInboxForScopeLocked(scope)
+      .where((row) => row.generation == checkpoint.generation)
+      .every((row) => row.status == CloudInboxStatus.applied.index ||
+          (row.status == CloudInboxStatus.retainedUnprojected.index &&
+              row.isTombstone && row.changeType == CloudChangeType.delete.name &&
+              row.failureCategory == null && row.preflightCategory == null &&
+              row.preflightCode == null));
 
   bool _hasRetainedTombstoneLocked(
     CloudSyncScope scope,

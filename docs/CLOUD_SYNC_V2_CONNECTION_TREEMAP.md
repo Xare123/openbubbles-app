@@ -55,7 +55,7 @@ agreed iMessage scope; do not silently add them back or discard iMessage feature
 | --- | --- |
 | Message history and conversation projection | User has observed restored readable chats; sustained incremental/restart behavior must be qualified on the release candidate. |
 | Photos, video, GIF and documents | Photos and video playback are user-confirmed. Installed `dcef0e9bf` automatically fetched three gallery attachments after navigation/scrolling without card taps. One HEIC still fails exact-size validation. GIF support is explicitly deferred; attachments are preserved, not deleted or hidden. Each media surface/type still needs user-facing validation, not metadata-only success. |
-| Chat-first ordinary text writing | Installed `98772e7d2` passed full GCE qualification, but its 2026-09-06 foreground test still deferred at `messages_cloud_tombstone_projection_unavailable` after native send confirmation. No CloudKit admission or remote save/readback was proven. A qualified current database snapshot is needed to distinguish retained Chat identity history from the other guard paths. |
+| Chat-first ordinary text writing | Installed `98772e7d2` still deferred after native confirmation. The local tombstone-only admission repair below passes the complete 1,722-test CloudKit suite; it is not installed or live-write qualified. Windows inspection proves 81 retained deletions plus 44 unresolved Chat saves, which remain blocking. |
 | Reaction, edit/undo and attachment writing | Not production-ready: `rust/src/cloud_sync_outbound.rs` intentionally admits only plain iMessage text; `CloudSyncLocalSendIdentity.capture` also rejects those forms. Requires actual encoders, ownership/conflict/retry semantics and cross-device proof, not gate removal alone. |
 | Conversation/group state | Existing canonical adapter supports versioned participants and presentation fields; direct Chat creation does not qualify group mutations, group photos or all conversation state. |
 | Deletion/tombstone and recovery | `ObjectBoxCanonicalSemanticEntityAdapter.applyTombstone` currently rejects incomplete identity DTOs, and native transport is create-only. Needs exact entity ownership and recoverable semantics before any deletion is enabled. Never test deletion against Alpha history. |
@@ -107,6 +107,40 @@ the exact dependency, update this board, and select the smallest repair before
 another APK. Do not relabel retained rows as applied, erase tombstones, reset
 cursors, or replay the explicitly excluded unsent origin to make the test pass.
 
+### Remote log export follow-up, September 6
+
+The user supplied Dart/native log exports while away. Direct private downloads
+were hashed and the ZIP inspected in memory. The latest Dart log contains 313
+upload-pass reports from 08:05:53Z through 18:53:36Z, all admitted=0 and all
+deferred with `messages_cloud_tombstone_projection_unavailable`. There are
+213 one-origin and 100 two-origin deferrals. These are local admission checks,
+not 313 remote saves. The worker is running, but admission has not succeeded.
+
+Eight verbose semantic reports exist across the archive; none is from
+September 6. The latest internal report timestamp is September 5, 07:06:17Z,
+build `6517f86612a0cf229f2ab8dbc56cf9b70928e182`. Its retained Chat backlog is
+476: 81 tombstones, three `unsupported_service` blocking saves, and 392
+explicitly out-of-scope service saves. This supports the offline contract
+counterexample below, but these historical counts are not a qualified current
+database snapshot or proof of the exact current admission route. Clearing
+tombstones alone would not resolve the other retained Chat categories.
+
+The local-day attachment log records 19 successful downloads and one
+`cloud_attachment_size_mismatch` at 08:16:49Z. After the newest candidate's
+approximately 13:08Z installation boundary it records six successes and no
+fetch errors. Neither event counts nor native WARN-level successful MMCS
+validation diagnostics substitute for visible media validation. Keep size and
+integrity checks intact; earlier-build errors must not be attributed to the
+new candidate without reproduction.
+
+Two unhandled optional chat-screen checks at 13:15:02Z and 13:15:03Z use a
+stored sender handle no longer recognized by the current account. The paths
+are `ChatManager.setActiveChatSync` and conversation-details initialization;
+the header's FaceTime check catches the same failure. Queue guarded optional
+initialization and explicit stale-sender handling. Do not silently change
+sending identity or reset the account. The export's `6005` warnings are from
+September 5, not new registration failures. Alpha remains untouched.
+
 ### Offline cross-boundary reproduction and revised repair plan
 
 Two added cases run the real `CloudSyncEngine`,
@@ -141,7 +175,7 @@ with `semantic_record_mapping_conflict`. The canonical adapter also rejects
 conflicting recipient aliases. A local success followed by a duplicate-record
 readback conflict would be another regression, not a working writer.
 
-Repair order, not yet implemented:
+Initial repair order (superseded by the narrower September 6 repair below):
 
 1. Characterize authenticated duplicate direct-Chat records, their per-record
    provenance, and alias ownership. Keep group/SMS behavior unchanged.
@@ -155,6 +189,158 @@ Repair order, not yet implemented:
 4. Qualify one installed native-confirmed send through Chat readback, Message
    readback, restart and a zero-extra-save retry. Keep the excluded unsent
    origin excluded. Do not call current writes production-ready.
+
+### Windows write fast loop: use now for contract repair
+
+The user requested Windows-based progress while the Pixel is unavailable.
+The existing Windows app harness has read, drain, attachment and projection
+viewer operations, not a live-write operation. Its launcher does not opt into
+outbound writing, and `CloudSyncDevGate.isCanaryRuntime` remains Android-Canary
+only. Do not call a successful Windows read an outbound qualification or bypass
+this fence by pretending Windows is Android.
+
+For the present Dart/ObjectBox blocker, the existing Windows Flutter test
+runner already exercises the production admission, canonical projection and
+transactional persistence classes without an APK or native application
+rebuild. Measured September 6: the 75 Chat-origin tests passed in 10.86 seconds
+including startup. Six new direct-Chat readback characterization cases passed
+in 7.22 seconds; the combined 143 origin/gateway tests passed in 9.25 seconds.
+These are local offline tests with synthetic transport/authentication, not
+Apple acceptance or device UI proof.
+
+The new cases use the semantic persistence lane, real transient identity
+registry, real canonical adapter and real ObjectBox gateway. They establish
+the same results before and after reopening the database:
+
+- An updated version of the same server record projects successfully and
+  preserves the existing Chat and linked Message.
+- A second server record claiming the same logical Chat fails with
+  `semantic_record_mapping_conflict`.
+- A different logical Chat claiming the existing direct recipient alias fails
+  with `canonical_chat_alias_conflict`.
+- Both failures roll back record maps, snapshots, replay state, ownership and
+  checkpoints, leave the second inbox row pending, and create no outbox entry.
+
+The negative cases document the current limitation, not desired permanent
+behavior. They convert the predicted next readback regression into a repeatable
+counterexample. Broader admission of unresolved saved Chats must handle
+legitimate per-record provenance and direct-chat convergence. The narrower
+tombstone-only exception below does not admit those saved Chats. Keep record
+identity collisions and cross-account/recipient mismatches rejected. Full
+native/CI qualification and a controlled live save/readback still follow the
+offline repair; use the Pixel for final installed-app/background behavior.
+No real profile, credentials, messages or retained device capture was opened
+or mutated in this test pass. No APK or GCE build was launched.
+
+### Windows live-write authorization and profile preflight
+
+The user now explicitly authorizes testing CloudKit writes on their account
+through the Windows fast loop. The existing restriction to the previously
+authorized test number remains; no Alpha changes, remote/local history
+deletion, or broad replay is authorized by this test. Authorization is no
+longer a missing prerequisite. Keep the recipient in private test inputs.
+
+The isolated Windows profile is present and its signing certificate has a
+private key and is unexpired. The previous runner executable and native DLL
+are absent from this checkout's Debug output, so a live launch needs a rebuild.
+No OpenBubbles process was running at the inspection checkpoint. Credential
+files were checked for presence only; current Apple authentication was not
+exercised and must not be described as verified.
+
+A fresh offline inspection held the original Windows `data.mdb` open with
+read-only sharing, inspected a disposable copy, and compared the original's
+SHA-256 before/after. The source was unchanged. Inspection took 11.83 seconds.
+The current saved Windows profile reports:
+
+| Semantic zone | Fetched sequence | Contiguous applied sequence | Applied rows | Retained rows |
+| --- | ---: | ---: | ---: | ---: |
+| Chat | 793 | 1 | 668 | 125 |
+| Message | 18992 | 4 | 12258 | 6734 |
+| Attachment | 3626 | 0 | 2237 | 1389 |
+
+All three checkpoints have generation 1, no pending batch/token, no error
+category, and no retry backoff. The applied sequence is a contiguous prefix,
+not the count of visible or successfully projected rows. These are current
+saved Windows-profile measurements, not a new Apple fetch or Pixel snapshot.
+
+Parent review accepted a bounded source audit: reuse
+`CloudSyncProductionOutboundCanaryAdapter` for the controlled writer rather
+than calling Android-only service wrappers or supplying test overrides. But
+its journal-free manual admission still requires complete three-zone
+projection. An already mapped Chat and a synthetic fresh Message do not
+qualify for the separate native-confirmed local-send exception. This profile
+therefore cannot pass the existing manual admission contract. Do not launch
+a knowingly ineligible write or fabricate a native-send journal receipt.
+
+The audit also identified a repeat-loop limitation: manual fresh preflight
+requires an empty outbox, while confirmed audit rows remain after no-save
+replay. Keep those receipts; any repeated manual harness must explicitly
+select/reconcile its exact operation instead of deleting evidence to re-arm.
+
+No writer was provisioned, no account was reset, and no remote save or send was
+attempted in this preflight. The prior six-case record/alias counterexample
+remains a prerequisite for admitting unresolved saved Chats, not for the
+narrower tombstone-only exception below. Once the applicable repair and
+genuinely new-operation provenance are qualified, use one pinned
+plain-text operation, initial-owner-only provisioning, protected exact
+readback, and no-save replay. Leave automatic uploads off in the diagnostic
+Windows composition. Do not claim a live-write result from these checks.
+
+### Narrow fresh-Chat repair: retained deletions are not saved identities
+
+Parent review and a bounded independent audit corrected an overly broad
+prerequisite in the initial plan: duplicate direct-Chat convergence is not
+needed to tolerate only unrelated retained deletions. Existing freshness
+checks reject known canonical recipient rows, snapshots, aliases, maps and
+prior operation identities. A new journal-proven native send creates a new
+random server record; it does not authorize old-message replay or deletion.
+
+The source now revalidates the same narrow exception at origin capture,
+atomic admission, leasing and final submission. Chat history must be a complete
+current-generation journal containing only applied rows or retained deletion
+rows with `isTombstone=true` and no failure/preflight classification. Every
+unresolved Chat save still blocks, including unsupported and out-of-scope
+saves. Exact-target tombstones, prior identity, pending work, journal gaps,
+account/generation drift and source changes still block. No record-map,
+alias, canonical merge, remote deletion, or schema migration was changed.
+
+The real ObjectBox tests now take retained reader tombstones through fresh Chat
+admission, reopen, exact synthetic receipt/readback, same-row canonical adoption
+and Message admission. The old tombstone remains retained and the exact-applied
+floor stays behind it. Classified or malformed tombstones fail after restart.
+Engine tests cover a new blocking save appearing before leasing and during
+remote preflight. Native authentication and network receipts are synthetic:
+these results are not live Apple acceptance.
+
+Verification: all **1,722** tests under `test/services/cloud_sync` passed in
+2m37s of runner time. Targeted analyzer checks were clean. A separate real
+ObjectBox inspector test passed, checking retention classification, original
+database hash preservation and exclusion of synthetic private identifiers.
+
+The bounded audit was accepted and its suggested preflight race case added.
+The reviewer was closed and shutdown verified; it created no files, worktree,
+build or descendants. Supported session deletion was unavailable, so no shared
+session storage was altered. C: had approximately 62 GiB free; no cleanup was
+necessary.
+
+A second read-only Windows-profile inspection, with the original database held
+read-shared and unchanged SHA-256 before/after, separates the saved backlog:
+Chat has **81 unclassified retained tombstones and 44 unresolved saved records**.
+The outbox is currently zero. The new exception removes the 81 deletion barriers
+but deliberately does not bypass those 44 saves. The inspector now emits these
+closed-set counts and zone labels (schema 6); it emits no record identifiers or
+message content. Refresh the Windows decoder/projection using current source
+before attempting live writes. Manual Windows writing still requires a genuine
+new-operation admission path, not a fabricated native-send confirmation.
+
+The expected Windows Debug executable/DLL are absent. The three known
+`build-cache/ck2-win*` directories contain no compiled target subdirectories,
+only wrapper/metadata files. Do not describe the next native build as a verified
+warm incremental build. A scoped Local Reach artifact search did not return
+promptly and was stopped; this is not proof that no alternate artifact exists.
+No native rebuild, APK, remote save/send or account reset was launched in this
+repair pass. Keep credentials local and use build provenance before reusing any
+alternative executable.
 
 While the user is away, Developer Tools provides `Download / Share Logs` and
 `Export OB logs`. With verbose CloudKit diagnostics already enabled, the Dart

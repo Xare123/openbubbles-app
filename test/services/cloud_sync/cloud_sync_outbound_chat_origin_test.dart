@@ -403,8 +403,10 @@ void main() {
     'shared Chat',
     'unrelated history',
     'engine success',
+    'engine retained tombstone success',
     'engine source during preflight',
     'engine tombstone during preflight',
+    'engine retained save during preflight',
     'engine preflight retry retirement',
     'engine preflight pause retirement',
     'engine preflight quarantine retirement',
@@ -423,6 +425,15 @@ void main() {
     'retained Chat tombstone',
     'retained Chat reader tombstone',
     'retained Chat restart reader tombstone',
+    'retained Chat conflict tombstone',
+    'retained Chat unknown tombstone',
+    'retained Chat preflight tombstone',
+    'retained Chat code tombstone',
+    'retained Chat invalid type tombstone',
+    'retained Chat pending tombstone',
+    'retained Chat gap tombstone',
+    'retained Chat foreign tombstone',
+    'retained Chat generation tombstone',
     'duplicate before stage',
     'prior snapshot before stage',
     'prior generation before stage',
@@ -433,6 +444,7 @@ void main() {
     'missing journal before lease',
     'missing journal before submit',
     'source before lease',
+    'retained save before lease',
     'payload before submit',
     'tombstone before submit',
     'duplicate before submit',
@@ -558,6 +570,14 @@ void main() {
           await retainHistory('attachmentManateeZone');
           await retainHistory('messageManateeZone', tombstone: true);
         }
+        const independentChatHistory = {
+          'retained Chat tombstone',
+          'retained Chat reader tombstone',
+          'retained Chat restart reader tombstone',
+        };
+        if (mutation == 'engine retained tombstone success') {
+          await retainHistory('chatManateeZone', tombstone: true);
+        }
         if (mutation.startsWith('retained Chat')) {
           if (mutation.contains('reader')) {
             // Exercise the installed reader policy, not a hand-marked inbox
@@ -623,6 +643,34 @@ void main() {
           } else {
             await retainHistory('chatManateeZone', tombstone: mutation.endsWith('tombstone'));
           }
+          if (mutation.endsWith('tombstone') &&
+              !independentChatHistory.contains(mutation)) {
+            final row = db.box<CloudInboxChangeEntity>().getAll().single;
+            switch (mutation) {
+              case 'retained Chat conflict tombstone':
+                row.failureCategory = CloudFailureCategory.conflict.name;
+              case 'retained Chat unknown tombstone':
+                row.failureCategory = CloudFailureCategory.unknown.name;
+              case 'retained Chat preflight tombstone':
+                row.preflightCategory = CloudFailureCategory.malformedRecord.name;
+              case 'retained Chat code tombstone':
+                row.preflightCode = 'synthetic_preflight_failure';
+              case 'retained Chat invalid type tombstone':
+                row.changeType = CloudChangeType.save.name;
+              case 'retained Chat pending tombstone':
+                row.status = CloudInboxStatus.pending.index;
+              case 'retained Chat gap tombstone':
+                row.fetchSequence = 2;
+              case 'retained Chat foreign tombstone':
+                row.accountFingerprint = 'B' * 43;
+              case 'retained Chat generation tombstone':
+                row.generation = 2;
+            }
+            db.box<CloudInboxChangeEntity>().put(row);
+            await restart();
+            bindJournal();
+            source = journal.readForAdmission(intentId);
+          }
         }
         void duplicateChat() {
           final duplicate = Chat(
@@ -665,13 +713,12 @@ void main() {
             ).admitChat(_scope(), chatId: chatId,
               createdAt: source.createdAtUtc, authFence: fence,
               localSendSource: source, encode: (_) => _FakeChat());
-        if (mutation.startsWith('retained Chat') ||
+        if ((mutation.startsWith('retained Chat') &&
+                !independentChatHistory.contains(mutation)) ||
             mutation.endsWith('before stage') || mutation.contains('during stage')) {
           await expectLater(admitChat(),
             mutation.startsWith('retained Chat')
-                ? _failure(mutation.endsWith('tombstone')
-                    ? 'messages_cloud_tombstone_projection_unavailable'
-                    : 'messages_cloud_account_projection_incomplete')
+                ? _failure('messages_cloud_account_projection_incomplete')
                 : throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())));
           final staged = mutation.contains('during stage') ? 1 : 0;
           expect(transport.stages, staged);
@@ -878,6 +925,9 @@ void main() {
             if (mutation == 'engine tombstone during preflight') {
               await retainHistory('chatManateeZone', tombstone: true, record: _record);
             }
+            if (mutation == 'engine retained save during preflight') {
+              await retainHistory('chatManateeZone');
+            }
           };
           remote.preparedSubmissionHandler = (scope, prepared, identity) async {
             expect(outbox().state, CloudOutboxStatus.unknownOutcome.index);
@@ -905,8 +955,8 @@ void main() {
           ).synchronize(trigger: CloudSyncTrigger.manual);
           expect(remote.prepareSubmissionCallCount, 1);
           expect(remote.consumePreparedSubmissionCallCount,
-              mutation == 'engine success' ? 1 : 0);
-          if (mutation == 'engine success') {
+              mutation.endsWith('success') ? 1 : 0);
+          if (mutation.endsWith('success')) {
             expect(outbox().state, CloudOutboxStatus.confirmed.index);
             expect(recordMap().etagHash, 'E' * 43);
           } else {
@@ -943,6 +993,9 @@ void main() {
         }
         if (mutation == 'source before lease') {
           db.box<Message>().put(db.box<Message>().get(messageId)!..dateDeleted = _now);
+        }
+        if (mutation == 'retained save before lease') {
+          await retainHistory('chatManateeZone');
         }
         if (mutation == 'missing journal before lease') bindStore();
         Future<List<CloudOutboxOperation>> leaseChat() => sync.leaseEligibleOutbox(
@@ -1137,6 +1190,19 @@ void main() {
           await sync.releaseCoordinatorLease(_scope(), leaseFence: lease);
         }
         preserved(adopted: true);
+        if (mutation.startsWith('retained Chat')) {
+          // Fresh readback does not consume the earlier deletion or pretend
+          // it was applied. Its record and the new Chat remain independent.
+          final retained = db.box<CloudInboxChangeEntity>().getAll()
+              .singleWhere((row) => row.isTombstone);
+          expect(retained.serverRecordIdHash, 'V' * 43);
+          expect(retained.status, CloudInboxStatus.retainedUnprojected.index);
+          final checkpoint = await sync.readCheckpoint(_scope());
+          expect(checkpoint.fetchedSequence, 2);
+          expect(checkpoint.lastAppliedSequence, 0);
+          expect(checkpoint.pendingBatchId, isNull);
+          expect(checkpoint.fetchedToken, 'synthetic-combined-token');
+        }
         expect(db.box<CloudSemanticSnapshotEntity>().count(), 1);
         await restart();
         bindJournal();
@@ -1194,7 +1260,8 @@ void main() {
           }
           db.box<CloudOutboxOperationEntity>().put(foreign);
         }
-        if (mutation != 'none' && mutation != 'shared Chat' && mutation != 'unrelated history') {
+        if (mutation != 'none' && mutation != 'shared Chat' && mutation != 'unrelated history' &&
+            !independentChatHistory.contains(mutation)) {
           await expectLater(
             admitMessage(),
             throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())),
