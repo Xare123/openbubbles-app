@@ -1416,14 +1416,17 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       if (await file.length() > 8192) {
         throw StateError('cloud_sync_chat_observation_candidate_invalid');
       }
-      var candidate = cloudSyncV2WindowsChatObservationCandidate(
+      final identity = cloudSyncV2WindowsChatObservationCandidate(
         await file.readAsString(),
       );
-      if (stagedMode) {
-        candidate = CloudSyncOutboundChatAdmissionCoordinator.encodeDirectIdentity(
-          originalGuid: candidate.groupId, recipient: candidate.chatIdentifier,
-          sender: candidate.lastAddressedHandle);
-      }
+      // proto001 is an OWNED Rust opaque. Staging and EACH observation consume
+      // it through FRB. Rebuild the same wire shape, not a new record identity,
+      // for every call; never reuse an already-disposed native wrapper.
+      api.CloudChat candidateForNativeCall() => stagedMode
+          ? CloudSyncOutboundChatAdmissionCoordinator.encodeDirectIdentity(
+              originalGuid: identity.groupId, recipient: identity.chatIdentifier,
+              sender: identity.lastAddressedHandle)
+          : identity;
       await _setRuntimeStage(stageName, state: 'running');
       Future<Map<String, Object?>> observe(
         CloudSyncNativeAuthSnapshot auth, Object pauseToken, {
@@ -1468,7 +1471,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                 expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
                 generation: BigInt.from(readSet.generation),
                 readSetFenceSha256: readSet.fenceSha256,
-                candidate: candidate,
+                candidate: candidateForNativeCall(),
                 stagedCandidate: staged == null ? null : identity_api.CloudSyncStagedChatIdentityCandidate(
                   protectedPayloadReference: staged.protectedEnvelopeReference,
                   payloadSha256: staged.payloadSha256, recordIdHash: staged.serverRecordIdHash,
@@ -1519,7 +1522,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         counts = await adapter.sampler.runConfirmedReadOnlyObservation(observe);
       } else {
         counts = await cloudSyncObserveStagedChat(readActiveClient: () => _activeClient,
-          privateStorageDirectory: fs.appDocDir.path, candidate: candidate,
+          privateStorageDirectory: fs.appDocDir.path, candidate: candidateForNativeCall(),
           observe: (auth, token, staged) => observe(auth, token, staged: staged));
         counts['stage_rolled_back'] = true;
       }

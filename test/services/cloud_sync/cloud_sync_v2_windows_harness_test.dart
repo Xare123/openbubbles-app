@@ -8,6 +8,20 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('staged diagnostics create fresh owned native wrappers for every bridge call', () {
+    final source = File('lib/cloud_sync_v2_windows_harness.dart').readAsStringSync();
+    final start = source.indexOf('Future<void> _runChatIdentityObservation()');
+    final end = source.indexOf('void _showFailure(', start);
+    expect(start, greaterThan(0));
+    expect(end, greaterThan(start));
+    final method = source.substring(start, end);
+    expect(method, contains('api.CloudChat candidateForNativeCall()'));
+    expect(RegExp(r'candidate: candidateForNativeCall\(\)').allMatches(method).length, 2);
+    expect(method, isNot(contains('candidate: candidate,')));
+    expect(method, contains('originalGuid: identity.groupId'));
+    expect(method, contains('recipient: identity.chatIdentifier'));
+    expect(method, contains('sender: identity.lastAddressedHandle'));
+  });
   test('staged identity diagnostic has a distinct explicit launch mode', () {
     final launch = CloudSyncV2WindowsHarnessLaunch.parse([
       'observe-staged-chat-identity', '--launch-id=${'b' * 32}',
