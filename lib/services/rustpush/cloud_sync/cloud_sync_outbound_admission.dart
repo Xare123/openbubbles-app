@@ -5,6 +5,7 @@ import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_encoder.dart';
+import 'cloud_sync_group_send_route.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_staging.dart';
 import 'objectbox_cloud_sync_store.dart';
@@ -81,16 +82,22 @@ final class CloudSyncOutboundAdmissionCoordinator {
       final candidate = local == null
           ? null
           : (encodeMessage ?? _encodeLocalMessage)(local);
+      final chat = local?.chat.target;
+      final groupRoute = chat == null
+          ? null
+          : CloudSyncGroupSendRoute.capture(chat);
       if (candidate != null &&
           (candidate.guid != local!.guid ||
               candidate.type != (local.associatedMessageType == null ? 1 : 2) ||
               candidate.service != 'iMessage' ||
               candidate.sender.isNotEmpty ||
-              candidate.chatId != local.chat.target!.guid ||
+              candidate.chatId !=
+                  (groupRoute?.groupId ?? local.chat.target!.guid) ||
               candidate.destinationCallerId !=
-                  local.chat.target!.usingHandle!
-                      .replaceFirst('mailto:', '')
-                      .replaceFirst('tel:', ''))) {
+                  (groupRoute?.sender ??
+                      local.chat.target!.usingHandle!
+                          .replaceFirst('mailto:', '')
+                          .replaceFirst('tel:', '')))) {
         throw StateError('cloud_sync_local_send_encoded_identity_changed');
       }
       return (source, candidate);
@@ -127,7 +134,9 @@ final class CloudSyncOutboundAdmissionCoordinator {
 
   static frb_api.CloudMessage _encodeLocalMessage(Message message) =>
       message.associatedMessageType == null
-      ? encodeCloudSyncLocalSendPlainText(message)
+      ? message.chat.target?.style == 43
+            ? encodeCloudSyncLocalSendGroupPlainText(message)
+            : encodeCloudSyncLocalSendPlainText(message)
       : encodeCloudSyncLocalSendReaction(message);
 
   Future<CloudOutboxOperation> _stageAndAdmit(

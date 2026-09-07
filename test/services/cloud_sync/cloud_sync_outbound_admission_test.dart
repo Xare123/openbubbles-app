@@ -297,14 +297,14 @@ void main() {
     CloudSyncLocalSendIntentEntity intent() =>
         objectBox.box<CloudSyncLocalSendIntentEntity>().get(intentId)!;
 
-    void confirm() {
+    void confirm([String stableGuid = _localGuid]) {
       final identity = CloudSyncLocalSendIdentity.capture(
         local,
         local.chat.target!,
-        _localGuid,
+        stableGuid,
       )!;
       local
-        ..guid = _localGuid
+        ..guid = stableGuid
         ..stagingGuid = null;
       journal.saveConfirmedSubmission(
         identity: identity,
@@ -407,6 +407,82 @@ void main() {
       );
     }
 
+    Future<void> prepareGroup() async {
+      final first = Handle(
+        address: 'group-a@example.com',
+        service: 'iMessage',
+        uniqueAddressAndService: 'group-a@example.com/iMessage',
+      );
+      final second = Handle(
+        address: '+15555550102',
+        service: 'iMessage',
+        uniqueAddressAndService: '+15555550102/iMessage',
+      );
+      objectBox.box<Handle>().putMany([first, second]);
+      final chat =
+          Chat(
+              guid: 'iMessage;+;restored-group',
+              chatIdentifier: 'restored-group',
+              usingHandle: 'mailto:sender@example.com',
+              style: 43,
+            )
+            ..cloudGuid = 'opaque-apple-group-id'
+            ..groupVersion = 9
+            ..handles.addAll([first, second]);
+      objectBox.box<Chat>().put(chat);
+      local = Message(
+        guid: 'temp-Group12345',
+        stagingGuid: _groupGuid,
+        text: 'synthetic group message',
+        isFromMe: true,
+        dateCreated: testEpoch,
+        attributedBody: [AttributedBody.raw('synthetic group message')],
+      )..chat.target = chat;
+      journal.saveSubmission(
+        identity: CloudSyncLocalSendIdentity.capture(local, chat, _groupGuid)!,
+        newlyGeneratedGuid: true,
+        persistMessage: () => objectBox.box<Message>().put(local),
+        now: testEpoch,
+      );
+      intentId = objectBox
+          .box<CloudSyncLocalSendIntentEntity>()
+          .getAll()
+          .singleWhere((row) => row.localMessageId == local.id)
+          .id;
+      confirm(_groupGuid);
+      final chatScope = siblingScope('chatManateeZone');
+      final source = objectBox
+          .box<CloudInboxChangeEntity>()
+          .getAll()
+          .singleWhere((row) => row.zone == chatScope.zone);
+      for (final alias
+          in objectBox.box<CloudSemanticChatAliasEntity>().getAll().where(
+            (row) => row.zone == chatScope.zone,
+          )) {
+        objectBox.box<CloudSemanticChatAliasEntity>().remove(alias.id);
+      }
+      for (final snapshot
+          in objectBox.box<CloudSemanticSnapshotEntity>().getAll().where(
+            (row) => row.zone == chatScope.zone,
+          )) {
+        objectBox.box<CloudSemanticSnapshotEntity>().remove(snapshot.id);
+      }
+      for (final mapping
+          in objectBox.box<CloudRecordMapEntity>().getAll().where(
+            (row) => row.zone == chatScope.zone,
+          )) {
+        objectBox.box<CloudRecordMapEntity>().remove(mapping.id);
+      }
+      await seedSyntheticRestoredChatProof(
+        objectBox: objectBox,
+        store: store,
+        chatScope: chatScope,
+        chat: chat,
+        appliedSource: source,
+        now: testEpoch,
+      );
+    }
+
     setUp(() async {
       await seedCompleteAccount();
       bindJournal();
@@ -486,6 +562,51 @@ void main() {
         expect(intent().confirmedReadbackBindingSha256, isNull);
       },
     );
+
+    test('restored group crosses journal, staging, and adoption', () async {
+      await prepareGroup();
+      transport.stages.add(_stage('b', 'Q', 'Y', 'Z'));
+      final operation = await admit();
+      final binding = intent().admittedChatBinding;
+      expect(binding, isNotNull);
+      expect(jsonDecode(binding!)[0], 3);
+      expect(operation.status, CloudOutboxStatus.pending);
+      expect(operation.action, CloudOutboxAction.save);
+      expect(transport.committed, [_stage('b', 'Q', 'Y', 'Z').leaseReference]);
+      expect(transport.rolledBack, isEmpty);
+    });
+
+    test('group member drift during staging rolls back admission', () async {
+      await prepareGroup();
+      final stage = _stage('b', 'Q', 'Y', 'Z');
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      transport
+        ..stages.add(stage)
+        ..stageEntered = entered
+        ..releaseStage = release;
+      final pending = admit();
+      final rejected = expectLater(
+        pending,
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'code',
+            'cloud_sync_local_send_source_changed',
+          ),
+        ),
+      );
+      await entered.future;
+      final member = local.chat.target!.handles.first
+        ..address = 'changed-during-stage@example.com';
+      objectBox.box<Handle>().put(member);
+      release.complete();
+      await rejected;
+      expect(transport.committed, isEmpty);
+      expect(transport.rolledBack, [stage.leaseReference]);
+      expect(intent().state, 1);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+    });
 
     test(
       'verified replay persists the immutable binding with receipt release',
@@ -1520,6 +1641,7 @@ void main() {
 
 const _localGuid = '11111111-1111-4111-8111-111111111111';
 const _reactionGuid = '22222222-2222-4222-8222-222222222222';
+const _groupGuid = '33333333-3333-4333-8333-333333333333';
 
 Future<void> _seedRestoredParent(
   Store db,
@@ -1608,7 +1730,9 @@ Future<void> _seedRestoredParent(
 final class _LocalCloudMessage implements frb_api.CloudMessage {
   _LocalCloudMessage(Message message, {this.type = 1})
     : guid = message.guid!,
-      chatId = message.chat.target!.guid,
+      chatId = message.chat.target!.style == 43
+          ? message.chat.target!.cloudGuid!
+          : message.chat.target!.guid,
       destinationCallerId = message.chat.target!.usingHandle!
           .replaceFirst('mailto:', '')
           .replaceFirst('tel:', '');

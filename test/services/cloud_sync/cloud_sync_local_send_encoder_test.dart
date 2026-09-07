@@ -69,6 +69,35 @@ void main() {
       IS_READ | IS_DELIVERED,
     );
   });
+  test('restored group uses raw outer route and canonical proto route', () {
+    final message = _groupMessage('group text');
+    final encoded = encodeCloudSyncLocalSendGroupPlainText(message);
+    final proto = api.decodeMessageproto(wrapped: encoded.msgProto);
+    final proto4 = (encoded.msgProto4 as _Proto4).value;
+    expect(proto.text, 'group text');
+    expect(encoded.chatId, 'opaque-apple-group-id');
+    expect(encoded.guid, message.guid);
+    expect(encoded.sender, isEmpty);
+    expect(encoded.destinationCallerId, 'sender@example.com');
+    expect(proto4.groupId, 'iMessage;+;restored-group');
+    expect(proto4.service, 'iMessage');
+  });
+  test('group encoder rejects provisional or missing raw routes', () {
+    final missing = _groupMessage('group text')..chat.target!.cloudGuid = null;
+    expect(
+      () => encodeCloudSyncLocalSendGroupPlainText(missing),
+      throwsStateError,
+    );
+    final provisional = _groupMessage('group text');
+    provisional.chat.target!
+      ..guid = '266571D8-DA74-4C73-A681-9007C946D3AA'
+      ..chatIdentifier = null
+      ..cloudGuid = null;
+    expect(
+      () => encodeCloudSyncLocalSendGroupPlainText(provisional),
+      throwsStateError,
+    );
+  });
   final rejected = <String, void Function(Message)>{
     'styled text': (m) =>
         _attributes(m, Attributes(messagePart: 0, bold: true)),
@@ -243,6 +272,27 @@ Message _message(String text) {
   )..chat.target = chat;
 }
 
+Message _groupMessage(String text) {
+  final first = Handle(address: 'first@example.com', service: 'iMessage');
+  final second = Handle(address: '+15550000002', service: 'iMessage');
+  final chat = Chat(
+    id: 12,
+    guid: 'iMessage;+;restored-group',
+    chatIdentifier: 'restored-group',
+    usingHandle: 'mailto:sender@example.com',
+    style: 43,
+    participants: [first, second],
+  )..cloudGuid = 'opaque-apple-group-id';
+  chat.handles.addAll([first, second]);
+  return Message(
+    guid: 'AA6165FC-EFF7-40A7-8F11-C0D3D397597B',
+    text: text,
+    dateCreated: DateTime.utc(2026, 9, 7),
+    isFromMe: true,
+    attributedBody: [AttributedBody.raw(text)],
+  )..chat.target = chat;
+}
+
 Message _reactionMessage({required String type, int? part}) {
   final recipient = Handle(
     address: 'recipient@example.com',
@@ -299,7 +349,7 @@ class _Bridge implements RustLibApi {
   @override
   api.GZipWrapperMessageProto4 crateApiApiEncodeMessageproto4({
     required api.MessageProto4 messageproto4,
-  }) => _Proto4();
+  }) => _Proto4(messageproto4);
   @override
   api.MessageFlags crateApiApiMessageFlagsFromBitsTruncate({
     required int val,
@@ -326,6 +376,8 @@ class _Proto3 implements api.GZipWrapperMessageProto3 {
 }
 
 class _Proto4 implements api.GZipWrapperMessageProto4 {
+  _Proto4(this.value);
+  final api.MessageProto4 value;
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

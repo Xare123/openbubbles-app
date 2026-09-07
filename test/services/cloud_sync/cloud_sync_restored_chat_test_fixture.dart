@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_group_send_route.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:crypto/crypto.dart';
@@ -28,6 +29,12 @@ String syntheticRestoredChatAliasKeyHash(String chatIdentifier) =>
     _nativeSemanticHash(
       domain: 'OpenBubbles Cloud Sync V2 canonical alias identity v1\u0000',
       value: 'service-identifier\u0000$chatIdentifier',
+    );
+
+String syntheticRestoredChatGroupAliasKeyHash(String groupId) =>
+    _nativeSemanticHash(
+      domain: 'OpenBubbles Cloud Sync V2 canonical alias identity v1\u0000',
+      value: 'group-id\u0000$groupId',
     );
 
 Future<CloudInboxChangeEntity> seedSyntheticRestoredChatAppliedSource({
@@ -103,8 +110,7 @@ Future<void> seedSyntheticRestoredChatProof({
       appliedSource.status != CloudInboxStatus.applied.index ||
       appliedSource.isTombstone ||
       appliedSource.changeType != CloudChangeType.save.name ||
-      appliedSource.serverRecordIdHash !=
-          syntheticRestoredChatServerRecordIdHash ||
+      appliedSource.serverRecordIdHash.length != 43 ||
       appliedSource.etagHash != syntheticRestoredChatEtagHash) {
     throw StateError('synthetic_restored_chat_source_invalid');
   }
@@ -113,6 +119,18 @@ Future<void> seedSyntheticRestoredChatProof({
       'semantic-generation4:${_digest('$scopeKey\u001f$generation')}';
   final logicalKey = syntheticRestoredChatLogicalEntityKeyHash(chat.guid);
   final aliasKey = syntheticRestoredChatAliasKeyHash(chat.chatIdentifier!);
+  final groupRoute = chat.style == 43
+      ? CloudSyncGroupSendRoute.capture(chat)
+      : null;
+  if (chat.style == 43 &&
+      (groupRoute == null ||
+          groupRoute.provisional ||
+          groupRoute.groupId == null)) {
+    throw StateError('synthetic_restored_group_route_invalid');
+  }
+  final groupMetadataDigest = groupRoute?.routingMetadataDigest(
+    groupVersion: chat.groupVersion,
+  );
   final canonicalGuidHash = CloudCanonicalIdentityDigest.forCanonicalGuid(
     scope: chatScope,
     generation: generation,
@@ -155,6 +173,8 @@ Future<void> seedSyntheticRestoredChatProof({
       logicalEntityKeyHash: logicalKey,
       canonicalGuidHash: canonicalGuidHash,
       canonicalGuidLookupHash: canonicalGuidLookupHash,
+      groupVersion: chat.groupVersion,
+      groupMetadataDigest: groupMetadataDigest,
       etagHash: appliedSource.etagHash,
       updatedAtMs: now.millisecondsSinceEpoch,
     ),
@@ -182,6 +202,34 @@ Future<void> seedSyntheticRestoredChatProof({
       updatedAtMs: now.millisecondsSinceEpoch,
     ),
   );
+  if (groupRoute != null) {
+    final groupAliasKey = syntheticRestoredChatGroupAliasKeyHash(
+      groupRoute.groupId!,
+    );
+    objectBox.box<CloudSemanticChatAliasEntity>().put(
+      CloudSemanticChatAliasEntity(
+        bindingKey:
+            'semantic-chat-claim2:${_digest('${chatScope.storageKey}\u001f$generation\u001fiMessage\u001fgroupId\u001f$groupAliasKey\u001f$logicalKey')}',
+        scopeGenerationKey: generationKey,
+        scopeKey: scopeKey,
+        accountFingerprint: chatScope.accountFingerprint,
+        container: chatScope.container,
+        database: chatScope.database,
+        zone: chatScope.zone,
+        streamKind: chatScope.streamKind.name,
+        schemaVersion: chatScope.schemaVersion,
+        generation: generation,
+        service: CloudSemanticService.iMessage.name,
+        aliasKind: CloudSemanticChatAliasKind.groupId.name,
+        aliasKeyHash: groupAliasKey,
+        chatLogicalEntityKeyHash: logicalKey,
+        canonicalGuidHash: canonicalGuidHash,
+        canonicalGuidLookupHash: canonicalGuidLookupHash,
+        chatId: chat.id!,
+        updatedAtMs: now.millisecondsSinceEpoch,
+      ),
+    );
+  }
 }
 
 int recordMapCountForZone(Store objectBox, String zone) => objectBox

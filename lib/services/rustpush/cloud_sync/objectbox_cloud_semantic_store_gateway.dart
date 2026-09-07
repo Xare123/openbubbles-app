@@ -1579,6 +1579,7 @@ final class ObjectBoxCloudSemanticStoreGateway
       final rows = query.find();
       var hasAuthoritativeAlias = false;
       var missingGroupRoute = false;
+      var requiresGroupMetadataDigest = false;
       for (final row in rows) {
         if (row.bindingKey.startsWith(_legacyChatAliasBindingPrefix)) {
           continue;
@@ -1636,7 +1637,26 @@ final class ObjectBoxCloudSemanticStoreGateway
             chat.cloudGuid?.isNotEmpty != true) {
           missingGroupRoute = true;
         }
+        if (row.service == CloudSemanticService.iMessage.name &&
+            !chat!.isRpSms &&
+            chat.style == 43) {
+          requiresGroupMetadataDigest = true;
+        }
         hasAuthoritativeAlias = true;
+      }
+      if (hasAuthoritativeAlias && requiresGroupMetadataDigest) {
+        final snapshot = _findLegacyOwnershipSnapshot(
+          context,
+          logicalEntityKeyHash,
+        );
+        if (snapshot == null) return false;
+        _validateLegacyOwnershipSnapshot(
+          context: context,
+          snapshot: snapshot,
+          expectedKinds: const {CloudEntityKind.chat},
+          expectedLogicalKeyHash: logicalEntityKeyHash,
+        );
+        if (snapshot.groupMetadataDigest == null) return false;
       }
       return hasAuthoritativeAlias && !missingGroupRoute;
     } finally {
@@ -2378,6 +2398,25 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         safeCode: 'projection_repair_snapshot_changed',
       );
     }
+    final backfillsGroupMetadataDigest =
+        repairsChat &&
+        payload.style == CloudSemanticChatStyle.group &&
+        local.groupMetadataDigest == null &&
+        snapshot.groupMetadataDigest != null;
+    if (backfillsGroupMetadataDigest) {
+      final expectedIncoming = local.copyWith(
+        groupMetadataDigest: snapshot.groupMetadataDigest,
+      );
+      if (!ObjectBoxCloudSemanticStoreGateway._legacySnapshotsMatchExactly(
+        expectedIncoming,
+        snapshot,
+      )) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'projection_repair_snapshot_changed',
+        );
+      }
+    }
 
     final CloudCanonicalSemanticMutationReceipt receipt;
     if (payload case CloudChatEntityPayload chatPayload) {
@@ -2417,6 +2456,26 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       throw ObjectBoxCloudSemanticStoreGateway._failure(
         'projection_repair_canonical_apply_uncommitted',
       );
+    }
+    if (backfillsGroupMetadataDigest) {
+      final snapshotKey = _context.snapshotKey(
+        CloudEntityKind.chat,
+        snapshot.logicalEntityKeyHash,
+      );
+      final entity = _findSnapshot(snapshotKey);
+      if (entity == null || entity.groupMetadataDigest != null) {
+        throw ObjectBoxCloudSemanticStoreGateway._failure(
+          'projection_repair_snapshot_changed',
+        );
+      }
+      _validateSnapshotScope(
+        entity,
+        expectedKind: CloudEntityKind.chat,
+        expectedLogicalKeyHash: snapshot.logicalEntityKeyHash,
+      );
+      entity.groupMetadataDigest = snapshot.groupMetadataDigest;
+      entity.updatedAtMs = _updatedAtMs;
+      _snapshots.put(entity);
     }
     _projectionRepairPerformed = true;
   }

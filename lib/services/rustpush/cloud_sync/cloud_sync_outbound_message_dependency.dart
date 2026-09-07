@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_chat_binding.dart';
+import 'cloud_sync_outbound_group_binding.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_reaction_send_identity.dart';
 import 'cloud_sync_record_maps.dart';
@@ -33,11 +34,17 @@ String requireCloudSyncLocalSendDependencies({
       message.associatedMessageType != null ||
       message.associatedMessageEmoji != null;
   if (!hasAssociation) {
-    return requireCloudSyncRestoredDirectChat(
-      store: store,
-      messageScope: messageScope,
-      message: message,
-    );
+    return message.chat.target?.style == 43
+        ? requireCloudSyncRestoredGroupChat(
+            store: store,
+            messageScope: messageScope,
+            message: message,
+          )
+        : requireCloudSyncRestoredDirectChat(
+            store: store,
+            messageScope: messageScope,
+            message: message,
+          );
   }
   Never reject() => throw CloudSyncFailure(
     category: CloudFailureCategory.dependency,
@@ -86,27 +93,45 @@ void requireCloudSyncAdoptedLocalSendDependencies({
     category: CloudFailureCategory.dependency,
     safeCode: 'cloud_sync_local_send_parent_not_ready',
   );
-  void validateLegacyChat() => requireCloudSyncAdoptedChatDependency(
-    store: store,
-    messageScope: messageScope,
-    binding: binding,
-    expectedChatId: expectedChatId,
-  );
+  void validateChatBinding() {
+    dynamic chatDecoded;
+    try {
+      chatDecoded = binding == null ? null : jsonDecode(binding);
+    } on FormatException {
+      chatDecoded = null;
+    }
+    if (chatDecoded is List && chatDecoded.isNotEmpty && chatDecoded[0] == 3) {
+      requireCloudSyncAdoptedGroupChatDependency(
+        store: store,
+        messageScope: messageScope,
+        binding: binding,
+        expectedChatId: expectedChatId,
+      );
+      return;
+    }
+    requireCloudSyncAdoptedChatDependency(
+      store: store,
+      messageScope: messageScope,
+      binding: binding,
+      expectedChatId: expectedChatId,
+    );
+  }
+
   if (binding == null || binding.length > 2048) {
-    validateLegacyChat();
+    validateChatBinding();
     return;
   }
   final dynamic decoded;
   try {
     decoded = jsonDecode(binding);
   } on FormatException {
-    validateLegacyChat();
+    validateChatBinding();
     return;
   }
   if (decoded is! List || decoded.length != 3 || decoded[0] != 2) {
     // Backward compatibility is intentional: plaintext admission remains the
     // old helper's byte-for-byte v1 format and validation behavior.
-    validateLegacyChat();
+    validateChatBinding();
     return;
   }
   if (decoded[1] is! String || decoded[2] is! List) reject();

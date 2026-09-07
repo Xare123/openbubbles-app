@@ -87,6 +87,39 @@ protected membership; nor was a blanket new multi-record rejection implemented.
 The remaining next gate is authenticated group route/member freshness, followed
 by restored-group Message admission and exact live readback.
 
+### Restored-group plaintext is bound to protected routing state
+
+**SOURCE-IMPLEMENTED; focused predecessor tests passed; final GCE and live
+qualification remain open. No remote group-write success is claimed.**
+
+The native converter now writes a deterministic group-routing digest into each
+iMessage style-43 semantic snapshot. Dart reproduces the same length-prefixed
+SHA-256 input from the canonical GUID, chat identifier, current raw group ID,
+service/style literals, collapsed group version and normalized participant set.
+Both sides use UTF-8 byte ordering; exact `urn:biz:<UUID>` participants are
+preserved, while arbitrary schemes remain rejected. Presentation-only fields
+and `originalGroupId` are deliberately excluded.
+
+Older applied V2 groups receive that digest only through the existing protected
+projection-repair lane. The repair is null-to-non-null only, requires an exact
+snapshot match for every other field, and does not advance a token, change a
+record map, modify membership or authorize a write.
+
+Normal plaintext in an already-restored, nonprovisional group now uses a new
+opaque tag-3 dependency binding. It pins generation, canonical owner, service
+and group aliases, current/pinned server record, latest applied non-tombstone
+save, ETag/raw reference and the routing digest. Admission revalidates it after
+awaits and restart. Encoding uses the raw group ID as outer `CloudMessage.chatId`
+and the canonical local GUID in `MessageProto4.groupId`. Provisional group
+creation, group reactions and group-state mutations remain closed.
+
+Direct-message tag-1 and reaction tag-2 bindings and encoders are unchanged.
+The new compatibility cases cover business URNs and a fixed non-BMP
+cross-language ordering vector. Dart analysis and diff checks pass. Windows
+Smart App Control blocks the local Flutter/Rust test executables before test
+execution, so the final full suite belongs on the exact-source GCE runner. Only
+after that passes may the authorized group send/readback/restart test run.
+
 ### Attachment IDS submission now shares retry and pending-row handling
 
 `RustPushBackend.sendAttachment` now uses `_sendPreparedMessage` for V2 outbound

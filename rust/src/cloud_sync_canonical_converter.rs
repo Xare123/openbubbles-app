@@ -1642,6 +1642,69 @@ fn sha256_digest(parts: &[&[u8]]) -> Result<CloudCanonicalDigest, CloudCanonical
     CloudCanonicalDigest::new(hex)
 }
 
+const GROUP_ROUTING_METADATA_DOMAIN: &[u8] =
+    b"OpenBubbles Cloud Sync V2 group routing metadata v1\0";
+
+fn strip_group_routing_scheme_prefix(uri: &str) -> &str {
+    if uri
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mailto:"))
+    {
+        return &uri[7..];
+    }
+    if uri
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("tel:"))
+    {
+        return &uri[4..];
+    }
+    uri
+}
+
+/// Unkeyed routing digest for a group chat snapshot.
+///
+/// Binds only what the local Chat row can reproduce: canonical guid, chat
+/// identifier, current group id, service/style literals, collapsed group
+/// version, and normalized participants. The original group id is excluded
+/// because the local row does not retain it, and presentation fields
+/// (display name, photo, last-addressed, last-read) are excluded because
+/// they are not routing identity.
+fn group_routing_metadata_digest(
+    chat: &CloudChat,
+    group_version: &CloudCanonicalField<u32>,
+    service: CloudCanonicalService,
+    style: CloudCanonicalChatStyle,
+) -> Result<Option<CloudCanonicalDigest>, CloudCanonicalValidationFailure> {
+    if service != CloudCanonicalService::IMessage || style != CloudCanonicalChatStyle::Group {
+        return Ok(None);
+    }
+    // Collapse to locally reproducible state: an explicit clear is
+    // indistinguishable from absent on the local row, so both hash as absent.
+    let version_token = match group_version {
+        CloudCanonicalField::Value(value) => format!("value:{value}"),
+        CloudCanonicalField::Absent | CloudCanonicalField::ExplicitClear => "absent".to_owned(),
+    };
+    let mut participants: Vec<&str> = chat
+        .participants
+        .iter()
+        .map(|participant| strip_group_routing_scheme_prefix(participant.uri.as_str()))
+        .collect();
+    participants.sort_unstable();
+    participants.dedup();
+    let mut parts: Vec<&[u8]> = Vec::with_capacity(7 + participants.len());
+    parts.push(GROUP_ROUTING_METADATA_DOMAIN);
+    parts.push(chat.guid.as_bytes());
+    parts.push(chat.chat_identifier.as_bytes());
+    parts.push(chat.group_id.as_bytes());
+    parts.push(b"iMessage");
+    parts.push(b"43");
+    parts.push(version_token.as_bytes());
+    for participant in &participants {
+        parts.push(participant.as_bytes());
+    }
+    sha256_digest(&parts).map(Some)
+}
+
 fn etag_hash(
     hasher: &CloudSemanticIdentifierHasher,
     etag: Option<&str>,
@@ -1778,6 +1841,7 @@ fn build_upsert(
     delivered_at_millis: Option<i64>,
     edit_parts: Vec<CloudCanonicalEditPartSnapshot>,
     group_version: Option<u32>,
+    group_metadata_digest: Option<CloudCanonicalDigest>,
 ) -> CloudCanonicalConversionOutcome {
     let protected = match protected_reference(context) {
         Ok(value) => value,
@@ -1825,7 +1889,7 @@ fn build_upsert(
         edit_parts,
         None,
         group_version,
-        None,
+        group_metadata_digest,
         etag_hash,
         protected,
     ) {
@@ -2195,6 +2259,17 @@ fn convert_chat_internal(
         CloudCanonicalField::Value(value) => Some(*value),
         CloudCanonicalField::Absent | CloudCanonicalField::ExplicitClear => None,
     };
+    let group_metadata_digest =
+        match group_routing_metadata_digest(chat, &group_version, service, style) {
+            Ok(value) => value,
+            Err(error) => {
+                return chat_diagnostic(
+                    diagnostic,
+                    CloudChatDiagnosticCode::CanonicalBuild,
+                    validation_quarantine(error),
+                )
+            }
+        };
     let payload = match CloudCanonicalChatPayload::new(
         chat.guid.clone(),
         chat.chat_identifier.clone(),
@@ -2234,6 +2309,7 @@ fn convert_chat_internal(
         None,
         vec![],
         group_version_snapshot,
+        group_metadata_digest,
     );
     if matches!(&outcome, CloudCanonicalConversionOutcome::Ready(_)) {
         outcome
@@ -2729,6 +2805,7 @@ pub(crate) fn convert_message(
         delivered_snapshot,
         message_summary.edit_snapshots,
         None,
+        None,
     )
 }
 
@@ -2980,6 +3057,7 @@ pub(crate) fn convert_attachment(
         None,
         None,
         vec![],
+        None,
         None,
     )
 }
@@ -6094,5 +6172,341 @@ mod tests {
                 "warn surface must not interpolate {interpolation}"
             );
         }
+    }
+
+    fn ready_chat_snapshot_digest(
+        hasher: &CloudSemanticIdentifierHasher,
+        presence: &CloudRawRecordPresence,
+        chat: &CloudChat,
+        record_name: &str,
+    ) -> Option<String> {
+        let outcome = convert_chat(&context(hasher, record_name, None), presence, chat);
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("chat should convert for {record_name}");
+        };
+        mutation
+            .snapshot()
+            .expect("chat snapshot")
+            .group_metadata_digest()
+            .map(|digest| digest.value().to_owned())
+    }
+
+    fn group_presence_with(extra: &[&str]) -> CloudRawRecordPresence {
+        let mut fields = vec!["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts", "prop"];
+        fields.extend_from_slice(extra);
+        raw_presence(&fields)
+    }
+
+    fn captured_group_presence(extra: &[&str]) -> CloudRawRecordPresence {
+        let mut presence = group_presence_with(extra);
+        capture_keys(&mut presence, "prop", &["pv"]);
+        presence
+    }
+
+    fn routing_base_chat() -> CloudChat {
+        let mut chat = group_chat();
+        chat.display_name = Some("Base name".to_owned());
+        chat.last_addressed_handle = "tel:+15555550100".to_owned();
+        chat.group_photo_guid = Some("photo-guid-a".to_owned());
+        chat
+    }
+
+    #[test]
+    fn group_routing_digest_only_for_imessage_group() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let group = ready_chat_snapshot_digest(
+            &hasher,
+            &captured_group_presence(&[]),
+            &group_chat(),
+            "digest-imessage-group",
+        );
+        assert!(group.is_some());
+        let direct = ready_chat_snapshot_digest(
+            &hasher,
+            &chat_required_presence(false),
+            &direct_chat(),
+            "digest-direct",
+        );
+        assert!(direct.is_none());
+        let mut sms = group_chat();
+        sms.service_name = "SMS".to_owned();
+        let sms_digest = ready_chat_snapshot_digest(
+            &hasher,
+            &captured_group_presence(&[]),
+            &sms,
+            "digest-sms-group",
+        );
+        assert!(sms_digest.is_none());
+    }
+
+    #[test]
+    fn group_routing_digest_matches_dart_framed_sha256_vector() {
+        let chat = CloudChat {
+            guid: "iMessage;+;chat-group".to_owned(),
+            chat_identifier: "chat-group".to_owned(),
+            group_id: "raw-apple-group".to_owned(),
+            service_name: "iMessage".to_owned(),
+            style: 43,
+            participants: vec![
+                CloudParticipant {
+                    uri: "first@example.com".to_owned(),
+                },
+                CloudParticipant {
+                    uri: "+15550000002".to_owned(),
+                },
+            ],
+            ..Default::default()
+        };
+        let digest = group_routing_metadata_digest(
+            &chat,
+            &CloudCanonicalField::Value(9),
+            CloudCanonicalService::IMessage,
+            CloudCanonicalChatStyle::Group,
+        )
+        .expect("digest")
+        .expect("group digest");
+        assert_eq!(
+            digest.value(),
+            "5ce8101f42beb2e5112a07339417c778b442f7efd9c92c5ebc817335a1c616c2"
+        );
+    }
+
+    #[test]
+    fn group_routing_digest_matches_dart_non_bmp_ordering_vector() {
+        let chat = CloudChat {
+            guid: "iMessage;+;chat-group".to_owned(),
+            chat_identifier: "chat-group".to_owned(),
+            group_id: "raw-apple-group".to_owned(),
+            service_name: "iMessage".to_owned(),
+            style: 43,
+            participants: vec![
+                CloudParticipant {
+                    uri: "\u{10000}".to_owned(),
+                },
+                CloudParticipant {
+                    uri: "\u{e000}".to_owned(),
+                },
+            ],
+            ..Default::default()
+        };
+        let digest = group_routing_metadata_digest(
+            &chat,
+            &CloudCanonicalField::Value(9),
+            CloudCanonicalService::IMessage,
+            CloudCanonicalChatStyle::Group,
+        )
+        .expect("digest")
+        .expect("group digest");
+        assert_eq!(
+            digest.value(),
+            "93c2647f1461d69703edb5cc5a0eaed7130b2f7f3934db089bd518fa4b2599bd"
+        );
+    }
+
+    #[test]
+    fn group_routing_digest_ordering_prefix_dedup_invariant() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let baseline = ready_chat_snapshot_digest(
+            &hasher,
+            &captured_group_presence(&[]),
+            &group_chat(),
+            "digest-baseline",
+        )
+        .expect("baseline digest");
+        let mut reordered = group_chat();
+        reordered.participants.reverse();
+        let reordered_digest = ready_chat_snapshot_digest(
+            &hasher,
+            &captured_group_presence(&[]),
+            &reordered,
+            "digest-reordered",
+        )
+        .expect("reordered digest");
+        assert_eq!(baseline, reordered_digest);
+        let mut prefixed = group_chat();
+        prefixed.participants = vec![
+            CloudParticipant {
+                uri: "TEL:+15555550101".to_owned(),
+            },
+            CloudParticipant {
+                uri: "mailto:+15555550100".to_owned(),
+            },
+            CloudParticipant {
+                uri: "tel:+15555550100".to_owned(),
+            },
+            CloudParticipant {
+                uri: "+15555550101".to_owned(),
+            },
+        ];
+        let prefixed_digest = ready_chat_snapshot_digest(
+            &hasher,
+            &captured_group_presence(&[]),
+            &prefixed,
+            "digest-prefixed",
+        )
+        .expect("prefixed digest");
+        assert_eq!(baseline, prefixed_digest);
+    }
+
+    #[test]
+    fn group_routing_digest_sensitive_fields_alter_it() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let baseline = ready_chat_snapshot_digest(
+            &hasher,
+            &captured_group_presence(&[]),
+            &group_chat(),
+            "digest-sensitive-baseline",
+        )
+        .expect("baseline digest");
+        let mut gid = group_chat();
+        gid.group_id = "chat-group-rotated".to_owned();
+        let gid_digest = ready_chat_snapshot_digest(
+            &hasher,
+            &captured_group_presence(&[]),
+            &gid,
+            "digest-sensitive-gid",
+        )
+        .expect("gid digest");
+        assert_ne!(baseline, gid_digest);
+        // Same group version with one member swapped: membership drift must surface.
+        let mut drifted = group_chat();
+        drifted.participants = vec![
+            CloudParticipant {
+                uri: "tel:+15555550100".to_owned(),
+            },
+            CloudParticipant {
+                uri: "tel:+15555550102".to_owned(),
+            },
+        ];
+        let drifted_digest = ready_chat_snapshot_digest(
+            &hasher,
+            &captured_group_presence(&[]),
+            &drifted,
+            "digest-sensitive-drift",
+        )
+        .expect("drifted digest");
+        assert_ne!(baseline, drifted_digest);
+        let mut versioned = group_chat();
+        versioned.properties.as_mut().expect("group properties").pv = Some(10);
+        let versioned_digest = ready_chat_snapshot_digest(
+            &hasher,
+            &captured_group_presence(&[]),
+            &versioned,
+            "digest-sensitive-version",
+        )
+        .expect("versioned digest");
+        assert_ne!(baseline, versioned_digest);
+        let mut guid = group_chat();
+        guid.guid = "chat-guid-group-fork".to_owned();
+        let guid_digest = ready_chat_snapshot_digest(
+            &hasher,
+            &captured_group_presence(&[]),
+            &guid,
+            "digest-sensitive-guid",
+        )
+        .expect("guid digest");
+        assert_ne!(baseline, guid_digest);
+        let mut cid = group_chat();
+        cid.chat_identifier = "iMessage;+;group-fork".to_owned();
+        let cid_digest = ready_chat_snapshot_digest(
+            &hasher,
+            &captured_group_presence(&[]),
+            &cid,
+            "digest-sensitive-cid",
+        )
+        .expect("cid digest");
+        assert_ne!(baseline, cid_digest);
+    }
+
+    #[test]
+    fn group_routing_digest_ignores_non_routing_fields() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let base = routing_base_chat();
+        let baseline = ready_chat_snapshot_digest(
+            &hasher,
+            &captured_group_presence(&["name", "lah", "gpid"]),
+            &base,
+            "digest-ignored-baseline",
+        )
+        .expect("baseline digest");
+        let mut ogid = routing_base_chat();
+        ogid.original_group_id = "chat-group-original-rotated".to_owned();
+        assert_eq!(
+            baseline,
+            ready_chat_snapshot_digest(
+                &hasher,
+                &captured_group_presence(&["name", "lah", "gpid"]),
+                &ogid,
+                "digest-ignored-ogid",
+            )
+            .expect("ogid digest")
+        );
+        let mut renamed = routing_base_chat();
+        renamed.display_name = Some("Renamed".to_owned());
+        assert_eq!(
+            baseline,
+            ready_chat_snapshot_digest(
+                &hasher,
+                &captured_group_presence(&["name", "lah", "gpid"]),
+                &renamed,
+                "digest-ignored-name",
+            )
+            .expect("name digest")
+        );
+        let mut relah = routing_base_chat();
+        relah.last_addressed_handle = "tel:+15555550101".to_owned();
+        assert_eq!(
+            baseline,
+            ready_chat_snapshot_digest(
+                &hasher,
+                &captured_group_presence(&["name", "lah", "gpid"]),
+                &relah,
+                "digest-ignored-lah",
+            )
+            .expect("lah digest")
+        );
+        let mut rephoto = routing_base_chat();
+        rephoto.group_photo_guid = Some("photo-guid-b".to_owned());
+        assert_eq!(
+            baseline,
+            ready_chat_snapshot_digest(
+                &hasher,
+                &captured_group_presence(&["name", "lah", "gpid"]),
+                &rephoto,
+                "digest-ignored-photo",
+            )
+            .expect("photo digest")
+        );
+    }
+
+    #[test]
+    fn group_routing_digest_collapses_explicit_clear_to_absent() {
+        let chat = group_chat();
+        let absent = group_routing_metadata_digest(
+            &chat,
+            &CloudCanonicalField::Absent,
+            CloudCanonicalService::IMessage,
+            CloudCanonicalChatStyle::Group,
+        )
+        .expect("absent digest")
+        .expect("absent some");
+        let cleared = group_routing_metadata_digest(
+            &chat,
+            &CloudCanonicalField::ExplicitClear,
+            CloudCanonicalService::IMessage,
+            CloudCanonicalChatStyle::Group,
+        )
+        .expect("cleared digest")
+        .expect("cleared some");
+        assert_eq!(absent.value(), cleared.value());
+        let valued = group_routing_metadata_digest(
+            &chat,
+            &CloudCanonicalField::Value(9),
+            CloudCanonicalService::IMessage,
+            CloudCanonicalChatStyle::Group,
+        )
+        .expect("valued digest")
+        .expect("valued some");
+        assert_ne!(absent.value(), valued.value());
     }
 }

@@ -62,11 +62,71 @@ api.MessageInst _wire(Chat chat) => api.MessageInst(
 );
 
 void main() {
+  test('group routing digest matches the native framed SHA-256 vector', () {
+    final group = _group()
+      ..cloudGuid = 'raw-apple-group'
+      ..groupVersion = 9;
+    final route = CloudSyncGroupSendRoute.capture(group)!;
+    expect(route.groupId, 'raw-apple-group');
+    expect(
+      route.routingMetadataDigest(groupVersion: group.groupVersion),
+      '5ce8101f42beb2e5112a07339417c778b442f7efd9c92c5ebc817335a1c616c2',
+    );
+    group.handles.first.address = 'mailto:first@example.com';
+    expect(
+      CloudSyncGroupSendRoute.capture(
+        group,
+      )!.routingMetadataDigest(groupVersion: group.groupVersion),
+      '5ce8101f42beb2e5112a07339417c778b442f7efd9c92c5ebc817335a1c616c2',
+    );
+    group.groupVersion = 10;
+    expect(
+      CloudSyncGroupSendRoute.capture(
+        group,
+      )!.routingMetadataDigest(groupVersion: group.groupVersion),
+      isNot('5ce8101f42beb2e5112a07339417c778b442f7efd9c92c5ebc817335a1c616c2'),
+    );
+  });
+
+  test('group route preserves an exact business participant identity', () {
+    const business = 'urn:biz:123e4567-e89b-12d3-a456-426614174000';
+    final group = _group();
+    group.handles.first.address = business;
+    final route = CloudSyncGroupSendRoute.capture(group);
+    expect(route, isNotNull);
+    expect(route!.members, contains(business));
+    final wire = _wire(group);
+    wire.conversation!.participants[0] = business;
+    expect(
+      CloudSyncLocalSendIdentity.captureWire(_message(group), group, wire),
+      isNotNull,
+    );
+  });
+
+  test('non-BMP group members use the native UTF-8 ordering', () {
+    final group = _group()
+      ..cloudGuid = 'raw-apple-group'
+      ..groupVersion = 9;
+    group.handles
+      ..clear()
+      ..addAll([_member('\u{10000}'), _member('\uE000')]);
+    expect(
+      CloudSyncGroupSendRoute.capture(
+        group,
+      )!.routingMetadataDigest(groupVersion: group.groupVersion),
+      '93c2647f1461d69703edb5cc5a0eaed7130b2f7f3934db089bd518fa4b2599bd',
+    );
+  });
+
   test('restoring raw CloudKit group ID preserves captured IDS origin', () {
     final group = _group();
     final message = _message(group);
     final wire = _wire(group);
-    final before = CloudSyncLocalSendIdentity.captureWire(message, group, wire)!;
+    final before = CloudSyncLocalSendIdentity.captureWire(
+      message,
+      group,
+      wire,
+    )!;
     for (final rawGroupId in ['raw-apple-group', _guid]) {
       group.cloudGuid = rawGroupId;
       final after = CloudSyncLocalSendIdentity.captureWire(

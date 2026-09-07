@@ -4497,6 +4497,7 @@ void main() {
         style: CloudSemanticChatStyle.group,
         groupId: rawGroupId,
         originalGroupId: rawOriginalId,
+        groupVersion: 7,
         extraAliases: [
           CloudSemanticChatAlias(
             kind: CloudSemanticChatAliasKind.groupId,
@@ -4512,6 +4513,8 @@ void main() {
         logicalEntityKeyHash: payload.logicalEntityKeyHash,
         encryptedRawRecordReference: entry.change.encryptedPayloadReference!,
         etagHash: entry.change.etagHash!,
+        groupVersion: 7,
+        groupMetadataDigest: _digestValue('G'),
       );
       final lease = identityRegistry.bind(
         CloudDecodedMutation.upsert(
@@ -4545,11 +4548,25 @@ void main() {
       );
       memberMessage.chat.target = objectBox.box<Chat>().get(chatId);
       final messageId = objectBox.box<Message>().put(memberMessage);
-      // Simulate the old V2 bug: strong alias persisted, raw route omitted.
+      // Simulate the old V2 bugs: the strong alias persisted, while both the
+      // raw route and the deterministic group-routing digest were omitted.
       chat = objectBox.box<Chat>().get(chatId)!;
       chat.cloudGuid = null;
       objectBox.box<Chat>().put(chat);
+      final oldSnapshot = objectBox
+          .box<CloudSemanticSnapshotEntity>()
+          .getAll()
+          .single;
+      oldSnapshot.groupMetadataDigest = null;
+      objectBox.box<CloudSemanticSnapshotEntity>().put(oldSnapshot);
       expect(objectBox.box<Chat>().get(chatId)!.cloudGuid, isNull);
+      expect(
+        objectBox
+            .box<CloudSemanticSnapshotEntity>()
+            .get(oldSnapshot.id)!
+            .groupMetadataDigest,
+        isNull,
+      );
       var candidates = await currentGateway
           .readAppliedProjectionRepairCandidates(
             scope: chatScope,
@@ -4559,14 +4576,19 @@ void main() {
           );
       expect(candidates, hasLength(1));
       final repairEntry = candidates.single;
-      final controlBefore = _durableSyncControlFingerprint(objectBox);
-      final membersBefore = objectBox
-          .box<Chat>()
-          .get(chatId)!
-          .handles
-          .map((handle) => handle.address)
-          .toList(growable: false)
-        ..sort();
+      final controlBefore = _durableSyncControlFingerprint(
+        objectBox,
+        includeGroupMetadataDigest: false,
+        includeSnapshotUpdatedAt: false,
+      );
+      final membersBefore =
+          objectBox
+              .box<Chat>()
+              .get(chatId)!
+              .handles
+              .map((handle) => handle.address)
+              .toList(growable: false)
+            ..sort();
       expect(membersBefore, hasLength(2));
       final displayNameBefore = objectBox.box<Chat>().get(chatId)!.displayName;
       final repairer = TransactionalCloudInboxApplier(
@@ -4592,7 +4614,14 @@ void main() {
         ),
         1,
       );
-      expect(_durableSyncControlFingerprint(objectBox), controlBefore);
+      expect(
+        _durableSyncControlFingerprint(
+          objectBox,
+          includeGroupMetadataDigest: false,
+          includeSnapshotUpdatedAt: false,
+        ),
+        controlBefore,
+      );
       expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
       expect(objectBox.box<Chat>().count(), 1);
       final repaired = objectBox.box<Chat>().get(chatId)!;
@@ -4600,16 +4629,21 @@ void main() {
       expect(repaired.chatIdentifier, chatIdentifier);
       expect(repaired.style, 43);
       expect(repaired.cloudGuid, rawGroupId);
-      expect(repaired.displayName, displayNameBefore);
-      final membersAfter = repaired.handles
-          .map((handle) => handle.address)
-          .toList(growable: false)
-        ..sort();
-      expect(membersAfter, membersBefore);
       expect(
-        objectBox.box<Message>().get(messageId)!.chat.targetId,
-        chatId,
+        objectBox
+            .box<CloudSemanticSnapshotEntity>()
+            .get(oldSnapshot.id)!
+            .groupMetadataDigest,
+        snapshot.groupMetadataDigest,
       );
+      expect(repaired.displayName, displayNameBefore);
+      final membersAfter =
+          repaired.handles
+              .map((handle) => handle.address)
+              .toList(growable: false)
+            ..sort();
+      expect(membersAfter, membersBefore);
+      expect(objectBox.box<Message>().get(messageId)!.chat.targetId, chatId);
       expect(
         await currentGateway.readAppliedProjectionRepairCandidates(
           scope: chatScope,
@@ -4622,7 +4656,8 @@ void main() {
       final changedSnapshot = CloudSemanticSnapshot(
         kind: CloudEntityKind.chat,
         logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
-        groupVersion: 1,
+        groupVersion: 8,
+        groupMetadataDigest: _digestValue('H'),
         etagHash: snapshot.etagHash,
         encryptedRawRecordReference: snapshot.encryptedRawRecordReference,
       );
@@ -4654,7 +4689,14 @@ void main() {
       } finally {
         changedLease.release();
       }
-      expect(_durableSyncControlFingerprint(objectBox), controlBefore);
+      expect(
+        _durableSyncControlFingerprint(
+          objectBox,
+          includeGroupMetadataDigest: false,
+          includeSnapshotUpdatedAt: false,
+        ),
+        controlBefore,
+      );
       objectBox.close();
       objectBox = await openStore(directory: directory.path);
       final reopenedAdapter = ObjectBoxCanonicalSemanticEntityAdapter(
@@ -4680,10 +4722,21 @@ void main() {
       );
       expect(objectBox.box<Chat>().get(chatId)!.cloudGuid, rawGroupId);
       expect(
-        objectBox.box<Message>().get(messageId)!.chat.targetId,
-        chatId,
+        objectBox
+            .box<CloudSemanticSnapshotEntity>()
+            .get(oldSnapshot.id)!
+            .groupMetadataDigest,
+        snapshot.groupMetadataDigest,
       );
-      expect(_durableSyncControlFingerprint(objectBox), controlBefore);
+      expect(objectBox.box<Message>().get(messageId)!.chat.targetId, chatId);
+      expect(
+        _durableSyncControlFingerprint(
+          objectBox,
+          includeGroupMetadataDigest: false,
+          includeSnapshotUpdatedAt: false,
+        ),
+        controlBefore,
+      );
     },
   );
 }
@@ -4779,6 +4832,8 @@ CloudSemanticSnapshot _chatSnapshot({
   String logicalEntityKeyHash = 'L',
   String etagHash = 'E',
   String encryptedRawRecordReference = 'W',
+  int? groupVersion,
+  String? groupMetadataDigest,
 }) {
   return CloudSemanticSnapshot(
     kind: CloudEntityKind.chat,
@@ -4789,6 +4844,8 @@ CloudSemanticSnapshot _chatSnapshot({
     encryptedRawRecordReference: encryptedRawRecordReference == 'W'
         ? _protectedReference(encryptedRawRecordReference)
         : encryptedRawRecordReference,
+    groupVersion: groupVersion,
+    groupMetadataDigest: groupMetadataDigest,
   );
 }
 
@@ -4803,6 +4860,7 @@ CloudChatEntityPayload _chatPayload({
   CloudSemanticChatStyle style = CloudSemanticChatStyle.direct,
   String? groupId,
   String? originalGroupId,
+  int? groupVersion,
 }) {
   return CloudChatEntityPayload(
     logicalEntityKeyHash: logicalEntityKeyHash == 'L'
@@ -4813,19 +4871,23 @@ CloudChatEntityPayload _chatPayload({
     displayName: 'Cloud chat',
     participantHandles: participantHandles,
     aliases: [
-          if (includeServiceIdentifierAlias)
-            CloudSemanticChatAlias(
-              kind: CloudSemanticChatAliasKind.serviceIdentifier,
-              keyHash: aliasKeyHash == 'H'
-                  ? _digestValue(aliasKeyHash)
-                  : aliasKeyHash,
-            ),
-          ...extraAliases,
-        ],
+      if (includeServiceIdentifierAlias)
+        CloudSemanticChatAlias(
+          kind: CloudSemanticChatAliasKind.serviceIdentifier,
+          keyHash: aliasKeyHash == 'H'
+              ? _digestValue(aliasKeyHash)
+              : aliasKeyHash,
+        ),
+      ...extraAliases,
+    ],
     service: CloudSemanticService.iMessage,
     style: style,
     groupId: groupId,
     originalGroupId: originalGroupId,
+    groupVersionState: groupVersion == null
+        ? CloudSemanticFieldState.absent
+        : CloudSemanticFieldState.value,
+    groupVersion: groupVersion,
   );
 }
 
@@ -5095,6 +5157,8 @@ String _protectedReference(String character) =>
 String _durableSyncControlFingerprint(
   Store store, {
   bool includeOwnershipEvidence = true,
+  bool includeGroupMetadataDigest = true,
+  bool includeSnapshotUpdatedAt = true,
 }) {
   final checkpoints = store.box<CloudSyncCheckpointEntity>().getAll()
     ..sort((left, right) => left.id.compareTo(right.id));
@@ -5190,9 +5254,9 @@ String _durableSyncControlFingerprint(
             row.editPartsJson,
             row.retractedAtMs,
             row.groupVersion,
-            row.groupMetadataDigest,
+            includeGroupMetadataDigest ? row.groupMetadataDigest : null,
             row.etagHash,
-            row.updatedAtMs,
+            includeSnapshotUpdatedAt ? row.updatedAtMs : null,
           ],
         )
         .toList(),
