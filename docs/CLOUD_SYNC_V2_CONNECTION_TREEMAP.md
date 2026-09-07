@@ -260,6 +260,31 @@ before app launch. With the corrected settings the Windows app built in
 **71.4 seconds**, completed the observer and closed itself. No Android build,
 remote mutation, security-policy change or history reset was used.
 
+Write-integration order, based on the current call graph:
+
+1. Bind observations to the actual staged Chat, not the diagnostic JSON or a
+   mutable Dart `CloudChat` object. `open_staged_outbound_chat` already verifies
+   the protected payload digest and physical record identity together.
+2. Require that evidence in all three existing store gates:
+   `captureFreshOutboundChatOrigin`, `_admitProtectedOutboundCreate` and
+   `_requireOperationProjectionReadyLocked` (lease plus submission). Keep
+   local-send confirmation, prior-identity ownership and exact tombstone checks.
+3. Qualify refreshing the observation with an already-admitted queue after
+   restart. The general semantic sampler deliberately rejects unsettled outbox
+   work; calling it from the write consumer would also change interlock mode.
+   Use the write owner's exact selection and controlled cached read-auth scope,
+   not a global preflight exemption. The current read-set fence includes the
+   checkpoint mutation counter, which admission changes. Evidence must be
+   refreshed or explicitly advanced with the same admission transaction; do
+   not silently drop that field or persist a blanket disjoint flag.
+4. Test interrupted staging/admission, changed auth/source/candidate, restart,
+   Chat readback/convergence, Message readback and zero-extra-save retries
+   before enabling this in Windows, then qualify Android separately.
+
+Admission alone is not a useful partial rollout: it could put a pending write
+in front of the semantic reads needed to release that same write. These gates
+therefore remain unchanged while their replacement is qualified together.
+
 #### Direct-Chat record membership: implemented, development opt-in only
 
 The Windows Dart/ObjectBox path now separates physical CloudKit record
