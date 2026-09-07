@@ -433,6 +433,98 @@ void main() {
     },
   );
 
+  for (final stillExcluded in [false, true]) {
+    test(
+      'explicit historical Chat window preserves or projects its current decode: excluded=$stillExcluded',
+      () async {
+        scope = CloudSyncScope(
+          accountFingerprint: testAccountFingerprintA,
+          container: 'com.apple.messages.cloud',
+          database: 'private',
+          zone: 'chatManateeZone',
+          schemaVersion: 2,
+          persistenceLane: CloudSyncPersistenceLane.semantic,
+        );
+        store = _MemorySemanticStore(scope: scope, generation: 3);
+        final inbox = retainedEntry(
+          1,
+        ).copyWith(lastFailure: CloudFailureCategory.outOfScopeService);
+        store.retainedEntries.add(inbox);
+        store.projectionWindowOverride = [inbox];
+        if (stillExcluded) {
+          decoder.outOfScopeServices[inbox.change.changeId] =
+              CloudSemanticOutOfScopeService.rcs;
+        } else {
+          decodeUpsert(
+            inbox,
+            CloudSemanticSnapshot(
+              kind: CloudEntityKind.chat,
+              logicalEntityKeyHash: 'recovered-chat',
+            ),
+          );
+        }
+        applier = TransactionalCloudInboxApplier(
+          decoder: decoder,
+          store: store,
+          identityRegistrar: _IdentityRegistrar(),
+          reconsiderExcludedChatMetadata: true,
+        );
+        final result = await applier.reprojectRetainedSaveWindow(
+          scope: scope,
+          generation: 3,
+          leaseFence: _testLeaseFence,
+          afterFetchSequence: 0,
+          throughFetchSequence: 1,
+          limit: 8,
+        );
+        expect(result.examined, 1);
+        expect(result.reprojected, stillExcluded ? 0 : 1);
+        expect(result.retained, stillExcluded ? 1 : 0);
+        expect(result.hasMoreWithinBound, isFalse);
+        expect(store.retainedTransactionCount, stillExcluded ? 0 : 1);
+        expect(store.retainedFailureRecordCount, 0);
+        expect(
+          store.retainedEntries.single.status,
+          stillExcluded
+              ? CloudInboxStatus.retainedUnprojected
+              : CloudInboxStatus.applied,
+        );
+        if (stillExcluded) expect(store.retainedEntries.single.attemptCount, 0);
+      },
+    );
+  }
+
+  test(
+    'historical metadata opt-in cannot admit excluded message bodies',
+    () async {
+      final inbox = retainedEntry(
+        1,
+      ).copyWith(lastFailure: CloudFailureCategory.outOfScopeService);
+      store.retainedEntries.add(inbox);
+      store.projectionWindowOverride = [inbox];
+      decodeUpsert(inbox, message());
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+        reconsiderExcludedChatMetadata: true,
+      );
+      await expectLater(
+        applier.reprojectRetainedSaveWindow(
+          scope: scope,
+          generation: 3,
+          leaseFence: _testLeaseFence,
+          afterFetchSequence: 0,
+          throughFetchSequence: 1,
+          limit: 8,
+        ),
+        throwsA(isA<CloudSyncFailure>()),
+      );
+      expect(decoder.decodeCalls, 0);
+      expect(store.retainedTransactionCount, 0);
+    },
+  );
+
   test('out-of-scope proof cannot erase other retained failure debt', () async {
     final inbox = retainedEntry(
       1,

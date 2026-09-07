@@ -1969,8 +1969,18 @@ fn convert_chat_internal(
             ),
         );
     }
+    // Live carrier-routed direct Chats may carry a photo asset. It is not
+    // evidence that this is a group, and the canonical direct Chat has no
+    // group-photo field. Preserve the asset in the protected envelope without
+    // blocking routing metadata needed by historical iMessages.
+    let ignore_direct_carrier_photo = service == CloudCanonicalService::Sms
+        && style == CloudCanonicalChatStyle::Direct
+        && chat.group_photo.is_some();
     match (presence.field("gp"), chat.group_photo.is_some()) {
         (CloudRawFieldPresence::Absent, false) => {}
+        (CloudRawFieldPresence::PresentWithValue, true) if ignore_direct_carrier_photo => {
+            *diagnostic = Some(CloudChatDiagnosticCode::DirectChatGroupPhotoAsset);
+        }
         (CloudRawFieldPresence::PresentWithValue, true)
             if style == CloudCanonicalChatStyle::Group
                 && chat
@@ -2080,14 +2090,18 @@ fn convert_chat_internal(
             )
         }
     };
-    let group_photo_guid = match top_optional_string(presence, "gpid", &chat.group_photo_guid) {
-        Ok(value) => value,
-        Err(reason) => {
-            return chat_diagnostic(
-                diagnostic,
-                CloudChatDiagnosticCode::GroupPhotoGuidField,
-                CloudCanonicalConversionOutcome::Quarantined(reason),
-            )
+    let group_photo_guid = if ignore_direct_carrier_photo {
+        CloudCanonicalField::Absent
+    } else {
+        match top_optional_string(presence, "gpid", &chat.group_photo_guid) {
+            Ok(value) => value,
+            Err(reason) => {
+                return chat_diagnostic(
+                    diagnostic,
+                    CloudChatDiagnosticCode::GroupPhotoGuidField,
+                    CloudCanonicalConversionOutcome::Quarantined(reason),
+                )
+            }
         }
     };
     if style == CloudCanonicalChatStyle::Direct
@@ -4085,6 +4099,58 @@ mod tests {
                 .value(),
             "obcs2.fixture.protected"
         );
+    }
+
+    #[test]
+    fn direct_sms_photo_asset_does_not_block_routing_metadata_or_invent_a_group_photo() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        for photo_guid in [None, Some("opaque-carrier-photo")] {
+            let mut chat = direct_chat();
+            chat.service_name = "SMS".to_owned();
+            chat.properties = None;
+            chat.group_photo = Some(Asset::default());
+            chat.group_photo_guid = photo_guid.map(str::to_owned);
+            let mut fields = vec!["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts", "gp"];
+            if photo_guid.is_some() {
+                fields.push("gpid");
+            }
+            let (outcome, diagnostic) = convert_chat_with_diagnostic(
+                &context(&hasher, "server-carrier-direct-photo", None),
+                &raw_presence(&fields),
+                &chat,
+            );
+            let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+                panic!("optional carrier photo must not block direct Chat routing");
+            };
+            let Some(CloudCanonicalPayload::Chat(payload)) = mutation.payload() else {
+                panic!("chat payload expected");
+            };
+            assert_eq!(
+                payload.group_photo_guid_state(),
+                crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Absent
+            );
+            assert_eq!(
+                mutation.envelope().protected_raw_envelope_reference().value(),
+                "obcs2.fixture.protected"
+            );
+            assert_eq!(
+                diagnostic,
+                Some(CloudChatDiagnosticCode::DirectChatGroupPhotoAsset)
+            );
+            // The same unusual field on an iMessage direct Chat is not part
+            // of this observed carrier compatibility case.
+            chat.service_name = "iMessage".to_owned();
+            assert!(matches!(
+                convert_chat(
+                    &context(&hasher, "server-imessage-direct-photo", None),
+                    &raw_presence(&fields),
+                    &chat,
+                ),
+                CloudCanonicalConversionOutcome::Deferred(
+                    CloudCanonicalDeferredReason::UnsupportedGroupPhoto
+                )
+            ));
+        }
     }
 
     #[test]

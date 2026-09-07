@@ -511,6 +511,7 @@ final class CloudSyncProductionSemanticPullAdapter {
     CloudSyncNativeWriterPause? nativeWriterPause,
     CloudSyncSemanticSessionScheduler? scheduleSession,
     CloudSyncVerboseDiagnosticsEnabled? verboseDiagnosticsEnabled,
+    bool reconsiderExcludedChatMetadata = false,
     bool? compileGateOverrideForTest,
   }) {
     final diagnosticCollectors =
@@ -591,8 +592,10 @@ final class CloudSyncProductionSemanticPullAdapter {
         );
         final gateway = ObjectBoxCloudSemanticStoreGateway.fromDatabase(
           canonicalAdapter: canonicalAdapter,
+          reconsiderExcludedChatMetadata: reconsiderExcludedChatMetadata,
         );
         return TransactionalCloudInboxApplier(
+          reconsiderExcludedChatMetadata: reconsiderExcludedChatMetadata,
           decoder: RustCloudSemanticDecoder(
             readAuthSnapshot: authProvider.capture,
             storageDirectory: privateStorageDirectory,

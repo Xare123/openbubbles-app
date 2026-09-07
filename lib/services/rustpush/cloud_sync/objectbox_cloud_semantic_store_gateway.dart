@@ -362,6 +362,7 @@ final class ObjectBoxCloudSemanticStoreGateway
     required Store store,
     required CloudCanonicalSemanticEntityAdapter canonicalAdapter,
     DateTime Function()? clock,
+    this.reconsiderExcludedChatMetadata = false,
   }) : _store = store,
        _canonicalAdapter = canonicalAdapter,
        _clock = clock ?? DateTime.now,
@@ -381,11 +382,13 @@ final class ObjectBoxCloudSemanticStoreGateway
   factory ObjectBoxCloudSemanticStoreGateway.fromDatabase({
     required CloudCanonicalSemanticEntityAdapter canonicalAdapter,
     DateTime Function()? clock,
+    bool reconsiderExcludedChatMetadata = false,
   }) {
     return ObjectBoxCloudSemanticStoreGateway(
       store: Database.store,
       canonicalAdapter: canonicalAdapter,
       clock: clock,
+      reconsiderExcludedChatMetadata: reconsiderExcludedChatMetadata,
     );
   }
 
@@ -403,6 +406,7 @@ final class ObjectBoxCloudSemanticStoreGateway
   static final HashSet<Store> _activeStores = HashSet<Store>.identity();
 
   final Store _store;
+  final bool reconsiderExcludedChatMetadata;
   final CloudCanonicalSemanticEntityAdapter _canonicalAdapter;
   final DateTime Function() _clock;
   final Box<CloudSyncCheckpointEntity> _checkpoints;
@@ -465,6 +469,18 @@ final class ObjectBoxCloudSemanticStoreGateway
         final rotatedAtMs = sampledAtMs > row.updatedAtMs
             ? sampledAtMs
             : row.updatedAtMs + 1;
+        if (reconsiderExcludedChatMetadata &&
+            cloudSyncIsHistoricalChatMetadataScope(entry.scope) &&
+            entry.lastFailure == CloudFailureCategory.outOfScopeService) {
+          if (row.failureCategory !=
+              CloudFailureCategory.outOfScopeService.name) {
+            throw _failure('retained_projection_out_of_scope_row_invalid');
+          }
+          // The new decoder did NOT confirm the old exclusion. Preserve the
+          // protected save as blocking debt instead of falsely reporting it as
+          // an understood carrier-service exclusion. Never mark it applied.
+          row.failureCategory = CloudFailureCategory.dependency.name;
+        }
         row
           ..retryCount += 1
           ..updatedAtMs = rotatedAtMs;
@@ -711,9 +727,14 @@ final class ObjectBoxCloudSemanticStoreGateway
               ),
             )
             .and(
-              CloudInboxChangeEntity_.failureCategory
-                  .notEquals(CloudFailureCategory.outOfScopeService.name)
-                  .or(CloudInboxChangeEntity_.failureCategory.isNull()),
+              reconsiderExcludedChatMetadata &&
+                      cloudSyncIsHistoricalChatMetadataScope(scope)
+                  ? CloudInboxChangeEntity_.status.equals(
+                      CloudInboxStatus.retainedUnprojected.index,
+                    )
+                  : CloudInboxChangeEntity_.failureCategory
+                        .notEquals(CloudFailureCategory.outOfScopeService.name)
+                        .or(CloudInboxChangeEntity_.failureCategory.isNull()),
             )
             .and(CloudInboxChangeEntity_.isTombstone.equals(false))
             .and(

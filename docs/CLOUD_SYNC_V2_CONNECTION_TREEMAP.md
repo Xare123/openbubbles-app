@@ -349,6 +349,160 @@ the blocker but are not substitutes for an unavailable current database
 snapshot when the required fields are absent. Do not request passwords,
 hardware identity, a new login, public log uploads, or internet-exposed ADB.
 
+### Windows replay refresh, September 6 evening
+
+First current-source replay completed at 01:10:26Z September 7 (September 6
+local), without a new login. It recovered **29 Chat, 311 Message and 133
+Attachment records** across the initial pass and exact local sweep. It also
+repaired 543 Chat ordering caches. Remote head was proved; projection remained
+partial. The remaining Chat saves are 2 group-photo dependencies,
+3 unsupported-service records, and 10 historically excluded records. All 81
+Chat tombstones stayed retained. These are native Windows results on the
+isolated profile, not Pixel UI or remote-write qualification.
+
+The cold harness build took 610.8 seconds. Initial startup was blocked by Smart
+App Control on `objectbox_flutter_libs_plugin.dll`, before any current-run
+profile stage. Signing only the Rust DLL was incomplete. The launcher now
+selects only top-level EXE/DLL files in its physical output directory, rejects
+reparse-point binaries, preserves valid signatures, and signs/verifies the
+remaining build binaries with the existing development certificate. Behavioral
+tests pass. Smart App Control remains enabled. The warm rebuild took **17.5
+seconds**, then successfully initialized CloudKit and completed the drain.
+
+The explicit Windows operation `-Drain -ReplayExcludedChats` completed at
+01:19:09Z September 7. Its
+build identifier includes the diagnostic variant, preventing silent reuse of
+a non-recovery binary. Default application/retry behavior is unchanged. Only
+sequence-bounded semantic Chat windows reconsider historical exclusions;
+ordinary retry scans and carrier message bodies remain excluded. Successful
+current decoding uses the normal fenced projection transaction. Still-excluded
+records remain untouched. If current decoding/projection fails, the formerly
+excluded Chat is preserved as blocking dependency debt, never falsely reported
+as an understood exclusion or marked applied. The original protected reference
+and payload digest remain intact. Focused applier, durable gateway and outbound
+Chat-origin tests pass (204 total). The full CloudKit Dart suite also passed,
+1,726 tests. The native replay freshly classified all 10 excluded Chats as
+RCS; none was silently rescued or reclassified. They remain deliberately out
+of scope. The same run narrowed the other five saves to two direct SMS Chats
+with `gp` assets and three unrecognized service values. No alias conflict was
+observed in those Chat conversion failures.
+
+The next narrow repair admits routing metadata for those direct SMS Chats
+while leaving the unproven group-photo field absent. A direct Chat photo does
+not establish a group identity. The protected asset remains retained; no image,
+Chat or source record is deleted. Other photo validation, including the
+unobserved iMessage-direct case, stays unchanged. The actual ARM64 regression
+test passes with and without a photo GUID and preserves the protected source
+reference. All 288 native CloudKit tests also pass, execution time 1.06 seconds.
+The updated profile replay completed at 01:44:21Z September 7 with build
+`0a7f821359d0-dirty-4a1b9def2fd4-replay-excluded-chats`. Both direct SMS Chats
+applied. No additional Messages or Attachments applied in this iteration;
+their remaining failures are independent of these two Chat records.
+
+An offline inspection then held the original database read-shared, inspected
+a disposable copy and verified its source SHA-256 was unchanged. Durable
+applied counts are Chat 699, Message 12,569 and Attachment 2,370, with 15,638
+matching snapshots, record maps and replay rows. This session's total recovery
+is **31 Chat, 311 Message and 133 Attachment records**, not a claim that every
+record represents a new visible conversation. Outbox remains zero; all three
+checkpoint generations stay one, with no pending batch/token or error/backoff.
+The exact Chat applied floor advanced normally to 55 while fetched sequence
+remains 793. No checkpoint was reset or artificially advanced.
+
+The remaining Chat saves are three unrecognized services and ten explicitly
+excluded RCS records; all 81 Chat tombstones remain retained. The message
+backlog still contains 2,736 blocking saves, including 181 unresolved Chat
+references and 58 invalid-sender outcomes in the completed local sweep.
+Do not attribute those to the now-resolved direct-photo case or silently mark
+the unknown services out of scope. Full read fidelity and live write
+qualification remain incomplete.
+
+The Windows harness now defaults to warning-level native logs plus redacted
+transient-decoder diagnostics; explicit
+`OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_VERBOSE_NATIVE_LOGS=1` restores full native
+debug logging for that process. Normal desktop and Android defaults are
+unchanged. The dependency-free log-policy module compiles and passes its native
+ARM64 test independently, without rebuilding the application. This reduces
+bulk logging and preserves useful decoder diagnostics through a long replay.
+
+Native test-cache compatibility: direct Cargo tests must match the launcher,
+not just share its target directory. Use the repository root with
+`--manifest-path rust/Cargo.toml`, empty effective Rust flags, four jobs,
+disabled dev symbols/incremental output, and the same signing wrapper/toolchain.
+The initial direct test attempt accidentally loaded `rust/.cargo/config.toml`
+and its `tokio_unstable` flags; it was canceled without deleting artifacts.
+The `cc` build dependency also tracks `VSTEL_MSBuildProjectFullPath`. Preserve
+the generated CargoKit project path used by MSBuild when running standalone
+tests, or OpenSSL and other C dependencies rebuild when switching modes.
+The aligned Rust test build took 454.2 seconds because that MSBuild value was
+still missing on the first standalone command. Its signed test executable then
+ran successfully. An apparently warm target directory alone does not prove a
+warm build; the second dependency rebuild is setup debt, not a claimed
+seconds-long Rust iteration. Subsequent standalone commands must preserve both
+the effective flags and this observed environment value.
+
+Use `tooling/windows/test_cloud_sync_v2_native.ps1` for repeat native tests.
+It uses the harness build context, validates the Cargo-emitted executable path,
+signs/verifies that executable, rejects empty test selections, keeps evidence
+outside the checkout and restores the caller's compiler environment. It never
+opens an account profile. The helper's first benchmark exposed a PowerShell
+null-coercion bug: `CC` was set to an empty string instead of removed. Cargo's
+fingerprint trace proved `EnvVarChanged`, and the helper now explicitly removes
+unset variables. After rebuilding the affected dependencies, its repeated run
+needed **0.70 seconds to check/build and 1.06 seconds to execute all 288 tests**.
+The compiler environment restoration assertion also passed. The next app
+build still took 464 seconds, exposing one more cross-mode mismatch: MSBuild
+provides the compiler on PATH, while the standalone test searched the registry
+and observed a different set of SDK fingerprint inputs. The helper now takes
+the ARM64 SDK search paths from Visual Studio, verifies its compiler matches
+the cached Flutter CMake compiler, and preserves MSBuild's environment shape.
+After that repair, an app-to-test transition recompiled **only the application
+Rust library**, not native dependencies: 27.72 seconds for the build and 2.99
+seconds for test startup/execution, with all 288 tests passing. Cargo artifact
+reports and the OpenSSL fingerprints confirm dependency reuse.
+
+The repeat read-only profile replay completed at 02:05:41Z September 7. It
+applied zero additional records in all three zones; retained counts remain
+94 Chat, 6,423 Message and 1,256 Attachment records, with outbox zero. Thus the
+recovered records were not duplicated on the repeated sweep. This does not
+change the outstanding read-fidelity or write gates.
+
+The Windows loop is the primary qualification path while the user is away.
+Do not build another APK to diagnose the saved Windows backlog. The source
+baseline is `0a7f82135` plus the existing decoder/binding working-tree changes;
+the launcher fingerprints those source changes rather than claiming a clean
+HEAD build. The ARM64 debug harness restore completed, using the existing
+signed procedural-macro wrapper, four Cargo jobs, and disabled Rust debug
+symbols/incremental output to limit local resource use. The launcher completed
+its bounded read-only CloudKit drains and retained-save projection sweeps.
+No source edit during that compile is permitted to invalidate its provenance.
+
+A pre-replay schema-6 inspection held the original ObjectBox data file read-shared
+and verified unchanged SHA-256 around inspection of a disposable copy. The
+44 retained Chat saves are **29 malformedRecord, 2 dependency,
+3 unsupportedService, and 10 outOfScopeService**. There are also 81 clean
+retained Chat tombstones, and no outbox operations. The earlier category
+allowlist obscured the last two service categories as unknown; they are now
+explicit, not new failures.
+
+Before the current-source refresh, the old saved Windows report identified both dependency entries as
+freshly decoded `native_out_of_scope_sms_family`, rejected by
+`retained_projection_out_of_scope_previous_failure_rejected`. They are not
+proven alias collisions. The 29 malformed-property entries match the known
+empty optional `prop` repair in `normalize_empty_optional_chat_property` in
+`rust/src/cloud_sync_transient_bridge.rs`. The first current-source replay
+recovered those 29 Chats. Preserve this chronology: the earlier SMS exclusion
+was an older decoder outcome, not the current cause of the two remaining
+photo dependencies.
+
+Investigation order: restore matching native runtime, replay saved evidence,
+measure remaining categories, then change only a reproduced blocker. Audit
+the out-of-scope transition and fresh-Chat admission rules separately from
+unknown services or previously projected record revisions. Never relabel a
+retained record as applied, advance the exact-applied floor artificially, or
+erase existing ownership merely to make admission pass. Keep user content
+and authentication local; Alpha remains untouched.
+
 ### Ordinary-send completion investigation
 
 Source `dcef0e9bf3066310a7dfabef80b80b77fa7783de` is pushed to the fork only

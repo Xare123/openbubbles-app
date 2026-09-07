@@ -83,6 +83,26 @@ New-Item -ItemType Directory -Path $testDirectory | Out-Null
 $children = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
 
 try {
+    $bundle = Join-Path $testDirectory 'bundle'
+    $nestedBundle = Join-Path $bundle 'nested'
+    New-Item -ItemType Directory -Path $nestedBundle -Force | Out-Null
+    foreach ($name in @('runner.exe', 'plugin.dll', 'symbols.pdb', 'notes.txt')) {
+        Set-Content -LiteralPath (Join-Path $bundle $name) -Value 'fixture'
+    }
+    Set-Content -LiteralPath (Join-Path $nestedBundle 'unrelated.dll') -Value 'fixture'
+    $selectedBinaries = @(Get-HarnessSignableArtifacts -RunnerDirectory $bundle)
+    Assert-True -Condition ($selectedBinaries.Count -eq 2) `
+        -Message 'Signing selection included non-binaries or nested files.'
+    Assert-True -Condition ($selectedBinaries -contains (Join-Path $bundle 'plugin.dll')) `
+        -Message 'The plugin DLL was omitted from signing selection.'
+    Assert-True -Condition ($selectedBinaries -contains (Join-Path $bundle 'runner.exe')) `
+        -Message 'The runner executable was omitted from signing selection.'
+    $fileDirectoryError = Invoke-ExpectedFailure {
+        Get-HarnessSignableArtifacts -RunnerDirectory (Join-Path $bundle 'plugin.dll')
+    }
+    Assert-True -Condition ($fileDirectoryError -like '*physical build directory*') `
+        -Message 'Signing selection accepted a file as the bundle directory.'
+
     $firstLaunchId = New-CryptographicLaunchId
     $secondLaunchId = New-CryptographicLaunchId
     Assert-True `

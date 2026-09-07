@@ -856,6 +856,11 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       platform: Platform.operatingSystem,
       architecture: ffi.Abi.current().toString(),
       buildCommit: _buildIdentifier(),
+      reconsiderExcludedChatMetadata:
+          widget.operation == CloudSyncV2WindowsHarnessOperation.drain &&
+          const bool.fromEnvironment(
+            'OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_REPLAY_EXCLUDED_CHATS',
+          ),
     );
     final reportWriter = CloudSyncSemanticPullReportFileWriter(
       privateReportDirectory: path.join(

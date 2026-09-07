@@ -985,6 +985,15 @@ abstract interface class CloudSemanticStoreTransaction {
   void recordConflict(String changeId, String safeCode);
 }
 
+/// Only Chat routing metadata may be reconsidered after the historical SMS
+/// exclusion policy changed. Carrier message bodies are still out of scope.
+bool cloudSyncIsHistoricalChatMetadataScope(CloudSyncScope scope) =>
+    scope.container == 'com.apple.messages.cloud' &&
+    scope.database == 'private' &&
+    scope.zone == 'chatManateeZone' &&
+    scope.streamKind == CloudSyncStreamKind.messages &&
+    scope.persistenceLane == CloudSyncPersistenceLane.semantic;
+
 class TransactionalCloudInboxApplier
     implements
         CloudInboxApplier,
@@ -1000,6 +1009,7 @@ class TransactionalCloudInboxApplier
     this._identityRegistrar,
     this._activeScopeRevalidator,
     this._allowTombstones = false,
+    this._reconsiderExcludedChatMetadata = false,
     this._diagnosticRecorder,
   });
 
@@ -1009,6 +1019,7 @@ class TransactionalCloudInboxApplier
   final CloudTransientCanonicalIdentityRegistrar? _identityRegistrar;
   final Future<bool> Function()? _activeScopeRevalidator;
   final bool _allowTombstones;
+  final bool _reconsiderExcludedChatMetadata;
   final CloudSyncSemanticDiagnosticRecorder? _diagnosticRecorder;
 
   @override
@@ -1144,6 +1155,9 @@ class TransactionalCloudInboxApplier
       projectionStore: projectionStore,
       registrar: registrar,
       candidates: candidates,
+      reconsiderExcludedChatMetadata:
+          _reconsiderExcludedChatMetadata &&
+          cloudSyncIsHistoricalChatMetadataScope(scope),
     );
     var hasMoreWithinBound = false;
     if (candidates.length == limit) {
@@ -1175,6 +1189,7 @@ class TransactionalCloudInboxApplier
     required CloudRetainedProjectionStoreGateway projectionStore,
     required CloudTransientCanonicalIdentityRegistrar registrar,
     required List<CloudInboxEntry> candidates,
+    bool reconsiderExcludedChatMetadata = false,
   }) async {
     var reprojected = 0;
     for (final entry in candidates) {
@@ -1184,7 +1199,10 @@ class TransactionalCloudInboxApplier
           entry.status != CloudInboxStatus.retainedUnprojected ||
           entry.change.type != CloudChangeType.save ||
           entry.change.isTombstone ||
-          entry.lastFailure == CloudFailureCategory.outOfScopeService) {
+          (entry.lastFailure == CloudFailureCategory.outOfScopeService &&
+              (!reconsiderExcludedChatMetadata ||
+                  entry.change.preflightFailure != null ||
+                  entry.change.preflightCode != null))) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.localStorage,
           safeCode: 'retained_projection_candidate_invalid',
@@ -1196,6 +1214,15 @@ class TransactionalCloudInboxApplier
         decoded = await _decoder.decode(entry);
       } on CloudSemanticOutOfScopeServiceDisposition catch (disposition) {
         _recordDiagnostic(disposition.safeCode);
+        if (reconsiderExcludedChatMetadata &&
+            entry.lastFailure == CloudFailureCategory.outOfScopeService) {
+          // A fresh decode still excludes this exact save. Preserve it without
+          // relabeling, retry rotation, or canonical mutation. The fixed
+          // sequence window ensures it is examined only once in this sweep.
+          _recordDiagnostic('retained_projection_out_of_scope_service');
+          await Future<void>.delayed(Duration.zero);
+          continue;
+        }
         if (entry.lastFailure != CloudFailureCategory.unsupportedService) {
           _recordDiagnostic(
             'retained_projection_out_of_scope_previous_failure_rejected',

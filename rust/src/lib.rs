@@ -90,8 +90,19 @@ pub mod bbhwinfo {
     include!(concat!(env!("OUT_DIR"), "/bbhwinfo.rs"));
 }
 
+#[cfg(not(target_os = "android"))]
+mod desktop_native_logging;
+
 pub fn init_logger(path: &Path) {
     LOGGER_INITIALIZED.get_or_init(|| {
+        #[cfg(target_os = "android")]
+        let log_spec = "warn";
+        #[cfg(not(target_os = "android"))]
+        let log_spec = desktop_native_logging::log_spec(
+            cfg!(target_os = "windows")
+                && std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS").as_deref() == Ok("1"),
+            std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_VERBOSE_NATIVE_LOGS").as_deref() == Ok("1"),
+        );
         #[cfg(target_os = "android")]
         let system = android_logger::AndroidLogger::new(
             android_logger::Config::default().with_max_level(log::LevelFilter::Warn),
@@ -99,15 +110,10 @@ pub fn init_logger(path: &Path) {
         #[cfg(not(target_os = "android"))]
         let system = {
             if let Err(_) = std::env::var("RUST_LOG") {
-                std::env::set_var("RUST_LOG", "debug");
+                std::env::set_var("RUST_LOG", log_spec);
             }
             pretty_env_logger::formatted_builder().build()
         };
-
-        #[cfg(target_os = "android")]
-        let log_spec = "warn";
-        #[cfg(not(target_os = "android"))]
-        let log_spec = "debug";
 
         let (logger, _) = Logger::try_with_str(log_spec)
             .expect("No logger?")

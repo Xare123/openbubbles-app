@@ -17,6 +17,7 @@ param(
     [switch] $SkipBuild,
     [switch] $RunOnce,
     [switch] $Drain,
+    [switch] $ReplayExcludedChats,
     [switch] $AttachmentProbe,
     [switch] $AttachmentProbeReuse,
     [switch] $ProjectionViewer,
@@ -59,6 +60,32 @@ function Get-Sha256Hex {
     finally {
         $sha256.Dispose()
     }
+}
+
+function Get-HarnessSignableArtifacts {
+    param([Parameter(Mandatory)][string] $RunnerDirectory)
+
+    $directory = Get-Item -LiteralPath $RunnerDirectory -ErrorAction Stop
+    if (-not $directory.PSIsContainer -or
+        ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "The harness bundle must be a physical build directory."
+    }
+    $prefix = $directory.FullName.TrimEnd('\') + '\'
+    $files = @(Get-ChildItem -LiteralPath $directory.FullName -File |
+        Where-Object { $_.Extension -in @('.exe', '.dll') } |
+        Sort-Object Name)
+    if ($files.Count -eq 0) { throw "The harness bundle has no binaries." }
+    foreach ($file in $files) {
+        if (-not $file.FullName.StartsWith($prefix,
+                [StringComparison]::OrdinalIgnoreCase) -or
+            ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "A harness binary is outside its physical build directory."
+        }
+        $file.FullName
+    }
+}
+if ($ReplayExcludedChats -and -not $Drain) {
+    throw "ReplayExcludedChats requires the bounded Drain operation."
 }
 
 function New-CryptographicLaunchId {
@@ -670,6 +697,7 @@ if (-not (Test-Path -LiteralPath $harnessSource -PathType Leaf)) {
     throw "The Windows Cloud Sync V2 harness source file was not found."
 }
 $buildIdentifier = Resolve-HarnessBuildIdentifier -Repository $repo
+if ($ReplayExcludedChats) { $buildIdentifier += '-replay-excluded-chats' }
 $storeExecutable = Resolve-StoreOpenBubblesExecutable
 $runnerDirectory = Join-Path $repo "build\windows\arm64\runner\Debug"
 $runnerDirectory = [System.IO.Path]::GetFullPath($runnerDirectory).TrimEnd('\')
@@ -693,6 +721,9 @@ $arguments = @(
     "--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true",
     "--dart-define=OPENBUBBLES_BUILD_COMMIT=$buildIdentifier"
 )
+if ($ReplayExcludedChats) {
+    $arguments += '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_REPLAY_EXCLUDED_CHATS=true'
+}
 
 $launcherLock = Enter-ProfileScopedLauncherLock -ProfilePath $profile
 $launcherLockOwned = $true
@@ -758,9 +789,20 @@ try {
     }
 
     if (-not $SkipBuild) {
-        & $SignTool sign /sha1 $SigningThumbprint /fd SHA256 $rustLibrary
-        if ($LASTEXITCODE -ne 0) {
-            throw "Signing the Windows harness Rust library failed."
+        # Smart App Control checks every loaded plugin, not just the Rust DLL.
+        # Sign only this freshly built bundle; preserve valid vendor signatures.
+        foreach ($binary in @(Get-HarnessSignableArtifacts -RunnerDirectory $runnerDirectory)) {
+            if ((Get-AuthenticodeSignature -LiteralPath $binary).Status -ne
+                [System.Management.Automation.SignatureStatus]::Valid) {
+                & $SignTool sign /sha1 $SigningThumbprint /fd SHA256 $binary
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Signing a Windows harness bundle binary failed."
+                }
+            }
+            if ((Get-AuthenticodeSignature -LiteralPath $binary).Status -ne
+                [System.Management.Automation.SignatureStatus]::Valid) {
+                throw "A Windows harness bundle signature is invalid."
+            }
         }
         Write-HarnessBuildReceipt `
             -ReceiptPath $buildReceiptPath `

@@ -4126,6 +4126,124 @@ void main() {
       expect(limitedWindow.map((entry) => entry.sequence), [1, 3]);
     },
   );
+
+  test(
+    'historical out-of-scope Chat metadata is currently invisible to both replay readers after reopen',
+    () async {
+      // Characterizes migration debt, not the desired recovery behavior:
+      // current native code can project SMS Chat routing metadata even when
+      // an older decoder classified that exact protected save out of scope.
+      final chatScope = _scope(
+        zone: 'chatManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      final entry = _entry(scope: chatScope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final row = objectBox.box<CloudInboxChangeEntity>().getAll().single
+        ..status = CloudInboxStatus.retainedUnprojected.index
+        ..failureCategory = CloudFailureCategory.outOfScopeService.name
+        ..completedAtMs = now.millisecondsSinceEpoch;
+      objectBox.box<CloudInboxChangeEntity>().put(row);
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      adapter = _ObjectBoxTestCanonicalAdapter(objectBox)
+        ..activeScope = chatScope
+        ..activeGeneration = entry.generation;
+      gateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: adapter,
+        clock: () => now,
+      );
+
+      expect(
+        await gateway.readRetainedProjectionCandidates(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+      expect(
+        await gateway.readRetainedProjectionWindow(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          afterFetchSequence: 0,
+          throughFetchSequence: entry.sequence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+      final preserved = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+      expect(preserved.encryptedPayloadRef, row.encryptedPayloadRef);
+      expect(preserved.payloadSha256, row.payloadSha256);
+      expect(
+        preserved.failureCategory,
+        CloudFailureCategory.outOfScopeService.name,
+      );
+      expect(preserved.status, CloudInboxStatus.retainedUnprojected.index);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+
+      gateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: adapter,
+        clock: () => now,
+        reconsiderExcludedChatMetadata: true,
+      );
+      // Opt-in affects only the bounded window, never ordinary retry scans.
+      expect(
+        await gateway.readRetainedProjectionCandidates(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+      final recovery = await gateway.readRetainedProjectionWindow(
+        scope: chatScope,
+        generation: entry.generation,
+        leaseFence: leaseFence,
+        afterFetchSequence: 0,
+        throughFetchSequence: entry.sequence,
+        limit: 8,
+      );
+      expect(recovery.map((item) => item.sequence), [entry.sequence]);
+      expect(
+        await gateway.readRetainedProjectionWindow(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          afterFetchSequence: entry.sequence,
+          throughFetchSequence: entry.sequence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+      // A failed current decode must become blocking debt, not continue to
+      // count as an understood exclusion. The protected source is preserved.
+      await gateway.recordRetainedProjectionFailure(
+        entry: recovery.single,
+        leaseFence: leaseFence,
+      );
+      final failed = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+      expect(failed.status, CloudInboxStatus.retainedUnprojected.index);
+      expect(failed.failureCategory, CloudFailureCategory.dependency.name);
+      expect(failed.encryptedPayloadRef, preserved.encryptedPayloadRef);
+      expect(failed.payloadSha256, preserved.payloadSha256);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
 }
 
 CloudSyncScope _scope({
