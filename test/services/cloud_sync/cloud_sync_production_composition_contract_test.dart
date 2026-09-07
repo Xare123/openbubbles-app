@@ -268,6 +268,50 @@ void main() {
     expect(readback, contains('resumeAutomaticUploads: false,'));
   });
 
+  test('new iMessage chat and composer share tracked submission, not two sends', () {
+    final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final create = source.substring(
+      source.indexOf('Future<Chat> createChat('),
+      source.indexOf('Future<PlatformFile> downloadAttachment('),
+    );
+    final composer = source.substring(
+      source.indexOf('Future<Message> sendMessage('),
+      source.indexOf('Future<Message> _sendPreparedMessage('),
+    );
+    final shared = source.substring(
+      source.indexOf('Future<Message> _sendPreparedMessage('),
+      source.indexOf('bool supportsFocusStates()'),
+    );
+    expect(create, contains('CloudKitWriterOwnership.v2MutationsEnabled'));
+    expect(create, contains('CloudSyncDevGate.manualOutboundCanaryEnabled && !chat.isRpSms'));
+    final tracked = create.substring(
+      create.indexOf('final pending = createPendingInitialIMessage('),
+      create.indexOf('} else {'),
+    );
+    expect(tracked, contains('createdAt: DateTime.now()'));
+    expect(tracked, contains('await _sendPreparedMessage('));
+    expect(tracked, isNot(contains('sendMsg(')));
+    expect(tracked, isNot(contains('reflectMessageDyn(')));
+    expect(tracked, isNot(contains('forwardIfNessesary(')));
+    expect(create, contains('afterGuid: initialConversation.afterGuid'));
+    expect(create, contains('participants: List.of(initialConversation.participants)'));
+    final legacy = create.substring(create.indexOf('} else {'));
+    expect(legacy, contains('await sendMsg(msg);'));
+    expect(legacy, contains('await pushService.reflectMessageDyn(msg)'));
+    expect(legacy, contains('await newMessage.forwardIfNessesary(chat)'));
+    expect(composer, contains('return _sendPreparedMessage('));
+    expect(composer, isNot(contains('sendMsg(')));
+    expect(shared.indexOf('_captureCloudSyncV2LocalSend('),
+        lessThan(shared.indexOf('confirmed: false,')));
+    expect(shared.indexOf('confirmed: false,'),
+        lessThan(shared.indexOf('await sendMsg(msg, rebuildForRetry: rebuildWireMessage)')));
+    expect(shared, contains('rebuilt.id = stableMessageId;'));
+    expect(shared, contains('expectedSourceSha256: localCloudIntent!.identity.sourceSha256'));
+    expect(shared, contains('if (localCloudIntent != null && !backgroundSendPending)'));
+    expect(RegExp(r'await sendMsg\(').allMatches(shared), hasLength(1));
+    expect(RegExp(r'reflectMessageDyn\(').allMatches(shared), hasLength(1));
+  });
+
   test('one confirmed action auto-resumes only bounded semantic batches', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',

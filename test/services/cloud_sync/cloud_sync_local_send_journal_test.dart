@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/imessage_initial_submission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
@@ -1260,6 +1261,91 @@ void main() {
       // requires the separate authenticated canonical Chat ownership proof.
     },
   );
+
+  for (final succeeded in [false, true]) {
+    test('new-chat source persists before native result: $succeeded', () async {
+      final wire = _wire(chat);
+      chat
+        ..guid = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'
+        ..style = null
+        ..chatIdentifier = null;
+      store.box<Chat>().put(chat);
+      wire.conversation!.senderGuid = chat.guid;
+      final body = AttributedBody.raw('ordinary text');
+      final pending = createPendingInitialIMessage(
+        body, createdAt: _time(2), sender: _handle('me@example.com'),
+      )..chat.target = chat;
+      final fresh = CloudSyncLocalSendIdentity.isFreshLocalSubmission(
+        pending, generatedGuid: wire.id, stableGuid: wire.id,
+      );
+      expect(fresh, isTrue);
+      expect(pending.id, isNull);
+      expect(pending.temp, isFalse);
+      // Native newMsg has no sent timestamp yet. Do not encode epoch 1970.
+      expect(wire.sentTimestamp, 0);
+      expect(pending.dateCreated, _time(2));
+      final initial = CloudSyncLocalSendIdentity.capture(pending, chat, wire.id)!;
+      final identity = journal.captureSubmissionWire(
+        message: pending, chat: chat, wire: wire,
+        initialSourceSha256: initial.sourceSha256,
+      )!;
+      pending.stagingGuid = wire.id;
+      journal.saveSubmission(
+        identity: identity, newlyGeneratedGuid: fresh,
+        persistMessage: () => store.box<Message>().put(pending), now: _time(2),
+      );
+      final rowId = pending.id!;
+      expect(journal.readReady(), isEmpty);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+      body.runs.single.range[1] = 1;
+      expect(pending.attributedBody.single.runs.single.range[1], 13);
+      await reopen();
+      final id = journal.recordNativeSendConfirmation(
+        stableGuid: wire.id, succeeded: succeeded,
+        capturedAuth: _auth(Object()), stillCurrent: () => true, now: _time(4),
+      );
+      expect(store.box<Message>().count(), 1);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 1);
+      expect(journal.readReady(), isEmpty);
+      if (succeeded) {
+        expect(id, isNotNull);
+        expect(store.box<CloudSyncLocalSendIntentEntity>().get(id!)!.state, 3);
+        journal.promoteIdsConfirmedDeferred(
+          intentId: id, currentAuth: _auth(Object()), now: _time(5),
+        );
+        final candidate = journal.readForAdmission(id);
+        expect(candidate.localMessageId, rowId);
+        expect(candidate.sourceSha256, identity.sourceSha256);
+        expect(candidate.message!.guid, wire.id);
+        expect(candidate.message!.chat.target!.guid, chat.guid);
+        expect(journal.readReady(), hasLength(1));
+      } else {
+        expect(id, isNull);
+        final saved = store.box<Message>().get(rowId)!;
+        expect(saved.stagingGuid, wire.id);
+        expect(saved.guid, startsWith('temp-'));
+        expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+      }
+    });
+  }
+
+  test('initial-message factory preserves unsupported formatting and group guards', () {
+    final body = AttributedBody(
+      string: 'ordinary text',
+      runs: [Run(range: [0, 13], attributes: Attributes(messagePart: 0, bold: true))],
+    );
+    final pending = createPendingInitialIMessage(
+      body, createdAt: _time(2), sender: _handle('me@example.com'),
+    );
+    expect(pending.attributedBody.single.runs.single.attributes!.bold, isTrue);
+    expect(CloudSyncLocalSendIdentity.capture(pending, chat, _guidA), isNull);
+    pending.attributedBody = [AttributedBody.raw(pending.text!)];
+    final group = _chat(participants: [
+      _handle('person@example.com'), _handle('second@example.com'),
+    ]);
+    expect(CloudSyncLocalSendIdentity.capture(pending, group, _guidA), isNull);
+    expect(CloudSyncLocalSendIdentity.capture(pending, _chat(isRpSms: true), _guidA), isNull);
+  });
 
   test(
     'provisional identity rejects a different row, sender, text or original GUID',

@@ -44,6 +44,77 @@ continue under a new account.
 
 ## Latest integration checkpoint, 2026-09-07
 
+### First message in a new chat now shares the journaled send path
+
+The normal composer used durable local-send capture, but `RustPushBackend.createChat`
+sent its first message directly through IDS, reflected it, and saved it without
+ever recording that origin. A successful first send therefore could not enter
+the V2 automatic upload queue. The V2 outbound-Canary, non-SMS branch now creates
+an unsent local source with `createPendingInitialIMessage` and uses the same
+`_sendPreparedMessage` path as the normal composer. Alpha/SMS retain their prior
+direct-send, reflection, forwarding and save sequence. No login code, schema,
+native API, or remote-write eligibility gate changed in this patch.
+
+```text
+new-chat initial body + saved local Chat
+  -> detached body and initial conversation snapshot
+  -> fresh native GUID + unsent local source (wall-clock date, not wire zero)
+  -> shared capture / atomic pending source + intent
+  -> IDS submission, retries retain GUID and original conversation predecessor
+       failure: retain pending identity, no upload confirmation
+       background: wait for matching native confirmation
+       synchronous success: persist IDS evidence, then authorize local admission
+  -> one reflection; Message.save reuses the existing row by GUID or staging GUID
+  -> existing protected Chat dependency and Message create/readback pipeline
+```
+
+Review confirmed that native `MessageInst::new` initializes `sent_timestamp` to
+zero, so the local source uses `DateTime.now()` instead. The first-message retry
+also clones the pre-persistence `ConversationData`: recomputing `afterGuid` from
+the newly saved pending row would point the message at itself. Message parts are
+still rebuilt for native ownership. The ordinary composer's existing submission
+body was extracted without changing its retry/confirmation/forwarding behavior.
+
+**TEST-PROVEN, not LIVE-PROVEN:** 434 focused tests passed across 11 files,
+including the production initial-source constructor, fresh provisional intent,
+restart with failed/successful native confirmation, retained formatting guards,
+real `Message.save` reflection deduplication and early-receipt preservation,
+outbound admission, protected transport and existing journal/runtime contracts.
+The new source is structurally pinned to the shared production submission method;
+the actual IDS network call and UI are not simulated by those tests. Evidence:
+`evidence/windows-replay-20260906/initial-chat-full-regression-20260907.log`.
+Focused new/changed helper and test analysis is clean in
+`initial-chat-focused-analyzer-20260907.log`; analysis including the large service
+has four pre-existing informational brace-style lints and no errors or warnings
+in `initial-chat-analyzer-20260907.log`. All paths are relative to the project root.
+No personal database was opened, APK installed, or live message sent for this check.
+ADB device and mDNS inventories were empty. The Windows loader blocker below
+remains unresolved; do not count the earlier successful executable as this build.
+
+### Group writes remain a separate, mapped dependency chain
+
+The reviewed next stages are not permission to remove direct-message checks:
+
+1. Versioned group local-send identity over the original Chat UUID, exact members,
+   sender and group identifiers. Preserve existing direct-message digest bytes.
+2. Group Chat origin and conflict checks, separate from the Message's origin.
+3. Group Chat encoding/native validation backed by accepted Apple record evidence,
+   followed by exact save/readback and same-row adoption.
+4. Applied, non-tombstone group dependency proof, including members, aliases,
+   version, scope/generation and protected record map; recheck after restart.
+5. Group Message upload, exact readback and independent-device display, then
+   membership/name changes as distinct mutations rather than plaintext events.
+
+Source boundaries: `CloudSyncLocalSendIdentity.capture/captureWire` currently
+accept only direct plaintext; `CloudSyncOutboundChatOrigin.capture`,
+`CloudSyncOutboundChatAdmissionCoordinator` and native `validate_direct_chat_create`
+are direct-only; `requireCloudSyncRestoredDirectChat` requires style 45 and an
+applied canonical direct Chat. The native CloudChat model and legacy `Chat.toCloud`
+contain style-43 group fields, but locally generated defaults do not establish
+Apple's accepted initial `cid/gid/ogid/guid`, participant ordering/sender inclusion,
+properties/version/handshake or save behavior. The authorized two-recipient group
+qualification has not been sent. No group guard was relaxed by the new-chat fix.
+
 ### Own-message reaction dependency, exact-readback proof
 
 The no-self-echo case now has a local, tested dependency path. A confirmed

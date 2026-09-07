@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:app_links/app_links.dart';
 import 'package:bluebubbles/services/rustpush/icloud_maintenance.dart';
+import 'package:bluebubbles/services/rustpush/imessage_initial_submission.dart';
 import 'package:bluebubbles/services/rustpush/imessage_reaction_payload.dart';
 import 'package:bluebubbles/services/rustpush/imessage_reaction_submission.dart';
 import 'package:bluebubbles/services/rustpush/registration_recovery.dart';
@@ -801,26 +802,53 @@ class RustPushBackend implements BackendService {
     );
     chat.save(); //save for reflectMessage
     if (message != null) {
-      var msg = await api.newMsg(
-          conversation: await chat.getConversationData(),
+      final initialBody = AttributedBody.fromMap(message.toMap());
+      final initialConversation = await chat.getConversationData();
+      Future<api.MessageInst> buildWireMessage() async => api.newMsg(
+          // Pending persistence must not turn a first-send retry into its own
+          // afterGuid predecessor. Rebuild owned payloads, not conversation ID.
+          conversation: api.ConversationData(
+            participants: List.of(initialConversation.participants),
+            cvName: initialConversation.cvName,
+            senderGuid: initialConversation.senderGuid,
+            afterGuid: initialConversation.afterGuid,
+          ),
           message: api.Message.message(api.NormalMessage(
-            parts: await partsFromBody(message),
+            parts: await partsFromBody(initialBody),
             service: await getService(chat),
             voice: false,
             embeddedProfile:
                 await pushService.getShareProfileMessageFor(chat.participants),
           )),
           sender: handle);
+      var msg = await buildWireMessage();
       if (chat.isRpSms) {
         msg.target = await getSMSTargets(handle);
       }
-      await sendMsg(msg);
-      msg.sentTimestamp = DateTime.now().millisecondsSinceEpoch;
-
-      final newMessage = (await pushService.reflectMessageDyn(msg))!;
-      newMessage.chat.target = chat;
-      await newMessage.forwardIfNessesary(chat);
-      newMessage.save();
+      if (CloudKitWriterOwnership.v2MutationsEnabled &&
+          CloudSyncDevGate.manualOutboundCanaryEnabled && !chat.isRpSms) {
+        final pending = createPendingInitialIMessage(
+          initialBody,
+          createdAt: DateTime.now(),
+          sender: RustPushBBUtils.rustHandleToBB(handle),
+        );
+        // Same durable origin, retry identity and IDS-confirmation path as the
+        // ordinary composer. Group/rich payload admission remains separately
+        // gated; merely reaching this path never authorizes a CloudKit write.
+        final reflected = await _sendPreparedMessage(
+          chat, pending, msg, buildWireMessage: buildWireMessage,
+        );
+        reflected.chat.target = chat;
+        reflected.save();
+      } else {
+        // Keep Alpha and SMS creation behavior unchanged.
+        await sendMsg(msg);
+        msg.sentTimestamp = DateTime.now().millisecondsSinceEpoch;
+        final newMessage = (await pushService.reflectMessageDyn(msg))!;
+        newMessage.chat.target = chat;
+        await newMessage.forwardIfNessesary(chat);
+        newMessage.save();
+      }
     }
     await chats.addChat(chat);
     return chat;
@@ -1519,7 +1547,15 @@ class RustPushBackend implements BackendService {
       );
     }
 
-    var msg = await buildWireMessage();
+    return _sendPreparedMessage(
+      chat, m, await buildWireMessage(), buildWireMessage: buildWireMessage,
+    );
+  }
+
+  Future<Message> _sendPreparedMessage(
+    Chat chat, Message m, api.MessageInst msg, {
+    required Future<api.MessageInst> Function() buildWireMessage,
+  }) async {
     final generatedMessageId = msg.id;
     Logger.info("sending ${msg.id}");
     if (m.stagingGuid != null ||
