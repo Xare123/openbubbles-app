@@ -10,6 +10,15 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('staged Chat evidence errors stay actionable without exposing content', () {
+    for (final code in ['cloud_sync_chat_identity_candidate_invalid',
+      'cloud_sync_chat_identity_candidate_changed', 'cloud_sync_chat_identity_evidence_required',
+      'cloud_sync_chat_identity_not_disjoint']) {
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+      expect(cloudSyncV2SafeFailureCode(StateError('$code private body')),
+        'cloud_sync_unknown_failure');
+    }
+  });
   test('outbound Chat-origin failures retain only their fixed codes', () {
     final source = File(
       'lib/services/rustpush/cloud_sync/cloud_sync_outbound_chat_origin.dart',

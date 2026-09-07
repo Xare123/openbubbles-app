@@ -14,6 +14,9 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dar
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identity_read_set.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_admission.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_preflight.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
@@ -99,7 +102,8 @@ enum CloudSyncV2WindowsHarnessOperation {
   attachmentReuseProbe,
   projectionViewer,
   projectionDetailViewer,
-  chatIdentityObservation;
+  chatIdentityObservation,
+  stagedChatIdentityObservation;
 
   static CloudSyncV2WindowsHarnessOperation parse(List<String> arguments) {
     return CloudSyncV2WindowsHarnessLaunch.parse(arguments).operation;
@@ -488,11 +492,13 @@ final class CloudSyncV2WindowsHarnessLaunch {
           operation = CloudSyncV2WindowsHarnessOperation.projectionDetailViewer;
           operationSeen = true;
         case 'observe-chat-identity':
+        case 'observe-staged-chat-identity':
           if (operationSeen) {
             throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
           }
-          operation =
-              CloudSyncV2WindowsHarnessOperation.chatIdentityObservation;
+          operation = argument == 'observe-chat-identity'
+              ? CloudSyncV2WindowsHarnessOperation.chatIdentityObservation
+              : CloudSyncV2WindowsHarnessOperation.stagedChatIdentityObservation;
           operationSeen = true;
         default:
           if (!argument.startsWith(launchIdArgumentPrefix) ||
@@ -1014,6 +1020,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       case CloudSyncV2WindowsHarnessOperation.projectionDetailViewer:
         return;
       case CloudSyncV2WindowsHarnessOperation.chatIdentityObservation:
+      case CloudSyncV2WindowsHarnessOperation.stagedChatIdentityObservation:
         await _runChatIdentityObservation();
     }
   }
@@ -1388,6 +1395,9 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
   Future<void> _runChatIdentityObservation() async {
     final adapter = _adapter;
     if (_busy || adapter == null) return;
+    final stagedMode = widget.operation ==
+        CloudSyncV2WindowsHarnessOperation.stagedChatIdentityObservation;
+    final stageName = stagedMode ? 'staged-chat-identity-observation' : 'chat-identity-observation';
     _resumeAfterTwoFactor =
         _CloudSyncV2WindowsHarnessResumeOperation.chatIdentityObservation;
     setState(() {
@@ -1406,14 +1416,19 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       if (await file.length() > 8192) {
         throw StateError('cloud_sync_chat_observation_candidate_invalid');
       }
-      final candidate = cloudSyncV2WindowsChatObservationCandidate(
+      var candidate = cloudSyncV2WindowsChatObservationCandidate(
         await file.readAsString(),
       );
-      await _setRuntimeStage('chat-identity-observation', state: 'running');
-      final counts = await adapter.sampler.runConfirmedReadOnlyObservation((
-        auth,
-        pauseToken,
-      ) async {
+      if (stagedMode) {
+        candidate = CloudSyncOutboundChatAdmissionCoordinator.encodeDirectIdentity(
+          originalGuid: candidate.groupId, recipient: candidate.chatIdentifier,
+          sender: candidate.lastAddressedHandle);
+      }
+      await _setRuntimeStage(stageName, state: 'running');
+      Future<Map<String, Object?>> observe(
+        CloudSyncNativeAuthSnapshot auth, Object pauseToken, {
+        CloudSyncProtectedOutboundStageData? staged,
+      }) async {
         final client = auth.cloudMessagesClient;
         if (pauseToken is! BigInt ||
             client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
@@ -1432,6 +1447,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         final counts = <String, Object?>{
           'version': 1,
           'write_authorized': false,
+          'staged_candidate': staged != null,
           'retained_saves': readSet.retainedSaves.length,
           'retained_tombstones': readSet.retainedTombstones,
           'overlaps': 0,
@@ -1440,6 +1456,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           'failed': 0,
         };
         String? candidateBinding;
+        String? stagedBinding;
         for (final source in readSet.retainedSaves) {
           readSet.requireUnchanged(Database.store);
           final result = await identity_api
@@ -1452,6 +1469,10 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                 generation: BigInt.from(readSet.generation),
                 readSetFenceSha256: readSet.fenceSha256,
                 candidate: candidate,
+                stagedCandidate: staged == null ? null : identity_api.CloudSyncStagedChatIdentityCandidate(
+                  protectedPayloadReference: staged.protectedEnvelopeReference,
+                  payloadSha256: staged.payloadSha256, recordIdHash: staged.serverRecordIdHash,
+                  logicalEntityKeyHash: staged.logicalEntityKeyHash),
                 source: identity_api.CloudSyncChatIdentitySourceInput(
                   changeIdHash: source.changeIdHash,
                   recordIdHash: source.recordIdHash,
@@ -1480,14 +1501,30 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
             throw StateError('cloud_sync_chat_observation_binding_invalid');
           }
           candidateBinding = result.candidateBindingHash;
+          if (staged != null) {
+            if (!RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(result.stagedCandidateBindingHash ?? '') ||
+                (stagedBinding != null && stagedBinding != result.stagedCandidateBindingHash)) {
+              throw StateError('cloud_sync_chat_observation_binding_invalid');
+            }
+            stagedBinding = result.stagedCandidateBindingHash;
+          }
           final key = result.comparison!.name;
           counts[key] = (counts[key]! as int) + 1;
         }
         readSet.requireUnchanged(Database.store);
         return counts;
-      });
+      }
+      final Map<String, Object?> counts;
+      if (!stagedMode) {
+        counts = await adapter.sampler.runConfirmedReadOnlyObservation(observe);
+      } else {
+        counts = await cloudSyncObserveStagedChat(readActiveClient: () => _activeClient,
+          privateStorageDirectory: fs.appDocDir.path, candidate: candidate,
+          observe: (auth, token, staged) => observe(auth, token, staged: staged));
+        counts['stage_rolled_back'] = true;
+      }
       await _setRuntimeStage(
-        'chat-identity-observation-complete',
+        '$stageName-complete',
         state: 'finished',
         detail: jsonEncode(counts),
       );

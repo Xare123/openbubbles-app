@@ -513,6 +513,21 @@ try {
     Assert-True -Condition $identityProcess.HasExited `
         -Message 'The verified read-only Chat observation harness was not closed.'
 
+    $stagedIdentityProcess = Start-TestHarnessProcess -Executable $testExecutable
+    $children.Add($stagedIdentityProcess)
+    $stagedIdentityPath = Join-Path $testDirectory 'staged-chat-identity-status.json'
+    Write-TestHarnessStatus -Path $stagedIdentityPath -LaunchId $firstLaunchId `
+        -ProcessId $stagedIdentityProcess.Id -State finished `
+        -Stage staged-chat-identity-observation-complete
+    Wait-HarnessOperation -Process $stagedIdentityProcess `
+        -ExpectedExecutable $testExecutable -StatusPath $stagedIdentityPath `
+        -LaunchStartedUtc ([datetime]::UtcNow.AddSeconds(-1)) `
+        -BaselineWriteUtc ([datetime]::MinValue) -ExpectedLaunchId $firstLaunchId `
+        -ExpectedOperation staged-chat-identity-observation -TimeoutSeconds 5
+    $stagedIdentityProcess.Refresh()
+    Assert-True -Condition $stagedIdentityProcess.HasExited `
+        -Message 'The verified staged Chat observation harness was not closed.'
+
     Write-Host 'Cloud Sync V2 Windows launcher behavioral tests passed.'
 }
 finally {

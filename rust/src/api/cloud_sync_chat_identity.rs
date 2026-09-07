@@ -297,7 +297,9 @@ mod cloud_sync_chat_identity_bridge_tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn staged_observation_checks_protected_payload_record_account_and_every_candidate_field() {
-        use rustpush::cloud_messages::CloudParticipant;
+        use rustpush::cloud_messages::{
+            cloudmessagesp::ChatProto, CloudParticipant, CloudProp, GZipWrapper,
+        };
         let directory = tempfile::tempdir().unwrap();
         let other_directory = tempfile::tempdir().unwrap();
         let storage = directory.path().to_str().unwrap();
@@ -315,6 +317,16 @@ mod cloud_sync_chat_identity_bridge_tests {
             style: 45,
             state: 3,
             successful_query: 1,
+            // Match the production Dart encoder, including optional plist
+            // properties and gzip protobuf rather than a minimal identity.
+            properties: Some(CloudProp {
+                pv: Some(1),
+                number_of_times_respondedto_thread: Some(3),
+                should_force_to_sms: Some(false),
+                message_handshake_state: Some(1),
+                ..Default::default()
+            }),
+            proto001: Some(GZipWrapper(ChatProto { unk1: Some(0) })),
             ..Default::default()
         };
         let stage_one = || {

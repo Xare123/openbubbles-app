@@ -3762,12 +3762,28 @@ class ObjectBoxCloudSyncStore
     _recordMaps.put(mirror);
   }
 
-  void _requireOperationProjectionReadyLocked(
+  /// Recover the original queued Chat and its journal authorization, without
+  /// staging another record or demanding evidence that is being refreshed.
+  CloudSyncOutboundChatOrigin? captureQueuedChatObservationOrigin(
+    CloudOutboxOperation expected,
+  ) => _store.runInTransaction(TxMode.read, () {
+    final row = _findOutboxByOperationIdLocked(expected.operationId);
+    final scope = expected.scope;
+    if (row == null || row.scopeKey != _scopeKey(scope) ||
+        row.accountFingerprint != scope.accountFingerprint || row.zone != scope.zone ||
+        !_outboxFromEntity(scope, row).sameDurableSnapshotAs(expected) ||
+        row.state != CloudOutboxStatus.pending.index ||
+        expected.status != CloudOutboxStatus.pending) {
+      throw _storageFailure('cloud_sync_outbound_chat_recovery_changed');
+    }
+    return _captureJournalBoundChatOriginLocked(scope, row);
+  });
+
+  CloudSyncOutboundChatOrigin? _captureJournalBoundChatOriginLocked(
     CloudSyncScope scope,
     CloudOutboxOperationEntity entity,
   ) {
     final operation = _outboxFromEntity(scope, entity);
-    final journal = _localSendJournal;
     final chatBinding = entity.localChatOrigin;
     if (chatBinding != null && cloudSyncChatOriginIsRetired(chatBinding)) {
       throw _storageFailure('cloud_sync_outbound_chat_source_retired');
@@ -3789,6 +3805,18 @@ class ObjectBoxCloudSyncStore
       if (origin.binding(operation.checkpointGeneration) != identity) {
         throw _storageFailure('cloud_sync_outbound_chat_origin_changed');
       }
+      return origin;
+    }
+    return null;
+  }
+
+  void _requireOperationProjectionReadyLocked(
+    CloudSyncScope scope,
+    CloudOutboxOperationEntity entity,
+  ) {
+    final operation = _outboxFromEntity(scope, entity);
+    final origin = _captureJournalBoundChatOriginLocked(scope, entity);
+    if (origin != null) {
       _requireMessagesCloudAccountProjectionReadyLocked(scope,
         allowRetainedForFreshCreate: true, requireResolvedChatSaves: true,
         freshRecordIdHash: operation.serverRecordIdHash,
@@ -3805,6 +3833,7 @@ class ObjectBoxCloudSyncStore
         freshRecordIdHash: operation.serverRecordIdHash);
       return;
     }
+    final journal = _localSendJournal;
     final source = journal?.readAdoptedCreateSource(_store, operation);
     if (journal == null || source == null) {
       _requireMessagesCloudAccountProjectionReadyLocked(scope);

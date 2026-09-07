@@ -303,9 +303,10 @@ database control reports are exactly equal. Evidence:
 `staged-chat-after-flutter.log` in the replay evidence folder. The harness exited
 normally. No real send or staged outbound record was created in this live check.
 
-The optional observation/evidence callbacks are **not wired into either live
-production composition yet**. Their default remains the original applied-save
-gate. Next integration follows this call graph:
+The observation/evidence callbacks are now wired together in the gated
+`CloudSyncProductionLocalSendAdapter`. Generic/manual admission retains the
+original applied-save gate. This is locally implemented, not installed on
+Pixel or qualified by an actual remote save. The call graph is:
 
 1. **Implemented/tested:** bind observations to the actual staged Chat, not the diagnostic JSON or a
    mutable Dart `CloudChat` object. `open_staged_outbound_chat` already verifies
@@ -315,11 +316,11 @@ gate. Next integration follows this call graph:
    `_admitProtectedOutboundCreate` and
    `_requireOperationProjectionReadyLocked` (lease plus submission). Keep
    local-send confirmation, prior-identity ownership and exact tombstone checks.
-3. **Next runtime integration:** qualify refreshing the observation with an already-admitted queue after
+3. **Implemented, runtime qualification in progress:** refresh the observation with an already-admitted queue after
    restart. The general semantic sampler deliberately rejects unsettled outbox
    work; calling it from the write consumer would also change interlock mode.
-   Use the write owner's exact selection and controlled cached read-auth scope,
-   not a global preflight exemption. The current read-set fence includes the
+   `CloudSyncWriteChatIdentitySession` uses the write owner's selection and
+   controlled cached read-auth scope, not a global preflight exemption. The read-set fence includes the
    checkpoint mutation counter, which admission changes. Evidence must be
    refreshed or explicitly advanced with the same admission transaction; do
    not silently drop that field or persist a blanket disjoint flag.
@@ -328,10 +329,49 @@ gate. Next integration follows this call graph:
    before enabling this in Windows, then qualify Android separately.
 
 Admission alone is not a useful partial rollout: it could put a pending write
-in front of the semantic reads needed to release that same write. Enable the
-new callbacks only together with selected-outbox observation refresh and the
-corresponding write-owner/native-pause lifecycle. Then qualify live Windows
-Chat/Message readback and no-extra-save recovery before Android activation.
+in front of the semantic reads needed to release that same write. Both callbacks
+and the write-owner/native-pause lifecycle now ship together in source. Next
+qualify live Windows Chat/Message readback and no-extra-save recovery before
+Android activation.
+
+#### Write-owned observation runtime, September 7 integration
+
+```text
+confirmed local-send intent + V2 owner + exact account/store/client
+  -> v2ReadWrite interlock
+  -> original Chat staged once (or recover exact queued stage after restart)
+  -> ensure cached read authentication before native pause
+  -> native pause -> warm PCS/read auth -> observe ALL retained saved identities
+  -> resume native writers -> revalidate account/owner/selection
+  -> synchronous evidence check at admission
+  -> refresh after admission changes the checkpoint revision
+  -> evidence check at lease AND submission -> existing write/readback engine
+```
+
+`captureQueuedChatObservationOrigin` validates the complete durable operation
+snapshot, original journal capability, local Chat and existing record map. It
+does not stage a second record. Evidence lives only for that queue pass and is
+cleared after the engine returns. Unknown outcomes keep their existing exact
+readback/reconciliation path; observation does not resubmit them.
+
+The native pause is always released before submission. An uncertain acquisition
+or failed release retains the interlock until process restart. Review also found
+that a caught poison error could previously re-enter the same outer operation;
+both active-fence checks and same-kind re-entry now reject poisoned operations.
+Tests cover this in addition to account changes during pause, observation and
+resume, exception cleanup, restart, stale evidence and exact-stage reuse.
+
+The Windows `-StagedChatIdentityObservation` mode uses the production encoder,
+protected staging and the same write-owned read-auth lifecycle. It deliberately
+does not create an IDS-confirmed intent or call the save engine. It rolls back
+the unadopted local stage and emits content-free identity counts. No Apple
+registration, canonical Chat/Message mutation or writer-owner migration occurs.
+An uncertain native pause may retain the local stage for later safe recovery.
+
+This mode closes the gap between synthetic staged fixtures and the previous
+unstaged live observation. It is NOT the eventual live-write test: the Windows
+harness still restores only CloudKit authentication, not ordinary IDS sending.
+Do not fabricate a send receipt to enter the ordinary-send exception.
 
 #### Direct-Chat record membership: implemented, development opt-in only
 

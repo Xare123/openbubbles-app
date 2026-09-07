@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
+import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart' as identity_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart' as frb_generated;
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 import 'package:bluebubbles/database/database.dart';
@@ -32,6 +33,10 @@ import 'cloud_sync_protector.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 import 'cloud_sync_outbound_admission.dart';
 import 'cloud_sync_outbound_chat_admission.dart';
+import 'cloud_sync_outbound_chat_origin.dart';
+import 'cloud_sync_outbound_staging.dart';
+import 'cloud_sync_chat_identity_evidence.dart';
+import 'cloud_sync_write_chat_identity_session.dart';
 import 'cloud_sync_create_queue_drain.dart';
 import 'cloud_sync_writer_authority.dart';
 import 'cloudkit_operation_interlock.dart';
@@ -726,10 +731,14 @@ final class CloudSyncProductionLocalSendAdapter {
     final journal = CloudSyncLocalSendJournal(
       store: objectBox, authority: authority, authoritySnapshot: owner,
     );
+    // Ephemeral per pass. Admission changes the read-set revision; refresh
+    // against the ORIGINAL staged operation before lease, including restart.
+    final chatEvidence = <String, CloudSyncChatIdentityEvidence>{};
     final durable = ObjectBoxCloudSyncStore(
       store: objectBox,
       protector: RustCloudSyncProtector(storageDirectory: _privateStorageDirectory),
       localSendJournal: journal,
+      readChatIdentityEvidence: (operation) => chatEvidence[operation.operationId],
     );
     final interlock = CloudKitOperationInterlock(
       privateStorageDirectory: _privateStorageDirectory, fenceStore: durable,
@@ -790,6 +799,65 @@ final class CloudSyncProductionLocalSendAdapter {
       await lifecycle.ensureRecoveredBeforeWrite();
       await validateSelection();
     }
+    final identitySession = CloudSyncWriteChatIdentitySession(
+      exclusion: interlock,
+      nativePause: FrbCloudSyncNativeWriterPause(),
+      validate: validateSelection,
+      ensureReadAuthentication: () => FrbCloudSyncNativeAuthBinding()
+          .ensureReadAuthentication(cloudMessagesClient: auth.cloudMessagesClient,
+            privateStorageDirectory: _privateStorageDirectory),
+      warmReadAuthentication: (token) => FrbCloudSyncNativeAuthBinding()
+          .warmReadAuthenticationUnderWriterPause(
+            cloudMessagesClient: auth.cloudMessagesClient, pauseToken: token),
+    );
+    Future<CloudSyncChatIdentityEvidence?> observeChatIdentity(
+      CloudSyncOutboundChatOrigin origin,
+      CloudSyncProtectedOutboundStageData stage,
+    ) => identitySession.run((token) => CloudSyncChatIdentityEvidence.observe(
+      store: objectBox, origin: origin, stage: stage, auth: auth, authFence: fence,
+      observer: (readSet, source, staged, candidateOrigin) async {
+        final client = auth.cloudMessagesClient;
+        if (client is! frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+          throw StateError('cloud_sync_native_auth_client_type_invalid');
+        }
+        return identity_api.cloudSyncObserveProtectedChatIdentity(
+          cloudMessagesClient: client, nativeWriterPauseToken: token,
+          storageDirectory: _privateStorageDirectory,
+          expectedAccountFingerprint: auth.accountFingerprint,
+          expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+          generation: BigInt.from(readSet.generation),
+          readSetFenceSha256: readSet.fenceSha256,
+          candidate: CloudSyncOutboundChatAdmissionCoordinator.encodeOrigin(candidateOrigin),
+          source: identity_api.CloudSyncChatIdentitySourceInput(
+            changeIdHash: source.changeIdHash, recordIdHash: source.recordIdHash,
+            etagHash: source.etagHash, payloadSha256: source.payloadSha256,
+            serverModifiedAtMillis: source.serverModifiedAtMs <= 0 ? null : source.serverModifiedAtMs,
+            protectedRawEnvelopeReference: source.encryptedPayloadReference),
+          stagedCandidate: identity_api.CloudSyncStagedChatIdentityCandidate(
+            protectedPayloadReference: staged.protectedEnvelopeReference,
+            payloadSha256: staged.payloadSha256, recordIdHash: staged.serverRecordIdHash,
+            logicalEntityKeyHash: staged.logicalEntityKeyHash),
+        );
+      },
+    ));
+    Future<void> refreshQueuedChatEvidence(CloudSyncScope target) async {
+      chatEvidence.clear();
+      if (target != chatScope) return;
+      for (final operation in await durable.readOutboxEntries(target)) {
+        if (operation.status != CloudOutboxStatus.pending) continue;
+        final origin = await fence.run(
+          () => durable.captureQueuedChatObservationOrigin(operation));
+        if (origin == null) continue; // Legacy/manual origins keep strict gates.
+        final evidence = await observeChatIdentity(origin, CloudSyncProtectedOutboundStageData(
+          logicalEntityKeyHash: operation.logicalEntityKeyHash,
+          protectedEnvelopeReference: operation.encryptedPayloadReference!,
+          payloadSha256: operation.payloadSha256!,
+          serverRecordIdHash: operation.serverRecordIdHash!,
+          leaseReference: operation.protectedLeaseReference!,
+        ));
+        if (evidence != null) chatEvidence[operation.operationId] = evidence;
+      }
+    }
     final admission = CloudSyncOutboundAdmissionCoordinator(
       store: durable, transport: transport,
       ensureProtectedStoreRecovered: recoverProtectedStore,
@@ -797,6 +865,7 @@ final class CloudSyncProductionLocalSendAdapter {
     final chatAdmission = CloudSyncOutboundChatAdmissionCoordinator(
       store: durable, transport: transport,
       ensureProtectedStoreRecovered: recoverProtectedStore,
+      observeChatIdentity: observeChatIdentity,
     );
     CloudSyncEngine engineFor(CloudSyncScope target) => CloudSyncEngine(
       scope: target,
@@ -863,7 +932,13 @@ final class CloudSyncProductionLocalSendAdapter {
         flush: (target) async {
           if (selection != null) await validateSelection();
           guard.requireClear();
-          await engineFor(target).synchronize(trigger: CloudSyncTrigger.localOutbox);
+          try {
+            await refreshQueuedChatEvidence(target);
+            await validateSelection();
+            await engineFor(target).synchronize(trigger: CloudSyncTrigger.localOutbox);
+          } finally {
+            chatEvidence.clear();
+          }
         },
         acknowledgeConfirmed: (target, operation) async {
         if (selection != null) await validateSelection();
@@ -955,6 +1030,68 @@ final class CloudSyncProductionLocalSendAdapter {
     } finally {
       await transport.quiesceNativeOperations();
     }
+  }
+}
+
+/// Windows fast-loop qualification of the actual protected Chat wire shape.
+/// Exposes only the staged read callback, never the transport or remote save.
+/// No journal, outbox, projection, owner transition or stage adoption occurs.
+Future<T> cloudSyncObserveStagedChat<T>({
+  required ActiveCloudMessagesClientReader readActiveClient,
+  required String privateStorageDirectory,
+  required frb_api.CloudChat candidate,
+  required Future<T> Function(CloudSyncNativeAuthSnapshot auth, BigInt pauseToken,
+      CloudSyncProtectedOutboundStageData stage) observe,
+}) async {
+  if (!CloudSyncDevGate.manualSemanticPullEnabled) {
+    throw StateError('cloud_sync_semantic_pull_disabled');
+  }
+  final objectBox = Database.store;
+  final authBinding = FrbCloudSyncNativeAuthBinding();
+  final authProvider = CloudSyncProductionAuthSnapshotProvider(
+    readActiveClient: readActiveClient, nativeAuthBinding: authBinding,
+    privateStorageDirectory: privateStorageDirectory);
+  final auth = await authProvider.capture();
+  if (auth == null) throw StateError('account_unavailable');
+  final durable = ObjectBoxCloudSyncStore(store: objectBox,
+    protector: RustCloudSyncProtector(storageDirectory: privateStorageDirectory));
+  final interlock = CloudKitOperationInterlock(
+    privateStorageDirectory: privateStorageDirectory, fenceStore: durable);
+  final transport = NativeProtectedCloudSyncTransport(
+    cloudMessagesClient: auth.cloudMessagesClient, storageDirectory: privateStorageDirectory,
+    protectedStoreIdentity: auth.protectedStoreIdentity);
+  final scope = CloudSyncScope(accountFingerprint: auth.accountFingerprint,
+    container: 'com.apple.messages.cloud', database: 'private', zone: 'chatManateeZone',
+    persistenceLane: CloudSyncPersistenceLane.semantic);
+  Future<void> validate() async {
+    if (!identical(objectBox, Database.store) || objectBox.isClosed() ||
+        !auth.sameIdentity(await authProvider.capture())) {
+      throw StateError('account_changed');
+    }
+    final preflight = ObjectBoxCloudSyncPreflightReader(store: objectBox).read();
+    if (!preflight.objectBoxReady || preflight.outboxCount != 0) {
+      throw StateError('outbox_not_empty');
+    }
+  }
+  final session = CloudSyncWriteChatIdentitySession(
+    exclusion: interlock, nativePause: FrbCloudSyncNativeWriterPause(), validate: validate,
+    ensureReadAuthentication: () => authBinding.ensureReadAuthentication(
+      cloudMessagesClient: auth.cloudMessagesClient, privateStorageDirectory: privateStorageDirectory),
+    warmReadAuthentication: (token) => authBinding.warmReadAuthenticationUnderWriterPause(
+      cloudMessagesClient: auth.cloudMessagesClient, pauseToken: token));
+  try {
+    return await interlock.runExclusive(kind: CloudKitOperationKind.v2ReadWrite,
+      action: () => transport.runOutboundAdmissionExclusive(() async {
+        await validate();
+        final staged = await transport.stageOutboundChat(scope, chat: candidate);
+        try {
+          return await session.run((token) => observe(auth, token, staged));
+        } finally {
+          await transport.rollbackOutboundLease(staged.leaseReference);
+        }
+      }));
+  } finally {
+    await transport.quiesceNativeOperations();
   }
 }
 

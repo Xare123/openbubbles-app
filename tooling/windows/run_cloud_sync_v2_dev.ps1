@@ -23,6 +23,7 @@ param(
     [switch] $ProjectionViewer,
     [switch] $ProjectionDetailViewer,
     [switch] $ChatIdentityObservation,
+    [switch] $StagedChatIdentityObservation,
     [ValidateRange(30, 3600)]
     [int] $RunOnceTimeoutSeconds = 600,
     [ValidateRange(60, 7200)]
@@ -43,7 +44,8 @@ $selectedOperations = @(
         $AttachmentProbeReuse,
         $ProjectionViewer,
         $ProjectionDetailViewer,
-        $ChatIdentityObservation
+        $ChatIdentityObservation,
+        $StagedChatIdentityObservation
     ) | Where-Object { $_ }
 )
 if ($selectedOperations.Count -gt 1) {
@@ -539,7 +541,8 @@ function Wait-HarnessOperation {
             'drain',
             'attachment-probe',
             'attachment-reuse-probe',
-            'chat-identity-observation'
+            'chat-identity-observation',
+            'staged-chat-identity-observation'
         )]
         [string] $ExpectedOperation,
         [Parameter(Mandatory)][int] $TimeoutSeconds
@@ -569,6 +572,9 @@ function Wait-HarnessOperation {
                 }
                 elseif ($ExpectedOperation -eq 'chat-identity-observation') {
                     $status.stage -eq 'chat-identity-observation-complete'
+                }
+                elseif ($ExpectedOperation -eq 'staged-chat-identity-observation') {
+                    $status.stage -eq 'staged-chat-identity-observation-complete'
                 }
                 else {
                     $status.stage -eq 'semantic-pull'
@@ -904,13 +910,16 @@ try {
     elseif ($ChatIdentityObservation) {
         $harnessArguments = @("observe-chat-identity") + $harnessArguments
     }
+    elseif ($StagedChatIdentityObservation) {
+        $harnessArguments = @("observe-staged-chat-identity") + $harnessArguments
+    }
     $startParameters = @{
         FilePath = $runner
         WorkingDirectory = $runnerDirectory
         PassThru = $true
         ArgumentList = $harnessArguments
     }
-    if ($ChatIdentityObservation) { $startParameters.WindowStyle = 'Hidden' }
+    if ($ChatIdentityObservation -or $StagedChatIdentityObservation) { $startParameters.WindowStyle = 'Hidden' }
     $statusPath = Join-Path $profile "cloud-sync-v2\windows-harness-status.json"
     $statusBaselineWriteUtc = [datetime]::MinValue
     if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
@@ -931,7 +940,7 @@ try {
         throw "The Windows Cloud Sync V2 harness exited during startup."
     }
     Write-Host "Cloud Sync V2 Windows harness started (PID $($process.Id))."
-    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse -or $ChatIdentityObservation) {
+    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse -or $ChatIdentityObservation -or $StagedChatIdentityObservation) {
         $operationTimeoutSeconds = if ($Drain) {
             $DrainTimeoutSeconds
         }
@@ -956,6 +965,8 @@ try {
                 'attachment-reuse-probe'
             } elseif ($ChatIdentityObservation) {
                 'chat-identity-observation'
+            } elseif ($StagedChatIdentityObservation) {
+                'staged-chat-identity-observation'
             } else {
                 'run-once'
             }) `

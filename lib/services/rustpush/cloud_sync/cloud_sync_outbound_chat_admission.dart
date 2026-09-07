@@ -61,7 +61,7 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
             ),
       accountFingerprint: scope.accountFingerprint,
     );
-    final candidate = (encode ?? _encodeOrigin)(origin);
+    final candidate = (encode ?? encodeOrigin)(origin);
     if (candidate.guid != origin.canonicalGuid ||
         candidate.chatIdentifier != origin.chatIdentifier ||
         candidate.groupId != origin.originalGuid ||
@@ -126,19 +126,27 @@ final class CloudSyncOutboundChatAdmissionCoordinator {
 
   /// Use the shipping direct-chat shape without calling Chat.toCloud(), whose
   /// identifier mutations occur before remote confirmation.
-  static api.CloudChat _encodeOrigin(CloudSyncOutboundChatOrigin origin) =>
+  static api.CloudChat encodeOrigin(CloudSyncOutboundChatOrigin origin) =>
+      encodeDirectIdentity(originalGuid: origin.originalGuid,
+        recipient: origin.chatIdentifier, sender: origin.usingHandle);
+
+  /// Shared wire shape for staging and the Windows protected-stage diagnostic.
+  /// Construction is not admission, a native-send receipt, or write authority.
+  static api.CloudChat encodeDirectIdentity({
+    required String originalGuid, required String recipient, required String sender,
+  }) =>
       api.CloudChat(
         style: 45,
         isFiltered: 0,
         successfulQuery: 1,
         state: 3,
-        chatIdentifier: origin.chatIdentifier,
-        groupId: origin.originalGuid,
-        originalGroupId: origin.originalGuid,
+        chatIdentifier: recipient,
+        groupId: originalGuid,
+        originalGroupId: originalGuid,
         serviceName: 'iMessage',
-        participants: [api.CloudParticipant(uri: origin.chatIdentifier)],
-        lastAddressedHandle: origin.usingHandle,
-        guid: origin.canonicalGuid,
+        participants: [api.CloudParticipant(uri: recipient)],
+        lastAddressedHandle: sender,
+        guid: 'iMessage;-;$recipient',
         lastReadMessageTimestamp: 0,
         properties: api.CloudProp(
           pv: 1,

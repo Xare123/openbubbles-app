@@ -1062,10 +1062,21 @@ void main() {
           await expectLater(leaseChat(), throwsStateError);
           expect(outbox().state, CloudOutboxStatus.pending.index);
           if (mutation != 'observed history stale before lease') {
+            final queued = (await sync.readOutboxEntries(_scope())).single;
+            expect(() => sync.captureQueuedChatObservationOrigin(
+              queued.copyWith(payloadSha256: '0' * 64)), throwsA(isA<CloudSyncFailure>()));
+            final recoveredOrigin = sync.captureQueuedChatObservationOrigin(queued)!;
+            expect(recoveredOrigin.chatId, chatId);
+            expect(queued.encryptedPayloadReference, observedStage!.protectedEnvelopeReference);
             await observeIdentity(
-              CloudSyncOutboundChatOrigin.capture(
-                scope: _scope(), chat: db.box<Chat>().get(chatId)!),
-              observedStage!,
+              recoveredOrigin,
+              CloudSyncProtectedOutboundStageData(
+                logicalEntityKeyHash: queued.logicalEntityKeyHash,
+                protectedEnvelopeReference: queued.encryptedPayloadReference!,
+                payloadSha256: queued.payloadSha256!,
+                serverRecordIdHash: queued.serverRecordIdHash!,
+                leaseReference: queued.protectedLeaseReference!,
+              ),
             );
           }
           if (mutation == 'observed history revoked before lease') currentBinding = false;
@@ -1081,6 +1092,11 @@ void main() {
         }
         final leased = await leaseChat();
         expect(leased.single.operationId, operation.operationId);
+        if (observedHistory) {
+          expect(() => sync.captureQueuedChatObservationOrigin(leased.single),
+            throwsA(isA<CloudSyncFailure>()));
+          expect(transport.stages, 1); // Refresh must not allocate a new record.
+        }
         if (mutation == 'payload before submit') {
           db.box<CloudOutboxOperationEntity>().put(outbox()..payloadSha256 = 'e' * 64);
         }

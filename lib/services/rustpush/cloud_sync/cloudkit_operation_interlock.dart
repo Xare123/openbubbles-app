@@ -107,7 +107,7 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
 
   static void throwIfActiveFenceLost() {
     final active = Zone.current[_zoneLeaseKey];
-    if (active is _ActiveCloudKitOperation && active.fenceLost) {
+    if (active is _ActiveCloudKitOperation && (active.fenceLost || active.poisoned)) {
       throw const CloudKitOperationInterlockException(
         'cloudkit_interlock_fence_lost',
       );
@@ -201,7 +201,7 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
           'cloudkit_interlock_mode_violation',
         );
       }
-      if (inherited.fenceLost) {
+      if (inherited.fenceLost || inherited.poisoned) {
         throw const CloudKitOperationInterlockException(
           'cloudkit_interlock_fence_lost',
         );

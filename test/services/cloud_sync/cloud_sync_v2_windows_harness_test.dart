@@ -8,6 +8,15 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('staged identity diagnostic has a distinct explicit launch mode', () {
+    final launch = CloudSyncV2WindowsHarnessLaunch.parse([
+      'observe-staged-chat-identity', '--launch-id=${'b' * 32}',
+    ]);
+    expect(launch.operation, CloudSyncV2WindowsHarnessOperation.stagedChatIdentityObservation);
+    expect(() => CloudSyncV2WindowsHarnessLaunch.parse([
+      'observe-chat-identity', 'observe-staged-chat-identity', '--launch-id=${'b' * 32}',
+    ]), throwsStateError);
+  });
   const launchId = '0123456789abcdef0123456789abcdef';
 
   test(

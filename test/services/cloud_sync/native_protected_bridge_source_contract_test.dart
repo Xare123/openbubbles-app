@@ -69,9 +69,9 @@ void main() {
         RegExp(
           r'NativeProtectedCloudSyncTransport\(',
         ).allMatches(adapter).length,
-        4,
+        5,
         reason:
-            'shadow, semantic pull, local-send runtime, and one-text outbound are the only protected transport compositions',
+            'shadow, semantic pull, local send, local staged observation, and one-text outbound are the only compositions',
       );
       expect(adapter, contains('NativeProtectedCloudSyncBindings?'));
       expect(adapter, isNot(contains('RustCloudSyncTransport(')));
@@ -88,13 +88,25 @@ void main() {
       final localSendStart = adapter.indexOf(
         'final class CloudSyncProductionLocalSendAdapter',
       );
+      final stagedStart = adapter.indexOf('Future<T> cloudSyncObserveStagedChat<T>');
       expect(shadowStart, greaterThanOrEqualTo(0));
       expect(semanticStart, greaterThan(shadowStart));
       expect(localSendStart, greaterThan(semanticStart));
       expect(outboundStart, greaterThan(localSendStart));
+      expect(stagedStart, greaterThan(localSendStart));
+      expect(outboundStart, greaterThan(stagedStart));
       final shadowComposition = adapter.substring(shadowStart, semanticStart);
       final semanticComposition = adapter.substring(semanticStart, localSendStart);
-      final localSendComposition = adapter.substring(localSendStart, outboundStart);
+      final localSendComposition = adapter.substring(localSendStart, stagedStart);
+      final stagedComposition = adapter.substring(stagedStart, outboundStart);
+      expect(stagedComposition.indexOf('!CloudSyncDevGate.manualSemanticPullEnabled'),
+        lessThan(stagedComposition.indexOf('NativeProtectedCloudSyncTransport(')));
+      expect(stagedComposition, contains('await transport.rollbackOutboundLease(staged.leaseReference)'));
+      expect(stagedComposition, contains('CloudSyncWriteChatIdentitySession('));
+      for (final forbidden in ['commitOutboundLease(', 'stageOutboundMessage(',
+        'admitProtectedOutbound', 'CloudSyncEngine(', 'flushOutbox(']) {
+        expect(stagedComposition, isNot(contains(forbidden)));
+      }
       final localTransportStart = localSendComposition.indexOf(
         'NativeProtectedCloudSyncTransport(',
       );
@@ -112,6 +124,7 @@ void main() {
         shadowComposition,
         semanticComposition,
         localSendComposition,
+        stagedComposition,
         adapter.substring(outboundStart),
       ]) {
         expect(
