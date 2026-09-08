@@ -7527,11 +7527,11 @@ return beaconShared(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( MessageInst field0)?  iMessage,TResult Function( String uuid,  String? error)?  sendConfirm,TResult Function( RegisterState field0)?  registrationState,TResult Function( SharedAlbum field0)?  newPhotostream,TResult Function( FTMessage field0)?  faceTime,TResult Function( StatusKitMessage field0)?  statusUpdate,TResult Function( IdmsMessage field0)?  idms,TResult Function( bool field0)?  twoFaAuthEvent,TResult Function()?  circleFinishEvent,TResult Function( String sender,  String beacon,  BeaconAttributes attributes)?  beaconShared,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( MessageInst field0)?  iMessage,TResult Function( String uuid,  String? error,  CloudSyncNativeSendReceipt? nativeReceipt,  String? nativeReceiptError)?  sendConfirm,TResult Function( RegisterState field0)?  registrationState,TResult Function( SharedAlbum field0)?  newPhotostream,TResult Function( FTMessage field0)?  faceTime,TResult Function( StatusKitMessage field0)?  statusUpdate,TResult Function( IdmsMessage field0)?  idms,TResult Function( bool field0)?  twoFaAuthEvent,TResult Function()?  circleFinishEvent,TResult Function( String sender,  String beacon,  BeaconAttributes attributes)?  beaconShared,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case PushMessage_IMessage() when iMessage != null:
 return iMessage(_that.field0);case PushMessage_SendConfirm() when sendConfirm != null:
-return sendConfirm(_that.uuid,_that.error);case PushMessage_RegistrationState() when registrationState != null:
+return sendConfirm(_that.uuid,_that.error,_that.nativeReceipt,_that.nativeReceiptError);case PushMessage_RegistrationState() when registrationState != null:
 return registrationState(_that.field0);case PushMessage_NewPhotostream() when newPhotostream != null:
 return newPhotostream(_that.field0);case PushMessage_FaceTime() when faceTime != null:
 return faceTime(_that.field0);case PushMessage_StatusUpdate() when statusUpdate != null:
@@ -7557,11 +7557,11 @@ return beaconShared(_that.sender,_that.beacon,_that.attributes);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( MessageInst field0)  iMessage,required TResult Function( String uuid,  String? error)  sendConfirm,required TResult Function( RegisterState field0)  registrationState,required TResult Function( SharedAlbum field0)  newPhotostream,required TResult Function( FTMessage field0)  faceTime,required TResult Function( StatusKitMessage field0)  statusUpdate,required TResult Function( IdmsMessage field0)  idms,required TResult Function( bool field0)  twoFaAuthEvent,required TResult Function()  circleFinishEvent,required TResult Function( String sender,  String beacon,  BeaconAttributes attributes)  beaconShared,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( MessageInst field0)  iMessage,required TResult Function( String uuid,  String? error,  CloudSyncNativeSendReceipt? nativeReceipt,  String? nativeReceiptError)  sendConfirm,required TResult Function( RegisterState field0)  registrationState,required TResult Function( SharedAlbum field0)  newPhotostream,required TResult Function( FTMessage field0)  faceTime,required TResult Function( StatusKitMessage field0)  statusUpdate,required TResult Function( IdmsMessage field0)  idms,required TResult Function( bool field0)  twoFaAuthEvent,required TResult Function()  circleFinishEvent,required TResult Function( String sender,  String beacon,  BeaconAttributes attributes)  beaconShared,}) {final _that = this;
 switch (_that) {
 case PushMessage_IMessage():
 return iMessage(_that.field0);case PushMessage_SendConfirm():
-return sendConfirm(_that.uuid,_that.error);case PushMessage_RegistrationState():
+return sendConfirm(_that.uuid,_that.error,_that.nativeReceipt,_that.nativeReceiptError);case PushMessage_RegistrationState():
 return registrationState(_that.field0);case PushMessage_NewPhotostream():
 return newPhotostream(_that.field0);case PushMessage_FaceTime():
 return faceTime(_that.field0);case PushMessage_StatusUpdate():
@@ -7583,11 +7583,11 @@ return beaconShared(_that.sender,_that.beacon,_that.attributes);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( MessageInst field0)?  iMessage,TResult? Function( String uuid,  String? error)?  sendConfirm,TResult? Function( RegisterState field0)?  registrationState,TResult? Function( SharedAlbum field0)?  newPhotostream,TResult? Function( FTMessage field0)?  faceTime,TResult? Function( StatusKitMessage field0)?  statusUpdate,TResult? Function( IdmsMessage field0)?  idms,TResult? Function( bool field0)?  twoFaAuthEvent,TResult? Function()?  circleFinishEvent,TResult? Function( String sender,  String beacon,  BeaconAttributes attributes)?  beaconShared,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( MessageInst field0)?  iMessage,TResult? Function( String uuid,  String? error,  CloudSyncNativeSendReceipt? nativeReceipt,  String? nativeReceiptError)?  sendConfirm,TResult? Function( RegisterState field0)?  registrationState,TResult? Function( SharedAlbum field0)?  newPhotostream,TResult? Function( FTMessage field0)?  faceTime,TResult? Function( StatusKitMessage field0)?  statusUpdate,TResult? Function( IdmsMessage field0)?  idms,TResult? Function( bool field0)?  twoFaAuthEvent,TResult? Function()?  circleFinishEvent,TResult? Function( String sender,  String beacon,  BeaconAttributes attributes)?  beaconShared,}) {final _that = this;
 switch (_that) {
 case PushMessage_IMessage() when iMessage != null:
 return iMessage(_that.field0);case PushMessage_SendConfirm() when sendConfirm != null:
-return sendConfirm(_that.uuid,_that.error);case PushMessage_RegistrationState() when registrationState != null:
+return sendConfirm(_that.uuid,_that.error,_that.nativeReceipt,_that.nativeReceiptError);case PushMessage_RegistrationState() when registrationState != null:
 return registrationState(_that.field0);case PushMessage_NewPhotostream() when newPhotostream != null:
 return newPhotostream(_that.field0);case PushMessage_FaceTime() when faceTime != null:
 return faceTime(_that.field0);case PushMessage_StatusUpdate() when statusUpdate != null:
@@ -7673,11 +7673,13 @@ as MessageInst,
 
 
 class PushMessage_SendConfirm extends PushMessage {
-  const PushMessage_SendConfirm({required this.uuid, this.error}): super._();
+  const PushMessage_SendConfirm({required this.uuid, this.error, this.nativeReceipt, this.nativeReceiptError}): super._();
 
 
  final  String uuid;
  final  String? error;
+ final  CloudSyncNativeSendReceipt? nativeReceipt;
+ final  String? nativeReceiptError;
 
 /// Create a copy of PushMessage
 /// with the given fields replaced by the non-null parameter values.
@@ -7689,16 +7691,16 @@ $PushMessage_SendConfirmCopyWith<PushMessage_SendConfirm> get copyWith => _$Push
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is PushMessage_SendConfirm&&(identical(other.uuid, uuid) || other.uuid == uuid)&&(identical(other.error, error) || other.error == error));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is PushMessage_SendConfirm&&(identical(other.uuid, uuid) || other.uuid == uuid)&&(identical(other.error, error) || other.error == error)&&(identical(other.nativeReceipt, nativeReceipt) || other.nativeReceipt == nativeReceipt)&&(identical(other.nativeReceiptError, nativeReceiptError) || other.nativeReceiptError == nativeReceiptError));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,uuid,error);
+int get hashCode => Object.hash(runtimeType,uuid,error,nativeReceipt,nativeReceiptError);
 
 @override
 String toString() {
-  return 'PushMessage.sendConfirm(uuid: $uuid, error: $error)';
+  return 'PushMessage.sendConfirm(uuid: $uuid, error: $error, nativeReceipt: $nativeReceipt, nativeReceiptError: $nativeReceiptError)';
 }
 
 
@@ -7709,7 +7711,7 @@ abstract mixin class $PushMessage_SendConfirmCopyWith<$Res> implements $PushMess
   factory $PushMessage_SendConfirmCopyWith(PushMessage_SendConfirm value, $Res Function(PushMessage_SendConfirm) _then) = _$PushMessage_SendConfirmCopyWithImpl;
 @useResult
 $Res call({
- String uuid, String? error
+ String uuid, String? error, CloudSyncNativeSendReceipt? nativeReceipt, String? nativeReceiptError
 });
 
 
@@ -7726,10 +7728,12 @@ class _$PushMessage_SendConfirmCopyWithImpl<$Res>
 
 /// Create a copy of PushMessage
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? uuid = null,Object? error = freezed,}) {
+@pragma('vm:prefer-inline') $Res call({Object? uuid = null,Object? error = freezed,Object? nativeReceipt = freezed,Object? nativeReceiptError = freezed,}) {
   return _then(PushMessage_SendConfirm(
 uuid: null == uuid ? _self.uuid : uuid // ignore: cast_nullable_to_non_nullable
 as String,error: freezed == error ? _self.error : error // ignore: cast_nullable_to_non_nullable
+as String?,nativeReceipt: freezed == nativeReceipt ? _self.nativeReceipt : nativeReceipt // ignore: cast_nullable_to_non_nullable
+as CloudSyncNativeSendReceipt?,nativeReceiptError: freezed == nativeReceiptError ? _self.nativeReceiptError : nativeReceiptError // ignore: cast_nullable_to_non_nullable
 as String?,
   ));
 }

@@ -202,10 +202,8 @@ void main() {
     final source = await File(
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsString();
-    final method = source.indexOf(
-      'prepareCloudSyncV2ComposerAdmission(\n      Chat chat, Message message) async',
-      source.indexOf('class RustPushService'),
-    );
+    final method = source.indexOf('prepareCloudSyncV2ComposerAdmission(',
+        source.indexOf('class RustPushService'));
     final classifier = source.indexOf(
       'if (!CloudSyncComposerAdmission.isPlainTextCandidate(message)) return null;',
       method,

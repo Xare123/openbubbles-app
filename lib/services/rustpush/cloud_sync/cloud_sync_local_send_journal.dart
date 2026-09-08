@@ -480,6 +480,68 @@ final class CloudSyncLocalSendAuthFence {
   }
 }
 
+/// Exact process-local scope for one native receipt replay pass. A receipt page
+/// may outlive an await, but it must never outlive the account, client, database
+/// or storage directory that authenticated that page.
+final class CloudSyncNativeReceiptReplayBinding {
+  const CloudSyncNativeReceiptReplayBinding({
+    required this.expectedAuth,
+    required this.expectedState,
+    required this.expectedStore,
+    required this.expectedClient,
+    required this.expectedStoragePath,
+    required this.readState,
+    required this.readStore,
+    required this.readClient,
+    required this.readStoragePath,
+    required this.runtimeCurrent,
+  });
+
+  final CloudSyncNativeAuthSnapshot expectedAuth;
+  final Object expectedState;
+  final Object expectedStore;
+  final Object expectedClient;
+  final String expectedStoragePath;
+  final Object? Function() readState;
+  final Object? Function() readStore;
+  final Object? Function() readClient;
+  final String Function() readStoragePath;
+  final bool Function() runtimeCurrent;
+
+  bool get isCurrent =>
+      runtimeCurrent() &&
+      identical(expectedState, readState()) &&
+      identical(expectedStore, readStore()) &&
+      identical(expectedClient, readClient()) &&
+      expectedStoragePath == readStoragePath();
+
+  void requireCurrent() {
+    if (!isCurrent) {
+      throw StateError('cloud_sync_native_send_replay_binding_changed');
+    }
+  }
+
+  void requireCapturedAuth(CloudSyncNativeAuthSnapshot current) {
+    requireCurrent();
+    if (!expectedAuth.sameIdentity(current)) {
+      throw StateError('cloud_sync_native_send_replay_binding_changed');
+    }
+  }
+}
+
+final class CloudSyncNativeSendReceiptResolution {
+  const CloudSyncNativeSendReceiptResolution._({
+    required this.stableGuid,
+    required this.alreadyDurable,
+  });
+
+  final String? stableGuid;
+  final bool alreadyDurable;
+
+  @override
+  String toString() => 'CloudSyncNativeSendReceiptResolution(redacted)';
+}
+
 /// Local-only journal. It cannot create an outbox row or contact CloudKit.
 /// The caller's synchronous persistence callback and this journal share one
 /// ObjectBox transaction. The persisted message is re-read before acceptance.
@@ -601,6 +663,69 @@ final class CloudSyncLocalSendJournal {
             actual.sourceSha256 == identity.sourceSha256 &&
             saved!.stagingGuid == identity._guid;
       });
+  /// Resolves a content-free native receipt only against this exact account,
+  /// owner epoch and existing journal row. Missing or source-changed rows are
+  /// not acknowledged by callers. State 1/2 is already durable and needs no
+  /// duplicate state transition; state 0/3 still flows through
+  /// [recordNativeSendConfirmation].
+  CloudSyncNativeSendReceiptResolution? resolveNativeSendReceipt(
+    String guidHash,
+  ) => _store.runInTransaction(TxMode.read, () {
+    _verifyLocalOwnership();
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(guidHash)) return null;
+    final query = _intents
+        .query(
+          CloudSyncLocalSendIntentEntity_.accountFingerprint
+              .equals(_binding.scope.accountFingerprint)
+              .and(
+                CloudSyncLocalSendIntentEntity_.writerEpoch.equals(
+                  _binding.epoch,
+                ),
+              )
+              .and(
+                CloudSyncLocalSendIntentEntity_.messageGuidHash.equals(
+                  guidHash,
+                ),
+              ),
+        )
+        .build();
+    final CloudSyncLocalSendIntentEntity? found;
+    try {
+      found = query.findUnique();
+    } finally {
+      query.close();
+    }
+    if (found == null) return null;
+    final intent = _readBoundIntent(found.id);
+    if (intent.state == 1 || intent.state == 2) {
+      if (intent.state == 2) {
+        _validatedExactAdoptedMessage(intent);
+      } else {
+        _validatedMessage(intent);
+      }
+      return const CloudSyncNativeSendReceiptResolution._(
+        stableGuid: null,
+        alreadyDurable: true,
+      );
+    }
+    final message = _messages.get(intent.localMessageId);
+    final candidates = <String?>[message?.stagingGuid, message?.guid];
+    final stableGuid = candidates.whereType<String>().firstWhere(
+      (candidate) =>
+          CloudSyncLocalSendIdentity._uuid.hasMatch(candidate) &&
+          CloudSyncLocalSendIdentity._digest([
+                'cloud-sync-local-send-guid-v1',
+                candidate,
+              ]) ==
+              guidHash,
+      orElse: () => '',
+    );
+    if (stableGuid.isEmpty) return null;
+    return CloudSyncNativeSendReceiptResolution._(
+      stableGuid: stableGuid,
+      alreadyDurable: false,
+    );
+  });
 
   /// Recover the original fingerprint for a retry under this exact local
   /// account/owner. New submissions still need the pre-await fingerprint;

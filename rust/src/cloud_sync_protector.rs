@@ -130,6 +130,7 @@ impl CloudSyncProtectionContext {
                     | "serverRecordId"
                     | "outboundMessage"
                     | "outboundChat"
+                    | "idsSendReceipt"
                     | "systemFields"
                     | "payloadReference"
                     | "rawRecord"

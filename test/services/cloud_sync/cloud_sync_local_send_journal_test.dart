@@ -126,17 +126,109 @@ void main() {
     expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
   });
 
-  test('native event replays after restart without an in-memory send map', () async {
+  test('native receipt replays after restart with a rotated native session', () async {
     awaitingNativeConfirmation();
+    final guidHash =
+        store.box<CloudSyncLocalSendIntentEntity>().getAll().single.messageGuidHash;
     await reopen();
-    final id = confirmNative()!;
+    final resolved = journal.resolveNativeSendReceipt(guidHash)!;
+    final restartedAuth = _auth(Object(), session: 'restarted-native-session');
+    final id = confirmNative(guid: resolved.stableGuid!, auth: restartedAuth)!;
     expect(store.box<CloudSyncLocalSendIntentEntity>().get(id)!.state, 3);
-    expect(confirmNative(), id);
+    expect(confirmNative(auth: restartedAuth), id);
+    journal.promoteIdsConfirmedDeferred(
+      intentId: id, currentAuth: restartedAuth, now: _time(5),
+    );
+    expect(confirmNative(auth: restartedAuth), isNull);
+    expect(journal.readReady(), hasLength(1));
+  });
+
+  test('native receipt replay binding fails closed across every scope transition', () {
+    var currentState = Object();
+    var currentStore = Object();
+    var currentClient = Object();
+    var currentPath = 'first-path';
+    var runtimeCurrent = true;
+    final auth = _auth(currentClient);
+    CloudSyncNativeReceiptReplayBinding binding() =>
+        CloudSyncNativeReceiptReplayBinding(
+          expectedAuth: auth,
+          expectedState: currentState,
+          expectedStore: currentStore,
+          expectedClient: currentClient,
+          expectedStoragePath: currentPath,
+          readState: () => currentState,
+          readStore: () => currentStore,
+          readClient: () => currentClient,
+          readStoragePath: () => currentPath,
+          runtimeCurrent: () => runtimeCurrent,
+        );
+
+    final stateBound = binding();
+    expect(stateBound.isCurrent, isTrue);
+    stateBound.requireCapturedAuth(auth);
+    currentState = Object();
+    expect(stateBound.requireCurrent, throwsStateError);
+
+    final storeBound = binding();
+    currentStore = Object();
+    expect(storeBound.requireCurrent, throwsStateError);
+
+    final clientBound = binding();
+    currentClient = Object();
+    expect(clientBound.requireCurrent, throwsStateError);
+
+    final pathBound = binding();
+    currentPath = 'replacement-path';
+    expect(pathBound.requireCurrent, throwsStateError);
+
+    final runtimeBound = binding();
+    runtimeCurrent = false;
+    expect(runtimeBound.requireCurrent, throwsStateError);
+
+    runtimeCurrent = true;
+    final authBound = binding();
+    expect(
+      () => authBound.requireCapturedAuth(
+        _auth(currentClient, session: 'replacement-native-session'),
+      ),
+      throwsStateError,
+    );
+  });
+
+  test('native receipt resolves only the exact pending journal GUID hash', () {
+    awaitingNativeConfirmation();
+    final intent = store.box<CloudSyncLocalSendIntentEntity>().getAll().single;
+    final resolved = journal.resolveNativeSendReceipt(intent.messageGuidHash)!;
+    expect(resolved.alreadyDurable, isFalse);
+    expect(resolved.stableGuid, _guidA);
+    expect(journal.resolveNativeSendReceipt('f' * 64), isNull);
+  });
+
+  test('duplicate native receipt becomes acknowledgeable after durable state', () {
+    awaitingNativeConfirmation();
+    final intent = store.box<CloudSyncLocalSendIntentEntity>().getAll().single;
+    final id = confirmNative()!;
+    final deferred = journal.resolveNativeSendReceipt(intent.messageGuidHash)!;
+    expect(deferred.alreadyDurable, isFalse);
+    expect(deferred.stableGuid, _guidA);
+    expect(confirmNative(), id, reason: 'state 3 replay is idempotent');
     journal.promoteIdsConfirmedDeferred(
       intentId: id, currentAuth: _auth(Object()), now: _time(5),
     );
-    expect(confirmNative(), isNull);
-    expect(journal.readReady(), hasLength(1));
+    final promoted = journal.resolveNativeSendReceipt(intent.messageGuidHash)!;
+    expect(promoted.alreadyDurable, isTrue);
+    expect(promoted.stableGuid, isNull);
+  });
+
+  test('source-changed receipt remains uncommitted for later disposition', () {
+    final message = awaitingNativeConfirmation();
+    final intent = store.box<CloudSyncLocalSendIntentEntity>().getAll().single;
+    final resolved = journal.resolveNativeSendReceipt(intent.messageGuidHash)!;
+    message.text = 'changed after submission';
+    store.box<Message>().put(message);
+    expect(() => confirmNative(guid: resolved.stableGuid!), throwsStateError);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(intent.id)!.state, 0);
   });
 
   test('edited source rejects native confirmation and rolls back normalization', () {

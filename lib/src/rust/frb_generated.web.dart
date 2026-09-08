@@ -1522,6 +1522,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_box_autoadd_cloud_sync_chat_identity_source_input(dynamic raw);
 
   @protected
+  CloudSyncNativeSendReceipt
+  dco_decode_box_autoadd_cloud_sync_native_send_receipt(dynamic raw);
+
+  @protected
+  CloudSyncNativeSendReceiptContext
+  dco_decode_box_autoadd_cloud_sync_native_send_receipt_context(dynamic raw);
+
+  @protected
   CloudSyncOutboundFailureClass
   dco_decode_box_autoadd_cloud_sync_outbound_failure_class(dynamic raw);
 
@@ -1997,6 +2005,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncNativeSendReceipt dco_decode_cloud_sync_native_send_receipt(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncNativeSendReceiptContext
+  dco_decode_cloud_sync_native_send_receipt_context(dynamic raw);
+
+  @protected
+  CloudSyncNativeSendReceiptPage dco_decode_cloud_sync_native_send_receipt_page(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncOutboundConsumeResult dco_decode_cloud_sync_outbound_consume_result(
     dynamic raw,
   );
@@ -2379,6 +2401,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<CloudParticipant> dco_decode_list_cloud_participant(dynamic raw);
+
+  @protected
+  List<CloudSyncNativeSendReceipt>
+  dco_decode_list_cloud_sync_native_send_receipt(dynamic raw);
 
   @protected
   List<CloudSyncOutboundSaveOutcome>
@@ -2926,6 +2952,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncChatIdentityComparison?
   dco_decode_opt_box_autoadd_cloud_sync_chat_identity_comparison(dynamic raw);
+
+  @protected
+  CloudSyncNativeSendReceipt?
+  dco_decode_opt_box_autoadd_cloud_sync_native_send_receipt(dynamic raw);
+
+  @protected
+  CloudSyncNativeSendReceiptContext?
+  dco_decode_opt_box_autoadd_cloud_sync_native_send_receipt_context(
+    dynamic raw,
+  );
 
   @protected
   CloudSyncOutboundFailureClass?
@@ -5035,6 +5071,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncNativeSendReceipt
+  sse_decode_box_autoadd_cloud_sync_native_send_receipt(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncNativeSendReceiptContext
+  sse_decode_box_autoadd_cloud_sync_native_send_receipt_context(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncOutboundFailureClass
   sse_decode_box_autoadd_cloud_sync_outbound_failure_class(
     SseDeserializer deserializer,
@@ -5658,6 +5706,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncNativeSendReceipt sse_decode_cloud_sync_native_send_receipt(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncNativeSendReceiptContext
+  sse_decode_cloud_sync_native_send_receipt_context(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncNativeSendReceiptPage sse_decode_cloud_sync_native_send_receipt_page(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncOutboundConsumeResult sse_decode_cloud_sync_outbound_consume_result(
     SseDeserializer deserializer,
   );
@@ -6104,6 +6168,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<CloudParticipant> sse_decode_list_cloud_participant(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<CloudSyncNativeSendReceipt>
+  sse_decode_list_cloud_sync_native_send_receipt(SseDeserializer deserializer);
 
   @protected
   List<CloudSyncOutboundSaveOutcome>
@@ -6731,6 +6799,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncChatIdentityComparison?
   sse_decode_opt_box_autoadd_cloud_sync_chat_identity_comparison(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncNativeSendReceipt?
+  sse_decode_opt_box_autoadd_cloud_sync_native_send_receipt(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncNativeSendReceiptContext?
+  sse_decode_opt_box_autoadd_cloud_sync_native_send_receipt_context(
     SseDeserializer deserializer,
   );
 
@@ -9243,6 +9323,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_native_send_receipt(
+    CloudSyncNativeSendReceipt self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_sync_native_send_receipt_context(
+    CloudSyncNativeSendReceiptContext self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_outbound_failure_class(
     CloudSyncOutboundFailureClass self,
     SseSerializer serializer,
@@ -9991,6 +10083,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_sync_native_send_receipt(
+    CloudSyncNativeSendReceipt self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_native_send_receipt_context(
+    CloudSyncNativeSendReceiptContext self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_native_send_receipt_page(
+    CloudSyncNativeSendReceiptPage self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_outbound_consume_result(
     CloudSyncOutboundConsumeResult self,
     SseSerializer serializer,
@@ -10512,6 +10622,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_cloud_participant(
     List<CloudParticipant> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_sync_native_send_receipt(
+    List<CloudSyncNativeSendReceipt> self,
     SseSerializer serializer,
   );
 
@@ -11273,6 +11389,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_cloud_sync_chat_identity_comparison(
     CloudSyncChatIdentityComparison? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_native_send_receipt(
+    CloudSyncNativeSendReceipt? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_native_send_receipt_context(
+    CloudSyncNativeSendReceiptContext? self,
     SseSerializer serializer,
   );
 

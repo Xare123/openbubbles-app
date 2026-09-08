@@ -351,6 +351,112 @@ pub struct CloudSyncNativeAuthMetadata {
     pub protected_store_identity: String,
 }
 
+/// Content-free context for making one successful native SendJob completion
+/// crash-recoverable before SendConfirm is emitted.
+#[derive(Clone)]
+pub struct CloudSyncNativeSendReceiptContext {
+    pub storage_directory: String,
+    pub guid_hash: String,
+    pub account_fingerprint: String,
+    pub protected_store_identity: String,
+    pub native_session_id: String,
+}
+
+/// Opaque durable receipt identity plus the two content-free values needed to
+/// match and acknowledge exactly the protected native record.
+#[derive(Clone)]
+pub struct CloudSyncNativeSendReceipt {
+    pub receipt_id: String,
+    pub guid_hash: String,
+    pub native_session_id: String,
+}
+
+pub struct CloudSyncNativeSendReceiptPage {
+    pub receipts: Vec<CloudSyncNativeSendReceipt>,
+    pub next_cursor: Option<String>,
+}
+
+fn cloud_sync_local_send_guid_hash(stable_guid: &str) -> String {
+    let encoded = serde_json::to_vec(&["cloud-sync-local-send-guid-v1", stable_guid])
+        .expect("static string arrays serialize");
+    Sha256::digest(encoded)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn persist_cloud_sync_native_send_receipt(
+    context: CloudSyncNativeSendReceiptContext,
+    stable_guid: &str,
+) -> anyhow::Result<CloudSyncNativeSendReceipt> {
+    if cloud_sync_local_send_guid_hash(stable_guid) != context.guid_hash {
+        return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
+    }
+    let receipt = crate::cloud_sync_native_fetch::cloud_sync_persist_ids_send_receipt(
+        PathBuf::from(context.storage_directory),
+        crate::cloud_sync_native_fetch::CloudNativeIdsSendReceipt {
+            guid_hash: context.guid_hash,
+            account_fingerprint: context.account_fingerprint,
+            protected_store_identity: context.protected_store_identity,
+            native_session_id: context.native_session_id,
+        },
+    )
+    .map_err(|_| anyhow!("cloud_sync_native_send_receipt_persist_failed"))?;
+    Ok(CloudSyncNativeSendReceipt {
+        receipt_id: receipt.receipt_id,
+        guid_hash: receipt.guid_hash,
+        native_session_id: receipt.native_session_id,
+    })
+}
+
+#[frb(sync)]
+pub fn cloud_sync_replay_native_send_receipts(
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    after_receipt_id: Option<String>,
+) -> anyhow::Result<CloudSyncNativeSendReceiptPage> {
+    crate::cloud_sync_native_fetch::cloud_sync_replay_ids_send_receipts(
+        PathBuf::from(storage_directory),
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+        after_receipt_id.as_deref(),
+    )
+    .map(|page| CloudSyncNativeSendReceiptPage {
+        receipts: page
+            .receipts
+            .into_iter()
+            .map(|receipt| CloudSyncNativeSendReceipt {
+                receipt_id: receipt.receipt_id,
+                guid_hash: receipt.guid_hash,
+                native_session_id: receipt.native_session_id,
+            })
+            .collect(),
+        next_cursor: page.next_cursor,
+    })
+    .map_err(|_| anyhow!("cloud_sync_native_send_receipt_replay_failed"))
+}
+
+#[frb(sync)]
+pub fn cloud_sync_acknowledge_native_send_receipt(
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    receipt: CloudSyncNativeSendReceipt,
+) -> anyhow::Result<()> {
+    crate::cloud_sync_native_fetch::cloud_sync_acknowledge_ids_send_receipt(
+        PathBuf::from(storage_directory),
+        &crate::cloud_sync_native_fetch::CloudNativeIdsSendReceiptReplay {
+            receipt_id: receipt.receipt_id,
+            guid_hash: receipt.guid_hash,
+            native_session_id: receipt.native_session_id,
+        },
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    )
+    .map_err(|_| anyhow!("cloud_sync_native_send_receipt_acknowledge_failed"))
+}
+
 const CLOUD_SYNC_READ_AUTH_WARM_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -7948,6 +8054,8 @@ pub enum PushMessage {
     SendConfirm {
         uuid: String,
         error: Option<String>,
+        native_receipt: Option<CloudSyncNativeSendReceipt>,
+        native_receipt_error: Option<String>,
     },
     RegistrationState(RegisterState),
     NewPhotostream(SharedAlbum),
@@ -8887,7 +8995,14 @@ pub async fn send(
     state: &Arc<IMClient>,
     local: &Arc<mpsc::Sender<PushMessage>>,
     mut msg: MessageInst,
+    native_receipt_context: Option<CloudSyncNativeSendReceiptContext>,
 ) -> anyhow::Result<bool> {
+    if native_receipt_context
+        .as_ref()
+        .is_some_and(|context| cloud_sync_local_send_guid_hash(&msg.id) != context.guid_hash)
+    {
+        return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
+    }
     let result = state.send(&mut msg).await?;
     info!("send_finish");
 
@@ -8895,19 +9010,75 @@ pub async fn send(
     if let Some(handle) = result.handle {
         let uuid = msg.id.clone();
         tokio::spawn(async move {
-            let result = handle.await.unwrap();
-            info!("Finished handle {}", uuid);
-            let maybeerr = result.err().map(|err| format!("{}", err));
+            let result = handle.await;
+            info!("Finished handle");
+            let (maybeerr, native_receipt, native_receipt_error) = match result {
+                Ok(result) => cloud_sync_send_confirmation_fields(
+                    result,
+                    native_receipt_context,
+                    &uuid,
+                ),
+                Err(_) => (
+                    Some("cloud_sync_native_send_completion_unknown".to_owned()),
+                    None,
+                    None,
+                ),
+            };
             let _ = local
                 .send(PushMessage::SendConfirm {
                     uuid,
                     error: maybeerr,
+                    native_receipt,
+                    native_receipt_error,
                 })
                 .await;
         });
         Ok(true)
+    } else if native_receipt_context.is_some() {
+        // A missing handle is native's synchronous-success case. Route tracked
+        // sends through the same receipt-backed event path so a crash after
+        // this FFI return cannot erase IDS completion evidence.
+        let uuid = msg.id.clone();
+        let (error, native_receipt, native_receipt_error) =
+            cloud_sync_send_confirmation_fields(Ok(()), native_receipt_context, &uuid);
+        let _ = local
+            .send(PushMessage::SendConfirm {
+                uuid,
+                error,
+                native_receipt,
+                native_receipt_error,
+            })
+            .await;
+        Ok(true)
     } else {
         Ok(false)
+    }
+}
+
+#[frb(ignore)]
+fn cloud_sync_send_confirmation_fields(
+    result: Result<(), PushError>,
+    native_receipt_context: Option<CloudSyncNativeSendReceiptContext>,
+    stable_guid: &str,
+) -> (
+    Option<String>,
+    Option<CloudSyncNativeSendReceipt>,
+    Option<String>,
+) {
+    match result {
+        Ok(()) => match native_receipt_context {
+            Some(context) => match persist_cloud_sync_native_send_receipt(context, stable_guid) {
+                Ok(receipt) => (None, Some(receipt), None),
+                Err(error) => (None, None, Some(error.to_string())),
+            },
+            None => (None, None, None),
+        },
+        Err(_) if native_receipt_context.is_some() => (
+            Some("cloud_sync_native_send_failed".to_owned()),
+            None,
+            None,
+        ),
+        Err(error) => (Some(error.to_string()), None, None),
     }
 }
 
@@ -9018,6 +9189,60 @@ mod cloud_sync_windows_sender_tests {
         let error = cloud_sync_windows_finish_send_job(Some(native)).await.unwrap_err();
         assert_eq!(error.to_string(), "cloud_sync_windows_sender_completion_unknown");
         cloud_sync_windows_finish_send_job(None).await.unwrap();
+    }
+
+    #[test]
+    fn ids_success_with_receipt_failure_is_not_reported_as_send_failure() {
+        let stable_guid = "11111111-2222-4abc-8def-555555555555";
+        let context = CloudSyncNativeSendReceiptContext {
+            storage_directory: "missing-receipt-directory".to_owned(),
+            guid_hash: cloud_sync_local_send_guid_hash(stable_guid),
+            account_fingerprint: "A".repeat(43),
+            protected_store_identity: format!("obcs2.store.{}", "S".repeat(43)),
+            native_session_id: "N".repeat(43),
+        };
+
+        let (send_error, receipt, receipt_error) =
+            cloud_sync_send_confirmation_fields(Ok(()), Some(context), stable_guid);
+        assert_eq!(send_error, None);
+        assert!(receipt.is_none());
+        assert_eq!(
+            receipt_error.as_deref(),
+            Some("cloud_sync_native_send_receipt_persist_failed")
+        );
+    }
+
+    #[test]
+    fn no_handle_success_has_durable_receipt_before_confirmation_fields_return() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let stable_guid = "11111111-2222-4abc-8def-555555555555";
+        let account_fingerprint = "A".repeat(43);
+        let protected_store_identity = crate::cloud_sync_protector::protected_store_identity(
+            directory.path().to_string_lossy().into_owned(),
+        )
+        .expect("protected store identity");
+        let context = CloudSyncNativeSendReceiptContext {
+            storage_directory: directory.path().to_string_lossy().into_owned(),
+            guid_hash: cloud_sync_local_send_guid_hash(stable_guid),
+            account_fingerprint: account_fingerprint.clone(),
+            protected_store_identity: protected_store_identity.clone(),
+            native_session_id: "N".repeat(43),
+        };
+
+        let (send_error, receipt, receipt_error) =
+            cloud_sync_send_confirmation_fields(Ok(()), Some(context), stable_guid);
+        assert_eq!(send_error, None);
+        assert_eq!(receipt_error, None);
+        let receipt = receipt.expect("durable receipt returned");
+        let page = cloud_sync_replay_native_send_receipts(
+            directory.path().to_string_lossy().into_owned(),
+            account_fingerprint,
+            protected_store_identity,
+            None,
+        )
+        .expect("replay persisted no-handle receipt");
+        assert_eq!(page.receipts.len(), 1);
+        assert_eq!(page.receipts[0].receipt_id, receipt.receipt_id);
     }
 }
 

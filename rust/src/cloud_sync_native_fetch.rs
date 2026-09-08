@@ -64,6 +64,13 @@ const LEASE_DIRECTORY_NAME: &str = ".leases";
 const COMMITTED_LEASE_DIRECTORY_NAME: &str = ".committed-leases";
 const TEMPORARY_DIRECTORY_NAME: &str = ".temporary";
 const GC_DIRECTORY_NAME: &str = ".gc";
+const IDS_SEND_RECEIPT_DIRECTORY_NAME: &str = ".ids-send-receipts";
+const IDS_SEND_RECEIPT_PREFIX: &str = "obcs2.ids.";
+const IDS_SEND_RECEIPT_SUFFIX: &str = ".receipt";
+const MAX_IDS_SEND_RECEIPTS_PER_REPLAY: usize = 64;
+const MAX_IDS_SEND_RECEIPT_BYTES: u64 = 64 * 1024;
+const IDS_SEND_RECEIPT_ID_DOMAIN: &[u8] =
+    b"OpenBubbles Cloud Sync V2 IDS send receipt identity v1\0";
 const GC_CURSOR_FILE_NAME: &str = ".cursor";
 const RAW_ENVELOPE_MAGIC: &[u8] = b"OBCS2-NATIVE-RAW";
 const CHECKPOINT_MAGIC: &[u8] = b"OBCS2-NATIVE-CHECKPOINT";
@@ -295,6 +302,7 @@ enum CloudNativeProtectionPurpose {
     ServerRecordId,
     OutboundMessage,
     OutboundChat,
+    IdsSendReceipt,
     RawRecord,
 }
 
@@ -305,6 +313,7 @@ impl CloudNativeProtectionPurpose {
             Self::ServerRecordId => "serverRecordId",
             Self::OutboundMessage => "outboundMessage",
             Self::OutboundChat => "outboundChat",
+            Self::IdsSendReceipt => "idsSendReceipt",
             Self::RawRecord => "rawRecord",
         }
     }
@@ -573,6 +582,22 @@ impl PlatformCloudNativeProtectedStore {
 
     fn gc_directory(&self) -> Result<PathBuf, CloudNativeStoreFailure> {
         Ok(self.store_directory()?.join(GC_DIRECTORY_NAME))
+    }
+
+    fn ids_send_receipt_directory(&self) -> Result<PathBuf, CloudNativeStoreFailure> {
+        Ok(self
+            .store_directory()?
+            .join(IDS_SEND_RECEIPT_DIRECTORY_NAME))
+    }
+
+    fn ids_send_receipt_path(&self, receipt_id: &str) -> Result<PathBuf, CloudNativeStoreFailure> {
+        let token = receipt_id
+            .strip_prefix(IDS_SEND_RECEIPT_PREFIX)
+            .filter(|token| is_bare_digest(token))
+            .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+        Ok(self
+            .ids_send_receipt_directory()?
+            .join(format!("{token}{IDS_SEND_RECEIPT_SUFFIX}")))
     }
 
     fn gc_candidate_path(&self, token: &str) -> Result<PathBuf, CloudNativeStoreFailure> {
@@ -1406,6 +1431,395 @@ impl PlatformCloudNativeProtectedStore {
         }
         Ok(summary)
     }
+
+    fn persist_ids_send_receipt(
+        &self,
+        receipt: &CloudNativeIdsSendReceipt,
+    ) -> Result<String, CloudNativeStoreFailure> {
+        let _guard = Self::operation_guard()?;
+        receipt.validate()?;
+        let actual_store_identity = cloud_sync_protector::protected_store_identity(
+            self.storage_directory.to_string_lossy().into_owned(),
+        )
+        .map_err(Self::map_protection_error)?;
+        if actual_store_identity != receipt.protected_store_identity {
+            return Err(CloudNativeStoreFailure::ContextMismatch);
+        }
+        let scope = CloudNativeProtectionScope::new(
+            receipt.account_fingerprint.clone(),
+            CloudNativeStream::Messages,
+        )
+        .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        let protected = self.protect_one(
+            &scope,
+            &CloudNativePlaintext {
+                purpose: CloudNativeProtectionPurpose::IdsSendReceipt,
+                value: receipt.encode()?,
+            },
+        )?;
+        if protected.is_empty() || protected.len() as u64 > MAX_IDS_SEND_RECEIPT_BYTES {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+
+        let store_directory = self.store_directory()?;
+        fs::create_dir_all(&store_directory).map_err(|_| CloudNativeStoreFailure::Io)?;
+        let receipt_directory = self.ids_send_receipt_directory()?;
+        let temporary_directory = self.temporary_directory()?;
+        fs::create_dir_all(&receipt_directory).map_err(|_| CloudNativeStoreFailure::Io)?;
+        fs::create_dir_all(&temporary_directory).map_err(|_| CloudNativeStoreFailure::Io)?;
+        Self::sync_directory(&store_directory)?;
+
+        let receipt_identity = [
+            receipt.guid_hash.as_str(),
+            receipt.account_fingerprint.as_str(),
+            receipt.protected_store_identity.as_str(),
+            receipt.native_session_id.as_str(),
+        ]
+        .join("\u{1f}");
+        let token = cloud_sync_protector::semantic_identifier_hasher(
+            self.storage_directory.to_string_lossy().into_owned(),
+        )
+        .map_err(Self::map_protection_error)?
+        .digest(IDS_SEND_RECEIPT_ID_DOMAIN, &receipt_identity);
+        let receipt_id = format!("{IDS_SEND_RECEIPT_PREFIX}{token}");
+        let destination = self.ids_send_receipt_path(&receipt_id)?;
+        if destination.exists() {
+            let metadata = fs::metadata(&destination).map_err(|_| CloudNativeStoreFailure::Io)?;
+            if metadata.len() == 0 || metadata.len() > MAX_IDS_SEND_RECEIPT_BYTES {
+                return Err(CloudNativeStoreFailure::InvalidReference);
+            }
+            let ciphertext =
+                fs::read_to_string(&destination).map_err(|_| CloudNativeStoreFailure::Io)?;
+            let plaintext = cloud_sync_protector::unprotect(
+                self.storage_directory.to_string_lossy().into_owned(),
+                scope.account_fingerprint.clone(),
+                scope.container.clone(),
+                scope.database.clone(),
+                scope.zone.clone(),
+                scope.stream_kind.clone(),
+                scope.schema_version,
+                CloudNativeProtectionPurpose::IdsSendReceipt
+                    .value()
+                    .to_owned(),
+                ciphertext,
+            )
+            .map_err(Self::map_protection_error)?;
+            let existing = CloudNativeIdsSendReceipt::decode(&plaintext)?;
+            if existing.guid_hash != receipt.guid_hash
+                || existing.account_fingerprint != receipt.account_fingerprint
+                || existing.protected_store_identity != receipt.protected_store_identity
+                || existing.native_session_id != receipt.native_session_id
+            {
+                return Err(CloudNativeStoreFailure::ContextMismatch);
+            }
+            return Ok(receipt_id);
+        }
+        let temporary =
+            temporary_directory.join(format!(".tmp-ids-send-{}.receipt", Uuid::new_v4().simple()));
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|_| CloudNativeStoreFailure::Io)?;
+        file.write_all(protected.as_bytes())
+            .and_then(|_| file.sync_all())
+            .map_err(|_| CloudNativeStoreFailure::Io)?;
+        fs::rename(&temporary, &destination).map_err(|_| CloudNativeStoreFailure::Io)?;
+        Self::sync_directory(&temporary_directory)?;
+        Self::sync_directory(&receipt_directory)?;
+        Ok(receipt_id)
+    }
+
+    fn replay_ids_send_receipts(
+        &self,
+        expected_account_fingerprint: &str,
+        expected_protected_store_identity: &str,
+        after_receipt_id: Option<&str>,
+    ) -> Result<CloudNativeIdsSendReceiptReplayPage, CloudNativeStoreFailure> {
+        let _guard = Self::operation_guard()?;
+        if !is_bare_digest(expected_account_fingerprint)
+            || !is_protected_store_identity(expected_protected_store_identity)
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let actual_store_identity = cloud_sync_protector::protected_store_identity(
+            self.storage_directory.to_string_lossy().into_owned(),
+        )
+        .map_err(Self::map_protection_error)?;
+        if actual_store_identity != expected_protected_store_identity {
+            return Ok(CloudNativeIdsSendReceiptReplayPage::empty());
+        }
+        let directory = self.ids_send_receipt_directory()?;
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(CloudNativeIdsSendReceiptReplayPage::empty())
+            }
+            Err(_) => return Err(CloudNativeStoreFailure::Io),
+        };
+        let scope = CloudNativeProtectionScope::new(
+            expected_account_fingerprint.to_owned(),
+            CloudNativeStream::Messages,
+        )
+        .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        let mut paths = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| name.strip_suffix(IDS_SEND_RECEIPT_SUFFIX))
+                    .is_some_and(is_bare_digest)
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        let after_token = match after_receipt_id {
+            Some(receipt_id) => Some(
+                receipt_id
+                    .strip_prefix(IDS_SEND_RECEIPT_PREFIX)
+                    .filter(|token| is_bare_digest(token))
+                    .ok_or(CloudNativeStoreFailure::InvalidReference)?,
+            ),
+            None => None,
+        };
+        if let Some(after_token) = after_token {
+            paths.retain(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| name.strip_suffix(IDS_SEND_RECEIPT_SUFFIX))
+                    .is_some_and(|token| token > after_token)
+            });
+        }
+        let mut receipts = Vec::new();
+        let mut next_cursor = None;
+        for (index, path) in paths.iter().enumerate() {
+            let token = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_suffix(IDS_SEND_RECEIPT_SUFFIX))
+                .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+            let metadata = fs::metadata(&path).map_err(|_| CloudNativeStoreFailure::Io)?;
+            if metadata.len() == 0 || metadata.len() > MAX_IDS_SEND_RECEIPT_BYTES {
+                continue;
+            }
+            let ciphertext = match fs::read_to_string(&path) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let plaintext = match cloud_sync_protector::unprotect(
+                self.storage_directory.to_string_lossy().into_owned(),
+                scope.account_fingerprint.clone(),
+                scope.container.clone(),
+                scope.database.clone(),
+                scope.zone.clone(),
+                scope.stream_kind.clone(),
+                scope.schema_version,
+                CloudNativeProtectionPurpose::IdsSendReceipt
+                    .value()
+                    .to_owned(),
+                ciphertext,
+            ) {
+                Ok(value) => value,
+                Err(CloudSyncProtectionError::ContextMismatch) => continue,
+                Err(error) => {
+                    let mapped = Self::map_protection_error(error);
+                    if mapped == CloudNativeStoreFailure::InvalidReference {
+                        continue;
+                    }
+                    return Err(mapped);
+                }
+            };
+            let receipt = match CloudNativeIdsSendReceipt::decode(&plaintext) {
+                Ok(receipt) => receipt,
+                Err(_) => continue,
+            };
+            if receipt.account_fingerprint != expected_account_fingerprint
+                || receipt.protected_store_identity != expected_protected_store_identity
+            {
+                continue;
+            }
+            receipts.push(CloudNativeIdsSendReceiptReplay {
+                receipt_id: format!("{IDS_SEND_RECEIPT_PREFIX}{token}"),
+                guid_hash: receipt.guid_hash,
+                native_session_id: receipt.native_session_id,
+            });
+            if receipts.len() == MAX_IDS_SEND_RECEIPTS_PER_REPLAY {
+                if index + 1 < paths.len() {
+                    next_cursor = Some(format!("{IDS_SEND_RECEIPT_PREFIX}{token}"));
+                }
+                break;
+            }
+        }
+        Ok(CloudNativeIdsSendReceiptReplayPage {
+            receipts,
+            next_cursor,
+        })
+    }
+
+    fn acknowledge_ids_send_receipt(
+        &self,
+        expected: &CloudNativeIdsSendReceiptReplay,
+        expected_account_fingerprint: &str,
+        expected_protected_store_identity: &str,
+    ) -> Result<(), CloudNativeStoreFailure> {
+        let _guard = Self::operation_guard()?;
+        expected.validate()?;
+        if !is_bare_digest(expected_account_fingerprint)
+            || !is_protected_store_identity(expected_protected_store_identity)
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let path = self.ids_send_receipt_path(&expected.receipt_id)?;
+        if !path.exists() {
+            return Ok(());
+        }
+        let actual_store_identity = cloud_sync_protector::protected_store_identity(
+            self.storage_directory.to_string_lossy().into_owned(),
+        )
+        .map_err(Self::map_protection_error)?;
+        if actual_store_identity != expected_protected_store_identity {
+            return Err(CloudNativeStoreFailure::ContextMismatch);
+        }
+        let metadata = fs::metadata(&path).map_err(|_| CloudNativeStoreFailure::Io)?;
+        if metadata.len() == 0 || metadata.len() > MAX_IDS_SEND_RECEIPT_BYTES {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let ciphertext = fs::read_to_string(&path).map_err(|_| CloudNativeStoreFailure::Io)?;
+        let scope = CloudNativeProtectionScope::new(
+            expected_account_fingerprint.to_owned(),
+            CloudNativeStream::Messages,
+        )
+        .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        let plaintext = cloud_sync_protector::unprotect(
+            self.storage_directory.to_string_lossy().into_owned(),
+            scope.account_fingerprint.clone(),
+            scope.container.clone(),
+            scope.database.clone(),
+            scope.zone.clone(),
+            scope.stream_kind.clone(),
+            scope.schema_version,
+            CloudNativeProtectionPurpose::IdsSendReceipt
+                .value()
+                .to_owned(),
+            ciphertext,
+        )
+        .map_err(Self::map_protection_error)?;
+        let receipt = CloudNativeIdsSendReceipt::decode(&plaintext)?;
+        if receipt.account_fingerprint != expected_account_fingerprint
+            || receipt.protected_store_identity != expected_protected_store_identity
+            || receipt.guid_hash != expected.guid_hash
+            || receipt.native_session_id != expected.native_session_id
+        {
+            return Err(CloudNativeStoreFailure::ContextMismatch);
+        }
+        fs::remove_file(&path).map_err(|_| CloudNativeStoreFailure::Io)?;
+        Self::sync_directory(&self.ids_send_receipt_directory()?)
+    }
+}
+
+pub(crate) struct CloudNativeIdsSendReceipt {
+    pub(crate) guid_hash: String,
+    pub(crate) account_fingerprint: String,
+    pub(crate) protected_store_identity: String,
+    pub(crate) native_session_id: String,
+}
+
+impl CloudNativeIdsSendReceipt {
+    fn validate(&self) -> Result<(), CloudNativeStoreFailure> {
+        if !is_hex_digest(&self.guid_hash)
+            || !is_bare_digest(&self.account_fingerprint)
+            || !is_protected_store_identity(&self.protected_store_identity)
+            || !is_bare_digest(&self.native_session_id)
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        Ok(())
+    }
+
+    fn encode(&self) -> Result<String, CloudNativeStoreFailure> {
+        self.validate()?;
+        Ok(serde_json::json!({
+            "version": 1,
+            "guidHash": self.guid_hash,
+            "accountFingerprint": self.account_fingerprint,
+            "protectedStoreIdentity": self.protected_store_identity,
+            "nativeSessionId": self.native_session_id,
+        })
+        .to_string())
+    }
+
+    fn decode(value: &str) -> Result<Self, CloudNativeStoreFailure> {
+        let value: serde_json::Value =
+            serde_json::from_str(value).map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        let object = value
+            .as_object()
+            .filter(|object| object.len() == 5)
+            .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+        if object.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let receipt = Self {
+            guid_hash: object
+                .get("guidHash")
+                .and_then(serde_json::Value::as_str)
+                .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                .to_owned(),
+            account_fingerprint: object
+                .get("accountFingerprint")
+                .and_then(serde_json::Value::as_str)
+                .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                .to_owned(),
+            protected_store_identity: object
+                .get("protectedStoreIdentity")
+                .and_then(serde_json::Value::as_str)
+                .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                .to_owned(),
+            native_session_id: object
+                .get("nativeSessionId")
+                .and_then(serde_json::Value::as_str)
+                .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                .to_owned(),
+        };
+        receipt.validate()?;
+        Ok(receipt)
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct CloudNativeIdsSendReceiptReplay {
+    pub(crate) receipt_id: String,
+    pub(crate) guid_hash: String,
+    pub(crate) native_session_id: String,
+}
+
+pub(crate) struct CloudNativeIdsSendReceiptReplayPage {
+    pub(crate) receipts: Vec<CloudNativeIdsSendReceiptReplay>,
+    pub(crate) next_cursor: Option<String>,
+}
+
+impl CloudNativeIdsSendReceiptReplayPage {
+    fn empty() -> Self {
+        Self {
+            receipts: Vec::new(),
+            next_cursor: None,
+        }
+    }
+}
+
+impl CloudNativeIdsSendReceiptReplay {
+    fn validate(&self) -> Result<(), CloudNativeStoreFailure> {
+        let token = self
+            .receipt_id
+            .strip_prefix(IDS_SEND_RECEIPT_PREFIX)
+            .filter(|token| is_bare_digest(token));
+        if token.is_none()
+            || !is_hex_digest(&self.guid_hash)
+            || !is_bare_digest(&self.native_session_id)
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        Ok(())
+    }
 }
 
 fn same_manifest_entries(
@@ -2044,6 +2458,19 @@ fn is_bare_digest(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn is_hex_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn is_protected_store_identity(value: &str) -> bool {
+    value
+        .strip_prefix("obcs2.store.")
+        .is_some_and(is_bare_digest)
 }
 
 fn is_lease_token(value: &str) -> bool {
@@ -3654,6 +4081,51 @@ pub(crate) fn cloud_sync_open_protected_outbound_chat(
         CloudNativeStream::Chats,
         CloudNativeProtectionPurpose::OutboundChat,
     )
+}
+
+pub(crate) fn cloud_sync_persist_ids_send_receipt(
+    storage_directory: PathBuf,
+    receipt: CloudNativeIdsSendReceipt,
+) -> Result<CloudNativeIdsSendReceiptReplay, CloudNativeFetchFailure> {
+    let store = PlatformCloudNativeProtectedStore::new(storage_directory);
+    let receipt_id = store
+        .persist_ids_send_receipt(&receipt)
+        .map_err(map_store_failure)?;
+    Ok(CloudNativeIdsSendReceiptReplay {
+        receipt_id,
+        guid_hash: receipt.guid_hash,
+        native_session_id: receipt.native_session_id,
+    })
+}
+
+pub(crate) fn cloud_sync_replay_ids_send_receipts(
+    storage_directory: PathBuf,
+    expected_account_fingerprint: &str,
+    expected_protected_store_identity: &str,
+    after_receipt_id: Option<&str>,
+) -> Result<CloudNativeIdsSendReceiptReplayPage, CloudNativeFetchFailure> {
+    PlatformCloudNativeProtectedStore::new(storage_directory)
+        .replay_ids_send_receipts(
+            expected_account_fingerprint,
+            expected_protected_store_identity,
+            after_receipt_id,
+        )
+        .map_err(map_store_failure)
+}
+
+pub(crate) fn cloud_sync_acknowledge_ids_send_receipt(
+    storage_directory: PathBuf,
+    expected: &CloudNativeIdsSendReceiptReplay,
+    expected_account_fingerprint: &str,
+    expected_protected_store_identity: &str,
+) -> Result<(), CloudNativeFetchFailure> {
+    PlatformCloudNativeProtectedStore::new(storage_directory)
+        .acknowledge_ids_send_receipt(
+            expected,
+            expected_account_fingerprint,
+            expected_protected_store_identity,
+        )
+        .map_err(map_store_failure)
 }
 
 fn cloud_sync_open_protected_outbound_value(
@@ -5322,6 +5794,233 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    fn ids_send_receipt_fixture(
+        directory: &Path,
+        guid_hash: char,
+        account_fingerprint: char,
+        native_session_id: char,
+    ) -> CloudNativeIdsSendReceipt {
+        CloudNativeIdsSendReceipt {
+            guid_hash: guid_hash.to_string().repeat(64),
+            account_fingerprint: account_fingerprint.to_string().repeat(43),
+            protected_store_identity: cloud_sync_protector::protected_store_identity(
+                directory.to_string_lossy().into_owned(),
+            )
+            .expect("protected store identity"),
+            native_session_id: native_session_id.to_string().repeat(43),
+        }
+    }
+
+    #[test]
+    fn ids_send_receipt_persist_is_durable_and_idempotent() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let receipt = ids_send_receipt_fixture(directory.path(), 'a', 'A', 'N');
+
+        let first = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist first receipt");
+        let second = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist duplicate receipt");
+        assert_eq!(first, second);
+        assert!(store
+            .ids_send_receipt_path(&first)
+            .expect("receipt path")
+            .is_file());
+        let replayed = store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("replay receipt")
+            .receipts;
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0].receipt_id, first);
+        assert_eq!(replayed[0].guid_hash, receipt.guid_hash);
+        assert_eq!(replayed[0].native_session_id, receipt.native_session_id);
+    }
+
+    #[test]
+    fn ids_send_receipt_wrong_identity_is_hidden_and_ack_fails_closed() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let receipt = ids_send_receipt_fixture(directory.path(), 'b', 'B', 'M');
+        let receipt_id = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist receipt");
+        let replay = CloudNativeIdsSendReceiptReplay {
+            receipt_id,
+            guid_hash: receipt.guid_hash.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+        };
+
+        assert!(store
+            .replay_ids_send_receipts(
+                &"C".repeat(43),
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("foreign account is hidden")
+            .receipts
+            .is_empty());
+        let wrong_session = CloudNativeIdsSendReceiptReplay {
+            native_session_id: "Z".repeat(43),
+            ..replay.clone()
+        };
+        assert_eq!(
+            store.acknowledge_ids_send_receipt(
+                &wrong_session,
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+            ),
+            Err(CloudNativeStoreFailure::ContextMismatch)
+        );
+        assert_eq!(
+            store
+                .replay_ids_send_receipts(
+                    &receipt.account_fingerprint,
+                    &receipt.protected_store_identity,
+                    None,
+                )
+                .expect("receipt retained")
+                .receipts
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn ids_send_receipt_ack_is_exact_and_idempotent() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let receipt = ids_send_receipt_fixture(directory.path(), 'c', 'C', 'S');
+        let receipt_id = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist receipt");
+        let replay = CloudNativeIdsSendReceiptReplay {
+            receipt_id,
+            guid_hash: receipt.guid_hash.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+        };
+
+        store
+            .acknowledge_ids_send_receipt(
+                &replay,
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+            )
+            .expect("ack receipt");
+        store
+            .acknowledge_ids_send_receipt(
+                &replay,
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+            )
+            .expect("duplicate ack");
+        assert!(store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("replay after ack")
+            .receipts
+            .is_empty());
+    }
+
+    #[test]
+    fn corrupt_receipts_do_not_starve_later_matching_receipt() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let receipt = ids_send_receipt_fixture(directory.path(), 'd', 'D', 'T');
+        let receipt_id = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist receipt");
+        let original = store
+            .ids_send_receipt_path(&receipt_id)
+            .expect("receipt path");
+        let later_id = format!("{IDS_SEND_RECEIPT_PREFIX}{}", "z".repeat(43));
+        let later = store
+            .ids_send_receipt_path(&later_id)
+            .expect("later receipt path");
+        fs::rename(original, &later).expect("move valid receipt after corrupt fixtures");
+        let receipt_directory = store
+            .ids_send_receipt_directory()
+            .expect("receipt directory");
+        for index in 0..MAX_IDS_SEND_RECEIPTS_PER_REPLAY {
+            let token = format!("A{index:042}");
+            fs::write(
+                receipt_directory.join(format!("{token}{IDS_SEND_RECEIPT_SUFFIX}")),
+                b"corrupt",
+            )
+            .expect("write corrupt receipt");
+        }
+
+        let replayed = store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("replay matching receipt")
+            .receipts;
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0].receipt_id, later_id);
+    }
+
+    #[test]
+    fn replay_cursor_advances_past_sixty_four_retained_receipts() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let target = ids_send_receipt_fixture(directory.path(), 'e', 'E', 'U');
+        let target_id = store
+            .persist_ids_send_receipt(&target)
+            .expect("persist target receipt");
+        let target_path = store
+            .ids_send_receipt_path(&target_id)
+            .expect("target path");
+        let last_id = format!("{IDS_SEND_RECEIPT_PREFIX}{}", "z".repeat(43));
+        fs::rename(
+            target_path,
+            store.ids_send_receipt_path(&last_id).expect("last path"),
+        )
+        .expect("move target last");
+        for index in 0..MAX_IDS_SEND_RECEIPTS_PER_REPLAY {
+            let retained = CloudNativeIdsSendReceipt {
+                guid_hash: format!("{index:064x}"),
+                account_fingerprint: target.account_fingerprint.clone(),
+                protected_store_identity: target.protected_store_identity.clone(),
+                native_session_id: target.native_session_id.clone(),
+            };
+            store
+                .persist_ids_send_receipt(&retained)
+                .expect("persist retained receipt");
+        }
+
+        let first = store
+            .replay_ids_send_receipts(
+                &target.account_fingerprint,
+                &target.protected_store_identity,
+                None,
+            )
+            .expect("first receipt page");
+        assert_eq!(first.receipts.len(), MAX_IDS_SEND_RECEIPTS_PER_REPLAY);
+        let cursor = first.next_cursor.expect("next cursor");
+        let second = store
+            .replay_ids_send_receipts(
+                &target.account_fingerprint,
+                &target.protected_store_identity,
+                Some(&cursor),
+            )
+            .expect("second receipt page");
+        assert_eq!(second.receipts.len(), 1);
+        assert_eq!(second.receipts[0].receipt_id, last_id);
+        assert_eq!(second.receipts[0].guid_hash, target.guid_hash);
+        assert_eq!(second.next_cursor, None);
     }
 
     #[test]

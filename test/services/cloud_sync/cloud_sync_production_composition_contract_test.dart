@@ -282,8 +282,11 @@ void main() {
       source.indexOf('Future<Message> _sendPreparedMessage('),
       source.indexOf('bool supportsFocusStates()'),
     );
+    final compactCreate = create.replaceAll(RegExp(r'\s+'), ' ');
+    final compactShared = shared.replaceAll(RegExp(r'\s+'), ' ');
     expect(create, contains('CloudKitWriterOwnership.v2MutationsEnabled'));
-    expect(create, contains('CloudSyncDevGate.manualOutboundCanaryEnabled && !chat.isRpSms'));
+    expect(compactCreate,
+        contains('CloudSyncDevGate.manualOutboundCanaryEnabled && !chat.isRpSms'));
     final tracked = create.substring(
       create.indexOf('final pending = createPendingInitialIMessage('),
       create.indexOf('} else {'),
@@ -301,15 +304,61 @@ void main() {
     expect(legacy, contains('await newMessage.forwardIfNessesary(chat)'));
     expect(composer, contains('return _sendPreparedMessage('));
     expect(composer, isNot(contains('sendMsg(')));
-    expect(shared.indexOf('_captureCloudSyncV2LocalSend('),
-        lessThan(shared.indexOf('confirmed: false,')));
-    expect(shared.indexOf('confirmed: false,'),
-        lessThan(shared.indexOf('await sendMsg(msg, rebuildForRetry: rebuildWireMessage)')));
-    expect(shared, contains('rebuilt.id = stableMessageId;'));
-    expect(shared, contains('expectedSourceSha256: localCloudIntent!.identity.sourceSha256'));
-    expect(shared, contains('if (localCloudIntent != null && !backgroundSendPending)'));
+    expect(compactShared.indexOf('_captureCloudSyncV2LocalSend('),
+        lessThan(compactShared.indexOf('confirmed: false,')));
+    expect(compactShared.indexOf('confirmed: false,'),
+        lessThan(compactShared.indexOf('await sendMsg(')));
+    expect(compactShared, contains('rebuilt.id = stableMessageId;'));
+    expect(compactShared,
+        contains('final originalCloudIntent = localCloudIntent;'));
+    expect(
+      RegExp(r'originalCloudIntent[^;]+stillCurrent\(\)')
+          .allMatches(compactShared),
+      hasLength(2),
+    );
+    expect(
+      compactShared,
+      contains("if (composerPreAdmitted) { throw StateError('cloud_sync_local_send_source_changed');"),
+    );
+    expect(compactShared,
+        contains('expectedSourceSha256: localCloudIntent!.identity.sourceSha256'));
+    expect(compactShared,
+        contains('if (localCloudIntent != null && !backgroundSendPending)'));
     expect(RegExp(r'await sendMsg\(').allMatches(shared), hasLength(1));
     expect(RegExp(r'reflectMessageDyn\(').allMatches(shared), hasLength(1));
+  });
+
+  test('native receipt replay is bound to one exact authenticated runtime', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final confirmStart = source.indexOf(
+      'Future<void> _confirmCloudSyncV2NativeSend(',
+    );
+    final replayStart = source.indexOf(
+      'Future<void> _runCloudSyncV2NativeSendReceiptReplay()',
+      confirmStart,
+    );
+    final replayEnd = source.indexOf(
+      'Future<void> _saveCloudSyncV2LocalSend(',
+      replayStart,
+    );
+    expect(confirmStart, greaterThanOrEqualTo(0));
+    expect(replayStart, greaterThan(confirmStart));
+    expect(replayEnd, greaterThan(replayStart));
+    final confirm = source.substring(confirmStart, replayStart);
+    final replay = source.substring(replayStart, replayEnd);
+    expect(confirm, contains('CloudSyncNativeReceiptReplayBinding? replayBinding'));
+    expect(confirm, contains('replayBinding?.requireCapturedAuth(auth);'));
+    expect(confirm, contains('stillCurrent: confirmationBindingCurrent'));
+    expect(replay, contains('final storagePath = statePath;'));
+    expect(replay, contains('final objectBox = Database.store;'));
+    expect(replay, contains('CloudSyncNativeReceiptReplayBinding('));
+    expect(replay, contains('replayBinding: replayBinding'));
+    expect(
+      'replayBinding.requireCurrent();'.allMatches(replay).length,
+      greaterThanOrEqualTo(3),
+    );
   });
 
   test('one confirmed action auto-resumes only bounded semantic batches', () {
@@ -320,7 +369,7 @@ void main() {
       'runCloudSyncV2AutomaticSemanticCatchUpConfirmed()',
     );
     final end = source.indexOf(
-      '_runCloudSyncV2ManualSemanticPull({required int maximumPasses})',
+      '_runCloudSyncV2ManualSemanticPull({required int maximumPasses}) {',
       start,
     );
 

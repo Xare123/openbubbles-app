@@ -125,6 +125,30 @@ String cloudSyncFingerprintAccount({
   rawAccountIdentifier: rawAccountIdentifier,
 );
 
+CloudSyncNativeSendReceiptPage cloudSyncReplayNativeSendReceipts({
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  String? afterReceiptId,
+}) => RustLib.instance.api.crateApiApiCloudSyncReplayNativeSendReceipts(
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  afterReceiptId: afterReceiptId,
+);
+
+void cloudSyncAcknowledgeNativeSendReceipt({
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required CloudSyncNativeSendReceipt receipt,
+}) => RustLib.instance.api.crateApiApiCloudSyncAcknowledgeNativeSendReceipt(
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  receipt: receipt,
+);
+
 /// Explicitly authenticates the read-only Cloud Sync V2 container.
 ///
 /// Callers must hold the CloudKit operation interlock. This may perform one
@@ -1331,8 +1355,13 @@ Future<bool> send({
   required ArcImClient state,
   required ArcSenderPushMessage local,
   required MessageInst msg,
-}) =>
-    RustLib.instance.api.crateApiApiSend(state: state, local: local, msg: msg);
+  CloudSyncNativeSendReceiptContext? nativeReceiptContext,
+}) => RustLib.instance.api.crateApiApiSend(
+  state: state,
+  local: local,
+  msg: msg,
+  nativeReceiptContext: nativeReceiptContext,
+);
 
 /// Windows qualification only. Uses the already-bound GSA account instead of
 /// replaying onboarding (which would replace unrelated CloudKit/Keychain state).
@@ -2978,6 +3007,91 @@ class CloudSyncNativeAuthMetadata {
           nativeSessionId == other.nativeSessionId &&
           accountFingerprint == other.accountFingerprint &&
           protectedStoreIdentity == other.protectedStoreIdentity;
+}
+
+/// Opaque durable receipt identity plus the two content-free values needed to
+/// match and acknowledge exactly the protected native record.
+class CloudSyncNativeSendReceipt {
+  final String receiptId;
+  final String guidHash;
+  final String nativeSessionId;
+
+  const CloudSyncNativeSendReceipt({
+    required this.receiptId,
+    required this.guidHash,
+    required this.nativeSessionId,
+  });
+
+  @override
+  int get hashCode =>
+      receiptId.hashCode ^ guidHash.hashCode ^ nativeSessionId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncNativeSendReceipt &&
+          runtimeType == other.runtimeType &&
+          receiptId == other.receiptId &&
+          guidHash == other.guidHash &&
+          nativeSessionId == other.nativeSessionId;
+}
+
+/// Content-free context for making one successful native SendJob completion
+/// crash-recoverable before SendConfirm is emitted.
+class CloudSyncNativeSendReceiptContext {
+  final String storageDirectory;
+  final String guidHash;
+  final String accountFingerprint;
+  final String protectedStoreIdentity;
+  final String nativeSessionId;
+
+  const CloudSyncNativeSendReceiptContext({
+    required this.storageDirectory,
+    required this.guidHash,
+    required this.accountFingerprint,
+    required this.protectedStoreIdentity,
+    required this.nativeSessionId,
+  });
+
+  @override
+  int get hashCode =>
+      storageDirectory.hashCode ^
+      guidHash.hashCode ^
+      accountFingerprint.hashCode ^
+      protectedStoreIdentity.hashCode ^
+      nativeSessionId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncNativeSendReceiptContext &&
+          runtimeType == other.runtimeType &&
+          storageDirectory == other.storageDirectory &&
+          guidHash == other.guidHash &&
+          accountFingerprint == other.accountFingerprint &&
+          protectedStoreIdentity == other.protectedStoreIdentity &&
+          nativeSessionId == other.nativeSessionId;
+}
+
+class CloudSyncNativeSendReceiptPage {
+  final List<CloudSyncNativeSendReceipt> receipts;
+  final String? nextCursor;
+
+  const CloudSyncNativeSendReceiptPage({
+    required this.receipts,
+    this.nextCursor,
+  });
+
+  @override
+  int get hashCode => receipts.hashCode ^ nextCursor.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncNativeSendReceiptPage &&
+          runtimeType == other.runtimeType &&
+          receipts == other.receipts &&
+          nextCursor == other.nextCursor;
 }
 
 class CloudSyncOutboundConsumeResult {
@@ -7594,8 +7708,12 @@ sealed class PushMessage with _$PushMessage {
   const PushMessage._();
 
   const factory PushMessage.iMessage(MessageInst field0) = PushMessage_IMessage;
-  const factory PushMessage.sendConfirm({required String uuid, String? error}) =
-      PushMessage_SendConfirm;
+  const factory PushMessage.sendConfirm({
+    required String uuid,
+    String? error,
+    CloudSyncNativeSendReceipt? nativeReceipt,
+    String? nativeReceiptError,
+  }) = PushMessage_SendConfirm;
   const factory PushMessage.registrationState(RegisterState field0) =
       PushMessage_RegistrationState;
   const factory PushMessage.newPhotostream(SharedAlbum field0) =
