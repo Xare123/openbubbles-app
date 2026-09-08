@@ -3321,6 +3321,97 @@ void main() {
       expect(bindings.consumeCalls, 0);
     },
   );
+
+  test(
+    'reset-required consume failure stays outcome-unknown without PCS pause',
+    () async {
+      final operation = _writeOperation(scope);
+      final protectedOperation = _protectedWriteOperation(operation);
+      final identity = _submissionIdentity(operation.operationId);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: operation.encryptedPayloadReference,
+      );
+      bindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: _FakePreparedHandle(),
+        handleBindingSha256: _preparedHandleBindingSha256,
+      );
+      bindings.consumeResult = frb_api.CloudSyncOutboundConsumeResult(
+        outcomes: [
+          frb_api.CloudSyncOutboundSaveOutcome(
+            localOperationId: operation.operationId,
+            appleOperationUuid: identity.operationUuids[operation.operationId]!,
+            disposition: frb_api.CloudSyncOutboundSaveDisposition.failed,
+            failureClass: frb_api.CloudSyncOutboundFailureClass.resetRequired,
+          ),
+        ],
+      );
+
+      final result = await runV2(() async {
+        final prepared = await transport.prepareSubmission(
+          scope,
+          submissionIdentity: identity,
+          operations: [protectedOperation],
+        );
+        return transport.consumePreparedSubmission(
+          scope,
+          preparedSubmission: prepared,
+          persistedIdentity: identity,
+          protectedOperations: [protectedOperation],
+          operations: [operation],
+        );
+      });
+
+      final outcome = result.outcomes.values.single;
+      expect(outcome.disposition, CloudPushDisposition.unknownOutcome);
+      expect(outcome.failureCategory, CloudFailureCategory.unknown);
+      expect(bindings.consumeCalls, 1);
+    },
+  );
+
+  test(
+    'reset-required preflight preserves its safe code and fails closed',
+    () async {
+      final operation = _writeOperation(scope);
+      final protectedOperation = _protectedWriteOperation(operation);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved,
+        failureClass: frb_api.CloudSyncOutboundFailureClass.resetRequired,
+        retryAfterSeconds: BigInt.from(41),
+      );
+
+      await expectLater(
+        runV2(
+          () => transport.prepareSubmission(
+            scope,
+            submissionIdentity: _submissionIdentity(operation.operationId),
+            operations: [protectedOperation],
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncFailure>()
+              .having(
+                (failure) => failure.category,
+                'category',
+                CloudFailureCategory.unknown,
+              )
+              .having(
+                (failure) => failure.retryAfter,
+                'retryAfter',
+                const Duration(seconds: 41),
+              )
+              .having(
+                (failure) => failure.safeCode,
+                'safeCode',
+                CloudSyncV2ProtectedTransportSafeFailureCodes
+                    .cloudKitResetRequired,
+              ),
+        ),
+      );
+      expect(bindings.reconcileCalls, 1);
+      expect(bindings.prepareCalls, 0);
+    },
+  );
 }
 
 CloudOutboxOperation _chatOperation(

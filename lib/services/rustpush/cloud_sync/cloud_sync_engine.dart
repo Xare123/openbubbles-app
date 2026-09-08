@@ -1273,14 +1273,16 @@ class CloudSyncEngine {
           break;
         } on CloudSyncFailure catch (error) {
           if (error.category == CloudFailureCategory.authorization &&
-              !authenticationRefreshUsed) {
+              !authenticationRefreshUsed &&
+              !cloudSyncIsResetRequiredSafeCode(error.safeCode)) {
             authenticationRefreshUsed = true;
             final refreshed = await _tryRefreshAuthentication();
             if (refreshed) {
               continue;
             }
           } else if (error.category == CloudFailureCategory.pcsUnavailable &&
-              !pcsRefreshUsed) {
+              !pcsRefreshUsed &&
+              !cloudSyncIsResetRequiredSafeCode(error.safeCode)) {
             pcsRefreshUsed = true;
             final refreshed = await _tryRefreshPcs();
             if (refreshed) {
@@ -2593,6 +2595,19 @@ class CloudSyncEngine {
     CloudOutboxOperation operation,
     CloudSyncFailure error,
   ) {
+    // A reset-required zone needs rebootstrap, never credential or PCS
+    // refresh. Fence it paused under a non-refreshable, non-retryable
+    // category with no next-eligible time: the pre-push branches only
+    // refresh authorization/pcsUnavailable sets, and only pending operations
+    // are leased, so this transition can neither retry nor auto-resume.
+    // There is no dedicated reset outbox status; unknown is the closed
+    // vocabulary member that no refresh, resume, or lease path matches on.
+    if (cloudSyncIsResetRequiredSafeCode(error.safeCode)) {
+      return CloudOutboxTransition.paused(
+        operation.operationId,
+        category: CloudFailureCategory.unknown,
+      );
+    }
     if (error.category == CloudFailureCategory.authorization ||
         error.category == CloudFailureCategory.pcsUnavailable ||
         error.category == CloudFailureCategory.dependency) {

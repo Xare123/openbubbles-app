@@ -136,6 +136,37 @@ abstract final class CloudSyncV2ProtectedTransportSafeFailureCodes {
   };
 }
 
+/// Every reset-required spelling that must fail closed instead of refreshing.
+///
+/// - [protectedTransport]: the protected native transport
+///   (FRB `CloudSyncProtectedSafeCode.cloudKitResetRequired`). This is the
+///   only code the protected paths emit today.
+/// - [rawTransport] and [rawChangeTokenExpired]: raw native pull diagnostics.
+///   No engine-feeding transport emits them as a [CloudSyncFailure] safe code
+///   today, but if a future raw transport does, it must fail closed too and
+///   never reopen credential or PCS refresh.
+abstract final class CloudSyncResetRequiredSafeCodes {
+  static const protectedTransport =
+      CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitResetRequired;
+  static const rawTransport = 'cloudkit-reset-required';
+  static const rawChangeTokenExpired = 'cloudkit-change-token-expired';
+
+  static const all = <String>{
+    protectedTransport,
+    rawTransport,
+    rawChangeTokenExpired,
+  };
+}
+
+/// Centralized reset-required identity for the CloudKit lifecycle guard.
+///
+/// A reset-required zone needs rebootstrap, never credential or PCS refresh.
+/// Transports preserve the safe code while mapping the category fail-closed;
+/// engine refresh branches match on it (not the category) so a genuine PCS
+/// outage keeps its refresh path.
+bool cloudSyncIsResetRequiredSafeCode(String? safeCode) =>
+    CloudSyncResetRequiredSafeCodes.all.contains(safeCode);
+
 /// Fixed, content-free failures emitted by the canonical ObjectBox projector.
 ///
 /// Retained replay must preserve these exact branches. Collapsing one to the

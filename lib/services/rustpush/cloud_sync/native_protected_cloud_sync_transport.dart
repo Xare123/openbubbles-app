@@ -1069,20 +1069,41 @@ final class NativeProtectedCloudSyncTransport
           safeCode: 'cloud_sync_outbound_create_preflight_conflict',
         ),
       frb_api.CloudSyncOutboundReconcileDisposition.unresolved =>
-        throw CloudSyncFailure(
-          category: switch (_mapOutboundFailureClass(result.failureClass)) {
-            CloudFailureCategory.authorization =>
-              CloudFailureCategory.authorization,
-            CloudFailureCategory.pcsUnavailable =>
-              CloudFailureCategory.pcsUnavailable,
-            CloudFailureCategory.throttled => CloudFailureCategory.throttled,
-            CloudFailureCategory.server => CloudFailureCategory.server,
-            _ => CloudFailureCategory.unknown,
-          },
-          retryAfter: _boundedRetryAfter(result.retryAfterSeconds),
-          safeCode: 'cloud_sync_outbound_create_preflight_unresolved',
-        ),
+        throw _unresolvedCreatePreflightFailure(result),
     };
+  }
+
+  /// Maps an unresolved create preflight to a fail-closed [CloudSyncFailure].
+  ///
+  /// A reset-required zone needs rebootstrap, never credential or PCS
+  /// refresh: its safe code is preserved while the category stays
+  /// non-retryable, so the engine fences it paused under unknown instead of
+  /// pausing for recovery or resuming it after a refresh.
+  CloudSyncFailure _unresolvedCreatePreflightFailure(
+    frb_api.CloudSyncOutboundReconcileResult result,
+  ) {
+    if (result.failureClass ==
+        frb_api.CloudSyncOutboundFailureClass.resetRequired) {
+      return CloudSyncFailure(
+        category: CloudFailureCategory.unknown,
+        retryAfter: _boundedRetryAfter(result.retryAfterSeconds),
+        safeCode:
+            CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitResetRequired,
+      );
+    }
+    return CloudSyncFailure(
+      category: switch (_mapOutboundFailureClass(result.failureClass)) {
+        CloudFailureCategory.authorization =>
+          CloudFailureCategory.authorization,
+        CloudFailureCategory.pcsUnavailable =>
+          CloudFailureCategory.pcsUnavailable,
+        CloudFailureCategory.throttled => CloudFailureCategory.throttled,
+        CloudFailureCategory.server => CloudFailureCategory.server,
+        _ => CloudFailureCategory.unknown,
+      },
+      retryAfter: _boundedRetryAfter(result.retryAfterSeconds),
+      safeCode: 'cloud_sync_outbound_create_preflight_unresolved',
+    );
   }
 
   CloudOutboxCreateReceipt _createReceiptFromPreflight({
@@ -1307,8 +1328,12 @@ final class NativeProtectedCloudSyncTransport
       ),
       frb_api.CloudSyncOutboundFailureClass.resetRequired => CloudPushOutcome(
         operationId: operationId,
-        disposition: CloudPushDisposition.pcsUnavailable,
-        failureCategory: CloudFailureCategory.pcsUnavailable,
+        // Fail closed: a reset-required zone needs rebootstrap, never
+        // credential or PCS refresh. Unknown keeps the operation out of the
+        // paused-for-recovery set; the reset identity is preserved on the
+        // preflight throw matched by cloudSyncIsResetRequiredSafeCode.
+        disposition: CloudPushDisposition.unknownOutcome,
+        failureCategory: CloudFailureCategory.unknown,
       ),
       _ => CloudPushOutcome(
         operationId: operationId,
@@ -1816,7 +1841,9 @@ final class NativeProtectedCloudSyncTransport
     frb_api.CloudSyncOutboundFailureClass.conflict =>
       CloudFailureCategory.conflict,
     frb_api.CloudSyncOutboundFailureClass.resetRequired =>
-      CloudFailureCategory.pcsUnavailable,
+      // Fail closed and non-retryable: reset-required must never enter the
+      // PCS refresh path. The reset identity travels on the safe code.
+      CloudFailureCategory.unknown,
     frb_api.CloudSyncOutboundFailureClass.permanent ||
     frb_api.CloudSyncOutboundFailureClass.unknown ||
     null => CloudFailureCategory.unknown,
