@@ -459,7 +459,9 @@ abstract final class CanaryAdbControl {
       if (local.outboxCount == 0) {
         outboxState = 'empty';
       } else if (local.outboxCount > 0 &&
-          local.settledOutboxFingerprint != null) {
+          local.outboxCount <= 65535 &&
+          local.settledOutboxFingerprint != null &&
+          RegExp(r'^[0-9a-f]{64}$').hasMatch(local.settledOutboxFingerprint!)) {
         outboxState = 'settled';
       } else {
         outboxState = 'blocked';
