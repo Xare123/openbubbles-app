@@ -166,9 +166,11 @@ This is a chronological evidence log. It does not override the
 ### Run 34211915641 and exact Pixel retained-sweep proof
 
 - Android app source `ad822f37cbf468a6bc74d602965e78ae02a852d1`
-  passed generated-binding, Dart, Rust, rustpush production-feature, protector,
-  Canary APK, ARM64 native-library, GitHub-hosted signing, runner cleanup, and
-  VM cleanup gates. The signed artifact used APK Signature Schemes v2 and v3.
+  passed the build-only GCE benchmark: source-SHA verification, Canary APK,
+  ARM64 native-library inspection, GitHub-hosted signing, runner cleanup, and
+  VM cleanup. The signed artifact used APK Signature Schemes v2 and v3.
+  Generated-binding and full Dart/Rust test steps were intentionally skipped;
+  this run is not exact-source full-suite evidence.
 - The APK was installed in place over Canary only. Its data and first-install
   time were preserved; Alpha's version and install timestamps remained exact.
 - The live semantic pull reached a terminal `partial` result after one remote

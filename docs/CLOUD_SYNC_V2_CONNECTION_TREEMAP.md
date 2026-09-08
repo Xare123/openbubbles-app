@@ -58,7 +58,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Candidate | Android app source `ad822f37cbf468a6bc74d602965e78ae02a852d1`; host-only ADB controller head `f826cd400a623b3a759cafe391580731d137ae8b` |
 | Main change | Exact `iMessageLite` satellite records and other deliberate physical-retention states are typed without remaining replay candidates. Retained projection now emits closed content-free diagnosis, and Canary exposes a package-scoped ADB control surface for repeatable device qualification. |
 | Dependency | rustpush `2274cee63c05432c89fc5dbb61915b5659fa9721`, published to the user's fork after the first clean-run checkout failure. |
-| Full qualification | Exact app source `ad822f37c` passed GCE run `34211915641`: generated bindings, Dart/Rust suites, rustpush production features, protector harness, Canary APK, ARM64 native-library inspection, GitHub-hosted v2/v3 signing, runner deregistration, and VM deletion. |
+| Full qualification | Exact app source `ad822f37c` passed the build-only GCE benchmark in run `34211915641`: source-SHA verification, Canary APK, ARM64 native-library inspection, GitHub-hosted v2/v3 signing, runner deregistration, and VM deletion. Generated bindings and full Dart/Rust suites were intentionally skipped, so exact-source full qualification remains pending. |
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
@@ -251,8 +251,8 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 
 ### Candidate qualification
 
-- [x] Generated bindings reproduce with no unrelated drift.
-- [x] Full Dart, Rust, rustpush, protector, and ObjectBox tests pass at the
+- [ ] Generated bindings reproduce with no unrelated drift.
+- [ ] Full Dart, Rust, rustpush, protector, and ObjectBox tests pass at the
   exact app and submodule commits.
 - [x] Canary APK contains the expected ARM64 native library and is signed on
   the existing trusted GitHub-hosted signing path.
