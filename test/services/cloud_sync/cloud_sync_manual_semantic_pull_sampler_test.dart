@@ -794,6 +794,51 @@ void main() {
   }
 
   test(
+    'projection timing charges each zone only for its own windows',
+    () async {
+      final stores = <String, InMemoryCloudSyncStore>{
+        for (final zone in CloudSyncManualSemanticPullSampler.zones)
+          zone: InMemoryCloudSyncStore(),
+      };
+      for (final zone in CloudSyncManualSemanticPullSampler.zones) {
+        await _seedRetainedSaves(stores[zone]!, _semanticScope(zone), count: 1);
+      }
+      final sampler = _catchUpSampler(
+        privateStorageDirectory: privateStorageDirectory,
+        stores: stores,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: _RecordingNativeWriterPause(),
+        onReprojectWindow:
+            (scope, generation, lease, after, through, limit) async {
+              if (scope.zone == 'messageManateeZone') {
+                await Future<void>.delayed(const Duration(milliseconds: 300));
+              }
+              return const CloudRetainedProjectionWindowResult(
+                examined: 1,
+                reprojected: 0,
+                retained: 1,
+                lastExaminedSequence: 1,
+                hasMoreWithinBound: false,
+              );
+            },
+      );
+
+      final result = await sampler.runConfirmedCatchUpAndPersist(
+        persistReport: (_) async => 'persisted',
+      );
+      final reports = {
+        for (final zone in result.projectionReport!.zones) zone.zoneLabel: zone,
+      };
+      final chats = reports['chats']!.elapsedMilliseconds;
+      final messages = reports['messages']!.elapsedMilliseconds;
+      final attachments = reports['attachments']!.elapsedMilliseconds;
+      expect(messages, greaterThanOrEqualTo(250));
+      expect(messages - chats, greaterThanOrEqualTo(150));
+      expect(messages - attachments, greaterThanOrEqualTo(150));
+    },
+  );
+
+  test(
     'transient server failure resumes writers before a fresh confirmed session',
     () async {
       final stores = <String, InMemoryCloudSyncStore>{

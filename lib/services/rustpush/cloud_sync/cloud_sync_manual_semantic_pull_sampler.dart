@@ -767,6 +767,7 @@ final class CloudSyncManualSemanticPullSampler {
           if (state.batches >= maximumRetainedProjectionSweepBatches) {
             throw StateError('cloud_sync_projection_sweep_batch_limit');
           }
+          final windowStopwatch = Stopwatch()..start();
           final (
             result,
             diagnostics,
@@ -780,6 +781,7 @@ final class CloudSyncManualSemanticPullSampler {
             ),
             cancellationToken: cancellationToken,
           );
+          windowStopwatch.stop();
           // The cursor is progress, not authority. Advance only after the
           // window's lease and native pause have both been released. A process
           // restart may safely replay retained rows; it cannot skip them.
@@ -787,6 +789,7 @@ final class CloudSyncManualSemanticPullSampler {
           state.examined += result.examined;
           state.reprojected += result.reprojected;
           state.retained += result.retained;
+          state.elapsedMilliseconds += windowStopwatch.elapsedMilliseconds;
           state.cursor = result.lastExaminedSequence;
           roundReprojected += result.reprojected;
           roundRetained += result.retained;
@@ -1000,10 +1003,10 @@ final class CloudSyncManualSemanticPullSampler {
           semanticUnsupportedServiceQuarantined: 0,
           semanticStageQuarantined: 0,
           retried: 0,
-          elapsedMilliseconds: DateTime.now()
-              .toUtc()
-              .difference(state.startedAt)
-              .inMilliseconds,
+          // Charge each zone only for its own projection windows. A zone that
+          // finished early must not inherit time later zones spend decoding a
+          // large history, especially across bounded dependency rounds.
+          elapsedMilliseconds: state.elapsedMilliseconds,
           projectionExamined: state.examined,
           projectionRetained: state.retained,
           projectionBatches: state.batches,
@@ -1420,13 +1423,13 @@ final class _CloudSyncRemoteHeadZoneBound {
 }
 
 final class _CloudSyncProjectionSweepProgress {
-  final DateTime startedAt = DateTime.now().toUtc();
   final Map<String, int> diagnostics = {};
   int cursor = 0;
   int batches = 0;
   int examined = 0;
   int reprojected = 0;
   int retained = 0;
+  int elapsedMilliseconds = 0;
 }
 
 final class _CloudSyncSemanticRetryFence {
