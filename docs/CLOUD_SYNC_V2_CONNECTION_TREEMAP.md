@@ -311,11 +311,11 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 3. Continue bounded retained projection until every remaining blocking message
    and attachment save is either projected or has an explicit typed unavailable
    state. Do not reinterpret physical retention as completed local projection.
-4. Separately resolve the two queued chat creates that fail closed as
-   `cloud_sync_outbound_chat_existing_history`: adopt and read back the existing
-   CloudKit chat record when identity is exact, otherwise keep the create
-   deferred. Confirm the interlock is idle and no retained ownership barrier
-   blocks admission.
+4. Separately classify the two queued chat creates that fail closed as
+   `cloud_sync_outbound_chat_existing_history`. That code currently collapses
+   a matching local Chat, semantic snapshot, alias, or earlier outbound origin;
+   none alone authorizes adoption. Adopt only after one exact current CloudKit
+   Chat owner is proven, otherwise keep the create deferred.
 5. Use the authorized test recipients only. First repeat direct no-duplicate
    readback proof, then create one controlled restored-group plaintext message.
 6. Verify the group record by exact CloudKit readback, restart/no-save replay,
@@ -340,3 +340,24 @@ cannot fetch or advance a token. Any system-event schema decode failure,
 unexplained retained-count loss, or write-side movement rejects the candidate.
 Outbound existing-history resolution remains a separate write gate for the
 two queued creates only.
+
+## Existing-history adoption evidence gate
+
+Automatic adoption is not safe from the offline checkout alone. For each
+queued intent, a content-free live observation must first distinguish the four
+`existing_history` branches and prove exactly one current direct-iMessage Chat
+owner under the same account, protected store, scope, generation, writer epoch,
+and native session. The proof must bind the canonical Chat lookup hash, semantic
+snapshot, service-identifier alias, canonical/member record map, latest applied
+non-tombstone save, ETag, protected record reference, and payload digest. A
+later retained save, tombstone, competing owner, or native `overlaps` /
+`incomplete` result remains a defer.
+
+Only after that proof may the production local-send admission seam atomically
+re-read the state-1 journal intent and unchanged provisional Message/Chat,
+adopt the exact existing relationship, and persist its durable reconciliation
+binding under the existing `v2ReadWrite` interlock and auth fence. That
+transaction must create no Chat stage, outbox row, record-map mutation, remote
+save, merge-update, or delete. Restart must repeat as a no-op; any mismatch must
+roll back and leave the intent ready/deferred. A bare Message reparent is not a
+fallback because the journal source digest binds the original Chat row and UUID.
