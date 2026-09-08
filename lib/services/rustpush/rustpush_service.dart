@@ -7634,22 +7634,29 @@ class RustPushService extends GetxService {
       });
     }
     Logger.info("initDone");
-    unawaited(_replayCloudSyncV2NativeSendReceipts().timeout(
+    await _replayCloudSyncV2NativeSendReceipts().timeout(
       const Duration(seconds: 5),
       onTimeout: () => Logger.warn(
         'Cloud Sync V2 native send receipt startup replay timed out',
       ),
-    ));
+    );
     final sendingProgress = Database.messages
         .query(Message_.sendingServiceId.notNull())
         .build()
         .find();
     for (var item in sendingProgress) {
-      // we are still sending
-      if (item.sendingServiceId == serviceId) continue;
-      item.sendingServiceId = null;
-      item = item.save(updateSendingServiceId: true);
-      markFailed(item, "Crashed while still sending");
+      final localId = item.id;
+      if (localId == null) continue;
+      // Replay can finish after its timeout. Claim the row atomically with the
+      // state-0/3 check rather than racing a stale failure against confirmation.
+      final failed = CloudSyncLocalSendJournal.claimUntrackedCrashedSend(
+        Database.store, localId, serviceId,
+      );
+      if (failed == null) {
+        Logger.info('Cloud Sync V2 unresolved native send retained at startup');
+        continue;
+      }
+      await markFailed(failed, "Crashed while still sending");
     }
     if (ls.isUiThread) await cs.refreshContacts();
     Logger.info("finishInit");
@@ -8302,7 +8309,7 @@ class RustPushService extends GetxService {
       _cloudSyncV2NativeReceiptReplayNeedsContinuation = false;
       for (var pageNumber = 0; pageNumber < 64; pageNumber++) {
         replayBinding.requireCurrent();
-        final page = api.cloudSyncReplayNativeSendReceipts(
+        final page = await api.cloudSyncReplayNativeSendReceipts(
           storageDirectory: storagePath,
           expectedAccountFingerprint: auth.accountFingerprint,
           expectedProtectedStoreIdentity: auth.protectedStoreIdentity,

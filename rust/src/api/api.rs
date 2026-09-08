@@ -409,8 +409,7 @@ fn persist_cloud_sync_native_send_receipt(
     })
 }
 
-#[frb(sync)]
-pub fn cloud_sync_replay_native_send_receipts(
+pub async fn cloud_sync_replay_native_send_receipts(
     storage_directory: String,
     expected_account_fingerprint: String,
     expected_protected_store_identity: String,
@@ -9212,8 +9211,8 @@ mod cloud_sync_windows_sender_tests {
         );
     }
 
-    #[test]
-    fn no_handle_success_has_durable_receipt_before_confirmation_fields_return() {
+    #[tokio::test]
+    async fn no_handle_success_has_durable_receipt_before_confirmation_fields_return() {
         let directory = tempfile::tempdir().expect("temp directory");
         let stable_guid = "11111111-2222-4abc-8def-555555555555";
         let account_fingerprint = "A".repeat(43);
@@ -9240,6 +9239,7 @@ mod cloud_sync_windows_sender_tests {
             protected_store_identity,
             None,
         )
+        .await
         .expect("replay persisted no-handle receipt");
         assert_eq!(page.receipts.len(), 1);
         assert_eq!(page.receipts[0].receipt_id, receipt.receipt_id);

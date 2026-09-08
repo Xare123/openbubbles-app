@@ -3881,15 +3881,16 @@ fn wire__crate__api__api__cloud_sync_recover_abandoned_page_leases_impl(
     )
 }
 fn wire__crate__api__api__cloud_sync_replay_native_send_receipts_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
     data_len_: i32,
-) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "cloud_sync_replay_native_send_receipts",
-            port: None,
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -3906,17 +3907,21 @@ fn wire__crate__api__api__cloud_sync_replay_native_send_receipts_impl(
             let api_expected_protected_store_identity = <String>::sse_decode(&mut deserializer);
             let api_after_receipt_id = <Option<String>>::sse_decode(&mut deserializer);
             deserializer.end();
-            transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                (move || {
-                    let output_ok = crate::api::api::cloud_sync_replay_native_send_receipts(
-                        api_storage_directory,
-                        api_expected_account_fingerprint,
-                        api_expected_protected_store_identity,
-                        api_after_receipt_id,
-                    )?;
-                    Ok(output_ok)
-                })(),
-            )
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::api::cloud_sync_replay_native_send_receipts(
+                            api_storage_directory,
+                            api_expected_account_fingerprint,
+                            api_expected_protected_store_identity,
+                            api_after_receipt_id,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
         },
     )
 }
@@ -27312,6 +27317,7 @@ fn pde_ffi_dispatcher_primary_impl(
 66 => wire__crate__api__api__cloud_sync_prepare_message_create_impl(port, ptr, rust_vec_len, data_len),
 68 => wire__crate__api__api__cloud_sync_reconcile_chat_create_impl(port, ptr, rust_vec_len, data_len),
 69 => wire__crate__api__api__cloud_sync_reconcile_message_create_impl(port, ptr, rust_vec_len, data_len),
+71 => wire__crate__api__api__cloud_sync_replay_native_send_receipts_impl(port, ptr, rust_vec_len, data_len),
 72 => wire__crate__api__api__cloud_sync_resume_password_cloudkit_writers_impl(port, ptr, rust_vec_len, data_len),
 75 => wire__crate__api__api__cloud_sync_stage_outbound_chat_impl(port, ptr, rust_vec_len, data_len),
 76 => wire__crate__api__api__cloud_sync_stage_outbound_message_impl(port, ptr, rust_vec_len, data_len),
@@ -27668,11 +27674,6 @@ fn pde_ffi_dispatcher_sync_impl(
         }
         67 => wire__crate__api__api__cloud_sync_protect_impl(ptr, rust_vec_len, data_len),
         70 => wire__crate__api__api__cloud_sync_recover_abandoned_page_leases_impl(
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        71 => wire__crate__api__api__cloud_sync_replay_native_send_receipts_impl(
             ptr,
             rust_vec_len,
             data_len,

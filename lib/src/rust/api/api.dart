@@ -125,7 +125,7 @@ String cloudSyncFingerprintAccount({
   rawAccountIdentifier: rawAccountIdentifier,
 );
 
-CloudSyncNativeSendReceiptPage cloudSyncReplayNativeSendReceipts({
+Future<CloudSyncNativeSendReceiptPage> cloudSyncReplayNativeSendReceipts({
   required String storageDirectory,
   required String expectedAccountFingerprint,
   required String expectedProtectedStoreIdentity,

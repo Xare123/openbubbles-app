@@ -103,6 +103,48 @@ void main() {
     expect(journal.readReady(), hasLength(1));
   });
 
+  test('startup failure sweep retains only unresolved native confirmation', () {
+    final message = awaitingNativeConfirmation();
+    expect(
+      CloudSyncLocalSendJournal.hasUnresolvedNativeConfirmation(store, message),
+      isTrue,
+    );
+    expect(
+      CloudSyncLocalSendJournal.claimUntrackedCrashedSend(
+        store, message.id!, 'replacement-service',
+      ),
+      isNull,
+    );
+    final id = confirmNative()!;
+    expect(
+      CloudSyncLocalSendJournal.hasUnresolvedNativeConfirmation(store, message),
+      isTrue,
+      reason: 'deferred IDS success must survive restart until promotion',
+    );
+    expect(
+      CloudSyncLocalSendJournal.claimUntrackedCrashedSend(
+        store, message.id!, 'replacement-service',
+      ),
+      isNull,
+    );
+    journal.promoteIdsConfirmedDeferred(
+      intentId: id, currentAuth: _auth(Object()), now: _time(5),
+    );
+    expect(
+      CloudSyncLocalSendJournal.hasUnresolvedNativeConfirmation(store, message),
+      isFalse,
+    );
+
+    final legacy = _message(chat: chat, stagingGuid: _guidB)
+      ..sendingServiceId = 'crashed-service';
+    store.box<Message>().put(legacy);
+    final claimed = CloudSyncLocalSendJournal.claimUntrackedCrashedSend(
+      store, legacy.id!, 'replacement-service',
+    );
+    expect(claimed?.id, legacy.id);
+    expect(store.box<Message>().get(legacy.id!)!.sendingServiceId, isNull);
+  });
+
   test('native confirmation can beat foreground GUID normalization', () {
     final message = awaitingNativeConfirmation(reflected: false);
     final id = confirmNative()!;

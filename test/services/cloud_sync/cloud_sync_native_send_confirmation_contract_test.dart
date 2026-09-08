@@ -27,20 +27,25 @@ void main() {
     final start = source.indexOf('if (push is api.PushMessage_SendConfirm)');
     final handler = source.substring(start, source.indexOf('return;',
         source.indexOf('await _confirmCloudSyncV2NativeSend', start)));
+    final compact = handler.replaceAll(RegExp(r'\s+'), ' ');
     expect(handler, contains('if (push.error == null)'));
-    expect(handler, contains('await _confirmCloudSyncV2NativeSend(push.uuid)'));
+    expect(compact, contains('await _confirmCloudSyncV2NativeSend( push.uuid,'));
+    expect(compact, contains('nativeReceipt: push.nativeReceipt,'));
     expect(handler, contains('background send failed; intent retained'));
   });
 
   test('durable IDS proof precedes fresh authorization and worker wakeup', () {
     final start = source.indexOf('Future<void> _confirmCloudSyncV2NativeSend');
     final handler = source.substring(
-      start, source.indexOf('Future<void> _saveCloudSyncV2LocalSend', start),
+      start,
+      source.indexOf('Future<void> _replayCloudSyncV2NativeSendReceipts', start),
     );
     expect(handler.indexOf('recordNativeSendConfirmation('),
         lessThan(handler.indexOf('await CloudSyncLocalSendAuthFence(')));
-    expect(handler.indexOf('promoteIdsConfirmedDeferred('),
-        lessThan(handler.indexOf('_queueCloudSyncV2LocalSends(')));
+    final promotion = handler.indexOf('promoteIdsConfirmedDeferred(');
+    expect(promotion, greaterThanOrEqualTo(0));
+    expect(promotion,
+        lessThan(handler.indexOf('_queueCloudSyncV2LocalSends(', promotion)));
     expect(handler, contains('}.contains(error.message)) {'));
     expect(handler, contains('rethrow;'));
     // Headless receipt must be able to journal proof; only dispatch is UI-bound.

@@ -731,7 +731,11 @@ impl PlatformCloudNativeProtectedStore {
             return Err(CloudNativeStoreFailure::InvalidReference);
         }
         let store_directory = self.store_directory()?;
+        let store_directory_existed = store_directory.is_dir();
         fs::create_dir_all(&store_directory).map_err(|_| CloudNativeStoreFailure::Io)?;
+        if !store_directory_existed {
+            Self::sync_directory(&self.storage_directory)?;
+        }
         let lease_directory = self.lease_directory()?;
         let temporary_directory = self.temporary_directory()?;
         fs::create_dir_all(&lease_directory).map_err(|_| CloudNativeStoreFailure::Io)?;
@@ -1463,6 +1467,10 @@ impl PlatformCloudNativeProtectedStore {
 
         let store_directory = self.store_directory()?;
         fs::create_dir_all(&store_directory).map_err(|_| CloudNativeStoreFailure::Io)?;
+        // A receipt may be the first durable V2 artifact. Retry the parent
+        // barrier unconditionally so an earlier create-plus-sync failure is
+        // repaired before this send is reported durable.
+        Self::sync_directory(&self.storage_directory)?;
         let receipt_directory = self.ids_send_receipt_directory()?;
         let temporary_directory = self.temporary_directory()?;
         fs::create_dir_all(&receipt_directory).map_err(|_| CloudNativeStoreFailure::Io)?;
@@ -1512,6 +1520,9 @@ impl PlatformCloudNativeProtectedStore {
             {
                 return Err(CloudNativeStoreFailure::ContextMismatch);
             }
+            // A prior attempt may have completed the rename but failed the
+            // directory barrier. Retry it before reporting idempotent success.
+            Self::sync_directory(&receipt_directory)?;
             return Ok(receipt_id);
         }
         let temporary =
@@ -1562,17 +1573,6 @@ impl PlatformCloudNativeProtectedStore {
             CloudNativeStream::Messages,
         )
         .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
-        let mut paths = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .and_then(|name| name.strip_suffix(IDS_SEND_RECEIPT_SUFFIX))
-                    .is_some_and(is_bare_digest)
-            })
-            .collect::<Vec<_>>();
-        paths.sort();
         let after_token = match after_receipt_id {
             Some(receipt_id) => Some(
                 receipt_id
@@ -1582,17 +1582,43 @@ impl PlatformCloudNativeProtectedStore {
             ),
             None => None,
         };
-        if let Some(after_token) = after_token {
-            paths.retain(|path| {
+        // Enumeration is off the Flutter UI isolate. Keep its memory bounded
+        // to the earliest page plus one look-ahead candidate, and keep costly
+        // receipt reads/decryption bounded to one page. Invalid filenames do
+        // not permanently strand later valid receipts.
+        let mut paths = Vec::with_capacity(MAX_IDS_SEND_RECEIPTS_PER_REPLAY + 1);
+        for entry in entries {
+            let Ok(entry) = entry else { continue };
+            let path = entry.path();
+            let token = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_suffix(IDS_SEND_RECEIPT_SUFFIX));
+            if !token.is_some_and(is_bare_digest)
+                || after_token.is_some_and(|after| token.is_some_and(|value| value <= after))
+            {
+                continue;
+            }
+            paths.push(path);
+            paths.sort();
+            if paths.len() > MAX_IDS_SEND_RECEIPTS_PER_REPLAY + 1 {
+                paths.pop();
+            }
+        }
+        let has_more = paths.len() > MAX_IDS_SEND_RECEIPTS_PER_REPLAY;
+        paths.truncate(MAX_IDS_SEND_RECEIPTS_PER_REPLAY);
+        let next_cursor = if has_more {
+            paths.last().and_then(|path| {
                 path.file_name()
                     .and_then(|name| name.to_str())
                     .and_then(|name| name.strip_suffix(IDS_SEND_RECEIPT_SUFFIX))
-                    .is_some_and(|token| token > after_token)
-            });
-        }
+                    .map(|token| format!("{IDS_SEND_RECEIPT_PREFIX}{token}"))
+            })
+        } else {
+            None
+        };
         let mut receipts = Vec::new();
-        let mut next_cursor = None;
-        for (index, path) in paths.iter().enumerate() {
+        for path in &paths {
             let token = path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -1643,12 +1669,6 @@ impl PlatformCloudNativeProtectedStore {
                 guid_hash: receipt.guid_hash,
                 native_session_id: receipt.native_session_id,
             });
-            if receipts.len() == MAX_IDS_SEND_RECEIPTS_PER_REPLAY {
-                if index + 1 < paths.len() {
-                    next_cursor = Some(format!("{IDS_SEND_RECEIPT_PREFIX}{token}"));
-                }
-                break;
-            }
         }
         Ok(CloudNativeIdsSendReceiptReplayPage {
             receipts,
@@ -5830,7 +5850,7 @@ mod tests {
             .ids_send_receipt_path(&first)
             .expect("receipt path")
             .is_file());
-        let replayed = store
+        let first = store
             .replay_ids_send_receipts(
                 &receipt.account_fingerprint,
                 &receipt.protected_store_identity,
@@ -5966,10 +5986,19 @@ mod tests {
                 &receipt.protected_store_identity,
                 None,
             )
-            .expect("replay matching receipt")
-            .receipts;
-        assert_eq!(replayed.len(), 1);
-        assert_eq!(replayed[0].receipt_id, later_id);
+            .expect("replay corrupt receipt page");
+        assert!(first.receipts.is_empty());
+        let cursor = first.next_cursor.expect("corrupt page cursor");
+        let replayed = store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                Some(&cursor),
+            )
+            .expect("replay later matching receipt");
+        assert_eq!(replayed.receipts.len(), 1);
+        assert_eq!(replayed.receipts[0].receipt_id, later_id);
+        assert_eq!(replayed.next_cursor, None);
     }
 
     #[test]
@@ -6021,6 +6050,35 @@ mod tests {
         assert_eq!(second.receipts[0].receipt_id, last_id);
         assert_eq!(second.receipts[0].guid_hash, target.guid_hash);
         assert_eq!(second.next_cursor, None);
+    }
+
+    #[test]
+    fn ids_send_receipt_replay_scans_large_noise_with_bounded_candidates() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let receipt_directory = store
+            .ids_send_receipt_directory()
+            .expect("receipt directory");
+        fs::create_dir_all(&receipt_directory).expect("create receipt directory");
+        for index in 0..=4_096 {
+            fs::write(receipt_directory.join(format!("noise-{index}")), b"x")
+                .expect("write bounded noise fixture");
+        }
+        let receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'V');
+        let receipt_id = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist receipt after noise");
+        let replayed = store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("replay receipt after noise");
+
+        assert_eq!(replayed.receipts.len(), 1);
+        assert_eq!(replayed.receipts[0].receipt_id, receipt_id);
+        assert_eq!(replayed.next_cursor, None);
     }
 
     #[test]

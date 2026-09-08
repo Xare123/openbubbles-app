@@ -593,6 +593,50 @@ final class CloudSyncLocalSendJournal {
             ]);
   }
 
+  /// A startup crash sweep must not downgrade a send while durable native IDS
+  /// evidence can still arrive or still needs authenticated promotion. This is
+  /// a local recovery fence only; it neither confirms the send nor authorizes
+  /// a CloudKit write.
+  static bool hasUnresolvedNativeConfirmation(Store store, Message message) {
+    final messageId = message.id;
+    if (messageId == null || messageId <= 0) return false;
+    final unresolvedState = CloudSyncLocalSendIntentEntity_.state
+        .equals(0)
+        .or(CloudSyncLocalSendIntentEntity_.state.equals(3));
+    final query = store
+        .box<CloudSyncLocalSendIntentEntity>()
+        .query(CloudSyncLocalSendIntentEntity_.localMessageId
+            .equals(messageId)
+            .and(unresolvedState))
+        .build()
+      ..limit = 1;
+    try {
+      return query.findFirst() != null;
+    } finally {
+      query.close();
+    }
+  }
+
+  /// Atomically claims only an untracked stale send for legacy failure
+  /// normalization. Native receipt replay uses the same Store transaction
+  /// boundary, so it cannot confirm between this check and the claim.
+  static Message? claimUntrackedCrashedSend(
+    Store store,
+    int localMessageId,
+    String currentServiceId,
+  ) => store.runInTransaction(TxMode.write, () {
+    final message = store.box<Message>().get(localMessageId);
+    if (message == null ||
+        message.sendingServiceId == null ||
+        message.sendingServiceId == currentServiceId ||
+        hasUnresolvedNativeConfirmation(store, message)) {
+      return null;
+    }
+    message.sendingServiceId = null;
+    store.box<Message>().put(message);
+    return message;
+  });
+
   /// A native callback can finish before the matching send future returns.
   /// Avoid re-saving or downgrading that same immutable, already-confirmed
   /// origin. This is not a way to infer confirmation from a Message row.

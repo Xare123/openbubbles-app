@@ -361,6 +361,31 @@ void main() {
     );
   });
 
+  test('startup recovery serializes receipt replay before stale send failure', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final start = source.indexOf(
+      'Cloud Sync V2 native send receipt startup replay timed out',
+    );
+    final end = source.indexOf('Logger.info("finishInit")', start);
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final recovery = source.substring(start, end);
+    expect(
+      source.lastIndexOf(
+        'await _replayCloudSyncV2NativeSendReceipts().timeout(', start,
+      ),
+      greaterThanOrEqualTo(0),
+    );
+    expect(
+      recovery.indexOf('claimUntrackedCrashedSend('),
+      lessThan(recovery.indexOf('await markFailed(')),
+    );
+    expect(recovery, contains('final failed = CloudSyncLocalSendJournal.'));
+    expect(recovery, contains('await markFailed(failed,'));
+  });
+
   test('one confirmed action auto-resumes only bounded semantic batches', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',

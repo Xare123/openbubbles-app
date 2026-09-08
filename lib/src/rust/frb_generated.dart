@@ -481,7 +481,8 @@ abstract class RustLibApi extends BaseApi {
     required bool liveReferenceEnumerationComplete,
   });
 
-  CloudSyncNativeSendReceiptPage crateApiApiCloudSyncReplayNativeSendReceipts({
+  Future<CloudSyncNativeSendReceiptPage>
+  crateApiApiCloudSyncReplayNativeSendReceipts({
     required String storageDirectory,
     required String expectedAccountFingerprint,
     required String expectedProtectedStoreIdentity,
@@ -4811,21 +4812,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  CloudSyncNativeSendReceiptPage crateApiApiCloudSyncReplayNativeSendReceipts({
+  Future<CloudSyncNativeSendReceiptPage>
+  crateApiApiCloudSyncReplayNativeSendReceipts({
     required String storageDirectory,
     required String expectedAccountFingerprint,
     required String expectedProtectedStoreIdentity,
     String? afterReceiptId,
   }) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(storageDirectory, serializer);
           sse_encode_String(expectedAccountFingerprint, serializer);
           sse_encode_String(expectedProtectedStoreIdentity, serializer);
           sse_encode_opt_String(afterReceiptId, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 71)!;
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 71,
+            port: port_,
+          );
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_cloud_sync_native_send_receipt_page,
