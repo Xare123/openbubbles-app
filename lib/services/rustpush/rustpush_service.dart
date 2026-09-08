@@ -38,6 +38,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_proven
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_production_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_sync_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_runtime.dart';
@@ -1472,6 +1473,10 @@ class RustPushBackend implements BackendService {
     return api.MessageParts(field0: parts);
   }
 
+  Future<CloudSyncComposerAdmission?> prepareCloudSyncV2ComposerAdmission(
+          Chat chat, Message message) =>
+      pushService.prepareCloudSyncV2ComposerAdmission(chat, message);
+
   @override
   Future<Message> sendMessage(Chat chat, Message m,
       {CancelToken? cancelToken}) async {
@@ -1646,11 +1651,17 @@ class RustPushBackend implements BackendService {
     final cloudSyncGuidIsNew = CloudSyncLocalSendIdentity.isFreshLocalSubmission(
       m, generatedGuid: generatedMessageId, stableGuid: stableMessageId,
     );
+    final composerPreAdmitted =
+        CloudSyncLocalSendJournal.hasPendingComposerAdmission(Database.store, m);
     var localCloudIntent = await pushService._captureCloudSyncV2LocalSend(
       message: m,
       chat: chat,
       wire: msg,
     );
+    if (composerPreAdmitted &&
+        (localCloudIntent == null || !localCloudIntent.composerPreAdmitted)) {
+      throw StateError('cloud_sync_local_send_journal_required');
+    }
     Future<api.MessageInst> rebuildWireMessage() async {
       final rebuilt = await buildWireMessage();
       rebuilt.id = stableMessageId;
@@ -7783,12 +7794,111 @@ class RustPushService extends GetxService {
 
   // Local intent capture only. This does not schedule or authorize a CloudKit
   // save; protected admission and the create-only writer remain separate.
+  Future<CloudSyncComposerAdmission?> prepareCloudSyncV2ComposerAdmission(
+      Chat chat, Message message) async {
+    if (!CloudSyncDevGate.localSendRuntimeEnabled ||
+        !CloudSyncDevGate.manualOutboundCanaryEnabled ||
+        !CloudKitWriterOwnership.v2MutationsEnabled) {
+      return null;
+    }
+    if (!_cloudSyncV2CanaryRuntimeAllowed ||
+        !_cloudSyncV2DeveloperRuntimeAllowed || !ls.isUiThread) {
+      return null;
+    }
+    if (!CloudSyncComposerAdmission.isPlainTextCandidate(message)) return null;
+    final previousStagingGuid = message.stagingGuid;
+    final stableGuid = CloudSyncComposerAdmission.selectStableGuid(
+      store: Database.store,
+      message: message,
+      allocate: () => uuid.v4().toUpperCase(),
+    );
+    if (stableGuid == null) return null;
+    final CloudSyncLocalSendIdentity? eligible;
+    try {
+      message.stagingGuid = stableGuid;
+      eligible = CloudSyncLocalSendIdentity.capture(
+        message, chat, stableGuid,
+      );
+    } finally {
+      message.stagingGuid = previousStagingGuid;
+    }
+    if (eligible == null) return null;
+    try {
+      if (loggingOut ||
+          ss.settings.cloudSyncingEnabled.value || isSyncing.value != null ||
+          statePath.isEmpty) {
+        throw StateError('cloud_sync_local_send_runtime_unavailable');
+      }
+      final currentState = state;
+      final client = currentState?.icloudServices?.cloudMessagesClient;
+      if (client == null) {
+        throw StateError('cloud_sync_local_send_runtime_unavailable');
+      }
+      final storagePath = statePath;
+      final objectBox = Database.store;
+      bool stillCurrent() => !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+          !objectBox.isClosed() && identical(objectBox, Database.store) &&
+          identical(currentState, state) &&
+          identical(client, state?.icloudServices?.cloudMessagesClient) &&
+          storagePath == statePath && !ss.settings.cloudSyncingEnabled.value;
+      Future<CloudSyncNativeAuthSnapshot?> captureAuth() async {
+        if (!stillCurrent()) return null;
+        final metadata = await FrbCloudSyncNativeAuthBinding().capture(
+          cloudMessagesClient: client,
+          privateStorageDirectory: storagePath,
+        );
+        if (!stillCurrent()) return null;
+        return CloudSyncNativeAuthSnapshot.fromNative(
+          nativeSessionId: metadata.nativeSessionId,
+          accountFingerprint: metadata.accountFingerprint,
+          protectedStoreIdentity: metadata.protectedStoreIdentity,
+          cloudMessagesClient: client,
+        );
+      }
+      final auth = await captureAuth().timeout(const Duration(seconds: 1));
+      if (auth == null || !stillCurrent()) {
+        throw StateError('cloud_sync_local_send_identity_changed');
+      }
+      final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
+      final owner = authority.read(
+        CloudKitWriterScope(accountFingerprint: auth.accountFingerprint),
+      );
+      if (owner == null || owner.owner != CloudKitWriterOwner.v2) {
+        throw StateError('cloud_sync_local_send_owner_required');
+      }
+      final journal = CloudSyncLocalSendJournal(
+        store: objectBox, authority: authority, authoritySnapshot: owner,
+      );
+      if (previousStagingGuid != null &&
+          !journal.isComposerSubmissionPending(eligible)) {
+        throw StateError('cloud_sync_local_send_journal_required');
+      }
+      return CloudSyncComposerAdmission.captureFresh(
+        stableGuid: stableGuid,
+        message: message,
+        chat: chat,
+        journal: journal,
+        authFence: CloudSyncLocalSendAuthFence(
+          expected: auth,
+          capture: () => captureAuth().timeout(const Duration(seconds: 1)),
+          stillCurrent: stillCurrent,
+        ),
+        admittedAt: DateTime.now().toUtc(),
+      ) ?? (throw StateError('cloud_sync_local_send_source_changed'));
+    } catch (error) {
+      Logger.warn('Cloud Sync V2 composer admission failed '
+          'code=${cloudSyncV2SafeFailureCode(error)}');
+      rethrow;
+    }
+  }
+
   Future<({
     CloudSyncLocalSendJournal journal,
     CloudSyncLocalSendIdentity identity,
     CloudSyncLocalSendAuthFence authFence,
     CloudSyncNativeAuthSnapshot capturedAuth,
     bool Function() stillCurrent,
+    bool composerPreAdmitted,
   })?> _captureCloudSyncV2LocalSend({
     required Message message,
     required Chat chat,
@@ -7861,11 +7971,14 @@ class RustPushService extends GetxService {
               initialSourceSha256: initialIdentity.sourceSha256,
             );
       if (identity == null) return null;
+      final composerPreAdmitted =
+          !isReaction && journal.isComposerSubmissionPending(identity);
       return (
         journal: journal,
         identity: identity,
         capturedAuth: auth,
         stillCurrent: stillCurrent,
+        composerPreAdmitted: composerPreAdmitted,
         authFence: CloudSyncLocalSendAuthFence(
           expected: auth,
           capture: () => captureAuth().timeout(const Duration(seconds: 1)),
@@ -7965,7 +8078,8 @@ class RustPushService extends GetxService {
   Future<void> _saveCloudSyncV2LocalSend(
     ({CloudSyncLocalSendJournal journal, CloudSyncLocalSendIdentity identity,
       CloudSyncLocalSendAuthFence authFence,
-      CloudSyncNativeAuthSnapshot capturedAuth, bool Function() stillCurrent})? context,
+      CloudSyncNativeAuthSnapshot capturedAuth, bool Function() stillCurrent,
+      bool composerPreAdmitted})? context,
     Message message,
     Chat chat, {
     required bool confirmed,
@@ -8012,6 +8126,11 @@ class RustPushService extends GetxService {
         // Only a rolled-back message/intent transaction needs the fallback.
         // Re-saving after a successful state-3 commit could duplicate the row.
         message.id = previousId;
+        if (context.composerPreAdmitted) {
+          // Never split an atomically admitted Message from its journal by
+          // falling back to standalone persistence.
+          rethrow;
+        }
         if (!context.stillCurrent()) {
           // Never run the global Message.save fallback in a replacement
           // account's Store. The original pending intent remains retained.

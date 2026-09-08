@@ -506,6 +506,31 @@ final class CloudSyncLocalSendJournal {
 
   bool isBoundToStore(Store store) => identical(store, _store);
 
+  /// Local routing check only. It grants no admission or writer authority.
+  static bool hasPendingComposerAdmission(Store store, Message message) {
+    final messageId = message.id;
+    final stableGuid = message.stagingGuid;
+    if (messageId == null || messageId <= 0 || stableGuid == null) return false;
+    final query = store
+        .box<CloudSyncLocalSendIntentEntity>()
+        .query(CloudSyncLocalSendIntentEntity_.localMessageId
+            .equals(messageId)
+            .and(CloudSyncLocalSendIntentEntity_.state.equals(0)))
+        .build();
+    final List<CloudSyncLocalSendIntentEntity> found;
+    try {
+      found = query.find();
+    } finally {
+      query.close();
+    }
+    return found.length == 1 &&
+        found.single.messageGuidHash ==
+            CloudSyncLocalSendIdentity._digest([
+              'cloud-sync-local-send-guid-v1',
+              stableGuid,
+            ]);
+  }
+
   /// A native callback can finish before the matching send future returns.
   /// Avoid re-saving or downgrading that same immutable, already-confirmed
   /// origin. This is not a way to infer confirmation from a Message row.
@@ -539,6 +564,42 @@ final class CloudSyncLocalSendJournal {
         // _readBoundIntent checked the immutable adoption binding. An adopted
         // source is no longer overwritten from the caller's mutable model.
         return intent.state == 2;
+      });
+
+  /// True only for the exact state-0 source already committed by composer
+  /// admission. This distinguishes it from legacy post-queue capture.
+  bool isComposerSubmissionPending(CloudSyncLocalSendIdentity identity) =>
+      _store.runInTransaction(TxMode.read, () {
+        _verifyLocalOwnership();
+        final key = CloudSyncLocalSendIdentity._digest([
+          'cloud-sync-local-send-intent-v1',
+          _binding.scope.accountFingerprint,
+          identity.guidHash,
+        ]);
+        final query = _intents
+            .query(CloudSyncLocalSendIntentEntity_.intentKey.equals(key))
+            .build();
+        final CloudSyncLocalSendIntentEntity? found;
+        try {
+          found = query.findUnique();
+        } finally {
+          query.close();
+        }
+        if (found == null) return false;
+        final intent = _readBoundIntent(found.id);
+        if (intent.state != 0 ||
+            intent.messageGuidHash != identity.guidHash ||
+            intent.sourceSha256 != identity.sourceSha256) {
+          return false;
+        }
+        final saved = _messages.get(intent.localMessageId);
+        final chat = saved?.chat.target;
+        final actual = saved == null || chat == null
+            ? null
+            : identity._revalidate(saved, chat);
+        return actual != null &&
+            actual.sourceSha256 == identity.sourceSha256 &&
+            saved!.stagingGuid == identity._guid;
       });
 
   /// Recover the original fingerprint for a retry under this exact local

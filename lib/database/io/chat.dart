@@ -1786,7 +1786,9 @@ class Chat {
   Future<Chat> addMessage(Message message,
       {bool changeUnreadStatus = true,
       bool checkForMessageText = true,
-      bool clearNotificationsIfFromMe = true}) async {
+      bool clearNotificationsIfFromMe = true,
+      Future<Message> Function(Message Function() persistMessage)?
+          transactionalPersistence}) async {
     // If this is a message preview and we don't already have metadata for this, get it
     if (message.fullText.replaceAll("\n", " ").hasUrl &&
         !MetadataHelper.mapIsNotEmpty(message.metadata) &&
@@ -1805,8 +1807,18 @@ class Chat {
     Message? newMessage;
 
     try {
-      newMessage = message.save(chat: this);
+      newMessage = transactionalPersistence == null
+          ? message.save(chat: this)
+          : await transactionalPersistence(
+              () => message.save(chat: this, throwOnUniqueViolation: true));
     } catch (ex, stacktrace) {
+      if (transactionalPersistence != null) {
+        Logger.error(
+            "Failed atomic message persistence (GUID: ${message.guid}) for chat (GUID: $guid)",
+            error: ex,
+            trace: stacktrace);
+        rethrow;
+      }
       newMessage = Message.findOne(guid: message.guid);
       if (newMessage == null) {
         Logger.error(

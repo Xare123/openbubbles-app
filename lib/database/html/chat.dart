@@ -303,14 +303,18 @@ class Chat {
   }
 
   Future<Chat> addMessage(Message message,
-      {bool changeUnreadStatus = true, bool checkForMessageText = true, bool clearNotificationsIfFromMe = true}) async {
+      {bool changeUnreadStatus = true, bool checkForMessageText = true, bool clearNotificationsIfFromMe = true,
+      Future<Message> Function(Message Function() persistMessage)? transactionalPersistence}) async {
     // Save the message
     Message? latest = latestMessage;
     Message? newMessage;
 
     try {
-      newMessage = message.save(chat: this);
+      newMessage = transactionalPersistence == null
+          ? message.save(chat: this)
+          : await transactionalPersistence(() => message.save(chat: this));
     } catch (ex, stacktrace) {
+      if (transactionalPersistence != null) rethrow;
       newMessage = Message.findOne(guid: message.guid);
       if (newMessage == null) {
         Logger.error("Failed to add message (GUID: ${message.guid}) to chat (GUID: $guid)",

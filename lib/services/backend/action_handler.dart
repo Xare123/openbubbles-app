@@ -115,8 +115,12 @@ class ActionHandler extends GetxService {
       }
     } else {
       m.generateTempGuid();
+      final composerAdmission = backend is RustPushBackend
+          ? await (backend as RustPushBackend).prepareCloudSyncV2ComposerAdmission(c, m)
+          : null;
       await c.addMessage(m,
-          clearNotificationsIfFromMe: clearNotificationsIfFromMe);
+          clearNotificationsIfFromMe: clearNotificationsIfFromMe,
+          transactionalPersistence: composerAdmission?.persist);
       messages.add(m);
     }
     return messages;

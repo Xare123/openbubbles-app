@@ -12,10 +12,13 @@ class _TestItem extends QueueItem {
 class _TestQueue extends Queue {
   int active = 0;
   int maxActive = 0;
+  bool failPreparation = false;
   bool fail = false;
 
   @override
-  Future<dynamic> prepItem(QueueItem item) async {}
+  Future<dynamic> prepItem(QueueItem item) async {
+    if (failPreparation) throw StateError('expected preparation failure');
+  }
 
   @override
   Future<void> handleQueueItem(QueueItem item) async {
@@ -52,6 +55,16 @@ void main() {
     await queue.queue(_TestItem(completer: completion));
 
     await expectLater(completion.future, throwsStateError);
+    expect(queue.isProcessing.value, isFalse);
+  });
+
+  test('preparation failure does not insert or start a queue item', () async {
+    final queue = _TestQueue()..failPreparation = true;
+
+    await expectLater(queue.queue(_TestItem()), throwsStateError);
+
+    expect(queue.items, isEmpty);
+    expect(queue.active, 0);
     expect(queue.isProcessing.value, isFalse);
   });
 }
