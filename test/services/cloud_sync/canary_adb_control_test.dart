@@ -340,6 +340,18 @@ void main() {
       expect(host, contains('Wait-DartReady'));
       expect(host, isNot(contains('Start-Sleep -Seconds')));
       expect(host, contains('Pull accepted asynchronously'));
+      expect(
+        host,
+        contains(
+          '<string name="flutter\\.canary_adb_last_result">(.*?)</string>',
+        ),
+      );
+      expect(host, contains("\$ErrorActionPreference = 'Continue'"));
+      expect(host, contains('\$adbExitCode = \$LASTEXITCODE'));
+      expect(
+        host,
+        contains('System.Management.Automation.ErrorRecord'),
+      );
     });
   });
 }

@@ -28,7 +28,29 @@ $prefsPath = 'shared_prefs/FlutterSharedPreferences.xml'
 
 function Invoke-Adb {
   param([string[]]$AdbArgs)
-  return (& adb @AdbArgs 2>&1 | Out-String)
+  # Windows PowerShell promotes native stderr to an ErrorRecord. With the
+  # script-wide Stop policy, a successful `am start` that prints a warning can
+  # therefore abort before we inspect adb's real exit code. Capture both
+  # streams under Continue, then restore the caller's policy.
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $adbOutputItems = @(& adb @AdbArgs 2>&1)
+    $adbExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+  $adbOutput = ($adbOutputItems | ForEach-Object {
+      if ($_ -is [System.Management.Automation.ErrorRecord]) {
+        [string]$_.Exception.Message
+      } else {
+        [string]$_
+      }
+    }) -join [Environment]::NewLine
+  if ($adbExitCode -ne 0) {
+    throw "adb exited with code $adbExitCode`: $adbOutput"
+  }
+  return $adbOutput
 }
 
 function New-Sequence {
@@ -60,7 +82,8 @@ function Read-Result {
   if ($xml -match 'run-as: |Permission denied|not debuggable') {
     throw 'run-as unavailable. Install the debuggable canaryDebug variant.'
   }
-  if ($xml -notmatch '<string name="canary_adb_last_result">(.*?)</string>') {
+  # shared_preferences prefixes Dart keys with `flutter.` in its Android XML.
+  if ($xml -notmatch '<string name="flutter\.canary_adb_last_result">(.*?)</string>') {
     return $null
   }
   $raw = [System.Net.WebUtility]::HtmlDecode($Matches[1])
