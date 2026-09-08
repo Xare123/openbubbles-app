@@ -539,6 +539,15 @@ jobs:
             rust/src/frb_generated.io.rs
             rust/src/frb_generated.web.rs
 
+      - name: Bound Gradle packaging memory on high-core runners
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='org.gradle.jvmargs=-Xmx24g -XX:MaxMetaspaceSize=2g -Djava.util.concurrent.ForkJoinPool.common.parallelism=8 -Dfile.encoding=UTF-8'
+          sed -i -E "s|^org\.gradle\.jvmargs=.*$|${expected}|" android/gradle.properties
+          grep -Fx -- "$expected" android/gradle.properties
+
       - name: Build benchmark APK
         id: build
         if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' }}
