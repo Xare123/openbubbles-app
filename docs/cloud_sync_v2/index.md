@@ -25,8 +25,9 @@ timestamp: 2026-09-08
 
 - `evidence/windows-replay-20260906/`: Windows fast-loop, ObjectBox, analyzer,
   route, reaction, save/readback, and Smart App Control evidence.
-- GitHub Actions run `34211915641`: current exact-source full GCE qualification
-  and signed Canary artifact for Android app source `ad822f37c`.
+- GitHub Actions run `34211915641`: current exact-source build-only GCE
+  benchmark and signed Canary artifact for Android app source `ad822f37c`;
+  exact-source full-suite qualification remains pending.
 - GitHub Actions run `34168948855`: invalidated infrastructure attempt. The app
   checkout succeeded, but rustpush commit `2274cee63` was absent from the fork;
   no tests or APK build ran. Runner cleanup passed.
