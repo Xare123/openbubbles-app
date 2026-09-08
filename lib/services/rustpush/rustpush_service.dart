@@ -8375,6 +8375,51 @@ class RustPushService extends GetxService {
     });
   }
 
+  /// Read-only automatic catch-up for the removable canary ADB channel.
+  /// (CANARY_ADB_HOOK: remove with canary ADB control.)
+  ///
+  /// Same guards, same bounded session runner, and same in-flight mutual
+  /// exclusion as [runCloudSyncV2AutomaticSemanticCatchUpConfirmed], but it
+  /// NEVER wakes the ordinary-send worker, so this entry point cannot cause
+  /// a CloudKit upload. Local canonical projection of fetched records is
+  /// unchanged from the confirmed UI flow. No existing behavior is altered:
+  /// every other caller keeps using the confirmed entry points, and no
+  /// writer, interlock, or pause logic is touched.
+  Future<CloudSyncSemanticDrainResult>
+  runCloudSyncV2AutomaticSemanticCatchUpReadOnly() {
+    if (!CloudSyncDevGate.manualSemanticPullEnabled) {
+      throw StateError('cloud_sync_semantic_pull_disabled');
+    }
+    if (!_cloudSyncV2CanaryRuntimeAllowed) {
+      throw StateError('cloud_sync_canary_package_required');
+    }
+    if (!_cloudSyncV2DeveloperRuntimeAllowed) {
+      throw StateError('cloud_sync_developer_mode_required');
+    }
+    if (_cloudSyncV2SemanticPullQuiescing || loggingOut) {
+      throw StateError('cloud_sync_semantic_pull_quiescing');
+    }
+    if (_cloudSyncV2SemanticPullInFlight != null) {
+      throw StateError('cloud_sync_semantic_pull_active');
+    }
+    final expectedCloudMessagesClient =
+        state?.icloudServices?.cloudMessagesClient;
+    if (expectedCloudMessagesClient == null) {
+      throw StateError('cloud_sync_native_auth_account_unavailable');
+    }
+
+    final future = _runCloudSyncV2AutomaticSemanticCatchUp(
+      expectedCloudMessagesClient: expectedCloudMessagesClient,
+    );
+    _cloudSyncV2SemanticPullInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_cloudSyncV2SemanticPullInFlight, future)) {
+        _cloudSyncV2SemanticPullInFlight = null;
+        // Deliberately no _queueCloudSyncV2LocalSends: read-only entry.
+      }
+    });
+  }
+
   Future<CloudSyncSemanticDrainResult>
   _runCloudSyncV2AutomaticSemanticCatchUp({
     required Object expectedCloudMessagesClient,

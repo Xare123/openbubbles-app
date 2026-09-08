@@ -1,0 +1,18 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Canary-debug ONLY overlay. Merged exclusively into the canaryDebug
+         variant. Alpha, Beta, production, and canaryRelease APKs never
+         contain this receiver. Removal: delete the whole canaryDebug tree.
+         exported=true is REQUIRED, not a relaxation: on modern Android
+         (this app targets SDK 36) the shell UID cannot deliver to an
+         exported=false component even with explicit -n targeting. Shell-only
+         scoping comes from android:permission="android.permission.DUMP"
+         (signature|privileged, pre-granted to the adb shell UID and
+         unobtainable by third-party apps), plus the in-code variant,
+         allowlist, and origin checks. -->
+    <application>
+        <receiver
+            android:name="com.bluebubbles.messaging.CanaryAdbControlReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

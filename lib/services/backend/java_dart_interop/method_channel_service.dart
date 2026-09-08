@@ -8,6 +8,7 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_canary_adb_control.dart'; // CANARY_ADB_HOOK: remove with canary ADB control.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
@@ -31,6 +32,7 @@ class MethodChannelService extends GetxService {
     background = headless;
     channel = const MethodChannel('com.bluebubbles.messaging');
     channel.setMethodCallHandler(_callHandler);
+    CanaryAdbControl.drainPendingAction(); // CANARY_ADB_HOOK: remove with canary ADB control.
     await channel.invokeMethod("ready");
     if (!kIsWeb && !kIsDesktop && !headless) {
       try {
@@ -439,6 +441,9 @@ class MethodChannelService extends GetxService {
             return Future.error(e, s);
         }
 
+        return Future.value(true);
+      case "canary-adb-command": // CANARY_ADB_HOOK: remove with canary ADB control.
+        await CanaryAdbControl.handleCommand(arguments);
         return Future.value(true);
       default:
         return Future.value(true);
