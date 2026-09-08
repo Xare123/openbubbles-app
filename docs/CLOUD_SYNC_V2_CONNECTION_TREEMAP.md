@@ -55,11 +55,11 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Candidate | `84b1018e4200d6bd838740682424d21dfee7995c` |
-| Main change | Restored group plaintext is bound to protected routing state. |
+| Candidate | `d750467b826c0576717b3255aa6ad960159d399f` (exact-source qualification pending) |
+| Main change | Exact `iMessageLite` satellite records are retained as typed out-of-scope state instead of unresolved iMessage projection debt. Case variants, malformed identity, and conflicting nested service remain quarantined. |
 | Dependency | rustpush `2274cee63c05432c89fc5dbb61915b5659fa9721`, published to the user's fork after the first clean-run checkout failure. |
-| Full qualification | GCE run `34170476606` is the current exact-source run. Its result must be recorded before installation. |
-| Android release proof | Pending a signed Canary and controlled Pixel test. Alpha remains untouched. |
+| Full qualification | GCE run `34188248440` passed against the exact candidate: generated bindings, full Dart and Rust suites, automatic-upload flags, rustpush production features, protector harness, Canary APK, native-library verification, stable signing, and cleanup. |
+| Android release proof | The signed Canary from run `34188248440` was installed in place on the Pixel with data preserved. Startup passed, Alpha remained untouched, and semantic repair applied 47 retained messages. A later large retained sweep stopped safely at report validation after projection traversal; no completion report or token was fabricated. Two queued chat creates remain deferred as existing-history conflicts. |
 | Production claim | Not yet allowed. |
 
 ### What the candidate changes
@@ -288,13 +288,18 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 
 ## Current critical path
 
-1. Complete GCE run `34170476606` against candidate `84b1018e4` and rustpush
-   `2274cee63`. Do not install an artifact from a failed run.
-2. If it passes, sign and install Canary in place. Preserve Canary identity and
-   Alpha completely.
-3. Run projection repair so eligible restored groups obtain the protected
-   routing digest. Confirm the interlock is idle and no retained ownership
-   barrier blocks admission.
+1. Qualify and install candidate `d750467b826c0576717b3255aa6ad960159d399f`, then confirm the three exact
+   `iMessageLite` chat saves become typed retained out-of-scope records. Do not
+   exclude them from the identity-disjointness read set.
+2. Diagnose the large retained sweep's content-free
+   `cloud_sync_semantic_report_zone_invalid` result and make report validation
+   identify the exact failed invariant. Do not reinterpret a failed report as a
+   completed drain.
+3. Resolve the two queued chat creates that now fail closed as
+   `cloud_sync_outbound_chat_existing_history`: adopt and read back the existing
+   CloudKit chat record when identity is exact, otherwise keep the create
+   deferred. Confirm the interlock is idle and no retained ownership barrier
+   blocks admission.
 4. Use the authorized test recipients only. First repeat direct no-duplicate
    readback proof, then create one controlled restored-group plaintext message.
 5. Verify the group record by exact CloudKit readback, restart/no-save replay,
@@ -307,8 +312,9 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 
 ## Next falsification test
 
-The next test is not another broad device exploration. It is the exact-source
-GCE run. A failure invalidates the candidate until its concrete source,
-binding, native, or packaging cause is repaired. A pass permits one signed
-Canary and the narrow live group create/readback/restart test. Neither outcome
-permits remote deletion or update merge.
+The next test is exact-source qualification of `d750467b826c0576717b3255aa6ad960159d399f`, because the current
+installed Canary does not contain the typed `iMessageLite` repair. After a pass,
+install in place and repeat the bounded read-only repair. Any invalid report,
+non-disjoint chat identity, or existing-history conflict blocks outbound
+admission until resolved. A pass does not permit remote deletion or update
+merge.

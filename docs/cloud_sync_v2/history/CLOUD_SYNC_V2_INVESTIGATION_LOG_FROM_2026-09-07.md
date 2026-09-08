@@ -48,11 +48,86 @@ This is a chronological evidence log. It does not override the
   environment, before executing the test.
 - Cleanup: GCE runner deletion and deregistration passed.
 
-### Run 34170476606, in progress
+### Run 34170476606, runtime-valid but reproducibility-invalid
 
 - App source: `84b1018e4200d6bd838740682424d21dfee7995c`
+- Dependency: rustpush `2274cee63c05432c89fc5dbb61915b5659fa9721`
+- Passed: generated bridge compilation, full Dart suite, Rust library,
+  automatic-upload flags, rustpush production features, protector harness,
+  Canary APK compilation, and native-library verification.
+- Signing was correctly skipped because the generated-binding reproducibility
+  gate found one Linux-only trailing space in `rust/src/frb_generated.rs`.
+- Repair: candidate `7a0aa17068c8e11aa951ebf10b8cc80dd395e71d`
+  makes the existing generated-Rust normalizer strip and reject trailing
+  horizontal whitespace. Applying it to the uploaded Linux artifact produced
+  the same SHA-256 as the normalized committed file.
+- Cleanup: GCE runner deletion and deregistration passed.
+
+### Run 34188248440, passed
+
+- App source: `7a0aa17068c8e11aa951ebf10b8cc80dd395e71d`
 - Dependency: rustpush `2274cee63c05432c89fc5dbb61915b5659fa9721`
 - Requested gates: generated bindings, full Dart suite, Rust library,
   automatic-upload flags, rustpush production features, protector harness,
   Canary APK, ARM64 native-library verification, GitHub-hosted signing, and
   ephemeral-runner cleanup.
+- Result: every requested gate passed. The GCE build job completed in 26m29s,
+  GitHub-hosted signing and verification completed in 58s, and VM plus runner
+  cleanup completed in 1m48s.
+- Signed artifact: `GCE CloudKit V2 Canary APK
+  7a0aa17068c8e11aa951ebf10b8cc80dd395e71d writer-true automatic-true`,
+  SHA-256
+  `6F94FB2FD31CB4674FF5CB54AF53E536C654C7ECC8C25DDDF3049B4070F6BD60`.
+- Local artifact verification reconfirmed application ID
+  `com.bluebubbles.messaging.cloudkitcanary`, APK Signature Scheme v2 and v3,
+  and the four required ARM64 native libraries.
+- Pixel installation: installed in place with `adb install -r`; Canary's
+  original install time and data were preserved, the process launched, and
+  Alpha's installed state remained unchanged.
+- First post-install observation: no startup crash. Two existing queued uploads
+  were safely deferred with `cloud_sync_chat_identity_not_disjoint`; projection
+  repair and controlled lifecycle proof are still required.
+
+### Pixel semantic repair at 2026-09-08T05:30:32Z
+
+- Exact app source: `7a0aa17068c8e11aa951ebf10b8cc80dd395e71d`.
+- The manual read-only run left the outbox unchanged and enabled no remote save,
+  remote delete, or tombstone delete behavior.
+- Message repair applied 47 retained records. Remaining retained message and
+  attachment evidence stayed durable rather than being falsely counted as
+  projected.
+- Chat backlog classification found 395 retained saves and 81 tombstones. Of
+  the saves, 392 were explicitly outside the iMessage projection scope. The
+  remaining three reported `decoder_unsupported_service` and remain blocking
+  because their identity has not yet been proven disjoint from the authorized
+  write candidates.
+- The two queued writes therefore remained deferred with
+  `cloud_sync_chat_identity_not_disjoint`. The next falsification test is an
+  exact, content-minimized identity observation of those three records, not a
+  looser admission rule or another broad fetch.
+
+### Large retained sweep at 2026-09-08T06:03Z
+
+- The installed `7a0aa1706` Canary continued a retained-projection sweep while
+  backgrounded. Content-free logs showed thousands of message and attachment
+  outcomes and no remote save or delete admission.
+- At `2026-09-08T06:36:51Z`, the sweep stopped safely with
+  `cloud_sync_semantic_report_zone_invalid`. No new report file appeared, so the
+  run is not completion evidence even though earlier projection transactions
+  remain durable.
+- The upload scheduler subsequently admitted zero operations and deferred both
+  queued chat creates as `cloud_sync_outbound_chat_existing_history`. This is a
+  stronger, later barrier than the earlier aggregate identity-disjointness
+  failure: the store found matching local or retained history and correctly
+  refused to create another random Chat record.
+- Historical evidence identifies the three exact unsupported service labels as
+  `iMessageLite`, Apple's satellite-messaging service. Candidate
+  `d750467b826c0576717b3255aa6ad960159d399f`
+  adds an exact, case-sensitive typed out-of-scope classification across Rust,
+  generated bindings, Dart, safe diagnostics, and tests. It does not remove the
+  records from writer identity observation and does not authorize either queued
+  create.
+- Local verification for `d750467b826c0576717b3255aa6ad960159d399f`: 75 targeted converter tests, all 359 Rust
+  library tests, and all 42 Rust semantic-decoder Dart tests passed. Exact-source
+  GCE qualification, installation, report-invariant diagnosis, and live
+  reclassification proof remain required.
