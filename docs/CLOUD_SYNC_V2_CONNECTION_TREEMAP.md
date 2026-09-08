@@ -55,10 +55,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Candidate | Android app source `ad822f37cbf468a6bc74d602965e78ae02a852d1`; host-only ADB controller head `f826cd400a623b3a759cafe391580731d137ae8b` |
-| Main change | Exact `iMessageLite` satellite records and other deliberate physical-retention states are typed without remaining replay candidates. Retained projection now emits closed content-free diagnosis, and Canary exposes a package-scoped ADB control surface for repeatable device qualification. |
-| Dependency | rustpush `2274cee63c05432c89fc5dbb61915b5659fa9721`, published to the user's fork after the first clean-run checkout failure. |
-| Full qualification | Exact app source `ad822f37c` passed the build-only GCE benchmark in run `34211915641`: source-SHA verification, Canary APK, ARM64 native-library inspection, GitHub-hosted v2/v3 signing, runner deregistration, and VM deletion. Generated bindings and full Dart/Rust suites were intentionally skipped, so exact-source full qualification remains pending. |
+| Candidate | App source `12035ec0cefe73a9d4f7f779d2e9a06c4c7667b0`; prior Android release proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
+| Main change | `MessageEncryptedV3.msgType` now selects the matching Apple system-event protobuf schema. Valid classes 3-7 remain retained as typed unsupported events instead of being mislabeled malformed by the ordinary-message decoder. |
+| Dependency | rustpush `c5e9053`, which restores the five system-event payload schemas on the existing fork branch. |
+| Full qualification | Exact-source T2D-60 GCE run `34226323430` passed: 2,441 Dart tests, 346 Rust app tests, 223 rustpush production-feature tests, 32 protector tests, reproducible generated bindings, signed Canary APK, ARM64 application/native-library verification, runner deregistration, and VM deletion. The GCE build job took 28m43s; the complete workflow took 32m11s. |
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
@@ -82,6 +82,11 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 - Retained message and attachment blockers are counted separately from the
   larger physical backlog. The current live blocker is therefore 3,586 saves,
   not all 10,108 retained rows.
+- Content-free Windows inspection proved all 189 native `msgProto` field-2
+  wire mismatches are classes 4-7, whose Apple schemas use int64 rather than
+  the ordinary message string. The same inspection found five class-3 system
+  events. Candidate `12035ec0c` validates all five variant schemas and retains
+  them as `UnsupportedMessageType`; it does not invent projection semantics.
 - Canary ADB control is package-scoped, challenge-confirmed, and read-only by
   default. Host parsing accounts for Android SharedPreferences key prefixes and
   harmless Windows PowerShell native-stderr promotion.
@@ -296,36 +301,38 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 
 ## Current critical path
 
-1. Classify the 1,893 blocking message saves with the production collector.
-   Resolve exact existing-history ownership where the local row, alias,
-   snapshot, record map, and current remote revision agree. Keep ambiguity
-   retained; do not infer create permission from local absence.
-2. Continue bounded retained projection until every remaining blocking message
+1. Qualify candidate `12035ec0c`, then replay the retained message cohort and
+   prove that the 189 schema-known system events move from native malformed to
+   typed unsupported state without changing remote data or tokens.
+2. Classify the remaining inbound message failures by their existing safe
+   categories, especially malformed required identity, ambiguous reply, and
+   dependency-parent state. Existing-history ownership is not an inbound
+   projection cause.
+3. Continue bounded retained projection until every remaining blocking message
    and attachment save is either projected or has an explicit typed unavailable
    state. Do not reinterpret physical retention as completed local projection.
-3. Resolve the two queued chat creates that fail closed as
+4. Separately resolve the two queued chat creates that fail closed as
    `cloud_sync_outbound_chat_existing_history`: adopt and read back the existing
    CloudKit chat record when identity is exact, otherwise keep the create
    deferred. Confirm the interlock is idle and no retained ownership barrier
    blocks admission.
-4. Use the authorized test recipients only. First repeat direct no-duplicate
+5. Use the authorized test recipients only. First repeat direct no-duplicate
    readback proof, then create one controlled restored-group plaintext message.
-5. Verify the group record by exact CloudKit readback, restart/no-save replay,
+6. Verify the group record by exact CloudKit readback, restart/no-save replay,
    and independent Apple-device display.
-6. Qualify direct reactions. Keep edits, unsends, attachments, group-state
+7. Qualify direct reactions. Keep edits, unsends, attachments, group-state
    changes, and deletion closed until their separate contracts pass.
-7. Run lifecycle soak and produce one release-candidate report that proves
+8. Run lifecycle soak and produce one release-candidate report that proves
    identity stability, token continuity, zero duplicate writes, and honest
    retained counts.
 
 ## Next falsification test
 
-The next falsification is a content-free classification of every
-`cloud_sync_outbound_chat_existing_history` ownership branch using the same
-collector as production. A diagnostic may perform one exact same-revision
-CloudKit readback only after account, client, generation, protected-store,
-writer-pause, snapshot, alias, record-map, journal, and ETag gates agree. It may
-not adopt, create, update, delete, advance tokens, or mutate ObjectBox. Any
-ambiguous owner, divergent revision, competing outbox row, unclassified
-retained state, or remote result other than exact same-revision agreement keeps
-outbound admission closed.
+The next falsification is a read-only retained replay on Canary using the
+signed exact-source `12035ec0c` artifact from GCE run `34226323430`. For
+message classes 3-7, the replay must
+report typed unsupported state rather than native malformed state. It must not
+fetch a new page, save, delete, advance a token, mutate the outbox, or remove a
+retained record. Any schema decode failure or retained-count loss rejects the
+candidate. Outbound existing-history resolution remains a separate write gate
+for the two queued creates only.

@@ -196,3 +196,37 @@ This is a chronological evidence log. It does not override the
   for the exact existing-history ownership branches, followed by at most one
   same-revision remote readback under the existing identity and writer-pause
   gates. It cannot adopt, save, delete, advance a token, or mutate ObjectBox.
+
+### Windows retained-message discriminator proof
+
+- The Windows development profile completed a read-only replay with remote
+  writes and deletes disabled and its outbox unchanged. Every one of 189 native
+  message protobuf failures had the same bounded signature: `msgProto` field 2
+  arrived as protobuf wire type 0 while the compiled ordinary-message schema
+  expected wire type 2.
+- A temporary offline reader copied the ObjectBox database, extracted only
+  protected raw-envelope references, and inspected only the unencrypted
+  `MessageEncryptedV3.msgType` discriminator after Windows DPAPI unprotection.
+  It emitted no message text, sender, chat identifier, GUID, or decrypted
+  payload. The source database hash was unchanged before and after inspection.
+- The 1,158 retained malformed non-tombstone records partitioned as class 1:
+  846, class 2: 118, class 3: 5, class 4: 36, class 5: 1, class 6: 141, and
+  class 7: 11. Classes 4-7 total exactly 189, matching the wire-mismatch cohort.
+- Apple runtime headers and the repository's earlier protobuf schema agree on
+  the discriminator mapping: class 3 is group-title change, class 4 is
+  location-share status change, class 5 is message action, class 6 is
+  participant change, and class 7 is group action. Classes 4-7 use int64 field
+  2; ordinary `MessageProto` uses a string there.
+- Candidate `12035ec0cefe73a9d4f7f779d2e9a06c4c7667b0` restores those five
+  schemas, selects them by the outer discriminator, preserves the existing
+  required-identity presence gate, and retains valid system events as typed
+  `UnsupportedMessageType` until projection semantics are implemented. It
+  enables no save, delete, token advancement, or inferred system-event update.
+- Exact-source full qualification passed on T2D-60 GCE as run `34226323430`:
+  2,441 Dart tests, 346 Rust app tests, 223 rustpush production-feature tests,
+  and 32 protector tests passed; generated bindings were reproducible; the
+  Canary APK built, its ARM64 application and native libraries were verified,
+  and GitHub-hosted signing completed. The build job took 28m43s and the full
+  workflow took 32m11s. Cleanup verified that both the runner VM and GitHub
+  registration were absent. The signed artifact digest is
+  `sha256:47221e522f997c84500e0ca993b7e42210190d8c59197e2e138e15e61a517ade`.
