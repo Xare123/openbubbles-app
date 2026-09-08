@@ -125,7 +125,7 @@ void main() {
   );
 
   test(
-    'maps only typed exact native SMS-family and RCS dispositions',
+    'maps only typed exact native out-of-scope service dispositions',
     () async {
       final entry = _entry();
       const cases =
@@ -137,6 +137,8 @@ void main() {
                 CloudSemanticOutOfScopeService.smsFamily,
             frb.CloudSyncTransientOutOfScopeService.rcs:
                 CloudSemanticOutOfScopeService.rcs,
+            frb.CloudSyncTransientOutOfScopeService.iMessageLite:
+                CloudSemanticOutOfScopeService.iMessageLite,
           };
 
       for (final item in cases.entries) {

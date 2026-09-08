@@ -21278,6 +21278,7 @@ impl SseDecode for crate::api::api::CloudSyncTransientOutOfScopeService {
         return match inner {
             0 => crate::api::api::CloudSyncTransientOutOfScopeService::SmsFamily,
             1 => crate::api::api::CloudSyncTransientOutOfScopeService::Rcs,
+            2 => crate::api::api::CloudSyncTransientOutOfScopeService::IMessageLite,
             _ => unreachable!(
                 "Invalid variant for CloudSyncTransientOutOfScopeService: {}",
                 inner
@@ -30661,6 +30662,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientOutOfS
         match self {
             Self::SmsFamily => 0.into_dart(),
             Self::Rcs => 1.into_dart(),
+            Self::IMessageLite => 2.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -37279,6 +37281,7 @@ impl SseEncode for crate::api::api::CloudSyncTransientOutOfScopeService {
             match self {
                 crate::api::api::CloudSyncTransientOutOfScopeService::SmsFamily => 0,
                 crate::api::api::CloudSyncTransientOutOfScopeService::Rcs => 1,
+                crate::api::api::CloudSyncTransientOutOfScopeService::IMessageLite => 2,
                 _ => {
                     unimplemented!("");
                 }

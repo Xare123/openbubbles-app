@@ -49,6 +49,7 @@ abstract final class CloudSyncV2DecoderSafeFailureCodes {
 abstract final class CloudSyncV2OutOfScopeServiceSafeFailureCodes {
   static const semanticSmsFamily = 'semantic_out_of_scope_sms_family';
   static const semanticRcs = 'semantic_out_of_scope_rcs';
+  static const semanticIMessageLite = 'semantic_out_of_scope_imessage_lite';
   static const dispositionInvalid = 'out_of_scope_service_disposition_invalid';
   static const retainedEntryInvalid =
       'retained_projection_out_of_scope_entry_invalid';
@@ -60,6 +61,7 @@ abstract final class CloudSyncV2OutOfScopeServiceSafeFailureCodes {
   static const all = <String>{
     semanticSmsFamily,
     semanticRcs,
+    semanticIMessageLite,
     dispositionInvalid,
     retainedEntryInvalid,
     retainedRowInvalid,

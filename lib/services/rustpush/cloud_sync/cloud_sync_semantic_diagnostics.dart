@@ -162,6 +162,7 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'semantic_quarantine_after_mutation_forbidden',
     'semantic_replay_terminal_conflict',
     'semantic_out_of_scope_rcs',
+    'semantic_out_of_scope_imessage_lite',
     'semantic_out_of_scope_sms_family',
     'tombstone_read_only_acknowledged',
   };

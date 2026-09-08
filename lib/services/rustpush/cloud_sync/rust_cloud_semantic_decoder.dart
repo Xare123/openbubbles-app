@@ -428,6 +428,8 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
           CloudSemanticOutOfScopeService.smsFamily,
         frb_api.CloudSyncTransientOutOfScopeService.rcs =>
           CloudSemanticOutOfScopeService.rcs,
+        frb_api.CloudSyncTransientOutOfScopeService.iMessageLite =>
+          CloudSemanticOutOfScopeService.iMessageLite,
       });
     }
     if (result.deferredReason case final deferredReason?) {

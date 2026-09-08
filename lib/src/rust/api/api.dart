@@ -4505,7 +4505,7 @@ class CloudSyncTransientMessagePayload {
 
 enum CloudSyncTransientMutationKind { upsert, tombstone }
 
-enum CloudSyncTransientOutOfScopeService { smsFamily, rcs }
+enum CloudSyncTransientOutOfScopeService { smsFamily, rcs, iMessageLite }
 
 /// Exactly one payload member is populated for an upsert.
 class CloudSyncTransientPayload {

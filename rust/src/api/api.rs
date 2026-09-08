@@ -1346,6 +1346,7 @@ pub enum CloudSyncTransientQuarantineReason {
 pub enum CloudSyncTransientOutOfScopeService {
     SmsFamily,
     Rcs,
+    IMessageLite,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -5776,6 +5777,9 @@ pub async fn cloud_sync_decode_protected_change(
                 }
                 crate::cloud_sync_canonical_converter::CloudCanonicalOutOfScopeService::Rcs => {
                     CloudSyncTransientOutOfScopeService::Rcs
+                }
+                crate::cloud_sync_canonical_converter::CloudCanonicalOutOfScopeService::IMessageLite => {
+                    CloudSyncTransientOutOfScopeService::IMessageLite
                 }
             });
             result

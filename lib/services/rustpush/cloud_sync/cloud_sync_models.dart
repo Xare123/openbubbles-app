@@ -263,14 +263,15 @@ enum CloudFailureCategory {
   unsupportedService,
 
   /// The native decoder proved an exact service this build deliberately does
-  /// not project (currently SMS/MMS-family or RCS). The protected source is
+  /// not project (currently SMS/MMS-family, RCS, or iMessageLite satellite
+  /// messaging). The protected source is
   /// retained, but this is not iMessage projection debt.
   outOfScopeService,
 }
 
 /// Exact native service proof carried only in memory. This is deliberately a
 /// closed enum so a safe-code string can never authorize out-of-scope state.
-enum CloudSemanticOutOfScopeService { smsFamily, rcs }
+enum CloudSemanticOutOfScopeService { smsFamily, rcs, iMessageLite }
 
 extension CloudSemanticOutOfScopeServiceBehavior
     on CloudSemanticOutOfScopeService {
@@ -278,6 +279,8 @@ extension CloudSemanticOutOfScopeServiceBehavior
     CloudSemanticOutOfScopeService.smsFamily =>
       'semantic_out_of_scope_sms_family',
     CloudSemanticOutOfScopeService.rcs => 'semantic_out_of_scope_rcs',
+    CloudSemanticOutOfScopeService.iMessageLite =>
+      'semantic_out_of_scope_imessage_lite',
   };
 }
 

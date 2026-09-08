@@ -808,6 +808,7 @@ pub(crate) enum CloudCanonicalQuarantineReason {
 pub(crate) enum CloudCanonicalOutOfScopeService {
     SmsFamily,
     Rcs,
+    IMessageLite,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -2010,6 +2011,20 @@ fn convert_chat_internal(
                 CloudCanonicalOutOfScopeService::Rcs,
             );
         }
+        "iMessageLite" => {
+            if let Some(code) = empty_chat_required_identity(chat) {
+                return chat_diagnostic(
+                    diagnostic,
+                    code,
+                    CloudCanonicalConversionOutcome::Quarantined(
+                        CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+                    ),
+                );
+            }
+            return CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::IMessageLite,
+            );
+        }
         _ => {
             return chat_diagnostic(
                 diagnostic,
@@ -2595,6 +2610,26 @@ pub(crate) fn convert_message(
                 } else {
                     CloudCanonicalOutOfScopeService::Rcs
                 },
+            );
+        }
+        "iMessageLite" => {
+            if message.guid.is_empty() || message.chat_id.is_empty() {
+                return CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+                );
+            }
+            if message
+                .msg_proto_4
+                .as_ref()
+                .and_then(|value| value.0.service.as_deref())
+                .is_some_and(|nested_service| nested_service != "iMessageLite")
+            {
+                return CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::UnsupportedService,
+                );
+            }
+            return CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::IMessageLite,
             );
         }
         _ => {
@@ -5292,6 +5327,10 @@ mod tests {
         for (service_name, expected) in [
             ("SMS", CloudCanonicalOutOfScopeService::SmsFamily),
             ("RCS", CloudCanonicalOutOfScopeService::Rcs),
+            (
+                "iMessageLite",
+                CloudCanonicalOutOfScopeService::IMessageLite,
+            ),
         ] {
             let mut message = normal_message(Some("hello"));
             message.service = service_name.to_owned();
@@ -5317,12 +5356,84 @@ mod tests {
                 CloudCanonicalOutOfScopeService::Rcs
             )
         );
+
+        let mut satellite_chat = direct_chat();
+        satellite_chat.service_name = "iMessageLite".to_owned();
+        assert_eq!(
+            convert_chat(
+                &context(&hasher, "server-satellite-out-of-scope-chat", None),
+                &chat_required_presence(false),
+                &satellite_chat,
+            ),
+            CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::IMessageLite
+            )
+        );
+    }
+
+    #[test]
+    fn imessage_lite_requires_exact_service_and_complete_identity() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+
+        let mut incomplete_chat = direct_chat();
+        incomplete_chat.service_name = "iMessageLite".to_owned();
+        incomplete_chat.group_id.clear();
+        assert_eq!(
+            convert_chat(
+                &context(&hasher, "server-incomplete-satellite-chat", None),
+                &chat_required_presence(false),
+                &incomplete_chat,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRequiredIdentity
+            )
+        );
+
+        let mut incomplete_message = normal_message(Some("satellite"));
+        incomplete_message.service = "iMessageLite".to_owned();
+        incomplete_message.chat_id.clear();
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-incomplete-satellite-message", None),
+                &message_presence(),
+                &incomplete_message,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRequiredIdentity
+            )
+        );
+
+        let mut conflicting_message = normal_message(Some("satellite"));
+        conflicting_message.service = "iMessageLite".to_owned();
+        conflicting_message.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+            service: Some("iMessage".to_owned()),
+            ..Default::default()
+        }));
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-conflicting-satellite-message", None),
+                &message_presence(),
+                &conflicting_message,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::UnsupportedService
+            )
+        );
     }
 
     #[test]
     fn unknown_facetime_and_case_variant_services_remain_typed_quarantines() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
-        for service_name in ["FaceTime", "carrier-extension", "sms", "rcs", ""] {
+        for service_name in [
+            "FaceTime",
+            "carrier-extension",
+            "sms",
+            "rcs",
+            "imessagelite",
+            "IMessageLite",
+            "iMessageLite ",
+            "",
+        ] {
             let mut chat = direct_chat();
             chat.service_name = service_name.to_owned();
             assert_eq!(
