@@ -15,6 +15,14 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use thiserror::Error;
 
+#[cfg(all(test, not(any(target_os = "windows", target_os = "android"))))]
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
+};
+#[cfg(all(test, not(any(target_os = "windows", target_os = "android"))))]
+use sha2::Digest as _;
+
 #[cfg(any(target_os = "android", target_os = "linux"))]
 use std::{
     ffi::CString,
@@ -559,7 +567,64 @@ fn platform_install_secret(
     )
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "android")))]
+// Unsupported-host unit tests must exercise the native receipt store, but
+// production protection remains available only through Windows DPAPI or
+// Android Keystore. This deterministic, directory-scoped key exists only in
+// `cargo test` builds and does not qualify any host protection mechanism.
+#[cfg(all(test, not(any(target_os = "windows", target_os = "android"))))]
+fn test_platform_key(storage_directory: &Path) -> [u8; INSTALL_SECRET_LENGTH] {
+    let canonical_directory =
+        fs::canonicalize(storage_directory).unwrap_or_else(|_| storage_directory.to_path_buf());
+    let mut digest = Sha256::new();
+    digest.update(b"OpenBubbles Cloud Sync V2 test-only platform key\0");
+    digest.update(canonical_directory.to_string_lossy().as_bytes());
+    digest.finalize().into()
+}
+
+#[cfg(all(test, not(any(target_os = "windows", target_os = "android"))))]
+fn platform_protect(
+    storage_directory: &Path,
+    plaintext: &[u8],
+) -> Result<(&'static str, Vec<u8>), CloudSyncProtectionError> {
+    let cipher = Aes256Gcm::new_from_slice(&test_platform_key(storage_directory))
+        .map_err(|_| CloudSyncProtectionError::KeyUnavailable)?;
+    let nonce: [u8; 12] = rand::random();
+    let mut protected = nonce.to_vec();
+    protected.extend_from_slice(
+        &cipher
+            .encrypt(Nonce::from_slice(&nonce), plaintext)
+            .map_err(|_| CloudSyncProtectionError::KeyUnavailable)?,
+    );
+    Ok(("test", protected))
+}
+
+#[cfg(all(test, not(any(target_os = "windows", target_os = "android"))))]
+fn platform_unprotect(
+    storage_directory: &Path,
+    platform: &str,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, CloudSyncProtectionError> {
+    if platform != "test" {
+        return Err(CloudSyncProtectionError::PlatformMismatch);
+    }
+    if ciphertext.len() < MIN_GCM_CIPHERTEXT_BYTES {
+        return Err(CloudSyncProtectionError::InvalidProtectedValue);
+    }
+    let cipher = Aes256Gcm::new_from_slice(&test_platform_key(storage_directory))
+        .map_err(|_| CloudSyncProtectionError::KeyUnavailable)?;
+    cipher
+        .decrypt(Nonce::from_slice(&ciphertext[..12]), &ciphertext[12..])
+        .map_err(|_| CloudSyncProtectionError::InvalidProtectedValue)
+}
+
+#[cfg(all(test, not(any(target_os = "windows", target_os = "android"))))]
+fn platform_install_secret(
+    storage_directory: &Path,
+) -> Result<[u8; INSTALL_SECRET_LENGTH], CloudSyncProtectionError> {
+    Ok(test_platform_key(storage_directory))
+}
+
+#[cfg(all(not(test), not(any(target_os = "windows", target_os = "android"))))]
 fn platform_protect(
     _storage_directory: &Path,
     _plaintext: &[u8],
@@ -567,7 +632,7 @@ fn platform_protect(
     Err(CloudSyncProtectionError::UnsupportedPlatform)
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "android")))]
+#[cfg(all(not(test), not(any(target_os = "windows", target_os = "android"))))]
 fn platform_unprotect(
     _storage_directory: &Path,
     _platform: &str,
@@ -576,7 +641,7 @@ fn platform_unprotect(
     Err(CloudSyncProtectionError::UnsupportedPlatform)
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "android")))]
+#[cfg(all(not(test), not(any(target_os = "windows", target_os = "android"))))]
 fn platform_install_secret(
     _storage_directory: &Path,
 ) -> Result<[u8; INSTALL_SECRET_LENGTH], CloudSyncProtectionError> {
@@ -913,6 +978,70 @@ mod tests {
             .map(|worker| worker.join().expect("worker should not panic"))
             .collect();
         assert!(secrets.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "android")))]
+    #[test]
+    fn unsupported_host_test_protector_round_trips_and_rejects_moves() {
+        let directory = tempdir().expect("temporary directory");
+        let storage = directory.path().to_string_lossy().into_owned();
+        let ciphertext = protect(
+            storage.clone(),
+            "fingerprint".to_owned(),
+            "container".to_owned(),
+            "private".to_owned(),
+            "zone".to_owned(),
+            "messages".to_owned(),
+            2,
+            "idsSendReceipt".to_owned(),
+            "content-free receipt".to_owned(),
+        )
+        .expect("test-only protect");
+
+        assert_eq!(
+            unprotect(
+                storage.clone(),
+                "fingerprint".to_owned(),
+                "container".to_owned(),
+                "private".to_owned(),
+                "zone".to_owned(),
+                "messages".to_owned(),
+                2,
+                "idsSendReceipt".to_owned(),
+                ciphertext.clone(),
+            )
+            .expect("test-only unprotect"),
+            "content-free receipt"
+        );
+
+        let mut tampered = ciphertext.clone().into_bytes();
+        let last = tampered.len() - 1;
+        tampered[last] = if tampered[last] == b'A' { b'B' } else { b'A' };
+        assert!(unprotect(
+            storage.clone(),
+            "fingerprint".to_owned(),
+            "container".to_owned(),
+            "private".to_owned(),
+            "zone".to_owned(),
+            "messages".to_owned(),
+            2,
+            "idsSendReceipt".to_owned(),
+            String::from_utf8(tampered).expect("ASCII ciphertext"),
+        )
+        .is_err());
+
+        assert!(unprotect(
+            storage,
+            "fingerprint".to_owned(),
+            "container".to_owned(),
+            "private".to_owned(),
+            "other-zone".to_owned(),
+            "messages".to_owned(),
+            2,
+            "idsSendReceipt".to_owned(),
+            ciphertext,
+        )
+        .is_err());
     }
 
     #[test]
