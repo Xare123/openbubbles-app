@@ -320,6 +320,12 @@ void main() {
       ).readAsStringSync();
       expect(receiver, isNot(contains('startActivity')));
       expect(receiver, contains('MainActivity.engine_ready'));
+      expect(receiver, contains('ApplicationInfo.FLAG_DEBUGGABLE'));
+      expect(
+        receiver,
+        contains('com.bluebubbles.messaging.cloudkitcanary'),
+      );
+      expect(receiver, isNot(contains('BuildConfig.')));
       expect(receiver, contains('command_acknowledged'));
       expect(receiver, isNot(contains('e.message')));
       expect(receiver, isNot(contains('seq=" +')));

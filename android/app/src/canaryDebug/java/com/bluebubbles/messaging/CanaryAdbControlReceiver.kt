@@ -3,6 +3,7 @@ package com.bluebubbles.messaging
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.util.Log
 import com.bluebubbles.messaging.services.backend_ui_interop.MethodCallHandler
 
@@ -60,7 +61,9 @@ class CanaryAdbControlReceiver : BroadcastReceiver() {
             }
             // Belt-and-suspenders: this class only ships in canaryDebug, but
             // refuse explicitly if the runtime variant ever mismatches.
-            if (BuildConfig.FLAVOR != "canary" || !BuildConfig.DEBUG) {
+            val isDebuggable =
+                context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+            if (context.packageName != "com.bluebubbles.messaging.cloudkitcanary" || !isDebuggable) {
                 Log.w(TAG, "command_refused_variant")
                 setResultData("{\"ok\":false,\"code\":\"adb_variant_refused\"}")
                 return
