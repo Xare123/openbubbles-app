@@ -32,7 +32,6 @@ class MethodChannelService extends GetxService {
     background = headless;
     channel = const MethodChannel('com.bluebubbles.messaging');
     channel.setMethodCallHandler(_callHandler);
-    CanaryAdbControl.drainPendingAction(); // CANARY_ADB_HOOK: remove with canary ADB control.
     await channel.invokeMethod("ready");
     if (!kIsWeb && !kIsDesktop && !headless) {
       try {

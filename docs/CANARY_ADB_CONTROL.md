@@ -1,166 +1,112 @@
 # Canary ADB Control (removable, debug-only)
 
-Headless parent-agent control for the Android Canary over plain ADB: open the
-Developer Tools / Cloud Sync V2 page, query route and readiness, and run the
-bounded read-only semantic catch-up. No screenshots, no coordinate taps, no
-VM-service port forwarding, no Dart SDK on the host.
+Plain-ADB control for the temporary Android Canary qualification loop. It can
+query content-free readiness, classify the current route, open Developer Tools,
+start a protected semantic catch-up, and query that catch-up later. It removes
+the need for screenshot/coordinate automation while this branch is tested.
 
-## Architecture
+## Scope and lifecycle boundary
 
-Host (PowerShell, plain adb) --explicit broadcast--> on-device receiver
---MethodChannel--> Dart dispatcher --result--> private prefs + logcat.
+The native receiver exists only in `src/canaryDebug`, requires the privileged
+`android.permission.DUMP` permission held by the ADB shell, and has no intent
+filter. Dart additionally requires a compile flag, `kDebugMode`, the Canary
+package, an exact action allowlist, and fixed result schemas.
 
-1. tooling/canary_adb_control.ps1 launches the Canary activity explicitly
-   (required: background activity starts from a receiver are blocked on
-   modern Android), sends one explicit broadcast to the receiver component,
-   and polls the content-free result.
-2. android/app/src/canaryDebug/.../CanaryAdbControlReceiver.kt (canaryDebug
-   ONLY) validates the action against a 7-item allowlist and forwards to
-   Dart. Immediate ack via setResultData (visible as data="..." in am
-   broadcast output). Its own startActivity call is best-effort only.
-3. lib/services/rustpush/cloud_sync/cloud_sync_canary_adb_control.dart
-   executes the command: navigation via the existing NavigatorService,
-   readiness via existing pushService gates, and the semantic catch-up via a
-   dedicated read-only entry point (see gates below). Results are counts,
-   booleans, route names, and safe codes only.
-4. Two hook lines in
-   lib/services/backend/java_dart_interop/method_channel_service.dart
-   (marked CANARY_ADB_HOOK): one case in the existing native-call switch, one
-   pending-action drain on init for cold start.
+`ping`, `status`, `route`, `semantic-status`, and `semantic-start` **never
+launch MainActivity**. The app must already have a ready Dart engine. This is
+intentional: starting the ordinary activity runs normal OpenBubbles lifecycle,
+which may start configured services or wake an opted-in writer. If the engine
+is absent, the receiver returns `adb_app_not_ready` and drops nothing.
 
-## Compile and runtime gates
+Only `open-dev` and `open-sync` launch MainActivity. The host then waits for a
+real ping/result handshake, not a fixed sleep, before sending navigation. Those
+two commands therefore have the same normal startup side effects as the user
+opening Canary. Do not use them as a read-only status substitute.
 
-- Dart: --dart-define=OPENBUBBLES_CANARY_ADB_CONTROL=true (default false).
-- Dart runtime: kDebugMode must be true (false in profile and release, even
-  if the flag leaks).
-- Native: receiver class and manifest entry exist only in the canaryDebug
-  variant (src/canaryDebug). Alpha, Beta, prod, and canaryRelease APKs
-  physically lack them. The receiver is exported=true with
-  android:permission="android.permission.DUMP": exported=true is mandatory
-  because the shell UID cannot deliver even an explicit broadcast to an
-  exported=false component on modern Android (this app targets SDK 36), and
-  the DUMP permission (signature|privileged, pre-granted to the adb shell
-  UID, unobtainable by third-party apps) is what keeps it shell-only.
-- Origin check: Dart requires originPackage ==
-  com.bluebubbles.messaging.cloudkitcanary.
-- Semantic start additionally requires
-  pushService.cloudSyncV2ManualSemanticPullAvailable (canary package,
-  Developer Mode, setup done, legacy sync off, no logout, no in-flight pull,
-  supported ABI) and an explicit two-step confirm. It calls the dedicated
-  runCloudSyncV2AutomaticSemanticCatchUpReadOnly entry point, which shares
-  the confirmed flow's guards, bounded sessions, interlock, and in-flight
-  exclusion but never wakes the ordinary-send worker, so no CloudKit upload
-  can be caused from this path. (The Confirmed entry point resumes automatic
-  uploads on completion and is never referenced by this channel.) Local
-  canonical projection of fetched records is unchanged from the UI flow;
-  CloudKit saves/deletes stay disabled by the sampler's own flags.
+## Semantic operation
 
-## Actions
+`semantic-start -Confirm` performs two messages with the same action and
+sequence. The first reads the full preflight and issues a cryptographically
+random, 20-second, one-use challenge. The second must return that challenge;
+it is bound to `semantic_pull_start` and the sequence and is consumed on every
+attempt. Preconditions are read again after challenge consumption.
 
-ping, status, query_route, open_developer_settings, open_cloud_sync_v2,
-semantic_pull_status, semantic_pull_start (needs -Confirm on the second call).
+The accepted result is immediate. The bounded pull continues asynchronously,
+so a large catch-up cannot be mistaken for a host timeout. Query progress and
+completion with `semantic-status`.
 
-Action contracts: open_developer_settings and open_cloud_sync_v2 both land on
-the Developer Tools (Troubleshoot) page, which hosts the Cloud Sync V2
-section, and both report developer_mode so the host can tell whether the
-section is rendered. No per-section visibility logic lives in this channel.
+The special ADB entry point does not call `_queueCloudSyncV2LocalSends` when it
+finishes. The ADB command itself therefore does not wake the outbound worker.
+It is not a zero-mutation operation: normal semantic sync fetches CloudKit
+records, projects supported records into local ObjectBox entities, persists
+reports, and advances durable read/projection checkpoints under the existing
+safety/interlock rules. CloudKit saves, CloudKit deletes, local tombstone
+deletion, and outbound admission are not called by this entry point. An already
+running writer remains governed by the app's normal runtime, which is why the
+preflight reports settled versus blocked outbox state and the host never starts
+the activity for semantic actions.
 
-Outbound/write canary entry points are never referenced. No deletes, no
-message sends, no credential or key access, no network listener. The only
-mutable state: navigation stack, a pending-action string, last-nav marker,
-and the last-result JSON in private prefs.
+## Fixed result contracts
 
-## Build and run
+Results contain only exact keys and values for their action/code pair:
 
-flutter run --flavor canary --debug --dart-define=OPENBUBBLES_CANARY_ADB_CONTROL=true --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
+- setup, Developer Mode, legacy enabled/active, logout, UI/auth readiness;
+- semantic compiled/in-flight/quiescing/available state;
+- coordinator state and an outbox class (`empty`, `settled`, `blocked`, or
+  `unavailable`), never outbox payloads or operation IDs;
+- coarse route class (`developer_tools`, `other`, or `unknown`), never a
+  dynamic route;
+- pull state, bounded pass count, terminal outcome, and fixed failure class;
+- fixed report diagnostic code and zone allowlists. The latter become populated
+  after the feature branch's diagnostic report exception is integrated.
 
-Then from this repo worktree:
+Message text, phone numbers, email addresses, GUIDs, routes, account/device
+identity, credentials, record values, CloudKit tokens, and file paths are
+structurally unrepresentable. The only opaque value is the short-lived control
+challenge. Native receiver log lines are fixed phrases; Dart logs only the
+closed action and result code and never serializes result data to logs.
 
+## Commands
+
+```powershell
 ./tooling/canary_adb_control.ps1 -Action status
 ./tooling/canary_adb_control.ps1 -Action open-sync
 ./tooling/canary_adb_control.ps1 -Action semantic-start
 ./tooling/canary_adb_control.ps1 -Action semantic-start -Confirm
+./tooling/canary_adb_control.ps1 -Action semantic-status
+```
 
-## Kill switch and removal path
+The first semantic-start is a non-executing preflight. `-Confirm` performs a
+fresh preflight/challenge and returns `adb_semantic_accepted`, not completion.
 
-1. Immediate: rebuild/install without the dart-define (defaults off; the Dart
-   handler records adb_control_disabled and does nothing).
-2. Full removal (7 items): delete
-   lib/services/rustpush/cloud_sync/cloud_sync_canary_adb_control.dart,
-   test/services/cloud_sync/canary_adb_control_test.dart,
-   tooling/canary_adb_control.ps1, docs/CANARY_ADB_CONTROL.md,
-   the android/app/src/canaryDebug tree, the two CANARY_ADB_HOOK lines in
-   method_channel_service.dart, and the CANARY_ADB_HOOK read-only entry point
-   in rustpush_service.dart. No other file is touched.
+Build with both temporary flags:
 
-## Security boundaries (mapped to requirements)
+```text
+--dart-define=OPENBUBBLES_CANARY_ADB_CONTROL=true
+--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
+```
 
-- Canary/debug only: canaryDebug source set + dart-define + kDebugMode.
-- Impossible in Alpha/release: class and manifest entry absent outside
-  canaryDebug; verified by grepping the main manifest and listing the
-  canaryRelease APK receivers on qualification.
-- No message content or identifiers in responses: result envelope restricted
-  to num/bool/short safe-charset strings; unit test rejects identifier-like
-  keys and free-form values.
-- No deletion, no send, no credentials: dispatcher references none of the
-  outbound, delete, keychain, or socket APIs (grep-checked in verification).
-- No remote listener: no sockets/ports; entry is a receiver with no
-  intent-filter, reachable only by explicit on-device broadcast (ADB/shell).
-- Localhost/ADB only: the receiver requires android.permission.DUMP, held by
-  the shell UID and unobtainable by third-party apps, which get a
-  SecurityException. Verified by manifest assertion test, not by assumption:
-  exported=true plus the DUMP permission are both asserted in
-  canary_adb_control_test.dart.
-- Semantic pull only when safe: same availability gate as the UI button plus
-  sampler fail-closed preflight/interlock; first call only reports
-  preconditions (adb_confirmation_required). The executed entry point never
-  wakes the ordinary-send worker, so the documented no-upload claim is
-  structural, not behavioral.
+## Removal
 
-## Comparison: why this instead of VM trigger or uiautomator
+Delete the canaryDebug manifest/receiver, this document, the host script, the
+dispatcher and its test. Remove every `CANARY_ADB_HOOK` import/case/getter/read-
+only entry point. Build without the ADB flag immediately disables Dart handling.
+This utility must be removed before an upstream PR or production build.
 
-- Existing tooling/vm_trigger_semantic.dart already drives the semantic pull
-  and --status through the Dart VM service. It needs a debug build with the
-  observatory exposed, adb port forwarding, the ws URI, and the Dart
-  vm_service packages on the host. It also evaluates broad expressions rather
-  than an allowlist, and it cannot navigate the UI.
-- Uiautomator/coordinate taps work on any build but are slow, resolution and
-  timing dependent, and break on layout changes.
-- This channel works on any canaryDebug install with plain adb, is
-  deterministic, allowlisted to 7 safe actions, and script-friendly.
-- Honest limit: it IS an app change (4 new files, a 5-line channel hook, and
-  one additive read-only service entry point), so it must
-  be removed before any upstream PR. If the team prefers zero app changes,
-  stay with vm_trigger_semantic --status plus uiautomator taps for
-  navigation; this channel is strictly better only while a local canaryDebug
-  qualification loop is active.
+## Verification gates
 
-## Verification
+Static/unit gates cover exact allowlists, parser rejection, action-specific
+schemas, plaintext/phone/email/GUID/dynamic-route rejection, challenge binding
+and expiry, no receiver-side activity start, fixed receiver logs, and manifest
+source-set scope. Qualification still needs:
 
-Performed in worktree worktrees/canary-adb-control at 7a0aa1706:
+1. Flutter format/analyze and targeted/full relevant tests.
+2. Assemble `canaryDebug` and `canaryRelease`; inspect merged manifests or APKs
+   to prove the receiver exists only in debug.
+3. Live ADB proof that shell delivery through `DUMP` works, background status
+   does not foreground Canary, a dead engine returns `adb_app_not_ready`,
+   navigation waits for readiness, semantic start returns promptly, and a later
+   status reaches the same terminal result as the UI.
 
-- New-file tests: test/services/cloud_sync/canary_adb_control_test.dart
-  (allowlist exactness, parse rejection, origin refusal, result scanner,
-  default-off gate). Run: flutter test test/services/cloud_sync/canary_adb_control_test.dart
-- PowerShell parse check of tooling/canary_adb_control.ps1 (Parser API, zero
-  errors).
-- Grep checks: CanaryAdb absent from the main manifest; dispatcher contains
-  no outq/socket/delete/send/keychain/credential symbols; only
-  method_channel_service.dart modified (2 hook hunks).
-- Manifest checks: canaryDebug overlay asserts exported=true, DUMP
-  permission, and the receiver name; main manifest asserts no CanaryAdb
-  trace (both in canary_adb_control_test.dart).
-- Parent worktree openbubbles-app untouched (git status compared before and
-  after; work done only in worktrees/canary-adb-control).
-
-Still required on the build machine (no Flutter/Android SDK on this host):
-flutter test, flutter analyze of the new files, and a canaryDebug +
-canaryRelease assemble to prove the receiver merges only into canaryDebug
-(check with aapt dump xmltree / package receivers), plus one live-device
-pass of each host action. The first successful status round-trip on a
-canaryDebug install is the live proof that shell delivery through the
-DUMP-permissioned receiver works; if it is ever refused, stop and re-open
-the mechanism question rather than widening the permission.
-
-Do not push, do not create a PR, do not touch upstream. Delete this whole
-feature (see removal path) before announcing or opening the upstream PR.
+Do not weaken the permission or add a background activity launch if live shell
+delivery fails. Re-open the mechanism instead.

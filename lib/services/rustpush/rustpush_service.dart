@@ -8280,6 +8280,16 @@ class RustPushService extends GetxService {
         abi == ffi.Abi.windowsX64;
   }
 
+  /// Content-free lifecycle state for the removable canary ADB controller.
+  /// (CANARY_ADB_HOOK: remove with canary ADB control.)
+  bool get cloudSyncV2CanaryAdbSemanticPullActive =>
+      _cloudSyncV2SemanticPullInFlight != null;
+
+  /// Content-free lifecycle state for the removable canary ADB controller.
+  /// (CANARY_ADB_HOOK: remove with canary ADB control.)
+  bool get cloudSyncV2CanaryAdbSemanticPullQuiescing =>
+      _cloudSyncV2SemanticPullQuiescing;
+
   /// Runs an explicitly confirmed, bounded CloudKit read whose supported
   /// records may be projected into canonical local ObjectBox entities.
   ///

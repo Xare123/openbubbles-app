@@ -12,10 +12,7 @@ import com.bluebubbles.messaging.services.backend_ui_interop.MethodCallHandler
 /// canaryDebug variant. Alpha, Beta, production, and canaryRelease APKs do
 /// not contain this class or its manifest entry.
 ///
-/// Trigger (localhost/ADB shell only; the host script also launches the app
-/// first because background activity starts from a receiver are blocked on
-/// modern Android, so the receiver-side launch below is best-effort only):
-///   adb shell am start -n com.bluebubbles.messaging.cloudkitcanary/com.bluebubbles.messaging.MainActivity
+/// Trigger (localhost/ADB shell only):
 ///   adb shell am broadcast -n com.bluebubbles.messaging.cloudkitcanary/com.bluebubbles.messaging.CanaryAdbControlReceiver -a com.bluebubbles.messaging.CANARY_ADB --es action status --es seq 1
 ///
 /// The receiver is android:exported="true" with
@@ -38,6 +35,7 @@ class CanaryAdbControlReceiver : BroadcastReceiver() {
         const val EXTRA_ACTION = "action"
         const val EXTRA_SEQ = "seq"
         const val EXTRA_CONFIRM = "confirm"
+        const val EXTRA_CHALLENGE = "challenge"
 
         val ALLOWLIST = setOf(
             "ping",
@@ -50,8 +48,8 @@ class CanaryAdbControlReceiver : BroadcastReceiver() {
         )
 
         private const val TAG = "CanaryAdb"
-        private const val PREFS = "FlutterSharedPreferences"
-        private const val PENDING_KEY = "flutter.canary_adb_pending"
+        private val TOKEN = Regex("^[A-Za-z0-9_-]{1,64}$")
+        private val CHALLENGE = Regex("^c_[A-Za-z0-9_-]{27}$")
     }
 
     override fun onReceive(context: Context?, intent: Intent?) {
@@ -63,67 +61,62 @@ class CanaryAdbControlReceiver : BroadcastReceiver() {
             // Belt-and-suspenders: this class only ships in canaryDebug, but
             // refuse explicitly if the runtime variant ever mismatches.
             if (BuildConfig.FLAVOR != "canary" || !BuildConfig.DEBUG) {
-                Log.w(TAG, "refusing canary ADB command on variant=" + BuildConfig.FLAVOR)
+                Log.w(TAG, "command_refused_variant")
                 setResultData("{\"ok\":false,\"code\":\"adb_variant_refused\"}")
                 return
             }
             val action = intent.getStringExtra(EXTRA_ACTION)
             val seq = intent.getStringExtra(EXTRA_SEQ) ?: "0"
             val confirm = intent.getStringExtra(EXTRA_CONFIRM) == "true"
+            val challenge = intent.getStringExtra(EXTRA_CHALLENGE)
             if (action == null || action !in ALLOWLIST) {
-                val ack = "{\"ok\":false,\"code\":\"adb_action_unknown\",\"seq\":\"" + safeToken(seq) + "\"}"
-                Log.w(TAG, "unknown canary ADB action seq=" + safeToken(seq))
-                setResultData(ack)
+                Log.w(TAG, "command_refused_action")
+                setResultData("{\"ok\":false,\"code\":\"adb_action_unknown\"}")
                 return
             }
-            if (action == "open_developer_settings" || action == "open_cloud_sync_v2") {
-                // Persist for cold start: if the Dart engine is not up yet,
-                // the Dart dispatcher drains this on init.
-                context.getSharedPreferences(PREFS, 0).edit()
-                    .putString(PENDING_KEY, action + "|" + safeToken(seq))
-                    .apply()
-                // Best-effort foreground only: the host script launches the
-                // app explicitly first, because background activity starts
-                // from a receiver are blocked on modern Android.
-                try {
-                    val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
-                    if (launch != null) {
-                        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        context.startActivity(launch)
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "launch failed seq=" + safeToken(seq) + ": " + e.message)
-                }
+            if (!TOKEN.matches(seq)) {
+                Log.w(TAG, "command_refused_sequence")
+                setResultData("{\"ok\":false,\"code\":\"adb_seq_invalid\"}")
+                return
             }
-            // Forward to Dart. Fire-and-forget: MainActivity.engine is null on
-            // cold start, in which case the pending entry above covers open_*
-            // actions and query actions report app_not_running.
+            if (challenge != null && !CHALLENGE.matches(challenge)) {
+                Log.w(TAG, "command_refused_challenge")
+                setResultData("{\"ok\":false,\"code\":\"adb_challenge_invalid\"}")
+                return
+            }
+            // Never start MainActivity here. Status, route and semantic actions
+            // must not wake normal app lifecycle or its configured writer.
+            if (MainActivity.engine == null || !MainActivity.engine_ready) {
+                Log.i(TAG, "command_app_not_ready")
+                setResultData("{\"ok\":false,\"code\":\"adb_app_not_ready\"}")
+                return
+            }
             try {
+                val arguments = mutableMapOf<String, Any>(
+                    "originPackage" to context.packageName,
+                    "action" to action,
+                    "seq" to seq,
+                    "confirm" to confirm,
+                )
+                if (challenge != null) arguments["challenge"] = challenge
                 MethodCallHandler.invokeMethod(
                     "canary-adb-command",
-                    mapOf(
-                        "originPackage" to context.packageName,
-                        "action" to action,
-                        "seq" to safeToken(seq),
-                        "confirm" to confirm,
-                    ),
+                    arguments,
                 )
-            } catch (e: Exception) {
-                Log.w(TAG, "forward failed seq=" + safeToken(seq) + ": " + e.message)
+            } catch (_: Exception) {
+                Log.w(TAG, "command_forward_failed")
+                setResultData("{\"ok\":false,\"code\":\"adb_forward_failed\"}")
+                return
             }
-            val ack = "{\"ok\":true,\"code\":\"adb_received\",\"action\":\"" + action + "\",\"seq\":\"" + safeToken(seq) + "\"}"
-            Log.i(TAG, "ack " + ack)
+            val ack = "{\"ok\":true,\"code\":\"adb_received\",\"action\":\"" + action + "\",\"seq\":\"" + seq + "\"}"
+            Log.i(TAG, "command_acknowledged")
             setResultData(ack)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             try {
+                Log.w(TAG, "command_receiver_failed")
                 setResultData("{\"ok\":false,\"code\":\"adb_receiver_error\"}")
             } catch (ignored: Exception) {
             }
         }
-    }
-
-    private fun safeToken(raw: String): String {
-        if (raw.length > 64) return raw.substring(0, 64).filter { it.isLetterOrDigit() || it == '_' || it == '-' }
-        return raw.filter { it.isLetterOrDigit() || it == '_' || it == '-' }
     }
 }
