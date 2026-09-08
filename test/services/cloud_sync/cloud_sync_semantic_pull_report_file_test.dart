@@ -495,11 +495,22 @@ void main() {
     await expectLater(
       writer.write(candidate),
       throwsA(
-        isA<CloudSyncSemanticPullReportFileException>().having(
-          (error) => error.safeCode,
-          'safeCode',
-          'cloud_sync_semantic_report_zone_invalid',
-        ),
+        isA<CloudSyncSemanticPullReportFileException>()
+            .having(
+              (error) => error.safeCode,
+              'safeCode',
+              'cloud_sync_semantic_report_zone_invalid',
+            )
+            .having(
+              (error) => error.diagnosticCode,
+              'diagnosticCode',
+              'semantic_report_elapsed_invalid',
+            )
+            .having(
+              (error) => error.diagnosticZone,
+              'diagnosticZone',
+              'messages',
+            ),
       ),
     );
   });
@@ -538,11 +549,17 @@ void main() {
       await expectLater(
         writer.write(candidate),
         throwsA(
-          isA<CloudSyncSemanticPullReportFileException>().having(
-            (error) => error.safeCode,
-            'safeCode',
-            'cloud_sync_semantic_report_zone_invalid',
-          ),
+          isA<CloudSyncSemanticPullReportFileException>()
+              .having(
+                (error) => error.safeCode,
+                'safeCode',
+                'cloud_sync_semantic_report_zone_invalid',
+              )
+              .having(
+                (error) => error.diagnosticCode,
+                'diagnosticCode',
+                'semantic_report_projection_accounting_invalid',
+              ),
         ),
       );
     },
@@ -664,11 +681,17 @@ void main() {
           ),
         ),
         throwsA(
-          isA<CloudSyncSemanticPullReportFileException>().having(
-            (error) => error.safeCode,
-            'safeCode',
-            'cloud_sync_semantic_report_zone_invalid',
-          ),
+          isA<CloudSyncSemanticPullReportFileException>()
+              .having(
+                (error) => error.safeCode,
+                'safeCode',
+                'cloud_sync_semantic_report_zone_invalid',
+              )
+              .having(
+                (error) => error.diagnosticCode,
+                'diagnosticCode',
+                'semantic_report_terminal_read_invalid',
+              ),
         ),
       );
     },
@@ -1075,11 +1098,17 @@ void main() {
         ),
       ),
       throwsA(
-        isA<CloudSyncSemanticPullReportFileException>().having(
-          (error) => error.safeCode,
-          'safeCode',
-          'cloud_sync_semantic_report_zone_invalid',
-        ),
+        isA<CloudSyncSemanticPullReportFileException>()
+            .having(
+              (error) => error.safeCode,
+              'safeCode',
+              'cloud_sync_semantic_report_zone_invalid',
+            )
+            .having(
+              (error) => error.diagnosticCode,
+              'diagnosticCode',
+              'semantic_report_diagnostic_count_invalid',
+            ),
       ),
     );
   });

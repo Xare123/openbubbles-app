@@ -12,6 +12,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbo
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
@@ -1119,8 +1120,18 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                             } catch (error) {
                               if (_showCloudSyncV2Busy(error)) return;
                               final safeCode = cloudSyncV2SafeFailureCode(error);
+                              final diagnosticCode = error
+                                      is CloudSyncSemanticPullReportFileException
+                                  ? error.diagnosticCode
+                                  : null;
+                              final diagnosticZone = error
+                                      is CloudSyncSemanticPullReportFileException
+                                  ? error.diagnosticZone
+                                  : null;
                               Logger.warn(
-                                "Cloud Sync V2 semantic pull stopped safely code=$safeCode",
+                                "Cloud Sync V2 semantic pull stopped safely code=$safeCode"
+                                "${diagnosticCode == null ? '' : ' detail=$diagnosticCode'}"
+                                "${diagnosticZone == null ? '' : ' zone=$diagnosticZone'}",
                               );
                               showSnackbar(
                                 "Cloud Sync V2 Stopped Safely",

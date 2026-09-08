@@ -28,8 +28,7 @@ final class CloudSyncSemanticPullReportFileWriter {
   static const int maximumDiagnosticCount = 65535;
   static const int _maximumReadElapsedMilliseconds = 10 * 60 * 1000;
   static const int _projectionSweepBaseElapsedMilliseconds = 30 * 60 * 1000;
-  static const int _projectionSweepElapsedMillisecondsPerBatch =
-      2 * 60 * 1000;
+  static const int _projectionSweepElapsedMillisecondsPerBatch = 2 * 60 * 1000;
   static final RegExp _ownedReportName = RegExp(
     r'^obcs2-semantic-[0-9]{1,24}\.json$',
   );
@@ -55,7 +54,11 @@ final class CloudSyncSemanticPullReportFileWriter {
   Future<File> write(CloudSyncSemanticPullReport report) async {
     final failure = _contractFailure(report);
     if (failure != null) {
-      throw CloudSyncSemanticPullReportFileException(failure);
+      throw CloudSyncSemanticPullReportFileException(
+        failure.safeCode,
+        diagnosticCode: failure.diagnosticCode,
+        diagnosticZone: failure.diagnosticZone,
+      );
     }
     if (!await _trustedStorageRoot.exists()) {
       throw const CloudSyncSemanticPullReportFileException(
@@ -132,12 +135,16 @@ final class CloudSyncSemanticPullReportFileWriter {
     }
   }
 
-  String? _contractFailure(CloudSyncSemanticPullReport report) {
+  _CloudSyncSemanticReportContractFailure? _contractFailure(
+    CloudSyncSemanticPullReport report,
+  ) {
     if (!_supportedPlatforms.contains(report.platform) ||
         !_supportedArchitectures.contains(report.architecture) ||
         !_safeBuildIdentifier.hasMatch(report.buildCommit) ||
         !report.timestampUtc.isUtc) {
-      return 'cloud_sync_semantic_report_metadata_invalid';
+      return const _CloudSyncSemanticReportContractFailure(
+        'cloud_sync_semantic_report_metadata_invalid',
+      );
     }
     if (report.pageLimit != 4 ||
         report.changeLimit != 50 ||
@@ -145,13 +152,17 @@ final class CloudSyncSemanticPullReportFileWriter {
         report.outboxCountBefore > maximumDiagnosticCount ||
         report.outboxCountAfter < 0 ||
         report.outboxCountAfter > maximumDiagnosticCount) {
-      return 'cloud_sync_semantic_report_read_only_invariant_invalid';
+      return const _CloudSyncSemanticReportContractFailure(
+        'cloud_sync_semantic_report_read_only_invariant_invalid',
+      );
     }
     // Missing or duplicate supported zones are unsafe runtime evidence, not an
     // unsafe serialization shape. Persist up to the expected count so the
     // controller can stop on, and retain, the exact diagnostic report.
     if (report.zones.length > _supportedZoneLabels.length) {
-      return 'cloud_sync_semantic_report_zone_count_invalid';
+      return const _CloudSyncSemanticReportContractFailure(
+        'cloud_sync_semantic_report_zone_count_invalid',
+      );
     }
     final maximumZoneRecords = report.pageLimit * report.changeLimit;
     // Normal semantic runs may examine one bounded retained-projection window
@@ -171,75 +182,117 @@ final class CloudSyncSemanticPullReportFileWriter {
       // Keep corruption detection without rejecting valid large-history runs.
       final maximumElapsedMilliseconds = projectionSweep
           ? _projectionSweepBaseElapsedMilliseconds +
-              zone.projectionBatches *
-                  _projectionSweepElapsedMillisecondsPerBatch
+                zone.projectionBatches *
+                    _projectionSweepElapsedMillisecondsPerBatch
           : _maximumReadElapsedMilliseconds;
-      if (!_supportedZoneLabels.contains(zone.zoneLabel) ||
-          zone.fetched < 0 ||
-          zone.fetched > maximumZoneRecords ||
-          zone.applied < 0 ||
-          zone.applied > maximumApplied ||
-          zone.deferred < 0 ||
-          zone.deferred > maximumZoneWorkRecords ||
-          zone.quarantined < 0 ||
-          zone.quarantined > maximumZoneWorkRecords ||
-          zone.preflightQuarantined < 0 ||
-          zone.preflightQuarantined > maximumZoneWorkRecords ||
-          zone.preflightUnsupportedRecordType < 0 ||
-          zone.preflightUnsupportedRecordType > maximumZoneWorkRecords ||
-          zone.preflightMalformedMetadata < 0 ||
-          zone.preflightMalformedMetadata > maximumZoneWorkRecords ||
-          zone.preflightOversizedRecord < 0 ||
-          zone.preflightOversizedRecord > maximumZoneWorkRecords ||
-          zone.preflightInvalidChangeShape < 0 ||
-          zone.preflightInvalidChangeShape > maximumZoneWorkRecords ||
-          zone.preflightUnknown < 0 ||
-          zone.preflightUnknown > maximumZoneWorkRecords ||
-          zone.startupQuarantined < 0 ||
-          zone.startupQuarantined > maximumZoneWorkRecords ||
-          zone.postFetchQuarantined < 0 ||
-          zone.postFetchQuarantined > maximumZoneWorkRecords ||
-          zone.tombstoneQuarantined < 0 ||
-          zone.tombstoneQuarantined > maximumZoneWorkRecords ||
-          zone.tombstoneReadOnlyAcknowledged < 0 ||
-          zone.tombstoneReadOnlyAcknowledged > maximumZoneWorkRecords ||
-          zone.retainedUnprojected < 0 ||
-          zone.retainedUnprojected > maximumDiagnosticCount ||
-          zone.semanticUnsupportedServiceQuarantined < 0 ||
-          zone.semanticUnsupportedServiceQuarantined > maximumZoneWorkRecords ||
-          zone.semanticStageQuarantined < 0 ||
-          zone.semanticStageQuarantined > maximumZoneWorkRecords ||
-          zone.retried < 0 ||
-          zone.retried > maximumZoneWorkRecords ||
-          (zone.observedEmptyTerminalRead && zone.fetched != 0) ||
-          zone.elapsedMilliseconds < 0 ||
-          zone.elapsedMilliseconds > maximumElapsedMilliseconds ||
-          zone.projectionExamined < 0 ||
-          zone.projectionExamined > maximumDiagnosticCount ||
-          zone.projectionRetained < 0 ||
-          zone.projectionRetained > zone.projectionExamined ||
-          zone.projectionBatches < 0 ||
-          zone.projectionBatches > 4096 ||
-          (!projectionSweep &&
-              (zone.projectionExamined != 0 ||
-                  zone.projectionRetained != 0 ||
-                  zone.projectionBatches != 0)) ||
-          (projectionSweep &&
-              (zone.fetched != 0 ||
-                  zone.observedEmptyTerminalRead ||
-                  zone.projectionExamined !=
-                      zone.applied + zone.projectionRetained)) ||
-          // Diagnostic events are not record counters. A single fetched chat
-          // can emit several alias diagnostics, and same-generation projection
-          // repair can inspect more rows than the one-page fetch limit. The
-          // collector already rejects non-positive counts. A separate ceiling
-          // catches corrupt aggregates without conflating them with the fetch
-          // page or projection-repair limits.
-          zone.diagnosticCounts.values.any(
-            (count) => count > maximumDiagnosticCount,
-          )) {
-        return 'cloud_sync_semantic_report_zone_invalid';
+      final diagnosticCode = _zoneContractDiagnosticCode(
+        zone,
+        projectionSweep: projectionSweep,
+        maximumZoneRecords: maximumZoneRecords,
+        maximumZoneWorkRecords: maximumZoneWorkRecords,
+        maximumApplied: maximumApplied,
+        maximumElapsedMilliseconds: maximumElapsedMilliseconds,
+      );
+      if (diagnosticCode != null) {
+        return _CloudSyncSemanticReportContractFailure(
+          'cloud_sync_semantic_report_zone_invalid',
+          diagnosticCode: diagnosticCode,
+          diagnosticZone: _supportedZoneLabels.contains(zone.zoneLabel)
+              ? zone.zoneLabel
+              : null,
+        );
       }
+    }
+    return null;
+  }
+
+  String? _zoneContractDiagnosticCode(
+    CloudSyncSemanticPullZoneReport zone, {
+    required bool projectionSweep,
+    required int maximumZoneRecords,
+    required int maximumZoneWorkRecords,
+    required int maximumApplied,
+    required int maximumElapsedMilliseconds,
+  }) {
+    if (!_supportedZoneLabels.contains(zone.zoneLabel)) {
+      return 'semantic_report_zone_label_invalid';
+    }
+    if (zone.fetched < 0 ||
+        zone.fetched > maximumZoneRecords ||
+        zone.applied < 0 ||
+        zone.applied > maximumApplied ||
+        zone.deferred < 0 ||
+        zone.deferred > maximumZoneWorkRecords ||
+        zone.quarantined < 0 ||
+        zone.quarantined > maximumZoneWorkRecords ||
+        zone.preflightQuarantined < 0 ||
+        zone.preflightQuarantined > maximumZoneWorkRecords ||
+        zone.preflightUnsupportedRecordType < 0 ||
+        zone.preflightUnsupportedRecordType > maximumZoneWorkRecords ||
+        zone.preflightMalformedMetadata < 0 ||
+        zone.preflightMalformedMetadata > maximumZoneWorkRecords ||
+        zone.preflightOversizedRecord < 0 ||
+        zone.preflightOversizedRecord > maximumZoneWorkRecords ||
+        zone.preflightInvalidChangeShape < 0 ||
+        zone.preflightInvalidChangeShape > maximumZoneWorkRecords ||
+        zone.preflightUnknown < 0 ||
+        zone.preflightUnknown > maximumZoneWorkRecords ||
+        zone.startupQuarantined < 0 ||
+        zone.startupQuarantined > maximumZoneWorkRecords ||
+        zone.postFetchQuarantined < 0 ||
+        zone.postFetchQuarantined > maximumZoneWorkRecords ||
+        zone.tombstoneQuarantined < 0 ||
+        zone.tombstoneQuarantined > maximumZoneWorkRecords ||
+        zone.tombstoneReadOnlyAcknowledged < 0 ||
+        zone.tombstoneReadOnlyAcknowledged > maximumZoneWorkRecords ||
+        zone.retainedUnprojected < 0 ||
+        zone.retainedUnprojected > maximumDiagnosticCount ||
+        zone.semanticUnsupportedServiceQuarantined < 0 ||
+        zone.semanticUnsupportedServiceQuarantined > maximumZoneWorkRecords ||
+        zone.semanticStageQuarantined < 0 ||
+        zone.semanticStageQuarantined > maximumZoneWorkRecords ||
+        zone.retried < 0 ||
+        zone.retried > maximumZoneWorkRecords) {
+      return 'semantic_report_zone_counter_invalid';
+    }
+    if (zone.observedEmptyTerminalRead && zone.fetched != 0) {
+      return 'semantic_report_terminal_read_invalid';
+    }
+    if (zone.elapsedMilliseconds < 0 ||
+        zone.elapsedMilliseconds > maximumElapsedMilliseconds) {
+      return 'semantic_report_elapsed_invalid';
+    }
+    if (zone.projectionExamined < 0 ||
+        zone.projectionExamined > maximumDiagnosticCount ||
+        zone.projectionRetained < 0 ||
+        zone.projectionRetained > zone.projectionExamined ||
+        zone.projectionBatches < 0 ||
+        zone.projectionBatches > 4096) {
+      return 'semantic_report_projection_counter_invalid';
+    }
+    if (!projectionSweep &&
+        (zone.projectionExamined != 0 ||
+            zone.projectionRetained != 0 ||
+            zone.projectionBatches != 0)) {
+      return 'semantic_report_projection_mode_invalid';
+    }
+    if (projectionSweep &&
+        (zone.fetched != 0 || zone.observedEmptyTerminalRead)) {
+      return 'semantic_report_projection_mode_invalid';
+    }
+    if (projectionSweep &&
+        zone.projectionExamined != zone.applied + zone.projectionRetained) {
+      return 'semantic_report_projection_accounting_invalid';
+    }
+    // Diagnostic events are not record counters. A single fetched chat can
+    // emit several alias diagnostics, and same-generation projection repair
+    // can inspect more rows than the one-page fetch limit. The collector
+    // already rejects non-positive counts. A separate ceiling catches corrupt
+    // aggregates without conflating them with fetch or projection limits.
+    if (zone.diagnosticCounts.values.any(
+      (count) => count > maximumDiagnosticCount,
+    )) {
+      return 'semantic_report_diagnostic_count_invalid';
     }
     return null;
   }
@@ -268,11 +321,32 @@ final class CloudSyncSemanticPullReportFileWriter {
   }
 }
 
-final class CloudSyncSemanticPullReportFileException implements Exception {
-  const CloudSyncSemanticPullReportFileException(this.safeCode);
+final class _CloudSyncSemanticReportContractFailure {
+  const _CloudSyncSemanticReportContractFailure(
+    this.safeCode, {
+    this.diagnosticCode,
+    this.diagnosticZone,
+  });
 
   final String safeCode;
+  final String? diagnosticCode;
+  final String? diagnosticZone;
+}
+
+final class CloudSyncSemanticPullReportFileException implements Exception {
+  const CloudSyncSemanticPullReportFileException(
+    this.safeCode, {
+    this.diagnosticCode,
+    this.diagnosticZone,
+  });
+
+  final String safeCode;
+  final String? diagnosticCode;
+  final String? diagnosticZone;
 
   @override
-  String toString() => 'CloudSyncSemanticPullReportFileException($safeCode)';
+  String toString() => diagnosticCode == null
+      ? 'CloudSyncSemanticPullReportFileException($safeCode)'
+      : 'CloudSyncSemanticPullReportFileException('
+            '$safeCode, $diagnosticCode, ${diagnosticZone ?? 'zone_unknown'})';
 }
