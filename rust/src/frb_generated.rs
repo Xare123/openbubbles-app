@@ -4216,7 +4216,7 @@ fn wire__crate__api__api__cloud_sync_warm_read_authentication_under_writer_pause
     rust_vec_len_: i32,
     data_len_: i32,
 ) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec,_,_,_>(flutter_rust_bridge::for_generated::TaskInfo{ debug_name: "cloud_sync_warm_read_authentication_under_writer_pause", port: Some(port_), mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal }, move || { 
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec,_,_,_>(flutter_rust_bridge::for_generated::TaskInfo{ debug_name: "cloud_sync_warm_read_authentication_under_writer_pause", port: Some(port_), mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal }, move || {
             let message = unsafe { flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_) };
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_cloud_messages_client = <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < CloudMessagesClient < DefaultAnisetteProvider > >>>>::sse_decode(&mut deserializer);

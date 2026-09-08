@@ -111,6 +111,11 @@ $source = $utf8Strict.GetString(
     $rawBytes.Length - $sourceOffset
 )
 $sourceSha256 = Get-Sha256 -Value $source
+$trailingWhitespacePattern = [regex]::new(
+    '[ \t]+(?=\r?$)',
+    [System.Text.RegularExpressions.RegexOptions]::Multiline
+)
+$trailingWhitespaceCount = $trailingWhitespacePattern.Matches($source).Count
 
 $duplicateGroups = @(
     Get-SseImplementations -Source $source |
@@ -138,11 +143,15 @@ if ($Mode -eq 'Verify') {
         $keys = $duplicateGroups.Name -join ', '
         throw "Found $($removals.Count) duplicate SSE impl(s): $keys"
     }
+    if ($trailingWhitespaceCount -ne 0) {
+        throw "Found $trailingWhitespaceCount generated Rust line(s) with trailing whitespace"
+    }
 
     [pscustomobject]@{
         GeneratedRust = $GeneratedRust
         DuplicateGroupCount = 0
         DuplicateImplCount = 0
+        TrailingWhitespaceCount = 0
         Sha256 = $sourceSha256
     } | ConvertTo-Json
     exit 0
@@ -163,7 +172,7 @@ foreach ($removal in ($removals | Sort-Object Start)) {
     $cursor = $removal.EndExclusive
 }
 [void]$builder.Append($source, $cursor, $source.Length - $cursor)
-$deduplicated = $builder.ToString()
+$deduplicated = $trailingWhitespacePattern.Replace($builder.ToString(), '')
 
 if (
     @(Get-SseImplementations -Source $deduplicated |
@@ -196,6 +205,9 @@ try {
 }
 
 $written = [System.IO.File]::ReadAllText($GeneratedRust)
+if ($trailingWhitespacePattern.IsMatch($written)) {
+    throw 'Post-write verification failed: generated Rust trailing whitespace remains'
+}
 if (
     @(Get-SseImplementations -Source $written |
         Group-Object Key |
@@ -208,6 +220,7 @@ if (
     GeneratedRust = $GeneratedRust
     RemovedImplCount = $removals.Count
     DuplicateGroupCount = $duplicateGroups.Count
+    RemovedTrailingWhitespaceCount = $trailingWhitespaceCount
     OriginalSha256 = $sourceSha256
     DeduplicatedSha256 = Get-Sha256 -Value $written
 } | ConvertTo-Json
