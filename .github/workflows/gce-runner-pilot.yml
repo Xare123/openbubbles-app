@@ -555,7 +555,10 @@ jobs:
             --dart-define=OPENBUBBLES_BUILD_COMMIT="$(git rev-parse HEAD)"
           )
           if [[ "$BUILD_FLAVOR" == 'canary' ]]; then
-            build_args+=(--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true)
+            build_args+=(
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true
+              --dart-define=OPENBUBBLES_CANARY_ADB_CONTROL=true
+            )
           fi
           if [[ "$OUTBOUND_WRITER" == 'true' ]]; then
             build_args+=(
@@ -566,13 +569,27 @@ jobs:
           if [[ "$AUTOMATIC_UPLOADS" == 'true' ]]; then
             build_args+=(--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME=true)
           fi
-          # Flutter's verbose path supplies Gradle --full-stacktrace. The
-          # previous packageCanaryDebug failure hid its underlying cause;
-          # retain the real error and disk state without changing resources
-          # or retrying a partially failed build.
+          # Flutter's verbose path supplies Gradle --full-stacktrace, but
+          # streaming it exceeded the useful Actions log envelope and hid the
+          # actual tail. Capture it once, emit a heartbeat, then print only a
+          # bounded diagnostic tail if the same build fails.
           df -h . "$RUNNER_TEMP"
+          build_log="$RUNNER_TEMP/flutter-build-verbose.log"
           build_status=0
-          flutter --verbose "${build_args[@]}" || build_status=$?
+          flutter --verbose "${build_args[@]}" >"$build_log" 2>&1 &
+          build_pid=$!
+          while kill -0 "$build_pid" 2>/dev/null; do
+            echo "Flutter APK build is still running ($(date -u +%H:%M:%SZ))."
+            sleep 30
+          done
+          wait "$build_pid" || build_status=$?
+          if [[ "$build_status" -ne 0 ]]; then
+            echo 'Bounded Flutter/Gradle failure diagnostics:' >&2
+            grep -nE 'FAILURE:|What went wrong:|Execution failed|Caused by:|(^|[^A-Za-z])error:|BUILD FAILED|Task .* FAILED|Exception' "$build_log" \
+              | tail -n 240 >&2 || true
+            echo 'Final 320 verbose build lines:' >&2
+            tail -n 320 "$build_log" >&2
+          fi
           df -h . "$RUNNER_TEMP"
           finished="$(date +%s)"
           elapsed="$((finished - started))"
