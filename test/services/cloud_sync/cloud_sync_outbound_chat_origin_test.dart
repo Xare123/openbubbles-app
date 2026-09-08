@@ -13,6 +13,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observabilit
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identity_evidence.dart';
 import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart' as identity_api;
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_selection.dart';
@@ -63,18 +64,19 @@ void main() {
   late ObjectBoxCloudSyncStore sync;
   late int chatId;
   late int messageId;
-  void bindStore() {
+  void bindStore({CloudSyncSemanticDiagnosticRecorder? recordDiagnostic}) {
     sync = ObjectBoxCloudSyncStore(
       store: db,
       protector: _Protector(),
       clock: () => _now,
+      recordExistingHistoryDiagnostic: recordDiagnostic,
     );
   }
 
-  Future<void> restart() async {
+  Future<void> restart({CloudSyncSemanticDiagnosticRecorder? recordDiagnostic}) async {
     db.close();
     db = await openStore(directory: directory.path);
-    bindStore();
+    bindStore(recordDiagnostic: recordDiagnostic);
   }
 
   CloudOutboxOperationEntity outbox() =>
@@ -90,6 +92,106 @@ void main() {
     expect(message.chat.targetId, chatId);
     expect(message.chat.target!.guid, adopted ? _canonical : _guid);
     expect(db.box<Chat>().get(chatId)!.handles.single.address, _recipient);
+  }
+
+  void persistMatchingAlias() {
+    final scope = _scope();
+    db.box<CloudSemanticChatAliasEntity>().put(
+      CloudSemanticChatAliasEntity(
+        bindingKey: 'synthetic-existing-history-alias',
+        scopeGenerationKey: 'synthetic-existing-history-generation',
+        scopeKey: cloudSyncPersistentScopeKey(scope),
+        accountFingerprint: scope.accountFingerprint,
+        container: scope.container,
+        database: scope.database,
+        zone: scope.zone,
+        streamKind: scope.streamKind.name,
+        schemaVersion: scope.schemaVersion,
+        generation: 1,
+        service: CloudSemanticService.iMessage.name,
+        aliasKind: CloudSemanticChatAliasKind.serviceIdentifier.name,
+        aliasKeyHash: 'I' * 43,
+        chatLogicalEntityKeyHash: _logical,
+        canonicalGuidHash: 'C' * 43,
+        canonicalGuidLookupHash:
+            CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+              scope: scope,
+              generation: 1,
+              canonicalGuid: _canonical,
+            ),
+        chatId: chatId,
+        updatedAtMs: _now.millisecondsSinceEpoch,
+      ),
+    );
+  }
+
+  CloudSyncLocalSendJournal bindJournal(
+    CloudSyncSemanticDiagnosticRecorder recordDiagnostic,
+  ) {
+    final writerScope = CloudKitWriterScope(accountFingerprint: 'A' * 43);
+    final authority = ObjectBoxCloudKitWriterAuthority.forTest(
+      store: db,
+      buildDecision: CloudKitWriterOwnership.resolve('v2'),
+    );
+    if (authority.read(writerScope) == null) {
+      final disabled = authority.initializeDisabled(writerScope, now: _now);
+      authority.provisionInitialOwner(
+        writerScope,
+        owner: CloudKitWriterOwner.v2,
+        expectedEpoch: disabled.epoch,
+        evidence: const CloudKitWriterTransitionEvidence.forTest(
+          operationsQuiesced: true,
+          activeIdentityRevalidated: true,
+          legacyMutationQueues: LegacyMutationQueueDisposition.empty,
+        ),
+        now: _now,
+      );
+    }
+    final journal = CloudSyncLocalSendJournal(
+      store: db,
+      authority: authority,
+      authoritySnapshot: authority.read(writerScope)!,
+    );
+    sync = ObjectBoxCloudSyncStore(
+      store: db,
+      protector: _Protector(),
+      clock: () => _now,
+      localSendJournal: journal,
+      recordExistingHistoryDiagnostic: recordDiagnostic,
+    );
+    return journal;
+  }
+
+  CloudSyncLocalSendAdmissionSource createJournalSource(
+    CloudSyncLocalSendJournal journal,
+  ) {
+    const messageGuid = 'DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD';
+    final local = db.box<Message>().get(messageId)!
+      ..guid = 'temp-Abc12345'
+      ..stagingGuid = messageGuid
+      ..attributedBody = [
+        AttributedBody.raw('synthetic body survives adoption'),
+      ];
+    final identity = CloudSyncLocalSendIdentity.capture(
+      local,
+      local.chat.target!,
+      messageGuid,
+    )!;
+    journal.saveSubmission(
+      identity: identity,
+      newlyGeneratedGuid: true,
+      persistMessage: () => db.box<Message>().put(local),
+      now: _now,
+    );
+    local
+      ..guid = messageGuid
+      ..stagingGuid = null;
+    journal.saveConfirmedSubmission(
+      identity: identity,
+      persistMessage: () => db.box<Message>().put(local),
+      now: _now,
+    );
+    return journal.readForAdmission(journal.readReady().single.id);
   }
 
   CloudOutboxOperation admit() {
@@ -442,6 +544,7 @@ void main() {
     'prior map during stage',
     'source during stage',
     'tombstone during stage',
+    'duplicate and tombstone during stage',
     'proof before lease',
     'observed history success',
     'observed history restart',
@@ -475,6 +578,8 @@ void main() {
         // Does not execute service attachment-lock release or live CloudKit.
         final writerScope = CloudKitWriterScope(accountFingerprint: 'A' * 43);
         final observedHistory = mutation.startsWith('observed history');
+        final existingHistoryDiagnostics =
+            CloudSyncSemanticDiagnosticCollector();
         CloudSyncChatIdentityEvidence? identityEvidence;
         var currentBinding = true;
         late CloudSyncLocalSendJournal journal;
@@ -511,6 +616,7 @@ void main() {
             clock: () => _now,
             localSendJournal: journal,
             readChatIdentityEvidence: observedHistory ? (_) => identityEvidence : null,
+            recordExistingHistoryDiagnostic: existingHistoryDiagnostics.record,
           );
         }
 
@@ -742,6 +848,13 @@ void main() {
           transport.onChatStage = () => retainHistory('chatManateeZone',
               tombstone: true, record: _record);
         }
+        if (mutation == 'duplicate and tombstone during stage') {
+          transport.onChatStage = () async {
+            duplicateChat();
+            await retainHistory('chatManateeZone',
+                tombstone: true, record: _record);
+          };
+        }
         if (mutation == 'prior map during stage') {
           transport.onChatStage = () => sync.upsertRecordMap(CloudRecordMapEntry(
             scope: _scope(), logicalEntityKeyHash: _logical,
@@ -764,6 +877,8 @@ void main() {
           await expectLater(admitChat(),
             mutation.startsWith('retained Chat')
                 ? _failure('messages_cloud_account_projection_incomplete')
+                : mutation == 'duplicate and tombstone during stage'
+                ? _failure('messages_cloud_tombstone_projection_unavailable')
                 : throwsA(anyOf(isA<StateError>(), isA<CloudSyncFailure>())));
           final staged = mutation.contains('during stage') ? 1 : 0;
           expect(transport.stages, staged);
@@ -775,6 +890,26 @@ void main() {
             expect(recordMap().serverRecordIdHash, 'Z' * 43);
           }
           expect(db.box<CloudSyncLocalSendIntentEntity>().get(intentId)!.state, 1);
+          final expectedDiagnostic = switch (mutation) {
+            'duplicate before stage' =>
+              'outbound_chat_existing_history_local_chat_match',
+            'prior snapshot before stage' || 'prior generation before stage' =>
+              'outbound_chat_existing_history_snapshot_match',
+            'prior map during stage' =>
+              'outbound_chat_existing_history_record_map_conflict',
+            'tombstone during stage' =>
+              'outbound_chat_existing_history_tombstone_conflict',
+            _ => null,
+          };
+          if (mutation == 'duplicate and tombstone during stage') {
+            expect(existingHistoryDiagnostics.snapshot(), {
+              'outbound_chat_existing_history_tombstone_conflict': 1,
+            });
+          } else if (expectedDiagnostic != null) {
+            expect(existingHistoryDiagnostics.snapshot(), {
+              expectedDiagnostic: 1,
+            });
+          }
           return;
         }
         final operation =
@@ -1616,6 +1751,146 @@ void main() {
     db.close();
     if (directory.existsSync()) await directory.delete(recursive: true);
   });
+
+  test(
+    'existing-history alias predicate reports its fixed cause without mutation',
+    () {
+      final diagnostics = CloudSyncSemanticDiagnosticCollector();
+      final journal = bindJournal(diagnostics.record);
+      final source = createJournalSource(journal);
+      persistMatchingAlias();
+      final before = <Type, int>{
+        Chat: db.box<Chat>().count(),
+        Message: db.box<Message>().count(),
+        CloudSemanticChatAliasEntity:
+            db.box<CloudSemanticChatAliasEntity>().count(),
+        CloudOutboxOperationEntity: db.box<CloudOutboxOperationEntity>().count(),
+        CloudRecordMapEntity: db.box<CloudRecordMapEntity>().count(),
+      };
+
+      expect(
+        () => sync.captureFreshOutboundChatOrigin(
+          _scope(), chatId, localSendSource: source),
+        _failure('cloud_sync_outbound_chat_existing_history'),
+      );
+
+      expect(diagnostics.snapshot(), {
+        'outbound_chat_existing_history_alias_match': 1,
+      });
+      expect(<Type, int>{
+        Chat: db.box<Chat>().count(),
+        Message: db.box<Message>().count(),
+        CloudSemanticChatAliasEntity:
+            db.box<CloudSemanticChatAliasEntity>().count(),
+        CloudOutboxOperationEntity: db.box<CloudOutboxOperationEntity>().count(),
+        CloudRecordMapEntity: db.box<CloudRecordMapEntity>().count(),
+      }, before);
+      preserved();
+    },
+  );
+
+  test(
+    'one existing-history evaluation reports every matching fixed predicate',
+    () {
+      final diagnostics = CloudSyncSemanticDiagnosticCollector();
+      final journal = bindJournal(diagnostics.record);
+      final source = createJournalSource(journal);
+      final duplicate = Chat(
+        guid: _canonical,
+        usingHandle: 'mailto:$_sender',
+        style: 45,
+      );
+      db.box<Chat>().put(duplicate);
+      _persistOwnership(db, 1);
+      persistMatchingAlias();
+      final beforeChats = db.box<Chat>().count();
+      final beforeSnapshots = db.box<CloudSemanticSnapshotEntity>().count();
+      final beforeAliases = db.box<CloudSemanticChatAliasEntity>().count();
+
+      expect(
+        () => sync.captureFreshOutboundChatOrigin(
+          _scope(), chatId, localSendSource: source),
+        _failure('cloud_sync_outbound_chat_existing_history'),
+      );
+
+      expect(diagnostics.snapshot(), {
+        'outbound_chat_existing_history_alias_match': 1,
+        'outbound_chat_existing_history_local_chat_match': 1,
+        'outbound_chat_existing_history_snapshot_match': 1,
+      });
+      expect(db.box<Chat>().count(), beforeChats);
+      expect(db.box<CloudSemanticSnapshotEntity>().count(), beforeSnapshots);
+      expect(db.box<CloudSemanticChatAliasEntity>().count(), beforeAliases);
+      expect(db.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(db.box<CloudRecordMapEntity>().count(), 0);
+      expect(db.box<Message>().get(messageId)!.text,
+          'synthetic body survives adoption');
+    },
+  );
+
+  test(
+    'earlier existing-history match survives malformed later classifier row',
+    () {
+      admit();
+      final malformed = outbox()..localChatOrigin = 'not-valid-json';
+      db.box<CloudOutboxOperationEntity>().put(malformed);
+      db.box<Chat>().put(Chat(
+        guid: _canonical,
+        usingHandle: 'mailto:$_sender',
+        style: 45,
+      ));
+      final diagnostics = CloudSyncSemanticDiagnosticCollector();
+      final journal = bindJournal(diagnostics.record);
+      final source = createJournalSource(journal);
+      final beforeOutbox = db.box<CloudOutboxOperationEntity>().count();
+      final beforeMaps = db.box<CloudRecordMapEntity>().count();
+
+      expect(
+        () => sync.captureFreshOutboundChatOrigin(
+          _scope(), chatId, localSendSource: source),
+        _failure('cloud_sync_outbound_chat_existing_history'),
+      );
+
+      expect(diagnostics.snapshot(), {
+        'outbound_chat_existing_history_local_chat_match': 1,
+      });
+      expect(db.box<CloudOutboxOperationEntity>().count(), beforeOutbox);
+      expect(db.box<CloudRecordMapEntity>().count(), beforeMaps);
+      expect(outbox().localChatOrigin, 'not-valid-json');
+    },
+  );
+
+  test(
+    'existing-history outbound-origin predicate is repeatable across restart',
+    () async {
+      admit();
+      final diagnostics = CloudSyncSemanticDiagnosticCollector();
+      var journal = bindJournal(diagnostics.record);
+      var source = createJournalSource(journal);
+      final intentId = source.intentId;
+      final beforeOutbox = db.box<CloudOutboxOperationEntity>().count();
+      final beforeMaps = db.box<CloudRecordMapEntity>().count();
+
+      for (var attempt = 1; attempt <= 2; attempt++) {
+        expect(
+          () => sync.captureFreshOutboundChatOrigin(
+            _scope(), chatId, localSendSource: source),
+          _failure('cloud_sync_outbound_chat_existing_history'),
+        );
+        expect(diagnostics.snapshot(), {
+          'outbound_chat_existing_history_prior_outbound_origin_match': attempt,
+        });
+        expect(db.box<CloudOutboxOperationEntity>().count(), beforeOutbox);
+        expect(db.box<CloudRecordMapEntity>().count(), beforeMaps);
+        if (attempt == 1) {
+          await restart();
+          journal = bindJournal(diagnostics.record);
+          source = journal.readForAdmission(intentId);
+        }
+      }
+      preserved();
+    },
+  );
 
   test(
     'real admission and canonical adoption preserve the same Chat row and Message body',

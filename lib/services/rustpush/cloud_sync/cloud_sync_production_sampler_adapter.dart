@@ -731,6 +731,7 @@ final class CloudSyncProductionLocalSendAdapter {
     final journal = CloudSyncLocalSendJournal(
       store: objectBox, authority: authority, authoritySnapshot: owner,
     );
+    final existingHistoryDiagnostics = CloudSyncSemanticDiagnosticCollector();
     // Ephemeral per pass. Admission changes the read-set revision; refresh
     // against the ORIGINAL staged operation before lease, including restart.
     final chatEvidence = <String, CloudSyncChatIdentityEvidence>{};
@@ -739,6 +740,7 @@ final class CloudSyncProductionLocalSendAdapter {
       protector: RustCloudSyncProtector(storageDirectory: _privateStorageDirectory),
       localSendJournal: journal,
       readChatIdentityEvidence: (operation) => chatEvidence[operation.operationId],
+      recordExistingHistoryDiagnostic: existingHistoryDiagnostics.record,
     );
     final interlock = CloudKitOperationInterlock(
       privateStorageDirectory: _privateStorageDirectory, fenceStore: durable,
@@ -1032,6 +1034,7 @@ final class CloudSyncProductionLocalSendAdapter {
         candidateLimitReached: result.candidateLimitReached,
         chatReadbackPending: chatReadbackPending && !result.outboxBlocked,
         deferredReasons: result.deferredReasons,
+        existingHistoryDiagnostics: existingHistoryDiagnostics.snapshot(),
       );
     } finally {
       await transport.quiesceNativeOperations();

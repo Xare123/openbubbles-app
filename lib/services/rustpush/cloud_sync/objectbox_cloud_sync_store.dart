@@ -15,6 +15,7 @@ import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_record_maps.dart';
 import 'cloud_sync_protector.dart';
 import 'cloud_sync_safe_failure.dart';
+import 'cloud_sync_semantic_diagnostics.dart';
 import 'cloud_sync_store.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 
@@ -44,8 +45,10 @@ class ObjectBoxCloudSyncStore
     DateTime Function()? clock,
     CloudSyncLocalSendJournal? localSendJournal,
     this._readChatIdentityEvidence,
+    CloudSyncSemanticDiagnosticRecorder? recordExistingHistoryDiagnostic,
   }) : _store = store,
        _localSendJournal = localSendJournal,
+       _recordExistingHistoryDiagnostic = recordExistingHistoryDiagnostic,
        _clock = clock ?? DateTime.now,
        _checkpoints = store.box<CloudSyncCheckpointEntity>(),
        _inbox = store.box<CloudInboxChangeEntity>(),
@@ -71,6 +74,7 @@ class ObjectBoxCloudSyncStore
   static const int _maximumRetainedRunsPerScope = 256;
   final CloudSyncChatIdentityEvidence? Function(CloudOutboxOperation operation)?
       _readChatIdentityEvidence;
+  final CloudSyncSemanticDiagnosticRecorder? _recordExistingHistoryDiagnostic;
   static const String _messagesCloudContainer = 'com.apple.messages.cloud';
   static const String _messagesCloudDatabase = 'private';
   static const Set<String> _messagesCloudSemanticZones = <String>{
@@ -3708,8 +3712,49 @@ class ObjectBoxCloudSyncStore
     String? allowedOperationId,
     String? freshRecordIdHash,
   }) {
+    final matches = _existingChatHistoryMatchesLocked(
+      origin,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+      allowedOperationId: allowedOperationId,
+      freshRecordIdHash: freshRecordIdHash,
+    );
+    for (final diagnosticCode in matches.diagnosticCodes) {
+      try {
+        _recordExistingHistoryDiagnostic?.call(diagnosticCode);
+      } catch (_) {
+        // Diagnostics must never change the existing admission result.
+      }
+    }
+    if (matches.hasExistingHistory) {
+      throw _storageFailure('cloud_sync_outbound_chat_existing_history');
+    }
+    if (matches.tombstoneConflict) {
+      throw _storageFailure('messages_cloud_tombstone_projection_unavailable');
+    }
+  }
+
+  _ExistingChatHistoryMatches _existingChatHistoryMatchesLocked(
+    CloudSyncOutboundChatOrigin origin, {
+    String? logicalEntityKeyHash,
+    String? allowedOperationId,
+    String? freshRecordIdHash,
+  }) {
     final scope = origin.scope;
-    Never reject() => throw _storageFailure('cloud_sync_outbound_chat_existing_history');
+    bool readLaterPredicate(
+      bool existingHistoryAlreadyMatched,
+      bool Function() read,
+    ) {
+      if (!existingHistoryAlreadyMatched) return read();
+      try {
+        return read();
+      } catch (_) {
+        // The original short-circuit already selected existing_history.
+        // Later diagnostics are best-effort and cannot replace that failure.
+        return false;
+      }
+    }
+
+    var localChatMatch = false;
     for (final chat in _store.box<Chat>().getAll()) {
       if (chat.id == origin.chatId) continue;
       final handles = chat.handles.toList(growable: false);
@@ -3717,54 +3762,71 @@ class ObjectBoxCloudSyncStore
           (!chat.isRpSms && !chat.isRoutingStub && handles.length == 1 &&
             handles.single.service == 'iMessage' &&
             handles.single.address == origin.chatIdentifier)) {
-        reject();
+        localChatMatch = true;
+        break;
       }
     }
     String lookup(int generation) => CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
       scope: scope, generation: generation, canonicalGuid: origin.canonicalGuid);
-    final snapshots = _store.box<CloudSemanticSnapshotEntity>().query(
-      CloudSemanticSnapshotEntity_.scopeKey.equals(_scopeKey(scope))).build();
-    try {
-      if (snapshots.find().any((row) =>
-          row.canonicalGuidLookupHash == lookup(row.generation))) {
-        reject();
+    final snapshotMatch = readLaterPredicate(localChatMatch, () {
+      final snapshots = _store.box<CloudSemanticSnapshotEntity>().query(
+        CloudSemanticSnapshotEntity_.scopeKey.equals(_scopeKey(scope))).build();
+      try {
+        return snapshots.find().any((row) =>
+            row.canonicalGuidLookupHash == lookup(row.generation));
+      } finally {
+        snapshots.close();
       }
-    } finally {
-      snapshots.close();
-    }
-    final aliases = _store.box<CloudSemanticChatAliasEntity>().query(
-      CloudSemanticChatAliasEntity_.scopeKey.equals(_scopeKey(scope))).build();
-    try {
-      if (aliases.find().any((row) => row.chatId == origin.chatId ||
-          row.canonicalGuidLookupHash == lookup(row.generation))) {
-        reject();
+    });
+    final aliasMatch = readLaterPredicate(localChatMatch || snapshotMatch, () {
+      final aliases = _store.box<CloudSemanticChatAliasEntity>().query(
+        CloudSemanticChatAliasEntity_.scopeKey.equals(_scopeKey(scope))).build();
+      try {
+        return aliases.find().any((row) => row.chatId == origin.chatId ||
+            row.canonicalGuidLookupHash == lookup(row.generation));
+      } finally {
+        aliases.close();
       }
-    } finally {
-      aliases.close();
-    }
-    for (final row in _findOutboxForScopeLocked(scope)) {
-      if (row.operationId == allowedOperationId) continue;
-      if (row.localChatOrigin != null &&
-          cloudSyncOutboundChatOriginMatchesCanonical(
-            row.localChatOrigin!, scope, origin.canonicalGuid)) {
-        reject();
-      }
-    }
-    if (logicalEntityKeyHash != null) {
-      final own = allowedOperationId == null ? null :
-          _findOutboxByOperationIdLocked(allowedOperationId);
-      if (_findRecordMapsForScopeLocked(scope).any((row) =>
+    });
+    final priorOutboundOriginMatch = readLaterPredicate(
+      localChatMatch || snapshotMatch || aliasMatch,
+      () {
+        for (final row in _findOutboxForScopeLocked(scope)) {
+          if (row.operationId == allowedOperationId) continue;
+          if (row.localChatOrigin != null &&
+              cloudSyncOutboundChatOriginMatchesCanonical(
+                row.localChatOrigin!, scope, origin.canonicalGuid)) {
+            return true;
+          }
+        }
+        return false;
+      },
+    );
+    final priorMatch = localChatMatch || snapshotMatch || aliasMatch ||
+        priorOutboundOriginMatch;
+    final recordMapConflict = logicalEntityKeyHash != null &&
+        readLaterPredicate(priorMatch, () {
+          final own = allowedOperationId == null ? null :
+              _findOutboxByOperationIdLocked(allowedOperationId);
+          return _findRecordMapsForScopeLocked(scope).any((row) =>
           row.logicalEntityKeyHash == logicalEntityKeyHash &&
           (own == null || row.generation != own.checkpointGeneration ||
-            row.serverRecordIdHash != own.serverRecordIdHash))) {
-        reject();
-      }
-    }
-    if (freshRecordIdHash != null && _findInboxForScopeLocked(scope).any((row) =>
-        row.isTombstone && row.changeType == CloudChangeType.delete.name &&
-        row.serverRecordIdHash == freshRecordIdHash)) {
-      throw _storageFailure('messages_cloud_tombstone_projection_unavailable');
-    }
+            row.serverRecordIdHash != own.serverRecordIdHash));
+        });
+    final tombstoneConflict = freshRecordIdHash != null && readLaterPredicate(
+      priorMatch || recordMapConflict,
+      () => _findInboxForScopeLocked(scope).any((row) =>
+          row.isTombstone && row.changeType == CloudChangeType.delete.name &&
+          row.serverRecordIdHash == freshRecordIdHash),
+    );
+    return _ExistingChatHistoryMatches(
+      localChatMatch: localChatMatch,
+      snapshotMatch: snapshotMatch,
+      aliasMatch: aliasMatch,
+      priorOutboundOriginMatch: priorOutboundOriginMatch,
+      recordMapConflict: recordMapConflict,
+      tombstoneConflict: tombstoneConflict,
+    );
   }
 
   void _putRecordMapAndMirrorLocked(CloudSyncScope scope, CloudRecordMapEntity row) {
@@ -3936,18 +3998,28 @@ class ObjectBoxCloudSyncStore
       // create may be independent of unrelated history. It still cannot
       // recreate a record with an observed deletion; all other writes keep
       // the original full-projection requirement.
+      final freshRecordTombstoneConflict = allowRetainedForFreshCreate &&
+          freshRecordIdHash != null &&
+          siblingScope == scope &&
+          _findInboxForScopeLocked(scope).any(
+            (row) =>
+                row.generation == checkpoint.generation &&
+                row.isTombstone &&
+                row.changeType == CloudChangeType.delete.name &&
+                row.serverRecordIdHash == freshRecordIdHash,
+          );
       if ((!allowRetained &&
               _hasRetainedTombstoneLocked(siblingScope, checkpoint)) ||
-          (allowRetainedForFreshCreate &&
-              freshRecordIdHash != null &&
-              siblingScope == scope &&
-              _findInboxForScopeLocked(scope).any(
-                (row) =>
-                    row.generation == checkpoint.generation &&
-                    row.isTombstone &&
-                    row.changeType == CloudChangeType.delete.name &&
-                    row.serverRecordIdHash == freshRecordIdHash,
-              ))) {
+          freshRecordTombstoneConflict) {
+        if (freshRecordTombstoneConflict && requireResolvedChatSaves) {
+          try {
+            _recordExistingHistoryDiagnostic?.call(
+              'outbound_chat_existing_history_tombstone_conflict',
+            );
+          } catch (_) {
+            // Diagnostics must never replace the projection failure.
+          }
+        }
         throw _storageFailure(
           'messages_cloud_tombstone_projection_unavailable',
         );
@@ -4697,6 +4769,43 @@ class ObjectBoxCloudSyncStore
     category: CloudFailureCategory.localStorage,
     safeCode: safeCode,
   );
+}
+
+final class _ExistingChatHistoryMatches {
+  const _ExistingChatHistoryMatches({
+    required this.localChatMatch,
+    required this.snapshotMatch,
+    required this.aliasMatch,
+    required this.priorOutboundOriginMatch,
+    required this.recordMapConflict,
+    required this.tombstoneConflict,
+  });
+
+  final bool localChatMatch;
+  final bool snapshotMatch;
+  final bool aliasMatch;
+  final bool priorOutboundOriginMatch;
+  final bool recordMapConflict;
+  final bool tombstoneConflict;
+
+  bool get hasExistingHistory =>
+      localChatMatch ||
+      snapshotMatch ||
+      aliasMatch ||
+      priorOutboundOriginMatch ||
+      recordMapConflict;
+
+  List<String> get diagnosticCodes => <String>[
+    if (localChatMatch) 'outbound_chat_existing_history_local_chat_match',
+    if (snapshotMatch) 'outbound_chat_existing_history_snapshot_match',
+    if (aliasMatch) 'outbound_chat_existing_history_alias_match',
+    if (priorOutboundOriginMatch)
+      'outbound_chat_existing_history_prior_outbound_origin_match',
+    if (recordMapConflict)
+      'outbound_chat_existing_history_record_map_conflict',
+    if (tombstoneConflict)
+      'outbound_chat_existing_history_tombstone_conflict',
+  ];
 }
 
 final class _ProtectedCheckpointCapture {

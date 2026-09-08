@@ -25,6 +25,34 @@ void main() {
     });
   });
 
+  test('existing Chat history causes are a closed content-free vocabulary', () {
+    final diagnostics = CloudSyncSemanticDiagnosticCollector();
+
+    for (final code in const <String>[
+      'outbound_chat_existing_history_local_chat_match',
+      'outbound_chat_existing_history_snapshot_match',
+      'outbound_chat_existing_history_alias_match',
+      'outbound_chat_existing_history_prior_outbound_origin_match',
+      'outbound_chat_existing_history_record_map_conflict',
+      'outbound_chat_existing_history_tombstone_conflict',
+    ]) {
+      diagnostics.record(code);
+    }
+    diagnostics.record(
+      'outbound_chat_existing_history_local_chat_match:private-identifier',
+    );
+
+    expect(diagnostics.snapshot(), <String, int>{
+      'diagnostic_code_invalid': 1,
+      'outbound_chat_existing_history_alias_match': 1,
+      'outbound_chat_existing_history_local_chat_match': 1,
+      'outbound_chat_existing_history_prior_outbound_origin_match': 1,
+      'outbound_chat_existing_history_record_map_conflict': 1,
+      'outbound_chat_existing_history_snapshot_match': 1,
+      'outbound_chat_existing_history_tombstone_conflict': 1,
+    });
+  });
+
   test('invalid diagnostic input cannot interrupt semantic projection', () {
     final diagnostics = CloudSyncSemanticDiagnosticCollector();
 

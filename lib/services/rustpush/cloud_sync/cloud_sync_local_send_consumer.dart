@@ -187,6 +187,7 @@ final class CloudSyncLocalSendConsumerResult {
     this.chatReadbackPending = false,
     this.candidateLimitReached = false,
     this.deferredReasons = const {},
+    this.existingHistoryDiagnostics = const {},
   });
 
   final int admitted;
@@ -200,6 +201,10 @@ final class CloudSyncLocalSendConsumerResult {
   /// Fixed, allowlisted codes only, aggregated per pass. Never identifiers,
   /// message text or raw exception/server content.
   final Map<String, int> deferredReasons;
+
+  /// Fixed, content-free cause counts from the actual Chat history admission
+  /// predicates. Counts are per rejected admission attempt, never row counts.
+  final Map<String, int> existingHistoryDiagnostics;
 
   /// Queue receipts are settled, but the ordinary semantic reader still needs
   /// to project the newly created Chat before its first Message can upload.

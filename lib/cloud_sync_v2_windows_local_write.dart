@@ -516,6 +516,7 @@ final class CloudSyncWindowsLocalWrite {
       'outbox_blocked': result.outboxBlocked,
       'chat_readback_pending': result.chatReadbackPending,
       'deferred_reasons': result.deferredReasons,
+      'existing_history_diagnostics': result.existingHistoryDiagnostics,
     };
   }
 }

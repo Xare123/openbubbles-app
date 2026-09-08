@@ -7751,7 +7751,8 @@ class RustPushService extends GetxService {
                 'admitted=${result.admitted} deferred=${result.deferred} '
                 'outboxBlocked=${result.outboxBlocked} '
                 'chatReadbackPending=${result.chatReadbackPending} '
-                'reasons=${jsonEncode(result.deferredReasons)}');
+                'reasons=${jsonEncode(result.deferredReasons)} '
+                'existingHistory=${jsonEncode(result.existingHistoryDiagnostics)}');
           }
           // Both the native writer and the attachment gate have been released.
           // Reuse the real semantic gateway, never turn an ACK into a local
@@ -8770,7 +8771,15 @@ class RustPushService extends GetxService {
       );
     }();
     _cloudSyncV2OutboundInFlight = future;
-    return future.whenComplete(() {
+    return future.then((result) {
+      Logger.info('Cloud Sync V2 exact-intent Canary result '
+          'admitted=${result.admitted} deferred=${result.deferred} '
+          'outboxBlocked=${result.outboxBlocked} '
+          'chatReadbackPending=${result.chatReadbackPending} '
+          'reasons=${jsonEncode(result.deferredReasons)} '
+          'existingHistory=${jsonEncode(result.existingHistoryDiagnostics)}');
+      return result;
+    }).whenComplete(() {
       if (identical(_cloudSyncV2OutboundInFlight, future)) {
         _cloudSyncV2OutboundInFlight = null;
       }
