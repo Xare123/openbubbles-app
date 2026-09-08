@@ -277,7 +277,7 @@ jobs:
         run: git config --global --add safe.directory "$FLUTTER_ROOT"
 
       - name: Set up Java
-        if: ${{ env.VALIDATION_MODE != 'rustpush-only' }}
+        if: ${{ env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' }}
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           java-version: "21"
@@ -285,7 +285,7 @@ jobs:
           cache: gradle
 
       - name: Set up Android SDK
-        if: ${{ env.VALIDATION_MODE != 'rustpush-only' }}
+        if: ${{ env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' }}
         uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
 
       - name: Cache Cargo registries
@@ -301,7 +301,7 @@ jobs:
       # Cargo validates incremental fingerprints after a source-only restore.
       # Keep the compatibility family aligned with the active sampler job.
       - name: Cache ARM64 debug CargoKit output
-        if: ${{ env.VALIDATION_MODE != 'rustpush-only' }}
+        if: ${{ env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' }}
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
         with:
           path: build/app/build/build
