@@ -5850,7 +5850,7 @@ mod tests {
             .ids_send_receipt_path(&first)
             .expect("receipt path")
             .is_file());
-        let first = store
+        let replayed = store
             .replay_ids_send_receipts(
                 &receipt.account_fingerprint,
                 &receipt.protected_store_identity,
@@ -5980,7 +5980,7 @@ mod tests {
             .expect("write corrupt receipt");
         }
 
-        let replayed = store
+        let first = store
             .replay_ids_send_receipts(
                 &receipt.account_fingerprint,
                 &receipt.protected_store_identity,
