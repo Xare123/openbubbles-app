@@ -2896,9 +2896,9 @@ Relay identity -> Apple account -> Keychain clique / PCS -> CloudMessagesClient
   |     +-- durable cursors / replay                               +-- on-demand media
   |     +-- no startup/reconnect/background production caller
   |
-  +-- normal composer -> IDS live delivery -> local Message save
-  |     +-- local-origin intent + Message saved in one transaction
-  |           pending -> IDS-confirmed/deferred -> ready after identity proof
+  +-- normal composer -> standalone local Message save -> in-memory send queue
+  |     +-- later local-origin capture can jointly re-save Message + state-0 intent
+  |           pending -> process-memory IDS confirmation -> ready after identity proof
   |           +-- protected stage -> atomic outbox/map/intent adoption
   |           +-- restart resolves exact adopted envelope, never re-encodes
   |           +-- foreground consumer wired; independent rollout flag OFF
@@ -2908,6 +2908,13 @@ Relay identity -> Apple account -> Keychain clique / PCS -> CloudMessagesClient
         -> acknowledged, immutable settled row -> next semantic read
            (Windows ObjectBox restart test passes; live Apple cycle pending)
 ```
+
+The diagram is intentionally explicit about the earlier standalone Message
+commit. The later nested ObjectBox transaction proves Message plus state-0
+intent rollback, but it cannot retroactively make the composer queue boundary
+atomic. A process death between the standalone save and local-origin capture can
+leave an undiscoverable Message, and native `SendConfirm` remains process-memory
+only until a durable IDS completion receipt is added.
 
 | Boundary | Current source evidence | Status / required proof |
 | --- | --- | --- |

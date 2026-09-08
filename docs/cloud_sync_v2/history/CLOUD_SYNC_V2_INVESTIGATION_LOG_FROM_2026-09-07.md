@@ -230,3 +230,49 @@ This is a chronological evidence log. It does not override the
   workflow took 32m11s. Cleanup verified that both the runner VM and GitHub
   registration were absent. The signed artifact digest is
   `sha256:47221e522f997c84500e0ca993b7e42210190d8c59197e2e138e15e61a517ade`.
+
+### Existing-history classifier and run 34240730080
+
+- App source `1c269b7e1c676fbb4dc7e23ec200ec0e013cf19a` adds six fixed,
+  content-free counters for existing local Chat, semantic snapshot, alias,
+  prior outbound origin, record-map, and tombstone conflicts. The observation
+  does not change admission, failure precedence, storage, outbox, checkpoint,
+  or remote-write behavior.
+- The focused production-path fixture suite passed 109 of 109 tests. An
+  independent audit confirmed that later diagnostic reads remain best-effort
+  only after an earlier existing-history result is known and cannot replace an
+  original failure.
+- Exact-source T2D-60 GCE run `34240730080` passed 2,447 Dart tests, 346 Rust
+  app tests, 223 rustpush production-feature tests, and 32 protector tests.
+  Generated bindings reproduced, the Canary APK built, ARM64 application and
+  native libraries passed verification, GitHub-hosted signing succeeded, and
+  runner and VM cleanup completed. Automatic-upload qualification did not run
+  because the exact candidate intentionally used `automatic_uploads=false`.
+- The GCE build job took 27m15s; the APK build step took 13m30s. The downloaded
+  signed artifact is package `com.bluebubbles.messaging.cloudkitcanary`, uses
+  APK Signature Schemes v2 and v3, and has digest
+  `sha256:31360153479d820a78e4828ee39db2825fb26124f27577febd59e94f85e95f54`.
+- The next evidence remains one in-place Canary install and read-only retained
+  replay, followed by an exact-intent diagnostic read for the two deferred
+  creates. No adoption or retry is authorized by a diagnostic count alone.
+
+### Atomic composer admission and durable IDS receipt
+
+- Commit `d4f618ced` moved eligible plaintext composer admission ahead of the
+  queue boundary. The first local Message and its state-0 intent now commit in
+  one ObjectBox transaction or both roll back. URL/rich-link candidates remain
+  excluded, and automatic CloudKit uploads remain off.
+- Commit `51314b83d` added a content-free protected native receipt that is
+  synced before Rust emits `SendConfirm`. Dart records IDS success as state 3
+  before acknowledging the receipt, and startup replay recovers receipts after
+  a process restart without treating a new native session as the old session.
+- Replay pages are bound to one exact account fingerprint, protected-store
+  identity, native session, Dart state, native client, ObjectBox store, and
+  storage path. A transition aborts the page before its cursor advances. Send
+  retries retain their original admission fence even if rebuilt payload
+  capture is discarded; a pre-admitted composer source change fails closed.
+- The focused integrated suite passed 122 tests and the source composition
+  suite passed 26 tests. Targeted handwritten analysis found no errors or
+  warnings. An independent post-fix static audit reported no remaining
+  concrete crash-consistency findings. Full GCE and live process-kill proof are
+  still required before automatic uploads can be considered.

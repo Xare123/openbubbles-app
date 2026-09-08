@@ -55,10 +55,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Candidate | App source `12035ec0cefe73a9d4f7f779d2e9a06c4c7667b0`; prior Android release proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
-| Main change | `MessageEncryptedV3.msgType` now selects the matching Apple system-event protobuf schema. Valid classes 3-7 remain retained as typed unsupported events instead of being mislabeled malformed by the ordinary-message decoder. |
+| Candidate | App source `51314b83d`; last exact-source qualified base `1c269b7e1c676fbb4dc7e23ec200ec0e013cf19a`; system-event decoder base `12035ec0cefe73a9d4f7f779d2e9a06c4c7667b0`; prior Android release proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
+| Main change | The normal plaintext composer now admits the first Message and state-0 local-send intent atomically. Native IDS success is protected and synced before `SendConfirm`, recovered after restart, rebound to the exact account/store/runtime page, and acknowledged only after state 3 is durable in ObjectBox. Automatic uploads remain off. |
 | Dependency | rustpush `c5e9053`, which restores the five system-event payload schemas on the existing fork branch. |
-| Full qualification | Exact-source T2D-60 GCE run `34226323430` passed: 2,441 Dart tests, 346 Rust app tests, 223 rustpush production-feature tests, 32 protector tests, reproducible generated bindings, signed Canary APK, ARM64 application/native-library verification, runner deregistration, and VM deletion. The GCE build job took 28m43s; the complete workflow took 32m11s. |
+| Full qualification | Candidate `51314b83d` is pending exact-source GCE qualification. Its focused local crash-chain suite passes 122 tests, its production composition contract passes 26 tests, targeted handwritten analysis has no errors or warnings, and an independent static audit has no remaining concrete findings. Base `1c269b7e1` passed GCE run `34240730080` with 2,447 Dart, 346 Rust app, 223 rustpush, and 32 protector tests plus reproducible bindings and a signed ARM64 Canary. |
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
@@ -85,8 +85,11 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 - Content-free Windows inspection proved all 189 native `msgProto` field-2
   wire mismatches are classes 4-7, whose Apple schemas use int64 rather than
   the ordinary message string. The same inspection found five class-3 system
-  events. Candidate `12035ec0c` validates all five variant schemas and retains
+  events. The decoder base `12035ec0c` validates all five variant schemas and retains
   them as `UnsupportedMessageType`; it does not invent projection semantics.
+- Existing-history write deferrals report fixed counts for local-chat, snapshot,
+  alias, prior-origin, record-map, and tombstone conflicts. The classifier is
+  observational only and does not authorize adoption or alter failure precedence.
 - Canary ADB control is package-scoped, challenge-confirmed, and read-only by
   default. Host parsing accounts for Android SharedPreferences key prefixes and
   harmless Windows PowerShell native-stderr promotion.
@@ -211,7 +214,8 @@ source contract or behavioral logic
   -> full exact-source GCE suite and APK build
 
 Apple protocol, PCS, save, readback, or replay behavior
-  -> private-profile Windows fast loop
+  -> exact-source trusted minimal Windows harness when available
+  -> otherwise signed Canary on Pixel
 
 Android registration, ObjectBox/UI, background, lock, or lifecycle behavior
   -> signed Canary on Pixel
@@ -220,10 +224,15 @@ cross-device convergence
   -> independent Apple device confirmation
 ```
 
-Do not rebuild a Canary for every code edit. Dart-only development may use
-Windows hot reload. Rust or bridge changes need an incremental DLL rebuild and
-process restart. Credentials and PCS state stay on the private Windows profile,
-never on GCE. Pixel is the final release proof, not the everyday protocol loop.
+Do not rebuild a Canary for every code edit. GCE handles exact-source Dart,
+Rust, bridge-generation, identity, projection, and reconciliation tests. The
+existing Windows ARM harness is stale relative to candidate `1c269b7e1`; both
+Dart and native Rust changed, so its reports cannot qualify the candidate.
+Smart App Control blocks the locally self-signed DLL and Cargo build-script
+executables with error 4551 before CloudKit starts. Keep that policy enabled.
+Restore Windows hot reload only after a trusted-provider-signed exact-source
+minimal harness exists. Credentials and PCS state remain on a private local
+profile, never on GCE. Pixel remains the live protocol and final release proof.
 
 ## Recovery policy
 
@@ -248,7 +257,7 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 | Protected fetch, journal, and token | [`native_protected_cloud_sync_transport.dart`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart), [`objectbox_cloud_sync_store.dart`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart) | Test and prior live proof. |
 | Decode and canonical conversion | [`rust_cloud_semantic_decoder.dart`](../lib/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart), [`cloud_sync_canonical_converter.rs`](../rust/src/cloud_sync_canonical_converter.rs) | Test and representative live proof. |
 | Ordered projection and retained repair | [`cloud_inbox_applier.dart`](../lib/services/rustpush/cloud_sync/cloud_inbox_applier.dart), [`objectbox_cloud_semantic_store_gateway.dart`](../lib/services/rustpush/cloud_sync/objectbox_cloud_semantic_store_gateway.dart) | Read live-proven; current backlog must be explicit. |
-| Write admission and recovery | [`cloud_sync_manual_outbound_canary.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart), [`cloudkit_writer_mutation_guard.dart`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart) | Direct Windows live proof; Pixel and other operation families remain. |
+| Composer origin, IDS completion, and write admission | [`rustpush_service.dart`](../lib/services/rustpush/rustpush_service.dart), [`cloud_sync_local_send_journal.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart), [`cloud_sync_manual_outbound_canary.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart), [`cloudkit_writer_mutation_guard.dart`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart) | Atomic composer admission and protected native receipt recovery are source-, unit-, restart-, and static-audit proven at `51314b83d`. Exact-source GCE, live Pixel process-death recovery, remote readback, and duplicate suppression remain. |
 | Direct and group encoders | [`cloud_sync_local_send_encoder.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_local_send_encoder.dart), [`cloud_sync_outbound_group_binding.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart) | Direct live-proven on Windows; group source-implemented. |
 | Native create/readback receipt | [`api.rs`](../rust/src/api/api.rs), [`cloud_messages.rs`](../rustpush/src/imessage/cloud_messages.rs), [`chat_create.rs`](../rustpush/src/imessage/cloud_messages/chat_create.rs) | Direct Windows proof; exact-source suite and group live proof pending. |
 
@@ -256,11 +265,11 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 
 ### Candidate qualification
 
-- [ ] Generated bindings reproduce with no unrelated drift.
+- [ ] Generated bindings reproduce with no unrelated drift at `51314b83d`.
 - [ ] Full Dart, Rust, rustpush, protector, and ObjectBox tests pass at the
   exact app and submodule commits.
-- [x] Canary APK contains the expected ARM64 native library and is signed on
-  the existing trusted GitHub-hosted signing path.
+- [ ] Canary APK for `51314b83d` contains the expected ARM64 native library
+  and is signed on the existing trusted GitHub-hosted signing path.
 - [ ] Failed GCE runs delete the VM and deregister the runner.
 
 ### Read qualification
@@ -283,8 +292,11 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 - [ ] Restored-group plaintext passes exact-source tests, one authorized live
   group create, exact readback, restart, and independent display.
 - [ ] Direct reactions pass live save/readback/restart and independent display.
-- [ ] Ordinary composer admission commits the local message and V2 outbox
-  intent together, then converges automatically.
+- [ ] Ordinary composer queue admission atomically commits the first durable
+  outgoing Message and state-0 local-send intent. Native IDS success is durably
+  recorded before `SendConfirm`; restart recovery promotes it to state 3 and
+  acknowledges that receipt only after the ObjectBox commit. Protected staging
+  then atomically adopts the intent into the outbox and converges automatically.
 - [ ] Attachment write, edits, unsends, and tombstones each receive their own
   causal and recovery contract before release or remain explicitly disabled.
 
@@ -301,7 +313,7 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 
 ## Current critical path
 
-1. Qualify candidate `12035ec0c`, then replay the retained message cohort and
+1. Replay the retained message cohort on qualified candidate `1c269b7e1` and
    prove that the 189 schema-known system events move from native malformed to
    typed unsupported state without changing remote data or tokens.
 2. Classify the remaining inbound message failures by their existing safe
@@ -311,41 +323,45 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 3. Continue bounded retained projection until every remaining blocking message
    and attachment save is either projected or has an explicit typed unavailable
    state. Do not reinterpret physical retention as completed local projection.
-4. Separately classify the two queued chat creates that fail closed as
-   `cloud_sync_outbound_chat_existing_history`. That code currently collapses
-   a matching local Chat, semantic snapshot, alias, or earlier outbound origin;
-   none alone authorizes adoption. Adopt only after one exact current CloudKit
-   Chat owner is proven, otherwise keep the create deferred.
-5. Use the authorized test recipients only. First repeat direct no-duplicate
+4. Read the qualified six-category diagnostic counts for the two queued chat
+   creates that fail closed as `cloud_sync_outbound_chat_existing_history`.
+   A local Chat, semantic snapshot, alias, earlier outbound origin, record-map
+   conflict, or tombstone alone does not authorize adoption. Adopt only after
+   one exact current CloudKit Chat owner is proven, otherwise keep the create
+   deferred.
+5. Qualify `51314b83d` on exact-source GCE with automatic uploads off. Require
+   reproducible bindings, every Dart/Rust/rustpush/protector suite, signed
+   ARM64 Canary, native-library inspection, and complete runner cleanup.
+6. On Canary, prove composer admission and the native IDS receipt across an
+   intentional process death, then verify state-3 recovery, one protected
+   outbox adoption, exact CloudKit readback, and zero duplicate local/remote
+   records. Do not touch Alpha.
+7. Use the authorized test recipients only. First repeat direct no-duplicate
    readback proof, then create one controlled restored-group plaintext message.
-6. Verify the group record by exact CloudKit readback, restart/no-save replay,
+8. Verify the group record by exact CloudKit readback, restart/no-save replay,
    and independent Apple-device display.
-7. Qualify direct reactions. Keep edits, unsends, attachments, group-state
+9. Qualify direct reactions. Keep edits, unsends, attachments, group-state
    changes, and deletion closed until their separate contracts pass.
-8. Run lifecycle soak and produce one release-candidate report that proves
+10. Run lifecycle soak and produce one release-candidate report that proves
    identity stability, token continuity, zero duplicate writes, and honest
    retained counts.
 
 ## Next falsification test
 
-The next falsification is a read-only retained replay on Canary using the
-signed exact-source `12035ec0c` artifact from GCE run `34226323430`. For
-message classes 3-7, the replay must
-report typed unsupported state rather than native malformed state. It must not
-save, delete, mutate the outbox, or remove a retained record. The confirmed
-catch-up may legitimately fetch newly arrived records and advance read
-checkpoints while proving remote head. Its subsequent retained-projection
-sweep is the part that must remain local-only: it constructs no transport and
-cannot fetch or advance a token. Any system-event schema decode failure,
-unexplained retained-count loss, or write-side movement rejects the candidate.
-Outbound existing-history resolution remains a separate write gate for the
-two queued creates only.
+The next falsification is exact-source GCE qualification of `51314b83d` with
+automatic uploads disabled. It must reproduce generated bindings, pass every
+Dart and Rust suite, build and sign the ARM64 Canary, verify its native library,
+and delete both the ephemeral runner registration and VM. Any bridge drift,
+test failure, unsigned artifact, wrong ABI, cleanup residue, or enabled upload
+lane rejects the candidate. Only after that proof may the same artifact enter
+the live Pixel crash/restart test. Existing-history adoption remains a separate
+write gate; diagnostic counts cannot authorize or perform adoption.
 
 ## Existing-history adoption evidence gate
 
 Automatic adoption is not safe from the offline checkout alone. For each
-queued intent, a content-free live observation must first distinguish the four
-`existing_history` branches and prove exactly one current direct-iMessage Chat
+queued intent, a content-free live observation must first distinguish the six
+`existing_history` categories and prove exactly one current direct-iMessage Chat
 owner under the same account, protected store, scope, generation, writer epoch,
 and native session. The proof must bind the canonical Chat lookup hash, semantic
 snapshot, service-identifier alias, canonical/member record map, latest applied
@@ -361,3 +377,28 @@ transaction must create no Chat stage, outbox row, record-map mutation, remote
 save, merge-update, or delete. Restart must repeat as a no-op; any mismatch must
 roll back and leave the intent ready/deferred. A bare Message reparent is not a
 fallback because the journal source digest binds the original Chat row and UUID.
+
+## Edit and unsend evidence gate
+
+Apple carries edit history and retracted parts inside the existing message's
+`msgProto.messageSummaryInfo` blob (`ec`, `ep`, `otr`, and `rp`). The read path
+already validates part-key consistency, monotonic edit revisions, and the rule
+that present-but-empty collections are absent rather than an explicit clear.
+The underlying CloudKit client exposes update save semantics and stale-record
+conflicts, but V2 transport deliberately remains initial-create-only.
+
+Do not enable update transport from structural inference alone. First capture
+one genuine Apple edit and one unsend read-only, proving the same record name,
+the before/after protected system fields and change tag, the complete rewritten
+or merged field set, and the resulting `messageSummaryInfo` bytes. Then require
+stale-tag refetch and reapply, exact retry identity, and anti-resurrection proof.
+Explicit `NOT_FOUND` is not permission to recreate a previously known message.
+
+A reviewed three-file first-edit identity scaffold remains deliberately outside
+this candidate. It has no production call site, Apple record or native wire
+fixture, journal/admission integration, or content-derived proof that its
+caller-supplied pre/post digests match the actual message text. Its operation
+identity also cannot establish the required predecessor change tag or monotonic
+CloudKit mutation revision. Retain it only as design evidence; do not integrate
+it until the live capture above determines the real zone, record, and compare-
+and-swap contract.

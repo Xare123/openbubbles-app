@@ -9,6 +9,11 @@ timestamp: 2026-08-22
 
 # OpenBubbles Cloud Sync V2 live validation
 
+> **Historical runbook:** the readiness snapshot below is retained for test
+> provenance and is not the current release state. Use
+> [`CLOUD_SYNC_V2_CONNECTION_TREEMAP.md`](CLOUD_SYNC_V2_CONNECTION_TREEMAP.md)
+> for the active candidate, current gates, and next falsification test.
+
 ## Current readiness
 
 The bounded Android read-only shadow and semantic-pull canaries now have
