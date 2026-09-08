@@ -21,7 +21,7 @@ use crate::{
         CloudCanonicalConversionContext, CloudCanonicalConversionOutcome,
         CloudCanonicalOutOfScopeService, CloudCanonicalQuarantineReason,
         CloudCanonicalValidationDiagnosticClass, CloudChatDiagnosticCode, CloudRawPresenceFailure,
-        CloudRawRecordPresence,
+        CloudRawFieldPresence, CloudRawRecordPresence,
     },
     cloud_sync_canonical_dto::{
         CloudCanonicalAliasKind, CloudCanonicalEntityKind, CloudCanonicalHash,
@@ -45,7 +45,10 @@ use log::{debug, warn};
 use prost::{DecodeError, Message as _};
 use rustpush::{
     cloud_messages::{
-        cloudmessagesp::{ChatProto, MessageProto, MessageProto2, MessageProto3, MessageProto4},
+        cloudmessagesp::{
+            ChatProto, GroupAction, GroupTitleChange, LocationShareStatusChange, MessageAction,
+            MessageProto, MessageProto2, MessageProto3, MessageProto4, ParticipantChange,
+        },
         CloudAttachment, CloudChat, CloudMessage, CloudMessagesClient, CloudParticipant,
         MESSAGES_SERVICE,
     },
@@ -584,6 +587,68 @@ fn field_name(field: &Field) -> Option<&str> {
     field.identifier.as_ref()?.name.as_deref()
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MessageOuterType {
+    Missing,
+    Malformed,
+    Value(i64),
+}
+
+/// Reads the unencrypted MessageEncryptedV3 routing discriminator. Diagnostics
+/// expose only bounded schema classes, never unexpected server values.
+fn message_outer_type(record: &Record) -> MessageOuterType {
+    let Some(value) = record
+        .record_field
+        .iter()
+        .find(|field| field_name(field) == Some("msgType"))
+        .and_then(|field| field.value.as_ref())
+    else {
+        return MessageOuterType::Missing;
+    };
+    if value.r#type != Some(FieldValueType::Int64Type as i32)
+        || value.is_encrypted == Some(true)
+        || value.bytes_value.is_some()
+        || value.double_value.is_some()
+        || value.date_value.is_some()
+        || value.string_value.is_some()
+        || value.location_value.is_some()
+        || value.reference_value.is_some()
+        || value.asset_value.is_some()
+        || !value.list_values.is_empty()
+        || value.package_value.is_some()
+    {
+        return MessageOuterType::Malformed;
+    }
+    value
+        .signed_value
+        .map(MessageOuterType::Value)
+        .unwrap_or(MessageOuterType::Malformed)
+}
+
+fn message_outer_type_class(record: &Record) -> &'static str {
+    match message_outer_type(record) {
+        MessageOuterType::Value(0) => "class_0",
+        MessageOuterType::Value(1) => "class_1",
+        MessageOuterType::Value(2) => "class_2",
+        MessageOuterType::Value(3) => "class_3",
+        MessageOuterType::Value(4) => "class_4",
+        MessageOuterType::Value(5) => "class_5",
+        MessageOuterType::Value(6) => "class_6",
+        MessageOuterType::Value(7) => "class_7",
+        MessageOuterType::Value(_) => "unsupported",
+        MessageOuterType::Missing => "missing",
+        MessageOuterType::Malformed => "malformed",
+    }
+}
+
+fn has_required_message_identity(presence: &CloudRawRecordPresence) -> bool {
+    [
+        "msgType", "eCode", "chatID", "sender", "time", "msgProto", "flags", "guid", "svc",
+    ]
+    .iter()
+    .all(|field| presence.field(field) == CloudRawFieldPresence::PresentWithValue)
+}
+
 fn record_name(record: &Record) -> Option<&str> {
     record
         .record_identifier
@@ -856,6 +921,53 @@ fn decode_message_proto_4(value: &[u8]) -> Result<(), DecodeError> {
     MessageProto4::decode(value).map(|_| ())
 }
 
+fn decode_group_title_change(value: &[u8]) -> Result<(), DecodeError> {
+    GroupTitleChange::decode(value).map(|_| ())
+}
+
+fn decode_location_share_status_change(value: &[u8]) -> Result<(), DecodeError> {
+    LocationShareStatusChange::decode(value).map(|_| ())
+}
+
+fn decode_message_action(value: &[u8]) -> Result<(), DecodeError> {
+    MessageAction::decode(value).map(|_| ())
+}
+
+fn decode_participant_change(value: &[u8]) -> Result<(), DecodeError> {
+    ParticipantChange::decode(value).map(|_| ())
+}
+
+fn decode_group_action(value: &[u8]) -> Result<(), DecodeError> {
+    GroupAction::decode(value).map(|_| ())
+}
+
+fn primary_message_proto_spec(record: &Record) -> GzipFieldSpec {
+    match message_outer_type(record) {
+        MessageOuterType::Value(3) => GzipFieldSpec::required(
+            "msgProto",
+            "group_title_change",
+            decode_group_title_change,
+        ),
+        MessageOuterType::Value(4) => GzipFieldSpec::required(
+            "msgProto",
+            "location_share_status_change",
+            decode_location_share_status_change,
+        ),
+        MessageOuterType::Value(5) => {
+            GzipFieldSpec::required("msgProto", "message_action", decode_message_action)
+        }
+        MessageOuterType::Value(6) => GzipFieldSpec::required(
+            "msgProto",
+            "participant_change",
+            decode_participant_change,
+        ),
+        MessageOuterType::Value(7) => {
+            GzipFieldSpec::required("msgProto", "group_action", decode_group_action)
+        }
+        _ => GzipFieldSpec::required("msgProto", "message_proto", decode_message_proto),
+    }
+}
+
 fn expected_nested_wire_type(decoder_stage: &str, field_number: u64) -> Option<u8> {
     match decoder_stage {
         "chat_proto" => (field_number == 2).then_some(0),
@@ -875,6 +987,42 @@ fn expected_nested_wire_type(decoder_stage: &str, field_number: u64) -> Option<u
                 Some(2)
             } else if matches!(field_number, 5 | 6 | 8) {
                 Some(0)
+            } else {
+                None
+            }
+        }
+        "group_title_change" => {
+            if field_number == 1 {
+                Some(0)
+            } else if matches!(field_number, 2 | 3 | 4) {
+                Some(2)
+            } else {
+                None
+            }
+        }
+        "location_share_status_change" => {
+            if matches!(field_number, 1 | 2 | 3) {
+                Some(0)
+            } else if matches!(field_number, 4 | 5) {
+                Some(2)
+            } else {
+                None
+            }
+        }
+        "message_action" => {
+            if matches!(field_number, 1 | 2) {
+                Some(0)
+            } else if matches!(field_number, 3 | 4 | 5) {
+                Some(2)
+            } else {
+                None
+            }
+        }
+        "participant_change" | "group_action" => {
+            if matches!(field_number, 1 | 2) {
+                Some(0)
+            } else if matches!(field_number, 3 | 4) {
+                Some(2)
             } else {
                 None
             }
@@ -2402,18 +2550,22 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
             };
         }
         CloudNativeStream::Messages => {
+            let primary_message_proto = primary_message_proto_spec(&record);
             if let Err(failure) = preflight_gzip_fields(
                 &mut record,
                 &record_key,
                 &presence,
                 &[
-                    GzipFieldSpec::required("msgProto", "message_proto", decode_message_proto),
+                    primary_message_proto,
                     GzipFieldSpec::optional("msgProto2", "message_proto_2", decode_message_proto_2),
                     GzipFieldSpec::optional("msgProto3", "message_proto_3", decode_message_proto_3),
                     GzipFieldSpec::optional("msgProto4", "message_proto_4", decode_message_proto_4),
                 ],
             ) {
-                warn!("CloudKit V2 transient decoder stage=message_gzip_preflight");
+                warn!(
+                    "CloudKit V2 transient decoder stage=message_gzip_preflight outer_type_class={}",
+                    message_outer_type_class(&record),
+                );
                 return CloudTransientDecodeOutcome::Failure(failure);
             }
             if let Err(failure) = normalize_optional_empty_list_fields(
@@ -2422,6 +2574,28 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 &["msgProto2", "msgProto3", "msgProto4"],
             ) {
                 return CloudTransientDecodeOutcome::Failure(failure);
+            }
+            // Classes 3-7 carry Apple-defined system-event payloads. The
+            // discriminator-selected schema above validates those bytes. Keep
+            // them retained as typed unsupported events until their projection
+            // semantics are implemented; the normal decoder is the wrong wire
+            // schema and previously mislabeled all classes 4-7 as malformed.
+            if matches!(
+                message_outer_type(&record),
+                MessageOuterType::Value(3..=7)
+            ) {
+                let reason = if has_required_message_identity(&presence) {
+                    CloudCanonicalQuarantineReason::UnsupportedMessageType
+                } else {
+                    CloudCanonicalQuarantineReason::MalformedRequiredIdentity
+                };
+                return normalize_conversion(
+                    CloudCanonicalConversionOutcome::Quarantined(reason),
+                    &hasher,
+                    &scope_fingerprint,
+                    &zone_fingerprint,
+                    request.generation,
+                );
             }
             let strict_record_key = StrictCloudKitV2Decryptor { inner: &record_key };
             let message = match decode_cloud_message_record(&record, &strict_record_key) {
@@ -3624,6 +3798,96 @@ mod tests {
             bounded_gunzip(b"not-gzip").unwrap_err(),
             CloudTransientBridgeFailure::MalformedRecord
         );
+    }
+
+    #[test]
+    fn message_outer_type_diagnostic_is_bounded_and_shape_checked() {
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        for (message_type, expected) in [
+            (0, "class_0"),
+            (1, "class_1"),
+            (2, "class_2"),
+            (3, "class_3"),
+            (4, "class_4"),
+            (5, "class_5"),
+            (6, "class_6"),
+            (7, "class_7"),
+            (99, "unsupported"),
+        ] {
+            let mut record = gzip_test_record("msgType", Type::Int64Type as i32, None);
+            record.record_field[0].value.as_mut().unwrap().signed_value = Some(message_type);
+            assert_eq!(message_outer_type_class(&record), expected);
+        }
+
+        assert_eq!(message_outer_type_class(&Record::default()), "missing");
+        let mut malformed = gzip_test_record("msgType", Type::StringType as i32, None);
+        malformed.record_field[0].value.as_mut().unwrap().signed_value = Some(3);
+        assert_eq!(message_outer_type_class(&malformed), "malformed");
+    }
+
+    #[test]
+    fn message_outer_type_selects_the_apple_system_event_schema() {
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        for (message_type, expected_stage) in [
+            (0, "message_proto"),
+            (1, "message_proto"),
+            (2, "message_proto"),
+            (3, "group_title_change"),
+            (4, "location_share_status_change"),
+            (5, "message_action"),
+            (6, "participant_change"),
+            (7, "group_action"),
+        ] {
+            let mut record = gzip_test_record("msgType", Type::Int64Type as i32, None);
+            record.record_field[0].value.as_mut().unwrap().signed_value = Some(message_type);
+            assert_eq!(primary_message_proto_spec(&record).decoder_stage, expected_stage);
+        }
+
+        // Class 3 carries a string in field 2. Classes 4-7 carry an int64.
+        // That int64 shape is what MessageProto rejected on every retained
+        // class 4-7 event before discriminator-based decoding.
+        let string_field_2 = [0x08, 0x01, 0x12, 0x01, b'x'];
+        let int64_field_2 = [0x08, 0x01, 0x10, 0x01];
+        assert!(decode_group_title_change(&string_field_2).is_ok());
+        assert!(decode_group_title_change(&int64_field_2).is_err());
+        for decoder in [
+            decode_location_share_status_change as fn(&[u8]) -> Result<(), DecodeError>,
+            decode_message_action,
+            decode_participant_change,
+            decode_group_action,
+        ] {
+            assert!(decoder(&int64_field_2).is_ok());
+            assert!(decode_message_proto(&int64_field_2).is_err());
+        }
+    }
+
+    #[test]
+    fn system_event_quarantine_still_requires_complete_outer_identity() {
+        use rustpush::cloudkit_proto::record::field;
+
+        let required = [
+            "msgType", "eCode", "chatID", "sender", "time", "msgProto", "flags", "guid", "svc",
+        ];
+        let mut record = Record {
+            record_field: required
+                .iter()
+                .map(|name| Field {
+                    identifier: Some(field::Identifier {
+                        name: Some((*name).to_owned()),
+                    }),
+                    value: Some(field::Value::default()),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let complete = CloudRawRecordPresence::extract(&record).unwrap();
+        assert!(has_required_message_identity(&complete));
+
+        record.record_field.pop();
+        let incomplete = CloudRawRecordPresence::extract(&record).unwrap();
+        assert!(!has_required_message_identity(&incomplete));
     }
 
     fn gzip_test_record(name: &str, field_type: i32, bytes_value: Option<Vec<u8>>) -> Record {
