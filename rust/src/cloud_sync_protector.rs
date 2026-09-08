@@ -17,7 +17,7 @@ use thiserror::Error;
 
 #[cfg(all(test, not(any(target_os = "windows", target_os = "android"))))]
 use aes_gcm::{
-    aead::{Aead, KeyInit},
+    aead::Aead,
     Aes256Gcm, Nonce,
 };
 #[cfg(all(test, not(any(target_os = "windows", target_os = "android"))))]
@@ -586,8 +586,10 @@ fn platform_protect(
     storage_directory: &Path,
     plaintext: &[u8],
 ) -> Result<(&'static str, Vec<u8>), CloudSyncProtectionError> {
-    let cipher = Aes256Gcm::new_from_slice(&test_platform_key(storage_directory))
-        .map_err(|_| CloudSyncProtectionError::KeyUnavailable)?;
+    let cipher = <Aes256Gcm as aes_gcm::KeyInit>::new_from_slice(&test_platform_key(
+        storage_directory,
+    ))
+    .map_err(|_| CloudSyncProtectionError::KeyUnavailable)?;
     let nonce: [u8; 12] = rand::random();
     let mut protected = nonce.to_vec();
     protected.extend_from_slice(
@@ -610,8 +612,10 @@ fn platform_unprotect(
     if ciphertext.len() < MIN_GCM_CIPHERTEXT_BYTES {
         return Err(CloudSyncProtectionError::InvalidProtectedValue);
     }
-    let cipher = Aes256Gcm::new_from_slice(&test_platform_key(storage_directory))
-        .map_err(|_| CloudSyncProtectionError::KeyUnavailable)?;
+    let cipher = <Aes256Gcm as aes_gcm::KeyInit>::new_from_slice(&test_platform_key(
+        storage_directory,
+    ))
+    .map_err(|_| CloudSyncProtectionError::KeyUnavailable)?;
     cipher
         .decrypt(Nonce::from_slice(&ciphertext[..12]), &ciphertext[12..])
         .map_err(|_| CloudSyncProtectionError::InvalidProtectedValue)
