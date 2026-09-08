@@ -374,6 +374,59 @@ CloudProtectedPageLeaseTransport? _protectedLeaseTransportFor(
 ///
 /// One instance is scoped to one account/container/database/zone. Platform
 /// differences are confined to [CloudSyncTransport] and [CloudSyncStore].
+///
+/// Redacted identity snapshot binding one credential/PCS refresh to the same
+/// account, client session, protected store, and checkpoint generation.
+///
+/// [accountFingerprint] is this run's scope fingerprint (a one-way,
+/// application-scoped DSID derivative; the raw DSID never enters Dart).
+/// The native fields mirror `CloudSyncNativeAuthMetadata` when a reader is
+/// configured; they stay null in unit tests without a native client.
+final class CloudSyncRefreshIdentity {
+  const CloudSyncRefreshIdentity({
+    required this.accountFingerprint,
+    required this.generation,
+    this.nativeAccountFingerprint,
+    this.nativeSessionId,
+    this.protectedStoreIdentity,
+  });
+
+  /// Maps a freshly captured native auth snapshot to refresh identity.
+  /// Only redacted snapshot fields are consumed, never a raw DSID. The
+  /// engine re-reads the durable checkpoint generation itself, so the
+  /// pass-through [generation] value is informational for test readers.
+  factory CloudSyncRefreshIdentity.fromNative({
+    required String accountFingerprint,
+    int generation = 0,
+    String? nativeSessionId,
+    String? protectedStoreIdentity,
+  }) {
+    return CloudSyncRefreshIdentity(
+      accountFingerprint: accountFingerprint,
+      generation: generation,
+      nativeAccountFingerprint: accountFingerprint,
+      nativeSessionId: nativeSessionId,
+      protectedStoreIdentity: protectedStoreIdentity,
+    );
+  }
+
+  final String accountFingerprint;
+  final int generation;
+  final String? nativeAccountFingerprint;
+  final String? nativeSessionId;
+  final String? protectedStoreIdentity;
+}
+
+/// Observes the current native auth identity for refresh binding. Production
+/// wires this to `CloudSyncNativeAuthBinding.capture`; tests substitute a
+/// scripted sequence to simulate mid-run account replacement.
+typedef CloudSyncRefreshIdentityReader =
+    Future<CloudSyncRefreshIdentity?> Function();
+
+/// Which credential refresh a stored post-refresh baseline belongs to.
+/// Baselines are tracked per kind because one run may refresh auth and PCS.
+enum _CloudSyncRefreshKind { authentication, pcs }
+
 class CloudSyncEngine {
   CloudSyncEngine({
     required this.scope,
@@ -388,6 +441,7 @@ class CloudSyncEngine {
     this._observer = const NoopCloudSyncObserver(),
     CloudSyncClock? clock,
     CloudSyncUuidFactory? uuidFactory,
+    this.refreshIdentityReader,
     CloudSyncEngineConfig? config,
   }) : config = config ?? CloudSyncEngineConfig(),
        _store = store,
@@ -474,6 +528,12 @@ class CloudSyncEngine {
   final CloudInboxApplier _inboxApplier;
   final CloudSyncBackoffPolicy _backoff;
   final CloudSyncObserver _observer;
+  final CloudSyncRefreshIdentityReader? refreshIdentityReader;
+  // Last post-refresh identity baselines that proved unchanged, per refresh
+  // kind. Scoped to one run: reset at run start and end so engine reuse
+  // cannot carry a baseline across runs.
+  CloudSyncRefreshIdentity? _lastSuccessfulAuthenticationRefresh;
+  CloudSyncRefreshIdentity? _lastSuccessfulPcsRefresh;
   final CloudSyncClock _clock;
   final CloudSyncUuidFactory _uuidFactory;
   final CloudSyncEngineConfig config;
@@ -543,6 +603,7 @@ class CloudSyncEngine {
 
     _runActive = true;
     final runNumber = ++_runSerial;
+    _resetLastSuccessfulRefreshIdentities();
     CloudCoordinatorLeaseFence? leaseFence;
     var counters = const CloudSyncRunCounters();
     var observedEmptyTerminalRead = false;
@@ -1113,6 +1174,7 @@ class CloudSyncEngine {
         _lastCoordinatorLeaseRenewal = null;
         _activeLeaseFence = null;
         _activeWriterPermit = null;
+        _resetLastSuccessfulRefreshIdentities();
         _runActive = false;
       }
     }
@@ -1276,16 +1338,20 @@ class CloudSyncEngine {
               !authenticationRefreshUsed &&
               !cloudSyncIsResetRequiredSafeCode(error.safeCode)) {
             authenticationRefreshUsed = true;
-            final refreshed = await _tryRefreshAuthentication();
-            if (refreshed) {
+            if (await _identityBoundRefresh(
+              _tryRefreshAuthentication,
+              kind: _CloudSyncRefreshKind.authentication,
+            )) {
               continue;
             }
           } else if (error.category == CloudFailureCategory.pcsUnavailable &&
               !pcsRefreshUsed &&
               !cloudSyncIsResetRequiredSafeCode(error.safeCode)) {
             pcsRefreshUsed = true;
-            final refreshed = await _tryRefreshPcs();
-            if (refreshed) {
+            if (await _identityBoundRefresh(
+              _tryRefreshPcs,
+              kind: _CloudSyncRefreshKind.pcs,
+            )) {
               continue;
             }
           }
@@ -1341,6 +1407,35 @@ class CloudSyncEngine {
         await _rollbackRejectedFetchedBatch(batch);
         rethrow;
       }
+      // The retried fetch ran after a refresh. If the identity flipped
+      // since the successful post-refresh baseline, its batch is
+      // untrusted: roll it back, record a non-retrying identity failure,
+      // and return without journaling, applying, advancing, or resuming.
+      final mismatchedRefresh = await _mismatchedPostRefreshBaseline(
+        authenticationRefreshUsed: authenticationRefreshUsed,
+        pcsRefreshUsed: pcsRefreshUsed,
+      );
+      if (mismatchedRefresh != null) {
+        await _rollbackRejectedFetchedBatch(batch);
+        final mismatch = CloudSyncFailure(
+          category: mismatchedRefresh == _CloudSyncRefreshKind.authentication
+              ? CloudFailureCategory.authorization
+              : CloudFailureCategory.pcsUnavailable,
+          retryAfter: config.pausedRetryDelay,
+          safeCode: 'cloud_sync_native_auth_identity_mismatch',
+        );
+        await _recordPullFailure(checkpoint, mismatch);
+        return _PullResult(
+          fetched: fetched,
+          succeeded: false,
+          failureCategory: mismatch.category,
+          failureSafeCode: mismatch.safeCode,
+          journalUsage: journalUsage,
+        );
+      }
+      // The single fail-closed decision above authorizes both this batch and
+      // paused-work resumption. Do not perform a second identity read whose
+      // failure could be ignored while the batch continues to journaling.
       if (authenticationRefreshUsed) {
         await _store.resumePausedOutbox(
           scope,
@@ -1913,13 +2008,19 @@ class CloudSyncEngine {
       now: _clock(),
     );
     if (pausedCategories.contains(CloudFailureCategory.authorization)) {
-      final refreshed = await _tryRefreshAuthentication();
+      final refreshed = await _identityBoundRefresh(
+        _tryRefreshAuthentication,
+        kind: _CloudSyncRefreshKind.authentication,
+      );
       _emit(
         CloudSyncEventType.authenticationRefreshed,
         at: _clock(),
         count: refreshed ? 1 : 0,
       );
-      if (refreshed) {
+      if (refreshed &&
+          await _currentRefreshIdentityMatchesLastSuccess(
+            _CloudSyncRefreshKind.authentication,
+          )) {
         await _resumePausedOutbox(
           categories: const {CloudFailureCategory.authorization},
         );
@@ -1930,13 +2031,19 @@ class CloudSyncEngine {
       }
     }
     if (pausedCategories.contains(CloudFailureCategory.pcsUnavailable)) {
-      final refreshed = await _tryRefreshPcs();
+      final refreshed = await _identityBoundRefresh(
+        _tryRefreshPcs,
+        kind: _CloudSyncRefreshKind.pcs,
+      );
       _emit(
         CloudSyncEventType.pcsRefreshed,
         at: _clock(),
         count: refreshed ? 1 : 0,
       );
-      if (refreshed) {
+      if (refreshed &&
+          await _currentRefreshIdentityMatchesLastSuccess(
+            _CloudSyncRefreshKind.pcs,
+          )) {
         await _resumePausedOutbox(
           categories: const {CloudFailureCategory.pcsUnavailable},
         );
@@ -2818,6 +2925,144 @@ class CloudSyncEngine {
     } catch (_) {
       return false;
     }
+  }
+
+  /// Runs one credential/PCS refresh only while the pre-refresh identity is
+  /// anchored, then requires the same DSID-derived fingerprint, native
+  /// session, store identity, and checkpoint generation afterwards.
+  ///
+  /// Returns true only when the transport refresh succeeded and the
+  /// identity is unchanged. Any mismatch fails closed without retrying the
+  /// fetch or resuming the outbox; the checkpoint is left untouched. The
+  /// transport seam stays narrow: native identity is observed through the
+  /// optional [refreshIdentityReader], and without it the check degrades
+  /// to the scope fingerprint plus durable checkpoint generation.
+  /// A successful refresh preserves its post-refresh identity as the
+  /// per-kind baseline for this run; resuming paused outbox rows later
+  /// requires an exact match against that baseline.
+  Future<bool> _identityBoundRefresh(
+    Future<bool> Function() refresh, {
+    required _CloudSyncRefreshKind kind,
+  }) async {
+    final before = await _captureRefreshIdentityOrNull();
+    if (before == null || !_refreshIdentityAnchored(before)) return false;
+    if (!await refresh()) return false;
+    final after = await _captureRefreshIdentityOrNull();
+    if (after == null) return false;
+    if (!_refreshIdentitiesMatch(before, after)) return false;
+    _setLastSuccessfulRefreshIdentity(kind, after);
+    return true;
+  }
+
+  /// Requires the current identity to exactly match the successful
+  /// post-refresh baseline for [kind]. A merely anchored identity is not
+  /// enough: a session or store replacement after the refresh must not
+  /// revive paused work. A missing baseline fails closed.
+  Future<bool> _currentRefreshIdentityMatchesLastSuccess(
+    _CloudSyncRefreshKind kind,
+  ) async {
+    final current = await _captureRefreshIdentityOrNull();
+    if (current == null) return false;
+    final baseline = _getLastSuccessfulRefreshIdentity(kind);
+    if (baseline == null) return false;
+    return _refreshIdentitiesMatch(baseline, current);
+  }
+
+  void _setLastSuccessfulRefreshIdentity(
+    _CloudSyncRefreshKind kind,
+    CloudSyncRefreshIdentity identity,
+  ) {
+    switch (kind) {
+      case _CloudSyncRefreshKind.authentication:
+        _lastSuccessfulAuthenticationRefresh = identity;
+      case _CloudSyncRefreshKind.pcs:
+        _lastSuccessfulPcsRefresh = identity;
+    }
+  }
+
+  CloudSyncRefreshIdentity? _getLastSuccessfulRefreshIdentity(
+    _CloudSyncRefreshKind kind,
+  ) {
+    switch (kind) {
+      case _CloudSyncRefreshKind.authentication:
+        return _lastSuccessfulAuthenticationRefresh;
+      case _CloudSyncRefreshKind.pcs:
+        return _lastSuccessfulPcsRefresh;
+    }
+  }
+
+  void _resetLastSuccessfulRefreshIdentities() {
+    _lastSuccessfulAuthenticationRefresh = null;
+    _lastSuccessfulPcsRefresh = null;
+  }
+
+  /// Returns the refresh kind whose post-refresh baseline no longer matches
+  /// the current identity, or null when every refresh used this run still
+  /// matches. Kinds that were not refreshed never mismatch, so ordinary
+  /// pages skip the native re-read entirely.
+  Future<_CloudSyncRefreshKind?> _mismatchedPostRefreshBaseline({
+    required bool authenticationRefreshUsed,
+    required bool pcsRefreshUsed,
+  }) async {
+    if (authenticationRefreshUsed &&
+        !await _currentRefreshIdentityMatchesLastSuccess(
+          _CloudSyncRefreshKind.authentication,
+        )) {
+      return _CloudSyncRefreshKind.authentication;
+    }
+    if (pcsRefreshUsed &&
+        !await _currentRefreshIdentityMatchesLastSuccess(
+          _CloudSyncRefreshKind.pcs,
+        )) {
+      return _CloudSyncRefreshKind.pcs;
+    }
+    return null;
+  }
+
+  Future<CloudSyncRefreshIdentity?> _captureRefreshIdentityOrNull() async {
+    try {
+      final checkpoint = await _store.readCheckpoint(scope);
+      final reader = refreshIdentityReader;
+      CloudSyncRefreshIdentity? native;
+      if (reader != null) {
+        // A configured reader that cannot produce an identity fails closed
+        // instead of degrading to scope-only fields.
+        native = await reader();
+        if (native == null) return null;
+      }
+      return CloudSyncRefreshIdentity(
+        accountFingerprint: scope.accountFingerprint,
+        generation: checkpoint.generation,
+        nativeAccountFingerprint:
+            native?.nativeAccountFingerprint ?? native?.accountFingerprint,
+        nativeSessionId: native?.nativeSessionId,
+        protectedStoreIdentity: native?.protectedStoreIdentity,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _refreshIdentityAnchored(CloudSyncRefreshIdentity identity) {
+    if (identity.accountFingerprint != scope.accountFingerprint) {
+      return false;
+    }
+    final nativeAccount = identity.nativeAccountFingerprint;
+    if (nativeAccount != null && nativeAccount != scope.accountFingerprint) {
+      return false;
+    }
+    return true;
+  }
+
+  bool _refreshIdentitiesMatch(
+    CloudSyncRefreshIdentity before,
+    CloudSyncRefreshIdentity after,
+  ) {
+    return before.accountFingerprint == after.accountFingerprint &&
+        before.generation == after.generation &&
+        before.nativeAccountFingerprint == after.nativeAccountFingerprint &&
+        before.nativeSessionId == after.nativeSessionId &&
+        before.protectedStoreIdentity == after.protectedStoreIdentity;
   }
 
   Future<void> _renewCoordinatorLeaseOrThrow({bool force = false}) async {

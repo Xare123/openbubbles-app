@@ -880,6 +880,15 @@ final class CloudSyncProductionLocalSendAdapter {
       inboxApplier: const RejectingShadowInboxApplier(),
       writerAuthority: ObjectBoxCloudSyncWriterAuthority(store: objectBox),
       writerExclusion: interlock,
+      refreshIdentityReader: () async {
+        final current = await authProvider.capture();
+        if (current == null) return null;
+        return CloudSyncRefreshIdentity.fromNative(
+          accountFingerprint: current.accountFingerprint,
+          nativeSessionId: current.nativeSessionId,
+          protectedStoreIdentity: current.protectedStoreIdentity,
+        );
+      },
       config: CloudSyncEngineConfig(
         maximumBatchSize: 1, maximumOutboxBatchesPerRun: 1,
         flags: const CloudSyncFeatureFlags(
@@ -1336,6 +1345,15 @@ final class CloudSyncProductionOutboundCanaryAdapter {
           inboxApplier: const RejectingShadowInboxApplier(),
           writerAuthority: engineWriterAuthority,
           writerExclusion: interlock,
+          refreshIdentityReader: () async {
+            final current = await authProvider.capture();
+            if (current == null) return null;
+            return CloudSyncRefreshIdentity.fromNative(
+              accountFingerprint: current.accountFingerprint,
+              nativeSessionId: current.nativeSessionId,
+              protectedStoreIdentity: current.protectedStoreIdentity,
+            );
+          },
           config: CloudSyncEngineConfig(
             maximumBatchSize: 1,
             maximumFetchPagesPerRun: 1,

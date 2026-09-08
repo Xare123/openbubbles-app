@@ -615,6 +615,15 @@ final class CloudSyncManualSemanticPullSampler {
           inboxApplier: inboxApplier,
           config: config,
           observer: observer,
+          refreshIdentityReader: () async {
+            final current = await _readAuthSnapshot();
+            if (current == null) return null;
+            return CloudSyncRefreshIdentity.fromNative(
+              accountFingerprint: current.accountFingerprint,
+              nativeSessionId: current.nativeSessionId,
+              protectedStoreIdentity: current.protectedStoreIdentity,
+            );
+          },
         );
         final result = await engine.synchronize(
           trigger: CloudSyncTrigger.manual,

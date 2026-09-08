@@ -289,6 +289,15 @@ final class CloudSyncManualShadowSampler {
           inboxApplier: const RejectingShadowInboxApplier(),
           config: _config(),
           observer: observer,
+          refreshIdentityReader: () async {
+            final current = await _readAuthSnapshot();
+            if (current == null) return null;
+            return CloudSyncRefreshIdentity.fromNative(
+              accountFingerprint: current.accountFingerprint,
+              nativeSessionId: current.nativeSessionId,
+              protectedStoreIdentity: current.protectedStoreIdentity,
+            );
+          },
         );
         runtime = CloudSyncShadowRuntime(
           engines: [engine],
