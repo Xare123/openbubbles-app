@@ -197,6 +197,24 @@ void main() {
     );
   });
 
+  test('iMessageLite native disposition uses reviewed diagnostics', () async {
+    final diagnostics = CloudSyncSemanticDiagnosticCollector();
+    final entry = _entry();
+    bindings.result = _outOfScope(
+      entry,
+      frb.CloudSyncTransientOutOfScopeService.iMessageLite,
+    );
+
+    await expectLater(
+      decoder(diagnosticRecorder: diagnostics.record).decode(entry),
+      throwsA(isA<CloudSemanticOutOfScopeServiceDisposition>()),
+    );
+
+    expect(diagnostics.snapshot(), <String, int>{
+      'native_out_of_scope_i_message_lite': 1,
+    });
+  });
+
   test('maps the diagnostic-only qualified direct CID digest', () async {
     final entry = _entry();
     bindings.result = _readyMessage(

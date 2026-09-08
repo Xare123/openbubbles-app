@@ -1227,6 +1227,53 @@ void main() {
   );
 
   test(
+    'typed out-of-scope retained rows may leave no replay candidates',
+    () async {
+      store = _FixedRetainedBacklogStore(3);
+      final retainedApplier = _RetainedProjectionEngineApplier(
+        onReproject: (_, _, _, limit) async {
+          expect(limit, 3);
+          return const CloudRetainedProjectionResult(
+            examined: 3,
+            reprojected: 0,
+            retained: 3,
+            hasRemaining: false,
+          );
+        },
+      );
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async =>
+              CloudFetchBatch(
+                scope: requestedScope,
+                changes: const [],
+                batchId: 'terminal-after-out-of-scope-retained',
+                generation: generation,
+                nextToken: previousToken,
+                hasMore: false,
+              );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: false,
+        ),
+        batchSize: 1,
+        maximumInboxEntriesPerRun: 4,
+        minimumInboxEntriesReservedForFetch: 1,
+        inboxApplierOverride: retainedApplier,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(transport.fetchCallCount, 1);
+      expect(result.observedEmptyTerminalRead, isTrue);
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(result.failureSafeCode, 'retained_projection_incomplete');
+      expect(result.retainedUnprojectedBacklog, 3);
+    },
+  );
+
+  test(
     'startup inbox work shrinks the reserved fetch request to exact capacity',
     () async {
       await seedGeneralJournal(
@@ -5062,6 +5109,16 @@ class _FailingRetainedBacklogReadStore extends InMemoryCloudSyncStore {
     readCalls++;
     throw StateError('simulated_retained_backlog_read_failure');
   }
+}
+
+final class _FixedRetainedBacklogStore extends InMemoryCloudSyncStore {
+  _FixedRetainedBacklogStore(this.retainedBacklog);
+
+  final int retainedBacklog;
+
+  @override
+  Future<int> readRetainedUnprojectedInboxCount(CloudSyncScope scope) async =>
+      retainedBacklog;
 }
 
 typedef _RetainedProjectionEngineCallback =

@@ -122,6 +122,7 @@ abstract final class CloudSyncSemanticDiagnosticCodes {
     'legacy_ownership_reaction_shape_invalid',
     'legacy_ownership_transient_owner_invalid',
     'native_invalid_disposition_shape',
+    'native_out_of_scope_i_message_lite',
     'native_out_of_scope_rcs',
     'native_out_of_scope_sms_family',
     'native_ready',

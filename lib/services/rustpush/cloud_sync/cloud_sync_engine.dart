@@ -721,7 +721,6 @@ class CloudSyncEngine {
             reprojection.retained < 0 ||
             reprojection.examined !=
                 reprojection.reprojected + reprojection.retained ||
-            (reprojection.retained > 0 && !reprojection.hasRemaining) ||
             reprojection.examined > retainedProjectionLimit) {
           throw CloudSyncFailure(
             category: CloudFailureCategory.localStorage,
