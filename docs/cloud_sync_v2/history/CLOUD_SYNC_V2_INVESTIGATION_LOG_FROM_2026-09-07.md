@@ -131,3 +131,34 @@ This is a chronological evidence log. It does not override the
   library tests, and all 42 Rust semantic-decoder Dart tests passed. Exact-source
   GCE qualification, installation, report-invariant diagnosis, and live
   reclassification proof remain required.
+
+### Run 34200238001 and exact Pixel diagnosis
+
+- App source `98ebe6ba4d926ecb57efbd8347c2e729a909cf8d` passed the full GCE path:
+  generated bindings, all Dart and Rust suites, rustpush production features,
+  protector harness, Canary APK, ARM64 native-library verification,
+  GitHub-hosted signing, VM deletion, and runner deregistration.
+- The signed APK was installed in place. Canary data and signing identity were
+  preserved, and Alpha remained installed and untouched.
+- The read-only semantic run preserved every protected source, enabled no
+  CloudKit save or delete, and left the outbox exactly `0 -> 0`.
+- Chats examined the three prior unsupported saves and typed all three as exact
+  `iMessageLite` out-of-scope state. The engine then failed
+  `retained_projection_result_invalid` because its older invariant incorrectly
+  required `hasRemaining=true` whenever physical retained rows remained. That
+  contradicts the intentional contract in which proven out-of-scope rows stay
+  physically retained but leave the eligible replay query.
+- The same three records emitted
+  `native_out_of_scope_i_message_lite`, which was missing from the closed
+  diagnostic vocabulary and therefore collapsed to
+  `diagnostic_code_invalid:3`.
+- The early engine failure left its reported Chat backlog at zero while the
+  sampler independently read the correct durable total of 476, producing the
+  downstream `retained_backlog_summary_mismatch`. This was an honest failure,
+  not a third storage defect.
+- Candidate `f19fe8034605117b1bd167757581d5b967645c86` removes only the stale correlation clause
+  and adds only the missing fixed diagnostic. It retains nonnegative,
+  arithmetic, bound, scope, lease, durable-backlog, outbox, and report guards.
+  Focused local proof passed all 185 engine, decoder, and diagnostic tests.
+  A broader local directory run was intentionally stopped because this checkout
+  lacks `objectbox.dll`; exact full qualification belongs on GCE.

@@ -4,7 +4,7 @@ title: Cloud Sync V2 Current Connection Treemap
 description: Current source of truth for CloudKit V2 architecture, safety boundaries, qualification state, and next gates.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-07
+timestamp: 2026-09-08
 ---
 
 # Cloud Sync V2 current connection treemap
@@ -55,11 +55,11 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Candidate | `d750467b826c0576717b3255aa6ad960159d399f` (exact-source qualification pending) |
-| Main change | Exact `iMessageLite` satellite records are retained as typed out-of-scope state instead of unresolved iMessage projection debt. Case variants, malformed identity, and conflicting nested service remain quarantined. |
+| Candidate | `f19fe8034605117b1bd167757581d5b967645c86` (exact-source qualification pending) |
+| Main change | Exact `iMessageLite` satellite records become typed out-of-scope retained state without remaining replay candidates. The engine now accepts that deliberate physical-retention state, and its native fixed diagnostic is in the closed content-free vocabulary. |
 | Dependency | rustpush `2274cee63c05432c89fc5dbb61915b5659fa9721`, published to the user's fork after the first clean-run checkout failure. |
-| Full qualification | GCE run `34188248440` passed against the exact candidate: generated bindings, full Dart and Rust suites, automatic-upload flags, rustpush production features, protector harness, Canary APK, native-library verification, stable signing, and cleanup. |
-| Android release proof | The signed Canary from run `34188248440` was installed in place on the Pixel with data preserved. Startup passed, Alpha remained untouched, and semantic repair applied 47 retained messages. A later large retained sweep stopped safely at report validation after projection traversal; no completion report or token was fabricated. Two queued chat creates remain deferred as existing-history conflicts. |
+| Full qualification | Predecessor `98ebe6ba4d926ecb57efbd8347c2e729a909cf8d` passed full GCE run `34200238001`: generated bindings, all Dart/Rust suites, rustpush production features, protector harness, Canary APK, native-library verification, stable signing, and cleanup. Exact candidate qualification is pending. |
+| Android release proof | Signed `98ebe6ba4` installed in place with Canary data preserved and Alpha untouched. Its live read-only run reclassified all three exact `iMessageLite` chat saves, then exposed two compatibility defects: a stale retained-result invariant and the missing fixed native diagnostic. No remote save/delete ran, and outbox stayed `0 -> 0`. Candidate `f19fe8034` repairs both defects and is not installed yet. |
 | Production claim | Not yet allowed. |
 
 ### What the candidate changes
@@ -288,13 +288,13 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 
 ## Current critical path
 
-1. Qualify and install candidate `d750467b826c0576717b3255aa6ad960159d399f`, then confirm the three exact
-   `iMessageLite` chat saves become typed retained out-of-scope records. Do not
-   exclude them from the identity-disjointness read set.
-2. Diagnose the large retained sweep's content-free
-   `cloud_sync_semantic_report_zone_invalid` result and make report validation
-   identify the exact failed invariant. Do not reinterpret a failed report as a
-   completed drain.
+1. Qualify and install candidate `f19fe8034605117b1bd167757581d5b967645c86`, then repeat the
+   bounded read-only drain. Confirm Chats no longer fails
+   `retained_projection_result_invalid`, emits no `diagnostic_code_invalid`,
+   reports the exact durable backlog, and keeps remote writes/deletes at zero.
+2. Continue bounded retained projection until every remaining blocking chat,
+   message, and attachment save is either projected or has an explicit typed
+   unavailable state. Do not reinterpret a failed report as a completed drain.
 3. Resolve the two queued chat creates that now fail closed as
    `cloud_sync_outbound_chat_existing_history`: adopt and read back the existing
    CloudKit chat record when identity is exact, otherwise keep the create
@@ -312,9 +312,11 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 
 ## Next falsification test
 
-The next test is exact-source qualification of `d750467b826c0576717b3255aa6ad960159d399f`, because the current
-installed Canary does not contain the typed `iMessageLite` repair. After a pass,
-install in place and repeat the bounded read-only repair. Any invalid report,
-non-disjoint chat identity, or existing-history conflict blocks outbound
-admission until resolved. A pass does not permit remote deletion or update
-merge.
+The next test is exact-source GCE qualification of
+`f19fe8034605117b1bd167757581d5b967645c86`, followed by an in-place Canary install and one
+bounded read-only drain. The installed `98ebe6ba4` Canary proved the three
+records are exact `iMessageLite` but also proved the older engine invariant and
+diagnostic vocabulary were incompatible with that valid disposition. Any
+failed zone, invalid diagnostic, backlog-summary mismatch, non-disjoint chat
+identity, or existing-history conflict still blocks outbound admission. A pass
+does not permit remote deletion or update merge.
