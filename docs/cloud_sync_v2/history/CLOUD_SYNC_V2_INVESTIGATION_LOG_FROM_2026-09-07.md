@@ -162,3 +162,35 @@ This is a chronological evidence log. It does not override the
   Focused local proof passed all 185 engine, decoder, and diagnostic tests.
   A broader local directory run was intentionally stopped because this checkout
   lacks `objectbox.dll`; exact full qualification belongs on GCE.
+
+### Run 34211915641 and exact Pixel retained-sweep proof
+
+- Android app source `ad822f37cbf468a6bc74d602965e78ae02a852d1`
+  passed generated-binding, Dart, Rust, rustpush production-feature, protector,
+  Canary APK, ARM64 native-library, GitHub-hosted signing, runner cleanup, and
+  VM cleanup gates. The signed artifact used APK Signature Schemes v2 and v3.
+- The APK was installed in place over Canary only. Its data and first-install
+  time were preserved; Alpha's version and install timestamps remained exact.
+- The live semantic pull reached a terminal `partial` result after one remote
+  pass with the remote head drained. Automatic triggers, remote saves, remote
+  deletes, and tombstone semantic deletes were all false. The outbox remained
+  exactly `0 -> 0`.
+- The terminal local-projection report retained the same 10,108 durable rows as
+  the preceding remote report. Chats completed with all 476 rows explicitly
+  outside active projection eligibility: 395 out-of-scope saves and 81 retained
+  tombstones. No stale invariant or invalid diagnostic recurred.
+- Messages remained degraded with 1,893 blocking saves. The exact sweep found
+  586 decoder-ready records, 1,086 malformed records, 216 dependency records,
+  and 5 unsupported-service records; no row was silently discarded.
+- Attachments remained degraded with 1,693 blocking saves. The exact sweep
+  found 1,359 decoder-ready records, 328 malformed records, and dependency or
+  ownership conflicts. The physical attachment backlog remains 1,812 including
+  119 retained tombstones.
+- Host-only source `f826cd400a623b3a759cafe391580731d137ae8b`
+  repaired Windows PowerShell native-stderr handling and Android
+  SharedPreferences key-prefix parsing in the Canary ADB controller. Thirteen
+  focused tests and a live `open-sync` result readback passed.
+- The next repair is not another broad fetch. It is a content-free classifier
+  for the exact existing-history ownership branches, followed by at most one
+  same-revision remote readback under the existing identity and writer-pause
+  gates. It cannot adopt, save, delete, advance a token, or mutate ObjectBox.

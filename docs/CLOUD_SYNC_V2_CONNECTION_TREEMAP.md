@@ -55,14 +55,14 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Candidate | `f19fe8034605117b1bd167757581d5b967645c86` (exact-source qualification pending) |
-| Main change | Exact `iMessageLite` satellite records become typed out-of-scope retained state without remaining replay candidates. The engine now accepts that deliberate physical-retention state, and its native fixed diagnostic is in the closed content-free vocabulary. |
+| Candidate | Android app source `ad822f37cbf468a6bc74d602965e78ae02a852d1`; host-only ADB controller head `f826cd400a623b3a759cafe391580731d137ae8b` |
+| Main change | Exact `iMessageLite` satellite records and other deliberate physical-retention states are typed without remaining replay candidates. Retained projection now emits closed content-free diagnosis, and Canary exposes a package-scoped ADB control surface for repeatable device qualification. |
 | Dependency | rustpush `2274cee63c05432c89fc5dbb61915b5659fa9721`, published to the user's fork after the first clean-run checkout failure. |
-| Full qualification | Predecessor `98ebe6ba4d926ecb57efbd8347c2e729a909cf8d` passed full GCE run `34200238001`: generated bindings, all Dart/Rust suites, rustpush production features, protector harness, Canary APK, native-library verification, stable signing, and cleanup. Exact candidate qualification is pending. |
-| Android release proof | Signed `98ebe6ba4` installed in place with Canary data preserved and Alpha untouched. Its live read-only run reclassified all three exact `iMessageLite` chat saves, then exposed two compatibility defects: a stale retained-result invariant and the missing fixed native diagnostic. No remote save/delete ran, and outbox stayed `0 -> 0`. Candidate `f19fe8034` repairs both defects and is not installed yet. |
+| Full qualification | Exact app source `ad822f37c` passed GCE run `34211915641`: generated bindings, Dart/Rust suites, rustpush production features, protector harness, Canary APK, ARM64 native-library inspection, GitHub-hosted v2/v3 signing, runner deregistration, and VM deletion. |
+| Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
-### What the candidate changes
+### What the candidate includes
 
 - Native and Dart compute the same deterministic group-routing digest from the
   canonical group, current raw group ID, service/style, group version, and
@@ -77,6 +77,14 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 - Direct tag-1 and reaction tag-2 encoders and bindings remain unchanged.
 - Provisional group creation, group reactions, group-state mutations, remote
   deletion, and update merge remain closed.
+- Exact out-of-scope chat satellites and retained tombstones no longer make a
+  valid physical-retention result fail the whole Chats zone.
+- Retained message and attachment blockers are counted separately from the
+  larger physical backlog. The current live blocker is therefore 3,586 saves,
+  not all 10,108 retained rows.
+- Canary ADB control is package-scoped, challenge-confirmed, and read-only by
+  default. Host parsing accounts for Android SharedPreferences key prefixes and
+  harmless Windows PowerShell native-stderr promotion.
 
 ## Scope and current evidence
 
@@ -231,7 +239,7 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 | Boundary | Primary source | Current status |
 | --- | --- | --- |
 | Product admission and interlock | [`cloud_sync_manual_semantic_pull_sampler.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart), [`cloudkit_operation_interlock.dart`](../lib/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart) | Read live-proven; full session replacement qualification remains. |
-| Read authentication and exact PCS | [`cloud_sync_production_sampler_adapter.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart), [`cloudkit.rs`](../rustpush/src/icloud/cloudkit.rs) | Representative live proof; current candidate requalification pending. |
+| Read authentication and exact PCS | [`cloud_sync_production_sampler_adapter.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart), [`cloudkit.rs`](../rustpush/src/icloud/cloudkit.rs) | Exact `ad822f37c` live read-only pull completed; cold/account lifecycle proof remains. |
 | Protected fetch, journal, and token | [`native_protected_cloud_sync_transport.dart`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart), [`objectbox_cloud_sync_store.dart`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart) | Test and prior live proof. |
 | Decode and canonical conversion | [`rust_cloud_semantic_decoder.dart`](../lib/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart), [`cloud_sync_canonical_converter.rs`](../rust/src/cloud_sync_canonical_converter.rs) | Test and representative live proof. |
 | Ordered projection and retained repair | [`cloud_inbox_applier.dart`](../lib/services/rustpush/cloud_sync/cloud_inbox_applier.dart), [`objectbox_cloud_semantic_store_gateway.dart`](../lib/services/rustpush/cloud_sync/objectbox_cloud_semantic_store_gateway.dart) | Read live-proven; current backlog must be explicit. |
@@ -243,10 +251,10 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 
 ### Candidate qualification
 
-- [ ] Generated bindings reproduce with no unrelated drift.
-- [ ] Full Dart, Rust, rustpush, protector, and ObjectBox tests pass at the
+- [x] Generated bindings reproduce with no unrelated drift.
+- [x] Full Dart, Rust, rustpush, protector, and ObjectBox tests pass at the
   exact app and submodule commits.
-- [ ] Canary APK contains the expected ARM64 native library and is signed on
+- [x] Canary APK contains the expected ARM64 native library and is signed on
   the existing trusted GitHub-hosted signing path.
 - [ ] Failed GCE runs delete the VM and deregister the runner.
 
@@ -288,14 +296,14 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 
 ## Current critical path
 
-1. Qualify and install candidate `f19fe8034605117b1bd167757581d5b967645c86`, then repeat the
-   bounded read-only drain. Confirm Chats no longer fails
-   `retained_projection_result_invalid`, emits no `diagnostic_code_invalid`,
-   reports the exact durable backlog, and keeps remote writes/deletes at zero.
-2. Continue bounded retained projection until every remaining blocking chat,
-   message, and attachment save is either projected or has an explicit typed
-   unavailable state. Do not reinterpret a failed report as a completed drain.
-3. Resolve the two queued chat creates that now fail closed as
+1. Classify the 1,893 blocking message saves with the production collector.
+   Resolve exact existing-history ownership where the local row, alias,
+   snapshot, record map, and current remote revision agree. Keep ambiguity
+   retained; do not infer create permission from local absence.
+2. Continue bounded retained projection until every remaining blocking message
+   and attachment save is either projected or has an explicit typed unavailable
+   state. Do not reinterpret physical retention as completed local projection.
+3. Resolve the two queued chat creates that fail closed as
    `cloud_sync_outbound_chat_existing_history`: adopt and read back the existing
    CloudKit chat record when identity is exact, otherwise keep the create
    deferred. Confirm the interlock is idle and no retained ownership barrier
@@ -312,11 +320,12 @@ never on GCE. Pixel is the final release proof, not the everyday protocol loop.
 
 ## Next falsification test
 
-The next test is exact-source GCE qualification of
-`f19fe8034605117b1bd167757581d5b967645c86`, followed by an in-place Canary install and one
-bounded read-only drain. The installed `98ebe6ba4` Canary proved the three
-records are exact `iMessageLite` but also proved the older engine invariant and
-diagnostic vocabulary were incompatible with that valid disposition. Any
-failed zone, invalid diagnostic, backlog-summary mismatch, non-disjoint chat
-identity, or existing-history conflict still blocks outbound admission. A pass
-does not permit remote deletion or update merge.
+The next falsification is a content-free classification of every
+`cloud_sync_outbound_chat_existing_history` ownership branch using the same
+collector as production. A diagnostic may perform one exact same-revision
+CloudKit readback only after account, client, generation, protected-store,
+writer-pause, snapshot, alias, record-map, journal, and ETag gates agree. It may
+not adopt, create, update, delete, advance tokens, or mutate ObjectBox. Any
+ambiguous owner, divergent revision, competing outbox row, unclassified
+retained state, or remote result other than exact same-revision agreement keeps
+outbound admission closed.
