@@ -332,7 +332,11 @@ The next falsification is a read-only retained replay on Canary using the
 signed exact-source `12035ec0c` artifact from GCE run `34226323430`. For
 message classes 3-7, the replay must
 report typed unsupported state rather than native malformed state. It must not
-fetch a new page, save, delete, advance a token, mutate the outbox, or remove a
-retained record. Any schema decode failure or retained-count loss rejects the
-candidate. Outbound existing-history resolution remains a separate write gate
-for the two queued creates only.
+save, delete, mutate the outbox, or remove a retained record. The confirmed
+catch-up may legitimately fetch newly arrived records and advance read
+checkpoints while proving remote head. Its subsequent retained-projection
+sweep is the part that must remain local-only: it constructs no transport and
+cannot fetch or advance a token. Any system-event schema decode failure,
+unexplained retained-count loss, or write-side movement rejects the candidate.
+Outbound existing-history resolution remains a separate write gate for the
+two queued creates only.
