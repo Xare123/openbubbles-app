@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_group_send_route.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
@@ -305,6 +306,97 @@ void main() {
     expect(selectedStableGuid, isNull);
     expect(allocated, isFalse);
   });
+
+  test(
+    'restored group plain-text submission admits once with group route',
+    () async {
+      final first = Handle(
+        address: 'a@example.com',
+        service: 'iMessage',
+        uniqueAddressAndService: 'a@example.com/iMessage',
+      );
+      final second = Handle(
+        address: '+15550000002',
+        service: 'iMessage',
+        uniqueAddressAndService: '+15550000002/iMessage',
+      );
+      store.box<Handle>().putMany([first, second]);
+      final groupChat = Chat(
+        guid: 'iMessage;+;chat-group',
+        chatIdentifier: 'chat-group',
+        usingHandle: 'me@example.com',
+        style: 43,
+        participants: [first, second],
+      )..handles.addAll([first, second]);
+      store.box<Chat>().put(groupChat);
+
+      final source = Message(
+        guid: 'temp-12345678',
+        text: 'ordinary text',
+        attributedBody: [AttributedBody.raw('ordinary text')],
+        dateCreated: _time(2),
+        isFromMe: true,
+      )..chat.target = groupChat;
+
+      await admission(source).persist(() {
+        source.id = store.box<Message>().put(source);
+        return source;
+      });
+      final messageId = source.id;
+
+      await reopen();
+
+      final restored = store.box<Message>().getAll().single;
+      final restoredChat = restored.chat.target!;
+      final route = CloudSyncGroupSendRoute.capture(restoredChat)!;
+      expect(restored.id, messageId);
+      expect(restored.stagingGuid, _stableGuid);
+      expect(store.box<Message>().count(), 1);
+      final intents = store.box<CloudSyncLocalSendIntentEntity>().getAll();
+      expect(intents, hasLength(1));
+      expect(intents.single.localMessageId, messageId);
+      expect(intents.single.state, 0);
+      expect(route.guid, 'iMessage;+;chat-group');
+      expect(route.identifier, 'chat-group');
+      expect(route.sender, 'me@example.com');
+      expect(route.members, ['+15550000002', 'a@example.com']);
+      expect(route.provisional, isFalse);
+
+      var allocated = false;
+      final selectedStableGuid = CloudSyncComposerAdmission.selectStableGuid(
+        store: store,
+        message: restored,
+        allocate: () {
+          allocated = true;
+          return '22222222-2222-4222-8222-222222222222';
+        },
+      );
+      expect(selectedStableGuid, _stableGuid);
+      expect(allocated, isFalse);
+      expect(
+        journal.isComposerSubmissionPending(
+          CloudSyncLocalSendIdentity.capture(
+            restored,
+            restoredChat,
+            selectedStableGuid!,
+          )!,
+        ),
+        isTrue,
+      );
+
+      await admission(restored, stableGuid: selectedStableGuid).persist(() {
+        restored.id = store.box<Message>().put(restored);
+        return restored;
+      });
+
+      expect(store.box<Message>().count(), 1);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 1);
+      expect(
+        store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state,
+        0,
+      );
+    },
+  );
 }
 
 CloudSyncNativeAuthSnapshot _auth(Object client) =>
