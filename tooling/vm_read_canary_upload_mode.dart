@@ -7,19 +7,27 @@ import 'package:vm_service/vm_service_io.dart';
 /// No source evaluation, account changes, Apple requests or database writes.
 ///
 /// Default mode verifies the automatic-build gates (uploads on). Pass
-/// `--expect-uploads-off` for Pixel qualification, which instead requires
-/// manualOutboundCanaryEnabled == false, localSendRuntimeEnabled == false,
-/// no automatic worker instance, and a present build commit. Emits only
-/// booleans, the build commit, and the checked mode.
+/// `--expect-uploads-off` for read-only Pixel qualification, or
+/// `--expect-manual-writer` for the explicit one-send Canary. Both require
+/// localSendRuntimeEnabled == false, no automatic worker instance, and a
+/// present build commit. Emits only booleans, the build commit, and the mode.
 Future<void> main(List<String> args) async {
   if (args.isEmpty ||
       args.length > 2 ||
-      (args.length == 2 && args[1] != '--expect-uploads-off')) {
+      (args.length == 2 &&
+          !const {
+            '--expect-uploads-off',
+            '--expect-manual-writer',
+          }.contains(args[1]))) {
     throw ArgumentError(
-      'usage: vm_read_canary_upload_mode.dart <ws-uri> [--expect-uploads-off]',
+      'usage: vm_read_canary_upload_mode.dart <ws-uri> '
+      '[--expect-uploads-off|--expect-manual-writer]',
     );
   }
-  final uploadsOffExpected = args.length == 2;
+  final uploadsOffExpected =
+      args.length == 2 && args[1] == '--expect-uploads-off';
+  final manualWriterExpected =
+      args.length == 2 && args[1] == '--expect-manual-writer';
   final service = await vmServiceConnectUri(args.first);
   try {
     final vm = await service.getVM();
@@ -86,11 +94,15 @@ Future<void> main(List<String> args) async {
     }
     print(
       jsonEncode({
-        'mode': uploadsOffExpected ? 'uploads-off' : 'automatic-build',
+        'mode': uploadsOffExpected
+            ? 'uploads-off'
+            : manualWriterExpected
+            ? 'manual-writer'
+            : 'automatic-build',
         'isolates': reports,
       }),
     );
-    if (uploadsOffExpected) {
+    if (uploadsOffExpected || manualWriterExpected) {
       final committed = reports.where((r) => r['buildCommit'] != null).toList();
       if (committed.isEmpty) {
         throw StateError('uploads_not_off');
@@ -100,14 +112,13 @@ Future<void> main(List<String> args) async {
       }
       for (final r in reports) {
         if (r['localSendRuntimeEnabled'] == true ||
-            r['manualOutboundCanaryEnabled'] == true ||
             r['automaticWorkerCreated'] == true) {
           throw StateError('uploads_not_off');
         }
       }
       final only = committed.single;
       if (only['localSendRuntimeEnabled'] != false ||
-          only['manualOutboundCanaryEnabled'] != false ||
+          only['manualOutboundCanaryEnabled'] != manualWriterExpected ||
           only['automaticWorkerCreated'] != false) {
         throw StateError('uploads_not_off');
       }

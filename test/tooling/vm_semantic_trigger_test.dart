@@ -8,6 +8,7 @@ import 'package:vm_service/vm_service.dart';
 import 'package:vm_service/vm_service_io.dart';
 
 import '../../tooling/vm_trigger_semantic.dart' as trigger;
+import '../../tooling/vm_trigger_cloudkit_write.dart' as write_trigger;
 
 Future<String> _waitForServiceUri(File info) async {
   final watch = Stopwatch()..start();
@@ -221,4 +222,116 @@ void main() {
       await run('success');
     },
   );
+
+  Future<InstanceRef> writeTarget(String mode) async {
+    final target = await service.evaluate(
+      isolateId,
+      libraryId,
+      "FixtureService('$mode')",
+    );
+    expect(target, isA<InstanceRef>());
+    return target as InstanceRef;
+  }
+
+  test(
+    'write preparation returns only content-free selection evidence',
+    () async {
+      final target = await writeTarget('write-success');
+      final result = await write_trigger.invokePrepareAndSelect(
+        service: service,
+        isolateId: isolateId,
+        libraryId: libraryId,
+        targetId: target.id!,
+        recipient: '+15555550123',
+      );
+      expect(result.candidateFound, isTrue);
+      expect(result.guidHash, '0123456789abcdef');
+      expect(result.createdAtUtc, '2026-09-10T01:02:03.000Z');
+      expect(result.toJson().toString(), isNot(contains('+15555550123')));
+    },
+  );
+
+  test('write preparation reports no candidate without fallback', () async {
+    final target = await writeTarget('write-none');
+    final result = await write_trigger.invokePrepareAndSelect(
+      service: service,
+      isolateId: isolateId,
+      libraryId: libraryId,
+      targetId: target.id!,
+      recipient: '+15555550123',
+    );
+    expect(result.candidateFound, isFalse);
+    expect(result.guidHash, isNull);
+  });
+
+  test('write preparation suppresses arbitrary error detail', () async {
+    final target = await writeTarget('write-private');
+    await expectLater(
+      write_trigger.invokePrepareAndSelect(
+        service: service,
+        isolateId: isolateId,
+        libraryId: libraryId,
+        targetId: target.id!,
+        recipient: '+15555550123',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'code',
+          'cloud_sync_write_operation_failed',
+        ),
+      ),
+    );
+  });
+
+  test('exact write waits for the production result shape', () async {
+    final target = await writeTarget('write-success');
+    final result = await write_trigger.invokeExactIntentAndWait(
+      service: service,
+      isolateId: isolateId,
+      libraryId: libraryId,
+      targetId: target.id!,
+      recipient: '+15555550123',
+      expectedGuidHash: '0123456789abcdef',
+    );
+    expect(result.admitted, 1);
+    expect(result.deferred, 0);
+    expect(result.outboxBlocked, isFalse);
+    expect(result.chatReadbackPending, isFalse);
+  });
+
+  test(
+    'exact write rejects candidate drift before invoking the pass',
+    () async {
+      final target = await writeTarget('write-changed');
+      await expectLater(
+        write_trigger.invokeExactIntentAndWait(
+          service: service,
+          isolateId: isolateId,
+          libraryId: libraryId,
+          targetId: target.id!,
+          recipient: '+15555550123',
+          expectedGuidHash: '0123456789abcdef',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'code',
+            'cloud_sync_outbound_candidate_changed',
+          ),
+        ),
+      );
+    },
+  );
+
+  test('recipient hash normalization matches app endpoint normalization', () {
+    expect(
+      write_trigger.normalizedRecipientSha256(' tel:+15555550123 '),
+      write_trigger.normalizedRecipientSha256('+15555550123'),
+    );
+    expect(
+      write_trigger.normalizedRecipientSha256('MAILTO:Test@Example.COM'),
+      write_trigger.normalizedRecipientSha256('test@example.com'),
+    );
+  });
 }

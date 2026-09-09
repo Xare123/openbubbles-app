@@ -257,6 +257,18 @@ Use five promotion lanes and do not skip upward:
    readback, restart, lifecycle, and UI evidence into as few signed-APK sessions
    as safety permits. Manual Apple-device display remains independent evidence.
 
+The manual-writer Pixel lane now has a host-controlled three-phase gate:
+[`pixel_cloudkit_write_gate.ps1`](../tooling/pixel_cloudkit_write_gate.ps1)
+and [`vm_trigger_cloudkit_write.dart`](../tooling/vm_trigger_cloudkit_write.dart).
+`prepare` establishes V2 ownership locally and returns only a candidate GUID
+hash; `run` restarts Canary, reselects that exact hash, and invokes the existing
+one-intent production path; optional `verify` restarts again and requires zero
+new admissions. Every phase pins the app source and host-tool hashes, takes the
+recipient only from a process environment variable bound to a separately
+supplied SHA-256, emits content-free evidence, and requires the automatic
+worker to be absent. The tooling is test-proven but does not replace live
+CloudKit readback or independent Apple-device display.
+
 ## Recovery policy
 
 | Failure | Safe response |
@@ -314,6 +326,10 @@ Use five promotion lanes and do not skip upward:
 ### Write qualification
 
 - [x] Direct plaintext create has bounded Windows save/readback/restart proof.
+- [x] Host-controlled Pixel prepare/run/verify tooling exercises the existing
+  exact-intent production path across fresh Canary processes, rejects candidate
+  drift, redacts arbitrary failures, and requires automatic uploads off. Live
+  execution against Apple remains below.
 - [ ] Confirmed direct replay proves zero saves and independent Apple-device
   display for the release candidate.
 - [ ] Restored-group plaintext passes exact-source tests, one authorized live
@@ -340,7 +356,7 @@ Use five promotion lanes and do not skip upward:
 
 ## Current critical path
 
-1. On exact-source Canary `9ba491813`, prove composer admission and the native IDS receipt across an
+1. On exact-source Canary `0b86a6465`, prove composer admission and the native IDS receipt across an
    intentional process death, then verify state-3 recovery, one protected
    outbox adoption, exact CloudKit readback, and zero duplicate local/remote
    records. Do not touch Alpha.
