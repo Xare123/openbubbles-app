@@ -28,7 +28,11 @@ final class CloudProtectedPageLeaseMaintenanceCaller {
   CloudProtectedPageLeaseMaintenanceCaller({
     required CloudProtectedPageLeaseLifecycle lifecycle,
     required CloudProtectedPageLeaseMaintenanceAdmission admission,
-  }) : _lifecycle = lifecycle,
+  }) :
+       // Keep the public constructor labels stable while the fields stay private.
+       // ignore: prefer_initializing_formals
+       _lifecycle = lifecycle,
+       // ignore: prefer_initializing_formals
        _admission = admission;
 
   final CloudProtectedPageLeaseLifecycle _lifecycle;

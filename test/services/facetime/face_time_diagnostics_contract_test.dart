@@ -114,4 +114,19 @@ void main() {
       contains('mediaPlaybackRequiresUserGesture = false'),
     );
   });
+
+  test('WebView media permissions are granted through the activity policy', () {
+    final activity = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
+    ).readAsStringSync();
+
+    expect(activity, contains('PermissionRequest.RESOURCE_VIDEO_CAPTURE'));
+    expect(activity, contains('PermissionRequest.RESOURCE_AUDIO_CAPTURE'));
+    expect(activity, contains('request.grant(request.resources)'));
+    expect(activity, contains('FaceTimePermissionPolicy.isGranted'));
+    expect(
+      activity,
+      contains('FaceTimePermissionPolicy.shouldStartInCallService'),
+    );
+  });
 }

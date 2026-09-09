@@ -86,7 +86,7 @@ final class _Admission
   Future<T> runWhenIdle<T>(CloudProtectedPageLeaseMaintenanceBody<T> action) {
     actionCalls++;
     final failure = this.failure;
-    if (failure != null) return Future<T>.error(failure!);
+    if (failure != null) return Future<T>.error(failure);
     _activeActions++;
     if (_activeActions > maxCallsAtOnce) maxCallsAtOnce = _activeActions;
     return Future<T>.sync(action).whenComplete(() => _activeActions--);

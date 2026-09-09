@@ -69,15 +69,17 @@ class Fixture {
     readOutbox: (s) async {
       event('read:${s.zone}');
       reads++;
-      if (wrongScopeOnReread && reads == 3)
+      if (wrongScopeOnReread && reads == 3) {
         return [op(message, CloudOutboxStatus.confirmed)];
+      }
       return queues[s]!;
     },
     reconcileUnknown: (o) async => event('reconcile:${o.scope.zone}'),
     flush: (s) async {
       event('flush:${s.zone}');
-      if (flushSettles)
+      if (flushSettles) {
         queues[s] = [op(s, CloudOutboxStatus.confirmed, lease: true)];
+      }
     },
     acknowledgeConfirmed: (s, o) async {
       expect(o.scope, s);

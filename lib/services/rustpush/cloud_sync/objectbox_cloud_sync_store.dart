@@ -48,6 +48,8 @@ class ObjectBoxCloudSyncStore
     CloudSyncSemanticDiagnosticRecorder? recordExistingHistoryDiagnostic,
   }) : _store = store,
        _localSendJournal = localSendJournal,
+       // Keep the public named parameter stable while the field stays private.
+       // ignore: prefer_initializing_formals
        _recordExistingHistoryDiagnostic = recordExistingHistoryDiagnostic,
        _clock = clock ?? DateTime.now,
        _checkpoints = store.box<CloudSyncCheckpointEntity>(),

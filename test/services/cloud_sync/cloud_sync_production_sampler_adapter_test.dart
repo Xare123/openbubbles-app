@@ -59,7 +59,7 @@ void main() {
     () {
       final file = File(
         'lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart',
-      ).readAsStringSync();
+      ).readAsStringSync().replaceAll('\r\n', '\n');
       final adapter = file.substring(
         file.indexOf('final class CloudSyncProductionLocalSendAdapter'),
         file.indexOf('final class CloudSyncProductionOutboundCanaryAdapter'),

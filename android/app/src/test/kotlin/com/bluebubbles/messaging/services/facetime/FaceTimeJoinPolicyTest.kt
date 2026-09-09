@@ -264,4 +264,39 @@ class FaceTimeJoinPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun preJoinDisconnectKeepsConnectingInsteadOfClaimingInterruption() {
+        assertEquals(
+            "Connecting FaceTime media...",
+            FaceTimeConnectionStatusPolicy.pendingMessage(
+                FaceTimeMediaEvidence(
+                    iceState = FaceTimeIceState.DISCONNECTED,
+                    remoteAudioTracks = 0,
+                    remoteVideoTracks = 0,
+                    mediaBytes = null,
+                    webLeaveVisible = false,
+                ),
+                completedJoin = false,
+            ),
+        )
+    }
+
+    @Test
+    fun closedTransportFailsEvenAfterACompletedJoin() {
+        assertEquals(
+            "FaceTime connection failed. Tap Rejoin to retry.",
+            FaceTimeConnectionStatusPolicy.pendingMessage(
+                FaceTimeMediaEvidence(
+                    iceState = FaceTimeIceState.CLOSED,
+                    remoteAudioTracks = 0,
+                    remoteVideoTracks = 0,
+                    mediaBytes = null,
+                    webLeaveVisible = true,
+                    peerId = 1,
+                ),
+                completedJoin = true,
+            ),
+        )
+    }
 }
