@@ -325,7 +325,13 @@ extension CloudFailureCategoryBehavior on CloudFailureCategory {
   };
 }
 
-class CloudSyncFailure implements Exception {
+/// Marker for failures whose diagnostic value is a content-free candidate.
+/// The outer boundary must still allowlist [safeCode] before exposing it.
+abstract interface class CloudSyncSafeCodeFailure {
+  String? get safeCode;
+}
+
+class CloudSyncFailure implements Exception, CloudSyncSafeCodeFailure {
   CloudSyncFailure({
     required this.category,
     this.retryAfter,
@@ -350,6 +356,7 @@ class CloudSyncFailure implements Exception {
 
   /// An allowlisted diagnostic code only. Never place server bodies, record
   /// identifiers, handles, tokens, or message content here.
+  @override
   final String? safeCode;
 
   /// Present only when native code durably protected the authenticated Apple

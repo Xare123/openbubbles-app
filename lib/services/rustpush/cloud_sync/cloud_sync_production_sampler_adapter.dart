@@ -30,6 +30,7 @@ import 'native_protected_cloud_sync_transport.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 import 'objectbox_cloud_semantic_store_gateway.dart';
 import 'cloud_sync_protector.dart';
+import 'cloud_sync_reset_coordinator.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 import 'cloud_sync_outbound_admission.dart';
 import 'cloud_sync_outbound_chat_admission.dart';
@@ -534,6 +535,19 @@ final class CloudSyncProductionSemanticPullAdapter {
     final durableStore = ObjectBoxCloudSyncStore.fromDatabase(
       protector: protector,
     );
+    final activeNativeWriterPause =
+        nativeWriterPause ?? FrbCloudSyncNativeWriterPause();
+    final resetCoordinator = CloudSyncResetCoordinator(
+      authority: ObjectBoxCloudKitWriterAuthority(store: Database.store),
+      interlock: CloudKitOperationInterlock(
+        privateStorageDirectory: privateStorageDirectory,
+        fenceStore: durableStore,
+      ),
+      store: durableStore,
+      readAuthSnapshot: authProvider.capture,
+      readPreflight: readPreflight,
+      nativeWriterPause: activeNativeWriterPause,
+    );
     sampler = CloudSyncManualSemanticPullSampler(
       readPreflight: readPreflight,
       ensureAuthSnapshot: authProvider.ensureReadAuthenticationUnderInterlock,
@@ -620,7 +634,26 @@ final class CloudSyncProductionSemanticPullAdapter {
           diagnosticRecorder: diagnostics.record,
         );
       },
-      nativeWriterPause: nativeWriterPause ?? FrbCloudSyncNativeWriterPause(),
+      nativeWriterPause: activeNativeWriterPause,
+      coordinateProtectedReset: (expectedAuth, context) => resetCoordinator
+          .coordinate(expectedAuth: expectedAuth, context: context),
+      recoverPendingReset: () async {
+        final auth = await authProvider.capture();
+        if (auth == null) return;
+        await resetCoordinator.recoverPending(
+          expectedAuth: auth,
+          candidateScopes: [
+            for (final zone in CloudSyncManualSemanticPullSampler.zones)
+              CloudSyncScope(
+                accountFingerprint: auth.accountFingerprint,
+                container: CloudSyncManualSemanticPullSampler.container,
+                database: CloudSyncManualSemanticPullSampler.database,
+                zone: zone,
+                persistenceLane: CloudSyncPersistenceLane.semantic,
+              ),
+          ],
+        );
+      },
       scheduleSession: scheduleSession,
       readDiagnosticCounts: (scope) =>
           diagnosticCollectors[scope.zone]?.snapshot() ?? const <String, int>{},

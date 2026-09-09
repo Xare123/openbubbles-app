@@ -8,6 +8,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shado
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
@@ -137,6 +138,8 @@ CloudSyncManualSemanticPullSampler _sampler({
   CloudSyncClock? clock,
   CloudSyncObserverFactory? observerFactory,
   CloudSyncSemanticSessionScheduler? scheduleSession,
+  CloudSyncProtectedResetCoordinator? coordinateProtectedReset,
+  CloudSyncPendingResetRecovery? recoverPendingReset,
 }) => CloudSyncManualSemanticPullSampler(
   readPreflight: readPreflight,
   ensureAuthSnapshot: ensureAuthSnapshot ?? () async => _auth(),
@@ -161,6 +164,8 @@ CloudSyncManualSemanticPullSampler _sampler({
   clockOverrideForTest: clock,
   observerFactory: observerFactory,
   scheduleSession: scheduleSession,
+  coordinateProtectedReset: coordinateProtectedReset,
+  recoverPendingReset: recoverPendingReset,
 );
 
 CloudSyncScope _semanticScope(String zone) => CloudSyncScope(
@@ -577,6 +582,59 @@ void main() {
 
       expect(persistedPasses, 1);
       expect(prepareCalls, 2);
+      expect(nativeWriterPause.pauseCalls, 1);
+      expect(nativeWriterPause.resumeCalls, 1);
+      expect(sampler.isActive, isFalse);
+    },
+  );
+
+  test(
+    'generic confirmed session redacts reset context and never replays',
+    () async {
+      const proofReference =
+          'obcs2.ref.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+      var coordinationCalls = 0;
+      final nativeWriterPause = _RecordingNativeWriterPause();
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: nativeWriterPause,
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async => InMemoryCloudSyncStore(),
+        createRawTransport: (auth, scope, pauseToken) async {
+          final transport = FakeCloudSyncTransport();
+          transport.fetchHandler = (scope, token, generation, limit) async {
+            throw CloudSyncFailure(
+              category: CloudFailureCategory.unknown,
+              safeCode: 'cloudkit_reset_required',
+              resetContext: CloudSyncResetRequiredContext(
+                scope: scope,
+                expectedGeneration: generation,
+                protectedRemoteStateProofReference: proofReference,
+              ),
+            );
+          };
+          return transport;
+        },
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+        coordinateProtectedReset: (auth, context) async {
+          coordinationCalls++;
+        },
+      );
+
+      await expectLater(
+        sampler.runConfirmedSession((runPass) => runPass()),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloudkit_reset_required',
+          ),
+        ),
+      );
+      expect(coordinationCalls, 0);
       expect(nativeWriterPause.pauseCalls, 1);
       expect(nativeWriterPause.resumeCalls, 1);
       expect(sampler.isActive, isFalse);
@@ -3250,6 +3308,278 @@ void main() {
         kind: CloudKitOperationKind.legacyReadWrite,
         action: () async {},
       );
+    },
+  );
+
+  test(
+    'protected reset releases read boundary, coordinates once, and replays',
+    () async {
+      const proofReference =
+          'obcs2.ref.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+      final fenceStore = InMemoryCloudSyncStore();
+      final stores = <String, InMemoryCloudSyncStore>{};
+      final events = <String>[];
+      final nativePause = _RecordingNativeWriterPause(events: events);
+      var resetSignals = 0;
+      var pendingRecoveries = 0;
+      var scheduledDepth = 0;
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: fenceStore,
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async =>
+            stores.putIfAbsent(scope.zone, InMemoryCloudSyncStore.new),
+        createRawTransport: (auth, scope, pauseToken) async {
+          final transport = FakeCloudSyncTransport();
+          transport.fetchHandler =
+              (requestedScope, previousToken, generation, limit) async {
+                if (requestedScope.zone ==
+                        CloudSyncManualSemanticPullSampler.zones.first &&
+                    resetSignals++ == 0) {
+                  throw CloudSyncFailure(
+                    category: CloudFailureCategory.unknown,
+                    safeCode: 'cloudkit_reset_required',
+                    resetContext: CloudSyncResetRequiredContext(
+                      scope: requestedScope,
+                      expectedGeneration: generation,
+                      protectedRemoteStateProofReference: proofReference,
+                    ),
+                  );
+                }
+                return CloudFetchBatch(
+                  scope: requestedScope,
+                  changes: const [],
+                  batchId: 'empty-after-reset-${requestedScope.zone}',
+                  generation: generation,
+                  nextToken: previousToken,
+                  hasMore: false,
+                );
+              };
+          return transport;
+        },
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+        nativeWriterPause: nativePause,
+        scheduleSession: <T>(Future<T> Function() action) async {
+          scheduledDepth++;
+          try {
+            return await action();
+          } finally {
+            scheduledDepth--;
+          }
+        },
+        recoverPendingReset: () async {
+          expect(scheduledDepth, 1);
+          pendingRecoveries++;
+          events.add('recover-pending');
+        },
+        coordinateProtectedReset: (auth, context) async {
+          expect(scheduledDepth, 1);
+          expect(nativePause.isPaused, isFalse);
+          expect(context.protectedRemoteStateProofReference, proofReference);
+          final competing = CloudKitOperationInterlock(
+            privateStorageDirectory: privateStorageDirectory.path,
+            fenceStore: fenceStore,
+          );
+          await competing.runExclusive(
+            kind: CloudKitOperationKind.destructiveReset,
+            action: () async => events.add('coordinate-reset'),
+          );
+        },
+      );
+
+      final report = await sampler.runConfirmed();
+
+      expect(pendingRecoveries, 1);
+      expect(scheduledDepth, 0);
+      expect(nativePause.pauseCalls, 2);
+      expect(nativePause.resumeCalls, 2);
+      expect(events.first, 'recover-pending');
+      expect(
+        events,
+        containsAllInOrder([
+          'pause-native-writers',
+          'resume-native-writers',
+          'coordinate-reset',
+          'pause-native-writers',
+          'resume-native-writers',
+        ]),
+      );
+      expect(report.zones, hasLength(3));
+      expect(report.toJson().toString(), isNot(contains(proofReference)));
+    },
+  );
+
+  test('protected reset replay is bounded to one per invocation', () async {
+    const proofReference =
+        'obcs2.ref.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+    var coordinationCalls = 0;
+    final sampler = _sampler(
+      privateStorageDirectory: privateStorageDirectory,
+      operationFenceStore: InMemoryCloudSyncStore(),
+      readPreflight: () async => _readyState(),
+      readAuthSnapshot: () async => _auth(),
+      createStore: (scope) async => InMemoryCloudSyncStore(),
+      createRawTransport: (auth, scope, pauseToken) async {
+        final transport = FakeCloudSyncTransport();
+        transport.fetchHandler =
+            (requestedScope, previousToken, generation, limit) async {
+              throw CloudSyncFailure(
+                category: CloudFailureCategory.unknown,
+                safeCode: 'cloudkit_reset_required',
+                resetContext: CloudSyncResetRequiredContext(
+                  scope: requestedScope,
+                  expectedGeneration: generation,
+                  protectedRemoteStateProofReference: proofReference,
+                ),
+              );
+            };
+        return transport;
+      },
+      createInboxApplier: (auth, scope, generation) async =>
+          FakeCloudInboxApplier(),
+      coordinateProtectedReset: (auth, context) async {
+        coordinationCalls++;
+      },
+    );
+
+    await expectLater(
+      sampler.runConfirmed(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloudkit_reset_required',
+        ),
+      ),
+    );
+    expect(coordinationCalls, 1);
+  });
+
+  test(
+    'catch-up coordinates one protected reset before persisting replay',
+    () async {
+      const proofReference =
+          'obcs2.ref.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+      final stores = <String, InMemoryCloudSyncStore>{};
+      final nativePause = _RecordingNativeWriterPause();
+      var resetSignals = 0;
+      var coordinationCalls = 0;
+      var persistedReports = 0;
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: nativePause,
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async =>
+            stores.putIfAbsent(scope.zone, InMemoryCloudSyncStore.new),
+        createRawTransport: (auth, scope, pauseToken) async {
+          final transport = FakeCloudSyncTransport();
+          transport.fetchHandler =
+              (requestedScope, previousToken, generation, limit) async {
+                if (requestedScope.zone ==
+                        CloudSyncManualSemanticPullSampler.zones.first &&
+                    resetSignals++ == 0) {
+                  throw CloudSyncFailure(
+                    category: CloudFailureCategory.unknown,
+                    safeCode: 'cloudkit_reset_required',
+                    resetContext: CloudSyncResetRequiredContext(
+                      scope: requestedScope,
+                      expectedGeneration: generation,
+                      protectedRemoteStateProofReference: proofReference,
+                    ),
+                  );
+                }
+                return CloudFetchBatch(
+                  scope: requestedScope,
+                  changes: const [],
+                  batchId: 'empty-after-reset-${requestedScope.zone}',
+                  generation: generation,
+                  nextToken: previousToken,
+                  hasMore: false,
+                );
+              };
+          return transport;
+        },
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+        coordinateProtectedReset: (auth, context) async {
+          expect(nativePause.isPaused, isFalse);
+          coordinationCalls++;
+        },
+      );
+
+      final result = await sampler.runConfirmedCatchUpAndPersist(
+        persistReport: (report) async {
+          persistedReports++;
+          return 'report-$persistedReports';
+        },
+      );
+
+      expect(result.remoteDrained, isTrue);
+      expect(result.remotePasses, 1);
+      expect(coordinationCalls, 1);
+      expect(persistedReports, 1);
+      expect(nativePause.pauseCalls, 2);
+      expect(nativePause.resumeCalls, 2);
+    },
+  );
+
+  test(
+    'catch-up rejects a second reset without persisting an unsafe pass',
+    () async {
+      const proofReference =
+          'obcs2.ref.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+      var coordinationCalls = 0;
+      var persistedReports = 0;
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async => InMemoryCloudSyncStore(),
+        createRawTransport: (auth, scope, pauseToken) async {
+          final transport = FakeCloudSyncTransport();
+          transport.fetchHandler =
+              (requestedScope, previousToken, generation, limit) async {
+                throw CloudSyncFailure(
+                  category: CloudFailureCategory.unknown,
+                  safeCode: 'cloudkit_reset_required',
+                  resetContext: CloudSyncResetRequiredContext(
+                    scope: requestedScope,
+                    expectedGeneration: generation,
+                    protectedRemoteStateProofReference: proofReference,
+                  ),
+                );
+              };
+          return transport;
+        },
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+        coordinateProtectedReset: (auth, context) async {
+          coordinationCalls++;
+        },
+      );
+
+      await expectLater(
+        sampler.runConfirmedCatchUpAndPersist(
+          persistReport: (report) async {
+            persistedReports++;
+            return 'unexpected-report';
+          },
+        ),
+        throwsA(
+          isA<CloudSyncSemanticDrainUnsafeReportException>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'cloudkit_reset_required',
+          ),
+        ),
+      );
+      expect(coordinationCalls, 1);
+      expect(persistedReports, 0);
     },
   );
 }

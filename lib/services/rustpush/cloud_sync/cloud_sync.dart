@@ -36,6 +36,7 @@ export 'cloud_sync_protector.dart';
 export 'cloud_sync_protector_health.dart';
 export 'cloud_sync_production_sampler_adapter.dart';
 export 'cloud_sync_runtime.dart';
+export 'cloud_sync_reset_coordinator.dart';
 export 'cloud_sync_safe_failure.dart';
 export 'cloud_sync_shadow_report.dart';
 export 'cloud_sync_semantic_diagnostics.dart';

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_reset_coordinator.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
@@ -225,6 +226,35 @@ void main() {
       ),
       'cloudkit_writer_identity_changed',
     );
+  });
+
+  test('preserves reviewed reset coordinator failures only', () {
+    expect(
+      cloudSyncV2SafeFailureCode(
+        const CloudSyncResetCoordinatorFailure(
+          'cloudkit_reset_generation_unresolved',
+        ),
+      ),
+      'cloudkit_reset_generation_unresolved',
+    );
+    expect(
+      cloudSyncV2SafeFailureCode(
+        const CloudSyncResetCoordinatorFailure('private-reset-detail'),
+      ),
+      'cloud_sync_unknown_failure',
+    );
+    for (final code in const [
+      'cloud_sync_auth_snapshot_missing',
+      'cloud_sync_auth_account_changed',
+      'cloud_sync_auth_store_changed',
+      'cloud_sync_auth_session_changed',
+      'cloud_sync_auth_client_changed',
+    ]) {
+      expect(
+        cloudSyncV2SafeFailureCode(CloudSyncResetCoordinatorFailure(code)),
+        code,
+      );
+    }
   });
 
   test('preserves reviewed outbound canary and candidate state codes', () {

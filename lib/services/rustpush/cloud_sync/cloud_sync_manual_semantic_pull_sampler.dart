@@ -45,6 +45,12 @@ typedef CloudSyncConfirmedSemanticPullSessionAction<T> =
     Future<T> Function(CloudSyncConfirmedSemanticPullPass runPass);
 typedef CloudSyncSemanticSessionReportPersist =
     Future<Object> Function(CloudSyncSemanticPullReport report);
+typedef CloudSyncProtectedResetCoordinator =
+    Future<void> Function(
+      CloudSyncNativeAuthSnapshot expectedAuth,
+      CloudSyncResetRequiredContext context,
+    );
+typedef CloudSyncPendingResetRecovery = Future<void> Function();
 
 /// Schedules a complete native session, including confirmed pause release.
 /// The scheduler must await [action] and must not release it on a timeout.
@@ -130,6 +136,8 @@ final class CloudSyncManualSemanticPullSampler {
     Duration? fetchTimeoutOverrideForTest,
     CloudSyncSemanticRetryWait? retryWaitOverrideForTest,
     CloudSyncClock? clockOverrideForTest,
+    this._coordinateProtectedReset,
+    this._recoverPendingReset,
   }) : _operationInterlock = CloudKitOperationInterlock(
          privateStorageDirectory: privateStorageDirectory,
          fenceStore: operationFenceStore,
@@ -191,6 +199,8 @@ final class CloudSyncManualSemanticPullSampler {
   final CloudSyncSemanticRetryWait _retryWait;
   final CloudSyncClock _clock;
   final CloudSyncSemanticSessionScheduler _scheduleSession;
+  final CloudSyncProtectedResetCoordinator? _coordinateProtectedReset;
+  final CloudSyncPendingResetRecovery? _recoverPendingReset;
   final bool _enabled;
   bool _active = false;
   bool _nativePauseUncertain = false;
@@ -202,8 +212,36 @@ final class CloudSyncManualSemanticPullSampler {
 
   CloudSyncFeatureFlags get debugFlags => _config().flags;
 
-  Future<CloudSyncSemanticPullReport> runConfirmed() =>
-      runConfirmedSession((runPass) => runPass());
+  Future<CloudSyncSemanticPullReport> runConfirmed() async {
+    if (!_enabled) throw StateError('cloud_sync_semantic_pull_disabled');
+    if (_active) throw StateError('cloud_sync_semantic_pull_active');
+    _active = true;
+    var resetCompleted = false;
+    try {
+      final recoverPendingReset = _recoverPendingReset;
+      if (recoverPendingReset != null) {
+        await _scheduleSession<void>(recoverPendingReset);
+      }
+      while (true) {
+        try {
+          return await _executeConfirmedSessionWithContext(
+            (session) => session.runRemotePass(),
+          );
+        } on _CloudSyncSemanticResetInterruption catch (failure) {
+          final coordinator = _coordinateProtectedReset;
+          if (coordinator == null || resetCompleted) {
+            throw StateError('cloudkit_reset_required');
+          }
+          resetCompleted = true;
+          await _scheduleSession<void>(
+            () => coordinator(failure.auth, failure.context),
+          );
+        }
+      }
+    } finally {
+      if (!_nativePauseUncertain) _active = false;
+    }
+  }
 
   /// Proves remote head, persists that proof, and then performs one exact
   /// local-only sweep of every retained save that existed at the proof bound.
@@ -234,8 +272,13 @@ final class CloudSyncManualSemanticPullSampler {
     var completedRemotePasses = 0;
     var retries = 0;
     var cumulativeWait = Duration.zero;
+    var resetCompleted = false;
     _CloudSyncSemanticRetryFence? retryFence;
     try {
+      final recoverPendingReset = _recoverPendingReset;
+      if (recoverPendingReset != null) {
+        await _scheduleSession<void>(recoverPendingReset);
+      }
       while (true) {
         _throwIfCancelled(cancellationToken);
         try {
@@ -294,6 +337,19 @@ final class CloudSyncManualSemanticPullSampler {
           cumulativeWait += delay;
           retryFence = failure.fence;
           await _retryWait(delay, cancellationToken);
+          _throwIfCancelled(cancellationToken);
+        } on _CloudSyncSemanticResetInterruption catch (failure) {
+          final coordinator = _coordinateProtectedReset;
+          if (coordinator == null || resetCompleted) {
+            throw const CloudSyncSemanticDrainUnsafeReportException(
+              'cloudkit_reset_required',
+            );
+          }
+          resetCompleted = true;
+          retryFence = null;
+          await _scheduleSession<void>(
+            () => coordinator(failure.auth, failure.context),
+          );
           _throwIfCancelled(cancellationToken);
         }
       }
@@ -395,9 +451,18 @@ final class CloudSyncManualSemanticPullSampler {
   /// otherwise safe one-shot reads.
   Future<T> runConfirmedSession<T>(
     CloudSyncConfirmedSemanticPullSessionAction<T> action,
-  ) => _runConfirmedSessionWithContext(
-    (session) => action(session.runRemotePass),
-  );
+  ) async {
+    try {
+      return await _runConfirmedSessionWithContext(
+        (session) => action(session.runRemotePass),
+      );
+    } on _CloudSyncSemanticResetInterruption {
+      // An arbitrary caller-owned session is not known to be replay-safe.
+      // Keep the protected reset context private and require the bounded,
+      // coordinator-owned entry points to perform reset orchestration.
+      throw StateError('cloudkit_reset_required');
+    }
+  }
 
   /// Reuses the semantic session's preflight, exact authentication, native
   /// writer pause and release handling without fetching or projecting a page.
@@ -632,6 +697,13 @@ final class CloudSyncManualSemanticPullSampler {
         await _flushObserver(observer);
         if (result.counters.confirmed != 0) {
           throw StateError('cloud_sync_semantic_remote_write_tripwire');
+        }
+        final resetContext = result.resetContext;
+        if (resetContext != null) {
+          throw _CloudSyncSemanticResetInterruption(
+            auth: auth,
+            context: resetContext,
+          );
         }
         final diagnosticCounts = await _diagnosticCountsForReport(
           scope: scope,
@@ -1463,4 +1535,17 @@ final class _CloudSyncSemanticTransientInterruption implements Exception {
   final int remotePasses;
   final String safeCode;
   final _CloudSyncSemanticRetryFence fence;
+}
+
+final class _CloudSyncSemanticResetInterruption implements Exception {
+  const _CloudSyncSemanticResetInterruption({
+    required this.auth,
+    required this.context,
+  });
+
+  final CloudSyncNativeAuthSnapshot auth;
+  final CloudSyncResetRequiredContext context;
+
+  @override
+  String toString() => '_CloudSyncSemanticResetInterruption(redacted)';
 }

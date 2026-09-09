@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_production_preflight.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
+import 'cloud_sync_models.dart';
 import 'cloudkit_operation_interlock.dart';
 
 /// Reads the local mutation fence in one ObjectBox transaction.
@@ -20,6 +21,7 @@ final class ObjectBoxCloudSyncPreflightReader {
   }) : _store = store,
        _leases = store.box<CloudSyncLeaseEntity>(),
        _outbox = store.box<CloudOutboxOperationEntity>(),
+       _checkpoints = store.box<CloudSyncCheckpointEntity>(),
        _now = now ?? DateTime.now,
        _ignoredScopeKeys =
            ignoredScopeKeys ??
@@ -31,6 +33,7 @@ final class ObjectBoxCloudSyncPreflightReader {
   final Store _store;
   final Box<CloudSyncLeaseEntity> _leases;
   final Box<CloudOutboxOperationEntity> _outbox;
+  final Box<CloudSyncCheckpointEntity> _checkpoints;
   final DateTime Function() _now;
   final Set<String> _ignoredScopeKeys;
 
@@ -51,11 +54,18 @@ final class ObjectBoxCloudSyncPreflightReader {
       final query = _leases.query(condition).build()..limit = 1;
       try {
         final rows = _outbox.getAll()..sort((a, b) => a.id.compareTo(b.id));
+        final checkpoints = <String, CloudSyncCheckpointEntity>{
+          for (final checkpoint in _checkpoints.getAll())
+            checkpoint.checkpointKey: checkpoint,
+        };
         return CloudSyncLocalPreflightState(
           objectBoxReady: true,
           coordinatorLeaseActive: query.findFirst() != null,
           outboxCount: rows.length,
-          settledOutboxFingerprint: settledAuditFingerprint(rows),
+          settledOutboxFingerprint: settledAuditFingerprint(
+            rows,
+            currentCheckpoints: checkpoints,
+          ),
         );
       } finally {
         query.close();
@@ -70,10 +80,22 @@ final class ObjectBoxCloudSyncPreflightReader {
   // identified local cancellation is inert, not a confirmed remote receipt.
   /// Content-free local-quiescence proof for retained audit rows. It is not
   /// remote ownership evidence and must never authorize submission or replay.
-  static String? settledAuditFingerprint(List<CloudOutboxOperationEntity> rows) {
+  static String? settledAuditFingerprint(
+    List<CloudOutboxOperationEntity> rows, {
+    Map<String, CloudSyncCheckpointEntity> currentCheckpoints = const {},
+  }) {
     if (rows.isEmpty) return null;
+    final generationFences = <int?>[];
     for (final row in rows) {
-      if (cloudSyncIsRetiredUnsubmittedChatCreate(row)) continue;
+      final fencedGeneration = _generationFenceForTerminalRow(
+        row,
+        currentCheckpoints[row.scopeKey],
+      );
+      generationFences.add(fencedGeneration);
+      if (fencedGeneration != null ||
+          cloudSyncIsRetiredUnsubmittedChatCreate(row)) {
+        continue;
+      }
       if (row.state != 2 ||
           row.action != 0 ||
           row.confirmedAtMs <= 0 ||
@@ -103,44 +125,87 @@ final class ObjectBoxCloudSyncPreflightReader {
     // Include every durable column, including nulls, IDs, and timestamps. A
     // same-count replacement or mutation during a read is not an unchanged
     // outbox. JSON preserves field boundaries without exposing any value.
+    final hasGenerationFence = generationFences.any(
+      (generation) => generation != null,
+    );
     return sha256
         .convert(
           utf8.encode(
-            jsonEncode([
-              'cloud-sync-settled-outbox-v1',
-              for (final row in rows)
-                [
-                  row.id,
-                  row.operationId,
-                  row.scopeKey,
-                  row.accountFingerprint,
-                  row.zone,
-                  row.logicalEntityKeyHash,
-                  row.action,
-                  row.dependencyOperationIdsJson,
-                  row.payloadVersion,
-                  row.mutationRevision,
-                  row.checkpointGeneration,
-                  row.localChatOrigin,
-                  row.appleRequestUuid,
-                  row.appleOperationUuid,
-                  row.encryptedPayloadRef,
-                  row.payloadSha256,
-                  row.protectedLeaseReference,
-                  row.state,
-                  row.attemptCount,
-                  row.nextEligibleAtMs,
-                  row.lastErrorCategory,
-                  row.serverRecordIdHash,
-                  row.leaseIdHash,
-                  row.leaseExpiresAtMs,
-                  row.confirmedAtMs,
-                  row.createdAtMs,
-                  row.updatedAtMs,
-                ],
-            ]),
+            jsonEncode(
+              hasGenerationFence
+                  ? [
+                      'cloud-sync-settled-outbox-v2',
+                      for (var index = 0; index < rows.length; index++)
+                        [
+                          generationFences[index],
+                          ..._auditColumns(rows[index]),
+                        ],
+                    ]
+                  : [
+                      'cloud-sync-settled-outbox-v1',
+                      for (final row in rows) _auditColumns(row),
+                    ],
+            ),
           ),
         )
         .toString();
   }
+
+  /// A reset-fenced operation is terminal even though its protected audit row
+  /// remains in ObjectBox. Accept it only when a newer checkpoint for the exact
+  /// semantic Messages scope makes the old generation impossible to lease.
+  static int? _generationFenceForTerminalRow(
+    CloudOutboxOperationEntity row,
+    CloudSyncCheckpointEntity? checkpoint,
+  ) {
+    if (checkpoint == null ||
+        row.state != CloudOutboxStatus.quarantined.index ||
+        row.checkpointGeneration <= 0 ||
+        checkpoint.generation <= row.checkpointGeneration ||
+        row.lastErrorCategory != CloudFailureCategory.localStorage.name ||
+        row.leaseIdHash != null ||
+        row.leaseExpiresAtMs != 0 ||
+        row.nextEligibleAtMs != 0 ||
+        row.scopeKey != checkpoint.checkpointKey ||
+        row.accountFingerprint != checkpoint.accountFingerprint ||
+        row.zone != checkpoint.zone ||
+        checkpoint.container != 'com.apple.messages.cloud' ||
+        checkpoint.database != 'private' ||
+        checkpoint.streamKind != CloudSyncStreamKind.messages.name ||
+        checkpoint.schemaVersion != 2 ||
+        checkpoint.persistenceLane != CloudSyncPersistenceLane.semantic.name) {
+      return null;
+    }
+    return checkpoint.generation;
+  }
+
+  static List<Object?> _auditColumns(CloudOutboxOperationEntity row) => [
+    row.id,
+    row.operationId,
+    row.scopeKey,
+    row.accountFingerprint,
+    row.zone,
+    row.logicalEntityKeyHash,
+    row.action,
+    row.dependencyOperationIdsJson,
+    row.payloadVersion,
+    row.mutationRevision,
+    row.checkpointGeneration,
+    row.localChatOrigin,
+    row.appleRequestUuid,
+    row.appleOperationUuid,
+    row.encryptedPayloadRef,
+    row.payloadSha256,
+    row.protectedLeaseReference,
+    row.state,
+    row.attemptCount,
+    row.nextEligibleAtMs,
+    row.lastErrorCategory,
+    row.serverRecordIdHash,
+    row.leaseIdHash,
+    row.leaseExpiresAtMs,
+    row.confirmedAtMs,
+    row.createdAtMs,
+    row.updatedAtMs,
+  ];
 }

@@ -89,6 +89,110 @@ void main() {
     expect(reader.read().settledOutboxFingerprint, isNull);
   });
 
+  test('a newer exact checkpoint makes reset-fenced outbox audit inert', () {
+    const scopeKey = 'semantic-message-scope';
+    final checkpoints = store.box<CloudSyncCheckpointEntity>();
+    final checkpointId = checkpoints.put(
+      CloudSyncCheckpointEntity(
+        checkpointKey: scopeKey,
+        accountFingerprint: _fingerprint,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'messageManateeZone',
+        streamKind: CloudSyncStreamKind.messages.name,
+        persistenceLane: CloudSyncPersistenceLane.semantic.name,
+        generation: 2,
+        updatedAtMs: now.millisecondsSinceEpoch,
+      ),
+    );
+    store.box<CloudOutboxOperationEntity>().put(
+      CloudOutboxOperationEntity(
+        operationId: 'reset-fenced-operation',
+        scopeKey: scopeKey,
+        accountFingerprint: _fingerprint,
+        zone: 'messageManateeZone',
+        logicalEntityKeyHash: 'logical',
+        action: CloudOutboxAction.save.index,
+        mutationRevision: 1,
+        checkpointGeneration: 1,
+        state: CloudOutboxStatus.quarantined.index,
+        lastErrorCategory: CloudFailureCategory.localStorage.name,
+        protectedLeaseReference: 'retained-protected-audit-reference',
+        createdAtMs: now.millisecondsSinceEpoch,
+        updatedAtMs: now.millisecondsSinceEpoch,
+      ),
+    );
+
+    final fenced = reader.read();
+    expect(fenced.outboxCount, 1);
+    expect(fenced.settledOutboxFingerprint, matches(r'^[0-9a-f]{64}$'));
+
+    // A same-generation quarantine is not proven inert and must still block.
+    checkpoints.put(
+      CloudSyncCheckpointEntity(
+        id: checkpointId,
+        checkpointKey: scopeKey,
+        accountFingerprint: _fingerprint,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'messageManateeZone',
+        streamKind: CloudSyncStreamKind.messages.name,
+        persistenceLane: CloudSyncPersistenceLane.semantic.name,
+        generation: 1,
+        updatedAtMs: now.millisecondsSinceEpoch,
+      ),
+    );
+    expect(reader.read().settledOutboxFingerprint, isNull);
+  });
+
+  test('generation fence rejects mismatched scope identity or live lease', () {
+    const scopeKey = 'semantic-message-scope';
+    store.box<CloudSyncCheckpointEntity>().put(
+      CloudSyncCheckpointEntity(
+        checkpointKey: scopeKey,
+        accountFingerprint: _fingerprint,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'messageManateeZone',
+        streamKind: CloudSyncStreamKind.messages.name,
+        persistenceLane: CloudSyncPersistenceLane.semantic.name,
+        generation: 2,
+        updatedAtMs: now.millisecondsSinceEpoch,
+      ),
+    );
+    final outbox = store.box<CloudOutboxOperationEntity>();
+    CloudOutboxOperationEntity fenced() => CloudOutboxOperationEntity(
+      operationId: 'reset-fenced-operation',
+      scopeKey: scopeKey,
+      accountFingerprint: _fingerprint,
+      zone: 'messageManateeZone',
+      logicalEntityKeyHash: 'logical',
+      action: CloudOutboxAction.save.index,
+      mutationRevision: 1,
+      checkpointGeneration: 1,
+      state: CloudOutboxStatus.quarantined.index,
+      lastErrorCategory: CloudFailureCategory.localStorage.name,
+      createdAtMs: now.millisecondsSinceEpoch,
+      updatedAtMs: now.millisecondsSinceEpoch,
+    );
+    final id = outbox.put(fenced());
+    expect(reader.read().settledOutboxFingerprint, isNotNull);
+
+    outbox.put(
+      fenced()
+        ..id = id
+        ..zone = 'chatManateeZone',
+    );
+    expect(reader.read().settledOutboxFingerprint, isNull);
+
+    outbox.put(
+      fenced()
+        ..id = id
+        ..leaseIdHash = 'live-lease',
+    );
+    expect(reader.read().settledOutboxFingerprint, isNull);
+  });
+
   test('incomplete confirmations and live receipt metadata never settle', () {
     CloudOutboxOperationEntity confirmed() => CloudOutboxOperationEntity(
       operationId: 'operation',
@@ -111,7 +215,11 @@ void main() {
     final id = outbox.put(confirmed());
     expect(reader.read().settledOutboxFingerprint, matches(r'^[0-9a-f]{64}$'));
     final beforeOriginChange = reader.read().settledOutboxFingerprint;
-    outbox.put(confirmed()..id = id..localChatOrigin = 'synthetic-origin');
+    outbox.put(
+      confirmed()
+        ..id = id
+        ..localChatOrigin = 'synthetic-origin',
+    );
     expect(reader.read().settledOutboxFingerprint, isNot(beforeOriginChange));
     final invalid = <void Function(CloudOutboxOperationEntity)>[
       (row) => row.protectedLeaseReference = 'unacknowledged',
