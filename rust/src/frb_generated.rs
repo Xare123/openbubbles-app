@@ -20506,10 +20506,12 @@ impl SseDecode for crate::api::api::CloudSyncProtectedFailure {
         let mut var_safeCode =
             <crate::api::api::CloudSyncProtectedSafeCode>::sse_decode(deserializer);
         let mut var_retryAfterSeconds = <Option<u64>>::sse_decode(deserializer);
+        let mut var_protectedResetProofReference = <Option<String>>::sse_decode(deserializer);
         return crate::api::api::CloudSyncProtectedFailure {
             category: var_category,
             safe_code: var_safeCode,
             retry_after_seconds: var_retryAfterSeconds,
+            protected_reset_proof_reference: var_protectedResetProofReference,
         };
     }
 }
@@ -29817,6 +29819,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncProtectedFailur
             self.category.into_into_dart().into_dart(),
             self.safe_code.into_into_dart().into_dart(),
             self.retry_after_seconds.into_into_dart().into_dart(),
+            self.protected_reset_proof_reference
+                .into_into_dart()
+                .into_dart(),
         ]
         .into_dart()
     }
@@ -36846,6 +36851,7 @@ impl SseEncode for crate::api::api::CloudSyncProtectedFailure {
         <crate::api::api::CloudSyncProtectedFailureCategory>::sse_encode(self.category, serializer);
         <crate::api::api::CloudSyncProtectedSafeCode>::sse_encode(self.safe_code, serializer);
         <Option<u64>>::sse_encode(self.retry_after_seconds, serializer);
+        <Option<String>>::sse_encode(self.protected_reset_proof_reference, serializer);
     }
 }
 

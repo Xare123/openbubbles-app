@@ -115,18 +115,27 @@ void main() {
     'reset-required pull failure never refreshes, advances, or resumes',
     () async {
       final before = await store.readCheckpoint(scope);
+      const proofReference =
+          'obcs2.ref.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
       transport.fetchHandler =
           (requestedScope, previousToken, generation, limit) async {
             throw CloudSyncFailure(
               category: CloudFailureCategory.pcsUnavailable,
               safeCode: CloudSyncV2ProtectedTransportSafeFailureCodes
                   .cloudKitResetRequired,
+              resetContext: CloudSyncResetRequiredContext(
+                scope: requestedScope,
+                expectedGeneration: generation,
+                protectedRemoteStateProofReference: proofReference,
+              ),
             );
           };
       transport.authenticationRefreshHandler = (_) async => true;
       transport.pcsRefreshHandler = (_) async => true;
 
-      await engine().synchronize(trigger: CloudSyncTrigger.manual);
+      final result = await engine().synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
 
       expect(transport.fetchCallCount, 1);
       expect(transport.authenticationRefreshCallCount, 0);
@@ -139,6 +148,16 @@ void main() {
         await store.readPausedOutboxFailureCategories(scope, now: clock.value),
         isEmpty,
       );
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureSafeCode, 'cloudkit_reset_required');
+      expect(result.resetContext, isNotNull);
+      expect(result.resetContext!.scope, scope);
+      expect(result.resetContext!.expectedGeneration, before.generation);
+      expect(
+        result.resetContext!.protectedRemoteStateProofReference,
+        proofReference,
+      );
+      expect(result.resetContext.toString(), isNot(contains(proofReference)));
     },
   );
 

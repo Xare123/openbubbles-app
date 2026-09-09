@@ -5190,6 +5190,40 @@ mod tests {
     }
 
     #[test]
+    fn platform_store_persists_a_reset_proof_with_the_production_protector() {
+        let directory = tempdir().expect("temporary protected store");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let scope = scope(CloudNativeStream::Messages);
+        let request = request(&scope, None);
+
+        let failure = protect_reset_failure(
+            &store,
+            &request,
+            &PushError::CloudKitChangeTokenExpired,
+        );
+
+        let reference = CloudCanonicalProtectedReference::new(
+            failure
+                .protected_reset_proof_reference()
+                .expect("production-protected reset proof")
+                .to_owned(),
+        )
+        .expect("canonical reset proof reference");
+        let plaintext = store
+            .unprotect(
+                &scope,
+                CloudNativeProtectionPurpose::ResetProof,
+                &reference,
+            )
+            .expect("unprotect production reset proof");
+        let decoded = URL_SAFE_NO_PAD
+            .decode(plaintext)
+            .expect("decode production reset proof");
+        assert!(decoded.starts_with(RESET_PROOF_MAGIC));
+        assert!(!format!("{failure:?}").contains(reference.value()));
+    }
+
+    #[test]
     fn known_semantic_read_failures_do_not_collapse_to_bare_unknown() {
         let cases = [
             (

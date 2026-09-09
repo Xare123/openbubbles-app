@@ -331,9 +331,18 @@ class CloudSyncRunResult {
     this.skipReason,
     this.failureCategory,
     this.failureSafeCode,
+    this.resetContext,
     this.shadowJournalBlockReason,
     this.observedEmptyTerminalRead = false,
-  }) : assert(retainedUnprojectedBacklog >= 0);
+  }) : assert(retainedUnprojectedBacklog >= 0),
+       assert(
+         resetContext == null || failureSafeCode == 'cloudkit_reset_required',
+       ),
+       assert(
+         resetContext == null ||
+             status == CloudSyncRunStatus.degraded ||
+             status == CloudSyncRunStatus.failed,
+       );
 
   final CloudSyncRunStatus status;
   final CloudSyncRunCounters counters;
@@ -347,6 +356,11 @@ class CloudSyncRunResult {
   final CloudSyncSkipReason? skipReason;
   final CloudFailureCategory? failureCategory;
   final String? failureSafeCode;
+
+  /// Opaque, protected evidence for an authenticated Apple reset response.
+  /// Callers may hand this capability only to the reset coordinator after the
+  /// engine has released its coordinator lease. Never log or serialize it.
+  final CloudSyncResetRequiredContext? resetContext;
   final CloudShadowJournalBlockReason? shadowJournalBlockReason;
 
   /// True only when this run durably journaled a terminal CloudKit page and
@@ -649,6 +663,7 @@ class CloudSyncEngine {
       var pullSucceeded = !config.flags.readOnlyFetch;
       CloudFailureCategory? degradedFailure;
       String? degradedFailureSafeCode;
+      CloudSyncResetRequiredContext? degradedResetContext;
       CloudShadowJournalBlockReason? shadowJournalBlockReason;
       var remainingInboxEntries = config.maximumInboxEntriesPerRun;
       var semanticInboxCounters = const CloudSyncRunCounters();
@@ -905,6 +920,7 @@ class CloudSyncEngine {
                         ? previousFailureSafeCode
                         : null);
         }
+        degradedResetContext = pullResult.resetContext;
         shadowJournalBlockReason = pullResult.journalBlockReason;
         semanticInboxPhaseStarted =
             semanticInboxPhaseStarted ||
@@ -979,8 +995,13 @@ class CloudSyncEngine {
           emitEvent: false,
         );
         if (postFetchApply.failureCategory != null) {
-          degradedFailure = postFetchApply.failureCategory;
-          degradedFailureSafeCode = postFetchApply.failureSafeCode;
+          // An authenticated reset signal is the primary failure. Existing
+          // inbox work may still be processed, but it must not replace the
+          // protected reset capability before the outer coordinator sees it.
+          if (degradedResetContext == null) {
+            degradedFailure = postFetchApply.failureCategory;
+            degradedFailureSafeCode = postFetchApply.failureSafeCode;
+          }
         }
         semanticInboxCounters = semanticInboxCounters.add(
           applied: postFetchApply.counters.applied,
@@ -1120,6 +1141,7 @@ class CloudSyncEngine {
         retainedUnprojectedBacklog: retainedUnprojectedBacklog,
         failureCategory: completionFailureCategory,
         failureSafeCode: completionFailureSafeCode,
+        resetContext: degradedResetContext,
         shadowJournalBlockReason: shadowJournalBlockReason,
         observedEmptyTerminalRead: observedEmptyTerminalRead,
       );
@@ -1141,6 +1163,7 @@ class CloudSyncEngine {
         finishedAt: finishedAt,
         failureCategory: error.category,
         failureSafeCode: error.safeCode,
+        resetContext: error.resetContext,
         observedEmptyTerminalRead: observedEmptyTerminalRead,
       );
     } catch (_) {
@@ -1362,6 +1385,7 @@ class CloudSyncEngine {
                   category: error.category,
                   retryAfter: config.pausedRetryDelay,
                   safeCode: error.safeCode,
+                  resetContext: error.resetContext,
                 )
               : error;
           await _recordPullFailure(checkpoint, pausedError);
@@ -1370,6 +1394,7 @@ class CloudSyncEngine {
             succeeded: false,
             failureCategory: pausedError.category,
             failureSafeCode: pausedError.safeCode,
+            resetContext: pausedError.resetContext,
             journalUsage: journalUsage,
           );
         } catch (_) {
@@ -3430,6 +3455,7 @@ class CloudSyncEngine {
     CloudSyncSkipReason? skipReason,
     CloudFailureCategory? failureCategory,
     String? failureSafeCode,
+    CloudSyncResetRequiredContext? resetContext,
     CloudShadowJournalBlockReason? shadowJournalBlockReason,
     bool observedEmptyTerminalRead = false,
   }) async {
@@ -3444,6 +3470,7 @@ class CloudSyncEngine {
       failureSafeCode: failureCategory == null
           ? null
           : cloudSyncV2SafeFailureCodeForCandidate(failureSafeCode),
+      resetContext: resetContext,
       shadowJournalBlockReason: shadowJournalBlockReason,
       observedEmptyTerminalRead: observedEmptyTerminalRead,
     );
@@ -3510,18 +3537,23 @@ class _PullResult {
     required this.succeeded,
     this.failureCategory,
     this.failureSafeCode,
+    this.resetContext,
     CloudShadowJournalUsage? journalUsage,
     this.rejectedEntries = 0,
     this.journalBlockReason,
     this.semanticCounters = const CloudSyncRunCounters(),
     this.semanticProcessedEntries = 0,
     this.observedEmptyTerminalRead = false,
-  }) : journalUsage = journalUsage ?? CloudShadowJournalUsage.empty;
+  }) : assert(
+         resetContext == null || failureSafeCode == 'cloudkit_reset_required',
+       ),
+       journalUsage = journalUsage ?? CloudShadowJournalUsage.empty;
 
   final int fetched;
   final bool succeeded;
   final CloudFailureCategory? failureCategory;
   final String? failureSafeCode;
+  final CloudSyncResetRequiredContext? resetContext;
   final CloudShadowJournalUsage journalUsage;
   final int rejectedEntries;
   final CloudShadowJournalBlockReason? journalBlockReason;

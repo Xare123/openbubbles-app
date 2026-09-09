@@ -17383,12 +17383,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return CloudSyncProtectedFailure(
       category: dco_decode_cloud_sync_protected_failure_category(arr[0]),
       safeCode: dco_decode_cloud_sync_protected_safe_code(arr[1]),
       retryAfterSeconds: dco_decode_opt_box_autoadd_u_64(arr[2]),
+      protectedResetProofReference: dco_decode_opt_String(arr[3]),
     );
   }
 
@@ -27145,10 +27146,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     );
     var var_safeCode = sse_decode_cloud_sync_protected_safe_code(deserializer);
     var var_retryAfterSeconds = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_protectedResetProofReference = sse_decode_opt_String(deserializer);
     return CloudSyncProtectedFailure(
       category: var_category,
       safeCode: var_safeCode,
       retryAfterSeconds: var_retryAfterSeconds,
+      protectedResetProofReference: var_protectedResetProofReference,
     );
   }
 
@@ -38673,6 +38676,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_cloud_sync_protected_failure_category(self.category, serializer);
     sse_encode_cloud_sync_protected_safe_code(self.safeCode, serializer);
     sse_encode_opt_box_autoadd_u_64(self.retryAfterSeconds, serializer);
+    sse_encode_opt_String(self.protectedResetProofReference, serializer);
   }
 
   @protected

@@ -168,6 +168,8 @@ class CloudSyncShadowRuntime {
       finishedAt: finishedAt,
       skipReason: worst.skipReason,
       failureCategory: worst.failureCategory,
+      failureSafeCode: worst.failureSafeCode,
+      resetContext: worst.resetContext,
       shadowJournalBlockReason: shadowJournalBlockReason,
     );
   }

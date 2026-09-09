@@ -135,6 +135,7 @@ impl CloudSyncProtectionContext {
             || !matches!(
                 self.purpose.as_str(),
                 "checkpointToken"
+                    | "resetProof"
                     | "serverRecordId"
                     | "outboundMessage"
                     | "outboundChat"
@@ -925,6 +926,17 @@ mod tests {
         assert!(decoded == chat_context);
         assert_eq!(plaintext, b"chat envelope");
         assert!(decoded != context("outboundMessage"));
+        assert!(decoded != context("rawRecord"));
+    }
+
+    #[test]
+    fn reset_proof_purpose_is_valid_and_domain_separated() {
+        let reset_context = context("resetProof");
+        let encoded = encode_inner(&reset_context, b"content-free reset evidence").unwrap();
+        let (decoded, plaintext) = decode_inner(&encoded).unwrap();
+        assert!(decoded == reset_context);
+        assert_eq!(plaintext, b"content-free reset evidence");
+        assert!(decoded != context("checkpointToken"));
         assert!(decoded != context("rawRecord"));
     }
 

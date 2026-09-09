@@ -3385,16 +3385,21 @@ class CloudSyncProtectedFailure {
   final CloudSyncProtectedFailureCategory category;
   final CloudSyncProtectedSafeCode safeCode;
   final BigInt? retryAfterSeconds;
+  final String? protectedResetProofReference;
 
   const CloudSyncProtectedFailure({
     required this.category,
     required this.safeCode,
     this.retryAfterSeconds,
+    this.protectedResetProofReference,
   });
 
   @override
   int get hashCode =>
-      category.hashCode ^ safeCode.hashCode ^ retryAfterSeconds.hashCode;
+      category.hashCode ^
+      safeCode.hashCode ^
+      retryAfterSeconds.hashCode ^
+      protectedResetProofReference.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3403,7 +3408,8 @@ class CloudSyncProtectedFailure {
           runtimeType == other.runtimeType &&
           category == other.category &&
           safeCode == other.safeCode &&
-          retryAfterSeconds == other.retryAfterSeconds;
+          retryAfterSeconds == other.retryAfterSeconds &&
+          protectedResetProofReference == other.protectedResetProofReference;
 }
 
 enum CloudSyncProtectedFailureCategory {
