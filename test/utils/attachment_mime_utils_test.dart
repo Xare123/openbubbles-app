@@ -93,6 +93,78 @@ void main() {
         'application/octet-stream',
       );
     });
+
+    test('infers image and video MIME types from filename evidence', () {
+      expect(
+        resolveAttachmentMimeType(
+          'animation.gif',
+          null,
+          declaredMimeType: 'application/octet-stream',
+        ),
+        'image/gif',
+      );
+      expect(
+        resolveAttachmentMimeType(
+          'clip.mp4',
+          null,
+          declaredMimeType: 'application/octet-stream',
+        ),
+        'video/mp4',
+      );
+    });
+
+    test('infers image and video MIME types from UTI evidence', () {
+      expect(
+        resolveAttachmentMimeType(
+          'attachment',
+          null,
+          uti: 'public.jpeg',
+          declaredMimeType: 'application/octet-stream',
+        ),
+        'image/jpeg',
+      );
+      expect(
+        resolveAttachmentMimeType(
+          'attachment',
+          null,
+          uti: 'public.mpeg-4',
+          declaredMimeType: 'application/octet-stream',
+        ),
+        'video/mp4',
+      );
+    });
+  });
+
+  group('attachment classification helpers', () {
+    test('plugin payload matching requires the exact suffix', () {
+      expect(
+        isPluginPayloadAttachmentFileName('A.pluginPayloadAttachment'),
+        isTrue,
+      );
+      expect(
+        isPluginPayloadAttachmentFileName('A.PLUGINPAYLOADATTACHMENT'),
+        isTrue,
+      );
+      expect(
+        isPluginPayloadAttachmentFileName(
+          'notes.pluginPayloadAttachment.pdf',
+        ),
+        isFalse,
+      );
+      expect(
+        isPluginPayloadAttachmentFileName('pluginPayloadAttachment-notes'),
+        isFalse,
+      );
+      expect(isPluginPayloadAttachmentFileName(null), isFalse);
+    });
+
+    test('media and location helpers are case-insensitive', () {
+      expect(isImageMimeType('Image/HEIC'), isTrue);
+      expect(isVideoMimeType('Video/MP4'), isTrue);
+      expect(isLocationMimeType('Application/Location'), isTrue);
+      expect(isLocationMimeType('text/x-vlocation'), isTrue);
+      expect(isLocationMimeType('application/pdf'), isFalse);
+    });
   });
 
   group('conciseAttachmentTypeLabel', () {

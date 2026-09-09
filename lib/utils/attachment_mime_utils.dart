@@ -1,6 +1,6 @@
 import 'package:mime_type/mime_type.dart';
 
-const Map<String, String> _documentMimeTypesByUti = <String, String>{
+const Map<String, String> _mimeTypesByUti = <String, String>{
   'com.adobe.pdf': 'application/pdf',
   'public.pdf': 'application/pdf',
   'org.openxmlformats.wordprocessingml.document':
@@ -18,6 +18,23 @@ const Map<String, String> _documentMimeTypesByUti = <String, String>{
   'public.plain-text': 'text/plain',
   'public.rtf': 'application/rtf',
   'public.zip-archive': 'application/zip',
+  'public.jpeg': 'image/jpeg',
+  'public.png': 'image/png',
+  'public.tiff': 'image/tiff',
+  'public.heic': 'image/heic',
+  'public.heif': 'image/heif',
+  'public.gif': 'image/gif',
+  'com.compuserve.gif': 'image/gif',
+  'public.mpeg-4': 'video/mp4',
+  'com.apple.quicktime-movie': 'video/quicktime',
+  'com.apple.m4v-video': 'video/x-m4v',
+  'public.avi': 'video/x-msvideo',
+  'public.mpeg': 'video/mpeg',
+  'public.3gpp': 'video/3gpp',
+  'public.mp3': 'audio/mpeg',
+  'public.aiff-audio': 'audio/aiff',
+  'com.apple.coreaudio-format': 'audio/caf',
+  'com.apple.coreaudio_format': 'audio/caf',
 };
 
 const Map<String, String> _conciseAttachmentTypeLabels = <String, String>{
@@ -44,7 +61,7 @@ String? resolveAttachmentMimeType(
   final normalizedUti = uti?.trim().toLowerCase();
   final inferredFromUti = normalizedUti == null || normalizedUti.isEmpty
       ? null
-      : _documentMimeTypesByUti[normalizedUti];
+      : _mimeTypesByUti[normalizedUti];
   if (declared != null &&
       declared.isNotEmpty &&
       declared.toLowerCase() != 'application/octet-stream') {
@@ -52,6 +69,21 @@ String? resolveAttachmentMimeType(
   }
   return inferredFromFile ?? inferredFromUti ?? (declared?.isEmpty ?? true ? null : declared);
 }
+
+bool isPluginPayloadAttachmentFileName(String? transferName) {
+  final trimmed = transferName?.trim();
+  if (trimmed == null || trimmed.isEmpty) return false;
+  return trimmed.toLowerCase().endsWith('.pluginpayloadattachment');
+}
+
+bool isImageMimeType(String? mimeType) =>
+    mimeType?.toLowerCase().startsWith('image/') ?? false;
+
+bool isVideoMimeType(String? mimeType) =>
+    mimeType?.toLowerCase().startsWith('video/') ?? false;
+
+bool isLocationMimeType(String? mimeType) =>
+    (mimeType ?? '').toLowerCase().contains('location');
 
 String conciseAttachmentTypeLabel(String name, String? mimeType) {
   final mimeLabel = _conciseAttachmentTypeLabels[mimeType?.toLowerCase()];

@@ -102,7 +102,7 @@ class OtherFile extends StatelessWidget {
           );
           return;
         }
-        if (attachment.mimeStart == "image" || (attachment.mimeStart == "video" && !isSnap)) {
+        if (isImageMimeType(resolvedMimeType) || (isVideoMimeType(resolvedMimeType) && !isSnap)) {
           Navigator.of(Get.context!).push(
             ThemeSwitcher.buildPageRoute(
               builder: (context) => FullscreenMediaHolder(

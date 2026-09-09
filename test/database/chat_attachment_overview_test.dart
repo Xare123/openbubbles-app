@@ -31,10 +31,16 @@ void main() {
     Database.chats.put(chat);
   });
 
-  Attachment attachment(String? name, {String? mimeType}) => Attachment(
+  Attachment attachment(
+    String? name, {
+    String? mimeType,
+    String? uti,
+  }) =>
+      Attachment(
         guid: 'attachment-${name ?? 'unnamed'}',
         transferName: name,
         mimeType: mimeType,
+        uti: uti,
         totalBytes: 123,
       );
 
@@ -119,5 +125,97 @@ void main() {
     expect((await overview(documentLimit: 2)).documents
         .map((a) => a.transferName), ['newer.pdf', 'older.pdf']);
     expect(Database.attachments.count(), 3);
+  });
+
+  test('generic GIF and MP4 attachments are classified as media', () async {
+    addMessage([
+      attachment(
+        'animation.gif',
+        mimeType: 'application/octet-stream',
+      ),
+      attachment(
+        'clip.mp4',
+        mimeType: 'application/octet-stream',
+      ),
+    ]);
+
+    final result = await overview();
+    final media = await GetChatMediaPage([
+      chat.id!,
+      0,
+      null,
+      null,
+      20,
+      200,
+    ]).run();
+
+    expect(result.documents, isEmpty);
+    expect(
+      media.items.map((attachment) => attachment.transferName),
+      containsAll(<String?>['animation.gif', 'clip.mp4']),
+    );
+  });
+
+  test('UTI evidence classifies extensionless media and keeps PDFs as documents',
+      () async {
+    addMessage([
+      attachment(
+        'jpeg-asset',
+        mimeType: 'application/octet-stream',
+        uti: 'public.jpeg',
+      ),
+      attachment(
+        'video-asset',
+        mimeType: 'application/octet-stream',
+        uti: 'public.mpeg-4',
+      ),
+      attachment(
+        'document-asset',
+        mimeType: 'application/octet-stream',
+        uti: 'com.adobe.pdf',
+      ),
+    ]);
+
+    final result = await overview();
+    final media = await GetChatMediaPage([
+      chat.id!,
+      0,
+      null,
+      null,
+      20,
+      200,
+    ]).run();
+
+    expect(
+      media.items.map((attachment) => attachment.transferName),
+      containsAll(<String?>['jpeg-asset', 'video-asset']),
+    );
+    expect(
+      result.documents.map((attachment) => attachment.transferName),
+      <String?>['document-asset'],
+    );
+  });
+
+  test('plugin payloads with misleading media MIME remain hidden but stored',
+      () async {
+    final payload = attachment(
+      'P.pluginPayloadAttachment',
+      mimeType: 'image/jpeg',
+    );
+    addMessage([payload]);
+
+    final result = await overview();
+    final media = await GetChatMediaPage([
+      chat.id!,
+      0,
+      null,
+      null,
+      20,
+      200,
+    ]).run();
+
+    expect(result.documents, isEmpty);
+    expect(media.items, isEmpty);
+    expect(Database.attachments.get(payload.id!), isNotNull);
   });
 }

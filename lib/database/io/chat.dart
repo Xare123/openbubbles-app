@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:async_task/async_task.dart';
 import 'package:bluebubbles/utils/attachment_guid_utils.dart';
+import 'package:bluebubbles/utils/attachment_mime_utils.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart';
@@ -153,11 +154,18 @@ class GetChatMediaPage extends AsyncTask<List<dynamic>, ChatMediaPage> {
         lastScanned = message;
         if (message.isGroupEvent || message.isInteractive) continue;
 
-        final media = message.dbAttachments
-            .where((attachment) =>
-                attachment.mimeStart == 'image' ||
-                attachment.mimeStart == 'video')
-            .toList();
+        final media = message.dbAttachments.where((attachment) {
+          if (isPluginPayloadAttachmentFileName(attachment.transferName)) {
+            return false;
+          }
+          final resolved = resolveAttachmentMimeType(
+            attachment.transferName ?? '',
+            null,
+            uti: attachment.uti,
+            declaredMimeType: attachment.mimeType,
+          );
+          return isImageMimeType(resolved) || isVideoMimeType(resolved);
+        }).toList();
         if (media.isEmpty) continue;
 
         message.attachments = List<Attachment>.from(message.dbAttachments);
@@ -233,17 +241,20 @@ class GetChatAttachmentOverview
           // Internal iMessage preview/plugin data is not a user document.
           // Keep the attachment and its Message relation for consumers such as
           // UrlPreview; filter only this overview, before applying card limits.
-          if (attachment.transferName
-                  ?.toLowerCase()
-                  .endsWith('.pluginpayloadattachment') ??
-              false) {
+          if (isPluginPayloadAttachmentFileName(attachment.transferName)) {
             continue;
           }
-          final mimeType = attachment.mimeType ?? '';
-          if (mimeType.contains('location')) {
+          final resolved = resolveAttachmentMimeType(
+            attachment.transferName ?? '',
+            null,
+            uti: attachment.uti,
+            declaredMimeType: attachment.mimeType,
+          );
+          final effectiveMimeType = resolved ?? attachment.mimeType ?? '';
+          if (isLocationMimeType(effectiveMimeType)) {
             if (locations.length < locationLimit) locations.add(attachment);
-          } else if (attachment.mimeStart != 'image' &&
-              attachment.mimeStart != 'video' &&
+          } else if (!isImageMimeType(resolved) &&
+              !isVideoMimeType(resolved) &&
               documents.length < documentLimit) {
             documents.add(attachment);
           }
@@ -2341,11 +2352,15 @@ class Chat {
     // If b is pinned & ordered, but a isn't either pinned or ordered, return accordingly
     if (b!.isPinned! &&
         b.pinIndex != null &&
-        (!a.isPinned! || a.pinIndex == null)) return 1;
+        (!a.isPinned! || a.pinIndex == null)) {
+      return 1;
+    }
     // If a is pinned & ordered, but b isn't either pinned or ordered, return accordingly
     if (a.isPinned! &&
         a.pinIndex != null &&
-        (!b.isPinned! || b.pinIndex == null)) return -1;
+        (!b.isPinned! || b.pinIndex == null)) {
+      return -1;
+    }
 
     // Compare when one is pinned and the other isn't
     if (!a.isPinned! && b.isPinned!) return 1;

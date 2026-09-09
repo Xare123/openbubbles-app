@@ -146,9 +146,9 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
       localFileAvailable = isUsableDownloadedPlatformFile(file);
     });
     updateKeepAlive();
-    if (attachment.mimeType?.contains("video") ?? false) {
+    if (isVideoMimeType(resolvedMimeType)) {
       getVideoPreview(file);
-    } else if (attachment.mimeStart == 'image') {
+    } else if (isImageMimeType(resolvedMimeType)) {
       getBytes();
     }
   }
@@ -195,7 +195,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
       return;
     }
     if (isUsableDownloadedAttachmentFile(pathName) && mounted) {
-      if (attachment.mimeStart == 'image') {
+      if (isImageMimeType(resolvedMimeType)) {
         final thumbnail = await as.getImageGalleryThumbnail(pathName);
         if (!mounted) return;
         setState(() {
@@ -209,7 +209,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
         });
         return;
       }
-      if (attachment.mimeStart == 'video') {
+      if (isVideoMimeType(resolvedMimeType)) {
         setState(() {
           attachmentFile = PlatformFile(
             name: safeAttachmentTransferName(attachment),
@@ -218,7 +218,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
           );
           localFileAvailable = true;
         });
-        if (attachment.mimeStart == 'video') {
+        if (isVideoMimeType(resolvedMimeType)) {
           getVideoPreview(attachmentFile);
         }
         return;
@@ -231,7 +231,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
         );
         localFileAvailable = true;
       });
-      if (attachment.mimeType?.contains("video") ?? false) {
+      if (isVideoMimeType(resolvedMimeType)) {
         getVideoPreview(attachmentFile);
       }
     }
@@ -305,7 +305,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
                       size: 28.0, color: context.theme.colorScheme.properOnSurface),
                   const SizedBox(height: 5),
                   Text(
-                    attachment.mimeType ?? "Unknown File Type",
+                    resolvedMimeType ?? attachment.mimeType ?? "Unknown File Type",
                     style: Theme.of(context).textTheme.bodyLarge,
                     textAlign: TextAlign.center,
                   ),
@@ -317,7 +317,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
                 sizeLabel: attachment.getFriendlySize(),
               ),
       );
-    } else if (attachment.mimeType?.startsWith("image") ?? false) {
+    } else if (isImageMimeType(resolvedMimeType)) {
       child = ImageDisplay(
         attachment: attachment,
         image: attachmentFile.bytes,
@@ -325,7 +325,7 @@ class _MediaGalleryCardState extends OptimizedState<MediaGalleryCard> with Autom
         mediaPager: widget.mediaPager,
       );
       addPadding = false;
-    } else if ((attachment.mimeType?.startsWith("video") ?? false) && !kIsDesktop && !kIsWeb) {
+    } else if (isVideoMimeType(resolvedMimeType) && !kIsDesktop && !kIsWeb) {
       if (videoPreview != null) {
         child = ImageDisplay(
           attachment: attachment,
@@ -420,7 +420,7 @@ class ImageDisplay extends StatelessWidget {
                     width: logicalWidth,
                     height: logicalWidth,
                   ),
-                if ((attachment.mimeType?.contains("video") ?? false) && duration != null)
+                if (duration != null)
                   Positioned(
                     bottom: 10,
                     right: 10,
