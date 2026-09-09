@@ -483,6 +483,68 @@ void main() {
     );
   });
 
+  test('maps a protected reset proof only onto the exact failed fetch', () async {
+    final proofReference = _reference('Z');
+    bindings.fetchResult = NativeProtectedFetchResult(
+      failure: NativeProtectedFailure(
+        category: NativeProtectedFailureCategory.unknown,
+        safeCode: 'cloudkit_reset_required',
+        protectedResetProofReference: proofReference,
+      ),
+    );
+
+    Object? thrown;
+    try {
+      await transport.fetchChanges(
+        scope,
+        previousToken: _reference('O'),
+        generation: 7,
+        limit: 20,
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown, isA<CloudSyncFailure>());
+    final failure = thrown! as CloudSyncFailure;
+    expect(failure.safeCode, 'cloudkit_reset_required');
+    expect(failure.resetContext, isNotNull);
+    expect(failure.resetContext!.scope, scope);
+    expect(failure.resetContext!.expectedGeneration, 7);
+    expect(
+      failure.resetContext!.protectedRemoteStateProofReference,
+      proofReference,
+    );
+    expect(failure.toString(), isNot(contains(proofReference)));
+    expect(failure.resetContext.toString(), isNot(contains(proofReference)));
+  });
+
+  test('rejects a reset proof on any non-reset failure', () async {
+    bindings.fetchResult = NativeProtectedFetchResult(
+      failure: NativeProtectedFailure(
+        category: NativeProtectedFailureCategory.authorization,
+        safeCode: 'cloudkit_authorization',
+        protectedResetProofReference: _reference('Z'),
+      ),
+    );
+
+    await expectLater(
+      transport.fetchChanges(
+        scope,
+        previousToken: null,
+        generation: 1,
+        limit: 20,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'invalid_protected_reset_proof',
+        ),
+      ),
+    );
+  });
+
   test('malformed native capability fails closed before journaling', () async {
     bindings.fetchResult = NativeProtectedFetchResult(
       page: NativeProtectedPage(

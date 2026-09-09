@@ -151,11 +151,13 @@ final class NativeProtectedFailure {
     required this.category,
     required this.safeCode,
     this.retryAfterSeconds,
+    this.protectedResetProofReference,
   });
 
   final NativeProtectedFailureCategory category;
   final String safeCode;
   final int? retryAfterSeconds;
+  final String? protectedResetProofReference;
 }
 
 final class NativeProtectedChange {
@@ -1469,7 +1471,11 @@ final class NativeProtectedCloudSyncTransport
       throw _malformed('invalid_protected_fetch_envelope');
     }
     if (failure != null) {
-      final mapped = _mapFailure(failure);
+      final mapped = _mapFailure(
+        failure,
+        resetScope: scope,
+        resetGeneration: generation,
+      );
       Logger.warn(
         'Cloud Sync V2 protected fetch failed '
         'category=${mapped.category.name} code=${mapped.safeCode ?? 'none'}',
@@ -1875,7 +1881,11 @@ final class NativeProtectedCloudSyncTransport
     };
   }
 
-  CloudSyncFailure _mapFailure(NativeProtectedFailure failure) {
+  CloudSyncFailure _mapFailure(
+    NativeProtectedFailure failure, {
+    CloudSyncScope? resetScope,
+    int? resetGeneration,
+  }) {
     final retryAfter = failure.retryAfterSeconds == null
         ? null
         : Duration(seconds: failure.retryAfterSeconds!);
@@ -1895,10 +1905,27 @@ final class NativeProtectedCloudSyncTransport
         CloudFailureCategory.localStorage,
       NativeProtectedFailureCategory.unknown => CloudFailureCategory.unknown,
     };
+    final resetReference = failure.protectedResetProofReference;
+    final isResetFailure = failure.safeCode == 'cloudkit_reset_required';
+    final hasResetCoordinates = resetScope != null && resetGeneration != null;
+    if (resetReference != null &&
+        (!isResetFailure ||
+            !hasResetCoordinates ||
+            !_protectedReferencePattern.hasMatch(resetReference))) {
+      return _localStorage('invalid_protected_reset_proof');
+    }
+    final resetContext = resetReference == null
+        ? null
+        : CloudSyncResetRequiredContext(
+            scope: resetScope!,
+            expectedGeneration: resetGeneration!,
+            protectedRemoteStateProofReference: resetReference,
+          );
     return CloudSyncFailure(
       category: category,
       retryAfter: retryAfter,
       safeCode: failure.safeCode,
+      resetContext: resetContext,
     );
   }
 
@@ -2569,6 +2596,7 @@ final class FrbNativeProtectedCloudSyncBindings
       category: _failureCategory(failure.category),
       safeCode: cloudSyncV2ProtectedTransportSafeCode(failure.safeCode),
       retryAfterSeconds: failure.retryAfterSeconds?.toInt(),
+      protectedResetProofReference: failure.protectedResetProofReference,
     );
   }
 

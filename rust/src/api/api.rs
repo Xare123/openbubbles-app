@@ -1004,11 +1004,27 @@ pub enum CloudSyncProtectedSafeCode {
     Unknown,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CloudSyncProtectedFailure {
     pub category: CloudSyncProtectedFailureCategory,
     pub safe_code: CloudSyncProtectedSafeCode,
     pub retry_after_seconds: Option<u64>,
+    pub protected_reset_proof_reference: Option<String>,
+}
+
+impl std::fmt::Debug for CloudSyncProtectedFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CloudSyncProtectedFailure")
+            .field("category", &self.category)
+            .field("safe_code", &self.safe_code)
+            .field("retry_after_seconds", &self.retry_after_seconds)
+            .field(
+                "has_protected_reset_proof",
+                &self.protected_reset_proof_reference.is_some(),
+            )
+            .finish()
+    }
 }
 
 /// Exactly one of `page` and `failure` is populated.
@@ -4067,6 +4083,9 @@ fn map_cloud_sync_protected_failure(
         category: map_cloud_sync_protected_category(failure.category()),
         safe_code: map_cloud_sync_protected_safe_code(failure.safe_code()),
         retry_after_seconds: failure.retry_after_seconds(),
+        protected_reset_proof_reference: failure
+            .protected_reset_proof_reference()
+            .map(str::to_owned),
     }
 }
 
@@ -4078,6 +4097,7 @@ fn local_cloud_sync_protected_failure(
         category,
         safe_code,
         retry_after_seconds: None,
+        protected_reset_proof_reference: None,
     }
 }
 

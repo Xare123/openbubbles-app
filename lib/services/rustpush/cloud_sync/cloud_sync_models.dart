@@ -189,6 +189,29 @@ final class CloudSyncResetCompletionProof {
   String toString() => 'CloudSyncResetCompletionProof(redacted)';
 }
 
+/// Opaque native evidence that Apple rejected the exact generation checkpoint
+/// and requires a zone rebootstrap. The protected reference is account-, zone-,
+/// and generation-bound by the native protector; Dart never resolves it.
+final class CloudSyncResetRequiredContext {
+  CloudSyncResetRequiredContext({
+    required this.scope,
+    required this.expectedGeneration,
+    required this.protectedRemoteStateProofReference,
+  }) {
+    if (expectedGeneration <= 0 ||
+        !_isProtectedReference(protectedRemoteStateProofReference)) {
+      throw ArgumentError('cloud_reset_required_context_invalid');
+    }
+  }
+
+  final CloudSyncScope scope;
+  final int expectedGeneration;
+  final String protectedRemoteStateProofReference;
+
+  @override
+  String toString() => 'CloudSyncResetRequiredContext(redacted)';
+}
+
 bool _isDigest(String value) => RegExp(r'^[a-f0-9]{64}$').hasMatch(value);
 
 bool _isProtectedReference(String value) =>
@@ -303,12 +326,20 @@ extension CloudFailureCategoryBehavior on CloudFailureCategory {
 }
 
 class CloudSyncFailure implements Exception {
-  CloudSyncFailure({required this.category, this.retryAfter, this.safeCode}) {
+  CloudSyncFailure({
+    required this.category,
+    this.retryAfter,
+    this.safeCode,
+    this.resetContext,
+  }) {
     if (retryAfter != null && retryAfter!.inMicroseconds < 0) {
       throw ArgumentError('cloud_sync_failure_retry_after_invalid');
     }
     if (safeCode != null && !_safeCodePattern.hasMatch(safeCode!)) {
       throw ArgumentError('cloud_sync_failure_safe_code_invalid');
+    }
+    if (resetContext != null && safeCode != 'cloudkit_reset_required') {
+      throw ArgumentError('cloud_sync_failure_reset_context_invalid');
     }
   }
 
@@ -320,6 +351,10 @@ class CloudSyncFailure implements Exception {
   /// An allowlisted diagnostic code only. Never place server bodies, record
   /// identifiers, handles, tokens, or message content here.
   final String? safeCode;
+
+  /// Present only when native code durably protected the authenticated Apple
+  /// reset signal. Never log or serialize the protected capability.
+  final CloudSyncResetRequiredContext? resetContext;
 
   @override
   String toString() =>

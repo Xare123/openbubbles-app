@@ -29299,11 +29299,12 @@ impl flutter_rust_bridge::IntoDart
             Self::ProtectedReferenceMismatch => 4.into_dart(),
             Self::SourceUnusable => 5.into_dart(),
             Self::PcsUnavailable => 6.into_dart(),
-            Self::RetryableUpstream => 7.into_dart(),
-            Self::LocalStorage => 8.into_dart(),
-            Self::SizeMismatch => 9.into_dart(),
-            Self::IntegrityMismatch => 10.into_dart(),
-            Self::DecoderFailure => 11.into_dart(),
+            Self::CloudKitResetRequired => 7.into_dart(),
+            Self::RetryableUpstream => 8.into_dart(),
+            Self::LocalStorage => 9.into_dart(),
+            Self::SizeMismatch => 10.into_dart(),
+            Self::IntegrityMismatch => 11.into_dart(),
+            Self::DecoderFailure => 12.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -37404,6 +37405,7 @@ impl SseEncode for crate::api::api::CloudSyncTransientFailureCode {
                 crate::api::api::CloudSyncTransientFailureCode::PcsUnavailable => 10,
                 crate::api::api::CloudSyncTransientFailureCode::RetryableUpstream => 11,
                 crate::api::api::CloudSyncTransientFailureCode::DecoderFailure => 12,
+                crate::api::api::CloudSyncTransientFailureCode::ResetRequired => 13,
                 _ => {
                     unimplemented!("");
                 }

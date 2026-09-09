@@ -75,6 +75,7 @@ const GC_CURSOR_FILE_NAME: &str = ".cursor";
 const RAW_ENVELOPE_MAGIC: &[u8] = b"OBCS2-NATIVE-RAW";
 const CHECKPOINT_MAGIC: &[u8] = b"OBCS2-NATIVE-CHECKPOINT";
 const RECORD_IDENTITY_MAGIC: &[u8] = b"OBCS2-NATIVE-RECORD-ID";
+const RESET_PROOF_MAGIC: &[u8] = b"OBCS2-NATIVE-RESET-PROOF";
 const FORMAT_VERSION: u16 = 1;
 
 static PROTECTED_STORE_OPERATION_LOCK: Mutex<()> = Mutex::new(());
@@ -299,6 +300,7 @@ impl Debug for CloudNativeProtectionScope {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CloudNativeProtectionPurpose {
     CheckpointToken,
+    ResetProof,
     ServerRecordId,
     OutboundMessage,
     OutboundChat,
@@ -310,6 +312,7 @@ impl CloudNativeProtectionPurpose {
     fn value(self) -> &'static str {
         match self {
             Self::CheckpointToken => "checkpointToken",
+            Self::ResetProof => "resetProof",
             Self::ServerRecordId => "serverRecordId",
             Self::OutboundMessage => "outboundMessage",
             Self::OutboundChat => "outboundChat",
@@ -2378,6 +2381,7 @@ pub(crate) struct CloudNativeFetchFailure {
     category: CloudNativeFailureCategory,
     safe_code: CloudNativeSafeCode,
     retry_after_seconds: Option<u64>,
+    protected_reset_proof_reference: Option<CloudCanonicalProtectedReference>,
 }
 
 impl CloudNativeFetchFailure {
@@ -2390,6 +2394,7 @@ impl CloudNativeFetchFailure {
             category,
             safe_code,
             retry_after_seconds,
+            protected_reset_proof_reference: None,
         }
     }
 
@@ -2404,6 +2409,12 @@ impl CloudNativeFetchFailure {
     pub(crate) fn retry_after_seconds(&self) -> Option<u64> {
         self.retry_after_seconds
     }
+
+    pub(crate) fn protected_reset_proof_reference(&self) -> Option<&str> {
+        self.protected_reset_proof_reference
+            .as_ref()
+            .map(CloudCanonicalProtectedReference::value)
+    }
 }
 
 impl Debug for CloudNativeFetchFailure {
@@ -2413,6 +2424,10 @@ impl Debug for CloudNativeFetchFailure {
             .field("category", &self.category)
             .field("safe_code", &self.safe_code)
             .field("retry_after_seconds", &self.retry_after_seconds)
+            .field(
+                "has_protected_reset_proof",
+                &self.protected_reset_proof_reference.is_some(),
+            )
             .finish()
     }
 }
@@ -3646,6 +3661,64 @@ fn map_fetch_failure(error: &PushError) -> CloudNativeFetchFailure {
     CloudNativeFetchFailure::new(category, safe_code, retry_after)
 }
 
+fn encode_reset_proof(request: &CloudNativeFetchRequest<'_>) -> String {
+    let checkpoint_digest = Sha256::digest(
+        request
+            .previous_checkpoint_reference
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    let mut encoded =
+        Vec::with_capacity(RESET_PROOF_MAGIC.len() + 2 + 8 + 1 + 1 + 32);
+    encoded.extend_from_slice(RESET_PROOF_MAGIC);
+    encoded.extend_from_slice(&FORMAT_VERSION.to_be_bytes());
+    encoded.extend_from_slice(&request.generation.to_be_bytes());
+    encoded.push(request.stream.tag());
+    encoded.push(1); // authenticated remote change-token/reset rejection
+    encoded.extend_from_slice(&checkpoint_digest);
+    URL_SAFE_NO_PAD.encode(encoded)
+}
+
+fn protect_reset_failure(
+    store: &dyn CloudNativeProtectedStore,
+    request: &CloudNativeFetchRequest<'_>,
+    error: &PushError,
+) -> CloudNativeFetchFailure {
+    let mut failure = map_fetch_failure(error);
+    if failure.safe_code != CloudNativeSafeCode::CloudKitResetRequired {
+        return failure;
+    }
+
+    let protected = match store.protect_batch(
+        request.scope,
+        &[CloudNativePlaintext {
+            purpose: CloudNativeProtectionPurpose::ResetProof,
+            value: encode_reset_proof(request),
+        }],
+    ) {
+        Ok(batch) if batch.references.len() == 1 => batch,
+        Ok(batch) => {
+            let _ = store.rollback_lease(&batch.lease);
+            return failure;
+        }
+        Err(_) => return failure,
+    };
+    let proof_reference = protected.references[0].clone();
+    let retained = HashSet::from([proof_reference.value().to_owned()]);
+    if store.commit_lease(&protected.lease, &retained).is_err() {
+        // Commit can fail after its durable receipt is written. Recovery owns
+        // either the remaining manifest or receipt, so do not risk deleting a
+        // value whose commit outcome is uncertain.
+        return failure;
+    }
+    // The protected value is now durable. Removing the commit receipt is only
+    // cleanup; a failed acknowledgement is recovered independently and does
+    // not invalidate the capability returned to the caller.
+    let _ = store.acknowledge_committed_lease(&protected.lease);
+    failure.protected_reset_proof_reference = Some(proof_reference);
+    failure
+}
+
 async fn cloud_sync_fetch_protected_page_with_store(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     read_authentication_permit: Option<&CloudKitReadAuthenticationPermit<'_>>,
@@ -3765,7 +3838,11 @@ async fn cloud_sync_fetch_protected_page_with_store(
             CloudNativeSafeCode::FetchDeadline,
             None,
         )),
-        Ok(Err(error)) => CloudNativeProtectedFetchOutcome::Failure(map_fetch_failure(&error)),
+        Ok(Err(error)) => {
+            CloudNativeProtectedFetchOutcome::Failure(protect_reset_failure(
+                store, request, &error,
+            ))
+        }
         Ok(Ok(page)) => protect_native_page(store, hasher, request, page),
     }
 }
@@ -5045,6 +5122,71 @@ mod tests {
             assert!(!rendered.contains("dsid-sentinel"));
             assert!(!rendered.contains("token-sentinel"));
         }
+    }
+
+    #[test]
+    fn reset_failure_protects_only_bound_content_free_evidence() {
+        let store = MemoryProtectedStore::default();
+        let scope = scope(CloudNativeStream::Messages);
+        let prior_token = URL_SAFE_NO_PAD.encode(Sha256::digest(b"prior-checkpoint"));
+        let prior_reference = format!("obcs2.ref.{prior_token}");
+        let request = request(&scope, Some(&prior_reference));
+
+        let failure = protect_reset_failure(
+            &store,
+            &request,
+            &PushError::CloudKitChangeTokenExpired,
+        );
+
+        assert_eq!(
+            failure.safe_code(),
+            CloudNativeSafeCode::CloudKitResetRequired
+        );
+        let proof_reference = failure
+            .protected_reset_proof_reference()
+            .expect("protected reset proof");
+        assert!(!format!("{failure:?}").contains(proof_reference));
+        let reference = CloudCanonicalProtectedReference::new(proof_reference.to_owned())
+            .expect("canonical proof reference");
+        assert_eq!(
+            store.unprotect(
+                &scope,
+                CloudNativeProtectionPurpose::CheckpointToken,
+                &reference,
+            ),
+            Err(CloudNativeStoreFailure::ContextMismatch)
+        );
+        let protected_plaintext = store
+            .unprotect(
+                &scope,
+                CloudNativeProtectionPurpose::ResetProof,
+                &reference,
+            )
+            .expect("bound reset proof");
+        let decoded = URL_SAFE_NO_PAD
+            .decode(protected_plaintext)
+            .expect("decode reset proof");
+        assert!(decoded.starts_with(RESET_PROOF_MAGIC));
+        let mut cursor = NativeByteCursor::new(&decoded[RESET_PROOF_MAGIC.len()..]);
+        assert_eq!(cursor.u16(), Some(FORMAT_VERSION));
+        assert_eq!(cursor.u64(), Some(7));
+        assert_eq!(cursor.byte(), Some(CloudNativeStream::Messages.tag()));
+        assert_eq!(cursor.byte(), Some(1));
+        assert_eq!(
+            cursor.take(32),
+            Some(Sha256::digest(prior_reference.as_bytes()).as_slice())
+        );
+        assert!(cursor.finished());
+        assert!(!decoded
+            .windows(prior_reference.len())
+            .any(|window| window == prior_reference.as_bytes()));
+        assert!(store.leases.lock().expect("leases lock").is_empty());
+        assert!(store.committed.lock().expect("committed lock").is_empty());
+
+        let ordinary = protect_reset_failure(&store, &request, &PushError::BadMsg);
+        assert_eq!(ordinary.safe_code(), CloudNativeSafeCode::MalformedResponse);
+        assert!(ordinary.protected_reset_proof_reference().is_none());
+        assert_eq!(store.plaintexts().len(), 1);
     }
 
     #[test]
