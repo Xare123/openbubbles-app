@@ -4,7 +4,7 @@ title: Cloud Sync V2 Current Connection Treemap
 description: Current source of truth for CloudKit V2 architecture, safety boundaries, qualification state, and next gates.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-08
+timestamp: 2026-09-09
 ---
 
 # Cloud Sync V2 current connection treemap
@@ -55,10 +55,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Candidate | App source `10bcca68d4e9434d337aa760a372927e99048050`; last exact-source fully qualified base `1c269b7e1c676fbb4dc7e23ec200ec0e013cf19a`; Rust/bridge boundary qualified at `6526d612d89dcd93729318128d8c46e78fc7edb5`; system-event decoder base `12035ec0cefe73a9d4f7f779d2e9a06c4c7667b0`; prior Android release proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
-| Main change | The normal plaintext composer admits its first Message and state-0 local-send intent atomically. Native IDS success is protected and synced before `SendConfirm`; startup awaits bounded off-UI-thread receipt replay, atomically claims orphaned sends, and acknowledges a receipt only after state 3 is durable in ObjectBox. Restored-group composer admission is pinned, and reset-required failures now fence without credential/PCS refresh, outbox retry, checkpoint advancement, or automatic resume. Automatic uploads remain off. |
-| Dependency | rustpush `c5e9053`, which restores the five system-event payload schemas on the existing fork branch. |
-| Full qualification | Fast GCE run `34284600111` at `6526d612d` reproduced all seven bindings, compiled the bridge, passed 355 Rust app tests, and removed both the T2D VM and GitHub runner; build work finished in 5m37s. The only later candidate changes are Dart lifecycle code and Dart tests: the focused reset/transport suites pass 85 tests, the engine plus composer suites pass 143 tests, targeted analysis is clean, and the restored-group composer case passes. One full exact-source GCE run for `10bcca68d` remains. Base `1c269b7e1` passed GCE run `34240730080` with 2,447 Dart, 346 Rust app, 223 rustpush, and 32 protector tests plus reproducible bindings and a signed ARM64 Canary. |
+| Candidate | App code candidate `2375343dd8dc1395b8d26b746299b7288c0af269`; this treemap update follows that code commit. Last exact-source GCE-qualified app base is `17401abfab03c94103bea0d8824a640dbc973ccf`; prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
+| Main change | Direct and restored-group plaintext admission, IDS receipt recovery, reset-required fencing, and manual read/write gates remain intact with automatic uploads off. The current delta repairs MIME/UTI classification across profile media, documents, and message attachment viewers, hides only the exact internal plugin-payload suffix, and adds one repeatable non-Pixel qualification command plus FaceTime lifecycle contracts. |
+| Dependency | rustpush `866560d38fcc544851c0b3d55414d25a29bba192`. |
+| Full qualification | GCE run `34313797937` qualified exact source `17401abfa`, produced a signed native-library-verified Canary APK, and removed both runner and VM. At code candidate `2375343dd`, all 2,112 Cloud Sync Dart/ObjectBox tests pass, the focused Cloud Sync analyzer is clean, 50 attachment/FaceTime Flutter tests pass, and 43 FaceTime Kotlin host tests pass. Smart App Control blocks the local ARM64 Rust launcher and vendored-OpenSSL Perl with error 4551, so current native Rust and APK qualification must run on the existing isolated GCE lane. |
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
@@ -106,8 +106,8 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | --- | --- | --- |
 | Chat and message history | `LIVE-PROVEN` for restored readable history | Qualify sustained incremental sync, restart, and account lifecycle on the release candidate. |
 | Reactions on read | `LIVE-PROVEN` for representative records | Continue retaining unavailable parents; qualify current candidate on Pixel. |
-| Photos and videos on read | `LIVE-PROVEN` for user-visible examples | One HEIC exact-size edge and some gallery/profile surfaces remain. GIF rendering is deferred, but data must remain preserved. |
-| Documents and plugin payloads | Partial | Classify and expose supported document payloads without mislabeling opaque plugin payload containers as ordinary files. |
+| Photos and videos on read | `SOURCE-IMPLEMENTED` after prior live proof | Current source resolves generic and UTI-only image/video records consistently across profile and message surfaces. Pixel must prove HEIC, video, and tap-to-open behavior; GIF data remains preserved but profile animation is not a release requirement. |
+| Documents and plugin payloads | `TEST-PROVEN` | Supported documents remain visible, unknown opaque files remain available, and only the exact `.pluginPayloadAttachment` suffix is hidden from profile media/documents without deleting its row. Pixel UI proof remains. |
 | Direct plaintext create | `LIVE-PROVEN` in the Windows development loop | Confirm exact remote readback, restart no-save replay, independent Apple-device visibility, and ordinary Pixel composer convergence. |
 | Restored-group plaintext create | `SOURCE-IMPLEMENTED` | Pass exact-source GCE, then perform one authorized live group test with pinned route/binding plus exact readback/restart proof. Provisional group creation remains closed. |
 | Direct reactions | `TEST-PROVEN` | Live Apple save/readback and independent-reader display remain. |
@@ -232,8 +232,9 @@ cross-device convergence
 
 Do not rebuild a Canary for every code edit. GCE handles exact-source Dart,
 Rust, bridge-generation, identity, projection, and reconciliation tests. The
-existing Windows ARM harness is stale relative to candidate `1c269b7e1`; both
-Dart and native Rust changed, so its reports cannot qualify the candidate.
+existing Windows ARM harness is stale relative to the current branch head;
+both app and rustpush revisions moved, so its reports cannot qualify the
+candidate.
 Smart App Control blocks the locally self-signed DLL and Cargo build-script
 executables with error 4551 before CloudKit starts. Keep that policy enabled.
 Restore Windows hot reload only after a trusted-provider-signed exact-source
@@ -279,7 +280,7 @@ Use five promotion lanes and do not skip upward:
 | Protected fetch, journal, and token | [`native_protected_cloud_sync_transport.dart`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart), [`objectbox_cloud_sync_store.dart`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart) | Test and prior live proof. |
 | Decode and canonical conversion | [`rust_cloud_semantic_decoder.dart`](../lib/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart), [`cloud_sync_canonical_converter.rs`](../rust/src/cloud_sync_canonical_converter.rs) | Test and representative live proof. |
 | Ordered projection and retained repair | [`cloud_inbox_applier.dart`](../lib/services/rustpush/cloud_sync/cloud_inbox_applier.dart), [`objectbox_cloud_semantic_store_gateway.dart`](../lib/services/rustpush/cloud_sync/objectbox_cloud_semantic_store_gateway.dart) | Read live-proven; current backlog must be explicit. |
-| Composer origin, IDS completion, and write admission | [`rustpush_service.dart`](../lib/services/rustpush/rustpush_service.dart), [`cloud_sync_local_send_journal.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart), [`cloud_sync_manual_outbound_canary.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart), [`cloudkit_writer_mutation_guard.dart`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart) | Atomic direct/restored-group composer admission, bounded awaited receipt replay, atomic startup claim, protected receipt recovery, and reset-required fencing are source- and focused-test-proven at `10bcca68d`; the receipt Rust boundary is GCE-proven at `6526d612d`. Full exact-source GCE, live Pixel process-death recovery, remote readback, and duplicate suppression remain. |
+| Composer origin, IDS completion, and write admission | [`rustpush_service.dart`](../lib/services/rustpush/rustpush_service.dart), [`cloud_sync_local_send_journal.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart), [`cloud_sync_manual_outbound_canary.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart), [`cloudkit_writer_mutation_guard.dart`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart) | Atomic direct/restored-group composer admission, bounded awaited receipt replay, atomic startup claim, protected receipt recovery, and reset-required fencing are source- and focused-test-proven through `2375343dd`; exact-source GCE, live Pixel process-death recovery, remote readback, and duplicate suppression remain. |
 | Direct and group encoders | [`cloud_sync_local_send_encoder.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_local_send_encoder.dart), [`cloud_sync_outbound_group_binding.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart) | Direct live-proven on Windows; group source-implemented. |
 | Native create/readback receipt | [`api.rs`](../rust/src/api/api.rs), [`cloud_messages.rs`](../rustpush/src/imessage/cloud_messages.rs), [`chat_create.rs`](../rustpush/src/imessage/cloud_messages/chat_create.rs) | Direct Windows proof; exact-source suite and group live proof pending. |
 
@@ -287,12 +288,13 @@ Use five promotion lanes and do not skip upward:
 
 ### Candidate qualification
 
-- [x] Generated bindings reproduce with no unrelated drift at Rust/bridge
-  boundary `6526d612d` (GCE `34284600111`, 355 Rust tests). Later candidate
-  changes are Dart-only; the full lane will reproduce this again.
+- [x] Generated bindings reproduced with no unrelated drift at Rust/bridge
+  boundary `6526d612d` (GCE `34284600111`, 355 Rust tests). The rustpush
+  revision later moved, so the full exact-source lane must reproduce this
+  evidence for the current candidate.
 - [ ] Full Dart, Rust, rustpush, protector, and ObjectBox tests pass at the
   exact app and submodule commits.
-- [ ] Canary APK for `10bcca68d` contains the expected ARM64 native library
+- [ ] Canary APK for the current branch head contains the expected ARM64 native library
   and is signed on the existing trusted GitHub-hosted signing path.
 - [ ] Failed GCE runs delete the VM and deregister the runner.
 
@@ -337,7 +339,7 @@ Use five promotion lanes and do not skip upward:
 
 ## Current critical path
 
-1. Finish exact-source GCE qualification of `10bcca68d` with automatic uploads
+1. Finish exact-source GCE qualification of the current branch head with automatic uploads
    off. Require
    reproducible bindings, every Dart/Rust/rustpush/protector suite, signed
    ARM64 Canary, native-library inspection, and complete runner cleanup.
@@ -362,10 +364,10 @@ Use five promotion lanes and do not skip upward:
 
 ## Next falsification test
 
-The next falsification is one full exact-source GCE qualification of
-`10bcca68d` with automatic uploads disabled. The cheaper Rust/bridge lane has
-already passed at `6526d612d`, and the later changes touch only Dart and Dart
-tests, so repeating that lane would add no coverage. The full run must execute
+The next falsification is one full exact-source GCE qualification of the
+current branch head with automatic uploads disabled. Run `34313797937` already
+qualified base `17401abfa`; the later code changes are Dart/UI plus test and
+qualification-harness changes. The full run must execute
 every Dart and Rust suite, reproduce bindings, build and sign the ARM64 Canary,
 verify its native library, and remove both the ephemeral runner registration
 and VM. Only that artifact may enter the live Pixel crash/restart test.
