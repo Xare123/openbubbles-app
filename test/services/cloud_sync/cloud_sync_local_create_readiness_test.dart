@@ -53,6 +53,112 @@ void main() {
     });
     tearDown(() async => fixture.close());
 
+    test(
+      'composer send survives every durable boundary and confirmed replay saves nothing',
+      () async {
+        await fixture.close();
+        fixture = await _Fixture.create(nativeConfirmed: false);
+
+        expect(fixture.intent.state, 0);
+        expect(fixture.objectBox.box<Message>().count(), 1);
+
+        // Process death after the composer journal commits, before IDS reports
+        // the native send result.
+        await fixture.reopenConfigured();
+        final confirmedIntentId = fixture.journal.recordNativeSendConfirmation(
+          stableGuid: _localGuid,
+          succeeded: true,
+          capturedAuth: fixture.nativeAuth,
+          stillCurrent: () => true,
+          now: testEpoch,
+        );
+        expect(confirmedIntentId, fixture.intentId);
+        expect(fixture.intent.state, 3);
+        expect(fixture.localMessage.guid, _localGuid);
+        expect(fixture.localMessage.stagingGuid, isNull);
+
+        // Process death after the durable IDS receipt, before authenticated
+        // promotion and protected outbox adoption.
+        await fixture.reopenConfigured();
+        expect(fixture.intent.state, 3);
+        fixture.journal.promoteIdsConfirmedDeferred(
+          intentId: fixture.intentId,
+          currentAuth: fixture.nativeAuth,
+          now: testEpoch,
+        );
+        await fixture.seedAccount();
+        fixture.transport.stages.add(_stage());
+        final admitted = await fixture.admitLocal();
+        expect(fixture.intent.state, 2);
+        expect(fixture.outboxRow.operationId, admitted.operationId);
+        expect(fixture.outboxRow.protectedLeaseReference, isNotNull);
+        expect(fixture.encodes, 1);
+
+        // Process death after protected adoption and native lease commit, but
+        // before the CloudKit save receipt is durably confirmed.
+        await fixture.reopenConfigured();
+        const leaseId = 'process-death-integration-save';
+        final leased = await fixture.store.leaseEligibleOutbox(
+          fixture.scope(),
+          now: testEpoch,
+          limit: 1,
+          leaseId: leaseId,
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        );
+        expect(leased.map((operation) => operation.operationId), [
+          admitted.operationId,
+        ]);
+        await fixture.store.markOutboxSubmissionStarted(
+          fixture.scope(),
+          leaseId: leaseId,
+          submissionIdentity: testSubmissionIdentity([admitted.operationId]),
+          now: testEpoch,
+        );
+        await fixture.store.commitOutboxCreateReceipt(
+          fixture.scope(),
+          leaseId: leaseId,
+          receipt: CloudOutboxCreateReceipt(
+            operationId: admitted.operationId,
+            logicalEntityKeyHash: admitted.logicalEntityKeyHash,
+            serverRecordIdHash: admitted.serverRecordIdHash!,
+            etagHash: 'E' * 43,
+          ),
+          now: testEpoch,
+        );
+        expect(fixture.outboxRow.state, CloudOutboxStatus.confirmed.index);
+        expect(fixture.outboxRow.protectedLeaseReference, isNull);
+
+        // A final process death must recover the same adopted operation. It
+        // must neither encode again nor expose another eligible remote save.
+        await fixture.reopenConfigured();
+        final replay = await fixture.admitLocal(
+          encoder: (_) => throw StateError('confirmed replay re-encoded'),
+        );
+        expect(replay.operationId, admitted.operationId);
+        expect(replay.status, CloudOutboxStatus.confirmed);
+        expect(fixture.encodes, 1);
+        expect(fixture.transport.stageCalls, 1);
+        expect(fixture.transport.committed, hasLength(1));
+        expect(
+          await fixture.store.leaseEligibleOutbox(
+            fixture.scope(),
+            now: testEpoch,
+            limit: 1,
+            leaseId: 'process-death-integration-replay',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save},
+          ),
+          isEmpty,
+        );
+        expect(fixture.objectBox.box<Message>().count(), 1);
+        expect(
+          fixture.objectBox.box<CloudSyncLocalSendIntentEntity>().count(),
+          1,
+        );
+      },
+    );
+
     test('full deferred batches report continuation and rotate past the head', () async {
       final firstId = fixture.intentId;
       fixture._createConfirmedIntent(
@@ -1749,7 +1855,7 @@ final class _ConsumerExclusion implements CloudKitOperationExclusion {
 final class _Fixture {
   _Fixture._(this.directory, this.protector, this.objectBox, this.transport);
 
-  static Future<_Fixture> create() async {
+  static Future<_Fixture> create({bool nativeConfirmed = true}) async {
     final directory = await Directory.systemTemp.createTemp(
       'openbubbles-local-create-readiness-',
     );
@@ -1761,7 +1867,7 @@ final class _Fixture {
       _StagingTransport(),
     );
     fixture._bindRuntime();
-    fixture._createConfirmedIntent();
+    fixture._createConfirmedIntent(confirmed: nativeConfirmed);
     return fixture;
   }
 
@@ -1774,6 +1880,7 @@ final class _Fixture {
   late ObjectBoxCloudSyncStore store;
   late CloudSyncOutboundAdmissionCoordinator coordinator;
   late CloudSyncLocalSendAuthFence authFence;
+  late CloudSyncNativeAuthSnapshot nativeAuth;
   late Message local;
   late int intentId;
   int encodes = 0;
@@ -1801,6 +1908,9 @@ final class _Fixture {
 
   CloudSyncLocalSendIntentEntity get intent =>
       objectBox.box<CloudSyncLocalSendIntentEntity>().get(intentId)!;
+
+  Message get localMessage =>
+      objectBox.box<Message>().get(intent.localMessageId)!;
 
   CloudOutboxOperationEntity get outboxRow =>
       objectBox.box<CloudOutboxOperationEntity>().getAll().single;
@@ -1854,6 +1964,7 @@ final class _Fixture {
       protectedStoreIdentity: 'obcs2.store.$testAccountFingerprintA',
       cloudMessagesClient: Object(),
     );
+    nativeAuth = auth;
     authFence = CloudSyncLocalSendAuthFence(
       expected: auth,
       capture: () async => auth,
@@ -1861,7 +1972,11 @@ final class _Fixture {
     );
   }
 
-  void _createConfirmedIntent({String guid = _localGuid, Chat? existingChat}) {
+  void _createConfirmedIntent({
+    String guid = _localGuid,
+    Chat? existingChat,
+    bool confirmed = true,
+  }) {
     final handle =
         existingChat?.handles.single ??
         Handle(
@@ -1900,14 +2015,16 @@ final class _Fixture {
         .getAll()
         .singleWhere((row) => row.messageGuidHash == identity.guidHash)
         .id;
-    local
-      ..guid = guid
-      ..stagingGuid = null;
-    journal.saveConfirmedSubmission(
-      identity: identity,
-      persistMessage: () => objectBox.box<Message>().put(local),
-      now: testEpoch,
-    );
+    if (confirmed) {
+      local
+        ..guid = guid
+        ..stagingGuid = null;
+      journal.saveConfirmedSubmission(
+        identity: identity,
+        persistMessage: () => objectBox.box<Message>().put(local),
+        now: testEpoch,
+      );
+    }
   }
 
   Future<CloudOutboxOperation> admitLocal({
