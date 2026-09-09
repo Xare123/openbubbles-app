@@ -55,10 +55,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Candidate | Exact-source candidate `9ba4918135a55f6f58d309d6a49487fe00238a73`; app-code delta ends at `2375343dd8dc1395b8d26b746299b7288c0af269` and the final commit updates only this treemap. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
-| Main change | Direct and restored-group plaintext admission, IDS receipt recovery, reset-required fencing, and manual read/write gates remain intact with automatic uploads off. The current delta repairs MIME/UTI classification across profile media, documents, and message attachment viewers, hides only the exact internal plugin-payload suffix, and adds one repeatable non-Pixel qualification command plus FaceTime lifecycle contracts. |
+| Candidate | Exact-source app-code candidate `0b86a6465cdb6ff574b0e6a94b86a8c6c78f3c52`. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
+| Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, and manual read/write gates are wired with automatic uploads off. Reset-fenced old-generation outbox rows remain durable audit evidence but cannot block the new generation when an exact newer checkpoint proves them terminal. |
 | Dependency | rustpush `866560d38fcc544851c0b3d55414d25a29bba192`. |
-| Full qualification | GCE run `34392904718` qualified exact source `9ba491813`: 2,497 Dart tests, 355 app Rust tests, 226 rustpush tests, and 33 protector tests passed; bindings reproduced; the ARM64 Canary contained every required native library and was signed on the trusted GitHub-hosted path. Automatic uploads were off. The 22m03s build and complete run both passed, and runner plus VM were removed. Capacity-only failure `34392654372` also cleaned up successfully. |
+| Full qualification | GCE run `34414062044` qualified exact app code `0b86a6465`: 2,522 Dart tests, 359 app Rust tests, 226 rustpush tests, 34 protector tests, and the 14-case semantic outbox contract passed; bindings reproduced; the ARM64 Canary contained every required native library and was signed on the trusted GitHub-hosted path. Automatic uploads were off. Independent inventories found zero remaining runners and zero GCE instances. |
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
@@ -114,7 +114,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Edits and unsends | `GAP` | Require distinct causal mutation and anti-resurrection contracts. |
 | Attachment writes | `GAP` | Require protected asset staging, record binding, save/readback, and recovery. |
 | Tombstones and deletion | Closed | Define exact ownership and recoverable semantics before enabling any local or remote delete. |
-| Token expiry | `GAP` | Wire generation-scoped rebootstrap and reconcile retained old-generation evidence. |
+| Token expiry | `TEST-PROVEN` | Live expired-token/restart proof remains. The exact-source path requires an authenticated protected reset proof, releases the semantic read boundary, reacquires the destructive-reset interlock and native pause, advances once, reconciles authority after process death, and replays once. |
 | SMS, MMS, and RCS | Out of scope | Do not add them to this CloudKit V2 release path. |
 
 ## Safety gates
@@ -268,7 +268,7 @@ Use five promotion lanes and do not skip upward:
 | Missing parent or parser | Retain protected evidence and retry projection after the dependency or parser repair. |
 | Malformed record | Store a fixed content-free reason and explicit repairability classification. Never guess identity. |
 | Process death after fetch | Recover the protected lease, replay the durable journal, and keep the prior token until terminal. |
-| Token expired | Stop, obtain an account-bound reset proof, quiesce coordinators, increment generation atomically, and rebootstrap only after old-evidence reconciliation is defined. |
+| Token expired | Stop, require the account-bound protected reset proof, release the read boundary, reacquire the destructive-reset interlock and native pause, advance the exact zone generation once, fence old evidence, reconcile authority after interruption, and replay at most once. |
 | Write result unknown | Preserve request and operation UUIDs, protected receipt, and fence. Exact readback is the only next network action. |
 
 ## Source-linked boundary map
@@ -278,9 +278,10 @@ Use five promotion lanes and do not skip upward:
 | Product admission and interlock | [`cloud_sync_manual_semantic_pull_sampler.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart), [`cloudkit_operation_interlock.dart`](../lib/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart) | Read live-proven; full session replacement qualification remains. |
 | Read authentication and exact PCS | [`cloud_sync_production_sampler_adapter.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart), [`cloudkit.rs`](../rustpush/src/icloud/cloudkit.rs) | Exact `ad822f37c` live read-only pull completed; cold/account lifecycle proof remains. |
 | Protected fetch, journal, and token | [`native_protected_cloud_sync_transport.dart`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart), [`objectbox_cloud_sync_store.dart`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart) | Test and prior live proof. |
+| Authenticated reset and restart recovery | [`cloud_sync_reset_coordinator.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_reset_coordinator.dart), [`cloud_sync_manual_semantic_pull_sampler.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart), [`cloudkit_writer_authority.dart`](../lib/services/rustpush/cloud_sync/cloudkit_writer_authority.dart), [`objectbox_cloud_sync_preflight.dart`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart) | Exact-source qualified at `0b86a6465`; live expired-token/restart proof remains. |
 | Decode and canonical conversion | [`rust_cloud_semantic_decoder.dart`](../lib/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart), [`cloud_sync_canonical_converter.rs`](../rust/src/cloud_sync_canonical_converter.rs) | Test and representative live proof. |
 | Ordered projection and retained repair | [`cloud_inbox_applier.dart`](../lib/services/rustpush/cloud_sync/cloud_inbox_applier.dart), [`objectbox_cloud_semantic_store_gateway.dart`](../lib/services/rustpush/cloud_sync/objectbox_cloud_semantic_store_gateway.dart) | Read live-proven; current backlog must be explicit. |
-| Composer origin, IDS completion, and write admission | [`rustpush_service.dart`](../lib/services/rustpush/rustpush_service.dart), [`cloud_sync_local_send_journal.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart), [`cloud_sync_manual_outbound_canary.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart), [`cloudkit_writer_mutation_guard.dart`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart) | Atomic direct/restored-group composer admission, bounded awaited receipt replay, atomic startup claim, protected receipt recovery, and reset-required fencing are source- and focused-test-proven through `2375343dd`; exact-source GCE, live Pixel process-death recovery, remote readback, and duplicate suppression remain. |
+| Composer origin, IDS completion, and write admission | [`rustpush_service.dart`](../lib/services/rustpush/rustpush_service.dart), [`cloud_sync_local_send_journal.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart), [`cloud_sync_manual_outbound_canary.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart), [`cloudkit_writer_mutation_guard.dart`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart) | Atomic direct/restored-group composer admission, bounded awaited receipt replay, atomic startup claim, protected receipt recovery, and reset-required fencing are exact-source qualified through `0b86a6465`; live Pixel process-death recovery, remote readback, and duplicate suppression remain. |
 | Direct and group encoders | [`cloud_sync_local_send_encoder.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_local_send_encoder.dart), [`cloud_sync_outbound_group_binding.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart) | Direct live-proven on Windows; group source-implemented. |
 | Native create/readback receipt | [`api.rs`](../rust/src/api/api.rs), [`cloud_messages.rs`](../rustpush/src/imessage/cloud_messages.rs), [`chat_create.rs`](../rustpush/src/imessage/cloud_messages/chat_create.rs) | Direct Windows proof; exact-source suite and group live proof pending. |
 
@@ -288,14 +289,15 @@ Use five promotion lanes and do not skip upward:
 
 ### Candidate qualification
 
-- [x] Generated bindings reproduce with no unrelated drift at exact source
-  `9ba491813` in GCE run `34392904718`.
-- [x] Full Dart, Rust, rustpush, protector, and ObjectBox tests pass at the
-  exact app and submodule commits.
-- [x] The Canary APK for `9ba491813` contains every required ARM64 native
-  library and is signed on the existing trusted GitHub-hosted signing path.
-- [x] Successful run `34392904718` and capacity-only failure `34392654372`
-  both deleted the VM and deregistered the runner.
+- [x] Reset-proof base `7df608af7` passed the full exact-source suite and
+  signed-APK path in GCE run `34407071539`, with automatic uploads off.
+- [x] Current app code `0b86a6465` reproduced bindings and passed 2,522 Dart,
+  359 app Rust, 226 rustpush, 34 protector, and 14 semantic-outbox contract
+  tests in run `34414062044`.
+- [x] The `0b86a6465` Canary contains every required ARM64 native library and
+  is signed on the existing trusted GitHub-hosted signing path.
+- [x] Run `34414062044` deleted its VM and deregistered its runner; independent
+  inventories confirmed zero remaining runners and zero GCE instances.
 
 ### Read qualification
 
@@ -346,9 +348,11 @@ Use five promotion lanes and do not skip upward:
    readback proof, then create one controlled restored-group plaintext message.
 3. Verify the group record by exact CloudKit readback, restart/no-save replay,
    and independent Apple-device display.
-4. Close lifecycle P0 before automatic sync: expired-token reset-required must
-   stop without retry; same-generation authentication may refresh once; account
-   replacement must preserve evidence and fail closed.
+4. Qualify lifecycle P0 before automatic sync: expired-token reset must advance
+   exactly once and replay once; a second reset signal must stop. Process death
+   must recover prepared or unknown authority without losing old evidence.
+   Same-generation authentication may refresh once; account replacement must
+   preserve evidence and fail closed.
 5. Add the durable Android background entrypoint and then enable incremental
    automatic triggers behind a rollback gate.
 6. Run lifecycle soak and produce one release-candidate report that proves
@@ -359,12 +363,13 @@ Use five promotion lanes and do not skip upward:
 
 ## Next falsification test
 
-The next falsification is the exact-source Canary `9ba491813` live Pixel
-crash/restart test. Admit one authorized direct plaintext send, terminate the
-process after native IDS success but before CloudKit convergence, restart, and
-require state-3 recovery, exactly one protected outbox adoption, exact CloudKit
-readback, independent Apple-device display, and zero duplicate local or remote
-records. Automatic uploads remain disabled during this proof.
+Use the signed exact-source `0b86a6465` Canary from successful GCE run
+`34414062044` for one batched Pixel session: cold read, idempotent
+second read, expired-token/restart recovery, and the authorized direct
+process-death write test. The write must recover state 3, adopt exactly one
+protected outbox operation, obtain exact CloudKit readback and independent
+Apple-device display, and create zero duplicate local or remote records.
+Automatic uploads remain disabled during this proof.
 Existing-history adoption remains a separate write gate; diagnostic counts
 cannot authorize or perform adoption.
 
