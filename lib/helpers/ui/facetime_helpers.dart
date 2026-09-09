@@ -279,8 +279,14 @@ Future<void> showOutgoingFaceTimeOverlay(RxString callState, String desc, String
                   phoneButton("End", Colors.red, ss.settings.skin.value == Skins.iOS ? CupertinoIcons.phone_down_fill : Icons.call_end, () async {
                       hideFaceTimeOverlay(callUuid, timeout: true);
                       pushService.outgoingCallTimer?.cancel();
-                      await api.cancelFacetime(facetime: pushService.state!.ftClient, guid: callUuid);
-                      pushService.currentOutgoingCall = null;
+                      try {
+                        await api.cancelFacetime(facetime: pushService.state!.ftClient, guid: callUuid);
+                      } catch (error, trace) {
+                        Logger.warn("Failed to cancel FaceTime session", error: error, trace: trace);
+                      } finally {
+                        pushService.currentOutgoingCall = null;
+                        pushService.outgoingCallMeta = {};
+                      }
                     },),
                 ],),
                 const SizedBox(height: 60,),

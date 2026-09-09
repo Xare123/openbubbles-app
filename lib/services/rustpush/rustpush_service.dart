@@ -156,6 +156,14 @@ bool shouldAnswerIncomingFaceTimeAdmission(
         FaceTimeIncomingAdmissionResult? admission) =>
     admission?.isApproved == true;
 
+String faceTimeOutgoingStartFailureMessage(Object error) {
+  final detail = error.toString();
+  if (detail.contains('(6005)')) {
+    return 'Your iMessage registration needs repair. No FaceTime call was placed.';
+  }
+  return 'FaceTime could not start. No call was placed.';
+}
+
 Future<bool> answerFaceTimeAdmissionIfAllowed({
   required bool isIncomingAdmission,
   required FaceTimeIncomingAdmissionResult? incomingAdmission,
@@ -4838,60 +4846,86 @@ class RustPushService extends GetxService {
   Map<String, dynamic> outgoingCallMeta = {};
   RxString? currentOutgoingCall;
   Future<void> placeOutgoingCall(String caller, List<String> targets) async {
-    var outgoingguid = uuid.v4().toUpperCase();
-
-    var link = await api.getFtLink(
-        facetime: pushService.state!.ftClient, usage: "next");
-    var desc = targets
+    final outgoingguid = uuid.v4().toUpperCase();
+    final desc = targets
         .map((p) => RustPushBBUtils.rustHandleToBB(p).displayName)
         .join(" & ");
-    // rotate link
-    pushService.rotateLink().catchError((e, s) {
-      Logger.error("Failed to rotate link", error: e, trace: s);
-    });
+    late final String link;
 
-    // preload
-    mcs.invokeMethod("update-call-state", {
-      "name": ss.settings.userName.value == "You"
+    try {
+      link = await api.getFtLink(
+          facetime: pushService.state!.ftClient, usage: "next");
+      final displayName = ss.settings.userName.value == "You"
           ? (await api.getHandles(state: pushService.state!.client))
               .first
               .replaceFirst("tel:", "")
               .replaceFirst("mailto:", "")
-          : ss.settings.userName.value,
-      "desc": desc,
-      "url": link,
-      "callUuid": outgoingguid,
-      "state": "ringing",
-    });
+          : ss.settings.userName.value;
 
-    outgoingCallMeta = {
-      'link': link,
-      'callUuid': outgoingguid,
-      'desc': desc,
-      'name': ss.settings.userName.value == "You"
-          ? (await api.getHandles(state: pushService.state!.client))
-              .first
-              .replaceFirst("tel:", "")
-              .replaceFirst("mailto:", "")
-          : ss.settings.userName.value,
-      'answer': true
-    };
+      // Correlate an immediate join event and preload the WebView before the
+      // network request, but do not show a ringing UI until Apple accepts the
+      // session creation request.
+      currentOutgoingCall = outgoingguid.obs;
+      mcs.invokeMethod("update-call-state", {
+        "name": displayName,
+        "desc": desc,
+        "url": link,
+        "callUuid": outgoingguid,
+        "state": "ringing",
+      });
 
-    outgoingCallTimer = Timer(const Duration(seconds: 30), () async {
-      currentOutgoingCall?.value = "timeout";
+      outgoingCallMeta = {
+        'link': link,
+        'callUuid': outgoingguid,
+        'desc': desc,
+        'name': displayName,
+        'answer': true
+      };
 
-      await api.cancelFacetime(
-          facetime: pushService.state!.ftClient, guid: outgoingguid);
-
-      // destroy webview
+      await api.createFacetime(
+          facetime: pushService.state!.ftClient,
+          uuid: outgoingguid,
+          handle: caller,
+          participants: targets);
+    } catch (error, trace) {
+      Logger.error("FaceTime session creation failed",
+          error: error, trace: trace);
       mcs.invokeMethod("update-call-state", {
         "callUuid": outgoingguid,
         "state": "timeout",
       });
       currentOutgoingCall = null;
+      outgoingCallMeta = {};
+      showSnackbar("FaceTime", faceTimeOutgoingStartFailureMessage(error));
+      return;
+    }
+
+    // Failure to prepare a subsequent link must not invalidate a session
+    // whose invitation was already accepted by the creation path.
+    pushService.rotateLink().catchError((e, s) {
+      Logger.error("Failed to rotate link", error: e, trace: s);
     });
 
-    currentOutgoingCall = outgoingguid.obs;
+    outgoingCallTimer = Timer(const Duration(seconds: 30), () async {
+      currentOutgoingCall?.value = "timeout";
+
+      try {
+        await api.cancelFacetime(
+            facetime: pushService.state!.ftClient, guid: outgoingguid);
+      } catch (error, trace) {
+        Logger.warn("Failed to cancel timed-out FaceTime session",
+            error: error, trace: trace);
+      } finally {
+        // Destroy the WebView and release local call state even if the remote
+        // cancellation request fails.
+        mcs.invokeMethod("update-call-state", {
+          "callUuid": outgoingguid,
+          "state": "timeout",
+        });
+        currentOutgoingCall = null;
+        outgoingCallMeta = {};
+      }
+    });
 
     Uint8List? icon;
     String? poster;
@@ -4901,13 +4935,11 @@ class RustPushService extends GetxService {
       poster = handle.getPoster();
     }
 
-    showOutgoingFaceTimeOverlay(
-        currentOutgoingCall!, desc, caller, targets, icon, link, poster);
-    await api.createFacetime(
-        facetime: pushService.state!.ftClient,
-        uuid: outgoingguid,
-        handle: caller,
-        participants: targets);
+    final callState = currentOutgoingCall;
+    if (callState != null && callState.value == outgoingguid) {
+      showOutgoingFaceTimeOverlay(
+          callState, desc, caller, targets, icon, link, poster);
+    }
   }
 
   // returns handle to show poster of
@@ -5631,11 +5663,16 @@ class RustPushService extends GetxService {
           outgoingCallTimer?.cancel();
           chosenFTRoomGuid = facetime.guid;
 
-          if (Platform.isAndroid) {
-            await mcs.invokeMethod("launch-facetime", outgoingCallMeta);
-          } else {
-            await launchUrl(Uri.parse(outgoingCallMeta['link']),
-                mode: LaunchMode.externalApplication);
+          try {
+            if (Platform.isAndroid) {
+              await mcs.invokeMethod("launch-facetime", outgoingCallMeta);
+            } else {
+              await launchUrl(Uri.parse(outgoingCallMeta['link']),
+                  mode: LaunchMode.externalApplication);
+            }
+          } finally {
+            currentOutgoingCall = null;
+            outgoingCallMeta = {};
           }
 
           _incomingAdmission = null;
