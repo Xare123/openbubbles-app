@@ -152,6 +152,7 @@ final class CloudKitResetFence {
     required this.expectedGeneration,
     required this.transitionIdHash,
     required this.proofReferenceHash,
+    required this.protectedRemoteStateProofReference,
   });
 
   final CloudKitWriterScope scope;
@@ -161,6 +162,7 @@ final class CloudKitResetFence {
   final int expectedGeneration;
   final String transitionIdHash;
   final String proofReferenceHash;
+  final String protectedRemoteStateProofReference;
 
   @override
   String toString() =>
@@ -515,6 +517,7 @@ final class ObjectBoxCloudKitWriterAuthority {
         ..resetProofReferenceHash = _digest(
           'cloudkit-reset-proof\u001f${request.protectedRemoteStateProofReference}',
         )
+        ..resetProofReference = request.protectedRemoteStateProofReference
         ..resetGeneration = request.expectedGeneration
         ..epoch += 1
         ..updatedAtMs = now.millisecondsSinceEpoch;
@@ -527,6 +530,8 @@ final class ObjectBoxCloudKitWriterAuthority {
         expectedGeneration: request.expectedGeneration,
         transitionIdHash: request.transitionIdHash,
         proofReferenceHash: entity.resetProofReferenceHash!,
+        protectedRemoteStateProofReference:
+            request.protectedRemoteStateProofReference,
       );
     });
   }
@@ -549,7 +554,12 @@ final class ObjectBoxCloudKitWriterAuthority {
           'cloudkit_writer_reset_scope_mismatch',
         );
       }
-      if (entity.resetProofReferenceHash == null) {
+      final proofReference = entity.resetProofReference;
+      if (entity.resetProofReferenceHash == null ||
+          proofReference == null ||
+          !_isProtectedReference(proofReference) ||
+          _digest('cloudkit-reset-proof\u001f$proofReference') !=
+              entity.resetProofReferenceHash) {
         throw const CloudKitWriterAuthorityFailure(
           'cloudkit_writer_reset_proof_binding_missing',
         );
@@ -562,6 +572,7 @@ final class ObjectBoxCloudKitWriterAuthority {
         expectedGeneration: entity.resetGeneration,
         transitionIdHash: snapshot.transitionIdHash!,
         proofReferenceHash: entity.resetProofReferenceHash!,
+        protectedRemoteStateProofReference: proofReference,
       );
     });
   }
@@ -641,6 +652,7 @@ final class ObjectBoxCloudKitWriterAuthority {
         ..transitionIdHash = null
         ..resetScopeKeyHash = null
         ..resetProofReferenceHash = null
+        ..resetProofReference = null
         ..resetGeneration = 0
         ..epoch += 1
         ..updatedAtMs = now.millisecondsSinceEpoch;
@@ -713,6 +725,8 @@ final class ObjectBoxCloudKitWriterAuthority {
         proof.activeIdentityFingerprint != fence.scope.accountFingerprint ||
         proof.previousGeneration != fence.expectedGeneration ||
         proof.generation != fence.expectedGeneration + 1 ||
+        proof.protectedRemoteStateProofReference !=
+            fence.protectedRemoteStateProofReference ||
         _digest(
               'cloudkit-reset-proof\u001f${proof.protectedRemoteStateProofReference}',
             ) !=
@@ -838,6 +852,10 @@ final class ObjectBoxCloudKitWriterAuthority {
           transitionIdHash == null ||
           entity.resetScopeKeyHash == null ||
           entity.resetProofReferenceHash == null ||
+          entity.resetProofReference == null ||
+          !_isProtectedReference(entity.resetProofReference!) ||
+          _digest('cloudkit-reset-proof\u001f${entity.resetProofReference!}') !=
+              entity.resetProofReferenceHash ||
           entity.resetGeneration <= 0) {
         throw const CloudKitWriterAuthorityFailure(
           'cloudkit_writer_authority_state_invalid',
@@ -863,6 +881,7 @@ final class ObjectBoxCloudKitWriterAuthority {
         state != CloudKitWriterAuthorityState.resetUnknown &&
         (entity.resetScopeKeyHash != null ||
             entity.resetProofReferenceHash != null ||
+            entity.resetProofReference != null ||
             entity.resetGeneration != 0)) {
       throw const CloudKitWriterAuthorityFailure(
         'cloudkit_writer_authority_state_invalid',
@@ -877,6 +896,11 @@ final class ObjectBoxCloudKitWriterAuthority {
       transitionIdHash: transitionIdHash,
     );
   }
+
+  bool _isProtectedReference(String value) =>
+      value.length <= 256 &&
+      value.startsWith('obcs2.ref.') &&
+      !value.contains(RegExp(r'[\x00-\x1f\x7f-\x9f]'));
 
   CloudKitWriterOwner _owner(int value) {
     if (value < 0 || value >= CloudKitWriterOwner.values.length) {

@@ -58,6 +58,7 @@ class ObjectBoxCloudSyncStore
        _protectedPageLeases = store.box<CloudProtectedPageLeaseEntity>(),
        _outbox = store.box<CloudOutboxOperationEntity>(),
        _recordMaps = store.box<CloudRecordMapEntity>(),
+       _writerAuthorities = store.box<CloudKitWriterAuthorityEntity>(),
        _attachmentMaterializations = store
            .box<CloudAttachmentMaterializationEntity>(),
        _semanticReplays = store.box<CloudSemanticReplayEntity>(),
@@ -107,6 +108,7 @@ class ObjectBoxCloudSyncStore
   final Box<CloudProtectedPageLeaseEntity> _protectedPageLeases;
   final Box<CloudOutboxOperationEntity> _outbox;
   final Box<CloudRecordMapEntity> _recordMaps;
+  final Box<CloudKitWriterAuthorityEntity> _writerAuthorities;
   final Box<CloudAttachmentMaterializationEntity> _attachmentMaterializations;
   final Box<CloudSemanticReplayEntity> _semanticReplays;
   final Box<CloudSyncRunEntity> _runs;
@@ -635,6 +637,7 @@ class ObjectBoxCloudSyncStore
           (_inbox.count() * 3) +
           _outbox.count() +
           (_recordMaps.count() * 2) +
+          _writerAuthorities.count() +
           (_attachmentMaterializations.count() * 4);
       if (upperBound > maximumCount) {
         return const _ProtectedReferenceCapture.incomplete();
@@ -690,6 +693,12 @@ class ObjectBoxCloudSyncStore
           capture(entry.encryptedServerRecordId);
           capture(entry.encryptedRawRecordRef);
         },
+      );
+      scanPaged(
+        (_writerAuthorities.query()
+              ..order(CloudKitWriterAuthorityEntity_.id))
+            .build(),
+        (entry) => capture(entry.resetProofReference),
       );
       scanPaged(
         (_attachmentMaterializations.query()

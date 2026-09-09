@@ -5440,6 +5440,25 @@ void main() {
     },
   );
 
+  test('live protected-reference scan preserves a reset proof', () async {
+    final proofReference = _nativeReference('R');
+    objectBox.box<CloudKitWriterAuthorityEntity>().put(
+      CloudKitWriterAuthorityEntity(
+        authorityKey: 'authority-reset-proof-root',
+        accountFingerprint: testAccountFingerprintA,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        resetProofReference: proofReference,
+        updatedAtMs: testEpoch.millisecondsSinceEpoch,
+      ),
+    );
+
+    final snapshot = await store.readLiveProtectedReferences(maximumCount: 16);
+
+    expect(snapshot.isComplete, isTrue);
+    expect(snapshot.references, contains(proofReference));
+  });
+
   test(
     'live protected-reference scan crosses the 1024-row page boundary',
     () async {

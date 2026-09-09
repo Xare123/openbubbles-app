@@ -408,6 +408,14 @@ void main() {
     expect(completed.owner, CloudKitWriterOwner.v2);
     expect(completed.epoch, fence.epoch + 1);
     expect(
+      store
+          .box<CloudKitWriterAuthorityEntity>()
+          .getAll()
+          .single
+          .resetProofReference,
+      isNull,
+    );
+    expect(
       () => v2.issuePermit(_scopeA, expectedOwner: CloudKitWriterOwner.v2),
       returnsNormally,
     );
@@ -434,6 +442,11 @@ void main() {
       )!;
       expect(recoveredFence.epoch, fence.epoch);
       expect(recoveredFence.transitionIdHash, _resetId);
+      expect(
+        recoveredFence.protectedRemoteStateProofReference,
+        _resetProofReference,
+      );
+      expect(recoveredFence.toString(), isNot(contains(_resetProofReference)));
       expect(
         () => reopened.issuePermit(
           _scopeA,
@@ -512,6 +525,26 @@ void main() {
         now: _time(3),
       ),
       throwsA(_failure('cloudkit_writer_reset_completion_proof_mismatch')),
+    );
+  });
+
+  test('reset recovery rejects a changed protected proof reference', () {
+    provision(owner: CloudKitWriterOwner.v2);
+    final v2 = authority(CloudKitWriterOwner.v2);
+    v2.prepareReset(
+      v2.issuePermit(_scopeA, expectedOwner: CloudKitWriterOwner.v2),
+      request: _resetRequest(),
+      now: _time(2),
+    );
+    final box = store.box<CloudKitWriterAuthorityEntity>();
+    final entity = box.getAll().single
+      ..resetProofReference =
+          'obcs2.ref.BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+    box.put(entity);
+
+    expect(
+      () => v2.recoverResetFence(_scopeA, syncScope: _resetScopeA),
+      throwsA(_failure('cloudkit_writer_authority_state_invalid')),
     );
   });
 

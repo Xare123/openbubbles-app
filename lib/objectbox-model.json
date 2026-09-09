@@ -2041,7 +2041,7 @@
     },
     {
       "id": "28:889478301778181246",
-      "lastPropertyId": "14:4174520670149979908",
+      "lastPropertyId": "15:8451174932715279609",
       "name": "CloudKitWriterAuthorityEntity",
       "properties": [
         {
@@ -2117,6 +2117,11 @@
         {
           "id": "14:4174520670149979908",
           "name": "resetProofReferenceHash",
+          "type": 9
+        },
+        {
+          "id": "15:8451174932715279609",
+          "name": "resetProofReference",
           "type": 9
         }
       ],

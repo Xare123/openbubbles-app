@@ -934,6 +934,7 @@ class CloudKitWriterAuthorityEntity {
   String? transitionIdHash;
   String? resetScopeKeyHash;
   String? resetProofReferenceHash;
+  String? resetProofReference;
   int resetGeneration;
   int updatedAtMs;
 
@@ -950,6 +951,7 @@ class CloudKitWriterAuthorityEntity {
     this.transitionIdHash,
     this.resetScopeKeyHash,
     this.resetProofReferenceHash,
+    this.resetProofReference,
     this.resetGeneration = 0,
     required this.updatedAtMs,
   });
