@@ -137,7 +137,11 @@ class FaceTimeActivity : Activity() {
         binding.nativeCallControls.elevation = (12 * density)
     }
 
-    private fun showCallUi(joined: Boolean, webLeaveVisible: Boolean = false) {
+    private fun showCallUi(
+        joined: Boolean,
+        webLeaveVisible: Boolean = false,
+        pendingMessage: String? = null,
+    ) {
         binding.mainFrame.visibility = View.VISIBLE
         binding.splashLayout.visibility = View.GONE
         positionNativeEndControl(webLeaveVisible)
@@ -148,11 +152,11 @@ class FaceTimeActivity : Activity() {
         }
         binding.connectionStatus.visibility = if (joined) View.GONE else View.VISIBLE
         if (!joined) {
-            binding.connectionStatus.text = if (joinPolicy.completedJoin) {
-                "FaceTime media unavailable"
-            } else {
-                "Finishing FaceTime connection..."
-            }
+            binding.connectionStatus.text = pendingMessage
+                ?: FaceTimeConnectionStatusPolicy.pendingMessage(
+                    evidence = null,
+                    completedJoin = joinPolicy.completedJoin,
+                )
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             window.setBackgroundBlurRadius(0)
@@ -180,7 +184,13 @@ class FaceTimeActivity : Activity() {
                     joinPolicy.recordMediaEvidence(FaceTimeMediaEvidence(
                         FaceTimeIceState.UNKNOWN, 0, 0, null, false,
                     ))
-                    showCallUi(joined = false)
+                    showCallUi(
+                        joined = false,
+                        pendingMessage = FaceTimeConnectionStatusPolicy.pendingMessage(
+                            evidence = null,
+                            completedJoin = joinPolicy.completedJoin,
+                        ),
+                    )
                     scheduleConnectionProbe(FaceTimeConnectionProbePolicy.pendingDelayMillis)
                     return@requestMediaEvidence
                 }
@@ -200,7 +210,14 @@ class FaceTimeActivity : Activity() {
                         state = decision.outcome.name.lowercase(),
                     )
                 }
-                showCallUi(joined = decision.joined, webLeaveVisible = evidence.webLeaveVisible)
+                showCallUi(
+                    joined = decision.joined,
+                    webLeaveVisible = evidence.webLeaveVisible,
+                    pendingMessage = FaceTimeConnectionStatusPolicy.pendingMessage(
+                        evidence = evidence,
+                        completedJoin = joinPolicy.completedJoin,
+                    ),
+                )
                 scheduleConnectionProbe(
                     if (decision.joined) {
                         FaceTimeConnectionProbePolicy.connectedDelayMillis

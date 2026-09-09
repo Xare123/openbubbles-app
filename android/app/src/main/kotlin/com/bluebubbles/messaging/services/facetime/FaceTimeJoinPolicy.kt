@@ -114,6 +114,25 @@ internal object FaceTimeControlPolicy {
         if (webLeaveVisible) FaceTimeNativeEndPlacement.BOTTOM_LEFT else FaceTimeNativeEndPlacement.TOP_RIGHT
 }
 
+/** User-facing status derived from the same remote-media evidence as admission. */
+internal object FaceTimeConnectionStatusPolicy {
+    fun pendingMessage(
+        evidence: FaceTimeMediaEvidence?,
+        completedJoin: Boolean,
+    ): String = when {
+        evidence == null -> "Preparing FaceTime media..."
+        evidence.iceState == FaceTimeIceState.FAILED ||
+            evidence.iceState == FaceTimeIceState.CLOSED ->
+            "FaceTime connection failed. Tap Rejoin to retry."
+        completedJoin && evidence.iceState == FaceTimeIceState.DISCONNECTED ->
+            "FaceTime media was interrupted. Tap Rejoin to retry."
+        evidence.hasConnectedIce && !evidence.hasRemoteTrack ->
+            "Waiting for FaceTime audio or video..."
+        evidence.hasConnectedIce -> "Securing FaceTime media..."
+        else -> "Connecting FaceTime media..."
+    }
+}
+
 internal class FaceTimeJoinPolicy(
     private val manualRecoveryAttempt: Int = 20,
     private val maxAttempts: Int = 80,

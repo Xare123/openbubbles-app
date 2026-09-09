@@ -210,4 +210,58 @@ class FaceTimeJoinPolicyTest {
         assertTrue(FaceTimeConnectionProbePolicy.pendingDelayMillis in 750L..1500L)
         assertTrue(FaceTimeConnectionProbePolicy.initialDelayMillis < FaceTimeConnectionProbePolicy.pendingDelayMillis)
     }
+
+    @Test
+    fun pendingStatusDistinguishesPreparationAdmissionAndTransportFailure() {
+        assertEquals(
+            "Preparing FaceTime media...",
+            FaceTimeConnectionStatusPolicy.pendingMessage(null, completedJoin = false),
+        )
+        assertEquals(
+            "Waiting for FaceTime audio or video...",
+            FaceTimeConnectionStatusPolicy.pendingMessage(
+                FaceTimeMediaEvidence(
+                    iceState = FaceTimeIceState.CONNECTED,
+                    remoteAudioTracks = 0,
+                    remoteVideoTracks = 0,
+                    mediaBytes = 0,
+                    webLeaveVisible = true,
+                    peerId = 1,
+                ),
+                completedJoin = false,
+            ),
+        )
+        assertEquals(
+            "FaceTime connection failed. Tap Rejoin to retry.",
+            FaceTimeConnectionStatusPolicy.pendingMessage(
+                FaceTimeMediaEvidence(
+                    iceState = FaceTimeIceState.FAILED,
+                    remoteAudioTracks = 0,
+                    remoteVideoTracks = 0,
+                    mediaBytes = 0,
+                    webLeaveVisible = true,
+                    peerId = 1,
+                ),
+                completedJoin = false,
+            ),
+        )
+    }
+
+    @Test
+    fun pendingStatusMakesPostConnectionMediaLossActionable() {
+        assertEquals(
+            "FaceTime media was interrupted. Tap Rejoin to retry.",
+            FaceTimeConnectionStatusPolicy.pendingMessage(
+                FaceTimeMediaEvidence(
+                    iceState = FaceTimeIceState.DISCONNECTED,
+                    remoteAudioTracks = 0,
+                    remoteVideoTracks = 0,
+                    mediaBytes = null,
+                    webLeaveVisible = true,
+                    peerId = 1,
+                ),
+                completedJoin = true,
+            ),
+        )
+    }
 }

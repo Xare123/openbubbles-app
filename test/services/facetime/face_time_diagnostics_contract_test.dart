@@ -102,4 +102,16 @@ void main() {
       contains('startOutgoingCall()'),
     );
   });
+
+  test('FaceTime WebView preserves session state and permits admitted media', () {
+    final cachedWebview = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/CachedWebview.kt',
+    ).readAsStringSync();
+
+    expect(cachedWebview, contains('domStorageEnabled = true'));
+    expect(
+      cachedWebview,
+      contains('mediaPlaybackRequiresUserGesture = false'),
+    );
+  });
 }

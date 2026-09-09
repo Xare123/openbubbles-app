@@ -338,7 +338,18 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String, 
                 )
             )
             .build()
-        webView.settings.javaScriptEnabled = true
+        webView.settings.apply {
+            javaScriptEnabled = true
+            // FaceTime Web keeps call setup state in browser storage. Android
+            // WebView disables DOM storage by default, unlike the supported
+            // Chrome path that Apple documents for Android callers.
+            domStorageEnabled = true
+            // Remote audio can begin only after the WebView has admitted the
+            // caller. That transition is asynchronous and no longer occurs in
+            // the original tap callback, so requiring another user gesture can
+            // leave a connected call permanently silent.
+            mediaPlaybackRequiresUserGesture = false
+        }
         webView.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(
                 view: WebView?,
