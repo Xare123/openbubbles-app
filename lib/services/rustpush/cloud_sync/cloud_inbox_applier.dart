@@ -1252,6 +1252,12 @@ class TransactionalCloudInboxApplier
                 'decoder_${_safeCodeSegment(failure.category.name)}',
           ),
         );
+        if (cloudSyncIsResetRequiredSafeCode(failure.safeCode)) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.unknown,
+            safeCode: failure.safeCode,
+          );
+        }
         if (failure.category == CloudFailureCategory.authorization) {
           throw CloudSyncFailure(
             category: CloudFailureCategory.authorization,
@@ -1424,6 +1430,12 @@ class TransactionalCloudInboxApplier
         _recordDiagnostic(
           'projection_repair_decoder_${_safeCodeSegment(failure.category.name)}',
         );
+        if (cloudSyncIsResetRequiredSafeCode(failure.safeCode)) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.unknown,
+            safeCode: failure.safeCode,
+          );
+        }
         if (failure.category.isRetryable) {
           throw CloudSyncFailure(
             category: failure.category,
@@ -1543,6 +1555,12 @@ class TransactionalCloudInboxApplier
         _recordDiagnostic(
           'legacy_ownership_repair_decoder_${_safeCodeSegment(failure.category.name)}',
         );
+        if (cloudSyncIsResetRequiredSafeCode(failure.safeCode)) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.unknown,
+            safeCode: failure.safeCode,
+          );
+        }
         if (failure.category.isRetryable) {
           throw CloudSyncFailure(
             category: failure.category,
@@ -1634,6 +1652,12 @@ class TransactionalCloudInboxApplier
           failure.safeCode ??
           'decoder_${_safeCodeSegment(failure.category.name)}';
       _recordDiagnostic(safeCode);
+      if (cloudSyncIsResetRequiredSafeCode(safeCode)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.unknown,
+          safeCode: safeCode,
+        );
+      }
       if (failure.category.isRetryable) {
         return CloudInboxApplyResult.retryable(
           failureCategory: failure.category,
@@ -1746,6 +1770,9 @@ class TransactionalCloudInboxApplier
           failure.safeCode ??
           'apply_${_safeCodeSegment(failure.category.name)}';
       _recordDiagnostic(safeCode);
+      if (cloudSyncIsResetRequiredSafeCode(safeCode)) {
+        rethrow;
+      }
       if (failure.category.isRetryable) {
         return CloudInboxApplyResult.retryable(
           failureCategory: failure.category,

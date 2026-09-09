@@ -20123,11 +20123,12 @@ impl SseDecode for crate::api::api::CloudSyncAttachmentMaterializationFailureCod
 4 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::ProtectedReferenceMismatch,
 5 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::SourceUnusable,
 6 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::PcsUnavailable,
-7 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::RetryableUpstream,
-8 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::LocalStorage,
-9 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::SizeMismatch,
-10 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::IntegrityMismatch,
-11 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::DecoderFailure,
+7 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::CloudKitResetRequired,
+8 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::RetryableUpstream,
+9 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::LocalStorage,
+10 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::SizeMismatch,
+11 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::IntegrityMismatch,
+12 => crate::api::api::CloudSyncAttachmentMaterializationFailureCode::DecoderFailure,
             _ => unreachable!("Invalid variant for CloudSyncAttachmentMaterializationFailureCode: {}", inner),
         };
     }
@@ -36550,11 +36551,12 @@ crate::api::api::CloudSyncAttachmentMaterializationFailureCode::StoreIdentityMis
 crate::api::api::CloudSyncAttachmentMaterializationFailureCode::ProtectedReferenceMismatch => { 4 }
 crate::api::api::CloudSyncAttachmentMaterializationFailureCode::SourceUnusable => { 5 }
 crate::api::api::CloudSyncAttachmentMaterializationFailureCode::PcsUnavailable => { 6 }
-crate::api::api::CloudSyncAttachmentMaterializationFailureCode::RetryableUpstream => { 7 }
-crate::api::api::CloudSyncAttachmentMaterializationFailureCode::LocalStorage => { 8 }
-crate::api::api::CloudSyncAttachmentMaterializationFailureCode::SizeMismatch => { 9 }
-crate::api::api::CloudSyncAttachmentMaterializationFailureCode::IntegrityMismatch => { 10 }
-crate::api::api::CloudSyncAttachmentMaterializationFailureCode::DecoderFailure => { 11 }
+crate::api::api::CloudSyncAttachmentMaterializationFailureCode::CloudKitResetRequired => { 7 }
+crate::api::api::CloudSyncAttachmentMaterializationFailureCode::RetryableUpstream => { 8 }
+crate::api::api::CloudSyncAttachmentMaterializationFailureCode::LocalStorage => { 9 }
+crate::api::api::CloudSyncAttachmentMaterializationFailureCode::SizeMismatch => { 10 }
+crate::api::api::CloudSyncAttachmentMaterializationFailureCode::IntegrityMismatch => { 11 }
+crate::api::api::CloudSyncAttachmentMaterializationFailureCode::DecoderFailure => { 12 }
  _ => { unimplemented!(""); }}, serializer);
     }
 }

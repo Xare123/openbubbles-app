@@ -1486,6 +1486,7 @@ pub enum CloudSyncAttachmentMaterializationFailureCode {
     ProtectedReferenceMismatch,
     SourceUnusable,
     PcsUnavailable,
+    CloudKitResetRequired,
     RetryableUpstream,
     LocalStorage,
     SizeMismatch,
@@ -5937,6 +5938,9 @@ fn map_cloud_sync_attachment_materialization_failure(
         }
         Native::SourceUnusable => CloudSyncAttachmentMaterializationFailureCode::SourceUnusable,
         Native::PcsUnavailable => CloudSyncAttachmentMaterializationFailureCode::PcsUnavailable,
+        Native::ResetRequired => {
+            CloudSyncAttachmentMaterializationFailureCode::CloudKitResetRequired
+        }
         Native::RetryableUpstream => {
             CloudSyncAttachmentMaterializationFailureCode::RetryableUpstream
         }

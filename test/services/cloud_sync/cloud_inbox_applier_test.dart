@@ -5,6 +5,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_proven
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -1581,6 +1582,34 @@ void main() {
       expect(store.transactionCount, 0);
     },
   );
+
+  test('reset-required decoder failure escapes record quarantine', () async {
+    final inbox = entry(1);
+    decoder.failures[inbox.change.changeId] = const CloudSemanticDecodeFailure(
+      CloudFailureCategory.unknown,
+      safeCode:
+          CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitResetRequired,
+    );
+
+    await expectLater(
+      _apply(applier, inbox),
+      throwsA(
+        isA<CloudSyncFailure>()
+            .having(
+              (failure) => failure.category,
+              'category',
+              CloudFailureCategory.unknown,
+            )
+            .having(
+              (failure) => failure.safeCode,
+              'safeCode',
+              CloudSyncV2ProtectedTransportSafeFailureCodes
+                  .cloudKitResetRequired,
+            ),
+      ),
+    );
+    expect(store.transactionCount, 0);
+  });
 
   test('diagnostics preserve decoder and canonical apply safe codes', () async {
     final diagnostics = <String>[];

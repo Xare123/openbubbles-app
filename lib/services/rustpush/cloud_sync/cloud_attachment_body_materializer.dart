@@ -6,6 +6,7 @@ import 'cloud_attachment_materialization.dart';
 import 'cloud_attachment_materialization_store.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_safe_failure.dart';
 
 /// Opaque request to the native attachment downloader.
 ///
@@ -45,6 +46,7 @@ enum CloudAttachmentBodyNativeFailure {
   protectedReferenceMismatch,
   sourceUnusable,
   pcsUnavailable,
+  cloudKitResetRequired,
   retryableUpstream,
   localStorage,
   sizeMismatch,
@@ -454,6 +456,10 @@ final class CloudAttachmentBodyMaterializer {
       CloudAttachmentBodyNativeFailure.pcsUnavailable => (
         CloudFailureCategory.pcsUnavailable,
         'pcs-unavailable',
+      ),
+      CloudAttachmentBodyNativeFailure.cloudKitResetRequired => (
+        CloudFailureCategory.unknown,
+        CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitResetRequired,
       ),
       CloudAttachmentBodyNativeFailure.retryableUpstream => (
         CloudFailureCategory.network,

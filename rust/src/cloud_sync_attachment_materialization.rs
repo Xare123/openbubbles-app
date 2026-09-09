@@ -118,6 +118,7 @@ pub(crate) enum CloudNativeAttachmentMaterializationFailure {
     ProtectedReferenceMismatch,
     SourceUnusable,
     PcsUnavailable,
+    ResetRequired,
     RetryableUpstream,
     LocalStorage,
     SizeMismatch,
@@ -525,6 +526,9 @@ fn map_decode_failure(
         }
         CloudTransientBridgeFailure::PcsUnavailable => {
             CloudNativeAttachmentMaterializationFailure::PcsUnavailable
+        }
+        CloudTransientBridgeFailure::ResetRequired => {
+            CloudNativeAttachmentMaterializationFailure::ResetRequired
         }
         CloudTransientBridgeFailure::RetryableUpstream
         | CloudTransientBridgeFailure::WarmAuthenticationRequired => {
@@ -1430,6 +1434,14 @@ mod tests {
                 "redacted local storage fixture",
             ))),
             CloudNativeAttachmentMaterializationFailure::LocalStorage
+        );
+    }
+
+    #[test]
+    fn transient_reset_required_stays_distinct_from_pcs_and_source_failures() {
+        assert_eq!(
+            map_decode_failure(CloudTransientBridgeFailure::ResetRequired),
+            CloudNativeAttachmentMaterializationFailure::ResetRequired
         );
     }
 

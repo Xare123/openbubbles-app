@@ -2943,6 +2943,7 @@ enum CloudSyncAttachmentMaterializationFailureCode {
   protectedReferenceMismatch,
   sourceUnusable,
   pcsUnavailable,
+  cloudKitResetRequired,
   retryableUpstream,
   localStorage,
   sizeMismatch,

@@ -1665,6 +1665,9 @@ class CloudSyncEngine {
           }
           result = await _inboxApplier.apply(entry, leaseFence: leaseFence);
         } on CloudSyncFailure catch (error) {
+          if (cloudSyncIsResetRequiredSafeCode(error.safeCode)) {
+            rethrow;
+          }
           result =
               error.category.isRetryable ||
                   (error.category == CloudFailureCategory.unknown &&
@@ -1687,6 +1690,13 @@ class CloudSyncEngine {
                   failureCategory: CloudFailureCategory.unknown,
                 );
         }
+      }
+
+      if (cloudSyncIsResetRequiredSafeCode(result.safeCode)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.unknown,
+          safeCode: result.safeCode,
+        );
       }
 
       if (result.disposition == CloudInboxApplyDisposition.quarantined &&

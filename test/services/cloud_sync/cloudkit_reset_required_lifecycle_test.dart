@@ -164,6 +164,49 @@ void main() {
     },
   );
 
+  test(
+    'reset-required semantic decode fails the run without quarantine',
+    () async {
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async =>
+              CloudFetchBatch(
+                scope: requestedScope,
+                changes: [testChange(1)],
+                batchId: 'reset-required-semantic-page',
+                generation: generation,
+                nextToken: 'must-not-commit-reset-required-token',
+                hasMore: false,
+              );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.quarantined(
+        failureCategory: CloudFailureCategory.unknown,
+        safeCode:
+            CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitResetRequired,
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.failed);
+      expect(result.failureCategory, CloudFailureCategory.unknown);
+      expect(
+        result.failureSafeCode,
+        CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitResetRequired,
+      );
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.fetchedToken, isNull);
+      expect(checkpoint.lastAppliedSequence, 0);
+      expect(checkpoint.pendingBatchId, 'reset-required-semantic-page');
+      expect(
+        (await store.inboxEntries(scope)).single.status,
+        CloudInboxStatus.pending,
+      );
+    },
+  );
+
   test('reset-required prepare failure fences paused without retry', () async {
     final operation = testOutboxOperation(scope, 1);
     await store.enqueueOutbox(operation);

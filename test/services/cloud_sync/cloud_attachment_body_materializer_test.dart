@@ -3,6 +3,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_materi
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_materialization_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'cloud_sync_test_helpers.dart';
@@ -181,6 +182,50 @@ void main() {
         CloudAttachmentMaterializationStage.tempStreaming,
       );
       expect(store.onlyValue!.verifiedBytes, 0);
+    },
+  );
+
+  test(
+    'native reset-required failure preserves the rebootstrap signal',
+    () async {
+      final store = _MemoryStore();
+      final native = _Native(
+        const CloudAttachmentBodyNativeResult.failed(
+          CloudAttachmentBodyNativeFailure.cloudKitResetRequired,
+        ),
+      );
+      final materializer = _materializer(
+        store: store,
+        native: native,
+        readAuth: () async => auth,
+      );
+
+      await expectLater(
+        materializer.materialize(
+          authSnapshot: auth,
+          nativeWriterPauseToken: pauseToken,
+          storageDirectory: 'C:/private-storage',
+          applicationDocumentsDirectory: 'C:/private-documents',
+          source: source,
+          logicalEntityKeyHash: logicalHash,
+          expectedCanonicalGuidSha256: expectedCanonicalGuidSha256,
+          expectedBytes: 12,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>()
+              .having(
+                (failure) => failure.category,
+                'category',
+                CloudFailureCategory.unknown,
+              )
+              .having(
+                (failure) => failure.safeCode,
+                'safeCode',
+                CloudSyncV2ProtectedTransportSafeFailureCodes
+                    .cloudKitResetRequired,
+              ),
+        ),
+      );
     },
   );
 

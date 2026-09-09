@@ -36,6 +36,10 @@ void main() {
               CloudAttachmentBodyNativeFailure.pcsUnavailable,
           frb_api
                   .CloudSyncAttachmentMaterializationFailureCode
+                  .cloudKitResetRequired:
+              CloudAttachmentBodyNativeFailure.cloudKitResetRequired,
+          frb_api
+                  .CloudSyncAttachmentMaterializationFailureCode
                   .retryableUpstream:
               CloudAttachmentBodyNativeFailure.retryableUpstream,
           frb_api.CloudSyncAttachmentMaterializationFailureCode.localStorage:
