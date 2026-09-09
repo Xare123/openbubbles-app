@@ -21198,6 +21198,7 @@ impl SseDecode for crate::api::api::CloudSyncTransientFailureCode {
             10 => crate::api::api::CloudSyncTransientFailureCode::PcsUnavailable,
             11 => crate::api::api::CloudSyncTransientFailureCode::RetryableUpstream,
             12 => crate::api::api::CloudSyncTransientFailureCode::DecoderFailure,
+            13 => crate::api::api::CloudSyncTransientFailureCode::ResetRequired,
             _ => unreachable!(
                 "Invalid variant for CloudSyncTransientFailureCode: {}",
                 inner
@@ -30704,6 +30705,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientFailur
             Self::PcsUnavailable => 10.into_dart(),
             Self::RetryableUpstream => 11.into_dart(),
             Self::DecoderFailure => 12.into_dart(),
+            Self::ResetRequired => 13.into_dart(),
             _ => unreachable!(),
         }
     }

@@ -1469,6 +1469,7 @@ pub enum CloudSyncTransientFailureCode {
     PcsUnavailable,
     RetryableUpstream,
     DecoderFailure,
+    ResetRequired,
 }
 
 /// Content-free failure vocabulary for one native attachment-body fetch.
@@ -5656,6 +5657,7 @@ pub(super) fn map_cloud_sync_transient_failure(
         Native::PcsUnavailable => CloudSyncTransientFailureCode::PcsUnavailable,
         Native::RetryableUpstream => CloudSyncTransientFailureCode::RetryableUpstream,
         Native::DecoderFailure => CloudSyncTransientFailureCode::DecoderFailure,
+        Native::ResetRequired => CloudSyncTransientFailureCode::ResetRequired,
     }
 }
 

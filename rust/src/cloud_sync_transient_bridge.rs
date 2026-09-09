@@ -245,6 +245,7 @@ pub(crate) enum CloudTransientBridgeFailure {
     PcsUnavailable,
     RetryableUpstream,
     DecoderFailure,
+    ResetRequired,
 }
 
 /// Emits only the fixed decoder stage, never record content or identifiers.
@@ -1654,12 +1655,11 @@ fn map_push_failure(error: &PushError) -> CloudTransientBridgeFailure {
                 CloudTransientBridgeFailure::ActiveAccountMismatch
             }
             CloudKitFailureClass::Conflict => CloudTransientBridgeFailure::ScopeMismatch,
-            CloudKitFailureClass::ResetRequired | CloudKitFailureClass::Permanent => {
-                CloudTransientBridgeFailure::InvalidRequest
-            }
+            CloudKitFailureClass::ResetRequired => CloudTransientBridgeFailure::ResetRequired,
+            CloudKitFailureClass::Permanent => CloudTransientBridgeFailure::InvalidRequest,
             CloudKitFailureClass::Unknown => CloudTransientBridgeFailure::DecoderFailure,
         },
-        PushError::CloudKitChangeTokenExpired => CloudTransientBridgeFailure::InvalidRequest,
+        PushError::CloudKitChangeTokenExpired => CloudTransientBridgeFailure::ResetRequired,
         PushError::CloudKitProtocolError(_)
         | PushError::ResourceTimeout
         | PushError::ResourceGenTimeout
@@ -1714,6 +1714,7 @@ fn safe_failure_class(failure: CloudTransientBridgeFailure) -> &'static str {
         CloudTransientBridgeFailure::ProtectedReferenceMismatch => "protected_reference_mismatch",
         CloudTransientBridgeFailure::OversizedRecord => "oversized_record",
         CloudTransientBridgeFailure::DecoderFailure => "decoder_failure",
+        CloudTransientBridgeFailure::ResetRequired => "reset_required",
     }
 }
 
@@ -5229,6 +5230,18 @@ mod tests {
         assert_eq!(
             map_push_failure(&cloudkit_client(client::Code::StaleRecordUpdate)),
             CloudTransientBridgeFailure::ScopeMismatch
+        );
+        assert_eq!(
+            map_push_failure(&cloudkit_client(client::Code::ResetNeeded)),
+            CloudTransientBridgeFailure::ResetRequired
+        );
+        assert_eq!(
+            map_push_failure(&PushError::CloudKitChangeTokenExpired),
+            CloudTransientBridgeFailure::ResetRequired
+        );
+        assert_eq!(
+            safe_failure_class(CloudTransientBridgeFailure::ResetRequired),
+            "reset_required"
         );
         assert_eq!(
             map_push_failure(&cloudkit_server(server::Code::NotFound)),

@@ -4303,6 +4303,7 @@ enum CloudSyncTransientFailureCode {
   pcsUnavailable,
   retryableUpstream,
   decoderFailure,
+  resetRequired,
 }
 
 enum CloudSyncTransientFieldState { absent, value, explicitClear }

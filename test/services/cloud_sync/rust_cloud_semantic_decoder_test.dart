@@ -4,6 +4,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_proven
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb;
@@ -417,6 +418,8 @@ void main() {
           CloudFailureCategory.server,
       frb.CloudSyncTransientFailureCode.decoderFailure:
           CloudFailureCategory.unknown,
+      frb.CloudSyncTransientFailureCode.resetRequired:
+          CloudFailureCategory.unknown,
     };
     for (final item in cases.entries) {
       bindings.result = frb.CloudSyncTransientDecodeResult(
@@ -426,6 +429,18 @@ void main() {
       );
       await _expectFailure(decoder().decode(entry), item.value);
     }
+
+    bindings.result = frb.CloudSyncTransientDecodeResult(
+      protectedSourceReference: _sourceReference,
+      generation: BigInt.from(entry.generation),
+      failureCode: frb.CloudSyncTransientFailureCode.resetRequired,
+    );
+    await _expectFailure(
+      decoder().decode(entry),
+      CloudFailureCategory.unknown,
+      safeCode:
+          CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitResetRequired,
+    );
 
     const deferredSafeCodes = <frb.CloudSyncTransientDeferredReason, String>{
       frb.CloudSyncTransientDeferredReason.nestedPresenceUnavailable:

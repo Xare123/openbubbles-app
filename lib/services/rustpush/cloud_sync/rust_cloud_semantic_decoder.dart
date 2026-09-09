@@ -381,7 +381,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     final failure = result.failureCode;
     return failure == null
         ? null
-        : CloudSemanticDecodeFailure(_failureCategory(failure));
+        : CloudSemanticDecodeFailure(
+            _failureCategory(failure),
+            safeCode: _failureSafeCode(failure),
+          );
   }
 
   CloudDecodedMutation _mapResult(
@@ -413,7 +416,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       );
     }
     if (result.failureCode case final failure?) {
-      throw CloudSemanticDecodeFailure(_failureCategory(failure));
+      throw CloudSemanticDecodeFailure(
+        _failureCategory(failure),
+        safeCode: _failureSafeCode(failure),
+      );
     }
     if (result.outOfScopeService case final service?) {
       if (entry.change.type != CloudChangeType.save ||
@@ -1324,7 +1330,14 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       CloudFailureCategory.server,
     frb_api.CloudSyncTransientFailureCode.decoderFailure =>
       CloudFailureCategory.unknown,
+    frb_api.CloudSyncTransientFailureCode.resetRequired =>
+      CloudFailureCategory.unknown,
   };
+
+  String? _failureSafeCode(frb_api.CloudSyncTransientFailureCode value) =>
+      value == frb_api.CloudSyncTransientFailureCode.resetRequired
+      ? CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitResetRequired
+      : null;
 }
 
 CloudEntityKind _entityKindFromFrb(
