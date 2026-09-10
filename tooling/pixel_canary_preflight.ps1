@@ -180,10 +180,10 @@ function Get-PackageTimeField {
 function Invoke-ApksignerPrintCerts {
     param([Parameter(Mandatory = $true)][string] $SignerPath, [Parameter(Mandatory = $true)][string] $TargetApk)
     if ($SignerPath -match '(?i)\.(bat|cmd)$') {
-        $cmdLine = '""{0}" verify --print-certs "{1}""' -f $SignerPath, $TargetApk
+        $cmdLine = '""{0}" verify --verbose --print-certs "{1}""' -f $SignerPath, $TargetApk
         return Invoke-BoundedText -FilePath 'cmd.exe' -Arguments @('/d', '/c', $cmdLine) -TimeoutSeconds $ProcessTimeoutSeconds -FailureCode 'apk_signature_verify_failed'
     }
-    return Invoke-BoundedText -FilePath $SignerPath -Arguments @('verify', '--print-certs', $TargetApk) -TimeoutSeconds $ProcessTimeoutSeconds -FailureCode 'apk_signature_verify_failed'
+    return Invoke-BoundedText -FilePath $SignerPath -Arguments @('verify', '--verbose', '--print-certs', $TargetApk) -TimeoutSeconds $ProcessTimeoutSeconds -FailureCode 'apk_signature_verify_failed'
 }
 
 try {
@@ -217,7 +217,7 @@ try {
     foreach ($certLine in $certLines) {
         if ($certLine -match 'Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F:]+)') { $digests += $Matches[1].Replace(':', '').ToLowerInvariant() }
         if ($certLine -match 'Signer #\d+ certificate DN:') { $signerHeaders += 1 }
-        if ($certLine -match 'Verified using v2 scheme:\s+true') { $v2Verified = $true }
+        if ($certLine -match '^Verified using v2 scheme(?: \([^)]*\))?:\s+true\s*$') { $v2Verified = $true }
     }
     if ($signerHeaders -ne 1 -or $digests.Count -ne 1) { Fail-Preflight 'apk_signer_count_invalid' }
     if (-not $v2Verified) { Fail-Preflight 'apk_signature_v2_missing' }
