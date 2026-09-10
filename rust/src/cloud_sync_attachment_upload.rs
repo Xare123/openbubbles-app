@@ -112,12 +112,51 @@ pub(crate) async fn prepare_attachment_upload_plan<R: Read + Send + Sync>(
     )?)
 }
 
+/// Connect the pinned IDS descriptor, initial reflected metadata and immutable
+/// plaintext snapshot to one V2 preparation. The source path is opened by the
+/// caller; mutable bytes never enter V2 preparation before original IDS proof.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn prepare_verified_ids_upload_plan<R: Read + Send>(
+    client: &CloudMessagesClient<DefaultAnisetteProvider>,
+    decoded: &crate::cloud_sync_ids_attachment_source::DecodedIdsAttachmentSource,
+    parent_source_sha256: String,
+    original_attachment_guid: &str,
+    times: &crate::cloud_sync_ids_attachment_source::NativeAttachmentMetaTimes,
+    record_identifier: RecordIdentifier,
+    source: &mut R,
+    private_directory: &std::path::Path,
+) -> Result<AttachmentUploadPlan, AttachmentUploadPreparationFailure> {
+    let material = crate::cloud_sync_ids_attachment_source::decoded_attachment_upload_material(
+        decoded,
+        original_attachment_guid,
+        times,
+    )?;
+    let snapshot = crate::cloud_sync_attachment_source_file::snapshot_verified_source(
+        source,
+        &material.file,
+        private_directory,
+    )
+    .await
+    .map_err(|_| AttachmentUploadPreparationFailure::SourceUnavailable)?;
+    prepare_attachment_upload_plan(
+        client,
+        decoded.message_guid.clone(),
+        parent_source_sha256,
+        record_identifier,
+        material.meta,
+        snapshot,
+    )
+    .await
+}
+
 /// Fixed native-only diagnostics; key lookup failure is not falsely labeled
 /// protected-store corruption and carries no raw keychain/auth error outward.
 #[derive(Clone, Copy, Debug, thiserror::Error, Eq, PartialEq)]
 pub(crate) enum AttachmentUploadPreparationFailure {
     #[error("attachment source preparation unavailable")]
     PreparationUnavailable,
+    #[error("attachment source unavailable or does not match original IDS bytes")]
+    SourceUnavailable,
     #[error("attachment upload source invalid")]
     InvalidSource(#[from] Failure),
 }

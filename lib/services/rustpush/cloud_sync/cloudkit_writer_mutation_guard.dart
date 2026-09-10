@@ -30,6 +30,10 @@ final RegExp _cloudKitWriterLeaseReferencePattern = RegExp(
 );
 const int _cloudKitWriterMaximumRetryAfterSeconds = 7 * 24 * 60 * 60;
 
+/// Attachment-record initial-create payload version (v1), matching the
+/// completed-upload final-save journal contract.
+const int _cloudKitWriterAttachmentCreatePayloadVersion = 1;
+
 /// Content-free digest shared by mutation admission and later exact readback.
 /// Mutable lifecycle fields are deliberately excluded so the same durable
 /// create binds while it moves from leased to unknownOutcome.
@@ -110,6 +114,21 @@ abstract interface class CloudKitWriterReconciliationBinding {
 abstract interface class CloudKitWriterChatReconciliationBinding
     implements CloudKitWriterReconciliationBinding {
   Future<frb_api.CloudSyncOutboundReconcileResult> reconcileChatCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  });
+}
+
+/// Attachment reconciliation is an explicit capability, never a Message or
+/// Chat fallback. It covers only the final attachment-record readback for an
+/// already-completed protected asset envelope.
+abstract interface class CloudKitWriterAttachmentReconciliationBinding
+    implements CloudKitWriterReconciliationBinding {
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileAttachmentCreate({
     required Object cloudMessagesClient,
     required String storageDirectory,
     required String expectedAccountFingerprint,
@@ -334,15 +353,25 @@ final class CloudKitWriterMutationGuard
       );
     }
     final isChat = operation.scope.zone == 'chatManateeZone';
+    final isAttachment = operation.scope.zone == 'attachmentManateeZone';
     if (isChat && binding is! CloudKitWriterChatReconciliationBinding) {
       throw const CloudKitWriterAuthorityFailure(
         'cloudkit_writer_chat_reconciliation_binding_missing',
       );
     }
+    if (isAttachment &&
+        binding is! CloudKitWriterAttachmentReconciliationBinding) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_attachment_reconciliation_binding_missing',
+      );
+    }
     final reconcile = isChat
         ? (binding as CloudKitWriterChatReconciliationBinding)
               .reconcileChatCreate
-        : binding.reconcileMessageCreate;
+        : isAttachment
+            ? (binding as CloudKitWriterAttachmentReconciliationBinding)
+                  .reconcileAttachmentCreate
+            : binding.reconcileMessageCreate;
     final result = await reconcile(
       cloudMessagesClient: expectedClient,
       storageDirectory: _privateStorageDirectory,
@@ -483,6 +512,8 @@ final class CloudKitWriterMutationGuard
   ) {
     final expectedPayloadVersion = switch (operation.scope.zone) {
       'chatManateeZone' => cloudSyncOutboundChatPayloadVersion,
+      'attachmentManateeZone' =>
+        _cloudKitWriterAttachmentCreatePayloadVersion,
       'messageManateeZone' => cloudSyncOutboundPayloadVersion,
       _ => null,
     };

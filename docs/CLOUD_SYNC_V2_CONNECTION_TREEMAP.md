@@ -59,7 +59,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Windows candidate | Qualified source `6abbeede2`, manual-write variant: 30 focused Dart and 48 real Rust-DLL codec tests, 380 app Rust and 261 rustpush tests. One-time sender repair succeeded. At 16:20:53Z a fresh direct message was confirmed/admitted and exact-readback proof persisted; restart admitted zero new writes and retained one canonical message. Independent Apple-device display and ordinary Pixel composer convergence remain open. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
-| Dependency | Qualified `975015f` passed 269 native tests in GCE `34526397036`. Candidate `f2e8ea3` adds original-IDS plaintext verification, pending native qualification. Only explicit IDS status 0 qualifies; missing intended group targets remain unconfirmed. |
+| Dependency | `f2e8ea3` adds original-IDS plaintext verification and passed 275 tests in GCE `34529638374`. Only explicit IDS status 0 qualifies; missing intended group targets remain unconfirmed. |
 | Prior-source qualification | GCE run `34437410835` fully succeeded for exact source `75440cafc`: full Dart suite, 373 app Rust tests, 253 rustpush tests, 34 protector tests, bridge drift checks, APK/native-library verification, Android JVM tests, trusted signing, and cleanup. This APK lacks the new positive-acknowledgment repair and is not a write-qualified release candidate. Older `fc132e5f8` also has the headless ready-handshake deadlock. |
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
@@ -115,11 +115,26 @@ initial-create identity; 221 targeted Dart cases passed. A shared Dart/Rust
 identity vector and record prepare/readback routes are added in the next
 candidate, along with version-2 protected plans retaining original HTTP/operation
 UUIDs. Version-1 plans stay readable but cannot invent new upload authority.
-New native changes and metadata helpers await GCE qualification.
-Production byte-upload orchestration, protected attempt/result recovery,
-final-save admission and parent wiring remain open. The metadata helper needs
-the actual prepared/reflected parent's canonical attachment mapping; GUID
-shape alone is not proof. Neither upload success nor a missing record proves
+Source `d8136c9b9` compiled and passed 428 app-native tests in GCE `34529635517`.
+Its expected bridge-drift failure produced artifact `10173280244`; all seven
+generated files were manifest/hash-verified and imported. No runtime was built.
+Both cleanup jobs passed and independent inventories were empty. Afterward,
+parent found the actual canonical-GUID constructor in `rustpush_service.dart`:
+initial reflection uses the explicit indexed-part index, or the current rendered
+attachment count, not MMCS `part`. The corrected source projects that same
+algorithm and rejects duplicate/missing final body references. This later
+correction, immutable-source integration and Dart routing await qualification.
+The next reviewed candidate connects the pinned IDS envelope, reflected metadata
+and private immutable file to the native upload-plan staging API. It revalidates
+the same live account/store/container after preparation; the original randomized
+plan must be adopted before upload. Attachment record prepare, consume and exact
+unknown-outcome readback now route through Attachment-specific bindings in Dart
+and its mutation guard. Parent independently passed all 113 transport/guard tests.
+The new native source and generated bridge still need GCE qualification.
+Production byte-upload consumption, protected attempt/result recovery,
+final-save admission and parent wiring remain open. Metadata is derived from
+the pinned body's projection, never a caller-supplied GUID guess. Neither
+upload success nor a missing record proves
 parent-message synchronization.
 The known-good local executable is still the qualified `6abbeede2` bundle.
 

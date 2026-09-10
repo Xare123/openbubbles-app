@@ -1254,3 +1254,37 @@ This is a chronological evidence log. It does not override the
   parent checked the evidence and closed the worker, verified `not_found`.
 - C: has approximately 65 GiB free. No storage cleanup was needed or performed.
   Shared source, unresolved evidence, user data and credentials are retained.
+
+- Checkpoint `d8136c9b9` compiled and passed 428 app-native tests in GCE
+  `34529635517`. Only the expected generated-bridge drift gate failed. Artifact
+  `10173280244` contained exactly the seven permitted generated files; hashes
+  matched after import. Dependency `f2e8ea3` passed 275 tests in `34529638374`.
+  Both cleanup jobs passed and independent VM/runner inventories were empty.
+  Parent also reran six targeted Dart suites: 222 passed. No APK or Windows
+  executable was built, no account data entered CI, and no live send occurred.
+- Parent invalidated the worker's claimed GUID-construction evidence gap:
+  `rustpush_service.dart::indexedPartsToAttributedBodyDyn` explicitly creates
+  `msgId_fieldIdx`; `reflectMessageDyn` uses an empty initial body. The native
+  MMCS part may differ from indexed-part idx, as the existing fixture already
+  demonstrates (idx 1, MMCS part 0). The revised helper removes caller-provided
+  mappings and projects actual fieldIdx, rendered-attachment counting, skipped
+  iris/SMIL, and run removal. Seven synthetic cases await the next native run.
+  Retained capture/restore semantics are unchanged.
+
+- Parent reviewed Attachment-specific prepare/readback and completed the worker's
+  missing mutation-guard recovery branch. The real generator-built operation
+  identity and original save UUIDs/references remain bound. Exact record absence
+  resolves final-save uncertainty, not successful save or byte-upload replay.
+  All 113 transport/guard cases passed independently; the worker's four-file
+  analyzer reported no issues. Shared code is retained; worker closed and
+  independently verified `not_found`.
+- Native plan staging now opens the exact protected IDS source, checks the
+  selected file against its original MMCS descriptor using an OS-cleaned private
+  snapshot, derives actual reflected metadata, and prepares one randomized V2
+  plan under the exact warmed container. Account/store/session/container are
+  revalidated before staging. No public byte-upload consume path is added yet.
+  Parent corrected the snapshot's initial over-read to the strict size-plus-one
+  bound and added a counterexample test, removed a duplicate dev dependency,
+  and reviewed the seven snapshot cases. Native compilation remains pending.
+  Snapshot worker closed and independently verified `not_found`; required shared
+  source/evidence retained. Supported transcript deletion is unavailable.

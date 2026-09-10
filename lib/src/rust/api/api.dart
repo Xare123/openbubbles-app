@@ -300,8 +300,28 @@ Future<CloudSyncPreparedMessageCreateResult> cloudSyncPrepareChatCreate({
   inputs: inputs,
 );
 
+/// Prepares the original completed attachment record for the same single-use
+/// capability-fenced consumer as Message and Chat. Does not upload bytes.
+Future<CloudSyncPreparedMessageCreateResult> cloudSyncPrepareAttachmentCreate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required String requestUuid,
+  required BigInt requestTimeoutSeconds,
+  required List<CloudSyncPreparedMessageCreateInput> inputs,
+}) => RustLib.instance.api.crateApiApiCloudSyncPrepareAttachmentCreate(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  requestUuid: requestUuid,
+  requestTimeoutSeconds: requestTimeoutSeconds,
+  inputs: inputs,
+);
+
 /// Historical message name: this record-agnostic consumer also consumes the
-/// opaque handle returned by chat prepare. No capability, permit, keystore,
+/// opaque handle returned by Chat and Attachment prepare. No capability, permit, keystore,
 /// single-use, container revalidation, or receipt fence is bypassed.
 Future<CloudSyncOutboundConsumeResult> cloudSyncConsumePreparedMessageCreate({
   required CloudSyncPreparedMessageCreateHandle handle,
@@ -344,6 +364,24 @@ Future<CloudSyncOutboundReconcileResult> cloudSyncReconcileChatCreate({
   required String requestUuid,
   required CloudSyncPreparedMessageCreateInput input,
 }) => RustLib.instance.api.crateApiApiCloudSyncReconcileChatCreate(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  requestUuid: requestUuid,
+  input: input,
+);
+
+/// Reads back the exact saved attachment against its original protected upload
+/// result. NotFound is record absence only, never permission to upload bytes again.
+Future<CloudSyncOutboundReconcileResult> cloudSyncReconcileAttachmentCreate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required String requestUuid,
+  required CloudSyncPreparedMessageCreateInput input,
+}) => RustLib.instance.api.crateApiApiCloudSyncReconcileAttachmentCreate(
   cloudMessagesClient: cloudMessagesClient,
   storageDirectory: storageDirectory,
   expectedAccountFingerprint: expectedAccountFingerprint,

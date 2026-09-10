@@ -33,6 +33,11 @@ const Set<String> _semanticProtectedStreams = {
   'attachments',
 };
 
+/// Attachment-record initial-create payload version (v1), matching the
+/// completed-upload/final-save journal contract. No other version is admitted
+/// on the attachment initial-create path.
+const int _attachmentCreatePayloadVersion = 1;
+
 final RegExp _nativeDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
 final RegExp _contentDigestPattern = RegExp(r'^[0-9a-f]{64}$');
 final RegExp _protectedReferencePattern = RegExp(
@@ -402,6 +407,34 @@ abstract interface class NativeProtectedCloudSyncChatWriteBindings
   });
 }
 
+/// Explicit opt-in: existing Message- and Chat-only bindings do not acquire
+/// Attachment authority.
+///
+/// Covers only the final attachment-record save for an already-completed
+/// protected asset envelope (no blob upload, no retry admission). The native
+/// prepare/reconcile pair takes the same input/result shape as Chat.
+abstract interface class NativeProtectedCloudSyncAttachmentWriteBindings
+    implements NativeProtectedCloudSyncWriteBindings {
+  Future<frb_api.CloudSyncPreparedMessageCreateResult> prepareAttachmentCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required Duration requestTimeout,
+    required List<frb_api.CloudSyncPreparedMessageCreateInput> inputs,
+  });
+
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileAttachmentCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  });
+}
+
 enum _CreatePreflightDisposition { absent, alreadyPresent }
 
 final class _NativeCloudSyncPreparedSubmission
@@ -600,6 +633,15 @@ final class NativeProtectedCloudSyncTransport
     return bindings as NativeProtectedCloudSyncChatWriteBindings;
   }
 
+  NativeProtectedCloudSyncAttachmentWriteBindings
+  _requireAttachmentWriteBindings() {
+    final bindings = _bindings;
+    if (bindings is! NativeProtectedCloudSyncAttachmentWriteBindings) {
+      throw _readOnlyFailure();
+    }
+    return bindings as NativeProtectedCloudSyncAttachmentWriteBindings;
+  }
+
   void _requireV2WriterInterlock() {
     CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);
   }
@@ -726,9 +768,10 @@ final class NativeProtectedCloudSyncTransport
     _requireV2WriterInterlock();
     final payloadVersion = _outboundCreatePayloadVersion(scope);
     final isChat = scope.zone == 'chatManateeZone';
+    final isAttachment = scope.zone == 'attachmentManateeZone';
     if (operations.isEmpty ||
         operations.length > _maximumChangesPerPage ||
-        (isChat && operations.length != 1) ||
+        ((isChat || isAttachment) && operations.length != 1) ||
         operations.any(
           (operation) =>
               operation.action != CloudOutboxAction.save ||
@@ -762,10 +805,14 @@ final class NativeProtectedCloudSyncTransport
     final bindings = _requireWriteBindings();
     final reconcile = isChat
         ? _requireChatWriteBindings().reconcileChatCreate
-        : bindings.reconcileMessageCreate;
+        : isAttachment
+            ? _requireAttachmentWriteBindings().reconcileAttachmentCreate
+            : bindings.reconcileMessageCreate;
     final prepare = isChat
         ? _requireChatWriteBindings().prepareChatCreate
-        : bindings.prepareMessageCreate;
+        : isAttachment
+            ? _requireAttachmentWriteBindings().prepareAttachmentCreate
+            : bindings.prepareMessageCreate;
     final preparation = await _runProtectedStoreOperation(() async {
       final remoteInputs = <frb_api.CloudSyncPreparedMessageCreateInput>[];
       final preconfirmedReceipts = <CloudOutboxCreateReceipt>[];
@@ -851,6 +898,12 @@ final class NativeProtectedCloudSyncTransport
     }
     if (scope.zone == 'chatManateeZone') {
       _requireChatWriteBindings();
+      if (preparedSubmission.operationCount != 1) {
+        throw _localStorage('cloud_sync_outbound_create_only');
+      }
+    }
+    if (scope.zone == 'attachmentManateeZone') {
+      _requireAttachmentWriteBindings();
       if (preparedSubmission.operationCount != 1) {
         throw _localStorage('cloud_sync_outbound_create_only');
       }
@@ -1807,10 +1860,24 @@ final class NativeProtectedCloudSyncTransport
     }
   }
 
+  void _validateOutboundAttachmentScope(CloudSyncScope scope) {
+    if (_validateScopeAndStream(scope) != 'attachments' ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semantic) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.cancelled,
+        safeCode: 'unsupported_protected_outbound_scope',
+      );
+    }
+  }
+
   int _outboundCreatePayloadVersion(CloudSyncScope scope) {
     if (scope.zone == 'chatManateeZone') {
       _validateOutboundChatScope(scope);
       return cloudSyncOutboundChatPayloadVersion;
+    }
+    if (scope.zone == 'attachmentManateeZone') {
+      _validateOutboundAttachmentScope(scope);
+      return _attachmentCreatePayloadVersion;
     }
     // The existing Message-v2 validation remains unchanged.
     _validateOutboundMessageScope(scope);
@@ -1970,6 +2037,10 @@ final class NativeProtectedCloudSyncTransport
       _validateOutboundChatScope(scope);
       _requireChatWriteBindings();
     }
+    if (scope.zone == 'attachmentManateeZone') {
+      _validateOutboundAttachmentScope(scope);
+      _requireAttachmentWriteBindings();
+    }
     final mutationGuard = _writerMutationGuard;
     if (mutationGuard == null) {
       throw CloudSyncFailure(
@@ -2006,6 +2077,19 @@ final class NativeProtectedCloudSyncTransport
     _requireV2WriterInterlock();
     _validateOutboundChatScope(scope);
     _requireChatWriteBindings();
+    return _verifyConfirmedCreateNoSave(scope, operation: operation);
+  }
+
+  /// Attachment-specific no-save readback retains the same proof/receipt
+  /// fences. This path never calls native prepare or consume and cannot
+  /// upload bytes.
+  Future<CloudSyncConfirmedReplayProof> verifyConfirmedAttachmentCreateNoSave(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+  }) {
+    _requireV2WriterInterlock();
+    _validateOutboundAttachmentScope(scope);
+    _requireAttachmentWriteBindings();
     return _verifyConfirmedCreateNoSave(scope, operation: operation);
   }
 
@@ -2121,7 +2205,9 @@ final class NativeProtectedCloudSyncTransport
     final payloadVersion = _outboundCreatePayloadVersion(scope);
     final reconcile = scope.zone == 'chatManateeZone'
         ? _requireChatWriteBindings().reconcileChatCreate
-        : _requireWriteBindings().reconcileMessageCreate;
+        : scope.zone == 'attachmentManateeZone'
+            ? _requireAttachmentWriteBindings().reconcileAttachmentCreate
+            : _requireWriteBindings().reconcileMessageCreate;
     final payloadReference = operation.encryptedPayloadReference;
     final payloadSha256 = operation.payloadSha256;
     final serverRecordIdHash = operation.serverRecordIdHash;
@@ -2257,7 +2343,9 @@ final class FrbNativeProtectedCloudSyncBindings
         NativeProtectedCloudSyncBindings,
         NativeProtectedCloudSyncWriteBindings,
         CloudKitWriterChatReconciliationBinding,
-        NativeProtectedCloudSyncChatWriteBindings {
+        NativeProtectedCloudSyncChatWriteBindings,
+        NativeProtectedCloudSyncAttachmentWriteBindings,
+        CloudKitWriterAttachmentReconciliationBinding {
   FrbNativeProtectedCloudSyncBindings({RustLibApi? api})
     // ignore: invalid_use_of_internal_member
     : _api = api ?? RustLib.instance.api;
@@ -2367,6 +2455,42 @@ final class FrbNativeProtectedCloudSyncBindings
     required String requestUuid,
     required frb_api.CloudSyncPreparedMessageCreateInput input,
   }) => _api.crateApiApiCloudSyncReconcileChatCreate(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    storageDirectory: storageDirectory,
+    expectedAccountFingerprint: expectedAccountFingerprint,
+    expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+    requestUuid: requestUuid,
+    input: input,
+  );
+
+  @override
+  Future<frb_api.CloudSyncPreparedMessageCreateResult> prepareAttachmentCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required Duration requestTimeout,
+    required List<frb_api.CloudSyncPreparedMessageCreateInput> inputs,
+  }) => _api.crateApiApiCloudSyncPrepareAttachmentCreate(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    storageDirectory: storageDirectory,
+    expectedAccountFingerprint: expectedAccountFingerprint,
+    expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+    requestUuid: requestUuid,
+    requestTimeoutSeconds: BigInt.from(requestTimeout.inSeconds),
+    inputs: inputs,
+  );
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileAttachmentCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) => _api.crateApiApiCloudSyncReconcileAttachmentCreate(
     cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
     storageDirectory: storageDirectory,
     expectedAccountFingerprint: expectedAccountFingerprint,

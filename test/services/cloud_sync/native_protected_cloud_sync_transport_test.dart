@@ -1312,6 +1312,234 @@ void main() {
     );
   });
 
+  group('explicit Attachment-v1 writer capability', () {
+    late _AttachmentBindings attachmentBindings;
+    setUp(() {
+      scope = _semanticScope(zone: 'attachmentManateeZone');
+      attachmentBindings = _AttachmentBindings();
+      bindings = attachmentBindings;
+      transport = buildTransport();
+    });
+    void absent() {
+      attachmentBindings.reconcileResult =
+          frb_api.CloudSyncOutboundReconcileResult(
+            disposition:
+                frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+            protectedProofReference: _reference('P'),
+          );
+      attachmentBindings.prepareResult =
+          frb_api.CloudSyncPreparedMessageCreateResult(
+            handle: _FakePreparedHandle(),
+            handleBindingSha256: _preparedHandleBindingSha256,
+          );
+    }
+
+    Future<CloudSyncPreparedSubmission> prepare(
+      CloudOutboxOperation operation,
+    ) => runV2(
+      () => transport.prepareSubmission(
+        scope,
+        submissionIdentity: _submissionIdentity(operation.operationId),
+        operations: [_protectedWriteOperation(operation)],
+      ),
+    );
+    test(
+      'Attachment preparation routes exact original input and UUIDs without Message or Chat fallback',
+      () async {
+        absent();
+        final op = _attachmentOperation(scope);
+        final prepared = await prepare(op);
+        expect(prepared.operationIds, [op.operationId]);
+        expect(attachmentBindings.attachmentReconcileCalls, 1);
+        expect(attachmentBindings.attachmentPrepareCalls, 1);
+        expect(attachmentBindings.prepareCalls, 0);
+        expect(attachmentBindings.reconcileCalls, 0);
+        expect(attachmentBindings.preparedRequestUuid, op.appleRequestUuid);
+        expect(
+          attachmentBindings.preparedInputs.single.localOperationId,
+          op.operationId,
+        );
+        expect(
+          attachmentBindings.preparedInputs.single.appleOperationUuid,
+          op.appleOperationUuid,
+        );
+        expect(
+          attachmentBindings.preparedInputs.single.protectedPayloadReference,
+          _reference('P'),
+        );
+        expect(
+          attachmentBindings.preparedInputs.single.protectedLeaseReference,
+          _lease('a'),
+        );
+      },
+    );
+    test('Message-only bindings cannot prepare Attachment', () async {
+      bindings = _FakeBindings();
+      transport = buildTransport();
+      await expectLater(
+        prepare(_attachmentOperation(scope)),
+        throwsA(isA<CloudSyncFailure>()),
+      );
+      expect(bindings.stageCalls, 0);
+      expect(bindings.prepareCalls, 0);
+      expect(bindings.reconcileCalls, 0);
+    });
+    test(
+      'cross-domain version, zone, identity, and action fail before any lookup',
+      () async {
+        absent();
+        await expectLater(
+          prepare(_writeOperation(scope)),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        final attachment = _attachmentOperation(scope);
+        scope = _semanticScope();
+        await expectLater(prepare(attachment), throwsA(isA<CloudSyncFailure>()));
+        scope = _semanticScope(zone: 'attachmentManateeZone');
+        // A chat-scoped operation stays bound to its chat scope: resubmitting
+        // it under the attachment scope must fail before any native lookup,
+        // even though chat-v1 and attachment-v1 share the version number.
+        final chatScoped = _chatOperation(
+          _semanticScope(zone: 'chatManateeZone'),
+        );
+        await expectLater(
+          prepare(chatScoped),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        scope = _semanticScope(zone: 'chatManateeZone');
+        await expectLater(
+          prepare(_attachmentOperation(scope)),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        scope = _semanticScope(zone: 'attachmentManateeZone');
+        await expectLater(
+          prepare(_attachmentOperation(scope, payloadVersion: 2)),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        await expectLater(
+          prepare(_attachmentOperation(scope, operationIdFor: _hash('M'))),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        await expectLater(
+          prepare(
+            _attachmentOperation(scope, action: CloudOutboxAction.delete),
+          ),
+          // The shared protected-write constructor rejects non-save actions
+          // before the transport is reached; still no native call happens.
+          throwsArgumentError,
+        );
+        expect(attachmentBindings.attachmentReconcileCalls, 0);
+        expect(attachmentBindings.reconcileCalls, 0);
+        expect(attachmentBindings.attachmentPrepareCalls, 0);
+        expect(attachmentBindings.prepareCalls, 0);
+      },
+    );
+    test(
+      'Message-v2 dispatch stays unchanged on Attachment-capable bindings',
+      () async {
+        absent();
+        scope = _semanticScope();
+        final op = _writeOperation(scope);
+        await prepare(op);
+        expect(attachmentBindings.reconcileCalls, 1);
+        expect(attachmentBindings.prepareCalls, 1);
+        expect(attachmentBindings.attachmentReconcileCalls, 0);
+        expect(attachmentBindings.attachmentPrepareCalls, 0);
+      },
+    );
+    test(
+      'existing Attachment readback is a confirmed no-op without native prepare or consume',
+      () async {
+        final op = _attachmentOperation(scope);
+        attachmentBindings.reconcileResult =
+            frb_api.CloudSyncOutboundReconcileResult(
+              disposition:
+                  frb_api.CloudSyncOutboundReconcileDisposition.committed,
+              protectedProofReference: _reference('P'),
+              serverRecordIdHash: _hash('S'),
+              etagHash: _hash('E'),
+            );
+        final prepared = await prepare(op);
+        final result = await runV2(
+          () => transport.consumePreparedSubmission(
+            scope,
+            preparedSubmission: prepared,
+            persistedIdentity: _submissionIdentity(op.operationId),
+            protectedOperations: [_protectedWriteOperation(op)],
+            operations: [op],
+          ),
+        );
+        expect(
+          result.outcomes.values.single.disposition,
+          CloudPushDisposition.confirmed,
+        );
+        expect(attachmentBindings.attachmentReconcileCalls, 1);
+        expect(attachmentBindings.attachmentPrepareCalls, 0);
+        expect(attachmentBindings.consumeCalls, 0);
+        expect(attachmentBindings.reconcileCalls, 0);
+      },
+    );
+    test(
+      'confirmed Attachment proof uses Attachment readback while Message and Chat proofs reject Attachment scope',
+      () async {
+        final op = _attachmentOperation(
+          scope,
+          status: CloudOutboxStatus.confirmed,
+        );
+        attachmentBindings.reconcileResult =
+            frb_api.CloudSyncOutboundReconcileResult(
+              disposition:
+                  frb_api.CloudSyncOutboundReconcileDisposition.committed,
+              protectedProofReference: _reference('P'),
+              serverRecordIdHash: _hash('S'),
+              etagHash: _hash('E'),
+            );
+        await runV2(
+          () => transport.verifyConfirmedAttachmentCreateNoSave(
+            scope,
+            operation: op,
+          ),
+        );
+        await expectLater(
+          runV2(
+            () => transport.verifyConfirmedMessageCreateNoSave(
+              scope,
+              operation: op,
+            ),
+          ),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        await expectLater(
+          runV2(
+            () => transport.verifyConfirmedChatCreateNoSave(
+              scope,
+              operation: op,
+            ),
+          ),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        expect(attachmentBindings.attachmentReconcileCalls, 1);
+        expect(attachmentBindings.reconcileCalls, 0);
+        expect(attachmentBindings.consumeCalls, 0);
+      },
+    );
+    test(
+      'Attachment unknown-outcome reconciliation requires Attachment bindings',
+      () async {
+        final op = _attachmentOperation(scope);
+        bindings = _FakeBindings();
+        transport = buildTransport();
+        await expectLater(
+          runV2(() => transport.reconcileUnknownOutcome(scope, operation: op)),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+        expect(bindings.reconcileCalls, 0);
+        expect(bindings.prepareCalls, 0);
+        expect(bindings.consumeCalls, 0);
+      },
+    );
+  });
+
   test('protected writer forwards one exact prepared create binding', () async {
     final operation = _writeOperation(scope);
     final protectedOperation = _protectedWriteOperation(operation);
@@ -3555,6 +3783,83 @@ final class _ChatBindings extends _FakeBindings
     required frb_api.CloudSyncPreparedMessageCreateInput input,
   }) async {
     chatReconcileCalls++;
+    reconcileCloudMessagesClient = cloudMessagesClient;
+    reconcileStorageDirectory = storageDirectory;
+    reconcileExpectedAccountFingerprint = expectedAccountFingerprint;
+    reconcileExpectedProtectedStoreIdentity = expectedProtectedStoreIdentity;
+    reconcileRequestUuid = requestUuid;
+    reconcileInput = input;
+    return reconcileResult;
+  }
+}
+
+/// Attachment-v1 operation helper. The operation id always comes from the
+/// real [CloudOperationIdentity.forInitialCreate] generator at attachment
+/// payload version 1 (never a hand-made hex string); mismatched-identity
+/// cases bind the id to a different logical key via [operationIdFor].
+CloudOutboxOperation _attachmentOperation(
+  CloudSyncScope scope, {
+  String? logical,
+  CloudOutboxStatus status = CloudOutboxStatus.unknownOutcome,
+  CloudOutboxAction action = CloudOutboxAction.save,
+  int payloadVersion = 1,
+  String? operationIdFor,
+}) {
+  final key = logical ?? _hash('L');
+  return CloudOutboxOperation(
+    scope: scope,
+    operationId: CloudOperationIdentity.forInitialCreate(
+      scope: scope,
+      logicalEntityKeyHash: operationIdFor ?? key,
+      payloadVersion: payloadVersion,
+    ),
+    logicalEntityKeyHash: key,
+    action: action,
+    payloadVersion: payloadVersion,
+    mutationRevision: 1,
+    checkpointGeneration: 1,
+    encryptedPayloadReference: _reference('P'),
+    payloadSha256: _sha('b'),
+    serverRecordIdHash: _hash('S'),
+    protectedLeaseReference: _lease('a'),
+    appleRequestUuid: '11111111-2222-4ABC-8DEF-555555555555',
+    appleOperationUuid: 'AAAAAAAA-BBBB-4CCC-8DDD-000000000001',
+    dependencyOperationIds: const {},
+    createdAt: DateTime.utc(2026, 9, 5),
+    status: status,
+    attemptCount: 1,
+  );
+}
+
+final class _AttachmentBindings extends _FakeBindings
+    implements NativeProtectedCloudSyncAttachmentWriteBindings {
+  int attachmentPrepareCalls = 0, attachmentReconcileCalls = 0;
+  @override
+  Future<frb_api.CloudSyncPreparedMessageCreateResult> prepareAttachmentCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required Duration requestTimeout,
+    required List<frb_api.CloudSyncPreparedMessageCreateInput> inputs,
+  }) async {
+    attachmentPrepareCalls++;
+    preparedRequestUuid = requestUuid;
+    preparedInputs = [...inputs];
+    return prepareResult;
+  }
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileAttachmentCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) async {
+    attachmentReconcileCalls++;
     reconcileCloudMessagesClient = cloudMessagesClient;
     reconcileStorageDirectory = storageDirectory;
     reconcileExpectedAccountFingerprint = expectedAccountFingerprint;

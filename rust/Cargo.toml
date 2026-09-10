@@ -36,6 +36,7 @@ rasn = "0.16.0"
 openssl = { version = "0.10.56", features = ["vendored"] }
 aes-gcm = "0.10.3"
 thiserror = "1.0.47"
+tempfile = "3"
 
 [target.'cfg(any(target_os = "android", target_os = "linux"))'.dependencies]
 libc = "=0.2.175"
@@ -49,9 +50,6 @@ windows-sys = { version = "=0.59.0", features = [
     "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
 ] }
-
-[dev-dependencies]
-tempfile = "3"
 
 [build-dependencies]
 uniffi = { git = "https://github.com/mozilla/uniffi-rs", features = [ "build" ] }

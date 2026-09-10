@@ -542,6 +542,16 @@ fn cloud_sync_restore_attachment_source_bound(
     context: &CloudSyncNativeSendReceiptContext,
     auth: &CloudSyncNativeAuthMetadata,
 ) -> anyhow::Result<MessageInst> {
+    let envelope = cloud_sync_open_attachment_source_bound(context, auth)?;
+    crate::cloud_sync_ids_attachment_source::restore_ids_attachment_message(&envelope)
+        .map_err(|_| anyhow!("cloud_sync_native_attachment_source_invalid"))
+}
+
+#[frb(ignore)]
+fn cloud_sync_open_attachment_source_bound(
+    context: &CloudSyncNativeSendReceiptContext,
+    auth: &CloudSyncNativeAuthMetadata,
+) -> anyhow::Result<Vec<u8>> {
     cloud_sync_require_source_context_auth(context, auth)?;
     let binding = context.source_binding.as_ref()
         .ok_or_else(|| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
@@ -566,7 +576,7 @@ fn cloud_sync_restore_attachment_source_bound(
     if cloud_sync_local_send_guid_hash(&message.id) != context.guid_hash {
         return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
     }
-    Ok(message)
+    Ok(envelope)
 }
 
 /// Stages the provided native IDS attachment value without sending anything or
@@ -599,6 +609,176 @@ pub async fn cloud_sync_stage_ids_attachment_source(
         payload_sha256: staged.payload_sha256,
         payload_length: staged.payload_length,
     })
+}
+
+/// Protected byte-upload preparation only. This is not an uploaded asset,
+/// final-record envelope, IDS confirmation, or permission to send anything.
+#[derive(Debug)]
+pub struct CloudSyncAttachmentUploadPlanResult {
+    pub stage: CloudSyncProtectedOutboundStage,
+    pub upload_attempt_id: String,
+}
+
+/// Stage one original upload plan from the exact retained IDS source. The
+/// caller holds the V2 writer interlock and protected-store exclusion, proves
+/// the local intent has a positive IDS receipt, then adopts/commits this plan
+/// before any upload. Recovery opens that plan rather than calling this again.
+/// File keys, original record name and plaintext never cross back into Dart.
+pub async fn cloud_sync_stage_attachment_upload_plan(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncNativeSendReceiptContext,
+    original_attachment_guid: String,
+    source_path: String,
+    start_date_ns: i64,
+    created_date_ns: i64,
+) -> anyhow::Result<CloudSyncAttachmentUploadPlanResult> {
+    let auth = cloud_sync_capture_auth_snapshot(
+        cloud_messages_client, context.storage_directory.clone(),
+    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let encoded = cloud_sync_open_attachment_source_bound(&context, &auth)?;
+    let decoded = crate::cloud_sync_ids_attachment_source::decode_ids_attachment_source(&encoded)
+        .map_err(|_| anyhow!("cloud_sync_native_attachment_source_invalid"))?;
+    let source_binding = context.source_binding.as_ref()
+        .ok_or_else(|| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
+    let writer_binding = cloud_messages_client
+        .warm_attachment_writer_preparation_lookup_only().await
+        .map_err(|_| anyhow!("cloud_sync_attachment_preparation_auth_unavailable"))?;
+    let after_warm = cloud_sync_capture_auth_snapshot(
+        cloud_messages_client, context.storage_directory.clone(),
+    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    cloud_sync_require_source_context_auth(&context, &after_warm)?;
+    cloud_messages_client.validate_writer_preparation_binding(&writer_binding).await
+        .map_err(|_| anyhow!("cloud_sync_attachment_preparation_binding_changed"))?;
+
+    // Recreate the native private-zone shape using the exact warmed container's
+    // owner, not a Dart-supplied owner or a different read-auth container.
+    let record_identifier = cloud_sync_attachment_upload_record_identifier(
+        writer_binding.container_scoped_user_id(),
+        &Uuid::new_v4().to_string().to_uppercase(),
+    )?;
+    let path = PathBuf::from(source_path);
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|_| anyhow!("cloud_sync_attachment_source_unavailable"))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(anyhow!("cloud_sync_attachment_source_unavailable"));
+    }
+    let mut source = File::open(path)
+        .map_err(|_| anyhow!("cloud_sync_attachment_source_unavailable"))?;
+    if !source.metadata().is_ok_and(|value| value.is_file()) {
+        return Err(anyhow!("cloud_sync_attachment_source_unavailable"));
+    }
+    let plan = crate::cloud_sync_attachment_upload::prepare_verified_ids_upload_plan(
+        cloud_messages_client, &decoded, source_binding.source_sha256.clone(),
+        &original_attachment_guid,
+        &crate::cloud_sync_ids_attachment_source::NativeAttachmentMetaTimes {
+            start_date_ns, created_date_ns,
+        },
+        record_identifier, &mut source, std::path::Path::new(&context.storage_directory),
+    ).await.map_err(|error| anyhow!("{error}"))?;
+    let after_prepare = cloud_sync_capture_auth_snapshot(
+        cloud_messages_client, context.storage_directory.clone(),
+    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    cloud_sync_require_source_context_auth(&context, &after_prepare)?;
+    cloud_messages_client.validate_writer_preparation_binding(&writer_binding).await
+        .map_err(|_| anyhow!("cloud_sync_attachment_preparation_binding_changed"))?;
+    let upload_attempt_id = plan.upload_attempt_id()
+        .map_err(|_| anyhow!("cloud_sync_attachment_preparation_invalid"))?.to_owned();
+    let stage = crate::cloud_sync_attachment_upload::stage_attachment_upload(
+        PathBuf::from(context.storage_directory), context.account_fingerprint, &plan,
+    ).map_err(|_| anyhow!("cloud_sync_attachment_preparation_stage_failed"))?;
+    Ok(CloudSyncAttachmentUploadPlanResult {
+        stage: CloudSyncProtectedOutboundStage {
+            logical_entity_key_hash: stage.logical_entity_key_hash,
+            protected_payload_reference: stage.protected_payload_reference,
+            payload_sha256: stage.payload_sha256,
+            payload_length: stage.payload_length,
+            protected_server_record_reference: stage.protected_server_record_reference,
+            server_record_id_hash: stage.server_record_id_hash,
+            lease_reference: stage.lease_reference,
+        },
+        upload_attempt_id,
+    })
+}
+
+#[frb(ignore)]
+fn cloud_sync_attachment_upload_record_identifier(
+    container_user_id: &str,
+    record_name: &str,
+) -> anyhow::Result<rustpush::cloudkit_proto::RecordIdentifier> {
+    use rustpush::cloudkit_proto::{identifier::Type, Identifier, RecordZoneIdentifier};
+    if container_user_id.is_empty() || container_user_id.len() > 4096
+        || container_user_id.chars().any(char::is_control)
+        || !Uuid::parse_str(record_name).is_ok_and(|id|
+            id.get_version() == Some(uuid::Version::Random)
+                && id.to_string().to_uppercase() == record_name)
+    {
+        return Err(anyhow!("cloud_sync_attachment_preparation_binding_invalid"));
+    }
+    Ok(rustpush::cloudkit::record_identifier(RecordZoneIdentifier {
+        value: Some(Identifier {
+            name: Some("attachmentManateeZone".to_owned()),
+            r#type: Some(Type::RecordZone as i32),
+        }),
+        owner_identifier: Some(Identifier {
+            name: Some(container_user_id.to_owned()),
+            r#type: Some(Type::User as i32),
+        }),
+        environment: None,
+    }, record_name))
+}
+
+#[cfg(test)]
+mod cloud_sync_attachment_upload_staging_tests {
+    use super::*;
+
+    const RECORD: &str = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE";
+
+    #[test]
+    fn upload_record_uses_exact_warmed_owner_and_attachment_zone() {
+        use rustpush::cloudkit_proto::identifier::Type;
+        let first = cloud_sync_attachment_upload_record_identifier("fixture-owner", RECORD).unwrap();
+        let zone = first.zone_identifier.as_ref().unwrap();
+        assert_eq!(first.value.as_ref().unwrap().name.as_deref(), Some(RECORD));
+        assert_eq!(first.value.as_ref().unwrap().r#type, Some(Type::Record as i32));
+        assert_eq!(zone.value.as_ref().unwrap().name.as_deref(), Some("attachmentManateeZone"));
+        assert_eq!(zone.value.as_ref().unwrap().r#type, Some(Type::RecordZone as i32));
+        assert_eq!(zone.owner_identifier.as_ref().unwrap().name.as_deref(), Some("fixture-owner"));
+        assert_eq!(zone.owner_identifier.as_ref().unwrap().r#type, Some(Type::User as i32));
+        assert!(zone.environment.is_none());
+        let other = cloud_sync_attachment_upload_record_identifier("other-owner", RECORD).unwrap();
+        assert_ne!(first, other);
+    }
+
+    #[test]
+    fn upload_record_rejects_missing_owner_and_nonallocated_names() {
+        for owner in ["".to_owned(), "x".repeat(4097), "owner\n".to_owned()] {
+            assert!(cloud_sync_attachment_upload_record_identifier(&owner, RECORD).is_err());
+        }
+        for name in ["".to_owned(), RECORD.to_lowercase(), "x".repeat(64),
+            "AAAAAAAA-BBBB-1CCC-8DDD-EEEEEEEEEEEE".to_owned()] {
+            assert!(cloud_sync_attachment_upload_record_identifier("fixture-owner", &name).is_err());
+        }
+    }
+
+    #[test]
+    fn source_open_rejects_auth_change_before_touching_storage() {
+        let context = CloudSyncNativeSendReceiptContext {
+            storage_directory: "must-not-open-this-directory".to_owned(),
+            guid_hash: "a".repeat(64),
+            account_fingerprint: "A".repeat(43),
+            protected_store_identity: "S".repeat(43),
+            native_session_id: "N".repeat(43),
+            source_binding: None,
+        };
+        for auth in [
+            CloudSyncNativeAuthMetadata { account_fingerprint: "B".repeat(43), protected_store_identity: "S".repeat(43), native_session_id: "N".repeat(43) },
+            CloudSyncNativeAuthMetadata { account_fingerprint: "A".repeat(43), protected_store_identity: "T".repeat(43), native_session_id: "N".repeat(43) },
+            CloudSyncNativeAuthMetadata { account_fingerprint: "A".repeat(43), protected_store_identity: "S".repeat(43), native_session_id: "M".repeat(43) },
+        ] {
+            let err = cloud_sync_open_attachment_source_bound(&context, &auth).unwrap_err();
+            assert_eq!(err.to_string(), "cloud_sync_native_send_receipt_context_invalid");
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

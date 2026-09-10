@@ -200,6 +200,7 @@ mod cloud_sync_outbound;
 mod cloud_sync_outbound_chat;
 mod cloud_sync_outbound_attachment;
 mod cloud_sync_ids_attachment_source;
+mod cloud_sync_attachment_source_file;
 mod cloud_sync_attachment_upload;
 mod cloud_sync_protector;
 mod cloud_sync_semantic_decoder;

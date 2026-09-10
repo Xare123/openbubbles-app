@@ -371,61 +371,33 @@ pub(crate) fn restore_ids_attachment_message(encoded: &[u8]) -> Result<MessageIn
     }
     Ok(msg)
 }
-/// Caller-supplied canonical local GUID for one attachment slot.
-///
-/// The source pins the PRE-send local GUID list, but the backend can reflect the
-/// attachment back under its canonical owned identity (<message guid>_<part>;
-/// Apple form at_<part>_<message guid>) via replaceAttachment from Apple-side
-/// strings (see convertAppleAttachmentGuid and applyFromCloud). No native code
-/// was found that builds the owned form from message guid + part number, so the
-/// {message_guid}_{part} acceptance arm below checks shape, not provenance.
-/// The caller must validate the mapping against the actual prepared/reflected
-/// parent body. meta.guid is never a blind conversion of the pre-send slot.
-pub(crate) struct NativeAttachmentGuidMapping {
-    pub canonical_local_guid: String,
-}
-/// File-metadata times carried into AttachmentMeta.
-///
-/// start_date/created_date are nanoseconds since the Apple epoch describing the
-/// attachment file. The source pins no such timestamps: sent_timestamp is the
-/// MessageInst send clock (Unix-epoch millis, rewritten by prepare_send), a
-/// different clock and epoch, and legacy getAttachmentMeta stamps both times from
-/// DateTime.now() at metadata-build time. The caller supplies these times and the
-/// plan persists them; the helper passes them through unchecked because any i64
-/// is legal here (dates may be negative, epoch 0 included).
+/// Fixed metadata-build times, in nanoseconds since the Apple epoch.
+/// Legacy getAttachmentMeta stamps these from DateTime.now(); the retained
+/// source contains only the separate Unix-millisecond send time. The caller
+/// supplies these values for persistence in the plan. Zero/negative are legal.
 pub(crate) struct NativeAttachmentMetaTimes {
     pub start_date_ns: i64,
     pub created_date_ns: i64,
 }
-/// Exact upload material for one attachment selected from a decoded source.
-///
-/// meta is the CloudKit AttachmentMeta for the parent's AttachmentUploadPlan;
-/// file/attachment carry the exact original MMCS descriptor bytes (key,
-/// signature, object, URL) and file metadata. This carries NO file bytes: the
-/// parent must still bind the verified file source (hash the actual bytes at
-/// plan-preparation time).
+/// Original descriptor and metadata; file bytes still require verification.
 pub(crate) struct DecodedAttachmentUploadMaterial {
     pub meta: rustpush::cloud_messages::AttachmentMeta,
     pub file: rustpush::MMCSFile,
     pub attachment: rustpush::Attachment,
 }
-/// Select ONE exact attachment by original GUID and build its upload material.
-///
-/// The GUID must appear exactly once in decoded.attachment_guids and exactly
-/// once among the decoded attachment parts, at the same slot index; anything
-/// else is rejected. Only decoded-source state is consulted: no chat/composer
-/// state, no network, no filesystem, no clock. user_info reuses the native
-/// &Attachment conversion, so MMCS bytes are never re-encoded by hand. filename
-/// and md5 stay None (no verified path or file bytes exist in the source).
-/// Sizes are capped at u32::MAX for the upload plan.
+/// Select by the original GUID and project the initial reflected body's GUID.
+/// Only retained source and fixed metadata times are used. filename and md5
+/// remain None because the source contains neither a verified path nor bytes.
 pub(crate) fn decoded_attachment_upload_material(
     decoded: &DecodedIdsAttachmentSource,
     attachment_guid: &str,
-    mapping: &NativeAttachmentGuidMapping,
     times: &NativeAttachmentMetaTimes,
 ) -> Result<DecodedAttachmentUploadMaterial, Failure> {
     validate_identifier(attachment_guid)?;
-    validate_identifier(&mapping.canonical_local_guid)?;
+    validate_identifier(&decoded.message_guid)?;
+    if decoded.parts.len() > MAX_PARTS || decoded.attachment_guids.len() > MAX_ATTACHMENTS {
+        return Err(Failure::OversizedMessage);
+    }
     if decoded.attachment_guids.is_empty()
         || decoded
             .attachment_guids
@@ -436,46 +408,22 @@ pub(crate) fn decoded_attachment_upload_material(
     {
         return Err(Failure::MalformedMessage);
     }
-    let ordered: Vec<&DecodedAttachment> = decoded.attachments();
-    if ordered.len() != decoded.attachment_guids.len() {
-        return Err(Failure::BindingMismatch);
-    }
-    let list_positions: Vec<usize> = decoded
-        .attachment_guids
-        .iter()
-        .enumerate()
-        .filter(|(_, guid)| guid.as_str() == attachment_guid)
-        .map(|(index, _)| index)
-        .collect();
-    let part_positions: Vec<usize> = ordered
-        .iter()
-        .enumerate()
-        .filter(|(_, part)| part.guid == attachment_guid)
-        .map(|(index, _)| index)
-        .collect();
-    if list_positions.len() != 1
-        || part_positions.len() != 1
-        || list_positions[0] != part_positions[0]
+    let ordered = decoded.attachments();
+    if ordered.len() != decoded.attachment_guids.len()
+        || ordered
+            .iter()
+            .zip(&decoded.attachment_guids)
+            .any(|(part, guid)| part.guid != *guid)
     {
         return Err(Failure::BindingMismatch);
     }
-    let selected = ordered[part_positions[0]];
+    let selected = ordered
+        .iter()
+        .find(|part| part.guid == attachment_guid)
+        .ok_or(Failure::BindingMismatch)?;
     validate_selected_attachment(selected)?;
-    // The canonical mapping must be the pinned GUID itself (no rename) or the
-    // owned form derived from pinned fields; otherwise it names a different
-    // body and is rejected rather than adopted.
-    let expected_owned = format!("{}_{}", decoded.message_guid, selected.part);
-    if mapping.canonical_local_guid != selected.guid
-        && mapping.canonical_local_guid != expected_owned
-    {
-        return Err(Failure::BindingMismatch);
-    }
-    let meta_guid = unconvert_attachment_guid(&mapping.canonical_local_guid);
-    if meta_guid.len() > MAX_ID_BYTES {
-        return Err(Failure::MalformedMessage);
-    }
-    // u32 guard first: the native conversion below narrows size with `as u32`,
-    // so an oversized descriptor must be rejected before it can truncate.
+    let meta_guid = initial_reflected_attachment_guid(decoded, attachment_guid)?;
+    // The native MMCS metadata conversion narrows size with `as u32`.
     u32::try_from(selected.size).map_err(|_| Failure::OversizedMessage)?;
     let total_bytes = i64::try_from(selected.size).map_err(|_| Failure::OversizedMessage)?;
     let file = rustpush::MMCSFile {
@@ -493,9 +441,6 @@ pub(crate) fn decoded_attachment_upload_material(
         name: selected.name.clone(),
         iris: selected.iris,
     };
-    // Reuse the native &Attachment conversion
-    // (rustpush/src/imessage/cloud_messages.rs) instead of re-encoding MMCS
-    // bytes by hand.
     let user_info: Option<rustpush::cloud_messages::MMCSAttachmentMeta> = (&attachment).into();
     let user_info = user_info.ok_or(Failure::MalformedMessage)?;
     let meta = rustpush::cloud_messages::AttachmentMeta {
@@ -525,41 +470,61 @@ pub(crate) fn decoded_attachment_upload_material(
         attachment,
     })
 }
-/// Mirror of Dart unconvertAppleAttachmentGuid
-/// (lib/utils/attachment_guid_utils.dart): <message guid>_<part> becomes
-/// at_<part>_<message guid>; anything without a trailing canonical-decimal
-/// segment (empty, leading zeros, with 0 allowed) is returned unchanged.
-fn unconvert_attachment_guid(guid: &str) -> String {
-    match guid.rfind('_') {
-        None => guid.to_owned(),
-        Some(separator) => {
-            if separator == 0 || separator + 1 >= guid.len() {
-                return guid.to_owned();
+/// Mirrors rustpush_service.dart::indexedPartsToAttributedBodyDyn with
+/// existingBody=null, as called by reflectMessageDyn. Track run messagePart
+/// separately: attachments use body.length there, but their GUID uses fieldIdx.
+fn initial_reflected_attachment_guid(
+    decoded: &DecodedIdsAttachmentSource,
+    attachment_guid: &str,
+) -> Result<String, Failure> {
+    // (run.messagePart, original attachment GUID); text has no attachment GUID.
+    let mut body: Vec<(u64, Option<&str>)> = Vec::new();
+    let mut added_indices = HashSet::new();
+    let mut owned_indices = HashSet::new();
+    let mut selected_index = None;
+    for part in &decoded.parts {
+        let idx = match part {
+            DecodedPart::Text { idx, .. } => *idx,
+            DecodedPart::Attachment(a) => a.idx,
+        };
+        let field_idx =
+            idx.unwrap_or_else(|| body.iter().filter(|(_, guid)| guid.is_some()).count() as u64);
+        // Dart removes matching runs on first use of an index, even for a
+        // skipped attachment. Count before removal, just as reflection does.
+        if added_indices.insert(field_idx) {
+            body.retain(|(message_part, _)| *message_part != field_idx);
+        }
+        match part {
+            DecodedPart::Text { .. } => body.push((field_idx, None)),
+            DecodedPart::Attachment(a) => {
+                if a.iris || a.mime == "application/smil" {
+                    continue;
+                }
+                if !owned_indices.insert(field_idx) {
+                    return Err(Failure::BindingMismatch);
+                }
+                if a.guid == attachment_guid {
+                    selected_index = Some(field_idx);
+                }
+                body.push((body.len() as u64, Some(a.guid.as_str())));
             }
-            let part = &guid[separator + 1..];
-            if !is_canonical_decimal(part) {
-                return guid.to_owned();
-            }
-            format!("at_{part}_{}", &guid[..separator])
         }
     }
-}
-fn is_canonical_decimal(value: &str) -> bool {
-    if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
-        return false;
+    // A skipped attachment, or a run removed later, has no final body reference.
+    if !body.iter().any(|(_, guid)| *guid == Some(attachment_guid)) {
+        return Err(Failure::UnsupportedMessage);
     }
-    value == "0" || !value.starts_with('0')
+    let field_idx = selected_index.ok_or(Failure::UnsupportedMessage)?;
+    // getAttachmentMeta unconvertAppleAttachmentGuid maps msgId_fieldIdx to this.
+    let guid = format!("at_{field_idx}_{}", decoded.message_guid);
+    validate_identifier(&guid)?;
+    Ok(guid)
 }
-/// Recheck every carried field against the same bounds the capture path enforces
-/// (attachment_dto/validate_attachment_dto); the upload material must never
-/// launder a descriptor the capture path would reject.
+/// Apply the capture path's descriptor bounds again before metadata conversion.
 fn validate_selected_attachment(selected: &DecodedAttachment) -> Result<(), Failure> {
     validate_identifier(&selected.guid)?;
     validate_meta_string(&selected.uti_type)?;
     validate_meta_string(&selected.mime)?;
-    if selected.name.is_empty() {
-        return Err(Failure::MalformedMessage);
-    }
     validate_meta_string(&selected.name)?;
     if selected.key.len() != 32 || selected.signature.len() != 21 {
         return Err(Failure::MalformedMessage);
@@ -2134,233 +2099,349 @@ mod tests {
             created_date_ns: 769_000_001_000_000_000,
         }
     }
-    fn pinned_mapping(guid: &str) -> NativeAttachmentGuidMapping {
-        NativeAttachmentGuidMapping {
-            canonical_local_guid: guid.to_owned(),
-        }
-    }
-    #[test]
-    fn upload_material_selects_exact_attachment_by_guid() {
-        let (msg, guids) = fixture_two();
-        let encoded = encode_ids_attachment_source(&msg, &guids).unwrap();
-        let mut decoded = decode_ids_attachment_source(&encoded).unwrap();
-        // Same filename on both slots: the GUID alone must disambiguate.
-        for part in &mut decoded.parts {
-            if let DecodedPart::Attachment(a) = part {
+    fn upload_fixture(parts: Vec<IndexedMessagePart>) -> (MessageInst, Vec<String>) {
+        let (mut msg, _) = fixture();
+        msg.id = "DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD".to_owned();
+        let mut parts = parts;
+        let mut guids = Vec::new();
+        for part in &mut parts {
+            if let MessagePart::Attachment(a) = &mut part.part {
                 a.name = "shared-name.jpg".to_owned();
-                a.signature[0] = 0x81;
+                if let AttachmentType::MMCS(file) = &mut a.a_type {
+                    file.signature[0] = 0x81;
+                }
+                guids.push(format!("AAAAAAAA-AAAA-4AAA-8AAA-{:012}", guids.len() + 1));
             }
         }
-        let times = upload_times();
-        let material = decoded_attachment_upload_material(
-            &decoded,
-            &guids[1],
-            &pinned_mapping(&guids[1]),
-            &times,
-        )
-        .unwrap();
-        assert_eq!(material.meta.guid, guids[1]);
-        assert_eq!(material.meta.total_bytes, 1033);
-        assert_eq!(material.meta.mime_type.as_deref(), Some("image/jpeg"));
-        assert_eq!(material.meta.uti.as_deref(), Some("public.jpeg"));
-        assert_eq!(
-            material.meta.transfer_name.as_deref(),
-            Some("shared-name.jpg")
-        );
-        assert_eq!(material.meta.pathc.as_deref(), Some("shared-name.jpg"));
-        assert_eq!(material.meta.version, 1);
-        assert!(material.meta.is_outgoing);
-        assert_eq!(material.meta.transfer_state, 5);
-        assert!(!material.meta.is_sticker);
-        assert!(!material.meta.hide_attachment);
-        assert_eq!(material.meta.start_date, times.start_date_ns);
-        assert_eq!(material.meta.created_date, times.created_date_ns);
-        // No invented path or digest: the parent supplies both from verified file state.
-        assert!(material.meta.filename.is_none());
-        assert!(material.meta.md5.is_none());
-        let user_info = material.meta.user_info.as_ref().unwrap();
-        assert_eq!(user_info.mmcs_owner.as_deref(), Some("object-9"));
-        assert_eq!(
-            user_info.mmcs_url.as_deref(),
-            Some("https://example.invalid/mmcs/object-9")
-        );
-        assert_eq!(
-            user_info.decryption_key.as_deref(),
-            Some("0a".repeat(32).as_str())
-        );
-        assert_eq!(
-            user_info.mmcs_signature_hex.as_deref(),
-            Some(format!("81{}", "09".repeat(20)).as_str())
-        );
-        assert!(matches!(
-            user_info.file_size,
-            Some(rustpush::cloud_messages::NumOrString::Num(1033))
-        ));
-        assert_eq!(user_info.name.as_deref(), Some("shared-name.jpg"));
-        assert_eq!(material.file.size, 1033);
-        assert_eq!(material.file.key, vec![10u8; 32]);
-        let mut expected_sig = vec![9u8; 21];
-        expected_sig[0] = 0x81;
-        assert_eq!(material.file.signature, expected_sig);
-        assert_eq!(material.file.object, "object-9");
-        assert_eq!(material.attachment.part, 1);
-        assert_eq!(material.attachment.name, "shared-name.jpg");
-        assert!(!material.attachment.iris);
-        // The other slot still resolves to its own bytes.
-        let first = decoded_attachment_upload_material(
-            &decoded,
-            &guids[0],
-            &pinned_mapping(&guids[0]),
-            &times,
-        )
-        .unwrap();
-        let mut expected_first_sig = vec![7u8; 21];
-        expected_first_sig[0] = 0x81;
-        assert_eq!(first.file.signature, expected_first_sig);
-        assert_eq!(first.meta.total_bytes, 1031);
+        msg.message = Message::Message(normal(parts));
+        (msg, guids)
+    }
+    fn decode_upload_fixture(msg: &MessageInst, guids: &[String]) -> DecodedIdsAttachmentSource {
+        decode_ids_attachment_source(&encode_ids_attachment_source(msg, guids).unwrap()).unwrap()
     }
     #[test]
-    fn upload_material_rejects_wrong_duplicate_and_drifted_guids() {
-        let (msg, guids) = fixture_two();
+    fn upload_material_uses_explicit_index_and_preserves_exact_descriptors() {
+        // Original fixture counterexample: explicit idx 1 wins over MMCS part 0.
+        let (msg, guids) = fixture();
+        let decoded = decode_upload_fixture(&msg, &guids);
+        let times = upload_times();
+        let material = decoded_attachment_upload_material(&decoded, &guids[0], &times).unwrap();
+        assert_eq!(material.meta.guid, "at_1_MSG-GUID-0001");
+        assert_eq!(material.attachment.part, 0);
+
+        let (msg, guids) = upload_fixture(vec![
+            text_part("two"),
+            attachment_part(7, 0, Some(1)),
+            attachment_part(9, 1, Some(2)),
+        ]);
         let encoded = encode_ids_attachment_source(&msg, &guids).unwrap();
         let decoded = decode_ids_attachment_source(&encoded).unwrap();
-        let times = upload_times();
-        // Wrong GUID: nothing in the source bears it.
-        assert!(matches!(
-            decoded_attachment_upload_material(
+        for (slot, field_idx) in [1, 2].into_iter().enumerate() {
+            let material =
+                decoded_attachment_upload_material(&decoded, &guids[slot], &times).unwrap();
+            assert_eq!(material.meta.guid, format!("at_{field_idx}_{}", msg.id));
+            assert_ne!(material.meta.guid, guids[slot]);
+            let pin = decoded.attachments()[slot];
+            assert_eq!(material.file.size as u64, pin.size);
+            assert_eq!(material.file.key, pin.key);
+            assert_eq!(material.file.signature, pin.signature);
+            assert_eq!(material.file.signature[0], 0x81);
+            assert_eq!(material.file.object, pin.object);
+            assert_eq!(material.file.url, pin.url);
+            assert_eq!(material.meta.total_bytes as u64, pin.size);
+            assert_eq!(
+                material.meta.transfer_name.as_deref(),
+                Some(pin.name.as_str())
+            );
+            assert_eq!(material.meta.pathc.as_deref(), Some(pin.name.as_str()));
+            assert_eq!(material.meta.mime_type.as_deref(), Some(pin.mime.as_str()));
+            assert_eq!(material.meta.uti.as_deref(), Some(pin.uti_type.as_str()));
+            assert_eq!(material.meta.start_date, times.start_date_ns);
+            assert_eq!(material.meta.created_date, times.created_date_ns);
+            assert_eq!(material.meta.version, 1);
+            assert_eq!(material.meta.transfer_state, 5);
+            assert!(material.meta.is_outgoing);
+            assert!(!material.meta.is_sticker);
+            assert!(!material.meta.hide_attachment);
+            assert!(material.meta.filename.is_none());
+            assert!(material.meta.md5.is_none());
+            assert!(matches!(
+                material
+                    .meta
+                    .extras
+                    .as_ref()
+                    .unwrap()
+                    .preview_generation_state,
+                Some(rustpush::cloud_messages::NumOrString::Num(1))
+            ));
+            let info = material.meta.user_info.as_ref().unwrap();
+            assert!(info.inline_attachment.is_none());
+            assert!(info.message_part.is_none());
+            assert_eq!(info.name.as_deref(), Some(pin.name.as_str()));
+            assert_eq!(info.uti_type.as_deref(), Some(pin.uti_type.as_str()));
+            assert_eq!(info.mime_type.as_deref(), Some(pin.mime.as_str()));
+            assert_eq!(info.mmcs_owner.as_deref(), Some(pin.object.as_str()));
+            assert_eq!(info.mmcs_url.as_deref(), Some(pin.url.as_str()));
+            assert!(
+                matches!(&info.file_size, Some(rustpush::cloud_messages::NumOrString::Num(n)) if u64::from(*n) == pin.size)
+            );
+            let tag = [7u8, 9][slot];
+            assert_eq!(
+                info.mmcs_signature_hex.as_deref(),
+                Some(format!("81{}", format!("{tag:02x}").repeat(20)).as_str())
+            );
+            assert_eq!(
+                info.decryption_key.as_deref(),
+                Some(format!("{:02x}", tag + 1).repeat(32).as_str())
+            );
+            // Compare the entire Attachment, including MMCS part, iris, and metadata.
+            let Message::Message(normal) = &msg.message else {
+                panic!("expected message")
+            };
+            let MessagePart::Attachment(original) = &normal.parts.0[slot + 1].part else {
+                panic!("expected attachment")
+            };
+            let mut expected = Vec::new();
+            let mut actual = Vec::new();
+            plist::to_writer_binary(&mut expected, original).unwrap();
+            plist::to_writer_binary(&mut actual, &material.attachment).unwrap();
+            assert_eq!(actual, expected);
+        }
+        // Metadata construction neither mutates capture nor changes restore semantics.
+        let (restored, restored_guids) = message_inst_from_decoded_source(&decoded).unwrap();
+        assert_eq!(
+            encode_ids_attachment_source(&restored, &restored_guids).unwrap(),
+            encoded
+        );
+    }
+    #[test]
+    fn upload_material_default_index_counts_rendered_attachments_not_text_or_mmcs_part() {
+        let (msg, guids) = upload_fixture(vec![
+            attachment_part(7, 42, None),
+            text_part("between"),
+            text_part("more text"),
+            attachment_part(9, 99, None),
+        ]);
+        let decoded = decode_upload_fixture(&msg, &guids);
+        for (slot, guid) in guids.iter().enumerate() {
+            let material =
+                decoded_attachment_upload_material(&decoded, guid, &upload_times()).unwrap();
+            assert_eq!(material.meta.guid, format!("at_{slot}_{}", msg.id));
+        }
+        // Leading text is also not an attachment; a single absent idx starts at 0.
+        let (msg, guids) = upload_fixture(vec![text_part("prefix"), attachment_part(7, 42, None)]);
+        let decoded = decode_upload_fixture(&msg, &guids);
+        assert_eq!(
+            decoded_attachment_upload_material(&decoded, &guids[0], &upload_times())
+                .unwrap()
+                .meta
+                .guid,
+            format!("at_0_{}", msg.id)
+        );
+    }
+    #[test]
+    fn upload_material_rejects_duplicate_projected_indices_for_any_selection() {
+        for second_idx in [Some(1), None] {
+            let (msg, guids) = upload_fixture(vec![
+                attachment_part(7, 0, Some(1)),
+                attachment_part(9, 1, second_idx),
+            ]);
+            let decoded = decode_upload_fixture(&msg, &guids);
+            for guid in &guids {
+                assert!(matches!(
+                    decoded_attachment_upload_material(&decoded, guid, &upload_times()),
+                    Err(Failure::BindingMismatch)
+                ));
+            }
+        }
+    }
+    #[test]
+    fn upload_material_skips_iris_and_smil_without_consuming_default_indices() {
+        let mut iris = attachment_part(5, 40, Some(9));
+        let MessagePart::Attachment(a) = &mut iris.part else {
+            panic!("expected attachment")
+        };
+        a.iris = true;
+        let mut smil = attachment_part(6, 41, None);
+        let MessagePart::Attachment(a) = &mut smil.part else {
+            panic!("expected attachment")
+        };
+        a.mime = "application/smil".to_owned();
+        let (msg, guids) = upload_fixture(vec![
+            iris,
+            attachment_part(7, 42, None),
+            text_part("between"),
+            smil,
+            attachment_part(9, 43, None),
+        ]);
+        let decoded = decode_upload_fixture(&msg, &guids);
+        for slot in [0, 2] {
+            assert!(matches!(
+                decoded_attachment_upload_material(&decoded, &guids[slot], &upload_times()),
+                Err(Failure::UnsupportedMessage)
+            ));
+        }
+        for (slot, field_idx) in [(1, 0), (3, 1)] {
+            let material =
+                decoded_attachment_upload_material(&decoded, &guids[slot], &upload_times())
+                    .unwrap();
+            assert_eq!(material.meta.guid, format!("at_{field_idx}_{}", msg.id));
+        }
+    }
+    #[test]
+    fn upload_material_tracks_reflection_run_removal_before_later_default_indices() {
+        // Attachment GUID index 5 is stored in a run whose messagePart is 0.
+        // A first use of index 0 removes that run, including for skipped parts.
+        for skip in [false, true] {
+            let mut next = text_part("replace run zero");
+            if skip {
+                next = attachment_part(5, 40, Some(0));
+                let MessagePart::Attachment(a) = &mut next.part else {
+                    panic!("expected attachment")
+                };
+                a.iris = true;
+            } else {
+                next.idx = Some(0);
+            }
+            let (msg, guids) = upload_fixture(vec![
+                attachment_part(7, 0, Some(5)),
+                next,
+                attachment_part(9, 1, None),
+            ]);
+            let decoded = decode_upload_fixture(&msg, &guids);
+            assert!(matches!(
+                decoded_attachment_upload_material(&decoded, &guids[0], &upload_times()),
+                Err(Failure::UnsupportedMessage)
+            ));
+            let material = decoded_attachment_upload_material(
                 &decoded,
-                "ATTACH-GUID-9999",
-                &pinned_mapping("ATTACH-GUID-9999"),
-                &times
-            ),
-            Err(Failure::BindingMismatch)
-        ));
-        // Empty GUID is malformed, not merely unbound.
-        assert!(matches!(
-            decoded_attachment_upload_material(&decoded, "", &pinned_mapping(&guids[0]), &times),
-            Err(Failure::MalformedMessage)
-        ));
-        // Ambiguous: two slots claim the same GUID.
-        let mut ambiguous = decode_ids_attachment_source(&encoded).unwrap();
-        if let DecodedPart::Attachment(a) = &mut ambiguous.parts[2] {
-            a.guid = guids[0].clone();
-        } else {
-            panic!("expected attachment");
+                guids.last().unwrap(),
+                &upload_times(),
+            )
+            .unwrap();
+            assert_eq!(material.meta.guid, format!("at_0_{}", msg.id));
         }
+        // A later text run can remove the selected attachment after projection.
+        let mut text = text_part("replace");
+        text.idx = Some(0);
+        let (msg, guids) = upload_fixture(vec![attachment_part(7, 0, Some(5)), text]);
+        let decoded = decode_upload_fixture(&msg, &guids);
         assert!(matches!(
-            decoded_attachment_upload_material(
-                &ambiguous,
-                &guids[0],
-                &pinned_mapping(&guids[0]),
-                &times
-            ),
-            Err(Failure::BindingMismatch)
-        ));
-        // Index drift: GUID list order no longer matches part order.
-        let mut drifted = decode_ids_attachment_source(&encoded).unwrap();
-        drifted.attachment_guids.swap(0, 1);
-        assert!(matches!(
-            decoded_attachment_upload_material(
-                &drifted,
-                &guids[0],
-                &pinned_mapping(&guids[0]),
-                &times
-            ),
-            Err(Failure::BindingMismatch)
-        ));
-        // Duplicate GUID list violates the validated source shape.
-        let mut dup_list = decode_ids_attachment_source(&encoded).unwrap();
-        dup_list.attachment_guids = vec![guids[0].clone(), guids[0].clone()];
-        assert!(decoded_attachment_upload_material(
-            &dup_list,
-            &guids[0],
-            &pinned_mapping(&guids[0]),
-            &times
-        )
-        .is_err());
-    }
-    #[test]
-    fn upload_material_guid_follows_verified_canonical_mapping() {
-        let (msg, guids) = fixture();
-        let encoded = encode_ids_attachment_source(&msg, &guids).unwrap();
-        let decoded = decode_ids_attachment_source(&encoded).unwrap();
-        let times = upload_times();
-        // No rename: the canonical mapping repeats the pinned GUID. The
-        // synthetic pinned GUID has no trailing canonical-decimal segment,
-        // so the legacy unconvert leaves it unchanged.
-        let material = decoded_attachment_upload_material(
-            &decoded,
-            &guids[0],
-            &pinned_mapping(&guids[0]),
-            &times,
-        )
-        .unwrap();
-        assert_eq!(material.meta.guid, guids[0]);
-        // Reflected rename: the backend canonical identity is
-        // <message guid>_<part>, so meta.guid must be its Apple form, not
-        // the pre-send slot value.
-        let renamed = NativeAttachmentGuidMapping {
-            canonical_local_guid: format!("{}_{}", decoded.message_guid, 0),
-        };
-        let reflected =
-            decoded_attachment_upload_material(&decoded, &guids[0], &renamed, &times).unwrap();
-        assert_eq!(
-            reflected.meta.guid,
-            format!("at_0_{}", decoded.message_guid)
-        );
-        assert_ne!(reflected.meta.guid, guids[0]);
-        // A canonical GUID from another message/body is rejected, not adopted.
-        let foreign = NativeAttachmentGuidMapping {
-            canonical_local_guid: "OTHER-MESSAGE_0".to_owned(),
-        };
-        assert!(matches!(
-            decoded_attachment_upload_material(&decoded, &guids[0], &foreign, &times),
-            Err(Failure::BindingMismatch)
-        ));
-        // A malformed mapping is rejected before any metadata is built.
-        let empty = NativeAttachmentGuidMapping {
-            canonical_local_guid: String::new(),
-        };
-        assert!(matches!(
-            decoded_attachment_upload_material(&decoded, &guids[0], &empty, &times),
-            Err(Failure::MalformedMessage)
+            decoded_attachment_upload_material(&decoded, &guids[0], &upload_times()),
+            Err(Failure::UnsupportedMessage)
         ));
     }
     #[test]
-    fn upload_material_passes_times_through_and_checks_exact_sizes() {
-        let (msg, guids) = fixture();
-        let encoded = encode_ids_attachment_source(&msg, &guids).unwrap();
-        let decoded = decode_ids_attachment_source(&encoded).unwrap();
-        let mapping = pinned_mapping(&guids[0]);
-        // Times pass through unchecked: epoch 0 is legal AttachmentMeta content,
-        // so even a zero timestamp pair is accepted, not mistaken for unset.
-        let zero = NativeAttachmentMetaTimes {
-            start_date_ns: 0,
-            created_date_ns: 0,
-        };
-        let material = decoded_attachment_upload_material(&decoded, &guids[0], &mapping, &zero)
-            .expect("zero times are legal");
-        assert_eq!(material.meta.start_date, 0);
-        assert_eq!(material.meta.created_date, 0);
-        // Oversized descriptor is rejected, not truncated into metadata.
-        let mut big = decode_ids_attachment_source(&encoded).unwrap();
-        if let DecodedPart::Attachment(a) = &mut big.parts[1] {
-            a.size = MAX_CONTENT_BYTES + 1;
-        } else {
-            panic!("expected attachment");
+    fn upload_material_rejects_wrong_duplicate_and_drifted_original_guids() {
+        let (msg, guids) = upload_fixture(vec![
+            attachment_part(7, 0, Some(1)),
+            attachment_part(9, 1, Some(2)),
+        ]);
+        let decoded = decode_upload_fixture(&msg, &guids);
+        for wrong in [
+            "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB".to_owned(),
+            format!("{}_1", msg.id),
+            format!("at_1_{}", msg.id),
+        ] {
+            assert!(matches!(
+                decoded_attachment_upload_material(&decoded, &wrong, &upload_times()),
+                Err(Failure::BindingMismatch)
+            ));
         }
-        let times = upload_times();
         assert!(matches!(
-            decoded_attachment_upload_material(&big, &guids[0], &mapping, &times),
-            Err(Failure::OversizedMessage)
+            decoded_attachment_upload_material(&decoded, "", &upload_times()),
+            Err(Failure::MalformedMessage)
         ));
-        // Corrupt key material is rejected, not carried into user_info.
-        let mut bad_key = decode_ids_attachment_source(&encoded).unwrap();
-        if let DecodedPart::Attachment(a) = &mut bad_key.parts[1] {
-            a.key.pop();
-        } else {
-            panic!("expected attachment");
+        let mutations: &[fn(&mut DecodedIdsAttachmentSource)] = &[
+            |d| {
+                d.attachment_guids.swap(0, 1);
+            },
+            |d| {
+                d.parts.swap(0, 1);
+            },
+            |d| {
+                d.attachment_guids[1] = d.attachment_guids[0].clone();
+            },
+            |d| {
+                if let DecodedPart::Attachment(a) = &mut d.parts[1] {
+                    a.guid = d.attachment_guids[0].clone();
+                }
+            },
+            |d| {
+                d.parts.pop();
+            },
+            |d| {
+                d.attachment_guids.clear();
+            },
+            |d| {
+                d.message_guid.clear();
+            },
+        ];
+        for mutate in mutations {
+            let mut candidate = decode_upload_fixture(&msg, &guids);
+            mutate(&mut candidate);
+            assert!(
+                decoded_attachment_upload_material(&candidate, &guids[0], &upload_times()).is_err()
+            );
         }
-        assert!(decoded_attachment_upload_material(&bad_key, &guids[0], &mapping, &times).is_err());
+        // Even drift in another slot must fail when the selected slot still matches.
+        let (msg, guids) = upload_fixture(vec![
+            attachment_part(7, 0, Some(1)),
+            attachment_part(8, 1, Some(2)),
+            attachment_part(9, 2, Some(3)),
+        ]);
+        let mut decoded = decode_upload_fixture(&msg, &guids);
+        decoded.attachment_guids.swap(1, 2);
+        assert!(matches!(
+            decoded_attachment_upload_material(&decoded, &guids[0], &upload_times()),
+            Err(Failure::BindingMismatch)
+        ));
+    }
+    #[test]
+    fn upload_material_preserves_zero_negative_times_and_rejects_incomplete_descriptors() {
+        let (msg, guids) = upload_fixture(vec![attachment_part(7, 0, Some(1))]);
+        let decoded = decode_upload_fixture(&msg, &guids);
+        for (start_date_ns, created_date_ns) in [(0, 0), (-1, 0), (i64::MIN, i64::MAX)] {
+            let times = NativeAttachmentMetaTimes {
+                start_date_ns,
+                created_date_ns,
+            };
+            let material = decoded_attachment_upload_material(&decoded, &guids[0], &times).unwrap();
+            assert_eq!(material.meta.start_date, start_date_ns);
+            assert_eq!(material.meta.created_date, created_date_ns);
+            assert!(material.meta.user_info.is_some());
+            assert_eq!(material.meta.version, 1);
+        }
+        for size in [u64::from(u32::MAX) + 1, MAX_CONTENT_BYTES + 1] {
+            let mut candidate = decode_upload_fixture(&msg, &guids);
+            let DecodedPart::Attachment(a) = &mut candidate.parts[0] else {
+                panic!("expected attachment")
+            };
+            a.size = size;
+            assert!(matches!(
+                decoded_attachment_upload_material(&candidate, &guids[0], &upload_times()),
+                Err(Failure::OversizedMessage)
+            ));
+        }
+        let mutations: &[fn(&mut DecodedAttachment)] = &[
+            |a| a.key.clear(),
+            |a| a.signature.clear(),
+            |a| a.object.clear(),
+            |a| a.url.clear(),
+            |a| a.mime.clear(),
+            |a| a.uti_type.clear(),
+            |a| a.name.clear(),
+        ];
+        for mutate in mutations {
+            let mut candidate = decode_upload_fixture(&msg, &guids);
+            let DecodedPart::Attachment(a) = &mut candidate.parts[0] else {
+                panic!("expected attachment")
+            };
+            mutate(a);
+            assert!(matches!(
+                decoded_attachment_upload_material(&candidate, &guids[0], &upload_times()),
+                Err(Failure::MalformedMessage)
+            ));
+        }
     }
 }

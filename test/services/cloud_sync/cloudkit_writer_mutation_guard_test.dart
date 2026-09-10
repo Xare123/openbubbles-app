@@ -431,6 +431,111 @@ void main() {
     },
   );
 
+  test(
+    'Attachment exact readback uses its own binding and clears only its fence',
+    () async {
+      provision(CloudKitWriterOwner.v2);
+      final operation = _unknownOutcomeOperation(
+        zone: 'attachmentManateeZone',
+        payloadVersion: 1,
+      );
+      await armUnknownV2Fence(operation);
+      final attachmentBinding = _AttachmentReconciliationBinding();
+      final result = await runV2(
+        () => guard(owner: CloudKitWriterOwner.v2, reconciler: attachmentBinding)
+            .reconcileUnknownOutcome(
+              owner: CloudKitWriterOwner.v2,
+              expectedClient: activeClient,
+              operation: operation,
+            ),
+      );
+      // Exact record absence resolves uncertainty about the final save. It
+      // does not report that save as successful or authorize a byte re-upload.
+      expect(result.disposition, CloudUnknownOutcomeDisposition.notApplied);
+      expect(result.retryAfter, isNull);
+      expect(attachmentBinding.attachmentCalls, 1);
+      expect(attachmentBinding.messageCalls, 0);
+      expect(_persistentFence(directory).existsSync(), isFalse);
+    },
+  );
+
+  test(
+    'Attachment cannot fall back to Message-only or Chat-only bindings',
+    () async {
+      provision(CloudKitWriterOwner.v2);
+      final operation = _unknownOutcomeOperation(
+        zone: 'attachmentManateeZone',
+        payloadVersion: 1,
+      );
+      await armUnknownV2Fence(operation);
+      await expectLater(
+        runV2(
+          () => guard(owner: CloudKitWriterOwner.v2).reconcileUnknownOutcome(
+            owner: CloudKitWriterOwner.v2,
+            expectedClient: activeClient,
+            operation: operation,
+          ),
+        ),
+        throwsA(
+          _failure('cloudkit_writer_attachment_reconciliation_binding_missing'),
+        ),
+      );
+      expect(binding.reconcileCalls, 0);
+      final chatBinding = _ChatReconciliationBinding();
+      await expectLater(
+        runV2(
+          () => guard(
+            owner: CloudKitWriterOwner.v2,
+            reconciler: chatBinding,
+          ).reconcileUnknownOutcome(
+            owner: CloudKitWriterOwner.v2,
+            expectedClient: activeClient,
+            operation: operation,
+          ),
+        ),
+        throwsA(
+          _failure('cloudkit_writer_attachment_reconciliation_binding_missing'),
+        ),
+      );
+      expect(chatBinding.chatCalls, 0);
+      expect(chatBinding.messageCalls, 0);
+      expect(_persistentFence(directory).existsSync(), isTrue);
+    },
+  );
+
+  test(
+    'Attachment rejects wrong-scope identity before native lookup',
+    () async {
+      provision(CloudKitWriterOwner.v2);
+      // The operation id stays bound to the message scope while the operation
+      // itself claims the attachment scope.
+      final operation = _unknownOutcomeOperation(
+        zone: 'attachmentManateeZone',
+        payloadVersion: 1,
+        operationIdZone: 'messageManateeZone',
+      );
+      final attachmentBinding = _AttachmentReconciliationBinding();
+      await expectLater(
+        runV2(
+          () => guard(
+            owner: CloudKitWriterOwner.v2,
+            reconciler: attachmentBinding,
+          ).reconcileUnknownOutcome(
+            owner: CloudKitWriterOwner.v2,
+            expectedClient: activeClient,
+            operation: operation,
+          ),
+        ),
+        throwsA(
+          _failure(
+            'cloudkit_writer_mutation_reconciliation_operation_invalid',
+          ),
+        ),
+      );
+      expect(attachmentBinding.attachmentCalls, 0);
+      expect(attachmentBinding.messageCalls, 0);
+    },
+  );
   for (final invalid in [
     ('chatManateeZone', 2),
     ('messageManateeZone', 1),
@@ -691,6 +796,41 @@ final class _ChatReconciliationBinding
   }
 }
 
+final class _AttachmentReconciliationBinding
+    implements CloudKitWriterAttachmentReconciliationBinding {
+  int attachmentCalls = 0;
+  int messageCalls = 0;
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileAttachmentCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) async {
+    attachmentCalls++;
+    return frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+      protectedProofReference: input.protectedPayloadReference,
+    );
+  }
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileMessageCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) async {
+    messageCalls++;
+    throw StateError('Attachment must not use Message reconciliation');
+  }
+}
+
 Matcher _failure(String safeCode) => isA<CloudKitWriterAuthorityFailure>()
     .having((value) => value.safeCode, 'safeCode', safeCode);
 
@@ -727,6 +867,10 @@ const _migrationId =
 CloudOutboxOperation _unknownOutcomeOperation({
   String zone = 'messageManateeZone',
   int payloadVersion = cloudSyncOutboundPayloadVersion,
+  // Optional zone the operation id is bound to. When set, the id is
+  // generated for that zone while the operation claims [zone], proving
+  // cross-scope identities fail before any native lookup.
+  String? operationIdZone,
 }) {
   final logicalEntityKeyHash = _hash('L');
   final scope = CloudSyncScope(
@@ -736,10 +880,19 @@ CloudOutboxOperation _unknownOutcomeOperation({
     zone: zone,
     persistenceLane: CloudSyncPersistenceLane.semanticV2,
   );
+  final idScope = operationIdZone == null
+      ? scope
+      : CloudSyncScope(
+          accountFingerprint: _digestA,
+          container: 'com.apple.messages.cloud',
+          database: 'private',
+          zone: operationIdZone,
+          persistenceLane: CloudSyncPersistenceLane.semanticV2,
+        );
   return CloudOutboxOperation(
     scope: scope,
     operationId: CloudOperationIdentity.forInitialCreate(
-      scope: scope,
+      scope: idScope,
       logicalEntityKeyHash: logicalEntityKeyHash,
       payloadVersion: payloadVersion,
     ),
