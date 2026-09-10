@@ -319,6 +319,97 @@ void main() {
   );
 
   test(
+    'source lookup retains one original plan across attempt, result and reopen',
+    () async {
+      final intent = seedConfirmedIntent();
+      CloudAttachmentUploadSnapshot? lookup() => uploads.findForAttachment(
+        localSendIntentId: intent,
+        logicalEntityKeyHash: _planA().logicalEntityKeyHash,
+        sourceAttachmentKeys: {_planA().logicalEntityKeyHash},
+      );
+      expect(lookup(), isNull);
+      final prepared = uploads.adoptPlan(
+        localSendIntentId: intent,
+        plan: _planA(),
+        now: _time(6),
+      );
+      expect(lookup()!.id, prepared.id);
+      uploads.beginAttempt(
+        id: prepared.id,
+        attemptId: _attemptA,
+        now: _time(7),
+      );
+      uploads.markUnknown(id: prepared.id, attemptId: _attemptA, now: _time(8));
+      await reopen();
+      expect(lookup()!.state, CloudAttachmentUploadState.unknown);
+      expect(lookup()!.plan.payloadSha256, _planA().payloadSha256);
+      uploads.recordUploaded(
+        id: prepared.id,
+        attemptId: _attemptA,
+        result: _resultA(),
+        now: _time(9),
+      );
+      expect(lookup()!.result!.leaseReference, _resultA().leaseReference);
+      expect(
+        uploads.findForAttachment(
+          localSendIntentId: intent,
+          logicalEntityKeyHash: _token('x'),
+          sourceAttachmentKeys: {_planA().logicalEntityKeyHash, _token('x')},
+        ),
+        isNull,
+      );
+      seedCheckpoint(2);
+      uploads = buildUploads(generation: 2);
+      expect(lookup, throwsStateError);
+    },
+  );
+
+  test(
+    'changed inventory cannot hide a retained plan and authorize reupload',
+    () {
+      final intent = seedConfirmedIntent();
+      final original = uploads.adoptPlan(
+        localSendIntentId: intent,
+        plan: _planA(),
+        now: _time(6),
+      );
+      uploads.beginAttempt(
+        id: original.id,
+        attemptId: _attemptA,
+        now: _time(7),
+      );
+      uploads.markUnknown(id: original.id, attemptId: _attemptA, now: _time(8));
+      expect(
+        () => uploads.findForAttachment(
+          localSendIntentId: intent,
+          logicalEntityKeyHash: _token('x'),
+          sourceAttachmentKeys: {_token('x')},
+        ),
+        throwsA(
+          _stateFailure('cloud_sync_attachment_upload_inventory_changed'),
+        ),
+      );
+      expect(
+        uploads.read(original.id).state,
+        CloudAttachmentUploadState.unknown,
+      );
+      expect(
+        uploads.read(original.id).plan.payloadSha256,
+        _planA().payloadSha256,
+      );
+      expect(store.box<CloudAttachmentUploadEntity>().count(), 1);
+      expect(
+        () => uploads.findForAttachment(
+          localSendIntentId: intent,
+          logicalEntityKeyHash: _token('x'),
+          sourceAttachmentKeys: {_planA().logicalEntityKeyHash},
+        ),
+        throwsStateError,
+      );
+    },
+  );
+
+  test(
     'blocked projection retains completed upload without partial final-save admission',
     () {
       final uploaded = toUploaded(

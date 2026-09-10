@@ -2025,6 +2025,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_cloud_sync_attachment_materialization_result(dynamic raw);
 
   @protected
+  CloudSyncAttachmentSourceEntry dco_decode_cloud_sync_attachment_source_entry(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncAttachmentUploadConsumeResult
   dco_decode_cloud_sync_attachment_upload_consume_result(dynamic raw);
 
@@ -2463,6 +2468,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<CloudParticipant> dco_decode_list_cloud_participant(dynamic raw);
+
+  @protected
+  List<CloudSyncAttachmentSourceEntry>
+  dco_decode_list_cloud_sync_attachment_source_entry(dynamic raw);
 
   @protected
   List<CloudSyncNativeSendReceipt>
@@ -5794,6 +5803,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncAttachmentSourceEntry sse_decode_cloud_sync_attachment_source_entry(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncAttachmentUploadConsumeResult
   sse_decode_cloud_sync_attachment_upload_consume_result(
     SseDeserializer deserializer,
@@ -6310,6 +6324,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<CloudParticipant> sse_decode_list_cloud_participant(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<CloudSyncAttachmentSourceEntry>
+  sse_decode_list_cloud_sync_attachment_source_entry(
     SseDeserializer deserializer,
   );
 
@@ -10254,6 +10274,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_sync_attachment_source_entry(
+    CloudSyncAttachmentSourceEntry self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_attachment_upload_consume_result(
     CloudSyncAttachmentUploadConsumeResult self,
     SseSerializer serializer,
@@ -10853,6 +10879,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_cloud_participant(
     List<CloudParticipant> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_sync_attachment_source_entry(
+    List<CloudSyncAttachmentSourceEntry> self,
     SseSerializer serializer,
   );
 

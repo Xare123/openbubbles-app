@@ -19,6 +19,7 @@ import 'cloud_sync_engine.dart';
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_local_send_consumer.dart';
 import 'cloud_sync_local_send_journal.dart';
+import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_local_send_selection.dart';
 import 'cloud_sync_manual_outbound_canary.dart';
 import 'cloud_sync_manual_semantic_pull_sampler.dart';
@@ -792,14 +793,39 @@ final class CloudSyncProductionLocalSendAdapter {
     final journal = CloudSyncLocalSendJournal(
       store: objectBox, authority: authority, authoritySnapshot: owner,
     );
+    final attachmentScope = CloudSyncScope(
+      accountFingerprint: auth.accountFingerprint,
+      container: writerScope.container, database: writerScope.database,
+      zone: 'attachmentManateeZone', streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: 2, persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final protector = RustCloudSyncProtector(
+      storageDirectory: _privateStorageDirectory,
+    );
+    // Resolve the persisted attachment generation before binding its journal.
+    // This bootstrap store cannot dispatch Attachment saves without that journal.
+    final attachmentCheckpoint = await ObjectBoxCloudSyncStore(
+      store: objectBox, protector: protector,
+    ).readCheckpoint(attachmentScope);
+    final afterCheckpoint = await authProvider.capture();
+    if (afterCheckpoint == null || !auth.sameIdentity(afterCheckpoint) ||
+        !_stillCurrent() || !identical(objectBox, Database.store) ||
+        authority.read(writerScope)?.epoch != owner.epoch) {
+      throw StateError('cloud_sync_local_send_identity_changed');
+    }
+    final uploads = CloudSyncAttachmentUploadJournal(
+      store: objectBox, localSends: journal, scope: attachmentScope,
+      checkpointGeneration: attachmentCheckpoint.generation, currentAuth: auth,
+    );
     final existingHistoryDiagnostics = CloudSyncSemanticDiagnosticCollector();
     // Ephemeral per pass. Admission changes the read-set revision; refresh
     // against the ORIGINAL staged operation before lease, including restart.
     final chatEvidence = <String, CloudSyncChatIdentityEvidence>{};
     final durable = ObjectBoxCloudSyncStore(
       store: objectBox,
-      protector: RustCloudSyncProtector(storageDirectory: _privateStorageDirectory),
+      protector: protector,
       localSendJournal: journal,
+      attachmentUploadJournal: uploads,
       readChatIdentityEvidence: (operation) => chatEvidence[operation.operationId],
       recordExistingHistoryDiagnostic: existingHistoryDiagnostics.record,
     );
@@ -964,7 +990,7 @@ final class CloudSyncProductionLocalSendAdapter {
       await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
       await recoverProtectedStore();
       final settled = await drainCloudSyncCreateQueues(
-        scopes: [chatScope, scope],
+        scopes: [chatScope, attachmentScope, scope],
         isRetiredUnsubmittedChatCreate: (operation) async =>
             durable.isRetiredUnsubmittedChatCreate(operation),
         isRetainedPreproofPendingCreate: (operation) async =>
@@ -1024,6 +1050,8 @@ final class CloudSyncProductionLocalSendAdapter {
         guard.requireClear();
         final proof = target.zone == 'chatManateeZone'
             ? await transport.verifyConfirmedChatCreateNoSave(target, operation: operation)
+            : target.zone == 'attachmentManateeZone'
+            ? await transport.verifyConfirmedAttachmentCreateNoSave(target, operation: operation)
             : await transport.verifyConfirmedMessageCreateNoSave(target, operation: operation);
         if (selection != null) await validateSelection();
         await transport.releaseConfirmedReplayReceipt(

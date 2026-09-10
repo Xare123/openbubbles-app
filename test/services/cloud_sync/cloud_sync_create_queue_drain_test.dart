@@ -20,6 +20,7 @@ CloudSyncScope scope(
   persistenceLane: lane,
 );
 final chat = scope('chatManateeZone');
+final attachment = scope('attachmentManateeZone');
 final message = scope('messageManateeZone');
 CloudOutboxOperation op(
   CloudSyncScope scope,
@@ -31,7 +32,7 @@ CloudOutboxOperation op(
   operationId: id ?? 'synthetic-${scope.zone}',
   logicalEntityKeyHash: 'synthetic',
   action: CloudOutboxAction.save,
-  payloadVersion: scope == chat ? 1 : 2,
+  payloadVersion: scope == message ? 2 : 1,
   mutationRevision: 0,
   checkpointGeneration: 1,
   dependencyOperationIds: const [],
@@ -46,6 +47,7 @@ class Fixture {
   final events = <String>[];
   final queues = <CloudSyncScope, List<CloudOutboxOperation>>{
     chat: [],
+    attachment: [],
     message: [],
   };
   List<CloudSyncScope> scopes = [chat, message];
@@ -88,8 +90,9 @@ class Fixture {
     flush: (s) async {
       event('flush:${s.zone}');
       if (flushSettles) {
-        final retained =
-            queues[s]!.where((o) => retainOnFlush.contains(o.operationId)).toList();
+        final retained = queues[s]!
+            .where((o) => retainOnFlush.contains(o.operationId))
+            .toList();
         queues[s] = [
           ...retained,
           op(s, CloudOutboxStatus.confirmed, lease: true),
@@ -107,6 +110,86 @@ class Fixture {
 }
 
 void main() {
+  test(
+    'Chat and Attachment exact acknowledgements precede parent flush',
+    () async {
+      final f = Fixture()..scopes = [chat, attachment, message];
+      for (final s in f.scopes) {
+        f.queues[s] = [op(s, CloudOutboxStatus.pending)];
+      }
+      expect(await f.run(), isTrue);
+      expect(
+        f.work.where((e) => e.startsWith('flush:') || e.startsWith('ack:')),
+        [
+          'flush:${chat.zone}',
+          'ack:${chat.zone}',
+          'flush:${attachment.zone}',
+          'ack:${attachment.zone}',
+          'flush:${message.zone}',
+          'ack:${message.zone}',
+        ],
+      );
+    },
+  );
+  for (final status in [
+    CloudOutboxStatus.pending,
+    CloudOutboxStatus.paused,
+    CloudOutboxStatus.quarantined,
+    CloudOutboxStatus.unknownOutcome,
+  ]) {
+    test('unresolved Attachment $status blocks parent dispatch', () async {
+      final f = Fixture()
+        ..scopes = [chat, attachment, message]
+        ..flushSettles = false;
+      f.queues[attachment] = [op(attachment, status)];
+      f.queues[message] = [op(message, CloudOutboxStatus.pending)];
+      expect(await f.run(), isFalse);
+      expect(f.work, isNot(contains('flush:${message.zone}')));
+      if (status == CloudOutboxStatus.unknownOutcome) {
+        expect(f.work, contains('reconcile:${attachment.zone}'));
+        expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
+      }
+    });
+  }
+  test(
+    'failed Attachment readback stops parent even after successful save',
+    () async {
+      final f = Fixture()
+        ..scopes = [chat, attachment, message]
+        ..ackFails = true;
+      f.queues[attachment] = [
+        op(attachment, CloudOutboxStatus.confirmed, lease: true),
+      ];
+      f.queues[message] = [op(message, CloudOutboxStatus.pending)];
+      await expectLater(f.run(), throwsStateError);
+      expect(f.work.last, 'ack:${attachment.zone}');
+      expect(f.work, isNot(contains('flush:${message.zone}')));
+    },
+  );
+  for (final phase in [
+    'read:${attachment.zone}',
+    'flush:${attachment.zone}',
+    'ack:${attachment.zone}',
+    'reconcile:${attachment.zone}',
+  ]) {
+    test('identity change during Attachment $phase stops parent', () async {
+      final f = Fixture()
+        ..scopes = [chat, attachment, message]
+        ..driftAfter = phase;
+      f.queues[attachment] = [
+        op(
+          attachment,
+          phase.startsWith('reconcile')
+              ? CloudOutboxStatus.unknownOutcome
+              : CloudOutboxStatus.pending,
+        ),
+      ];
+      f.queues[message] = [op(message, CloudOutboxStatus.pending)];
+      await expectLater(f.run(), throwsStateError);
+      expect(f.work.last, phase);
+      expect(f.work, isNot(contains('flush:${message.zone}')));
+    });
+  }
   for (final unknownScope in [message, chat]) {
     test('unknown ${unknownScope.zone} prevents either queue flush', () async {
       final f = Fixture();
@@ -235,26 +318,23 @@ void main() {
       );
     },
   );
-  test(
-    'retained preproof held-only traverses without flush or ack',
-    () async {
-      final f = Fixture();
-      f.queues[chat] = [op(chat, CloudOutboxStatus.pending, id: 'held-chat')];
-      f.queues[message] = [
-        op(message, CloudOutboxStatus.pending, id: 'held-message'),
-      ];
-      f.isHeld = (o) async => o.operationId.startsWith('held-');
-      expect(await f.run(), isTrue);
-      expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
-      expect(f.work.any((e) => e.startsWith('ack:')), isFalse);
-      expect(f.work.any((e) => e.startsWith('reconcile:')), isFalse);
-      expect(f.work, contains('held:${chat.zone}:held-chat'));
-      expect(f.work, contains('held:${message.zone}:held-message'));
-      for (var i = 0; i < f.events.length; i++) {
-        if (f.events[i] != 'auth') expect(f.events[i + 1], 'auth');
-      }
-    },
-  );
+  test('retained preproof held-only traverses without flush or ack', () async {
+    final f = Fixture();
+    f.queues[chat] = [op(chat, CloudOutboxStatus.pending, id: 'held-chat')];
+    f.queues[message] = [
+      op(message, CloudOutboxStatus.pending, id: 'held-message'),
+    ];
+    f.isHeld = (o) async => o.operationId.startsWith('held-');
+    expect(await f.run(), isTrue);
+    expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
+    expect(f.work.any((e) => e.startsWith('ack:')), isFalse);
+    expect(f.work.any((e) => e.startsWith('reconcile:')), isFalse);
+    expect(f.work, contains('held:${chat.zone}:held-chat'));
+    expect(f.work, contains('held:${message.zone}:held-message'));
+    for (var i = 0; i < f.events.length; i++) {
+      if (f.events[i] != 'auth') expect(f.events[i + 1], 'auth');
+    }
+  });
   test(
     'mixed held plus qualified flushes qualified then acks qualified only',
     () async {
@@ -270,66 +350,62 @@ void main() {
       expect(f.work, contains('flush:${chat.zone}'));
       expect(f.ackedIds, ['synthetic-${chat.zone}']);
       expect(f.ackedIds, isNot(contains('held-chat')));
-      final heldChecks =
-          f.work.where((e) => e == 'held:${chat.zone}:held-chat').length;
+      final heldChecks = f.work
+          .where((e) => e == 'held:${chat.zone}:held-chat')
+          .length;
       expect(heldChecks, greaterThanOrEqualTo(2));
       for (var i = 0; i < f.events.length; i++) {
         if (f.events[i] != 'auth') expect(f.events[i + 1], 'auth');
       }
     },
   );
-  test(
-    'unknown still blocks even when held callback always true',
-    () async {
-      final f = Fixture();
-      f.queues[chat] = [op(chat, CloudOutboxStatus.pending, id: 'held-chat')];
-      f.queues[message] = [op(message, CloudOutboxStatus.unknownOutcome)];
-      f.isHeld = (_) async => true;
-      expect(await f.run(), isFalse);
-      expect(f.work, contains('reconcile:${message.zone}'));
-      expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
-      expect(f.work.any((e) => e.startsWith('ack:')), isFalse);
-    },
-  );
-  test(
-    'account drift during held callback stops next work',
-    () async {
-      final f = Fixture()..driftAfter = 'held:${chat.zone}:held-chat';
-      f.queues[chat] = [op(chat, CloudOutboxStatus.pending, id: 'held-chat')];
+  test('unknown still blocks even when held callback always true', () async {
+    final f = Fixture();
+    f.queues[chat] = [op(chat, CloudOutboxStatus.pending, id: 'held-chat')];
+    f.queues[message] = [op(message, CloudOutboxStatus.unknownOutcome)];
+    f.isHeld = (_) async => true;
+    expect(await f.run(), isFalse);
+    expect(f.work, contains('reconcile:${message.zone}'));
+    expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
+    expect(f.work.any((e) => e.startsWith('ack:')), isFalse);
+  });
+  test('account drift during held callback stops next work', () async {
+    final f = Fixture()..driftAfter = 'held:${chat.zone}:held-chat';
+    f.queues[chat] = [op(chat, CloudOutboxStatus.pending, id: 'held-chat')];
+    f.queues[message] = [];
+    f.isHeld = (_) async => true;
+    await expectLater(f.run(), throwsStateError);
+    expect(f.work.last, 'held:${chat.zone}:held-chat');
+    expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
+    expect(f.work.any((e) => e.startsWith('ack:')), isFalse);
+  });
+  test('leased paused quarantined never exempt via held callback', () async {
+    for (final status in [
+      CloudOutboxStatus.leased,
+      CloudOutboxStatus.paused,
+      CloudOutboxStatus.quarantined,
+    ]) {
+      final f = Fixture()..flushSettles = false;
+      f.queues[chat] = [op(chat, status, id: 'held-chat')];
       f.queues[message] = [];
-      f.isHeld = (_) async => true;
-      await expectLater(f.run(), throwsStateError);
-      expect(f.work.last, 'held:${chat.zone}:held-chat');
-      expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
-      expect(f.work.any((e) => e.startsWith('ack:')), isFalse);
-    },
-  );
-  test(
-    'leased paused quarantined never exempt via held callback',
-    () async {
-      for (final status in [
-        CloudOutboxStatus.leased,
-        CloudOutboxStatus.paused,
-        CloudOutboxStatus.quarantined,
-      ]) {
-        final f = Fixture()..flushSettles = false;
-        f.queues[chat] = [op(chat, status, id: 'held-chat')];
-        f.queues[message] = [];
-        final consulted = <String>[];
-        f.isHeld = (o) async {
-          consulted.add(o.operationId);
-          return true;
-        };
-        expect(await f.run(), isFalse, reason: '$status');
-        expect(consulted, isEmpty, reason: '$status consulted');
-        expect(f.ackedIds, isEmpty, reason: '$status ack');
-      }
-    },
-  );
+      final consulted = <String>[];
+      f.isHeld = (o) async {
+        consulted.add(o.operationId);
+        return true;
+      };
+      expect(await f.run(), isFalse, reason: '$status');
+      expect(consulted, isEmpty, reason: '$status consulted');
+      expect(f.ackedIds, isEmpty, reason: '$status ack');
+    }
+  });
   final invalid = <List<CloudSyncScope>>[
     [],
     [chat, chat],
     [message, chat],
+    [attachment, chat],
+    [message, attachment],
+    [attachment, attachment],
+    [chat, attachment, message, message],
     [chat, message, message],
     [chat, scope(message.zone, account: 'b' * 43)],
     [scope(chat.zone, container: 'other')],

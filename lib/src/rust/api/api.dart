@@ -160,6 +160,17 @@ Future<MessageInst> cloudSyncRestoreIdsAttachmentSource({
   context: context,
 );
 
+/// Local protected-source inspection only. Caller holds the same interlock
+/// and protected-store exclusion used by preparation. This does not warm an
+/// Apple container, allocate an upload plan, or perform a remote operation.
+Future<List<CloudSyncAttachmentSourceEntry>> cloudSyncInspectAttachmentSources({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncNativeSendReceiptContext context,
+}) => RustLib.instance.api.crateApiApiCloudSyncInspectAttachmentSources(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+);
+
 /// Stages the provided native IDS attachment value without sending anything or
 /// touching Apple. Caller must journal ownership and commit the lease under
 /// the protected-store exclusive lock before passing this binding to send().
@@ -3127,6 +3138,37 @@ class CloudSyncAttachmentMaterializationResult {
           completed == other.completed &&
           verifiedBytes == other.verifiedBytes &&
           failure == other.failure;
+}
+
+/// Identity-only inventory of the original protected IDS body. The lookup is
+/// performed before allocating a randomized upload plan. Local reflection may
+/// rename attachments; the original source GUID still selects the same bytes.
+/// This contains no message text, MMCS credentials, or attachment contents.
+class CloudSyncAttachmentSourceEntry {
+  final String originalAttachmentGuid;
+  final String reflectedAttachmentGuid;
+  final String logicalEntityKeyHash;
+
+  const CloudSyncAttachmentSourceEntry({
+    required this.originalAttachmentGuid,
+    required this.reflectedAttachmentGuid,
+    required this.logicalEntityKeyHash,
+  });
+
+  @override
+  int get hashCode =>
+      originalAttachmentGuid.hashCode ^
+      reflectedAttachmentGuid.hashCode ^
+      logicalEntityKeyHash.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncAttachmentSourceEntry &&
+          runtimeType == other.runtimeType &&
+          originalAttachmentGuid == other.originalAttachmentGuid &&
+          reflectedAttachmentGuid == other.reflectedAttachmentGuid &&
+          logicalEntityKeyHash == other.logicalEntityKeyHash;
 }
 
 /// `Succeeded` means uploaded bytes with a protected receipt, NOT record save

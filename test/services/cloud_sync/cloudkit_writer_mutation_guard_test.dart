@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_adapters.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
@@ -442,8 +443,11 @@ void main() {
       await armUnknownV2Fence(operation);
       final attachmentBinding = _AttachmentReconciliationBinding();
       final result = await runV2(
-        () => guard(owner: CloudKitWriterOwner.v2, reconciler: attachmentBinding)
-            .reconcileUnknownOutcome(
+        () =>
+            guard(
+              owner: CloudKitWriterOwner.v2,
+              reconciler: attachmentBinding,
+            ).reconcileUnknownOutcome(
               owner: CloudKitWriterOwner.v2,
               expectedClient: activeClient,
               operation: operation,
@@ -456,6 +460,52 @@ void main() {
       expect(attachmentBinding.attachmentCalls, 1);
       expect(attachmentBinding.messageCalls, 0);
       expect(_persistentFence(directory).existsSync(), isFalse);
+    },
+  );
+
+  test(
+    'attachment adapter preserves the real guard fence after unknown result',
+    () async {
+      provision(CloudKitWriterOwner.v2);
+      final gate = GuardedCloudSyncAttachmentUploadMutationGate(
+        guard(owner: CloudKitWriterOwner.v2),
+      );
+      var consumes = 0;
+      Future<void> attempt(bool unknown) => runV2(
+        () => gate.runAuthorized<void>(
+          owner: CloudKitWriterOwner.v2,
+          expectedClient: activeClient,
+          expectedAccountFingerprint: _cloudScope.accountFingerprint,
+          preparedHandleBindingSha256: _sha('a'),
+          reconciliationBindingSha256: _sha('b'),
+          requireAdmission: () {},
+          requireDurableAdmission: () async {},
+          action: (token) async {
+            expect(token, matches(RegExp(r'^[a-f0-9]{64}$')));
+            consumes++;
+            if (unknown) gate.markActiveMutationUnknown();
+          },
+        ),
+      );
+      await attempt(false);
+      expect(consumes, 1);
+      expect(_persistentFence(directory).existsSync(), isFalse);
+      await expectLater(
+        attempt(true),
+        throwsA(_failure('cloudkit_writer_mutation_outcome_unknown')),
+      );
+      expect(consumes, 2);
+      expect(_persistentFence(directory).existsSync(), isTrue);
+      expect(
+        authority(CloudKitWriterOwner.v2).read(_scope)!.state,
+        CloudKitWriterAuthorityState.mutationUnknown,
+      );
+      await expectLater(
+        attempt(false),
+        throwsA(isA<CloudKitWriterAuthorityFailure>()),
+      );
+      expect(consumes, 2);
+      expect(_persistentFence(directory).existsSync(), isTrue);
     },
   );
 
@@ -484,14 +534,12 @@ void main() {
       final chatBinding = _ChatReconciliationBinding();
       await expectLater(
         runV2(
-          () => guard(
-            owner: CloudKitWriterOwner.v2,
-            reconciler: chatBinding,
-          ).reconcileUnknownOutcome(
-            owner: CloudKitWriterOwner.v2,
-            expectedClient: activeClient,
-            operation: operation,
-          ),
+          () => guard(owner: CloudKitWriterOwner.v2, reconciler: chatBinding)
+              .reconcileUnknownOutcome(
+                owner: CloudKitWriterOwner.v2,
+                expectedClient: activeClient,
+                operation: operation,
+              ),
         ),
         throwsA(
           _failure('cloudkit_writer_attachment_reconciliation_binding_missing'),
@@ -517,19 +565,18 @@ void main() {
       final attachmentBinding = _AttachmentReconciliationBinding();
       await expectLater(
         runV2(
-          () => guard(
-            owner: CloudKitWriterOwner.v2,
-            reconciler: attachmentBinding,
-          ).reconcileUnknownOutcome(
-            owner: CloudKitWriterOwner.v2,
-            expectedClient: activeClient,
-            operation: operation,
-          ),
+          () =>
+              guard(
+                owner: CloudKitWriterOwner.v2,
+                reconciler: attachmentBinding,
+              ).reconcileUnknownOutcome(
+                owner: CloudKitWriterOwner.v2,
+                expectedClient: activeClient,
+                operation: operation,
+              ),
         ),
         throwsA(
-          _failure(
-            'cloudkit_writer_mutation_reconciliation_operation_invalid',
-          ),
+          _failure('cloudkit_writer_mutation_reconciliation_operation_invalid'),
         ),
       );
       expect(attachmentBinding.attachmentCalls, 0);

@@ -1,6 +1,6 @@
 import 'cloud_sync_models.dart';
 
-/// Drains ordered Chat/Message create queues inside the caller's existing
+/// Drains ordered Chat/Attachment/Message create queues inside the caller's existing
 /// interlock. This grants no lock, permit, or account-wide settled proof.
 /// Callback failures propagate; the caller performs global preflight afterward.
 Future<bool> drainCloudSyncCreateQueues({
@@ -17,7 +17,13 @@ Future<bool> drainCloudSyncCreateQueues({
   Future<bool> Function(CloudOutboxOperation)? isRetainedPreproofPendingCreate,
 }) async {
   final ordered = List<CloudSyncScope>.unmodifiable(scopes);
-  const zones = ['chatManateeZone', 'messageManateeZone'];
+  // The parent may be submitted only after each preceding queue has both
+  // settled and acknowledged its exact remote readback, not just its byte upload.
+  const zones = [
+    'chatManateeZone',
+    'attachmentManateeZone',
+    'messageManateeZone',
+  ];
   if (ordered.isEmpty || ordered.length > zones.length) {
     throw ArgumentError('cloud_sync_create_queue_scopes_invalid');
   }

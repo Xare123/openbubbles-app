@@ -161,8 +161,21 @@ recovery change. Cleanup passed; independent inventories showed zero VMs and
 runner registrations. These are component checks, not live attachment-send proof.
 The resume input now matches the persisted journal fields,
 which do not include the discarded transient envelope length.
-Runtime coordinator, final-save handoff and parent wiring remain open. Completed
-upload fence recovery is implemented and tested. The epoch counterexample is
+The ordinary runtime injects the attachment journal and drains Chat,
+Attachment, then Message queues with exact readback between queues. The upload
+executor and real guard/store adapters passed 195 combined targeted Dart tests.
+Review repairs cover auth drift around staging/consume/commit, original-plan
+pinning, unadopted-lease cleanup and unknown marking inside the persistent guard.
+Source `ef1d45cf2` passed all 475 Rust tests in GCE `34541849568`. This includes
+the native source inventory, UTF-16 body projection and canonical attachment
+identity repair: upload/final-save/readback now use the same owned `(message,
+part)` key as ingestion. Existing differently keyed plans remain retained,
+not silently relabeled. Only generated bridge drift failed; artifact
+`10177858701` supplied the seven reviewed/hash-verified bindings. Cleanup and
+independent VM/runner inventories passed. These are component checks, not a
+working end-to-end attachment writer: runtime plan coordination and protected
+parent staging/prepare/readback remain in implementation.
+Completed upload fence recovery is implemented and tested. The epoch counterexample is
 now explicit: write ambiguity advances
 the writer from E to E+1, then E+2 after reconciliation, while the upload journal
 previously required its original source epoch to equal the current permit epoch.
@@ -634,10 +647,12 @@ CloudKit readback or independent Apple-device display.
 1. Finish the attachment vertical path, not another independent validator.
    The composer retains its actual IDS source; the upload journal retains its
    original randomized plan, attempt and result; final-record admission exists.
-   Qualify native upload execution and completion inspection, import the exact
-   bridge, then connect the runtime coordinator to lease commit, create/readback
-   and parent-message dependencies. The pending recovery repair separates old
-   source evidence from current writer permission across E/E+1/E+2. Complete
+   Native upload, source inventory and body projection passed 475 Rust tests;
+   executor/guard/queue integration passed 195 targeted Dart cases. Connect the
+   original-plan coordinator, create/readback and protected-source parent
+   staging/prepare/readback without weakening the plaintext gate. Completed-upload recovery separates old source
+   evidence from current writer permission across E/E+1/E+2, but the old parent
+   intent still needs explicit reauthorization before its Message admission. Complete
    evidence may resolve its exact fence; no receipt never authorizes reupload.
    Unknown byte-upload isolation requires native quiescence before unrelated
    writes resume. Also prove bounded source-staging coordination with long reads:
@@ -669,20 +684,14 @@ CloudKit readback or independent Apple-device display.
 
 ## Next falsification test
 
-The isolated Windows direct test and restart passed. Source-only tests passed
-randomized preparation restoration, purpose/record separation, changed-source
-rejection and completed-asset correlation. Journal source ownership, migration,
-GC, admission, reference/lease retention and restored-group regressions passed
-398 focused Dart/ObjectBox tests in the final combined run. Native source capture
-and a validator for the actual `prepare_send` timestamp/routing changes are now
-qualified by GCE `34513911095` on source `8bbffb1ab`: 408 native tests passed,
-including all 11 new source cases; cleanup passed. The preceding T2D run failed
-before compilation due to zone capacity, so the existing N2D-16 option was used.
-The source-bound receipt/API integration passed 414 native tests in
-`34517138488`. The next exact-source run must regenerate and qualify the retry
-reconstruction bridge and rerun the composer/staging suites. Then connect
-positive-IDS proof to the uploader's durable attempt state.
-None of these tests alone proves an attachment was sent or saved.
+The isolated Windows direct test and restart passed; do not repeat the claimed
+request. Source inventory, canonical read/write identity and parent UTF-16 body
+passed GCE `34541849568`; executor adversarial tests and the real persistent
+guard passed locally. Next qualify the connected source-bound parent envelope
+and original-plan coordinator, then exercise the actual runtime path from one positive
+IDS receipt through byte upload, final Attachment save/readback, parent Message
+save/readback and restart without duplication. Independent Apple-device display
+remains a separate acceptance check; component tests cannot replace it.
 When the approved group is present, falsify exact selection, acceptance by every
 intended target, group encoding, readback and restart without resending. Preserve
 the direct claim. The inspector must distinguish readable text, positive IDS

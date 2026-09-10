@@ -1382,3 +1382,46 @@ This is a chronological evidence log. It does not override the
   empty. No Apple credentials or messages were uploaded, no live account writes
   occurred, and no APK/runtime was installed. Runtime attachment execution and
   parent-message integration remain required.
+
+## 2026-09-10, attachment integration review and cross-layer identity repair
+
+- The ordinary writer now receives the exact attachment journal/checkpoint
+  generation. Queue processing is Chat -> Attachment -> Message, with exact
+  readback before advancing. The 110 targeted queue/runtime/composition tests
+  passed. This does not execute attachment bytes or admit their parent yet.
+- Parent review rejected the first executor draft as unqualified: two undefined
+  native-client type references, unknown-result marking after the mutation guard
+  released, auth not rechecked after lease commit, and insufficient pinning of
+  the pre-prepare durable source/plan. The same worker is repairing its two
+  files with adversarial tests. No production enablement occurred.
+- Native body review found incorrect success/failure fixtures for Dart's
+  first-use index eviction, plus a gap between explicit UTF-16 starts and the
+  sequential lengths serialized by NSAttributedString. The worker is correcting
+  both before native qualification. The source inventory returns original and
+  reflected GUIDs plus the canonical key, never text or media credentials.
+- A cross-layer counterexample was found: upload/final-save code hashed the raw
+  Apple attachment GUID, but canonical ingestion and parent references hash the
+  owner message and part. The candidate unifies those identities without changing
+  the established read path. Previously staged differently keyed plans remain
+  evidence, not authority for silent rekeying or replay.
+- These changes are pending exact-source GCE validation and bridge regeneration.
+  Apple credentials and stores remain local. No APK or live-account write ran.
+
+## 2026-09-10, attachment identity and executor qualification
+
+- Exact source `ef1d45cf2645192ece672c3a1b6f54d48e6e1ee3` passed all 475 Rust
+  tests in N2D-8/c run `34541849568`. Only generated bridge drift failed.
+  Artifact `10177858701` contained the seven expected generated files; each
+  source/destination SHA-256 matched after import. Cleanup succeeded, with
+  zero GCE instances and zero GitHub runner registrations independently checked.
+- The parent-reviewed executor, upload journal, real persistent mutation guard,
+  three-zone queue, production adapter/composition and exact-selection tests
+  passed 195 cases together. Review fixed null/throwing auth capture cleanup,
+  original-source/plan pinning, result identity checks inside authorization,
+  and receipt-context storage binding. Journal-owned leases survive failures;
+  an unknown result retains the real guard fence and blocks another consume.
+- The reviewed executor worker was closed and shutdown verified. Shared source
+  and required evidence remain; supported dedicated session deletion is absent.
+- Next implementation: native source-bound parent envelope with unchanged
+  plaintext/reaction gates, plus original-plan coordination before upload.
+  Source credentials and messages remained local. No live write or APK install.

@@ -206,6 +206,54 @@ final class CloudSyncAttachmentUploadJournal {
     () => CloudAttachmentUploadSnapshot._(_readBound(id)),
   );
 
+  /// Resolve the original plan BEFORE any new randomized preparation. The
+  /// caller derives this key from the protected IDS source, never a mutable
+  /// display GUID. Deliberately do not filter by generation: a stale retained
+  /// row must fail validation instead of disappearing and permitting a duplicate.
+  CloudAttachmentUploadSnapshot? findForAttachment({
+    required int localSendIntentId,
+    required String logicalEntityKeyHash,
+    required Set<String> sourceAttachmentKeys,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireGeneration();
+    final inventory = Set<String>.unmodifiable(sourceAttachmentKeys);
+    if (localSendIntentId <= 0 ||
+        inventory.isEmpty ||
+        inventory.length > 64 ||
+        inventory.any((key) => !_token.hasMatch(key)) ||
+        !inventory.contains(logicalEntityKeyHash)) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final query = _uploads
+        .query(
+          CloudAttachmentUploadEntity_.localSendIntentId.equals(
+            localSendIntentId,
+          ),
+        )
+        .build();
+    try {
+      // Inspect all plans for this original source. After an identity-codec
+      // repair, a previously keyed plan must not disappear from an exact-key
+      // lookup and accidentally authorize a second upload for the same bytes.
+      // The complete inventory comes from the committed native source.
+      CloudAttachmentUploadSnapshot? selected;
+      final seen = <String>{};
+      for (final candidate in query.find()) {
+        final row = _readBound(candidate.id);
+        if (!inventory.contains(row.attachmentKeyHash) ||
+            !seen.add(row.attachmentKeyHash)) {
+          throw StateError('cloud_sync_attachment_upload_inventory_changed');
+        }
+        if (row.attachmentKeyHash == logicalEntityKeyHash) {
+          selected = CloudAttachmentUploadSnapshot._(row);
+        }
+      }
+      return selected;
+    } finally {
+      query.close();
+    }
+  });
+
   /// Deterministic byte-upload reconciliation binding over the original
   /// envelope (scope, writer epoch, generation, store identity, local
   /// source, upload key, attachment identity, plan, attempt). Result,
