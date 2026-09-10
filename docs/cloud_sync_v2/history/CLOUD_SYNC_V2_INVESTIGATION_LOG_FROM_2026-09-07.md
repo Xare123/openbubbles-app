@@ -367,3 +367,9 @@ This is a chronological evidence log. It does not override the
   no parent close or follow-up result. The exact agent/submission handles were
   sent to the designated repair task. No replacement worktree, task database
   edit, or transcript deletion was attempted.
+- Source `925b02181c99985763df7a52d27dcb2b6371559c` and its exact dependency
+  were pushed to the user's forks, with no upstream PR created. Full GCE run
+  `34434823427` uses T2D-60, primary lane, manual writer/background read on,
+  automatic uploads off, and pilot `a35bfc526`. Quota readback showed 100 T2D
+  CPUs/500 GB SSD available with zero usage before dispatch. Runner creation
+  passed. Compilation, tests, APK/signing, and cleanup remain to be verified.
