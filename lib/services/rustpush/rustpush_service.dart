@@ -9201,7 +9201,11 @@ class RustPushService extends GetxService {
         maximumPasses: maximumPasses,
       );
       try {
-        final result = await controller.drainConfirmedAndPersist();
+        final result = await controller.drainConfirmedAndPersist(
+          executionBudget: allowAndroidBackgroundIsolate
+              ? CloudSyncAndroidBackgroundPolicy.executionBudget
+              : null,
+        );
         final reportReference = result.persistedReportReference;
         final reportName = reportReference is File
             ? basename(reportReference.path)

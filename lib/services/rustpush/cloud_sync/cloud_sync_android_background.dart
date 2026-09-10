@@ -19,6 +19,9 @@ abstract final class CloudSyncAndroidBackgroundPolicy {
   static final RegExp _scopeHashPattern = RegExp(r'^[a-f0-9]{64}$');
 
   static const String metadataWorkKind = 'METADATA';
+  // Leave room inside Android's eight-minute wait for startup and quiescence.
+  // This stops admitting read work; it never force-aborts a protected operation.
+  static const executionBudget = Duration(minutes: 5);
 
   static CloudSyncScope semanticMessageScope(String accountFingerprint) =>
       CloudSyncScope(

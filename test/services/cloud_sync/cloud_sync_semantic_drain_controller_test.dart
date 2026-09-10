@@ -8,9 +8,137 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_dra
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:universal_io/io.dart';
 
 void main() {
+  test(
+    'background budget cancels admission but awaits protected quiescence',
+    () {
+      fakeAsync((clock) {
+        final release = Completer<void>();
+        var cancellations = 0;
+        var finished = false;
+        final terminal = report(terminalEmpty: true);
+        final controller = _controller(
+          runConfirmed: () async => throw StateError('wrong-path'),
+          persistReport: (_) async => throw StateError('wrong-path'),
+          runCatchUp: () async {
+            await release.future;
+            return CloudSyncConfirmedCatchUpResult(
+              remotePasses: 1,
+              lastRemoteReport: terminal,
+              lastRemoteReportReference: 'durable-report',
+              remoteDrained: true,
+              reachedRemotePassLimit: false,
+            );
+          },
+          cancelCatchUp: () => cancellations++,
+        );
+        controller
+            .drainConfirmedAndPersist(
+              executionBudget: const Duration(minutes: 5),
+            )
+            .then((_) => finished = true);
+        clock.elapse(const Duration(minutes: 5));
+        expect(cancellations, 1);
+        expect(controller.isDisposed, isTrue);
+        expect(controller.isActive, isTrue);
+        expect(finished, isFalse);
+        release.complete();
+        clock.flushMicrotasks();
+        expect(controller.isActive, isFalse);
+        expect(finished, isTrue);
+        expect(clock.pendingTimers, isEmpty);
+      });
+    },
+  );
+
+  test('expired budget persists active page and prevents another page', () {
+    fakeAsync((clock) {
+      final release = Completer<void>();
+      var passes = 0;
+      var persisted = 0;
+      Object? failure;
+      final controller = _controller(
+        runConfirmed: () async {
+          passes++;
+          await release.future;
+          return report(terminalEmpty: false, fetched: 10);
+        },
+        persistReport: (_) async {
+          persisted++;
+          return 'durable-report';
+        },
+      );
+      controller
+          .drainConfirmedAndPersist(executionBudget: const Duration(seconds: 1))
+          .then<void>(
+            (_) => fail('must not complete an undrained read'),
+            onError: (Object error, StackTrace _) {
+              failure = error;
+            },
+          );
+      clock.elapse(const Duration(seconds: 1));
+      expect(failure, isNull);
+      expect(controller.isActive, isTrue);
+      release.complete();
+      clock.flushMicrotasks();
+      expect(passes, 1);
+      expect(persisted, 1);
+      expect(
+        failure.toString(),
+        contains('cloud_sync_semantic_drain_cancelled'),
+      );
+      expect(controller.isActive, isFalse);
+    });
+  });
+
+  test(
+    'completed background drain cancels its timer without closing next run',
+    () {
+      fakeAsync((clock) {
+        var cancellations = 0;
+        final controller = _controller(
+          runConfirmed: () async => report(terminalEmpty: true),
+          persistReport: (_) async => 'durable-report',
+          cancelCatchUp: () => cancellations++,
+        );
+        controller.drainConfirmedAndPersist(
+          executionBudget: const Duration(seconds: 1),
+        );
+        clock.flushMicrotasks();
+        clock.elapse(const Duration(seconds: 2));
+        expect(cancellations, 0);
+        expect(controller.isDisposed, isFalse);
+        expect(clock.pendingTimers, isEmpty);
+        var completed = false;
+        controller.drainConfirmedAndPersist().then((_) => completed = true);
+        clock.flushMicrotasks();
+        expect(completed, isTrue);
+      });
+    },
+  );
+
+  test('invalid execution budget rejects before calling the transport', () {
+    var runs = 0;
+    final controller = _controller(
+      runConfirmed: () async {
+        runs++;
+        return report(terminalEmpty: true);
+      },
+      persistReport: (_) async => 'unused',
+    );
+    for (final budget in [Duration.zero, const Duration(seconds: -1)]) {
+      expect(
+        () => controller.drainConfirmedAndPersist(executionBudget: budget),
+        throwsA(isA<StateError>()),
+      );
+    }
+    expect(runs, 0);
+    expect(controller.isActive, isFalse);
+  });
+
   test('returns after one persisted terminal-empty read', () async {
     final events = <String>[];
     final controller = _controller(

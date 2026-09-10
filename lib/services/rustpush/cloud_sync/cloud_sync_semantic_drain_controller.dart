@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'cloud_sync_manual_semantic_pull_sampler.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_semantic_pull_report.dart';
@@ -105,7 +107,9 @@ final class CloudSyncSemanticDrainController {
   /// Drains until all expected zones prove a terminal empty read or the
   /// configured cap is reached. A cap result is safe to resume later, never a
   /// successful remote-drain claim.
-  Future<CloudSyncSemanticDrainResult> drainConfirmedAndPersist() {
+  Future<CloudSyncSemanticDrainResult> drainConfirmedAndPersist({
+    Duration? executionBudget,
+  }) {
     if (_admissionClosed) {
       throw StateError('cloud_sync_semantic_drain_controller_disposed');
     }
@@ -115,12 +119,24 @@ final class CloudSyncSemanticDrainController {
     if (maximumPasses < 1 || maximumPasses > defaultMaximumPasses) {
       throw StateError('cloud_sync_semantic_drain_pass_limit_invalid');
     }
+    if (executionBudget != null && executionBudget <= Duration.zero) {
+      throw StateError('cloud_sync_semantic_drain_budget_invalid');
+    }
 
+    Timer? budgetTimer;
     late final Future<CloudSyncSemanticDrainResult> operation;
     operation = _drain().whenComplete(() {
+      budgetTimer?.cancel();
       if (identical(_inFlight, operation)) _inFlight = null;
     });
     _inFlight = operation;
+    if (executionBudget != null) {
+      budgetTimer = Timer(executionBudget, () {
+        // Request cooperative cancellation, then let the current protected
+        // operation quiesce. Future.timeout would abandon it while still active.
+        unawaited(dispose());
+      });
+    }
     return operation;
   }
 

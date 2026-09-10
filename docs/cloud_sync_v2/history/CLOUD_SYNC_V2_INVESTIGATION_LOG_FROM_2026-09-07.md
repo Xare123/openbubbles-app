@@ -276,3 +276,42 @@ This is a chronological evidence log. It does not override the
   warnings. An independent post-fix static audit reported no remaining
   concrete crash-consistency findings. Full GCE and live process-kill proof are
   still required before automatic uploads can be considered.
+
+## 2026-09-09, background startup and lifetime counterexamples
+
+- Prior GCE run `34423632222` passed its selected suites and produced the
+  signed `fc132e5f8` APK. It did not execute Android JVM tests, and source-string
+  assertions did not detect the following runtime dependency cycle:
+  Dart service initialization awaits `ready`; Kotlin resumed its own waiter
+  without replying; the background wake awaits the unfinished service graph.
+- The repair acknowledges every ready request before native dispatch and emits
+  startup once. Missing callback handles fail before engine allocation. Failed
+  or canceled startup disposes only its own unclaimed engine.
+- Native waiter cancellation no longer decrements active Dart work. Engine
+  leases end on actual reply or synchronous dispatch failure, including late
+  and duplicate replies. Delayed disposal rechecks exact engine identity,
+  active leases, and idle generation on Main. APNs network callbacks that
+  originate on IO are marshaled onto Main before Flutter dispatch.
+- The background drain requests cooperative cancellation at five minutes,
+  closes further admission, and awaits protected quiescence. The eight-minute
+  Android timeout bounds the waiter, not native operation completion. Current
+  protected work is never declared stopped or force-destroyed due to elapsed
+  time. Late completion remains safe to reconcile on the next wake.
+- Focused verification: 26 Android tests (including 16 behavioral ready,
+  invocation, and lifetime cases) and 32 Dart controller/policy/composition
+  tests passed. Targeted Dart analysis found no issues. Neither result is
+  proof of a fresh installed Android lifecycle run.
+- The subsequent whole Android JVM suite passed 89 tests across 15 suites,
+  with zero failures, errors, or skipped tests. It reused built ARM64 Flutter
+  output while compiling current Kotlin and test code, taking 35 seconds.
+- Parent review rejected an attachment-upload validation stub: an unwired
+  type would not implement uploads. Legacy upload and record save are separate
+  operations; a missing CloudAttachment cannot disprove an earlier MMCS upload.
+  The upload implementation uses a general container and cannot be borrowed
+  without V2 identity and writer fences. Preserve separate uncertain-upload
+  and uncertain-record-save states in the upcoming attachment implementation;
+  source-level content hashing does not prove server-side upload deduplication.
+- Retained-history review corrected the claim that no bounded sweep existed.
+  A targeted already-applied replay convergence repair is being qualified;
+  the old 1,893/1,693 live blocking counts are not evidence that this defect
+  explains those rows. No current Pixel recount has been obtained.
