@@ -672,3 +672,9 @@ This is a chronological evidence log. It does not override the
   (Find My People). The latter's 29 publication/merge/refresh tests were rerun
   successfully; the earlier 38 count also included play-sound tests. These
   commits are newer than the completed GCE run and are not installed.
+- Windows bundle review identified a useful existing positive FFI test lane:
+  `cloud_sync_local_send_encoder_test.dart` can load the produced DLL using
+  `OPENBUBBLES_TEST_NATIVE_LIBRARY`. Replaced its restored-group test's
+  mock-only cast with the production `decodeMessageproto4` API plus the mock
+  adapter implementation. All 47 portable cases pass; the real DLL lane adds
+  a legacy/V2 comparison and must run separately. No wire encoder changed.

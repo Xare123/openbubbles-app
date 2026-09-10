@@ -73,7 +73,8 @@ void main() {
     final message = _groupMessage('group text');
     final encoded = encodeCloudSyncLocalSendGroupPlainText(message);
     final proto = api.decodeMessageproto(wrapped: encoded.msgProto);
-    final proto4 = (encoded.msgProto4 as _Proto4).value;
+    expect(encoded.msgProto4, isNotNull);
+    final proto4 = api.decodeMessageproto4(wrapped: encoded.msgProto4!);
     expect(proto.text, 'group text');
     expect(encoded.chatId, 'opaque-apple-group-id');
     expect(encoded.guid, message.guid);
@@ -350,6 +351,10 @@ class _Bridge implements RustLibApi {
   api.GZipWrapperMessageProto4 crateApiApiEncodeMessageproto4({
     required api.MessageProto4 messageproto4,
   }) => _Proto4(messageproto4);
+  @override
+  api.MessageProto4 crateApiApiDecodeMessageproto4({
+    required api.GZipWrapperMessageProto4 wrapped,
+  }) => (wrapped as _Proto4).value;
   @override
   api.MessageFlags crateApiApiMessageFlagsFromBitsTruncate({
     required int val,
