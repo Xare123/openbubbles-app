@@ -989,3 +989,66 @@ This is a chronological evidence log. It does not override the
   No dedicated worktrees, sessions or disposable agent files were deleted.
   Reviewed source and required transcripts remain; session deletion is not
   supported. Free C: space remained about 66.6 GiB before cloud qualification.
+
+### 2026-09-10: exact source ownership and journal retention
+
+- Previous goal work produced evidence, not merely a status restatement:
+  exact source `11de45796` / rustpush `f041db67` passed GCE `34508598558`
+  (397 app Rust tests) and `34508602298` (265 rustpush tests). Both cleanup
+  jobs succeeded. Independent inventories returned no instances or runners.
+- Current critical path is the protected actual IDS attachment descriptor,
+  not another direct test send. The existing content-free IDS receipt can be
+  acknowledged before upload admission, so that receipt cannot be the only
+  owner of descriptor recovery material. No personal account was accessed.
+- Added nullable `CloudSyncLocalSendIntentEntity.protectedSourceBinding`:
+  property `16:5377428623302990429`, preserving all preceding UIDs. Synthetic
+  old-schema pending/deferred/adopted rows reopen with null binding and no
+  inferred IDS acceptance. Parent reviewed generated source and normalized
+  generator-added trailing whitespace only in `api.freezed.dart`, after
+  proving it had no substantive change.
+- Journal adoption is write-once before IDS success, validates exact local
+  account/store/message/source, and is idempotent only for the same binding.
+  Existing plaintext captures remain unchanged. The protected reference and
+  lease now participate in GC and recovery liveness; malformed origin binding
+  stops cleanup. Outbox adoption v3 includes the source binding when present,
+  retaining the exact preexisting v1/v2 bytes for null-source rows.
+- Parent tests initially had three incorrect exception matchers (closure
+  compared directly to StateError); repaired with `throwsA`, not changed
+  production guards. All 204 combined journal/schema/store/binding tests then
+  passed, and targeted static analysis reported no issues. Another 128
+  lifecycle/restored-group/chat-origin regression tests passed. Neither suite
+  proves live attachment sending or native OS protection.
+- Actual attachment composer capture, source-bound positive IDS receipt,
+  durable byte-upload attempts and parent-record dependency remain integration
+  work. Do not enable them by removing the existing plain-text-only guard.
+- Source inspection found the next concrete seam: `IMClient.send` calls
+  `MessageInst.prepare_send`, which always replaces `sent_timestamp` and may
+  add sender/conversation routing fields. The source-bound receipt must check
+  final descriptors, not claim that pre-send capture proves unchanged wire.
+  A focused validator for these three known preparation changes may avoid
+  redesigning the send API; preserve exact body/recipients/descriptor identity.
+
+### 2026-09-10: native source review and prepared-message validation
+
+- Parent reviewed both agents' source and schema changes. The final eight-suite
+  Dart run passed 398 tests, including source substitution after database reopen,
+  old-schema compatibility, journal retention, lease lifecycle and group origin.
+- Parent corrected a native test that passed the original single GUID while
+  expecting a count mismatch. Added actual group/profile roundtrip coverage,
+  unknown protobuf/plist rejection on recovery and committed-lease roundtrip with
+  account/source/digest mismatch cases. Eleven native tests are written, not yet
+  compiled or passed. Rustfmt and `git diff --check` passed.
+- Added a minimal prepared-message validator against the real rustpush
+  `prepare_send`: preserve the entire body and descriptor, allow only generated
+  missing sender GUID, appended self participant and timestamp inside the native
+  send interval. A positive IDS result remains independently required. No network
+  sender hook or positive receipt integration was enabled in this slice.
+- Accepted Goodall's code after parent fixes and the integration-map locations;
+  rejected its proposal to put the attachment payload digest in `guid_hash`.
+  That field must retain message-GUID identity; source binding needs its own
+  versioned field. Accepted Ramanujan's additive schema and regression work.
+- Both workers used the shared worktree, so no dedicated worktree is disposable.
+  Their source, test evidence and transcripts remain needed; supported transcript
+  deletion is unavailable. No user data or build evidence was removed by parent.
+  C: had 64.78 GiB free; cloud instance and GitHub runner inventories were empty
+  before the next source-only run. No local Cargo build or account access.

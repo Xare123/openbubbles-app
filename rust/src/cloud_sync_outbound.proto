@@ -58,3 +58,19 @@ message CloudSyncAttachmentUploadV1 {
   bytes prepared_put_snapshot = 6;
   string source_file_sha256 = 7;
 }
+// Native-only IDS composer source: the provided pre-send MessageInst
+// plus explicit ordered local attachment GUIDs paired to the
+// actual Attachment parts. Inner snapshot is a canonical plist; no network
+// authority and no stage. Protected staging wraps this envelope with the
+// caller local source hash so the hash itself is protected.
+message CloudSyncIdsAttachmentSourceV1 {
+  uint32 schema_version = 1;
+  bytes source_plist = 2;
+}
+// Protected wrapper staged under the idsAttachmentSource purpose: version
+// plus caller local source hash plus the exact source envelope bytes.
+message CloudSyncIdsAttachmentSourceStageV1 {
+  uint32 schema_version = 1;
+  string local_source_sha256 = 2;
+  bytes source_envelope = 3;
+}

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:objectbox/internal.dart' as obx;
 
@@ -267,6 +268,7 @@ void main() {
           'admittedChatBinding',
           'confirmedReadbackBindingSha256',
           'idsConfirmationVersion',
+          'protectedSourceBinding',
         ].contains(property['name']),
       );
       intentModel['lastPropertyId'] = '10:3816774319385985138';
@@ -309,6 +311,7 @@ void main() {
             expect(intent.admittedOperationId, isNull);
             expect(intent.admittedBindingSha256, isNull);
             expect(intent.admittedChatBinding, isNull);
+            expect(intent.protectedSourceBinding, isNull);
             expect(intent.intentKey, 'synthetic-intent-$state');
             expect(intent.writerEpoch, 3);
             expect(intent.sourceSha256, 'C' * 64);
@@ -340,6 +343,7 @@ void main() {
         'admittedChatBinding',
         'confirmedReadbackBindingSha256',
         'idsConfirmationVersion',
+        'protectedSourceBinding',
       ].contains(property['name']),
     );
     intentModel['lastPropertyId'] = '12:8651771725641056063';
@@ -376,6 +380,7 @@ void main() {
         expect(intent.admittedOperationId, 'synthetic-existing-envelope');
         expect(intent.admittedBindingSha256, 'd' * 64);
         expect(intent.admittedChatBinding, isNull);
+        expect(intent.protectedSourceBinding, isNull);
         expect(intent.sourceSha256, 'C' * 64);
         expect(intent.localMessageId, 42);
         expect(intent.writerEpoch, 7);
@@ -384,6 +389,202 @@ void main() {
       }
     }
   });
+
+  test(
+    'protected source binding upgrade preserves pending, deferred, and adopted intents',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'cloud-sync-protected-source-upgrade-',
+      );
+      addTearDown(() async {
+        if (directory.existsSync()) await directory.delete(recursive: true);
+      });
+      final current = getObjectBoxModel();
+      final previousMap = current.model.toMap();
+      final intentModel = (previousMap['entities'] as List)
+          .cast<Map>()
+          .singleWhere(
+            (entity) => entity['name'] == 'CloudSyncLocalSendIntentEntity',
+          );
+      (intentModel['properties'] as List).removeWhere(
+        (property) => property['name'] == 'protectedSourceBinding',
+      );
+      intentModel['lastPropertyId'] = '15:7746544196685616233';
+      final previous = obx.ModelDefinition(
+        obx.ModelInfo.fromMap(previousMap),
+        current.bindings,
+      );
+      final oldStore = Store(previous, directory: directory.path);
+      late final int pendingId;
+      late final int deferredId;
+      late final int adoptedId;
+      try {
+        pendingId = oldStore.box<CloudSyncLocalSendIntentEntity>().put(
+          CloudSyncLocalSendIntentEntity(
+            intentKey: 'synthetic-protected-source-pending',
+            accountFingerprint: 'A' * 43,
+            writerEpoch: 3,
+            localMessageId: 11,
+            messageGuidHash: 'b' * 64,
+            sourceSha256: 'c' * 64,
+            state: 0,
+            createdAtMs: 1000,
+            updatedAtMs: 2000,
+          ),
+        );
+        deferredId = oldStore.box<CloudSyncLocalSendIntentEntity>().put(
+          CloudSyncLocalSendIntentEntity(
+            intentKey: 'synthetic-protected-source-deferred',
+            accountFingerprint: 'A' * 43,
+            writerEpoch: 5,
+            localMessageId: 13,
+            messageGuidHash: 'd' * 64,
+            sourceSha256: 'e' * 64,
+            state: 3,
+            admittedBindingSha256: 'f' * 64,
+            idsConfirmationVersion: 2,
+            createdAtMs: 1100,
+            updatedAtMs: 2100,
+          ),
+        );
+        adoptedId = oldStore.box<CloudSyncLocalSendIntentEntity>().put(
+          CloudSyncLocalSendIntentEntity(
+            intentKey: 'synthetic-protected-source-adopted',
+            accountFingerprint: 'A' * 43,
+            writerEpoch: 7,
+            localMessageId: 42,
+            messageGuidHash: 'F' * 64,
+            sourceSha256: 'G' * 64,
+            state: 2,
+            admittedOperationId: 'synthetic-adopted-envelope',
+            admittedBindingSha256: 'd' * 64,
+            admittedChatBinding: 'obcs2.chat-binding.v1.synthetic',
+            createdAtMs: 1200,
+            updatedAtMs: 2200,
+          ),
+        );
+      } finally {
+        oldStore.close();
+      }
+      for (var restart = 0; restart < 2; restart++) {
+        final upgraded = await openStore(directory: directory.path);
+        try {
+          expect(upgraded.box<CloudSyncLocalSendIntentEntity>().count(), 3);
+          final pending =
+              upgraded.box<CloudSyncLocalSendIntentEntity>().get(pendingId)!;
+          expect(pending.intentKey, 'synthetic-protected-source-pending');
+          expect(pending.state, 0);
+          expect(pending.writerEpoch, 3);
+          expect(pending.localMessageId, 11);
+          expect(pending.messageGuidHash, 'b' * 64);
+          expect(pending.sourceSha256, 'c' * 64);
+          expect(pending.admittedOperationId, isNull);
+          expect(pending.admittedBindingSha256, isNull);
+          expect(pending.admittedChatBinding, isNull);
+          expect(pending.confirmedReadbackBindingSha256, isNull);
+          expect(pending.idsConfirmationVersion, 0);
+          expect(pending.protectedSourceBinding, isNull);
+          expect(pending.createdAtMs, 1000);
+          expect(pending.updatedAtMs, 2000);
+          final deferred =
+              upgraded.box<CloudSyncLocalSendIntentEntity>().get(deferredId)!;
+          expect(deferred.intentKey, 'synthetic-protected-source-deferred');
+          expect(deferred.state, 3);
+          expect(deferred.writerEpoch, 5);
+          expect(deferred.localMessageId, 13);
+          expect(deferred.messageGuidHash, 'd' * 64);
+          expect(deferred.sourceSha256, 'e' * 64);
+          expect(deferred.admittedOperationId, isNull);
+          expect(deferred.admittedBindingSha256, 'f' * 64);
+          expect(deferred.admittedChatBinding, isNull);
+          expect(deferred.confirmedReadbackBindingSha256, isNull);
+          expect(deferred.idsConfirmationVersion, 2);
+          expect(deferred.protectedSourceBinding, isNull);
+          expect(deferred.createdAtMs, 1100);
+          expect(deferred.updatedAtMs, 2100);
+          final adopted =
+              upgraded.box<CloudSyncLocalSendIntentEntity>().get(adoptedId)!;
+          expect(adopted.intentKey, 'synthetic-protected-source-adopted');
+          expect(adopted.state, 2);
+          expect(adopted.writerEpoch, 7);
+          expect(adopted.localMessageId, 42);
+          expect(adopted.messageGuidHash, 'F' * 64);
+          expect(adopted.sourceSha256, 'G' * 64);
+          expect(adopted.admittedOperationId, 'synthetic-adopted-envelope');
+          expect(adopted.admittedBindingSha256, 'd' * 64);
+          expect(
+            adopted.admittedChatBinding,
+            'obcs2.chat-binding.v1.synthetic',
+          );
+          expect(adopted.confirmedReadbackBindingSha256, isNull);
+          expect(adopted.idsConfirmationVersion, 0);
+          expect(adopted.protectedSourceBinding, isNull);
+          expect(adopted.createdAtMs, 1200);
+          expect(adopted.updatedAtMs, 2200);
+        } finally {
+          upgraded.close();
+        }
+      }
+      final expectedBinding = CloudSyncLocalSendSourceBinding(
+        accountFingerprint: 'A' * 43,
+        protectedStoreIdentity: 'obcs2.store.${'A' * 43}',
+        messageGuidHash: 'b' * 64,
+        sourceSha256: 'c' * 64,
+        protectedReference: 'obcs2.ref.${'P' * 43}',
+        leaseReference: 'obcs2.lease.${'a' * 32}',
+        payloadSha256: 'd' * 64,
+        payloadLength: 512,
+      ).encode();
+      final writable = await openStore(directory: directory.path);
+      try {
+        final pending =
+            writable.box<CloudSyncLocalSendIntentEntity>().get(pendingId)!;
+        pending.protectedSourceBinding = expectedBinding;
+        writable.box<CloudSyncLocalSendIntentEntity>().put(pending);
+      } finally {
+        writable.close();
+      }
+      for (var restart = 0; restart < 2; restart++) {
+        final reopened = await openStore(directory: directory.path);
+        try {
+          final pending =
+              reopened.box<CloudSyncLocalSendIntentEntity>().get(pendingId)!;
+          expect(pending.protectedSourceBinding, expectedBinding);
+          expect(
+            CloudSyncLocalSendSourceBinding.decode(
+              pending.protectedSourceBinding!,
+            ).leaseReference,
+            'obcs2.lease.${'a' * 32}',
+          );
+          expect(pending.state, 0);
+          expect(pending.idsConfirmationVersion, 0);
+          expect(
+            reopened
+                .box<CloudSyncLocalSendIntentEntity>()
+                .get(deferredId)!
+                .protectedSourceBinding,
+            isNull,
+          );
+          expect(
+            reopened
+                .box<CloudSyncLocalSendIntentEntity>()
+                .get(adoptedId)!
+                .protectedSourceBinding,
+            isNull,
+          );
+          expect(
+            reopened
+                .box<CloudSyncLocalSendIntentEntity>()
+                .get(adoptedId)!
+                .idsConfirmationVersion,
+            0,
+          );
+        } finally {
+          reopened.close();
+        }
+      }
+    },
+  );
 
   test(
     'Cloud Sync entities extend rather than renumber the canonical model',
@@ -554,6 +755,25 @@ void main() {
         '14:3699140591669288204',
       );
       expect(chatAliasProperties['chatId']?['id'], '18:1466186784207767557');
+
+      final intentProperties = propertiesFor(
+        'CloudSyncLocalSendIntentEntity',
+      );
+      expect(
+        intentProperties['idsConfirmationVersion']?['id'],
+        '15:7746544196685616233',
+      );
+      expect(
+        intentProperties['protectedSourceBinding']?['id'],
+        '16:5377428623302990429',
+      );
+      final intentEntity = (model['entities'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere(
+            (value) => value['name'] == 'CloudSyncLocalSendIntentEntity',
+          );
+      expect(intentEntity['id'], '33:7403419454425897175');
+      expect(intentEntity['lastPropertyId'], '16:5377428623302990429');
     },
   );
 }

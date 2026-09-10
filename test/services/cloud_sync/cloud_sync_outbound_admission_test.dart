@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_create_queue_drain.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
@@ -1940,6 +1941,64 @@ void main() {
         },
       );
     }
+
+    test(
+      'substituted protected source after reopen fails adopted validation',
+      () async {
+        String sourceBinding({required String ref, required String lease}) =>
+            CloudSyncLocalSendSourceBinding(
+              accountFingerprint: testAccountFingerprintA,
+              protectedStoreIdentity:
+                  'obcs2.store.$testAccountFingerprintA',
+              messageGuidHash: intent().messageGuidHash,
+              sourceSha256: intent().sourceSha256,
+              protectedReference: testProtectedReference(ref),
+              leaseReference: testProtectedLeaseReference(lease),
+              payloadSha256: testSha256('d'),
+              payloadLength: 512,
+            ).encode();
+        objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+          intent()
+            ..protectedSourceBinding = sourceBinding(ref: 'P', lease: 'a'),
+        );
+        transport.stages.add(_stage('a', 'P', 'L', 'S'));
+        final operation = await admit();
+        expect(intent().state, 2);
+        expect(intent().admittedBindingSha256, matches(r'^[0-9a-f]{64}$'));
+        expect((await admit()).operationId, operation.operationId);
+        expect(encodes, 1);
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        store = ObjectBoxCloudSyncStore(
+          store: objectBox,
+          protector: _Protector(),
+        );
+        bindJournal();
+        coordinator = CloudSyncOutboundAdmissionCoordinator(
+          store: store,
+          transport: transport,
+          ensureProtectedStoreRecovered: () async {
+            timeline.add('recover');
+          },
+        );
+        objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+          intent()
+            ..protectedSourceBinding = sourceBinding(ref: 'Q', lease: 'b'),
+        );
+        await expectLater(
+          admit(),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'code',
+              'cloud_sync_local_send_adopted_operation_missing',
+            ),
+          ),
+        );
+        expect(intent().state, 2);
+        expect(intent().admittedOperationId, operation.operationId);
+      },
+    );
 
     test(
       'settled receipt changes do not invalidate the immutable payload binding',

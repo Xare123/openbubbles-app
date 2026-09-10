@@ -59,7 +59,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Windows candidate | Qualified source `6abbeede2`, manual-write variant: 30 focused Dart and 48 real Rust-DLL codec tests, 380 app Rust and 261 rustpush tests. One-time sender repair succeeded. At 16:20:53Z a fresh direct message was confirmed/admitted and exact-readback proof persisted; restart admitted zero new writes and retained one canonical message. Independent Apple-device display and ordinary Pixel composer convergence remain open. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
-| Dependency | rustpush `f33dcacc043b2a2363a0b8d12e4429bf936b6856` adds finite Find My HTTP-status errors above `2bfbe8a` acknowledgment tracking and attachment-integrity base `a78ccfd`. Only explicit status 0 qualifies; the legacy meaning of 5008 is not assumed. Missing intended group targets remain unconfirmed. All 261 dependency tests passed. |
+| Dependency | rustpush `f041db67c8f605efa9da4d05c0fab81e291f0b33` preserves exact randomized V2 upload preparation above Find My status handling and positive IDS acknowledgment tracking. All 265 dependency tests passed in GCE `34508602298`. Only explicit IDS status 0 qualifies; missing intended group targets remain unconfirmed. |
 | Prior-source qualification | GCE run `34437410835` fully succeeded for exact source `75440cafc`: full Dart suite, 373 app Rust tests, 253 rustpush tests, 34 protector tests, bridge drift checks, APK/native-library verification, Android JVM tests, trusted signing, and cleanup. This APK lacks the new positive-acknowledgment repair and is not a write-qualified release candidate. Older `fc132e5f8` also has the headless ready-handshake deadlock. |
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
@@ -83,6 +83,14 @@ envelope core, not a functioning attachment uploader. GCE run `34505595606`
 passed all 389 native tests on T2D-32 (`app-rust-only`), including nine
 attachment-codec cases. Cleanup passed; independent inventories showed zero
 VMs and runner registrations. No APK or replacement Windows runtime was requested.
+
+Source `11de45796` with rustpush `f041db67` passed isolated GCE runs
+`34508598558` (397 app Rust tests) and `34508602298` (265 rustpush tests).
+Both cleanup jobs passed; independent inventories returned zero VMs/runners.
+These prove randomized upload-plan recovery and validation components, not an
+end-to-end attachment send. The new unqualified source-capture/journal slice
+must retain exact native descriptors through stage/adopt/lease-commit and IDS
+receipt acknowledgment before the uploader can consume them.
 The known-good local executable is still the qualified `6abbeede2` bundle.
 
 The first September 10 attempt failed on retained IDS credentials before send.
@@ -199,7 +207,7 @@ evidence paths. Causal edit/unsend writes remain a gap, not a passed gate.
 | Retained writer queue usability | `TEST-PROVEN` | One journal-bound, read-only classifier covers queue drain, queued Chat observation, and preflight. It exempts only pristine pending creates with proof version 0, exact protected envelope/mapping, current owner/generation, no lease, attempt, Apple UUID or receipt. All rows remain counted and fingerprinted; no upload, acknowledgement, deletion, or proof upgrade occurs. GCE passed the real consumer/admission/store regression with a fresh qualified send beside retained work and reopen without duplicate submission. Apple responses are synthetic in this test; live proof remains. Unknown/retried/leased/malformed rows still block. |
 | Direct reactions | `TEST-PROVEN` | Live Apple save/readback and independent-reader display remain. |
 | Edits and unsends | `GAP` | Require distinct causal mutation and anti-resurrection contracts. |
-| Attachment writes | `GAP` | Shared upload primitives now reject malformed requests/replies without panics and correlate identical-byte files by distinct record IDs, pending Rust qualification. V2 still needs protected staging, attachment-record save/readback, recovery, and parent-message integration. Upload receipt is not record-save proof. |
+| Attachment writes | `GAP` end to end; preparation components `TEST-PROVEN` | Protected randomized preparation, completed-asset envelope and stable readback checks passed 397 app-native and 265 dependency tests. Source ownership/GC are being connected to exact IDS descriptors. Actual composer capture, source-bound success, durable upload attempts, record create/readback and parent-message integration remain required. Upload receipt is not record-save proof. |
 | Tombstones and deletion | Closed | Define exact ownership and recoverable semantics before enabling any local or remote delete. |
 | Token expiry | `TEST-PROVEN` | Live expired-token/restart proof remains. The exact-source path requires an authenticated protected reset proof, releases the semantic read boundary, reacquires the destructive-reset interlock and native pause, advances once, reconciles authority after process death, and replays once. |
 | Android background catch-up | `IN REPAIR` | The prior native `ready` handler resumed Kotlin without replying to the Dart call that startup awaited. Current repair acknowledges it, pins each engine until Dart replies, serializes dispatch/disposal on Main, and requests cooperative read cancellation after five minutes. All 89 Android JVM tests and 32 focused Dart tests pass; exact-source APK and Pixel lifecycle proof remain. |
@@ -360,6 +368,16 @@ exact attachment descriptor actually sent through IDS
   upload adoption; existing create-only record transport/readback; parent message
   dependency and encoding. Do not bypass the missing journal ownership by calling
   the legacy uploader or treating native codec tests as end-to-end qualification.
+- Native send preparation is a separate boundary: `IMClient.send` calls
+  `MessageInst.prepare_send`, which assigns a new send timestamp and may add
+  the sender/conversation GUID. Capturing a Dart-built MessageInst and then
+  allowing preparation to mutate it is not proof of the final wire. Integration
+  must validate the final attachment descriptors and bind positive IDS success
+  to the original source. Prefer an explicit validator for the three known
+  preparation changes (timestamp, generated conversation GUID, added self
+  participant), with all body/recipient/attachment fields unchanged, if that
+  avoids a new two-phase send API. Freezing the prepared submission is an
+  alternative, not a prerequisite. Do not ignore arbitrary changed fields.
 
 ## Fast qualification loop
 
@@ -516,18 +534,24 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Bounded Windows direct qualification passed on `6abbeede2`; preserve its
-   claimed request and proof. Add an exact restored-group qualification input
-   using the existing production admission and encoder, not a new uploader.
-   Qualify the repaired lifecycle candidate before another Pixel
-   install. Then prove composer admission and the native IDS receipt across an
-   intentional process death, then verify state-3 recovery, one protected
-   outbox adoption, exact CloudKit readback, and zero duplicate local/remote
-   records. Do not touch Alpha.
-2. Use the authorized test recipients only. First repeat direct no-duplicate
-   readback proof, then create one controlled restored-group plaintext message.
-3. Verify the group record by exact CloudKit readback, restart/no-save replay,
-   and independent Apple-device display.
+1. Connect attachment local origin to the protected upload plan. Extend the
+   local-send journal's ownership of the exact native attachment descriptor,
+   then add durable upload-attempt/result state, record-create/readback and
+   parent dependency. The additive `protectedSourceBinding` field and immutable
+   journal adoption now retain the source independently of the acknowledged IDS
+   receipt. GC and native lease recovery include it. Actual composer capture,
+   prepared-message verification and source-bound success receipt remain unwired;
+   do not substitute mutable attachment metadata for these steps.
+2. Preserve qualified Windows direct request `qualification-20260910-03` and
+   its proof. No additional direct send is needed merely to recheck that result.
+   The exact restored-group route is implemented/tested, but no group with the
+   approved two test recipients exists in the retained Windows profile. Restore
+   or create that approved conversation before live group qualification. Never
+   substitute another personal group.
+3. Use Windows for direct reactions and subsequent attachment/causal-write
+   qualification, preserving exact readback, restart/no-save recovery and
+   independent Apple-device display as separate gates. Implement group creation,
+   group reactions and supported edits/unsends, not just restored plaintext.
 4. Qualify lifecycle P0 before automatic sync: expired-token reset must advance
    exactly once and replay once; a second reset signal must stop. Process death
    must recover prepared or unknown authority without losing old evidence.
@@ -545,11 +569,21 @@ CloudKit readback or independent Apple-device display.
 
 ## Next falsification test
 
-The isolated Windows direct test and restart passed. Next falsify exact
-restored-group selection, positive acceptance by every intended target, native
-group encoding, remote readback and restart without resending. Preserve the
-existing direct claim. The offline inspector must continue distinguishing
-readable text from positive IDS confirmation and exact-readback proof.
+The isolated Windows direct test and restart passed. Source-only tests passed
+randomized preparation restoration, purpose/record separation, changed-source
+rejection and completed-asset correlation. Journal source ownership, migration,
+GC, admission, reference/lease retention and restored-group regressions passed
+398 focused Dart/ObjectBox tests in the final combined run. Native source capture
+and a validator for the actual `prepare_send` timestamp/routing changes are now
+implemented with synthetic tests, awaiting exact-source GCE compilation. This is
+not an IDS receipt and is not yet connected to the composer.
+Next qualify exact native descriptor capture and its stage/adopt/commit recovery,
+then wire composer/positive-IDS proof to the uploader's durable attempt state.
+None of these tests alone proves an attachment was sent or saved.
+When the approved group is present, falsify exact selection, acceptance by every
+intended target, group encoding, readback and restart without resending. Preserve
+the direct claim. The inspector must distinguish readable text, positive IDS
+confirmation and exact-readback proof.
 Then qualify the ready/lease/budget repair with Android behavioral tests and
 an exact-source signed APK. Do not install `fc132e5f8` as background-qualified.
 Use one batched Pixel session: cold read, idempotent

@@ -5,6 +5,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/imessage_initial_submission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_encoder.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
@@ -88,6 +89,72 @@ void main() {
         capturedAuth: auth ?? _auth(Object()), stillCurrent: () => current,
         now: _time(4),
       );
+
+  test('protected source ownership survives restart and IDS receipt consumption', () async {
+    final message = _message(chat: chat, stagingGuid: _guidA);
+    final identity = _identity(message, chat, _guidA);
+    final auth = _auth(Object());
+    journal.saveSubmission(identity: identity, newlyGeneratedGuid: true,
+      persistMessage: () => store.box<Message>().put(message), now: _time(2));
+    final source = _protectedSource(identity);
+    void adopt([CloudSyncLocalSendSourceBinding? value]) => journal.adoptProtectedSource(
+      identity: identity, source: value ?? source, capturedAuth: auth,
+      stillCurrent: () => true, now: _time(3));
+    adopt();
+    final intent = store.box<CloudSyncLocalSendIntentEntity>().getAll().single;
+    expect(intent.state, 0);
+    expect(intent.idsConfirmationVersion, 0);
+    await reopen();
+    expect(journal.readProtectedSource(intentId: intent.id,
+      currentAuth: _auth(Object()))!.encode(), source.encode());
+    adopt(); // Exact idempotent adoption, never allocate a replacement source.
+    expect(() => adopt(_protectedSource(identity, marker: 'B')),
+      throwsA(_stateFailure('cloud_sync_local_send_protected_source_changed')));
+    confirmNative();
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(intent.id)!.state, 3);
+    await reopen();
+    expect(journal.readProtectedSource(intentId: intent.id,
+      currentAuth: _auth(Object()))!.encode(), source.encode());
+    expect(() => journal.readProtectedSource(intentId: intent.id,
+      currentAuth: _auth(Object(), store: 'obcs2.store.${'B' * 43}')),
+      throwsA(_stateFailure('cloud_sync_local_send_protected_source_changed')));
+  });
+
+  test('source cannot be backfilled after IDS success or without pending origin', () {
+    final message = _message(chat: chat, stagingGuid: _guidA);
+    final identity = _identity(message, chat, _guidA);
+    void adopt() => journal.adoptProtectedSource(identity: identity,
+      source: _protectedSource(identity), capturedAuth: _auth(Object()),
+      stillCurrent: () => true, now: _time(5));
+    expect(adopt, throwsA(_stateFailure('cloud_sync_local_send_origin_missing')));
+    journal.saveSubmission(identity: identity, newlyGeneratedGuid: true,
+      persistMessage: () => store.box<Message>().put(message), now: _time(2));
+    confirmNative();
+    expect(adopt, throwsA(_stateFailure('cloud_sync_local_send_protected_source_too_late')));
+    expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.protectedSourceBinding, isNull);
+  });
+
+  test('source adoption rejects changed message and account before persistence', () {
+    final message = _message(chat: chat, stagingGuid: _guidA);
+    final identity = _identity(message, chat, _guidA);
+    journal.saveSubmission(identity: identity, newlyGeneratedGuid: true,
+      persistMessage: () => store.box<Message>().put(message), now: _time(2));
+    expect(() => journal.adoptProtectedSource(identity: identity,
+      source: _protectedSource(identity), capturedAuth: _auth(Object(), account: _otherAccount),
+      stillCurrent: () => true, now: _time(3)),
+      throwsA(_stateFailure('cloud_sync_local_send_auth_changed')));
+    expect(() => journal.adoptProtectedSource(identity: identity,
+      source: _protectedSource(identity), capturedAuth: _auth(Object()),
+      stillCurrent: () => false, now: _time(3)),
+      throwsA(_stateFailure('cloud_sync_local_send_identity_changed')));
+    message.text = 'different';
+    store.box<Message>().put(message);
+    expect(() => journal.adoptProtectedSource(identity: identity,
+      source: _protectedSource(identity), capturedAuth: _auth(Object()),
+      stillCurrent: () => true, now: _time(3)),
+      throwsA(_stateFailure('cloud_sync_local_send_protected_source_too_late')));
+    expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.protectedSourceBinding, isNull);
+  });
 
   test('background send return is not confirmation; native success records proof', () {
     final message = awaitingNativeConfirmation();
@@ -1863,6 +1930,17 @@ api.MessageInst _wire(Chat chat, {String text = 'ordinary text'}) =>
       sendDelivered: true,
       verificationFailed: false,
     );
+
+CloudSyncLocalSendSourceBinding _protectedSource(
+  CloudSyncLocalSendIdentity identity, {String marker = 'A'}
+) => CloudSyncLocalSendSourceBinding(
+  accountFingerprint: _scope.accountFingerprint,
+  protectedStoreIdentity: 'obcs2.store.${'A' * 43}',
+  messageGuidHash: identity.guidHash, sourceSha256: identity.sourceSha256,
+  protectedReference: 'obcs2.ref.${marker * 43}',
+  leaseReference: 'obcs2.lease.${'a' * 32}',
+  payloadSha256: 'b' * 64, payloadLength: 512,
+);
 
 CloudSyncNativeAuthSnapshot _auth(
   Object client, {

@@ -141,6 +141,7 @@ impl CloudSyncProtectionContext {
                     | "outboundChat"
                     | "outboundAttachment"
                     | "outboundAttachmentUpload"
+                    | "idsAttachmentSource"
                     | "idsSendReceipt"
                     | "systemFields"
                     | "payloadReference"
@@ -944,7 +945,7 @@ mod tests {
 
     #[test]
     fn attachment_upload_and_completed_record_purposes_are_separate() {
-        let purposes = ["outboundAttachment", "outboundAttachmentUpload", "outboundMessage", "outboundChat", "rawRecord"];
+        let purposes = ["outboundAttachment", "outboundAttachmentUpload", "idsAttachmentSource", "outboundMessage", "outboundChat", "rawRecord"];
         for purpose in purposes {
             let expected = context(purpose);
             let encoded = encode_inner(&expected, b"synthetic protected material").unwrap();

@@ -56,6 +56,12 @@ class CloudSyncLocalSendIntentEntity {
   /// this value from state, message flags, CloudKit readback, or an upgrade.
   int idsConfirmationVersion;
 
+  /// Versioned content-free protected envelope reference/lease/digest binding
+  /// for the local send origin. Stores ONLY that binding, never a raw wire
+  /// descriptor or key. Null on all pre-binding rows. Parser/journal
+  /// integration is owned elsewhere; this field is additive ownership only.
+  String? protectedSourceBinding;
+
   int createdAtMs;
   int updatedAtMs;
 
@@ -73,6 +79,7 @@ class CloudSyncLocalSendIntentEntity {
     this.admittedChatBinding,
     this.confirmedReadbackBindingSha256,
     this.idsConfirmationVersion = 0,
+    this.protectedSourceBinding,
     required this.createdAtMs,
     required this.updatedAtMs,
   });

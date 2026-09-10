@@ -5,6 +5,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_shadow_journal_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
@@ -31,6 +32,34 @@ void main() {
       clock: () => currentTime,
     );
   }
+
+  test('local source remains live for lease recovery and GC after reopen', () async {
+    final source = CloudSyncLocalSendSourceBinding(
+      accountFingerprint: 'A' * 43, protectedStoreIdentity: 'obcs2.store.${'A' * 43}',
+      messageGuidHash: 'a' * 64, sourceSha256: 'b' * 64,
+      protectedReference: 'obcs2.ref.${'S' * 43}',
+      leaseReference: 'obcs2.lease.${'c' * 32}',
+      payloadSha256: 'd' * 64, payloadLength: 123,
+    );
+    final id = objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+      CloudSyncLocalSendIntentEntity(intentKey: 'local-source-fixture',
+        accountFingerprint: source.accountFingerprint, writerEpoch: 1,
+        localMessageId: 1, messageGuidHash: source.messageGuidHash,
+        sourceSha256: source.sourceSha256, createdAtMs: 1, updatedAtMs: 1,
+        protectedSourceBinding: source.encode()),
+    );
+    await reopen();
+    final live = await store.readLiveProtectedReferences(maximumCount: 100);
+    expect(live.isComplete, isTrue);
+    expect(live.references, contains(source.protectedReference));
+    expect(await store.readLiveProtectedOutboundLeaseReferences(maximumCount: 100),
+      contains(source.leaseReference));
+    final changed = objectBox.box<CloudSyncLocalSendIntentEntity>().get(id)!
+      ..sourceSha256 = 'e' * 64;
+    objectBox.box<CloudSyncLocalSendIntentEntity>().put(changed);
+    await expectLater(store.readLiveProtectedReferences(maximumCount: 100), throwsStateError);
+    await expectLater(store.readLiveProtectedOutboundLeaseReferences(maximumCount: 100), throwsStateError);
+  });
 
   for (final scenario in ['exact member update', 'corrupt owner', 'reset']) {
     test('physical Chat mapping $scenario survives reopen without retargeting', () async {

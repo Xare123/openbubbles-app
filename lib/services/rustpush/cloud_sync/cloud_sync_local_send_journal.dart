@@ -13,6 +13,7 @@ import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloud_sync_group_send_route.dart';
 import 'cloud_sync_reaction_send_identity.dart';
+import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
@@ -991,6 +992,83 @@ final class CloudSyncLocalSendJournal {
     );
   });
 
+  /// Adopt one already-protected native source before IDS submission. The
+  /// caller holds the native protected-store lock across stage/adopt/commit.
+  /// An existing binding is immutable, including after IDS confirmation.
+  /// Never backfill a descriptor from mutable attachments after sending.
+  void adoptProtectedSource({
+    required CloudSyncLocalSendIdentity identity,
+    required CloudSyncLocalSendSourceBinding source,
+    required CloudSyncNativeAuthSnapshot capturedAuth,
+    required bool Function() stillCurrent,
+    required DateTime now,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _verifyLocalOwnership();
+    if (!stillCurrent() || !now.isUtc || now.millisecondsSinceEpoch <= 0) {
+      throw StateError('cloud_sync_local_send_identity_changed');
+    }
+    source.requireOrigin(
+      accountFingerprint: _binding.scope.accountFingerprint,
+      messageGuidHash: identity.guidHash,
+      sourceSha256: identity.sourceSha256,
+      protectedStoreIdentity: capturedAuth.protectedStoreIdentity,
+    );
+    if (capturedAuth.accountFingerprint != source.accountFingerprint) {
+      throw StateError('cloud_sync_local_send_auth_changed');
+    }
+    final key = CloudSyncLocalSendIdentity._digest([
+      'cloud-sync-local-send-intent-v1', source.accountFingerprint,
+      identity.guidHash,
+    ]);
+    final found = _readUnique(_intents.query(
+      CloudSyncLocalSendIntentEntity_.intentKey.equals(key),
+    ));
+    if (found == null) {
+      throw StateError('cloud_sync_local_send_origin_missing');
+    }
+    final intent = _readBoundIntent(found.id);
+    if (intent.sourceSha256 != identity.sourceSha256) {
+      throw StateError('cloud_sync_local_send_source_changed');
+    }
+    final encoded = source.encode();
+    if (intent.protectedSourceBinding != null) {
+      if (intent.protectedSourceBinding != encoded) {
+        throw StateError('cloud_sync_local_send_protected_source_changed');
+      }
+      return;
+    }
+    final message = _messages.get(intent.localMessageId);
+    final chat = message?.chat.target;
+    if (intent.state != 0 || intent.idsConfirmationVersion != 0 ||
+        message == null || chat == null ||
+        message.stagingGuid != identity._guid ||
+        identity._revalidate(message, chat)?.sourceSha256 != identity.sourceSha256) {
+      throw StateError('cloud_sync_local_send_protected_source_too_late');
+    }
+    intent
+      ..protectedSourceBinding = encoded
+      ..updatedAtMs = now.millisecondsSinceEpoch;
+    _intents.put(intent);
+  });
+
+  CloudSyncLocalSendSourceBinding? readProtectedSource({
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyLocalOwnership();
+    final intent = _readBoundIntent(intentId);
+    final encoded = intent.protectedSourceBinding;
+    if (encoded == null) return null;
+    final source = CloudSyncLocalSendSourceBinding.decode(encoded);
+    source.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+    );
+    return source;
+  });
+
   /// A retry may re-use an existing intent, but cannot invent local origin for
   /// a GUID that predated this journal. Only the fresh IDS GUID path may create.
   void saveSubmission({
@@ -1815,6 +1893,7 @@ final class CloudSyncLocalSendJournal {
       ..admittedBindingSha256 = _operationBinding(
         operation,
         chatBinding: chatBinding,
+        protectedSourceBinding: intent.protectedSourceBinding,
       );
     _intents.put(intent);
   }
@@ -1844,6 +1923,7 @@ final class CloudSyncLocalSendJournal {
             _operationBinding(
               operation,
               chatBinding: intent.admittedChatBinding,
+              protectedSourceBinding: intent.protectedSourceBinding,
             ) ||
         operation.createdAt.millisecondsSinceEpoch != intent.createdAtMs) {
       throw StateError('cloud_sync_local_send_adopted_operation_missing');
@@ -1996,6 +2076,18 @@ final class CloudSyncLocalSendJournal {
   }
 
   static bool _hasConsistentAdoption(CloudSyncLocalSendIntentEntity intent) {
+    final protectedSource = intent.protectedSourceBinding;
+    if (protectedSource != null) {
+      try {
+        CloudSyncLocalSendSourceBinding.decode(protectedSource).requireOrigin(
+          accountFingerprint: intent.accountFingerprint,
+          messageGuidHash: intent.messageGuidHash,
+          sourceSha256: intent.sourceSha256,
+        );
+      } on StateError {
+        return false;
+      }
+    }
     if (intent.confirmedReadbackBindingSha256 != null &&
         (intent.state != 2 ||
             intent.confirmedReadbackBindingSha256 !=
@@ -2028,10 +2120,13 @@ final class CloudSyncLocalSendJournal {
   static String _operationBinding(
     CloudOutboxOperation operation, {
     String? chatBinding,
+    String? protectedSourceBinding,
   }) => CloudSyncLocalSendIdentity._digest([
     // Keep old envelopes readable for recovery, but dispatch separately
     // requires the new dependency. Never retrofit proof from Message rows.
-    chatBinding == null
+    protectedSourceBinding != null
+        ? 'cloud-sync-local-send-adoption-v3'
+        : chatBinding == null
         ? 'cloud-sync-local-send-adoption-v1'
         : 'cloud-sync-local-send-adoption-v2',
     operation.scope.storageKey, operation.operationId,
@@ -2042,6 +2137,7 @@ final class CloudSyncLocalSendJournal {
     operation.dependencyOperationIds.toList()..sort(),
     operation.createdAt.millisecondsSinceEpoch,
     if (chatBinding != null) chatBinding,
+    if (protectedSourceBinding != null) protectedSourceBinding,
     // Lease/receipt/status fields legitimately change on confirmation.
     // Native recovery and submission still validate the live lease itself.
   ]);
@@ -2244,6 +2340,7 @@ final class CloudSyncLocalSendAdmissionSource {
       admittedOperationId = intent.admittedOperationId,
       admittedBindingSha256 = intent.admittedBindingSha256,
       admittedChatBinding = intent.admittedChatBinding,
+      protectedSourceBinding = intent.protectedSourceBinding,
       idsConfirmationVersion = intent.idsConfirmationVersion,
       state = intent.state,
       createdAtUtc = DateTime.fromMillisecondsSinceEpoch(
@@ -2261,6 +2358,7 @@ final class CloudSyncLocalSendAdmissionSource {
   final String? admittedOperationId;
   final String? admittedBindingSha256;
   final String? admittedChatBinding;
+  final String? protectedSourceBinding;
   final int idsConfirmationVersion;
   final int state;
   final DateTime createdAtUtc;
@@ -2278,6 +2376,7 @@ final class CloudSyncLocalSendAdmissionSource {
       admittedOperationId == intent.admittedOperationId &&
       admittedBindingSha256 == intent.admittedBindingSha256 &&
       admittedChatBinding == intent.admittedChatBinding &&
+      protectedSourceBinding == intent.protectedSourceBinding &&
       idsConfirmationVersion == intent.idsConfirmationVersion &&
       createdAtUtc.millisecondsSinceEpoch == intent.createdAtMs;
 

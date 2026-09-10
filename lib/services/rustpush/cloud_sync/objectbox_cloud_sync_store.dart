@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'cloud_operation_identity.dart';
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_local_send_journal.dart';
+import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_chat_identity_evidence.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
@@ -532,7 +533,7 @@ class ObjectBoxCloudSyncStore
     });
   }
 
-  /// Returns protected outbound lease references still owned by outbox rows.
+  /// Returns protected leases owned by outbox rows or local send sources.
   ///
   /// These references are intentionally returned separately from page leases:
   /// page-lease cleanup must not acknowledge or release an outbound receipt.
@@ -567,8 +568,38 @@ class ObjectBoxCloudSyncStore
           );
         }
       }
+      final sources = _store.box<CloudSyncLocalSendIntentEntity>().query(
+        CloudSyncLocalSendIntentEntity_.protectedSourceBinding.notNull(),
+      ).build();
+      try {
+        if (sources.count() > maximumCount) {
+          throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+        }
+        for (final intent in sources.find()) {
+          references.add(_localSendSource(intent)!.leaseReference);
+          if (references.length > maximumCount) {
+            throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+          }
+        }
+      } finally {
+        sources.close();
+      }
       return Set<String>.unmodifiable(references);
     });
+  }
+
+  static CloudSyncLocalSendSourceBinding? _localSendSource(
+    CloudSyncLocalSendIntentEntity intent,
+  ) {
+    final encoded = intent.protectedSourceBinding;
+    if (encoded == null) return null;
+    final source = CloudSyncLocalSendSourceBinding.decode(encoded);
+    source.requireOrigin(
+      accountFingerprint: intent.accountFingerprint,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+    );
+    return source;
   }
 
   @override
@@ -638,6 +669,7 @@ class ObjectBoxCloudSyncStore
           _outbox.count() +
           (_recordMaps.count() * 2) +
           _writerAuthorities.count() +
+          _store.box<CloudSyncLocalSendIntentEntity>().count() +
           (_attachmentMaterializations.count() * 4);
       if (upperBound > maximumCount) {
         return const _ProtectedReferenceCapture.incomplete();
@@ -713,6 +745,11 @@ class ObjectBoxCloudSyncStore
       );
 
       final checkpoints = <_ProtectedCheckpointCapture>[];
+      scanPaged(
+        (_store.box<CloudSyncLocalSendIntentEntity>().query()
+              ..order(CloudSyncLocalSendIntentEntity_.id)).build(),
+        (intent) => capture(_localSendSource(intent)?.protectedReference),
+      );
       scanPaged(
         (_checkpoints.query()..order(CloudSyncCheckpointEntity_.id)).build(),
         (entry) {
