@@ -175,8 +175,13 @@ not silently relabeled. Only generated bridge drift failed; artifact
 independent VM/runner inventories passed. These are component checks, not a
 working end-to-end attachment writer. Original-plan coordination and source-bound
 header encoding passed 57 combined Dart cases (including existing plaintext and
-reaction regressions); actual runtime composition and protected parent
-staging/prepare/readback remain in implementation. Native restored-group parent
+reaction regressions). The native plan adapter and coordinator passed 10 cases
+through the generated API mock, with clean targeted analysis. Native protected
+parent staging/prepare/readback now has a reviewed candidate and nine synthetic
+tests pending GCE execution. It rebuilds only from the retained IDS source,
+uses the existing bounded decoder for comparison, and retains the original
+envelope bytes for readback. Actual runtime composition remains incomplete.
+Native restored-group parent
 routing still needs its own verified chat binding, not an inferred direct route.
 Completed upload fence recovery is implemented and tested. The epoch counterexample is
 now explicit: write ambiguity advances

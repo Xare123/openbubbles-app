@@ -481,6 +481,87 @@ impl<'a> BoundedTypedStreamDecoder<'a> {
     }
 }
 
+/// Compare a source-generated initial body against the bounded, lossless AST,
+/// before inbound projection ignores unknown attributes. Dictionary order is
+/// immaterial; keys (including duplicates), fields, classes, scalar types and
+/// values are exact. No ingestion behavior or general decoder is changed.
+/// Archive class versions are not semantic authorization: this decoder does
+/// not retain them. Outbound staging accepts no supplied archive, and readback
+/// separately binds the exact original protected bytes, including versions.
+pub(crate) fn validate_source_projected_attributed_body(
+    encoded: &[u8],
+    expected: &rustpush::StCollapsedValue,
+) -> Result<(), CloudCanonicalQuarantineReason> {
+    use rustpush::StCollapsedValue as Expected;
+    fn fields(decoder: &BoundedTypedStreamDecoder<'_>, actual: &[BoundedStreamValue],
+        expected: &[Expected], depth: usize) -> Result<(), BoundedStreamFailure>
+    {
+        if actual.len() != expected.len() { return Err(BoundedStreamFailure::Malformed); }
+        for (a, b) in actual.iter().zip(expected) { compare(decoder, a, b, depth)?; }
+        Ok(())
+    }
+    fn compare(decoder: &BoundedTypedStreamDecoder<'_>, actual: &BoundedStreamValue,
+        expected: &Expected, depth: usize) -> Result<(), BoundedStreamFailure>
+    {
+        if depth > MAX_TYPED_STREAM_DEPTH { return Err(BoundedStreamFailure::Oversized); }
+        match (actual, expected) {
+            (BoundedStreamValue::String(a), Expected::String(b)) if a == b => Ok(()),
+            (BoundedStreamValue::Int(a, sa), Expected::Int(b, sb)) if a == b && sa == sb => Ok(()),
+            (BoundedStreamValue::Object(Some(index)), Expected::CString(b)) => {
+                if matches!(decoder.objects.get(*index), Some(BoundedStreamObject::CString(a)) if a == b) {
+                    Ok(())
+                } else { Err(BoundedStreamFailure::Malformed) }
+            }
+            (BoundedStreamValue::Object(Some(index)), Expected::Object { class, fields: wanted }) => {
+                let actual_fields = decoder.object_fields(*index, &[class.as_str()])?;
+                if actual_fields.len() != wanted.len() { return Err(BoundedStreamFailure::Malformed); }
+                if class == "NSDictionary" {
+                    // A projected dictionary always has a count followed by
+                    // one key/value pair per attribute. Reject duplicate keys
+                    // rather than constructing a map that silently overwrites.
+                    if wanted.is_empty() || wanted.len() % 2 != 1 {
+                        return Err(BoundedStreamFailure::Malformed);
+                    }
+                    fields(decoder, &actual_fields[0], &wanted[0], depth + 1)?;
+                    let mut seen = HashSet::new();
+                    for pair in actual_fields[1..].chunks_exact(2) {
+                        if pair[0].len() != 1 { return Err(BoundedStreamFailure::Malformed); }
+                        let key = decoder.string_object(&pair[0][0])?;
+                        if !seen.insert(key.clone()) { return Err(BoundedStreamFailure::Malformed); }
+                        let expected_pair = wanted[1..].chunks_exact(2).find(|pair| {
+                            matches!(&pair[0][0], Expected::Object { class, fields }
+                                if class == "NSString" && matches!(&fields[0][0], Expected::String(v) if v == &key))
+                        }).ok_or(BoundedStreamFailure::Malformed)?;
+                        // Also compare key-object fields, not just its string:
+                        // the inbound string accessor alone ignores extras.
+                        fields(decoder, &pair[0], &expected_pair[0], depth + 1)?;
+                        fields(decoder, &pair[1], &expected_pair[1], depth + 1)?;
+                    }
+                    Ok(())
+                } else {
+                    for (a, b) in actual_fields.iter().zip(wanted) {
+                        fields(decoder, a, b, depth + 1)?;
+                    }
+                    Ok(())
+                }
+            }
+            _ => Err(BoundedStreamFailure::Malformed),
+        }
+    }
+    let validate = || -> Result<(), BoundedStreamFailure> {
+        if encoded.is_empty() || encoded.len() > 1024 * 1024 {
+            return Err(BoundedStreamFailure::Oversized);
+        }
+        let (decoder, values) = BoundedTypedStreamDecoder::new(encoded)?.decode()?;
+        if values.len() != 1 { return Err(BoundedStreamFailure::Malformed); }
+        compare(&decoder, &values[0], expected, 0)
+    };
+    validate().map_err(|error| match error {
+        BoundedStreamFailure::Malformed => CloudCanonicalQuarantineReason::MalformedAttributedBody,
+        BoundedStreamFailure::Oversized => CloudCanonicalQuarantineReason::OversizedContent,
+    })
+}
+
 #[derive(Clone, Default)]
 struct DecodedRunAttributes {
     message_part: Option<u32>,

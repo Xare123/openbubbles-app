@@ -1443,3 +1443,19 @@ This is a chronological evidence log. It does not override the
   readback. Review requires reuse of the existing bounded typedstream decoder
   where possible; group parent routing and runtime child-dependency admission
   remain open. Header tests are not native group-send proof.
+
+## 2026-09-10, native attachment-parent candidate review
+
+- Reviewed source-bound staging, prepare and reconciliation across the four
+  native files. The API requires the exact committed original-source context;
+  ordinary plaintext/reaction validation remains separate. Readback compares
+  original protected bytes, allowing only the established CloudKit Date roundtrip.
+- Reused the existing bounded typedstream decoder instead of adding another
+  parser. Semantic comparison rejects unknown/duplicate attributes and extra
+  fields. Archive versions remain byte-bound rather than semantic authorization.
+- All four native files passed syntax parsing and scoped diff checks. Nine
+  synthetic tests are added but require cloud compilation/execution. Restored
+  group routing and runtime child-readback enforcement remain required work.
+- Native plan adapter plus coordinator passed 10 targeted Dart cases, with no
+  analyzer issues. These use a generated-API mock, not an Apple account.
+- No APK install, live write, credentials upload or Alpha changes in this batch.

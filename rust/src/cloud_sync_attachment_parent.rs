@@ -8,13 +8,12 @@
 // decoded_attachment_upload_material derives metadata.guid from the same
 // field-index walk. Tests check their parity per link (meta.guid == apple_guid).
 //
-// Scope: deterministic, randomness-free projection only. The caller keeps all
-// lease, account, store, auth, and GUID checks and supplies only an envelope
+// Scope: deterministic projection and strict source-bound body comparison.
+// The caller keeps all lease, account, store, auth checks and supplies a source
 // opened after its own committed-lease verification (same contract as
-// restore_ids_attachment_message). This module never decodes generic wire
-// bytes, never touches IDS/auth/storage, and is not a general encoder.
-// Used by the source inventory; parent-message staging still requires its
-// separately bound durable write contract.
+// restore_ids_attachment_message). The bounded reader below admits only the
+// projected initial-body grammar, never generic attributed content. The
+// outbound module owns protected staging and repeats the source GUID binding.
 //
 // Determinism is semantic, not byte-level: run order, UTF-16 lengths, and
 // GUID mapping are fixed, but NSDictionaryTypedCoder iterates a HashMap, so
@@ -32,6 +31,7 @@ use crate::cloud_sync_ids_attachment_source::{DecodedIdsAttachmentSource, Decode
 use crate::cloud_sync_outbound::CloudSyncOutboundFailure as Failure;
 use rustpush::{
     coder_encode_flattened, NSAttributedString, NSDictionaryTypedCoder, NSNumber, NSString,
+    StCollapsedValue,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -75,7 +75,19 @@ pub(crate) struct ParentAttributedProjection {
     pub utf16_length: u32,
     pub encoded_body: Vec<u8>,
     pub links: Vec<ParentAttachmentLink>,
+    body: StCollapsedValue,
 }
+
+impl ParentAttributedProjection {
+    /// Dictionary order may differ across projections. Every class, field,
+    /// attribute, value and UTF-16 range must otherwise match the source.
+    pub(crate) fn validate_encoded_body(&self, encoded: &[u8]) -> Result<(), Failure> {
+        crate::cloud_sync_canonical_converter::validate_source_projected_attributed_body(
+            encoded, &self.body,
+        ).map_err(|_| Failure::BindingMismatch)
+    }
+}
+
 
 enum RunDraft {
     Text {
@@ -379,6 +391,7 @@ pub(crate) fn project_parent_attributed_body(
         utf16_length: cursor,
         encoded_body,
         links,
+        body: collapsed,
     })
 }
 
@@ -394,6 +407,85 @@ mod tests {
         start_date_ns: 1,
         created_date_ns: 2,
     };
+
+    #[test]
+    fn strict_source_comparison_accepts_dictionary_order_not_semantic_changes() {
+        let source = crate::cloud_sync_outbound::attachment_parent_test_support::source();
+        let projection = project_parent_attributed_body(&source).unwrap();
+        assert_eq!(projection.utf16_length, 6);
+        assert_eq!(projection.links[0].start_utf16, 3);
+        assert_eq!(projection.links[1].start_utf16, 5);
+        assert_eq!(projection.links[0].apple_guid, "at_1_parent-fixture-guid");
+        assert_eq!(projection.links[1].apple_guid, "at_7_parent-fixture-guid");
+        projection.validate_encoded_body(&projection.encoded_body).unwrap();
+        let mut reordered = projection.body.clone();
+        if let StCollapsedValue::Object { fields, .. } = &mut reordered {
+            for field in fields.iter_mut().skip(1) {
+                if let [StCollapsedValue::Object { class, fields }] = field.as_mut_slice() {
+                    if class == "NSDictionary" {
+                        let mut entries: Vec<_> = fields[1..].chunks_exact(2)
+                            .map(|pair| pair.to_vec()).collect();
+                        entries.reverse();
+                        fields.truncate(1);
+                        fields.extend(entries.into_iter().flatten());
+                    }
+                }
+            }
+        }
+        let reordered_bytes = coder_encode_flattened(&[reordered]);
+        assert_ne!(reordered_bytes, projection.encoded_body);
+        projection.validate_encoded_body(&reordered_bytes).unwrap();
+
+        let mut changed = decode_wire(&projection);
+        changed.text = "Z😀 B ".to_owned();
+        assert!(projection.validate_encoded_body(&coder_encode_flattened(&[changed.encode()])).is_err());
+        let mut changed = decode_wire(&projection);
+        changed.ranges[0].0 -= 1; // splitting the source's surrogate pair
+        assert!(projection.validate_encoded_body(&coder_encode_flattened(&[changed.encode()])).is_err());
+        let mut changed = decode_wire(&projection);
+        changed.ranges[1].1.0.insert(ATTACH_GUID_KEY.to_owned(), NSString("at_1_other-parent".to_owned()).encode());
+        assert!(projection.validate_encoded_body(&coder_encode_flattened(&[changed.encode()])).is_err());
+        let mut changed = decode_wire(&projection);
+        changed.ranges[0].1.0.insert(BOLD_KEY.to_owned(), NSNumber(1).encode());
+        assert!(projection.validate_encoded_body(&coder_encode_flattened(&[changed.encode()])).is_err());
+        let mut changed = decode_wire(&projection);
+        changed.ranges[0].1.0.insert("unknown-attribute".to_owned(), NSNumber(0).encode());
+        assert!(projection.validate_encoded_body(&coder_encode_flattened(&[changed.encode()])).is_err());
+    }
+
+    #[test]
+    fn strict_source_comparison_rejects_duplicate_keys_and_hidden_key_fields() {
+        let source = crate::cloud_sync_outbound::attachment_parent_test_support::source();
+        let projection = project_parent_attributed_body(&source).unwrap();
+        for duplicate in [false, true] {
+            let mut body = projection.body.clone();
+            let StCollapsedValue::Object { fields, .. } = &mut body else { panic!("fixture body") };
+            let StCollapsedValue::Object { fields: dictionary, .. } = &mut fields[2][0]
+                else { panic!("fixture dictionary") };
+            if duplicate {
+                dictionary[3] = dictionary[1].clone();
+            } else {
+                let StCollapsedValue::Object { fields, .. } = &mut dictionary[1][0]
+                    else { panic!("fixture key") };
+                fields.push(vec![StCollapsedValue::String("hidden-field".to_owned())]);
+            }
+            assert!(projection.validate_encoded_body(&coder_encode_flattened(&[body])).is_err());
+        }
+    }
+
+    #[test]
+    fn strict_source_comparison_rejects_truncated_trailing_and_oversized_archives() {
+        let source = crate::cloud_sync_outbound::attachment_parent_test_support::source();
+        let projection = project_parent_attributed_body(&source).unwrap();
+        for end in 0..projection.encoded_body.len() {
+            assert!(projection.validate_encoded_body(&projection.encoded_body[..end]).is_err());
+        }
+        let mut trailing = projection.encoded_body.clone();
+        trailing.push(0);
+        assert!(projection.validate_encoded_body(&trailing).is_err());
+        assert!(projection.validate_encoded_body(&vec![0; 1024 * 1024 + 1]).is_err());
+        assert!(projection.validate_encoded_body(&[0x80, 0x01]).is_err());
+    }
 
     fn decoded_fixture(
         message_guid: &str,

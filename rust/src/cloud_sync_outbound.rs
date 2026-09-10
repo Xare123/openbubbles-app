@@ -19,6 +19,8 @@ use thiserror::Error;
 use crate::cloud_sync_canonical_dto::{
     parse_associated_parent, CloudCanonicalEntityKind, CloudCanonicalReactionKind,
 };
+use crate::cloud_sync_attachment_parent::project_parent_attributed_body;
+use crate::cloud_sync_ids_attachment_source::DecodedIdsAttachmentSource;
 
 use crate::cloud_sync_native_fetch::{
     cloud_sync_open_protected_outbound_message, cloud_sync_stage_protected_outbound_envelope,
@@ -129,6 +131,18 @@ pub(crate) fn stage_outbound_message(
     let record_name =
         deterministic_message_record_name(&logical_message_guid, &container_scoped_user_id)?;
     let encoded = encode_outbound_message(message, &record_name)?;
+    stage_encoded_message(storage_directory, account_fingerprint, entity_kind,
+        &logical_message_guid, &record_name, encoded)
+}
+
+fn stage_encoded_message(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    entity_kind: CloudCanonicalEntityKind,
+    logical_message_guid: &str,
+    record_name: &str,
+    encoded: Vec<u8>,
+) -> Result<NativeProtectedOutboundStage, CloudSyncOutboundFailure> {
     let payload_sha256 = sha256_hex(&encoded);
     let payload_length =
         u64::try_from(encoded.len()).map_err(|_| CloudSyncOutboundFailure::OversizedMessage)?;
@@ -186,6 +200,195 @@ pub(crate) fn open_staged_outbound_message(
         return Err(CloudSyncOutboundFailure::BindingMismatch);
     }
     decode_outbound_envelope(&encoded).map(|(message, _)| message)
+}
+
+/// Source-validated parent plus ORIGINAL protected envelope bytes. No mutable
+/// access: readback must compare the original payload, not a fresh projection.
+/// This is native-only and deliberately has no content-bearing Debug impl.
+pub(crate) struct NativeOpenedAttachmentParent {
+    message: CloudMessage,
+    server_record_name: String,
+    encoded: Vec<u8>,
+}
+
+impl NativeOpenedAttachmentParent {
+    pub(crate) fn message(&self) -> &CloudMessage { &self.message }
+    pub(crate) fn server_record_name(&self) -> &str { &self.server_record_name }
+}
+
+/// API opens the committed IDS source under its exact context/auth interlock.
+/// This function neither opens nor commits that source lease. The caller must
+/// retain it for all prepares/reconciliations and enforce child dependencies.
+pub(crate) fn stage_outbound_attachment_parent(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    container_scoped_user_id: String,
+    message_headers: CloudMessage,
+    source: &DecodedIdsAttachmentSource,
+) -> Result<NativeProtectedOutboundStage, CloudSyncOutboundFailure> {
+    let guid = message_headers.guid.clone();
+    let record_name = deterministic_message_record_name(&guid, &container_scoped_user_id)?;
+    let encoded = encode_outbound_attachment_parent(message_headers, &record_name, source)?;
+    stage_encoded_message(storage_directory, account_fingerprint,
+        CloudCanonicalEntityKind::Message, &guid, &record_name, encoded)
+}
+
+/// No caller-authored body is accepted, including an empty attributed archive.
+/// Record identity remains the existing V2 Message identity, not an attachment
+/// identity. The storage entry point derives the record name from native salt.
+pub(crate) fn encode_outbound_attachment_parent(
+    mut message_headers: CloudMessage,
+    server_record_name: &str,
+    source: &DecodedIdsAttachmentSource,
+) -> Result<Vec<u8>, CloudSyncOutboundFailure> {
+    if message_headers.msg_proto.0.text.as_deref().is_some_and(|v| !v.is_empty())
+        || message_headers.msg_proto.0.attributed_body.is_some()
+    {
+        return Err(CloudSyncOutboundFailure::UnsupportedMessage);
+    }
+    validate_attachment_parent_headers(&message_headers, source)?;
+    let projection = project_parent_attributed_body(source)?;
+    message_headers.msg_proto.0.text = Some(projection.text);
+    message_headers.msg_proto.0.attributed_body = Some(projection.encoded_body);
+    validate_common_outbound_sizes(&message_headers)?;
+    encode_message_fields(message_headers, server_record_name)
+}
+
+/// No schema change: the journal supplies the retained source binding on each
+/// open. A bare V2 envelope is still rejected by the ordinary plaintext path.
+pub(crate) fn decode_outbound_attachment_parent(
+    encoded: &[u8],
+    source: &DecodedIdsAttachmentSource,
+) -> Result<NativeOpenedAttachmentParent, CloudSyncOutboundFailure> {
+    let (message, server_record_name) = decode_message_fields(encoded)?;
+    validate_attachment_parent_headers(&message, source)?;
+    let projection = project_parent_attributed_body(source)?;
+    if message.msg_proto.0.text.as_deref() != Some(projection.text.as_str()) {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    projection.validate_encoded_body(message.msg_proto.0.attributed_body.as_deref()
+        .ok_or(CloudSyncOutboundFailure::MalformedMessage)?)?;
+    // Reject unknown/duplicate/noncanonical envelope or nested proto fields:
+    // do not discard them and later mistake a different re-encoding for the
+    // persisted payload. The attributed bytes themselves are kept unchanged.
+    if encode_message_fields(message.clone(), &server_record_name)? != encoded {
+        return Err(CloudSyncOutboundFailure::MalformedMessage);
+    }
+    Ok(NativeOpenedAttachmentParent {
+        message, server_record_name, encoded: encoded.to_vec(),
+    })
+}
+
+pub(crate) fn open_staged_outbound_attachment_parent(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_payload_reference: &str,
+    expected_payload_sha256: &str,
+    source: &DecodedIdsAttachmentSource,
+) -> Result<NativeOpenedAttachmentParent, CloudSyncOutboundFailure> {
+    let protected = cloud_sync_open_protected_outbound_message(
+        storage_directory, account_fingerprint, protected_payload_reference,
+    ).map_err(|_| CloudSyncOutboundFailure::ProtectedStorage)?;
+    if protected.len() > MAX_OUTBOUND_ENVELOPE_BYTES.div_ceil(3) * 4 {
+        return Err(CloudSyncOutboundFailure::OversizedMessage);
+    }
+    let encoded = URL_SAFE_NO_PAD.decode(protected)
+        .map_err(|_| CloudSyncOutboundFailure::MalformedMessage)?;
+    if sha256_hex(&encoded) != expected_payload_sha256 {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    decode_outbound_attachment_parent(&encoded, source)
+}
+
+/// Same exact CloudKit Date roundtrip exception as plaintext readback. Every
+/// other field, including the archived body, must equal the ORIGINAL stage.
+/// A semantically equivalent fresh archive is not permission to rewrite it.
+pub(crate) fn verify_attachment_parent_readback(
+    mut actual: CloudMessage,
+    expected: &NativeOpenedAttachmentParent,
+    expected_payload_sha256: &str,
+    source: &DecodedIdsAttachmentSource,
+) -> Result<String, CloudSyncOutboundFailure> {
+    use rustpush::cloudkit_proto::CloudKitValue;
+    use std::time::{Duration, SystemTime};
+
+    let digest = sha256_hex(&expected.encoded);
+    if digest != expected_payload_sha256 {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    let reopened = decode_outbound_attachment_parent(&expected.encoded, source)?;
+    if actual.utm != reopened.message.utm {
+        let value = reopened.message.utm.ok_or(CloudSyncOutboundFailure::BindingMismatch)?;
+        if value < UNIX_EPOCH + Duration::from_secs(978307200) {
+            return Err(CloudSyncOutboundFailure::MalformedMessage);
+        }
+        let wire = value.to_value().ok_or(CloudSyncOutboundFailure::MalformedMessage)?;
+        if actual.utm != SystemTime::from_value(&wire) {
+            return Err(CloudSyncOutboundFailure::BindingMismatch);
+        }
+        actual.utm = reopened.message.utm;
+    }
+    if !message_readback_differences(&reopened.message, &actual).is_empty() {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    Ok(digest)
+}
+
+fn source_bare_handle(value: &str) -> Result<&str, CloudSyncOutboundFailure> {
+    let bare = value.strip_prefix("mailto:").or_else(|| value.strip_prefix("tel:"))
+        .unwrap_or(value);
+    validate_identifier(bare)?;
+    if bare.chars().any(char::is_control) || bare.contains(';') || bare.contains(':') {
+        return Err(CloudSyncOutboundFailure::MalformedMessage);
+    }
+    Ok(bare)
+}
+
+fn validate_attachment_parent_headers(
+    message: &CloudMessage,
+    source: &DecodedIdsAttachmentSource,
+) -> Result<(), CloudSyncOutboundFailure> {
+    validate_common_outbound_sizes(message)?;
+    // Apply the unchanged plaintext validator to the headers with a local
+    // sentinel body. Never pass this temporary value to serialization/storage.
+    let mut headers = message.clone();
+    headers.msg_proto.0.attributed_body = None;
+    headers.msg_proto.0.text = Some("source-bound-parent".to_owned());
+    validate_cloud_message(&headers)?;
+    if message.r#type != 1 || message.guid != source.message_guid {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    if message.destination_caller_id != source_bare_handle(&source.sender)? {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    let sender = source_bare_handle(&source.sender)?;
+    let mut peers = Vec::new();
+    for participant in &source.participants {
+        let peer = source_bare_handle(participant)?;
+        if peer != sender { peers.push(peer); }
+    }
+    // The pre-send source does not bind a restored group's opaque CloudKit
+    // chat ID to its local GUID. Do not invent that mapping or accept an
+    // arbitrary header. Group parents need separately verified chat evidence.
+    if peers.len() != 1 || source.sender_guid.as_deref()
+        .is_some_and(|v| v.starts_with("iMessage;+;"))
+    {
+        return Err(CloudSyncOutboundFailure::UnsupportedMessage);
+    }
+    let chat_id = format!("iMessage;-;{}", peers[0]);
+    if message.chat_id != chat_id || message.msg_proto_4.as_ref()
+        .and_then(|v| v.0.group_id.as_deref()).is_some_and(|v| v != chat_id)
+    {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    // prepare_send rewrites sent_timestamp even when nonzero; that pre-send
+    // value is NOT proof of reflected CloudKit dateCreated. Keep the ordinary
+    // positive-time gate; the API/journal owns the authoritative header binding.
+    // send_delivered requests a receipt; it does not assert delivery/read
+    // state. Keep the ordinary flags/receipt contract rather than inventing
+    // zero receipt values from a pre-send source. Journal admission binds
+    // those headers, and protected replay/readback keeps their exact values.
+    Ok(())
 }
 
 pub(crate) fn open_staged_server_record_name(
@@ -351,6 +554,14 @@ fn encode_outbound_message(
     server_record_name: &str,
 ) -> Result<Vec<u8>, CloudSyncOutboundFailure> {
     validate_cloud_message(&message)?;
+    encode_message_fields(message, server_record_name)
+}
+
+// Serialization only. Both callers must apply their own closed-set validator.
+fn encode_message_fields(
+    message: CloudMessage,
+    server_record_name: &str,
+) -> Result<Vec<u8>, CloudSyncOutboundFailure> {
     validate_identifier(server_record_name)?;
     let (has_utm, utm_seconds, utm_nanos) = match message.utm {
         Some(value) => {
@@ -397,6 +608,15 @@ fn encode_outbound_message(
 fn decode_outbound_envelope(
     encoded: &[u8],
 ) -> Result<(CloudMessage, String), CloudSyncOutboundFailure> {
+    let (message, record_name) = decode_message_fields(encoded)?;
+    validate_cloud_message(&message)?;
+    Ok((message, record_name))
+}
+
+// Parsing only, private so callers cannot accidentally bypass authorization.
+fn decode_message_fields(
+    encoded: &[u8],
+) -> Result<(CloudMessage, String), CloudSyncOutboundFailure> {
     if encoded.is_empty() || encoded.len() > MAX_OUTBOUND_ENVELOPE_BYTES {
         return Err(CloudSyncOutboundFailure::OversizedMessage);
     }
@@ -434,7 +654,6 @@ fn decode_outbound_envelope(
         service: envelope.service,
         msg_proto_4: decode_optional_proto::<MessageProto4>(envelope.msg_proto_4)?.map(GZipWrapper),
     };
-    validate_cloud_message(&message)?;
     Ok((message, server_record_name))
 }
 
@@ -806,8 +1025,173 @@ fn sha256_hex(value: &[u8]) -> String {
 }
 
 #[cfg(test)]
+pub(crate) mod attachment_parent_test_support {
+    use super::*;
+    use crate::cloud_sync_ids_attachment_source::{DecodedAttachment, DecodedPart};
+
+    pub(crate) fn source() -> DecodedIdsAttachmentSource {
+        let attachment = |guid: &str, part: u64, idx: u64| DecodedPart::Attachment(DecodedAttachment {
+            guid: guid.to_owned(), part, idx: Some(idx), uti_type: "public.jpeg".to_owned(),
+            mime: "image/jpeg".to_owned(), name: "synthetic.jpg".to_owned(), iris: false,
+            key: vec![7; 32], signature: vec![9; 21], object: "synthetic-object".to_owned(),
+            url: "https://example.invalid/asset".to_owned(), size: 123,
+        });
+        DecodedIdsAttachmentSource {
+            message_guid: "parent-fixture-guid".to_owned(),
+            sender: "mailto:sender@example.invalid".to_owned(), sent_timestamp: 0,
+            send_delivered: false,
+            participants: vec!["mailto:peer@example.invalid".to_owned()],
+            cv_name: None, sender_guid: None, after_guid: None, embedded_profile: None,
+            attachment_guids: vec!["original-A".to_owned(), "original-B".to_owned()],
+            parts: vec![
+                DecodedPart::Text { text: "A😀".to_owned(), idx: None },
+                attachment("original-A", 0, 1),
+                DecodedPart::Text { text: "B".to_owned(), idx: Some(1) },
+                attachment("original-B", 1, 7),
+            ],
+        }
+    }
+
+    pub(crate) fn headers() -> CloudMessage {
+        CloudMessage {
+            utm: Some(UNIX_EPOCH + std::time::Duration::new(1_720_000_000, 123)),
+            r#type: 1, error: 0, chat_id: "iMessage;-;peer@example.invalid".to_owned(),
+            sender: String::new(), time: 741_692_800_000_000_000,
+            msg_proto_2: None, destination_caller_id: "sender@example.invalid".to_owned(),
+            msg_proto: GZipWrapper(MessageProto { unk1: 1, ..Default::default() }),
+            flags: MessageFlags::IS_FINISHED | MessageFlags::IS_FROM_ME | MessageFlags::IS_SENT
+                | MessageFlags::WAS_DATA_DETECTED,
+            guid: "parent-fixture-guid".to_owned(), msg_proto_3: None,
+            service: "iMessage".to_owned(), msg_proto_4: None,
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attachment_parent_roundtrip_is_source_bound_and_preserves_original_bytes() {
+        use super::attachment_parent_test_support::{headers, source};
+        let source = source();
+        let name = deterministic_message_record_name(&source.message_guid, "container-user").unwrap();
+        let bytes = encode_outbound_attachment_parent(headers(), &name, &source).unwrap();
+        let opened = decode_outbound_attachment_parent(&bytes, &source).unwrap();
+        assert_eq!(opened.message().msg_proto.0.text.as_deref(), Some("A😀 B "));
+        assert_eq!(opened.encoded, bytes);
+        assert_eq!(opened.server_record_name(), name);
+        assert!(decode_outbound_envelope(&bytes).is_err());
+        assert!(outbound_entity_kind(opened.message()).is_err());
+        assert!(encode_outbound_message(opened.message().clone(), &name).is_err());
+        let digest = sha256_hex(&bytes);
+        assert_eq!(verify_attachment_parent_readback(opened.message().clone(), &opened, &digest, &source).unwrap(), digest);
+        let roundtrip = cloudkit_roundtrip(opened.message());
+        assert_eq!(verify_attachment_parent_readback(roundtrip, &opened, &digest, &source).unwrap(), digest);
+    }
+
+    #[test]
+    fn attachment_parent_rejects_caller_body_and_source_guid_mismatch() {
+        use super::attachment_parent_test_support::{headers, source};
+        let source = source();
+        for body in [Vec::new(), vec![0x80, 0x01], project_parent_attributed_body(&source).unwrap().encoded_body] {
+            let mut supplied = headers();
+            supplied.msg_proto.0.attributed_body = Some(body);
+            assert!(encode_outbound_attachment_parent(supplied, "record", &source).is_err());
+        }
+        let mut text = headers();
+        text.msg_proto.0.text = Some("injected".to_owned());
+        assert!(encode_outbound_attachment_parent(text, "record", &source).is_err());
+        let mut wrong = headers();
+        wrong.guid = "other-parent".to_owned();
+        assert_eq!(encode_outbound_attachment_parent(wrong, "record", &source), Err(CloudSyncOutboundFailure::BindingMismatch));
+        let bytes = encode_outbound_attachment_parent(headers(), "record", &source).unwrap();
+        let mut changed = source;
+        changed.message_guid = "other-parent".to_owned();
+        assert!(decode_outbound_attachment_parent(&bytes, &changed).is_err());
+    }
+
+    #[test]
+    fn attachment_parent_rejects_header_injection_and_unproven_group_route() {
+        use super::attachment_parent_test_support::{headers, source};
+        let source = source();
+        let mutations: Vec<Box<dyn Fn(&mut CloudMessage)>> = vec![
+            Box::new(|m| m.chat_id.push('x')),
+            Box::new(|m| m.destination_caller_id.push('x')),
+            Box::new(|m| m.time = 0),
+            Box::new(|m| m.sender = "other".to_owned()),
+            Box::new(|m| m.flags |= MessageFlags::IS_AUDIO_MESSAGE),
+            Box::new(|m| m.flags |= MessageFlags::IS_SYSTEM_MESSAGE),
+            Box::new(|m| m.msg_proto.0.payload_data = Some(vec![1])),
+            Box::new(|m| m.msg_proto.0.associated_message_type = Some(2000)),
+            Box::new(|m| m.r#type = 2),
+            Box::new(|m| m.service = "SMS".to_owned()),
+            Box::new(|m| m.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+                group_id: Some("other-route".to_owned()), ..Default::default()
+            }))),
+        ];
+        for mutate in mutations {
+            let mut candidate = headers();
+            mutate(&mut candidate);
+            assert!(encode_outbound_attachment_parent(candidate, "record", &source).is_err());
+        }
+        let mut group = source;
+        group.participants.push("mailto:third@example.invalid".to_owned());
+        assert!(encode_outbound_attachment_parent(headers(), "record", &group).is_err());
+    }
+
+    #[test]
+    fn attachment_parent_presend_time_is_not_reflection_time_and_identity_is_stable() {
+        use super::attachment_parent_test_support::{headers, source};
+        let mut source = source();
+        source.sent_timestamp = 1_720_000_000_000;
+        assert!(encode_outbound_attachment_parent(headers(), "record", &source).is_ok());
+        let mut reflected_time = headers();
+        reflected_time.time += 1_000_000;
+        reflected_time.flags |= MessageFlags::IS_DELIVERED | MessageFlags::IS_READ;
+        reflected_time.msg_proto.0.date_delivered = Some(741_692_800_001_000_000);
+        reflected_time.msg_proto.0.date_read = Some(741_692_800_002_000_000);
+        assert!(encode_outbound_attachment_parent(reflected_time, "record", &source).is_ok());
+        let name = deterministic_message_record_name(&source.message_guid, "user").unwrap();
+        let first = encode_outbound_attachment_parent(headers(), &name, &source).unwrap();
+        let second = encode_outbound_attachment_parent(headers(), &name, &source).unwrap();
+        assert_eq!(decode_outbound_attachment_parent(&first, &source).unwrap().server_record_name(),
+            decode_outbound_attachment_parent(&second, &source).unwrap().server_record_name());
+        let hasher = crate::cloud_sync_semantic_decoder::CloudSemanticIdentifierHasher::new(b"test-only-key").unwrap();
+        let parent_key = hasher.canonical_entity_key_hash(CloudCanonicalEntityKind::Message, &source.message_guid).unwrap();
+        let first_links = project_parent_attributed_body(&source).unwrap().links;
+        let second_links = project_parent_attributed_body(&source).unwrap().links;
+        for (a, b) in first_links.iter().zip(&second_links) {
+            let child = hasher.canonical_attachment_key_hash(&a.apple_guid).unwrap();
+            assert_eq!(child, hasher.canonical_attachment_key_hash(&b.apple_guid).unwrap());
+            assert_eq!(child, hasher.canonical_owned_attachment_key_hash(&source.message_guid, a.field_idx).unwrap());
+            assert_ne!(child, parent_key);
+            assert_eq!(a.original_guid, b.original_guid);
+            assert_eq!(a.local_guid, b.canonical_guid);
+        }
+    }
+
+    #[test]
+    fn attachment_parent_reopen_and_readback_reject_tampering() {
+        use super::attachment_parent_test_support::{headers, source};
+        let source = source();
+        let bytes = encode_outbound_attachment_parent(headers(), "record", &source).unwrap();
+        let opened = decode_outbound_attachment_parent(&bytes, &source).unwrap();
+        let mut wrong_body = opened.message().clone();
+        wrong_body.msg_proto.0.attributed_body = Some(vec![4, 11, 255]);
+        assert!(decode_outbound_attachment_parent(&encode_message_fields(wrong_body, "record").unwrap(), &source).is_err());
+        let mut wrong_text = opened.message().clone();
+        wrong_text.msg_proto.0.text = Some("tampered".to_owned());
+        assert!(decode_outbound_attachment_parent(&encode_message_fields(wrong_text.clone(), "record").unwrap(), &source).is_err());
+        assert!(verify_attachment_parent_readback(wrong_text, &opened, &sha256_hex(&bytes), &source).is_err());
+        assert!(verify_attachment_parent_readback(opened.message().clone(), &opened, &"0".repeat(64), &source).is_err());
+        let mut wrong_utm = opened.message().clone();
+        wrong_utm.utm = wrong_utm.utm.map(|t| t + std::time::Duration::from_millis(1));
+        assert!(verify_attachment_parent_readback(wrong_utm, &opened, &sha256_hex(&bytes), &source).is_err());
+        let mut extra = bytes;
+        extra.extend_from_slice(&[0x98, 0x06, 0x01]); // unknown field 99
+        assert!(decode_outbound_attachment_parent(&extra, &source).is_err());
+    }
 
     fn fixture() -> CloudMessage {
         CloudMessage {
