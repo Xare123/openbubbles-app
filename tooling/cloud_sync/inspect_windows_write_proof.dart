@@ -76,11 +76,21 @@ Map<String, Object?> inspectWindowsWriteProof(
     if (journal == null) {
       throw StateError('cloud_sync_local_send_authority_changed');
     }
-    journal.readExactIntent(
-      intentId: intent.id,
-      expectedRecipient: request.recipient,
-      expectedSourceSha256: intent.sourceSha256,
-    );
+    if (request.isGroup) {
+      journal.readExactGroupIntent(
+        intentId: intent.id,
+        expectedChatGuid: request.restoredGroupGuid!,
+        expectedMembers: request.recipients,
+        expectedSender: request.sender,
+        expectedSourceSha256: intent.sourceSha256,
+      );
+    } else {
+      journal.readExactIntent(
+        intentId: intent.id,
+        expectedRecipient: request.recipient,
+        expectedSourceSha256: intent.sourceSha256,
+      );
+    }
     exactSource = true;
   } catch (error) {
     validationFailure = cloudSyncV2SafeFailureCode(error);

@@ -723,6 +723,34 @@ final class CloudSyncProductionLocalSendAdapter {
         .whenComplete(() => _running = null);
   }
 
+  /// Same production admission/recovery, pinned to an explicit restored group.
+  Future<CloudSyncLocalSendConsumerResult> runExactGroupIntent({
+    required int intentId,
+    required String expectedChatGuid,
+    required List<String> expectedMembers,
+    required String expectedSender,
+    required String expectedSourceSha256,
+  }) {
+    if (_running != null) {
+      throw StateError('cloud_sync_local_send_consumer_busy');
+    }
+    final selection = _exactSelection;
+    if (selection != null && !selection.matchesGroup(
+      intentId: intentId, expectedChatGuid: expectedChatGuid,
+      expectedMembers: expectedMembers, expectedSender: expectedSender,
+      expectedSourceSha256: expectedSourceSha256,
+    )) {
+      throw StateError('cloud_sync_local_send_selection_changed');
+    }
+    _exactSelection ??= CloudSyncLocalSendExactSelection.group(
+      intentId: intentId, expectedChatGuid: expectedChatGuid,
+      expectedMembers: expectedMembers, expectedSender: expectedSender,
+      expectedSourceSha256: expectedSourceSha256,
+    );
+    return _running = _run(selection: _exactSelection)
+        .whenComplete(() => _running = null);
+  }
+
   Future<CloudSyncLocalSendConsumerResult> _run({
     CloudSyncLocalSendExactSelection? selection,
   }) async {

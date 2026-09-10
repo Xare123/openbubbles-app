@@ -198,6 +198,7 @@ mod cloud_sync_chat_identity;
 mod cloud_sync_native_fetch;
 mod cloud_sync_outbound;
 mod cloud_sync_outbound_chat;
+mod cloud_sync_outbound_attachment;
 mod cloud_sync_protector;
 mod cloud_sync_semantic_decoder;
 mod cloud_sync_semantic_identity;

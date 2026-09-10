@@ -66,6 +66,14 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 Windows next gate: extend the controlled qualification route to one exact
 restored group, then qualify reactions and independent Apple-device visibility.
+The September 10 offline Windows inventory found **zero** chats with exactly
+the two approved test recipients. Do not select another personal group. The
+new request-v3 route binds the entire member set and exact restored group GUID;
+its journal/adapter selection passed local qualification (174 focused tests,
+including exact adopted-group selection after database reopen). This does not create
+groups or bypass the existing protected semantic dependency. Live group proof
+needs the approved conversation restored/created first. Direct-reaction work
+and attachment integration can proceed independently of that prerequisite.
 Current private request `qualification-20260910-03` is claimed: do not change
 it or send it again. The runtime is in `../windows-cloudkit-qualified-6abbeede2`;
 the older runtime and receipt remain rollback material.

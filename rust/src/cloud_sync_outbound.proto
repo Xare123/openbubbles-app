@@ -33,3 +33,14 @@ message CloudSyncOutboundChatV1 {
   string server_record_name = 2;
   bytes chat_plist = 3;
 }
+
+// Separate type from message/chat envelopes. Native-only initial-create
+// payload for one attachmentManateeZone record: the allocated random record
+// name plus the completed attachment bytes. No instance of this protobuf
+// crosses Flutter Rust Bridge.
+message CloudSyncOutboundAttachmentV1 {
+  uint32 schema_version = 1;
+  string server_record_name = 2;
+  bytes attachment_meta_plist = 3;
+  bytes asset_proto = 4;
+}

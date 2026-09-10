@@ -11,6 +11,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 
 import 'services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_group_send_route.dart';
 import 'cloud_sync_v2_windows_write_checkpoint.dart';
 import 'package:uuid/uuid.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
@@ -44,25 +45,49 @@ String cloudSyncWindowsWriteFailureCode(Object error) {
 final class CloudSyncWindowsWriteRequest {
   CloudSyncWindowsWriteRequest.fromJson(Map<String, dynamic> json)
     : id = json['id'] as String,
-      recipient = json['recipient'] as String,
+      _recipient = json['recipient'] as String?,
+      recipients = List.unmodifiable(
+        json['version'] == 3
+            ? (((json['recipients'] as List?)?.cast<String>().toList() ??
+                    <String>[])
+                ..sort())
+            : [json['recipient'] as String],
+      ),
+      restoredGroupGuid = json['restoredGroupGuid'] as String?,
       sender = json['sender'] as String,
       text = json['text'] as String,
       refreshSenderAuthentication = json['refreshSenderAuthentication'] == true,
       existingChatFromRequestId = json['existingChatFromRequestId'] as String? {
-    final validVersion = json['version'] == 1
-        ? existingChatFromRequestId == null
-        : json['version'] == 2 &&
-              existingChatFromRequestId != null &&
-              RegExp(
-                r'^[a-z0-9-]{1,64}$',
-              ).hasMatch(existingChatFromRequestId!) &&
-              existingChatFromRequestId != id;
+    final validVersion = json['version'] == 3
+        ? _recipient == null &&
+              existingChatFromRequestId == null &&
+              restoredGroupGuid != null &&
+              restoredGroupGuid!.startsWith('iMessage;+;') &&
+              restoredGroupGuid!.length > 'iMessage;+;'.length &&
+              restoredGroupGuid!.length <= 4096 &&
+              restoredGroupGuid!.trim() == restoredGroupGuid &&
+              !restoredGroupGuid!.runes.any(
+                (rune) => rune < 0x20 || rune == 0x7f,
+              ) &&
+              recipients.length >= 2 &&
+              recipients.length <= 31
+        : restoredGroupGuid == null &&
+              !json.containsKey('recipients') &&
+              (json['version'] == 1
+                  ? existingChatFromRequestId == null
+                  : json['version'] == 2 &&
+                        existingChatFromRequestId != null &&
+                        RegExp(
+                          r'^[a-z0-9-]{1,64}$',
+                        ).hasMatch(existingChatFromRequestId!) &&
+                        existingChatFromRequestId != id);
     if (!validVersion ||
         (json.containsKey('refreshSenderAuthentication') &&
             json['refreshSenderAuthentication'] is! bool) ||
         json['allowSend'] != true ||
         !RegExp(r'^[a-z0-9-]{1,64}$').hasMatch(id) ||
-        !RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(recipient) ||
+        recipients.toSet().length != recipients.length ||
+        !recipients.every(RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch) ||
         !RegExp(r'^[^\s:@]+@[^\s:@]+\.[^\s:@]+$').hasMatch(sender) ||
         text.trim().isEmpty ||
         text.length > 512) {
@@ -71,7 +96,13 @@ final class CloudSyncWindowsWriteRequest {
   }
 
   final String id;
-  final String recipient;
+  final String? _recipient;
+  final List<String> recipients;
+  final String? restoredGroupGuid;
+  bool get isGroup => restoredGroupGuid != null;
+  String get recipient =>
+      _recipient ??
+      (throw StateError('cloud_sync_windows_write_group_requires_member_set'));
   final String sender;
   final String text;
 
@@ -83,7 +114,17 @@ final class CloudSyncWindowsWriteRequest {
       .convert(
         utf8.encode(
           jsonEncode(
-            existingChatFromRequestId == null
+            isGroup
+                ? [
+                    'windows-local-write-v3',
+                    id,
+                    recipients,
+                    sender,
+                    text,
+                    restoredGroupGuid,
+                    if (refreshSenderAuthentication) 'refresh-sender-auth-v1',
+                  ]
+                : existingChatFromRequestId == null
                 ? [
                     'windows-local-write-v1',
                     id,
@@ -105,6 +146,36 @@ final class CloudSyncWindowsWriteRequest {
         ),
       )
       .toString();
+}
+
+/// An explicit restored-group selector, not a best-match or a new group.
+/// Protected semantic dependency validation still happens in the writer.
+Chat cloudSyncWindowsRestoredGroupWriteChat(
+  Store store,
+  CloudSyncWindowsWriteRequest request,
+) {
+  if (!request.isGroup) {
+    throw StateError('cloud_sync_windows_write_group_mismatch');
+  }
+  final query = store
+      .box<Chat>()
+      .query(Chat_.guid.equals(request.restoredGroupGuid!))
+      .build();
+  try {
+    final matches = query.find();
+    final chat = matches.length == 1 ? matches.single : null;
+    final route = chat == null ? null : CloudSyncGroupSendRoute.capture(chat);
+    if (route == null ||
+        route.provisional ||
+        route.groupId == null ||
+        route.sender != request.sender ||
+        jsonEncode(route.members) != jsonEncode(request.recipients)) {
+      throw StateError('cloud_sync_windows_write_group_mismatch');
+    }
+    return chat!;
+  } finally {
+    query.close();
+  }
 }
 
 /// Select only a previously qualified send's exact chat, never a best-match
@@ -176,7 +247,7 @@ final class CloudSyncWindowsLocalWrite {
   final Object? Function() readClient;
   final Future<void> Function(
     String sender,
-    String recipient, {
+    List<String> recipients, {
     required bool refreshAuthentication,
   })
   prepareSender;
@@ -207,6 +278,9 @@ final class CloudSyncWindowsLocalWrite {
       throw StateError('cloud_sync_windows_write_client_missing');
     }
     final objectBox = Database.store;
+    if (request.isGroup && !claim.existsSync()) {
+      cloudSyncWindowsRestoredGroupWriteChat(objectBox, request);
+    }
     bool current() =>
         identical(client, readClient()) &&
         identical(objectBox, Database.store) &&
@@ -226,7 +300,9 @@ final class CloudSyncWindowsLocalWrite {
       await reportStage('windows-write-registering-sender');
       await prepareSender(
         'mailto:${request.sender}',
-        'tel:${request.recipient}',
+        request.recipients
+            .map((recipient) => 'tel:$recipient')
+            .toList(growable: false),
         refreshAuthentication: request.refreshSenderAuthentication,
       );
     }
@@ -340,6 +416,12 @@ final class CloudSyncWindowsLocalWrite {
           auth.accountFingerprint,
         );
       }
+      if (request.isGroup) {
+        existingChat = cloudSyncWindowsRestoredGroupWriteChat(
+          objectBox,
+          request,
+        );
+      }
       // Preserve both layers of the pre-send checkpoint. An ObjectBox backup
       // alone becomes unreplayable when normal GC retires its native reference.
       await fence.run(
@@ -355,10 +437,11 @@ final class CloudSyncWindowsLocalWrite {
       final wire = await api.newMsg(
         conversation: api.ConversationData(
           participants: [
-            'tel:${request.recipient}',
+            ...request.recipients.map((recipient) => 'tel:$recipient'),
             'mailto:${request.sender}',
           ],
           senderGuid: existingChat?.guid,
+          cvName: existingChat?.apnTitle,
           afterGuid: previousClaim?['guid'] as String?,
         ),
         sender: 'mailto:${request.sender}',
@@ -400,41 +483,44 @@ final class CloudSyncWindowsLocalWrite {
       late Message message;
       await fence.run(
         () => objectBox.runInTransaction(TxMode.write, () {
-          final handleQuery = objectBox
-              .box<Handle>()
-              .query(
-                Handle_.uniqueAddressAndService.equals(
-                  '${request.recipient}/iMessage',
-                ),
-              )
-              .build();
-          late Handle handle;
-          try {
-            handle =
-                handleQuery.findUnique() ??
-                Handle(
-                  address: request.recipient,
-                  service: 'iMessage',
-                  uniqueAddressAndService: '${request.recipient}/iMessage',
-                );
-          } finally {
-            handleQuery.close();
-          }
-          objectBox.box<Handle>().put(handle);
-          final chat = existingChat == null
-              ? Chat(
-                  guid: const Uuid().v4().toUpperCase(),
-                  usingHandle: 'mailto:${request.sender}',
-                  style: 45,
-                  participants: [handle],
+          late Chat chat;
+          if (request.isGroup) {
+            chat = cloudSyncWindowsRestoredGroupWriteChat(objectBox, request);
+          } else if (existingChat != null) {
+            chat = cloudSyncWindowsExistingWriteChat(
+              objectBox,
+              previousClaim!,
+              request,
+              auth.accountFingerprint,
+            );
+          } else {
+            final handleQuery = objectBox
+                .box<Handle>()
+                .query(
+                  Handle_.uniqueAddressAndService.equals(
+                    '${request.recipient}/iMessage',
+                  ),
                 )
-              : cloudSyncWindowsExistingWriteChat(
-                  objectBox,
-                  previousClaim!,
-                  request,
-                  auth.accountFingerprint,
-                );
-          if (existingChat == null) {
+                .build();
+            late Handle handle;
+            try {
+              handle =
+                  handleQuery.findUnique() ??
+                  Handle(
+                    address: request.recipient,
+                    service: 'iMessage',
+                    uniqueAddressAndService: '${request.recipient}/iMessage',
+                  );
+            } finally {
+              handleQuery.close();
+            }
+            objectBox.box<Handle>().put(handle);
+            chat = Chat(
+              guid: const Uuid().v4().toUpperCase(),
+              usingHandle: 'mailto:${request.sender}',
+              style: 45,
+              participants: [handle],
+            );
             // Admission must adopt this exact new-conversation row only.
             chat.handles.add(handle);
             objectBox.box<Chat>().put(chat);
@@ -520,16 +606,24 @@ final class CloudSyncWindowsLocalWrite {
       );
     }
     await reportStage('windows-write-consuming-exact-intent');
-    final result =
-        await CloudSyncProductionLocalSendAdapter(
-          readActiveClient: readClient,
-          privateStorageDirectory: fs.appDocDir.path,
-          stillCurrent: current,
-        ).runExactIntent(
-          intentId: intent.id,
-          expectedRecipient: request.recipient,
-          expectedSourceSha256: intent.sourceSha256,
-        );
+    final adapter = CloudSyncProductionLocalSendAdapter(
+      readActiveClient: readClient,
+      privateStorageDirectory: fs.appDocDir.path,
+      stillCurrent: current,
+    );
+    final result = request.isGroup
+        ? await adapter.runExactGroupIntent(
+            intentId: intent.id,
+            expectedChatGuid: request.restoredGroupGuid!,
+            expectedMembers: request.recipients,
+            expectedSender: request.sender,
+            expectedSourceSha256: intent.sourceSha256,
+          )
+        : await adapter.runExactIntent(
+            intentId: intent.id,
+            expectedRecipient: request.recipient,
+            expectedSourceSha256: intent.sourceSha256,
+          );
     return {
       'native_send_confirmed': true,
       'admitted': result.admitted,

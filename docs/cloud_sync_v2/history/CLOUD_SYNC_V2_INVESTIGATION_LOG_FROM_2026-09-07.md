@@ -895,3 +895,48 @@ This is a chronological evidence log. It does not override the
   This closes bounded Windows direct write qualification only. Independent
   Apple-device display, restored groups, reactions, attachment writes, causal
   edits/unsends, Android convergence/lifecycle and FaceTime remain unqualified.
+
+### 2026-09-10: exact-group qualification and attachment envelope integration
+
+- Found a concrete Windows diagnostic gap: `readExactIntent` assumed one
+  recipient even though the ordinary journal supports group plaintext. Added
+  a separate exact restored-group selector and version-3 Windows request,
+  pinning group GUID, complete member set, sender and immutable message source.
+  Sender lookup verifies every requested member using one IDS client. No
+  legacy ownership, automatic writer, group creation or unrelated outbox drain
+  was enabled; direct request v1/v2 bindings are preserved.
+- With the Windows process exited, an explicit disposable-copy inventory found
+  zero chats with exactly the two approved test numbers. The source database
+  and existing request stayed unchanged. No test request was replaced and no
+  message was sent. The current direct-write proof was re-inspected under the
+  edited Dart code and still passed every predicate, with one readable message.
+- The first parent run caught an invalid duplicate-GUID fixture assumption:
+  ObjectBox already enforces GUID uniqueness. Corrected the fixture to assert
+  that protection. The subsequent 100-test focused run passed; final group
+  additions and native attachment code still require their own qualification.
+- Attachment review confirmed reusable native upload and create-only record
+  primitives. V2 still needs durable upload staging, protected transport and
+  parent dependency integration, not activation of the legacy writer. Parent
+  rejected an initial codec comparison that required fetched upload receipts
+  and complete Asset bytes to match the submitted upload. Immutable recovery
+  bytes and semantic remote-content readback are distinct proofs; download
+  credentials can differ while signatures, key, size and metadata remain bound.
+- Final parent run: 174 focused Dart/ObjectBox tests passed, including a real
+  close/reopen of the synthetic database after group-message admission. Group
+  mutation after reopen still fails the protected Chat dependency. One test
+  initially expected `StateError`; corrected it to assert the actual typed
+  `cloud_sync_local_send_chat_not_ready` failure, without changing the guard.
+  Targeted analysis passed across all edited Dart files.
+- The native attachment envelope codec is implemented but not connected to
+  staging/upload transport yet. Parent fixed record/zone/owner comparison,
+  two now-invalid renamed-record test assumptions, and unnecessary duplicate
+  serialization. The full original upload envelope remains hash-bound while
+  readback uses exact metadata, signatures, key, size and record identity.
+  Nine native tests are written; source-only GCE qualification is next. Local
+  rustfmt parsing/check passed using the existing toolchain's absolute path.
+- Closed both reviewed agents. Feynman's two disposable PowerShell wrappers
+  (838 bytes) were removed after exact hash/path/process checks; their source
+  tests and review evidence remain. Manifest is
+  `build-evidence/agent-feynman-cleanup-20260910.json`. No dedicated worktrees
+  existed. Required review transcripts remain, with supported session deletion
+  unavailable. The previously rejected zero-byte fixture removal was not retried.

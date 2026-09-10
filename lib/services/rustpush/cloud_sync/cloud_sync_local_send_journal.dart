@@ -1405,22 +1405,92 @@ final class CloudSyncLocalSendJournal {
     required String expectedRecipient,
     required String expectedSourceSha256,
   }) => _store.runInTransaction(TxMode.read, () {
-    _verifyLocalOwnership();
-    final intent = _readBoundIntent(intentId);
-    if (expectedRecipient.isEmpty ||
-        !RegExp(r'^[0-9a-f]{64}$').hasMatch(expectedSourceSha256) ||
-        intent.sourceSha256 != expectedSourceSha256 ||
-        (intent.state != 1 && intent.state != 2 && intent.state != 3)) {
+    final intent = _readBoundExactIntent(
+      intentId: intentId,
+      expectedSourceSha256: expectedSourceSha256,
+    );
+    if (expectedRecipient.isEmpty) {
       throw StateError('cloud_sync_local_send_selection_changed');
     }
     final message = intent.state == 2
         ? _validatedExactAdoptedMessage(intent)
         : _validatedMessage(intent);
-    if (message.chat.target!.handles.single.address != expectedRecipient) {
+    // Never let List.single leak a Range/State error for a group row: a
+    // non-direct route and any handle arity mismatch both report the fixed
+    // selection code.
+    final chat = message.chat.target!;
+    if (CloudSyncGroupSendRoute.capture(chat) != null) {
+      throw StateError('cloud_sync_local_send_selection_changed');
+    }
+    final handles = chat.handles.toList(growable: false);
+    if (handles.length != 1 || handles.first.address != expectedRecipient) {
       throw StateError('cloud_sync_local_send_selection_changed');
     }
     return CloudSyncLocalSendAdmissionSource._(intent, message);
   });
+
+  /// Bounded exact selection for a restored non-provisional group row. The
+  /// caller replays the full expected binding (chat GUID, sender and member
+  /// set) alongside the independent immutable source hash. This neither
+  /// scans candidates nor relaxes the protected CloudKit group binding, and
+  /// it never promotes any journal entry.
+  CloudSyncLocalSendAdmissionSource readExactGroupIntent({
+    required int intentId,
+    required String expectedChatGuid,
+    required List<String> expectedMembers,
+    required String expectedSender,
+    required String expectedSourceSha256,
+  }) => _store.runInTransaction(TxMode.read, () {
+    if (expectedChatGuid.isEmpty ||
+        expectedSender.isEmpty ||
+        expectedMembers.isEmpty ||
+        expectedMembers.any((member) => member.isEmpty)) {
+      throw StateError('cloud_sync_local_send_selection_changed');
+    }
+    final wanted = <String>{};
+    for (final member in expectedMembers) {
+      if (!wanted.add(member) || member == expectedSender) {
+        throw StateError('cloud_sync_local_send_selection_changed');
+      }
+    }
+    final intent = _readBoundExactIntent(
+      intentId: intentId,
+      expectedSourceSha256: expectedSourceSha256,
+    );
+    final message = intent.state == 2
+        ? _validatedExactAdoptedMessage(intent)
+        : _validatedMessage(intent);
+    final route = CloudSyncGroupSendRoute.capture(message.chat.target!);
+    if (route == null ||
+        route.provisional ||
+        route.guid != expectedChatGuid ||
+        route.sender != expectedSender ||
+        route.members.length != wanted.length) {
+      throw StateError('cloud_sync_local_send_selection_changed');
+    }
+    for (final member in route.members) {
+      if (!wanted.contains(member)) {
+        throw StateError('cloud_sync_local_send_selection_changed');
+      }
+    }
+    return CloudSyncLocalSendAdmissionSource._(intent, message);
+  });
+
+  /// Shared ownership/source/state gate for exact diagnostic selection.
+  /// Selectable states are 1-3; state is never changed here.
+  CloudSyncLocalSendIntentEntity _readBoundExactIntent({
+    required int intentId,
+    required String expectedSourceSha256,
+  }) {
+    _verifyLocalOwnership();
+    final intent = _readBoundIntent(intentId);
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(expectedSourceSha256) ||
+        intent.sourceSha256 != expectedSourceSha256 ||
+        (intent.state != 1 && intent.state != 2 && intent.state != 3)) {
+      throw StateError('cloud_sync_local_send_selection_changed');
+    }
+    return intent;
+  }
 
   /// Durable round-robin selection, without changing immutable origin or
   /// adopting an upload. Blocked rows stay ready and can be retried after a

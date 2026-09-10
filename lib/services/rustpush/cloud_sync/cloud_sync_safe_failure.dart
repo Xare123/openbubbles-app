@@ -335,6 +335,8 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_windows_sender_send_failed',
   'cloud_sync_windows_sender_completion_unknown',
   'cloud_sync_windows_write_request_invalid',
+  'cloud_sync_windows_write_group_mismatch',
+  'cloud_sync_windows_write_group_requires_member_set',
   'cloud_sync_windows_write_disabled',
   'cloud_sync_windows_write_client_missing',
   'cloud_sync_windows_write_identity_changed',

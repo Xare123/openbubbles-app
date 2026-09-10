@@ -1137,7 +1137,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       final result = await CloudSyncWindowsLocalWrite(
         readClient: () => _activeClient,
         reportStage: (stage) => _setRuntimeStage(stage, state: 'running'),
-        prepareSender: (sender, recipient, {required refreshAuthentication}) async {
+        prepareSender: (sender, recipients, {required refreshAuthentication}) async {
           final config = _osConfig!;
           final connection = _connection!;
           final hardware = api.readHardware(path: fs.appDocDir.path);
@@ -1172,8 +1172,10 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
             throw StateError('cloud_sync_windows_sender_handle_unregistered');
           }
           await _setRuntimeStage('windows-write-recipient-lookup', state: 'running');
-          if (!(await api.validateTargets(state: im, targets: [recipient], sender: sender))
-              .contains(recipient)) {
+          final available = await api.validateTargets(
+            state: im, targets: recipients, sender: sender,
+          );
+          if (!recipients.every(available.contains)) {
             throw StateError('cloud_sync_windows_sender_target_unavailable');
           }
         },

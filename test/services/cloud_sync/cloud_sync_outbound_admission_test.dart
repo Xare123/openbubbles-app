@@ -591,6 +591,34 @@ void main() {
       expect(transport.rolledBack, isEmpty);
     });
 
+    test('exact group selection retains adopted proof after database reopen', () async {
+      await prepareGroup();
+      transport.stages.add(_stage('b', 'Q', 'Y', 'Z'));
+      final operation = await admit();
+      final sourceHash = intent().sourceSha256;
+      CloudSyncLocalSendAdmissionSource select() => journal.readExactGroupIntent(
+        intentId: intentId,
+        expectedChatGuid: 'iMessage;+;restored-group',
+        expectedMembers: ['group-a@example.com', '+15555550102'],
+        expectedSender: 'sender@example.com',
+        expectedSourceSha256: sourceHash,
+      );
+      expect(select().admittedOperationId, operation.operationId);
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      bindJournal();
+      expect(select().admittedOperationId, operation.operationId);
+      expect(select().state, 2);
+      final group = select().message!.chat.target!;
+      final member = group.handles.first..address = 'other@example.com';
+      objectBox.box<Handle>().put(member);
+      expect(select, throwsA(isA<CloudSyncFailure>().having(
+        (error) => error.safeCode, 'code', 'cloud_sync_local_send_chat_not_ready',
+      )));
+      expect(transport.stages, isEmpty);
+      expect(transport.committed.length, 1);
+    });
+
     test('group member drift during staging rolls back admission', () async {
       await prepareGroup();
       final stage = _stage('b', 'Q', 'Y', 'Z');

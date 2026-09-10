@@ -18,11 +18,24 @@ final class CloudSyncLocalSendExactSelection {
     required this.intentId,
     required this.expectedRecipient,
     required this.expectedSourceSha256,
-  });
+  }) : expectedChatGuid = null, expectedMembers = null, expectedSender = null;
+
+  CloudSyncLocalSendExactSelection.group({
+    required this.intentId,
+    required String this.expectedChatGuid,
+    required List<String> expectedMembers,
+    required String this.expectedSender,
+    required this.expectedSourceSha256,
+  }) : expectedRecipient = '',
+       expectedMembers = List.unmodifiable(expectedMembers.toList()..sort());
 
   final int intentId;
   final String expectedRecipient;
   final String expectedSourceSha256;
+  final String? expectedChatGuid;
+  final List<String>? expectedMembers;
+  final String? expectedSender;
+  bool get isGroup => expectedChatGuid != null;
   String? _sourceBinding;
   int? _state;
   Store? _boundStore;
@@ -42,8 +55,20 @@ final class CloudSyncLocalSendExactSelection {
     required String expectedRecipient,
     required String expectedSourceSha256,
   }) =>
-      this.intentId == intentId &&
+      !isGroup && this.intentId == intentId &&
       this.expectedRecipient == expectedRecipient &&
+      this.expectedSourceSha256 == expectedSourceSha256;
+
+  bool matchesGroup({
+    required int intentId,
+    required String expectedChatGuid,
+    required List<String> expectedMembers,
+    required String expectedSender,
+    required String expectedSourceSha256,
+  }) => isGroup && this.intentId == intentId &&
+      this.expectedChatGuid == expectedChatGuid &&
+      this.expectedSender == expectedSender &&
+      jsonEncode(this.expectedMembers) == jsonEncode(expectedMembers.toList()..sort()) &&
       this.expectedSourceSha256 == expectedSourceSha256;
 
   CloudSyncLocalSendAdmissionSource validate({
@@ -56,7 +81,13 @@ final class CloudSyncLocalSendExactSelection {
         !journal.isBoundToStore(store)) {
       throw StateError('cloud_sync_local_send_selection_changed');
     }
-    final source = journal.readExactIntent(
+    final source = isGroup ? journal.readExactGroupIntent(
+      intentId: intentId,
+      expectedChatGuid: expectedChatGuid!,
+      expectedMembers: expectedMembers!,
+      expectedSender: expectedSender!,
+      expectedSourceSha256: expectedSourceSha256,
+    ) : journal.readExactIntent(
       intentId: intentId,
       expectedRecipient: expectedRecipient,
       expectedSourceSha256: expectedSourceSha256,
@@ -119,6 +150,12 @@ final class CloudSyncLocalSendExactSelection {
           throw StateError('cloud_sync_local_send_selection_changed');
         }
       } else if (row.zone == 'chatManateeZone') {
+        // Restored-group qualification may reuse a proven existing Chat, but
+        // cannot authorize creating a different/provisional group or draining
+        // an unrelated active direct-chat create.
+        if (isGroup) {
+          throw StateError('cloud_sync_local_send_unrelated_outbox');
+        }
         final chatScope = CloudSyncScope(
           accountFingerprint: scope.accountFingerprint,
           container: scope.container,
