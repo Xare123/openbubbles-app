@@ -78,6 +78,12 @@ Current private request `qualification-20260910-03` is claimed: do not change
 it or send it again. The runtime is in `../windows-cloudkit-qualified-6abbeede2`;
 the older runtime and receipt remain rollback material.
 
+Source `955d8acad` adds exact-group qualification and the native attachment
+envelope core, not a functioning attachment uploader. GCE run `34505595606`
+is testing the native crate on T2D-32 (`app-rust-only`); it was live in dependency
+setup at the last check. No APK or replacement Windows runtime was requested.
+The known-good local executable is still the qualified `6abbeede2` bundle.
+
 The first September 10 attempt failed on retained IDS credentials before send.
 Explicit request-bound sender authentication from the same retained GSA session
 then succeeded on `6abbeede2`. It did not reset onboarding or clear CloudKit

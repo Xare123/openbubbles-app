@@ -940,3 +940,10 @@ This is a chronological evidence log. It does not override the
   `build-evidence/agent-feynman-cleanup-20260910.json`. No dedicated worktrees
   existed. Required review transcripts remain, with supported session deletion
   unavailable. The previously rejected zero-byte fixture removal was not retried.
+- Committed/pushed reviewed source as `955d8acada99c9b051d59a5d6998cc0cb7b02f1a`
+  with automatic CI skipped. Explicit GCE `34505595606` targets that source on
+  pilot `a2680baac`, `t2d-standard-32`, primary lane, `app-rust-only`, writer and
+  automatic uploads false. Runner creation passed and dependency setup was
+  live. No account data was exported, no APK was built/requested, and the local
+  qualified runtime/request remain unchanged. Follow this exact run through
+  native tests and cleanup before claiming native qualification.
