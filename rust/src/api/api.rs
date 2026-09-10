@@ -579,6 +579,65 @@ fn cloud_sync_open_attachment_source_bound(
     Ok(envelope)
 }
 
+/// Identity-only inventory of the original protected IDS body. The lookup is
+/// performed before allocating a randomized upload plan. Local reflection may
+/// rename attachments; the original source GUID still selects the same bytes.
+/// This contains no message text, MMCS credentials, or attachment contents.
+#[frb(non_opaque)]
+pub struct CloudSyncAttachmentSourceEntry {
+    pub original_attachment_guid: String,
+    pub reflected_attachment_guid: String,
+    pub logical_entity_key_hash: String,
+}
+
+impl std::fmt::Debug for CloudSyncAttachmentSourceEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncAttachmentSourceEntry(redacted)")
+    }
+}
+
+/// Local protected-source inspection only. Caller holds the same interlock
+/// and protected-store exclusion used by preparation. This does not warm an
+/// Apple container, allocate an upload plan, or perform a remote operation.
+pub async fn cloud_sync_inspect_attachment_sources(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncNativeSendReceiptContext,
+) -> anyhow::Result<Vec<CloudSyncAttachmentSourceEntry>> {
+    let auth = cloud_sync_capture_auth_snapshot(
+        cloud_messages_client, context.storage_directory.clone(),
+    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let inventory = cloud_sync_inspect_attachment_sources_bound(&context, &auth)?;
+    let after = cloud_sync_capture_auth_snapshot(
+        cloud_messages_client, context.storage_directory.clone(),
+    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    cloud_sync_require_source_context_auth(&context, &after)?;
+    Ok(inventory)
+}
+
+#[frb(ignore)]
+fn cloud_sync_inspect_attachment_sources_bound(
+    context: &CloudSyncNativeSendReceiptContext,
+    auth: &CloudSyncNativeAuthMetadata,
+) -> anyhow::Result<Vec<CloudSyncAttachmentSourceEntry>> {
+    let encoded = cloud_sync_open_attachment_source_bound(context, auth)?;
+    let decoded = crate::cloud_sync_ids_attachment_source::decode_ids_attachment_source(&encoded)
+        .map_err(|_| anyhow!("cloud_sync_native_attachment_source_invalid"))?;
+    let projection = crate::cloud_sync_attachment_parent::project_parent_attributed_body(&decoded)
+        .map_err(|_| anyhow!("cloud_sync_native_attachment_parent_invalid"))?;
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
+        context.storage_directory.clone(),
+    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
+    projection.links.into_iter().map(|link| {
+        let logical = hasher.canonical_attachment_key_hash(&link.apple_guid)
+            .map_err(|_| anyhow!("cloud_sync_native_attachment_parent_invalid"))?;
+        Ok(CloudSyncAttachmentSourceEntry {
+            original_attachment_guid: link.original_guid,
+            reflected_attachment_guid: link.local_guid,
+            logical_entity_key_hash: logical.value().to_owned(),
+        })
+    }).collect()
+}
+
 /// Stages the provided native IDS attachment value without sending anything or
 /// touching Apple. Caller must journal ownership and commit the lease under
 /// the protected-store exclusive lock before passing this binding to send().
@@ -3478,10 +3537,7 @@ pub async fn cloud_sync_prepare_attachment_create(
                 return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::ProtectedStorage)
             }
         };
-    let logical_hash = match hasher.canonical_entity_key_hash(
-        crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Attachment,
-        &attachment.cm.0.guid,
-    ) {
+    let logical_hash = match hasher.canonical_attachment_key_hash(&attachment.cm.0.guid) {
         Ok(hash) => hash,
         Err(_) => return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch),
     };
@@ -4821,10 +4877,7 @@ pub async fn cloud_sync_reconcile_attachment_create(
                 return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::ProtectedStorage)
             }
         };
-    let logical_hash = match hasher.canonical_entity_key_hash(
-        crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Attachment,
-        &expected_attachment.cm.0.guid,
-    ) {
+    let logical_hash = match hasher.canonical_attachment_key_hash(&expected_attachment.cm.0.guid) {
         Ok(hash) => hash,
         Err(_) => return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::BindingMismatch),
     };
@@ -10887,6 +10940,7 @@ mod cloud_sync_windows_sender_tests {
             native_session_id: context.native_session_id.clone(),
         };
         assert!(cloud_sync_restore_attachment_source_bound(&context, &auth).is_err());
+        assert!(cloud_sync_inspect_attachment_sources_bound(&context, &auth).is_err());
         assert!(cloud_sync_attachment_send_source(Some(&context), &message).is_err());
         crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
             directory.path().to_path_buf(), &stage.lease_reference,
@@ -10895,6 +10949,20 @@ mod cloud_sync_windows_sender_tests {
         let (source, guids) = cloud_sync_attachment_send_source(Some(&context), &message).unwrap().unwrap();
         let restored = cloud_sync_restore_attachment_source_bound(&context, &auth).unwrap();
         assert!(cloud_sync_attachment_send_source(Some(&context), &restored).is_ok());
+        // The retry inventory resolves the original opaque source GUID to the
+        // reflected local GUID, using the same key that a subsequent CloudKit
+        // read projects for the owned attachment. It never needs a new upload.
+        let inventory = cloud_sync_inspect_attachment_sources_bound(&context, &auth).unwrap();
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(inventory[0].original_attachment_guid, "synthetic-attachment");
+        assert_eq!(inventory[0].reflected_attachment_guid, format!("{guid}_0"));
+        let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(storage.clone()).unwrap();
+        let expected_key = hasher.canonical_owned_attachment_key_hash(guid, 0).unwrap();
+        assert_eq!(inventory[0].logical_entity_key_hash, expected_key.value());
+        assert_eq!(format!("{:?}", inventory[0]), "CloudSyncAttachmentSourceEntry(redacted)");
+        let replay_inventory = cloud_sync_inspect_attachment_sources_bound(&context, &auth).unwrap();
+        assert_eq!(replay_inventory[0].logical_entity_key_hash, inventory[0].logical_entity_key_hash);
+        assert_eq!(replay_inventory[0].original_attachment_guid, inventory[0].original_attachment_guid);
         for field in 0..4 {
             let mut wrong = context.clone();
             match field {
@@ -10904,13 +10972,16 @@ mod cloud_sync_windows_sender_tests {
                 _ => wrong.protected_store_identity = format!("obcs2.store.{}", "B".repeat(43)),
             }
             assert!(cloud_sync_restore_attachment_source_bound(&wrong, &auth).is_err());
+            assert!(cloud_sync_inspect_attachment_sources_bound(&wrong, &auth).is_err());
         }
         let mut missing = context.clone();
         missing.source_binding = None;
         assert!(cloud_sync_restore_attachment_source_bound(&missing, &auth).is_err());
+        assert!(cloud_sync_inspect_attachment_sources_bound(&missing, &auth).is_err());
         let mut corrupted = context.clone();
         corrupted.source_binding.as_mut().unwrap().payload_sha256 = "b".repeat(64);
         assert!(cloud_sync_restore_attachment_source_bound(&corrupted, &auth).is_err());
+        assert!(cloud_sync_inspect_attachment_sources_bound(&corrupted, &auth).is_err());
         let mut changed = message.clone();
         changed.send_delivered = true;
         assert!(cloud_sync_attachment_send_source(Some(&context), &changed).is_err());

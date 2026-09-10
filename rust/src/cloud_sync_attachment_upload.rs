@@ -30,7 +30,6 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    cloud_sync_canonical_dto::CloudCanonicalEntityKind,
     cloud_sync_native_fetch::{
         cloud_sync_open_protected_attachment_upload,
         cloud_sync_stage_protected_attachment_upload_envelope,
@@ -626,7 +625,7 @@ pub(crate) fn stage_attachment_upload(
     )
     .map_err(|_| Failure::ProtectedStorage)?;
     let logical = hasher
-        .canonical_entity_key_hash(CloudCanonicalEntityKind::Attachment, &plan.metadata.guid)
+        .canonical_attachment_key_hash(&plan.metadata.guid)
         .map_err(|_| Failure::MalformedMessage)?;
     let stage = cloud_sync_stage_protected_attachment_upload_envelope(
         storage_directory,
@@ -720,7 +719,7 @@ fn open_attachment_upload_bound(
     )
     .map_err(|_| Failure::ProtectedStorage)?;
     let logical = hasher
-        .canonical_entity_key_hash(CloudCanonicalEntityKind::Attachment, &plan.metadata.guid)
+        .canonical_attachment_key_hash(&plan.metadata.guid)
         .map_err(|_| Failure::MalformedMessage)?;
     if hasher.server_record_id_hash(plan.record_name()?) != stage.server_record_id_hash
         || logical.value() != stage.logical_entity_key_hash
@@ -785,6 +784,31 @@ mod tests {
             record(),
             AttachmentMeta {
                 guid: "fixture-attachment-guid".to_owned(),
+                is_outgoing: true,
+                version: 1,
+                total_bytes: CONTENT.len() as i64,
+                mime_type: Some("application/pdf".to_owned()),
+                ..Default::default()
+            },
+            prepared,
+            digest(CONTENT),
+        )
+        .unwrap()
+    }
+
+    async fn plan_with_guid(guid: &str) -> AttachmentUploadPlan {
+        let prepared = prepare_put_v2(
+            FileContainer::new(Cursor::new(CONTENT.to_vec())),
+            &[0x42; 32],
+        )
+        .await
+        .unwrap();
+        AttachmentUploadPlan::new(
+            PARENT.to_owned(),
+            "a".repeat(64),
+            record(),
+            AttachmentMeta {
+                guid: guid.to_owned(),
                 is_outgoing: true,
                 version: 1,
                 total_bytes: CONTENT.len() as i64,
@@ -1238,5 +1262,108 @@ mod tests {
         // recovered. Reading old state neither drops keys nor creates an upload.
         recovered.validate_source(Cursor::new(CONTENT)).unwrap();
         assert!(recovered.complete(asset(&original)).is_ok());
+    }
+
+    #[tokio::test]
+    async fn owned_wire_stage_open_roundtrip_uses_canonical_read_identity() {
+        let wire_guid = "at_3_MSG_WITH_UNDERSCORES";
+        let original = plan_with_guid(wire_guid).await;
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let stage =
+            stage_attachment_upload(directory.path().into(), account.clone(), &original).unwrap();
+        let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
+            directory.path().to_string_lossy().into_owned(),
+        )
+        .unwrap();
+        assert_eq!(
+            stage.logical_entity_key_hash,
+            hasher
+                .canonical_owned_attachment_key_hash("MSG_WITH_UNDERSCORES", 3)
+                .unwrap()
+                .value()
+        );
+        assert_eq!(
+            stage.logical_entity_key_hash,
+            hasher
+                .canonical_attachment_key_hash(wire_guid)
+                .unwrap()
+                .value()
+        );
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            directory.path().into(),
+            &stage.lease_reference,
+            std::slice::from_ref(&stage.protected_payload_reference),
+        )
+        .unwrap();
+        let recovered =
+            open_attachment_upload(directory.path().into(), account.clone(), &stage).unwrap();
+        assert_eq!(recovered.metadata.guid, wire_guid);
+        assert_eq!(recovered.encode().unwrap(), original.encode().unwrap());
+        let journaled = open_journaled_attachment_upload(
+            directory.path().into(),
+            account,
+            &stage.logical_entity_key_hash,
+            &stage.protected_payload_reference,
+            &stage.payload_sha256,
+            &stage.server_record_id_hash,
+            &stage.lease_reference,
+        )
+        .unwrap();
+        assert_eq!(journaled.encode().unwrap(), original.encode().unwrap());
+    }
+
+    #[tokio::test]
+    async fn legacy_wire_hash_journal_fails_precise_mismatch_without_relabel() {
+        let wire_guid = "at_3_MSG_WITH_UNDERSCORES";
+        let original = plan_with_guid(wire_guid).await;
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let stage =
+            stage_attachment_upload(directory.path().into(), account.clone(), &original).unwrap();
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            directory.path().into(),
+            &stage.lease_reference,
+            std::slice::from_ref(&stage.protected_payload_reference),
+        )
+        .unwrap();
+        let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
+            directory.path().to_string_lossy().into_owned(),
+        )
+        .unwrap();
+        let legacy = hasher
+            .canonical_entity_key_hash(
+                crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Attachment,
+                wire_guid,
+            )
+            .unwrap();
+        assert_ne!(legacy.value(), stage.logical_entity_key_hash);
+        let canonical_key = stage.logical_entity_key_hash.clone();
+        let mut relabeled = stage;
+        relabeled.logical_entity_key_hash = legacy.value().to_owned();
+        assert!(matches!(
+            open_attachment_upload(directory.path().into(), account.clone(), &relabeled),
+            Err(Failure::BindingMismatch)
+        ));
+        assert!(matches!(
+            open_journaled_attachment_upload(
+                directory.path().into(),
+                account.clone(),
+                &relabeled.logical_entity_key_hash,
+                &relabeled.protected_payload_reference,
+                &relabeled.payload_sha256,
+                &relabeled.server_record_id_hash,
+                &relabeled.lease_reference,
+            ),
+            Err(Failure::BindingMismatch)
+        ));
+        // Precise mismatch preserves data: the committed plan still reopens
+        // under its canonical key and decodes byte-exact.
+        relabeled.logical_entity_key_hash = canonical_key;
+        let recovered =
+            open_attachment_upload(directory.path().into(), account.clone(), &relabeled).unwrap();
+        assert_eq!(recovered.encode().unwrap(), original.encode().unwrap());
+        assert!(hasher.canonical_attachment_key_hash(wire_guid).is_ok());
+        assert!(hasher.canonical_attachment_key_hash("at__guid").is_err());
     }
 }

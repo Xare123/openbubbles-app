@@ -203,6 +203,7 @@ mod cloud_sync_ids_attachment_source;
 mod cloud_sync_attachment_source_file;
 mod cloud_sync_attachment_upload;
 mod cloud_sync_attachment_upload_receipt;
+mod cloud_sync_attachment_parent;
 mod cloud_sync_protector;
 mod cloud_sync_semantic_decoder;
 mod cloud_sync_semantic_identity;

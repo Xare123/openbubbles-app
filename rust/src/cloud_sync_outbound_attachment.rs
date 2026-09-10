@@ -16,7 +16,6 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    cloud_sync_canonical_dto::CloudCanonicalEntityKind,
     cloud_sync_native_fetch::{
         cloud_sync_open_protected_outbound_attachment,
         cloud_sync_stage_protected_outbound_attachment_envelope,
@@ -53,17 +52,31 @@ pub(crate) fn initial_attachment_create_operation_id(
     account_fingerprint: &str,
     logical_entity_key_hash: &str,
 ) -> Result<String, Failure> {
-    if [account_fingerprint, logical_entity_key_hash].iter().any(|value| {
-        value.len() != 43 || !value.bytes().all(|byte|
-            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    }) {
+    if [account_fingerprint, logical_entity_key_hash]
+        .iter()
+        .any(|value| {
+            value.len() != 43
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+    {
         return Err(Failure::BindingMismatch);
     }
     let canonical = [
-        "cloud-sync-initial-create-v1", account_fingerprint,
-        "com.apple.messages.cloud", "private", ATTACHMENT_CREATE_ZONE,
-        "messages", "2", "semantic", logical_entity_key_hash, "save", "1",
-    ].join("\u{001f}");
+        "cloud-sync-initial-create-v1",
+        account_fingerprint,
+        "com.apple.messages.cloud",
+        "private",
+        ATTACHMENT_CREATE_ZONE,
+        "messages",
+        "2",
+        "semantic",
+        logical_entity_key_hash,
+        "save",
+        "1",
+    ]
+    .join("\u{001f}");
     Ok(format!("op1:{}", digest(canonical.as_bytes())))
 }
 
@@ -193,7 +206,7 @@ pub(crate) fn stage_outbound_attachment(
     )
     .map_err(|_| Failure::ProtectedStorage)?;
     let logical_entity_key_hash = hasher
-        .canonical_entity_key_hash(CloudCanonicalEntityKind::Attachment, &attachment.cm.0.guid)
+        .canonical_attachment_key_hash(&attachment.cm.0.guid)
         .map_err(|_| Failure::MalformedMessage)?
         .value()
         .to_owned();
@@ -418,7 +431,12 @@ mod tests {
             initial_attachment_create_operation_id(&"A".repeat(43), &"L".repeat(43)).unwrap(),
             "op1:7b2b89e41a267f080a5bdc0e27e83abbbfaa0cd14d1c7e0cbadccbd52ff5a04c"
         );
-        for invalid in [String::new(), "A".repeat(42), "A".repeat(44), "!".repeat(43)] {
+        for invalid in [
+            String::new(),
+            "A".repeat(42),
+            "A".repeat(44),
+            "!".repeat(43),
+        ] {
             assert!(initial_attachment_create_operation_id(&invalid, &"L".repeat(43)).is_err());
             assert!(initial_attachment_create_operation_id(&"A".repeat(43), &invalid).is_err());
         }
@@ -749,5 +767,51 @@ mod tests {
             r#type: Some(rustpush::cloudkit_proto::identifier::Type::User.into()),
         });
         assert!(verify_attachment_readback(&source, &reowned, RECORD, RECORD, &expected).is_err());
+    }
+
+    #[test]
+    fn outbound_stage_uses_canonical_attachment_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
+            directory.path().to_string_lossy().into_owned(),
+        )
+        .unwrap();
+        let mut owned = fixture();
+        owned.cm.0.guid = "at_2_GUID_WITH_UNDERSCORES".to_owned();
+        let stage =
+            stage_outbound_attachment(directory.path().into(), account, owned, RECORD).unwrap();
+        assert_eq!(
+            stage.logical_entity_key_hash,
+            hasher
+                .canonical_owned_attachment_key_hash("GUID_WITH_UNDERSCORES", 2)
+                .unwrap()
+                .value()
+        );
+        assert_eq!(
+            stage.logical_entity_key_hash,
+            hasher
+                .canonical_attachment_key_hash("at_2_GUID_WITH_UNDERSCORES")
+                .unwrap()
+                .value()
+        );
+        let legacy = hasher
+            .canonical_entity_key_hash(
+                crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Attachment,
+                "at_2_GUID_WITH_UNDERSCORES",
+            )
+            .unwrap();
+        assert_ne!(legacy.value(), stage.logical_entity_key_hash);
+        assert!(hasher.canonical_attachment_key_hash("at__guid").is_err());
+        let unowned = "attachment-fixture-guid";
+        assert_eq!(
+            hasher.canonical_attachment_key_hash(unowned).unwrap(),
+            hasher
+                .canonical_entity_key_hash(
+                    crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Attachment,
+                    unowned,
+                )
+                .unwrap()
+        );
     }
 }

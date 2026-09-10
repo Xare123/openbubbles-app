@@ -12,8 +12,8 @@ use sha2::Sha256;
 use thiserror::Error;
 
 use crate::cloud_sync_canonical_dto::{
-    CloudCanonicalAliasKind, CloudCanonicalEntityKind, CloudCanonicalHash,
-    CloudCanonicalValidationFailure,
+    parse_owned_attachment_guid, CloudCanonicalAliasKind, CloudCanonicalEntityKind,
+    CloudCanonicalHash, CloudCanonicalValidationFailure,
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -142,6 +142,25 @@ impl CloudSemanticIdentifierHasher {
         )
     }
 
+    /// Write-path mirror of the canonical read identity for attachments.
+    /// Owned wire GUIDs (at_<part>_<message>) hash as the owned
+    /// (message, part) pair; malformed at_ values error; all other GUIDs
+    /// hash as ordinary attachment identifiers. Existing hashes unchanged.
+    pub(crate) fn canonical_attachment_key_hash(
+        &self,
+        wire_guid: &str,
+    ) -> Result<CloudCanonicalHash, CloudCanonicalValidationFailure> {
+        match parse_owned_attachment_guid(wire_guid) {
+            Ok(owned) => {
+                self.canonical_owned_attachment_key_hash(owned.message_guid(), owned.part())
+            }
+            Err(error) if wire_guid.starts_with("at_") => Err(error),
+            Err(_) => {
+                self.canonical_entity_key_hash(CloudCanonicalEntityKind::Attachment, wire_guid)
+            }
+        }
+    }
+
     pub(crate) fn canonical_alias_key_hash(
         &self,
         alias_kind: CloudCanonicalAliasKind,
@@ -228,5 +247,82 @@ mod tests {
                 .canonical_owned_attachment_key_hash("message_guid_with_underscores", 8)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn attachment_key_hash_matches_owned_read_identity() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"attachment-identity-test").unwrap();
+        for (wire, message, part) in [
+            (
+                "at_7_message_guid_with_underscores",
+                "message_guid_with_underscores",
+                7,
+            ),
+            ("at_12_GUID_WITH_UNDERSCORES", "GUID_WITH_UNDERSCORES", 12),
+            ("at_0_plain", "plain", 0),
+        ] {
+            assert_eq!(
+                hasher.canonical_attachment_key_hash(wire).unwrap(),
+                hasher
+                    .canonical_owned_attachment_key_hash(message, part)
+                    .unwrap(),
+                "{wire}"
+            );
+        }
+        assert_ne!(
+            hasher
+                .canonical_attachment_key_hash("at_7_message_guid_with_underscores")
+                .unwrap(),
+            hasher
+                .canonical_attachment_key_hash("at_8_message_guid_with_underscores")
+                .unwrap()
+        );
+        assert_ne!(
+            hasher
+                .canonical_attachment_key_hash("at_7_first_message")
+                .unwrap(),
+            hasher
+                .canonical_attachment_key_hash("at_7_second_message")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn attachment_key_hash_rejects_malformed_owned_wire() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"attachment-identity-test").unwrap();
+        for malformed in [
+            "at_",
+            "at__guid",
+            "at_-1_guid",
+            "at_01_guid",
+            "at_x_guid",
+            "at_4294967296_guid",
+            "at_0_bad/guid",
+        ] {
+            assert_eq!(
+                hasher.canonical_attachment_key_hash(malformed),
+                Err(CloudCanonicalValidationFailure::MalformedAttachmentOwner),
+                "{malformed}"
+            );
+        }
+    }
+
+    #[test]
+    fn attachment_key_hash_preserves_unowned_identity() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"attachment-identity-test").unwrap();
+        for wire in [
+            "fixture-attachment-guid",
+            "other_0_guid",
+            "at",
+            "plain-guid-with-dashes",
+        ] {
+            assert_eq!(
+                hasher.canonical_attachment_key_hash(wire).unwrap(),
+                hasher
+                    .canonical_entity_key_hash(CloudCanonicalEntityKind::Attachment, wire)
+                    .unwrap(),
+                "{wire}"
+            );
+        }
     }
 }
