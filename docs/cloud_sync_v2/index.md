@@ -4,7 +4,7 @@ title: Cloud Sync V2 Documentation Index
 description: Entry point for the current CloudKit V2 architecture, preserved investigation history, and qualification evidence.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, index, evidence]
-timestamp: 2026-09-08
+timestamp: 2026-09-09
 ---
 
 # Cloud Sync V2 documentation
@@ -25,9 +25,12 @@ timestamp: 2026-09-08
 
 - `evidence/windows-replay-20260906/`: Windows fast-loop, ObjectBox, analyzer,
   route, reaction, save/readback, and Smart App Control evidence.
-- GitHub Actions run `34211915641`: current exact-source build-only GCE
-  benchmark and signed Canary artifact for Android app source `ad822f37c`;
-  exact-source full-suite qualification remains pending.
+- GitHub Actions run `34437410835`: fully qualified and signed baseline
+  `75440cafc`, with cleanup verified. It predates the positive IDS acceptance
+  repair and must not be treated as write-qualified. See the current treemap
+  for the latest code and narrow-test run IDs.
+- GitHub Actions run `34211915641`: signed Android artifact for the earlier
+  live-read proof source `ad822f37c`, not the current production candidate.
 - GitHub Actions run `34168948855`: invalidated infrastructure attempt. The app
   checkout succeeded, but rustpush commit `2274cee63` was absent from the fork;
   no tests or APK build ran. Runner cleanup passed.

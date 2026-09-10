@@ -432,3 +432,48 @@ This is a chronological evidence log. It does not override the
   and pilot `f8520b1ee` in `us-west1-a`, run `34437410835`, manual writer and
   background read on, automatic uploads off. Trusted-source validation passed
   and runner creation is in progress; every downstream result is still pending.
+
+## 2026-09-09, actual IDS acceptance versus completed work
+
+- While tracing immutable attachment capture, parent found two meanings of
+  `SendJob.handle == None`: finished work and zero destination targets. The
+  send worker also reports APSError/TimedOut progress while returning `Ok(())`.
+  The old Android receipt bridge and Windows loop treated that completion as
+  success proof. This invalidates completion-only claims, not independently
+  observed remote CloudKit records or readable history.
+- Code `35551340c` with rustpush `2bfbe8a` shares explicit participant acceptance
+  across send retries, retains missing intended group participants, and checks
+  the evidence only after successful job completion. Status 0 alone qualifies.
+  Legacy 5008 semantics are unqualified for V2. A self-send needs an actual
+  other-device acknowledgment, not an empty fanout; no read-receipt or Apple UI
+  proof is inferred. Ordinary untracked send behavior remains unchanged.
+- Protected receipt version/domain 2 distinguishes the stronger evidence.
+  Tests cover keeping old version-1 ciphertext intact while rejecting replay
+  and acknowledgment. Dart no longer promotes an intent from an untracked
+  receipt-less event. Fixed unconfirmed errors do not contain the Dart retry
+  trigger. Pre-fix ready/adopted intents are a separate unresolved release gate;
+  automatic uploads remain off, with no migration, deletion or blind resend.
+- The attachment handoff was reviewed and its read-only worker closed, verified
+  absent. Parent rejected storing the only source in the short-lived IDS
+  receipt. The protected source still needs adoption and GC ownership. No
+  attachment admission was enabled during this investigation.
+- A bounded second review corroborated the completion bypass repair. Parent
+  incorporated its 5008 and missing-proof observability findings, kept valid
+  other-device self-send support, and retained the old-intent migration gate.
+  The reviewer was closed after disposition; no worker worktree or scratch
+  files were created. Review transcripts remain needed provenance; unsupported
+  session deletion was not attempted. C: remained above 63 GiB free.
+- Run `34437410835` passed full source qualification through APK/native-library
+  and Android JVM tests for `75440cafc`, including 373 app Rust, 253 rustpush,
+  and 34 protector tests. Signing/cleanup were still running at observation.
+  It does not contain the new receipt repair. New run `34439102945` was rejected
+  before VM creation because writer controls require full validation; cleanup
+  succeeded, and inventories showed only the existing full-run VM/runner.
+  Corrected narrow runs `34439315172` (app Rust) and `34439316836` (rustpush)
+  use source `35551340c`, T2D-32, separate bounded lanes, and writer/automatic
+  upload flags off. No new APK or Apple credentials are used. Results pending.
+- Final readback confirmed full run `34437410835` succeeded including trusted
+  signing and cleanup. Independent inventories no longer list its VM/runner;
+  only the two new narrow-validation runners remain. Both new runs passed
+  trusted-source validation and started builds. Pixel ADB inventory was empty;
+  no app was installed and no device data or messages were changed.
