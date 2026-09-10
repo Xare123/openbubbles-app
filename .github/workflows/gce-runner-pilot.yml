@@ -489,6 +489,8 @@ jobs:
       # generated surface, while the later drift gate still prevents silently
       # accepting uncommitted generated files.
       - name: Run the full Dart test suite
+        id: dart-tests
+        continue-on-error: true
         if: ${{ env.VALIDATION_MODE == 'full' }}
         shell: bash
         run: |
@@ -496,11 +498,15 @@ jobs:
           pwsh -NoProfile -File tooling/windows/test_cloudkit_semantic_outbox_contract.ps1
 
       - name: Run Rust library tests
+        id: app-rust-tests
+        continue-on-error: true
         if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' }}
         shell: bash
         run: cargo test --manifest-path rust/Cargo.toml --lib
 
       - name: Qualify automatic-upload Canary flags
+        id: automatic-upload-tests
+        continue-on-error: true
         if: ${{ env.VALIDATION_MODE == 'full' && env.AUTOMATIC_UPLOADS == 'true' }}
         shell: bash
         run: |
@@ -513,15 +519,51 @@ jobs:
             test/services/cloud_sync/cloud_sync_upload_rollout_gate_test.dart
 
       - name: Run rustpush library tests with production feature set
+        id: rustpush-tests
+        continue-on-error: true
         if: ${{ env.VALIDATION_MODE == 'full' }}
         shell: bash
         # Several tests intentionally pause a process-global CloudKit gate.
         run: cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3 -- --test-threads=1
 
       - name: Run Cloud Sync protector harness
+        id: protector-tests
+        continue-on-error: true
         if: ${{ env.VALIDATION_MODE == 'full' }}
         shell: bash
         run: cargo test --manifest-path rust/cloud_sync_protector_harness/Cargo.toml
+
+      # Collect independent suite failures in one run, but never package a
+      # failed qualification. `outcome` retains failures hidden by the step's
+      # continue-on-error `conclusion`. Missing/skipped outcomes also fail.
+      - name: Require every selected test suite to pass
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' }}
+        shell: bash
+        env:
+          DART_TEST_OUTCOME: ${{ steps.dart-tests.outcome }}
+          APP_RUST_TEST_OUTCOME: ${{ steps.app-rust-tests.outcome }}
+          AUTOMATIC_UPLOAD_TEST_OUTCOME: ${{ steps.automatic-upload-tests.outcome }}
+          RUSTPUSH_TEST_OUTCOME: ${{ steps.rustpush-tests.outcome }}
+          PROTECTOR_TEST_OUTCOME: ${{ steps.protector-tests.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          require_success() {
+            printf '%s: %s\n' "$1" "${2:-missing}"
+            if [[ "$2" != 'success' ]]; then
+              failed=1
+            fi
+          }
+          require_success app-rust "$APP_RUST_TEST_OUTCOME"
+          if [[ "$VALIDATION_MODE" == 'full' ]]; then
+            require_success dart "$DART_TEST_OUTCOME"
+            require_success rustpush "$RUSTPUSH_TEST_OUTCOME"
+            require_success protector "$PROTECTOR_TEST_OUTCOME"
+            if [[ "$AUTOMATIC_UPLOADS" == 'true' ]]; then
+              require_success automatic-uploads "$AUTOMATIC_UPLOAD_TEST_OUTCOME"
+            fi
+          fi
+          exit "$failed"
 
       - name: Upload regenerated bridge bindings
         if: ${{ always() && (env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only') }}
