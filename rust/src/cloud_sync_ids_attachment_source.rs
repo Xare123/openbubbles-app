@@ -319,7 +319,7 @@ pub(crate) fn verify_staged_ids_attachment_source(
     validate_ids_attachment_source(&envelope, msg, attachment_guids)?;
     decode_ids_attachment_source(&envelope)
 }
-fn open_staged_source_envelope(
+pub(crate) fn open_staged_source_envelope(
     storage_directory: PathBuf,
     account_fingerprint: String,
     local_source_sha256: &str,

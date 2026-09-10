@@ -362,6 +362,46 @@ pub struct CloudSyncNativeSendReceiptContext {
     pub account_fingerprint: String,
     pub protected_store_identity: String,
     pub native_session_id: String,
+    pub source_binding: Option<CloudSyncNativeSendSourceBinding>,
+}
+
+/// Content-free ownership of an already-staged IDS attachment source. This
+/// identifies protected local data, never delivery or CloudKit write authority.
+#[derive(Clone)]
+pub struct CloudSyncNativeSendSourceBinding {
+    pub source_sha256: String,
+    pub protected_reference: String,
+    pub lease_reference: String,
+    pub payload_sha256: String,
+    pub payload_length: u64,
+}
+
+impl From<CloudSyncNativeSendSourceBinding>
+    for crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceBinding
+{
+    fn from(source: CloudSyncNativeSendSourceBinding) -> Self {
+        Self {
+            source_sha256: source.source_sha256,
+            protected_reference: source.protected_reference,
+            lease_reference: source.lease_reference,
+            payload_sha256: source.payload_sha256,
+            payload_length: source.payload_length,
+        }
+    }
+}
+
+impl From<crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceBinding>
+    for CloudSyncNativeSendSourceBinding
+{
+    fn from(source: crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceBinding) -> Self {
+        Self {
+            source_sha256: source.source_sha256,
+            protected_reference: source.protected_reference,
+            lease_reference: source.lease_reference,
+            payload_sha256: source.payload_sha256,
+            payload_length: source.payload_length,
+        }
+    }
 }
 
 /// Opaque durable receipt identity plus the two content-free values needed to
@@ -371,6 +411,7 @@ pub struct CloudSyncNativeSendReceipt {
     pub receipt_id: String,
     pub guid_hash: String,
     pub native_session_id: String,
+    pub source_binding: Option<CloudSyncNativeSendSourceBinding>,
 }
 
 pub struct CloudSyncNativeSendReceiptPage {
@@ -401,6 +442,7 @@ fn persist_cloud_sync_native_send_receipt(
             account_fingerprint: context.account_fingerprint,
             protected_store_identity: context.protected_store_identity,
             native_session_id: context.native_session_id,
+            source_binding: context.source_binding.map(Into::into),
         },
     )
     .map_err(|_| anyhow!("cloud_sync_native_send_receipt_persist_failed"))?;
@@ -408,6 +450,7 @@ fn persist_cloud_sync_native_send_receipt(
         receipt_id: receipt.receipt_id,
         guid_hash: receipt.guid_hash,
         native_session_id: receipt.native_session_id,
+        source_binding: receipt.source_binding.map(Into::into),
     })
 }
 
@@ -431,6 +474,7 @@ pub async fn cloud_sync_replay_native_send_receipts(
                 receipt_id: receipt.receipt_id,
                 guid_hash: receipt.guid_hash,
                 native_session_id: receipt.native_session_id,
+                source_binding: receipt.source_binding.map(Into::into),
             })
             .collect(),
         next_cursor: page.next_cursor,
@@ -451,6 +495,7 @@ pub fn cloud_sync_acknowledge_native_send_receipt(
             receipt_id: receipt.receipt_id,
             guid_hash: receipt.guid_hash,
             native_session_id: receipt.native_session_id,
+            source_binding: receipt.source_binding.map(Into::into),
         },
         &expected_account_fingerprint,
         &expected_protected_store_identity,
@@ -459,6 +504,43 @@ pub fn cloud_sync_acknowledge_native_send_receipt(
 }
 
 const CLOUD_SYNC_READ_AUTH_WARM_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Stages the provided native IDS attachment value without sending anything or
+/// touching Apple. Caller must journal ownership and commit the lease under
+/// the protected-store exclusive lock before passing this binding to send().
+pub async fn cloud_sync_stage_ids_attachment_source(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncNativeSendReceiptContext,
+    local_source_sha256: String,
+    message: MessageInst,
+    attachment_guids: Vec<String>,
+) -> anyhow::Result<CloudSyncNativeSendSourceBinding> {
+    if context.source_binding.is_some()
+        || cloud_sync_local_send_guid_hash(&message.id) != context.guid_hash
+    {
+        return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
+    }
+    let auth = cloud_sync_capture_auth_snapshot(
+        cloud_messages_client, context.storage_directory.clone(),
+    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    if auth.account_fingerprint != context.account_fingerprint
+        || auth.protected_store_identity != context.protected_store_identity
+        || auth.native_session_id != context.native_session_id
+    {
+        return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
+    }
+    let staged = crate::cloud_sync_ids_attachment_source::stage_ids_attachment_source(
+        PathBuf::from(context.storage_directory), context.account_fingerprint,
+        &local_source_sha256, &message, &attachment_guids,
+    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_stage_failed"))?;
+    Ok(CloudSyncNativeSendSourceBinding {
+        source_sha256: local_source_sha256,
+        protected_reference: staged.protected_reference,
+        lease_reference: staged.lease_reference,
+        payload_sha256: staged.payload_sha256,
+        payload_length: staged.payload_length,
+    })
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CloudSyncReadAuthWarmFailure {
@@ -9150,6 +9232,37 @@ pub async fn recv_wait(watcher: &mut APSWatcher, state: &Arc<SharedPushState>) -
     }
 }
 
+#[frb(ignore)]
+fn cloud_sync_attachment_send_source(
+    context: Option<&CloudSyncNativeSendReceiptContext>,
+    message: &MessageInst,
+) -> anyhow::Result<Option<(Vec<u8>, Vec<String>)>> {
+    let Some(context) = context else { return Ok(None); };
+    let Some(binding) = &context.source_binding else { return Ok(None); };
+    let stage = crate::cloud_sync_ids_attachment_source::NativeIdsAttachmentSourceStage {
+        protected_reference: binding.protected_reference.clone(),
+        lease_reference: binding.lease_reference.clone(),
+        payload_sha256: binding.payload_sha256.clone(),
+        payload_length: binding.payload_length,
+    };
+    let protected_identity = crate::cloud_sync_protector::protected_store_identity(
+        context.storage_directory.clone(),
+    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
+    if protected_identity != context.protected_store_identity {
+        return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
+    }
+    let envelope = crate::cloud_sync_ids_attachment_source::open_staged_source_envelope(
+        PathBuf::from(&context.storage_directory), context.account_fingerprint.clone(),
+        &binding.source_sha256, &stage,
+    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
+    let decoded = crate::cloud_sync_ids_attachment_source::decode_ids_attachment_source(&envelope)
+        .map_err(|_| anyhow!("cloud_sync_native_attachment_source_invalid"))?;
+    crate::cloud_sync_ids_attachment_source::validate_ids_attachment_source(
+        &envelope, message, &decoded.attachment_guids,
+    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_changed"))?;
+    Ok(Some((envelope, decoded.attachment_guids)))
+}
+
 pub async fn send(
     state: &Arc<IMClient>,
     local: &Arc<mpsc::Sender<PushMessage>>,
@@ -9162,7 +9275,17 @@ pub async fn send(
     {
         return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
     }
+    let attachment_source = cloud_sync_attachment_send_source(native_receipt_context.as_ref(), &msg)?;
+    let send_started_ms = systemtime_to_millis(SystemTime::now());
     let result = state.send(&mut msg).await?;
+    let send_finished_ms = systemtime_to_millis(SystemTime::now());
+    let source_validation = match attachment_source {
+        Some((source, guids)) =>
+            crate::cloud_sync_ids_attachment_source::validate_prepared_ids_attachment_source(
+                &source, &msg, &guids, send_started_ms, send_finished_ms,
+            ).map_err(|_| "cloud_sync_native_attachment_prepared_source_changed"),
+        None => Ok(()),
+    };
     let confirmation = result.confirmation();
     info!("send_finish");
 
@@ -9173,11 +9296,12 @@ pub async fn send(
             let result = handle.await;
             info!("Finished handle");
             let (maybeerr, native_receipt, native_receipt_error) = match result {
-                Ok(result) => cloud_sync_send_confirmation_fields(
+                Ok(result) => cloud_sync_send_confirmation_fields_with_source(
                     result,
                     native_receipt_context,
                     &uuid,
                     || confirmation.require_confirmed(),
+                    source_validation,
                 ),
                 Err(_) => (
                     Some("cloud_sync_native_send_completion_unknown".to_owned()),
@@ -9201,8 +9325,8 @@ pub async fn send(
         // protected success receipt in either completion path.
         let uuid = msg.id.clone();
         let (error, native_receipt, native_receipt_error) =
-            cloud_sync_send_confirmation_fields(Ok(()), native_receipt_context, &uuid,
-                || confirmation.require_confirmed());
+            cloud_sync_send_confirmation_fields_with_source(Ok(()), native_receipt_context, &uuid,
+                || confirmation.require_confirmed(), source_validation);
         let _ = local
             .send(PushMessage::SendConfirm {
                 uuid,
@@ -9218,6 +9342,7 @@ pub async fn send(
 }
 
 #[frb(ignore)]
+#[cfg(test)]
 fn cloud_sync_send_confirmation_fields(
     result: Result<(), PushError>,
     native_receipt_context: Option<CloudSyncNativeSendReceiptContext>,
@@ -9228,6 +9353,19 @@ fn cloud_sync_send_confirmation_fields(
     Option<CloudSyncNativeSendReceipt>,
     Option<String>,
 ) {
+    cloud_sync_send_confirmation_fields_with_source(
+        result, native_receipt_context, stable_guid, confirm_participants, Ok(()),
+    )
+}
+
+#[frb(ignore)]
+fn cloud_sync_send_confirmation_fields_with_source(
+    result: Result<(), PushError>,
+    native_receipt_context: Option<CloudSyncNativeSendReceiptContext>,
+    stable_guid: &str,
+    confirm_participants: impl FnOnce() -> Result<(), PushError>,
+    source_validation: Result<(), &'static str>,
+) -> (Option<String>, Option<CloudSyncNativeSendReceipt>, Option<String>) {
     // Legacy/untracked send semantics stay unchanged. Strict V2 receipts need
     // both job completion and positive acceptance, not APSError/TimedOut
     // progress or a missing native handle. Fixed errors cannot trigger the
@@ -9238,6 +9376,11 @@ fn cloud_sync_send_confirmation_fields(
         result
     };
     match result {
+        // IDS already accepted the send. A local source mismatch suppresses
+        // CloudKit authority, but must not ask the user/wrapper to resend it.
+        Ok(()) if source_validation.is_err() => (
+            None, None, source_validation.err().map(str::to_owned),
+        ),
         Ok(()) => match native_receipt_context {
             Some(context) => match persist_cloud_sync_native_send_receipt(context, stable_guid) {
                 Ok(receipt) => (None, Some(receipt), None),
@@ -9376,6 +9519,7 @@ mod cloud_sync_windows_sender_tests {
             account_fingerprint: "A".repeat(43),
             protected_store_identity: format!("obcs2.store.{}", "S".repeat(43)),
             native_session_id: "N".repeat(43),
+            source_binding: None,
         };
 
         let (send_error, receipt, receipt_error) =
@@ -9411,6 +9555,7 @@ mod cloud_sync_windows_sender_tests {
             account_fingerprint: "A".repeat(43),
             protected_store_identity: format!("obcs2.store.{}", "S".repeat(43)),
             native_session_id: "N".repeat(43),
+            source_binding: None,
         };
         for failure in [PushError::NoValidTargets, PushError::SendTimedOut, PushError::SendErr(6005)] {
             let (error, receipt, receipt_error) = cloud_sync_send_confirmation_fields(
@@ -9422,6 +9567,111 @@ mod cloud_sync_windows_sender_tests {
         }
         // Negative confirmation must not even initialize the protected store.
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn accepted_ids_with_changed_prepared_source_retains_delivery_but_no_receipt() {
+        let directory = tempfile::tempdir().unwrap();
+        let guid = "11111111-2222-4abc-8def-555555555555";
+        let context = CloudSyncNativeSendReceiptContext {
+            storage_directory: directory.path().to_string_lossy().into_owned(),
+            guid_hash: cloud_sync_local_send_guid_hash(guid),
+            account_fingerprint: "A".repeat(43),
+            protected_store_identity: format!("obcs2.store.{}", "S".repeat(43)),
+            native_session_id: "N".repeat(43),
+            source_binding: None,
+        };
+        let (send_error, receipt, receipt_error) = cloud_sync_send_confirmation_fields_with_source(
+            Ok(()), Some(context), guid, || Ok(()),
+            Err("cloud_sync_native_attachment_prepared_source_changed"),
+        );
+        assert!(send_error.is_none());
+        assert!(receipt.is_none());
+        assert_eq!(receipt_error.as_deref(), Some("cloud_sync_native_attachment_prepared_source_changed"));
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn source_bound_native_send_preflight_and_receipt_recover_exact_origin() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = directory.path().to_string_lossy().into_owned();
+        let guid = "11111111-2222-4abc-8def-555555555555";
+        let message = MessageInst {
+            id: guid.to_owned(),
+            sender: Some("mailto:sender@example.invalid".to_owned()),
+            conversation: Some(rustpush::ConversationData {
+                participants: vec!["mailto:peer@example.invalid".to_owned()],
+                cv_name: None, sender_guid: None, after_guid: None,
+            }),
+            message: Message::Message(rustpush::NormalMessage {
+                parts: rustpush::MessageParts(vec![rustpush::IndexedMessagePart {
+                    part: rustpush::MessagePart::Attachment(rustpush::Attachment {
+                        a_type: rustpush::AttachmentType::MMCS(rustpush::MMCSFile {
+                            key: vec![7; 32], signature: vec![8; 21],
+                            object: "synthetic-object".to_owned(),
+                            url: "https://example.invalid/asset".to_owned(), size: 123,
+                        }),
+                        part: 0, uti_type: "public.jpeg".to_owned(),
+                        mime: "image/jpeg".to_owned(), name: "synthetic.jpg".to_owned(), iris: false,
+                    }), idx: Some(0), ext: None,
+                }]),
+                effect: None, reply_guid: None, reply_part: None, service: rustpush::MessageType::IMessage,
+                subject: None, app: None, link_meta: None, voice: false, scheduled: None, embedded_profile: None,
+            }),
+            sent_timestamp: 123, target: None, send_delivered: false,
+            verification_failed: false, certified_context: None,
+        };
+        let stage = crate::cloud_sync_ids_attachment_source::stage_ids_attachment_source(
+            directory.path().to_path_buf(), "A".repeat(43), &"a".repeat(64),
+            &message, &["synthetic-attachment".to_owned()],
+        ).unwrap();
+        let context = CloudSyncNativeSendReceiptContext {
+            storage_directory: storage.clone(), guid_hash: cloud_sync_local_send_guid_hash(guid),
+            account_fingerprint: "A".repeat(43),
+            protected_store_identity: crate::cloud_sync_protector::protected_store_identity(storage.clone()).unwrap(),
+            native_session_id: "N".repeat(43),
+            source_binding: Some(CloudSyncNativeSendSourceBinding {
+                source_sha256: "a".repeat(64), protected_reference: stage.protected_reference.clone(),
+                lease_reference: stage.lease_reference.clone(), payload_sha256: stage.payload_sha256.clone(),
+                payload_length: stage.payload_length,
+            }),
+        };
+        assert!(cloud_sync_attachment_send_source(Some(&context), &message).is_err());
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            directory.path().to_path_buf(), &stage.lease_reference,
+            std::slice::from_ref(&stage.protected_reference),
+        ).unwrap();
+        let (source, guids) = cloud_sync_attachment_send_source(Some(&context), &message).unwrap().unwrap();
+        let mut changed = message.clone();
+        changed.send_delivered = true;
+        assert!(cloud_sync_attachment_send_source(Some(&context), &changed).is_err());
+        let mut prepared = message;
+        let start = systemtime_to_millis(SystemTime::now());
+        prepared.prepare_send(&["mailto:sender@example.invalid".to_owned()]);
+        let end = systemtime_to_millis(SystemTime::now());
+        let validation = crate::cloud_sync_ids_attachment_source::validate_prepared_ids_attachment_source(
+            &source, &prepared, &guids, start, end,
+        ).map_err(|_| "cloud_sync_native_attachment_prepared_source_changed");
+        let (error, receipt, receipt_error) = cloud_sync_send_confirmation_fields_with_source(
+            Ok(()), Some(context.clone()), guid, || Ok(()), validation,
+        );
+        assert!(error.is_none() && receipt_error.is_none());
+        let receipt = receipt.unwrap();
+        assert_eq!(receipt.guid_hash, cloud_sync_local_send_guid_hash(guid));
+        assert_eq!(receipt.source_binding.as_ref().unwrap().payload_sha256, stage.payload_sha256);
+        let replay = cloud_sync_replay_native_send_receipts(
+            storage.clone(), context.account_fingerprint.clone(), context.protected_store_identity.clone(), None,
+        ).await.unwrap();
+        assert_eq!(replay.receipts.len(), 1);
+        assert_eq!(replay.receipts[0].source_binding.as_ref().unwrap().source_sha256, "a".repeat(64));
+        cloud_sync_acknowledge_native_send_receipt(
+            storage, context.account_fingerprint, context.protected_store_identity, receipt,
+        ).unwrap();
+        // The journal-owned source survives acknowledgement of the IDS receipt.
+        let recovered = crate::cloud_sync_ids_attachment_source::open_staged_ids_attachment_source(
+            directory.path().to_path_buf(), "A".repeat(43), &"a".repeat(64), &stage,
+        ).unwrap();
+        assert_eq!(recovered.message_guid, guid);
     }
 
     #[test]
@@ -9447,6 +9697,7 @@ mod cloud_sync_windows_sender_tests {
             account_fingerprint: account_fingerprint.clone(),
             protected_store_identity: protected_store_identity.clone(),
             native_session_id: "N".repeat(43),
+            source_binding: None,
         };
 
         let (send_error, receipt, receipt_error) =

@@ -860,8 +860,9 @@ final class CloudSyncLocalSendJournal {
   /// duplicate state transition; state 0/3 still flows through
   /// [recordNativeSendConfirmation].
   CloudSyncNativeSendReceiptResolution? resolveNativeSendReceipt(
-    String guidHash,
-  ) => _store.runInTransaction(TxMode.read, () {
+    String guidHash, {
+    CloudSyncLocalSendSourceBinding? protectedSource,
+  }) => _store.runInTransaction(TxMode.read, () {
     _verifyLocalOwnership();
     if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(guidHash)) return null;
     final query = _intents
@@ -888,6 +889,7 @@ final class CloudSyncLocalSendJournal {
     }
     if (found == null) return null;
     final intent = _readBoundIntent(found.id);
+    _requireNativeReceiptSource(intent, protectedSource);
     if ((intent.state == 1 || intent.state == 2) &&
         intent.idsConfirmationVersion == cloudSyncIdsConfirmationVersion) {
       if (intent.state == 2) {
@@ -1184,6 +1186,7 @@ final class CloudSyncLocalSendJournal {
     required CloudSyncNativeAuthSnapshot capturedAuth,
     required bool Function() stillCurrent,
     required DateTime now,
+    CloudSyncLocalSendSourceBinding? protectedSource,
   }) {
     if (!succeeded || !CloudSyncLocalSendIdentity._uuid.hasMatch(stableGuid)) {
       return null;
@@ -1210,6 +1213,7 @@ final class CloudSyncLocalSendJournal {
       }
       if (found == null) return null;
       final intent = _readBoundIntent(found.id);
+      _requireNativeReceiptSource(intent, protectedSource);
       if (intent.state == 1 || intent.state == 2) {
         if (intent.idsConfirmationVersion != cloudSyncIdsConfirmationVersion) {
           // A fresh v2 receipt may requalify this exact prior intent. Merely
@@ -2076,6 +2080,8 @@ final class CloudSyncLocalSendJournal {
   }
 
   static bool _hasConsistentAdoption(CloudSyncLocalSendIntentEntity intent) {
+    // Source-bearing origins require an independently source-bound native
+    // receipt before promotion. Shape validation here is not receipt evidence.
     final protectedSource = intent.protectedSourceBinding;
     if (protectedSource != null) {
       try {
@@ -2116,6 +2122,20 @@ final class CloudSyncLocalSendJournal {
         auth.accountFingerprint,
         auth.protectedStoreIdentity,
       ]);
+
+  static void _requireNativeReceiptSource(
+    CloudSyncLocalSendIntentEntity intent,
+    CloudSyncLocalSendSourceBinding? source,
+  ) {
+    source?.requireOrigin(
+      accountFingerprint: intent.accountFingerprint,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+    );
+    if (intent.protectedSourceBinding != source?.encode()) {
+      throw StateError('cloud_sync_local_send_receipt_source_changed');
+    }
+  }
 
   static String _operationBinding(
     CloudOutboxOperation operation, {

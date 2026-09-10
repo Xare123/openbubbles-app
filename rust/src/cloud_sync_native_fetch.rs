@@ -69,6 +69,7 @@ const IDS_SEND_RECEIPT_PREFIX: &str = "obcs2.ids.";
 const IDS_SEND_RECEIPT_SUFFIX: &str = ".receipt";
 const MAX_IDS_SEND_RECEIPTS_PER_REPLAY: usize = 64;
 const MAX_IDS_SEND_RECEIPT_BYTES: u64 = 64 * 1024;
+const MAX_IDS_SEND_SOURCE_PAYLOAD_BYTES: u64 = 1024 * 1024;
 const IDS_SEND_RECEIPT_ID_DOMAIN: &[u8] =
     b"OpenBubbles Cloud Sync V2 IDS send receipt identity v2\0";
 const GC_CURSOR_FILE_NAME: &str = ".cursor";
@@ -1526,6 +1527,7 @@ impl PlatformCloudNativeProtectedStore {
                 || existing.account_fingerprint != receipt.account_fingerprint
                 || existing.protected_store_identity != receipt.protected_store_identity
                 || existing.native_session_id != receipt.native_session_id
+                || existing.source_binding != receipt.source_binding
             {
                 return Err(CloudNativeStoreFailure::ContextMismatch);
             }
@@ -1677,6 +1679,7 @@ impl PlatformCloudNativeProtectedStore {
                 receipt_id: format!("{IDS_SEND_RECEIPT_PREFIX}{token}"),
                 guid_hash: receipt.guid_hash,
                 native_session_id: receipt.native_session_id,
+                source_binding: receipt.source_binding,
             });
         }
         Ok(CloudNativeIdsSendReceiptReplayPage {
@@ -1738,6 +1741,7 @@ impl PlatformCloudNativeProtectedStore {
             || receipt.protected_store_identity != expected_protected_store_identity
             || receipt.guid_hash != expected.guid_hash
             || receipt.native_session_id != expected.native_session_id
+            || receipt.source_binding != expected.source_binding
         {
             return Err(CloudNativeStoreFailure::ContextMismatch);
         }
@@ -1746,11 +1750,52 @@ impl PlatformCloudNativeProtectedStore {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CloudNativeIdsSendSourceBinding {
+    pub(crate) source_sha256: String,
+    pub(crate) protected_reference: String,
+    pub(crate) lease_reference: String,
+    pub(crate) payload_sha256: String,
+    pub(crate) payload_length: u64,
+}
+
+impl CloudNativeIdsSendSourceBinding {
+    fn validate(&self) -> Result<(), CloudNativeStoreFailure> {
+        if !is_hex_digest(&self.source_sha256)
+            || !is_hex_digest(&self.payload_sha256)
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let protected_token = self
+            .protected_reference
+            .strip_prefix("obcs2.ref.")
+            .filter(|token| is_bare_digest(token));
+        if protected_token.is_none() {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let lease_token = self
+            .lease_reference
+            .strip_prefix("obcs2.lease.")
+            .filter(|token| is_lease_token(token));
+        if lease_token.is_none() {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        if self.payload_length == 0
+            || self.payload_length > MAX_IDS_SEND_SOURCE_PAYLOAD_BYTES
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        Ok(())
+    }
+}
+
 pub(crate) struct CloudNativeIdsSendReceipt {
     pub(crate) guid_hash: String,
     pub(crate) account_fingerprint: String,
     pub(crate) protected_store_identity: String,
     pub(crate) native_session_id: String,
+    pub(crate) source_binding: Option<CloudNativeIdsSendSourceBinding>,
 }
 
 impl CloudNativeIdsSendReceipt {
@@ -1762,19 +1807,34 @@ impl CloudNativeIdsSendReceipt {
         {
             return Err(CloudNativeStoreFailure::InvalidReference);
         }
+        if let Some(binding) = &self.source_binding {
+            binding.validate()?;
+        }
         Ok(())
     }
 
     fn encode(&self) -> Result<String, CloudNativeStoreFailure> {
         self.validate()?;
-        Ok(serde_json::json!({
-            "version": 2,
-            "guidHash": self.guid_hash,
-            "accountFingerprint": self.account_fingerprint,
-            "protectedStoreIdentity": self.protected_store_identity,
-            "nativeSessionId": self.native_session_id,
-        })
-        .to_string())
+        if let Some(binding) = &self.source_binding {
+            Ok(serde_json::json!({
+                "version": 3,
+                "guidHash": self.guid_hash,
+                "accountFingerprint": self.account_fingerprint,
+                "protectedStoreIdentity": self.protected_store_identity,
+                "nativeSessionId": self.native_session_id,
+                "sourceBinding": binding,
+            })
+            .to_string())
+        } else {
+            Ok(serde_json::json!({
+                "version": 2,
+                "guidHash": self.guid_hash,
+                "accountFingerprint": self.account_fingerprint,
+                "protectedStoreIdentity": self.protected_store_identity,
+                "nativeSessionId": self.native_session_id,
+            })
+            .to_string())
+        }
     }
 
     fn decode(value: &str) -> Result<Self, CloudNativeStoreFailure> {
@@ -1782,38 +1842,79 @@ impl CloudNativeIdsSendReceipt {
             serde_json::from_str(value).map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
         let object = value
             .as_object()
-            .filter(|object| object.len() == 5)
             .ok_or(CloudNativeStoreFailure::InvalidReference)?;
         // Version 1 certified SendJob completion, which also included no-op
         // sends and failed recipient progress. Retain it as legacy evidence,
         // but do not replay it as positive participant acceptance.
-        if object.get("version").and_then(serde_json::Value::as_u64) != Some(2) {
-            return Err(CloudNativeStoreFailure::InvalidReference);
+        match object.get("version").and_then(serde_json::Value::as_u64) {
+            Some(2) => {
+                if object.len() != 5 || object.contains_key("sourceBinding") {
+                    return Err(CloudNativeStoreFailure::InvalidReference);
+                }
+                let receipt = Self {
+                    guid_hash: object
+                        .get("guidHash")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    account_fingerprint: object
+                        .get("accountFingerprint")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    protected_store_identity: object
+                        .get("protectedStoreIdentity")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    native_session_id: object
+                        .get("nativeSessionId")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    source_binding: None,
+                };
+                receipt.validate()?;
+                Ok(receipt)
+            }
+            Some(3) => {
+                if object.len() != 6 {
+                    return Err(CloudNativeStoreFailure::InvalidReference);
+                }
+                let binding_value = object
+                    .get("sourceBinding")
+                    .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+                let source_binding: CloudNativeIdsSendSourceBinding =
+                    serde_json::from_value(binding_value.clone())
+                        .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+                let receipt = Self {
+                    guid_hash: object
+                        .get("guidHash")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    account_fingerprint: object
+                        .get("accountFingerprint")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    protected_store_identity: object
+                        .get("protectedStoreIdentity")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    native_session_id: object
+                        .get("nativeSessionId")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    source_binding: Some(source_binding),
+                };
+                receipt.validate()?;
+                Ok(receipt)
+            }
+            _ => Err(CloudNativeStoreFailure::InvalidReference),
         }
-        let receipt = Self {
-            guid_hash: object
-                .get("guidHash")
-                .and_then(serde_json::Value::as_str)
-                .ok_or(CloudNativeStoreFailure::InvalidReference)?
-                .to_owned(),
-            account_fingerprint: object
-                .get("accountFingerprint")
-                .and_then(serde_json::Value::as_str)
-                .ok_or(CloudNativeStoreFailure::InvalidReference)?
-                .to_owned(),
-            protected_store_identity: object
-                .get("protectedStoreIdentity")
-                .and_then(serde_json::Value::as_str)
-                .ok_or(CloudNativeStoreFailure::InvalidReference)?
-                .to_owned(),
-            native_session_id: object
-                .get("nativeSessionId")
-                .and_then(serde_json::Value::as_str)
-                .ok_or(CloudNativeStoreFailure::InvalidReference)?
-                .to_owned(),
-        };
-        receipt.validate()?;
-        Ok(receipt)
     }
 }
 
@@ -1822,6 +1923,7 @@ pub(crate) struct CloudNativeIdsSendReceiptReplay {
     pub(crate) receipt_id: String,
     pub(crate) guid_hash: String,
     pub(crate) native_session_id: String,
+    pub(crate) source_binding: Option<CloudNativeIdsSendSourceBinding>,
 }
 
 pub(crate) struct CloudNativeIdsSendReceiptReplayPage {
@@ -1849,6 +1951,9 @@ impl CloudNativeIdsSendReceiptReplay {
             || !is_bare_digest(&self.native_session_id)
         {
             return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        if let Some(binding) = &self.source_binding {
+            binding.validate()?;
         }
         Ok(())
     }
@@ -4255,6 +4360,7 @@ pub(crate) fn cloud_sync_persist_ids_send_receipt(
         receipt_id,
         guid_hash: receipt.guid_hash,
         native_session_id: receipt.native_session_id,
+        source_binding: receipt.source_binding,
     })
 }
 
@@ -6069,6 +6175,7 @@ mod tests {
             )
             .expect("protected store identity"),
             native_session_id: native_session_id.to_string().repeat(43),
+            source_binding: None,
         }
     }
 
@@ -6128,6 +6235,7 @@ mod tests {
         let replay = CloudNativeIdsSendReceiptReplay {
             receipt_id, guid_hash: receipt.guid_hash.clone(),
             native_session_id: receipt.native_session_id.clone(),
+            source_binding: None,
         };
         assert!(store.acknowledge_ids_send_receipt(
             &replay, &receipt.account_fingerprint, &receipt.protected_store_identity,
@@ -6147,6 +6255,7 @@ mod tests {
             receipt_id,
             guid_hash: receipt.guid_hash.clone(),
             native_session_id: receipt.native_session_id.clone(),
+            source_binding: None,
         };
 
         assert!(store
@@ -6196,6 +6305,7 @@ mod tests {
             receipt_id,
             guid_hash: receipt.guid_hash.clone(),
             native_session_id: receipt.native_session_id.clone(),
+            source_binding: None,
         };
 
         store
@@ -6212,6 +6322,207 @@ mod tests {
                 &receipt.protected_store_identity,
             )
             .expect("duplicate ack");
+        assert!(store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("replay after ack")
+            .receipts
+            .is_empty());
+    }
+
+    fn ids_send_source_binding_fixture() -> CloudNativeIdsSendSourceBinding {
+        CloudNativeIdsSendSourceBinding {
+            source_sha256: "a".repeat(64),
+            protected_reference: format!("obcs2.ref.{}", "A".repeat(43)),
+            lease_reference: format!("obcs2.lease.{}", "b".repeat(32)),
+            payload_sha256: "c".repeat(64),
+            payload_length: 123,
+        }
+    }
+
+    #[test]
+    fn ids_send_receipt_source_binding_version_roundtrip() {
+        let directory = tempdir().expect("temp directory");
+        let bare = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        let bare_encoded = bare.encode().expect("encode v2");
+        let bare_value: serde_json::Value =
+            serde_json::from_str(&bare_encoded).expect("parse v2");
+        let bare_object = bare_value.as_object().expect("v2 object");
+        assert_eq!(bare_object.len(), 5);
+        assert_eq!(
+            bare_object.get("version").and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert!(!bare_object.contains_key("sourceBinding"));
+        let bare_decoded =
+            CloudNativeIdsSendReceipt::decode(&bare_encoded).expect("decode v2");
+        assert_eq!(bare_decoded.source_binding, None);
+        assert_eq!(bare_decoded.guid_hash, bare.guid_hash);
+
+        let mut bound = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        bound.source_binding = Some(ids_send_source_binding_fixture());
+        let bound_encoded = bound.encode().expect("encode v3");
+        let bound_value: serde_json::Value =
+            serde_json::from_str(&bound_encoded).expect("parse v3");
+        let bound_object = bound_value.as_object().expect("v3 object");
+        assert_eq!(bound_object.len(), 6);
+        assert_eq!(
+            bound_object.get("version").and_then(serde_json::Value::as_u64),
+            Some(3)
+        );
+        assert!(bound_object.contains_key("sourceBinding"));
+        let bound_decoded =
+            CloudNativeIdsSendReceipt::decode(&bound_encoded).expect("decode v3");
+        assert_eq!(bound_decoded.source_binding, bound.source_binding);
+        assert_eq!(bound_decoded.guid_hash, bound.guid_hash);
+    }
+
+    #[test]
+    fn ids_send_receipt_source_binding_rejects_invalid() {
+        let directory = tempdir().expect("temp directory");
+        let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        receipt.source_binding = Some(ids_send_source_binding_fixture());
+        let valid = receipt.encode().expect("valid v3 encodes");
+        let valid_value: serde_json::Value =
+            serde_json::from_str(&valid).expect("valid v3 parses");
+
+        let mut bad_hash = ids_send_source_binding_fixture();
+        bad_hash.source_sha256 = "A".repeat(64);
+        assert!(bad_hash.validate().is_err());
+        let mut bad_ref = ids_send_source_binding_fixture();
+        bad_ref.protected_reference = format!("obcs2.ref.{}", "A".repeat(42));
+        assert!(bad_ref.validate().is_err());
+        let mut bad_lease = ids_send_source_binding_fixture();
+        bad_lease.lease_reference = format!("obcs2.lease.{}", "B".repeat(32));
+        assert!(bad_lease.validate().is_err());
+        let mut bad_len = ids_send_source_binding_fixture();
+        bad_len.payload_length = 0;
+        assert!(bad_len.validate().is_err());
+        let mut too_big = ids_send_source_binding_fixture();
+        too_big.payload_length = MAX_IDS_SEND_SOURCE_PAYLOAD_BYTES + 1;
+        assert!(too_big.validate().is_err());
+
+        let mut v2_with_binding = valid_value.clone();
+        v2_with_binding["version"] = serde_json::json!(2);
+        assert!(CloudNativeIdsSendReceipt::decode(&v2_with_binding.to_string()).is_err());
+        let mut v3_without_binding: serde_json::Value =
+            serde_json::from_str(&ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R').encode().unwrap()).unwrap();
+        v3_without_binding["version"] = serde_json::json!(3);
+        assert!(CloudNativeIdsSendReceipt::decode(&v3_without_binding.to_string()).is_err());
+        let mut unknown_version = valid_value.clone();
+        unknown_version["version"] = serde_json::json!(4);
+        assert!(CloudNativeIdsSendReceipt::decode(&unknown_version.to_string()).is_err());
+        let mut extra_key = valid_value.clone();
+        extra_key["extra"] = serde_json::json!(1);
+        assert!(CloudNativeIdsSendReceipt::decode(&extra_key.to_string()).is_err());
+        let mut extra_nested = valid_value.clone();
+        extra_nested["sourceBinding"]["extra"] = serde_json::json!(1);
+        assert!(CloudNativeIdsSendReceipt::decode(&extra_nested.to_string()).is_err());
+        let mut bad_nested = valid_value.clone();
+        bad_nested["sourceBinding"]["payload_length"] = serde_json::json!(0);
+        assert!(CloudNativeIdsSendReceipt::decode(&bad_nested.to_string()).is_err());
+    }
+
+    #[test]
+    fn ids_send_receipt_source_binding_idempotent_and_substitution_rejected() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        receipt.source_binding = Some(ids_send_source_binding_fixture());
+        let first = store.persist_ids_send_receipt(&receipt).expect("persist bound");
+        let second = store.persist_ids_send_receipt(&receipt).expect("persist same source");
+        assert_eq!(first, second);
+
+        // Same origin tuple but a different source binding must not overwrite.
+        let mut other_binding = ids_send_source_binding_fixture();
+        other_binding.payload_sha256 = "d".repeat(64);
+        let substituted = CloudNativeIdsSendReceipt {
+            guid_hash: receipt.guid_hash.clone(),
+            account_fingerprint: receipt.account_fingerprint.clone(),
+            protected_store_identity: receipt.protected_store_identity.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+            source_binding: Some(other_binding),
+        };
+        assert_eq!(
+            store.persist_ids_send_receipt(&substituted),
+            Err(CloudNativeStoreFailure::ContextMismatch)
+        );
+        let replayed = store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("replay after substitution attempt")
+            .receipts;
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0].guid_hash, receipt.guid_hash);
+        assert_eq!(replayed[0].source_binding, receipt.source_binding);
+        assert_ne!(
+            replayed[0].guid_hash,
+            ids_send_source_binding_fixture().payload_sha256
+        );
+    }
+
+    #[test]
+    fn ids_send_receipt_replay_and_ack_carry_source_binding() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        receipt.source_binding = Some(ids_send_source_binding_fixture());
+        let receipt_id = store.persist_ids_send_receipt(&receipt).expect("persist bound");
+        let page = store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("replay bound");
+        assert_eq!(page.receipts.len(), 1);
+        assert_eq!(page.receipts[0].source_binding, receipt.source_binding);
+
+        let mismatched = CloudNativeIdsSendReceiptReplay {
+            receipt_id: receipt_id.clone(),
+            guid_hash: receipt.guid_hash.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+            source_binding: None,
+        };
+        assert_eq!(
+            store.acknowledge_ids_send_receipt(
+                &mismatched,
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+            ),
+            Err(CloudNativeStoreFailure::ContextMismatch)
+        );
+        assert_eq!(
+            store
+                .replay_ids_send_receipts(
+                    &receipt.account_fingerprint,
+                    &receipt.protected_store_identity,
+                    None,
+                )
+                .expect("receipt preserved after binding mismatch")
+                .receipts
+                .len(),
+            1
+        );
+        let expected = CloudNativeIdsSendReceiptReplay {
+            receipt_id,
+            guid_hash: receipt.guid_hash.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+            source_binding: receipt.source_binding.clone(),
+        };
+        store
+            .acknowledge_ids_send_receipt(
+                &expected,
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+            )
+            .expect("ack with matching binding");
         assert!(store
             .replay_ids_send_receipts(
                 &receipt.account_fingerprint,
@@ -6295,6 +6606,7 @@ mod tests {
                 account_fingerprint: target.account_fingerprint.clone(),
                 protected_store_identity: target.protected_store_identity.clone(),
                 native_session_id: target.native_session_id.clone(),
+                source_binding: None,
             };
             store
                 .persist_ids_send_receipt(&retained)

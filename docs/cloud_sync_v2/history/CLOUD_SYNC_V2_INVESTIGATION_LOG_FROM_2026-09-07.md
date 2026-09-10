@@ -1052,3 +1052,28 @@ This is a chronological evidence log. It does not override the
   deletion is unavailable. No user data or build evidence was removed by parent.
   C: had 64.78 GiB free; cloud instance and GitHub runner inventories were empty
   before the next source-only run. No local Cargo build or account access.
+
+### 2026-09-10: qualified capture and source-bound native receipts
+
+- Source `8bbffb1ab` qualification first hit `ZONE_RESOURCE_POOL_EXHAUSTED` in
+  `us-west1-b` for T2D-32 (run `34513644167`); no compiler ran, cleanup passed.
+  The existing N2D-16 / `us-west1-a` option then passed run `34513911095`: all
+  408 app Rust tests, including all 11 capture/stage/prepared-message cases.
+  The full workflow and cleanup completed successfully. No APK was built.
+- The next slice extends receipt version 3 with an explicit optional source
+  binding, preserving v2 encoding and the GUID/account/store/session receipt
+  identity. Replay and acknowledgement compare that binding. Kant's focused
+  native patch was parent-reviewed and accepted; no dedicated worktree/files
+  were removed. Shared source and required transcript evidence remain retained.
+- Parent added the source-staging API with exact current native auth binding,
+  committed-source preflight in `send`, and post-`prepare_send` verification.
+  A mismatch after positive IDS acceptance returns a receipt error, not a send
+  failure or automatic resubmission instruction. Two synthetic native API tests
+  exercise these seams without accessing any Apple account.
+- Dart now checks the native source binding against the journal before native
+  receipt resolution/promotion/acknowledgement. Missing or different source
+  proof cannot promote an attachment-bearing origin. Original v2 text receipts
+  remain valid when the journal has no attachment source.
+- This newer API/receipt integration is uncompiled and needs bridge regeneration
+  in the next source-only run. Composer attachment capture/adoption and durable
+  CloudKit upload attempts remain unfinished; no production enablement occurred.

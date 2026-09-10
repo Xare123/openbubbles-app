@@ -83,11 +83,13 @@ void main() {
   }
 
   int? confirmNative({String guid = _guidA, bool succeeded = true,
-      bool current = true, CloudSyncNativeAuthSnapshot? auth}) =>
+      bool current = true, CloudSyncNativeAuthSnapshot? auth,
+      CloudSyncLocalSendSourceBinding? protectedSource}) =>
       journal.recordNativeSendConfirmation(
         stableGuid: guid, succeeded: succeeded,
         capturedAuth: auth ?? _auth(Object()), stillCurrent: () => current,
         now: _time(4),
+        protectedSource: protectedSource,
       );
 
   test('protected source ownership survives restart and IDS receipt consumption', () async {
@@ -110,7 +112,16 @@ void main() {
     adopt(); // Exact idempotent adoption, never allocate a replacement source.
     expect(() => adopt(_protectedSource(identity, marker: 'B')),
       throwsA(_stateFailure('cloud_sync_local_send_protected_source_changed')));
-    confirmNative();
+    expect(() => confirmNative(),
+      throwsA(_stateFailure('cloud_sync_local_send_receipt_source_changed')));
+    expect(() => journal.resolveNativeSendReceipt(identity.guidHash),
+      throwsA(_stateFailure('cloud_sync_local_send_receipt_source_changed')));
+    expect(() => confirmNative(protectedSource: _protectedSource(identity, marker: 'B')),
+      throwsA(_stateFailure('cloud_sync_local_send_receipt_source_changed')));
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(intent.id)!.state, 0);
+    expect(journal.resolveNativeSendReceipt(identity.guidHash,
+      protectedSource: source)!.alreadyDurable, isFalse);
+    confirmNative(protectedSource: source);
     expect(store.box<CloudSyncLocalSendIntentEntity>().get(intent.id)!.state, 3);
     await reopen();
     expect(journal.readProtectedSource(intentId: intent.id,

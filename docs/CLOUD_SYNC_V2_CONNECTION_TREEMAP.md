@@ -539,9 +539,11 @@ CloudKit readback or independent Apple-device display.
    then add durable upload-attempt/result state, record-create/readback and
    parent dependency. The additive `protectedSourceBinding` field and immutable
    journal adoption now retain the source independently of the acknowledged IDS
-   receipt. GC and native lease recovery include it. Actual composer capture,
-   prepared-message verification and source-bound success receipt remain unwired;
-   do not substitute mutable attachment metadata for these steps.
+   receipt. GC and native lease recovery include it. Source staging and native
+   pre-send/prepared-message validation now have an API hook; source-bound v3
+   receipt/replay/ack and Dart promotion checks are under qualification. The
+   attachment composer still does not select this path. Wire its origin and
+   stage/adopt/commit lifecycle next; do not use mutable metadata after sending.
 2. Preserve qualified Windows direct request `qualification-20260910-03` and
    its proof. No additional direct send is needed merely to recheck that result.
    The exact restored-group route is implemented/tested, but no group with the
@@ -575,10 +577,12 @@ rejection and completed-asset correlation. Journal source ownership, migration,
 GC, admission, reference/lease retention and restored-group regressions passed
 398 focused Dart/ObjectBox tests in the final combined run. Native source capture
 and a validator for the actual `prepare_send` timestamp/routing changes are now
-implemented with synthetic tests, awaiting exact-source GCE compilation. This is
-not an IDS receipt and is not yet connected to the composer.
-Next qualify exact native descriptor capture and its stage/adopt/commit recovery,
-then wire composer/positive-IDS proof to the uploader's durable attempt state.
+qualified by GCE `34513911095` on source `8bbffb1ab`: 408 native tests passed,
+including all 11 new source cases; cleanup passed. The preceding T2D run failed
+before compilation due to zone capacity, so the existing N2D-16 option was used.
+The following source-bound receipt/API integration is not yet qualified and
+requires regenerated bridge bindings. Then wire composer/positive-IDS proof to
+the uploader's durable attempt state.
 None of these tests alone proves an attachment was sent or saved.
 When the approved group is present, falsify exact selection, acceptance by every
 intended target, group encoding, readback and restart without resending. Preserve

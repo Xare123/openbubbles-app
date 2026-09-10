@@ -41,6 +41,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_android_back
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_runtime.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
@@ -8264,7 +8265,35 @@ class RustPushService extends GetxService {
         nativeReceipt.nativeSessionId != auth.nativeSessionId) {
       return;
     }
-    final resolution = journal.resolveNativeSendReceipt(nativeReceipt.guidHash);
+    final CloudSyncLocalSendSourceBinding? receiptSource;
+    final CloudSyncNativeSendReceiptResolution? resolution;
+    try {
+      final source = nativeReceipt.sourceBinding;
+      receiptSource = source == null ? null : CloudSyncLocalSendSourceBinding(
+        accountFingerprint: auth.accountFingerprint,
+        protectedStoreIdentity: auth.protectedStoreIdentity,
+        messageGuidHash: nativeReceipt.guidHash,
+        sourceSha256: source.sourceSha256,
+        protectedReference: source.protectedReference,
+        leaseReference: source.leaseReference,
+        payloadSha256: source.payloadSha256,
+        payloadLength: source.payloadLength.toInt(),
+      );
+      resolution = journal.resolveNativeSendReceipt(
+        nativeReceipt.guidHash, protectedSource: receiptSource,
+      );
+    } on StateError catch (error) {
+      if (!const {
+        'cloud_sync_local_send_receipt_source_changed',
+        'cloud_sync_local_send_protected_source_changed',
+        'cloud_sync_local_send_protected_source_invalid',
+      }.contains(error.message)) {
+        rethrow;
+      }
+      Logger.warn('Cloud Sync V2 native send confirmation not admitted '
+          'code=cloud_sync_local_send_receipt_source_changed');
+      return; // Preserve unmatched native evidence; never acknowledge it.
+    }
     if (resolution == null) return;
     if (resolution.alreadyDurable) {
       try {
@@ -8293,6 +8322,7 @@ class RustPushService extends GetxService {
       intentId = journal.recordNativeSendConfirmation(
         stableGuid: confirmationGuid, succeeded: true, capturedAuth: auth,
         stillCurrent: confirmationBindingCurrent, now: DateTime.now().toUtc(),
+        protectedSource: receiptSource,
       );
     } on StateError catch (error) {
       // An edited/deleted source or replaced authority cannot be authorized by
@@ -8304,6 +8334,8 @@ class RustPushService extends GetxService {
         'cloud_sync_local_send_intent_changed',
         'cloud_sync_local_send_owner_changed',
         'cloud_sync_local_send_auth_changed',
+        'cloud_sync_local_send_receipt_source_changed',
+        'cloud_sync_local_send_protected_source_changed',
       }.contains(error.message)) {
         rethrow;
       }
@@ -8312,7 +8344,8 @@ class RustPushService extends GetxService {
       return;
     }
     final durable = intentId != null ||
-        journal.resolveNativeSendReceipt(nativeReceipt.guidHash)?.alreadyDurable == true;
+        journal.resolveNativeSendReceipt(nativeReceipt.guidHash,
+          protectedSource: receiptSource)?.alreadyDurable == true;
     if (!durable) return;
     try {
       api.cloudSyncAcknowledgeNativeSendReceipt(
