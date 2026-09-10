@@ -549,3 +549,11 @@ This is a chronological evidence log. It does not override the
   repeated build attempt was made. Receipt remains the old one. Wireless ADB
   reconnected to Pixel; Canary metadata and a no-launch status check were read.
   The diagnostic engine was not ready. Neither app was launched or modified.
+- GCE `34443435257` then passed all 2,560 Dart tests, including the new mixed
+  ordinary-consumer queue/reopen test and both predecessor-schema fixtures.
+  Fourteen semantic-outbox plus three evidence-output cases also passed.
+  Cleanup succeeded and independent VM/runner inventories were empty. This
+  qualifies code `e060bcb41` at the synthetic-response boundary, not at Apple.
+  Next: one full signed Canary qualification build, then the controlled live
+  plaintext send/save/readback. No claim of completed attachment writing or
+  causal edits/unsends/deletion is made.
