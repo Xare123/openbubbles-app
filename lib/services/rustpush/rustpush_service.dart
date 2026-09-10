@@ -5907,9 +5907,10 @@ class RustPushService extends GetxService {
             push.uuid,
             nativeReceipt: push.nativeReceipt,
           );
-        } else if (push.nativeReceiptError != null) {
+        } else if (push.nativeReceiptError != null ||
+            CloudSyncLocalSendJournal.hasUnresolvedNativeConfirmation(Database.store, message)) {
           Logger.warn(
-            'Cloud Sync V2 IDS success not journaled; durable native receipt unavailable',
+            'Cloud Sync V2 send completion not journaled; durable native receipt unavailable',
           );
         }
       } else {
