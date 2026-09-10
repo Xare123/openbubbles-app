@@ -160,6 +160,14 @@ if ($launchParse -lt 0 -or $profileConfiguration -le $launchParse -or
 $launcherSource = Get-Content -LiteralPath (
     Join-Path $source 'tooling/windows/run_cloud_sync_v2_dev.ps1'
 ) -Raw
+$buildIdentifier = & {
+    param($TaskRepository, $TaskVariant)
+    # Use the launcher's identity rules before pub/build generate files.
+    # Keep its local-machine defaults out of this builder's scope.
+    . (Join-Path $TaskRepository 'tooling/windows/run_cloud_sync_v2_dev.ps1') -FunctionsOnlyForTest
+    $sourceIdentifier = Resolve-HarnessBuildIdentifier -Repository $TaskRepository
+    Get-HarnessConfigurationIdentifier -SourceIdentifier $sourceIdentifier -WriterBuild:($TaskVariant -eq 'local-write')
+} $source $BuildVariant
 $flagAssignment = $launcherSource.IndexOf(
     '$env:OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS = "1"',
     [System.StringComparison]::Ordinal
@@ -312,12 +320,6 @@ try {
         Tee-Object -FilePath $dartTestLog
     if ($LASTEXITCODE -ne 0) { throw 'Focused Windows CloudKit Dart tests failed.' }
 
-    $buildIdentifier = if ($BuildVariant -eq 'local-write') {
-        "$actualCommit-local-write"
-    }
-    else {
-        $actualCommit
-    }
     $buildArguments = @(
         'build', 'windows', '--debug', '--no-pub',
         '--target', 'lib/cloud_sync_v2_windows_harness.dart',
