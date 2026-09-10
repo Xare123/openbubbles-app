@@ -2604,10 +2604,133 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "34:2734237264100580081",
+      "lastPropertyId": "22:4262532899867805764",
+      "name": "CloudAttachmentUploadEntity",
+      "properties": [
+        {
+          "id": "1:7871966961163758731",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:938998677143155627",
+          "name": "uploadKey",
+          "indexId": "96:5596207918597549014",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:279027725046348543",
+          "name": "accountFingerprint",
+          "indexId": "97:2075310387007054598",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:3277268363576700599",
+          "name": "writerEpoch",
+          "type": 6
+        },
+        {
+          "id": "5:5390511205794146912",
+          "name": "checkpointGeneration",
+          "type": 6
+        },
+        {
+          "id": "6:6926538332344304316",
+          "name": "localSendIntentId",
+          "type": 6
+        },
+        {
+          "id": "7:9189900516711249161",
+          "name": "messageGuidHash",
+          "type": 9
+        },
+        {
+          "id": "8:1191852452585790101",
+          "name": "sourceSha256",
+          "type": 9
+        },
+        {
+          "id": "9:6715874872073704154",
+          "name": "protectedStoreIdentity",
+          "type": 9
+        },
+        {
+          "id": "10:7207965553076214730",
+          "name": "attachmentKeyHash",
+          "type": 9
+        },
+        {
+          "id": "11:813323431797847179",
+          "name": "serverRecordIdHash",
+          "type": 9
+        },
+        {
+          "id": "12:5901925811801640223",
+          "name": "planReference",
+          "type": 9
+        },
+        {
+          "id": "13:6804055832176457315",
+          "name": "planLeaseReference",
+          "type": 9
+        },
+        {
+          "id": "14:7429832689423550848",
+          "name": "planPayloadSha256",
+          "type": 9
+        },
+        {
+          "id": "15:5822578973046783755",
+          "name": "state",
+          "type": 6
+        },
+        {
+          "id": "16:8509188496422871880",
+          "name": "attemptId",
+          "type": 9
+        },
+        {
+          "id": "17:2060515892441704994",
+          "name": "resultReference",
+          "type": 9
+        },
+        {
+          "id": "18:2889262338777596967",
+          "name": "resultLeaseReference",
+          "type": 9
+        },
+        {
+          "id": "19:5745161725763312239",
+          "name": "resultPayloadSha256",
+          "type": 9
+        },
+        {
+          "id": "20:5586437517234561195",
+          "name": "admittedOperationId",
+          "type": 9
+        },
+        {
+          "id": "21:4239690596825032290",
+          "name": "createdAtMs",
+          "type": 6
+        },
+        {
+          "id": "22:4262532899867805764",
+          "name": "updatedAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "33:7403419454425897175",
-  "lastIndexId": "95:4712335069625825055",
+  "lastEntityId": "34:2734237264100580081",
+  "lastIndexId": "97:2075310387007054598",
   "lastRelationId": "1:7492985733214117623",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

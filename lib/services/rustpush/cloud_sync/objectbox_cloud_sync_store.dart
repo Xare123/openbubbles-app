@@ -8,6 +8,7 @@ import 'cloud_operation_identity.dart';
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
+import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_chat_identity_evidence.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
@@ -583,6 +584,22 @@ class ObjectBoxCloudSyncStore
         }
       } finally {
         sources.close();
+      }
+      // Upload preparation and result precede final-save outbox admission.
+      // Retain both leases even after interruption or account replacement;
+      // neither a missing record nor a terminal parent releases these keys.
+      final uploads = _store.box<CloudAttachmentUploadEntity>();
+      if (uploads.count() > maximumCount) {
+        throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+      }
+      for (final upload in uploads.getAll()) {
+        validateCloudAttachmentUploadRow(upload);
+        references.add(upload.planLeaseReference);
+        final resultLease = upload.resultLeaseReference;
+        if (resultLease != null) references.add(resultLease);
+        if (references.length > maximumCount) {
+          throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+        }
       }
       return Set<String>.unmodifiable(references);
     });

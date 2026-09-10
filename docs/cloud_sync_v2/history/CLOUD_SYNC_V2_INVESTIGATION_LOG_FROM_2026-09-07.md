@@ -1189,3 +1189,36 @@ This is a chronological evidence log. It does not override the
   Known production UX gaps remain: history-sync exclusion can reject a pending
   attachment send, and source reuse alone does not prove that a retry after
   positive IDS acceptance skips another IDS submission.
+- Composer/source checkpoint `42647ee3a8ce00f0e2b226db0126b390b5209ee3`
+  passed GCE `34523305646`, including the bridge reproducibility gate. Cleanup
+  completed; independent inventories returned zero instances and registrations.
+- Next candidate introduces a dedicated content-free upload-attempt entity
+  instead of changing the existing immutable record-save envelope. Parent
+  implements origin/epoch/generation-checked transitions, same-attempt late
+  receipt handling, atomic final-outbox handoff and protected lease retention.
+  Bounded workers own additive schema/migration tests, behavioral journal tests,
+  and the one-attempt native upload owner. No account/device data is used.
+  Parent independently compared the generated model: all 25 prior entities
+  remain exactly unchanged, with one new entity (number 34). Compilation,
+  migration and complete upload wiring remain pending for this newer candidate.
+- Parent reviewed the upload journal and independently passed 220 targeted
+  Dart cases: 13 new real-ObjectBox upload cases plus migration, store, source
+  staging and local-send journal coverage. They prove begin-once across reopen,
+  exact late receipts, atomic save-outbox handoff/rollback, reset/account/store
+  rejection and retained plan/result leases. Analyzer reports no issues for
+  the three affected journal/store source files. These are synthetic tests,
+  not an Apple upload or a real-profile migration.
+- Native dependency `975015f32b17655705c5b267397411bd80efa899` adds a single-use
+  prepared upload owner and one identified authorization plus bounded MMCS
+  transfer, without record creation or blind replay. Parent reviewed all three
+  paths, corrected an invalid source-contract assertion and ambiguous wording,
+  and passed Rust syntax parsing. Native compilation remains pending. The
+  app adapter validates and rewinds the exact retained source handle while
+  restoring its original randomized preparation. No user credentials enter CI.
+- FaceTime source `a266fe0f2` fixes an independently reproducible media-sampling
+  race: a connection closed during asynchronous stats collection no longer
+  masks a remaining live connection. Parent reviewed the patch and reran all
+  12 JavaScript tests successfully; the worker also reports 58 Kotlin cases.
+  This is evidence-selection qualification, not proof that calls now connect.
+  The worker was closed and independently returned `not_found`; reviewed
+  shared source and necessary test evidence are retained.

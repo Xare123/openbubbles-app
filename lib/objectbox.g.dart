@@ -3023,6 +3023,150 @@ final _entities = <obx_int.ModelEntity>[
     relations: <obx_int.ModelRelation>[],
     backlinks: <obx_int.ModelBacklink>[],
   ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(34, 2734237264100580081),
+    name: 'CloudAttachmentUploadEntity',
+    lastPropertyId: const obx_int.IdUid(22, 4262532899867805764),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 7871966961163758731),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 938998677143155627),
+        name: 'uploadKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(96, 5596207918597549014),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 279027725046348543),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(97, 2075310387007054598),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 3277268363576700599),
+        name: 'writerEpoch',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 5390511205794146912),
+        name: 'checkpointGeneration',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 6926538332344304316),
+        name: 'localSendIntentId',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 9189900516711249161),
+        name: 'messageGuidHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 1191852452585790101),
+        name: 'sourceSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 6715874872073704154),
+        name: 'protectedStoreIdentity',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 7207965553076214730),
+        name: 'attachmentKeyHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 813323431797847179),
+        name: 'serverRecordIdHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 5901925811801640223),
+        name: 'planReference',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 6804055832176457315),
+        name: 'planLeaseReference',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 7429832689423550848),
+        name: 'planPayloadSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 5822578973046783755),
+        name: 'state',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 8509188496422871880),
+        name: 'attemptId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(17, 2060515892441704994),
+        name: 'resultReference',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 2889262338777596967),
+        name: 'resultLeaseReference',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 5745161725763312239),
+        name: 'resultPayloadSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 5586437517234561195),
+        name: 'admittedOperationId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 4239690596825032290),
+        name: 'createdAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(22, 4262532899867805764),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
 ];
 
 /// Shortcut for [obx.Store.new] that passes [getObjectBoxModel] and for Flutter
@@ -3068,8 +3212,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
     // Typically, this is done with `dart run build_runner build`.
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
-    lastEntityId: const obx_int.IdUid(33, 7403419454425897175),
-    lastIndexId: const obx_int.IdUid(95, 4712335069625825055),
+    lastEntityId: const obx_int.IdUid(34, 2734237264100580081),
+    lastIndexId: const obx_int.IdUid(97, 2075310387007054598),
     lastRelationId: const obx_int.IdUid(1, 7492985733214117623),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [
@@ -7100,6 +7244,200 @@ obx_int.ModelDefinition getObjectBoxModel() {
             return object;
           },
         ),
+    CloudAttachmentUploadEntity:
+        obx_int.EntityDefinition<CloudAttachmentUploadEntity>(
+          model: _entities[25],
+          toOneRelations: (CloudAttachmentUploadEntity object) => [],
+          toManyRelations: (CloudAttachmentUploadEntity object) => {},
+          getId: (CloudAttachmentUploadEntity object) => object.id,
+          setId: (CloudAttachmentUploadEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB: (CloudAttachmentUploadEntity object, fb.Builder fbb) {
+            final uploadKeyOffset = fbb.writeString(object.uploadKey);
+            final accountFingerprintOffset = fbb.writeString(
+              object.accountFingerprint,
+            );
+            final messageGuidHashOffset = fbb.writeString(
+              object.messageGuidHash,
+            );
+            final sourceSha256Offset = fbb.writeString(object.sourceSha256);
+            final protectedStoreIdentityOffset = fbb.writeString(
+              object.protectedStoreIdentity,
+            );
+            final attachmentKeyHashOffset = fbb.writeString(
+              object.attachmentKeyHash,
+            );
+            final serverRecordIdHashOffset = fbb.writeString(
+              object.serverRecordIdHash,
+            );
+            final planReferenceOffset = fbb.writeString(object.planReference);
+            final planLeaseReferenceOffset = fbb.writeString(
+              object.planLeaseReference,
+            );
+            final planPayloadSha256Offset = fbb.writeString(
+              object.planPayloadSha256,
+            );
+            final attemptIdOffset = object.attemptId == null
+                ? null
+                : fbb.writeString(object.attemptId!);
+            final resultReferenceOffset = object.resultReference == null
+                ? null
+                : fbb.writeString(object.resultReference!);
+            final resultLeaseReferenceOffset =
+                object.resultLeaseReference == null
+                ? null
+                : fbb.writeString(object.resultLeaseReference!);
+            final resultPayloadSha256Offset = object.resultPayloadSha256 == null
+                ? null
+                : fbb.writeString(object.resultPayloadSha256!);
+            final admittedOperationIdOffset = object.admittedOperationId == null
+                ? null
+                : fbb.writeString(object.admittedOperationId!);
+            fbb.startTable(23);
+            fbb.addInt64(0, object.id);
+            fbb.addOffset(1, uploadKeyOffset);
+            fbb.addOffset(2, accountFingerprintOffset);
+            fbb.addInt64(3, object.writerEpoch);
+            fbb.addInt64(4, object.checkpointGeneration);
+            fbb.addInt64(5, object.localSendIntentId);
+            fbb.addOffset(6, messageGuidHashOffset);
+            fbb.addOffset(7, sourceSha256Offset);
+            fbb.addOffset(8, protectedStoreIdentityOffset);
+            fbb.addOffset(9, attachmentKeyHashOffset);
+            fbb.addOffset(10, serverRecordIdHashOffset);
+            fbb.addOffset(11, planReferenceOffset);
+            fbb.addOffset(12, planLeaseReferenceOffset);
+            fbb.addOffset(13, planPayloadSha256Offset);
+            fbb.addInt64(14, object.state);
+            fbb.addOffset(15, attemptIdOffset);
+            fbb.addOffset(16, resultReferenceOffset);
+            fbb.addOffset(17, resultLeaseReferenceOffset);
+            fbb.addOffset(18, resultPayloadSha256Offset);
+            fbb.addOffset(19, admittedOperationIdOffset);
+            fbb.addInt64(20, object.createdAtMs);
+            fbb.addInt64(21, object.updatedAtMs);
+            fbb.finish(fbb.endTable());
+            return object.id;
+          },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final uploadKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final writerEpochParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              10,
+              0,
+            );
+            final checkpointGenerationParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              12,
+              0,
+            );
+            final localSendIntentIdParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              14,
+              0,
+            );
+            final messageGuidHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 16, '');
+            final sourceSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 18, '');
+            final protectedStoreIdentityParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 20, '');
+            final attachmentKeyHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 22, '');
+            final serverRecordIdHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 24, '');
+            final planReferenceParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 26, '');
+            final planLeaseReferenceParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 28, '');
+            final planPayloadSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 30, '');
+            final stateParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              32,
+              0,
+            );
+            final attemptIdParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 34);
+            final resultReferenceParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 36);
+            final resultLeaseReferenceParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 38);
+            final resultPayloadSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 40);
+            final admittedOperationIdParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 42);
+            final createdAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              44,
+              0,
+            );
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              46,
+              0,
+            );
+            final object = CloudAttachmentUploadEntity(
+              id: idParam,
+              uploadKey: uploadKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              writerEpoch: writerEpochParam,
+              checkpointGeneration: checkpointGenerationParam,
+              localSendIntentId: localSendIntentIdParam,
+              messageGuidHash: messageGuidHashParam,
+              sourceSha256: sourceSha256Param,
+              protectedStoreIdentity: protectedStoreIdentityParam,
+              attachmentKeyHash: attachmentKeyHashParam,
+              serverRecordIdHash: serverRecordIdHashParam,
+              planReference: planReferenceParam,
+              planLeaseReference: planLeaseReferenceParam,
+              planPayloadSha256: planPayloadSha256Param,
+              state: stateParam,
+              attemptId: attemptIdParam,
+              resultReference: resultReferenceParam,
+              resultLeaseReference: resultLeaseReferenceParam,
+              resultPayloadSha256: resultPayloadSha256Param,
+              admittedOperationId: admittedOperationIdParam,
+              createdAtMs: createdAtMsParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
   };
 
   return obx_int.ModelDefinition(model, bindings);
@@ -9550,5 +9888,136 @@ class CloudSyncLocalSendIntentEntity_ {
   static final protectedSourceBinding =
       obx.QueryStringProperty<CloudSyncLocalSendIntentEntity>(
         _entities[24].properties[15],
+      );
+}
+
+/// [CloudAttachmentUploadEntity] entity fields to define ObjectBox queries.
+class CloudAttachmentUploadEntity_ {
+  /// See [CloudAttachmentUploadEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudAttachmentUploadEntity>(
+    _entities[25].properties[0],
+  );
+
+  /// See [CloudAttachmentUploadEntity.uploadKey].
+  static final uploadKey = obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+    _entities[25].properties[1],
+  );
+
+  /// See [CloudAttachmentUploadEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[2],
+      );
+
+  /// See [CloudAttachmentUploadEntity.writerEpoch].
+  static final writerEpoch =
+      obx.QueryIntegerProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[3],
+      );
+
+  /// See [CloudAttachmentUploadEntity.checkpointGeneration].
+  static final checkpointGeneration =
+      obx.QueryIntegerProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[4],
+      );
+
+  /// See [CloudAttachmentUploadEntity.localSendIntentId].
+  static final localSendIntentId =
+      obx.QueryIntegerProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[5],
+      );
+
+  /// See [CloudAttachmentUploadEntity.messageGuidHash].
+  static final messageGuidHash =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[6],
+      );
+
+  /// See [CloudAttachmentUploadEntity.sourceSha256].
+  static final sourceSha256 =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[7],
+      );
+
+  /// See [CloudAttachmentUploadEntity.protectedStoreIdentity].
+  static final protectedStoreIdentity =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[8],
+      );
+
+  /// See [CloudAttachmentUploadEntity.attachmentKeyHash].
+  static final attachmentKeyHash =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[9],
+      );
+
+  /// See [CloudAttachmentUploadEntity.serverRecordIdHash].
+  static final serverRecordIdHash =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[10],
+      );
+
+  /// See [CloudAttachmentUploadEntity.planReference].
+  static final planReference =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[11],
+      );
+
+  /// See [CloudAttachmentUploadEntity.planLeaseReference].
+  static final planLeaseReference =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[12],
+      );
+
+  /// See [CloudAttachmentUploadEntity.planPayloadSha256].
+  static final planPayloadSha256 =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[13],
+      );
+
+  /// See [CloudAttachmentUploadEntity.state].
+  static final state = obx.QueryIntegerProperty<CloudAttachmentUploadEntity>(
+    _entities[25].properties[14],
+  );
+
+  /// See [CloudAttachmentUploadEntity.attemptId].
+  static final attemptId = obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+    _entities[25].properties[15],
+  );
+
+  /// See [CloudAttachmentUploadEntity.resultReference].
+  static final resultReference =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[16],
+      );
+
+  /// See [CloudAttachmentUploadEntity.resultLeaseReference].
+  static final resultLeaseReference =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[17],
+      );
+
+  /// See [CloudAttachmentUploadEntity.resultPayloadSha256].
+  static final resultPayloadSha256 =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[18],
+      );
+
+  /// See [CloudAttachmentUploadEntity.admittedOperationId].
+  static final admittedOperationId =
+      obx.QueryStringProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[19],
+      );
+
+  /// See [CloudAttachmentUploadEntity.createdAtMs].
+  static final createdAtMs =
+      obx.QueryIntegerProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[20],
+      );
+
+  /// See [CloudAttachmentUploadEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudAttachmentUploadEntity>(
+        _entities[25].properties[21],
       );
 }

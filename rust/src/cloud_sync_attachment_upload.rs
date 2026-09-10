@@ -9,14 +9,17 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use std::{
-    io::{self, Cursor, Read},
+    io::{self, Cursor, Read, Seek, SeekFrom},
     path::PathBuf,
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use prost::Message;
 use rustpush::{
-    cloud_messages::{AttachmentMeta, CloudAttachment, CloudMessagesClient, GZipWrapper},
+    cloud_messages::{
+        AttachmentMeta, CloudAttachment, CloudAttachmentNativeUploadInput, CloudMessagesClient,
+        GZipWrapper,
+    },
     cloudkit_proto::{Asset, RecordIdentifier},
     mmcs::PreparedPut,
     DefaultAnisetteProvider,
@@ -231,6 +234,39 @@ impl AttachmentUploadPlan {
             return Err(Failure::BindingMismatch);
         }
         Ok(())
+    }
+
+    /// Connect the recovered plan to the native one-attempt uploader, without
+    /// re-preparing bytes or generating new file keys. A seekable, retained
+    /// source is validated and rewound on the SAME handle. Caller must still
+    /// persist an attempt before consuming the returned native owner; this
+    /// method is local preparation and grants no network/retry authority.
+    pub(crate) fn native_upload_input<R: Read + Seek + Send + Sync>(
+        &self,
+        parent_message_guid: &str,
+        parent_source_sha256: &str,
+        record_identifier: &RecordIdentifier,
+        local_operation_id: String,
+        apple_operation_uuid: String,
+        mut source: R,
+    ) -> Result<CloudAttachmentNativeUploadInput<R>, Failure> {
+        self.validate_origin(parent_message_guid, parent_source_sha256, record_identifier)?;
+        let snapshot = self.validated_preparation_snapshot()?;
+        source
+            .seek(SeekFrom::Start(0))
+            .map_err(|_| Failure::ProtectedStorage)?;
+        self.validate_source(&mut source)?;
+        source
+            .seek(SeekFrom::Start(0))
+            .map_err(|_| Failure::ProtectedStorage)?;
+        Ok(CloudAttachmentNativeUploadInput {
+            local_operation_id,
+            server_record_name: self.record_name()?.to_owned(),
+            apple_operation_uuid,
+            prepared: PreparedPut::from_v2_upload_snapshot(&snapshot)
+                .map_err(|_| Failure::MalformedMessage)?,
+            reader: source,
+        })
     }
 
     fn encode(&self) -> Result<Vec<u8>, Failure> {
@@ -511,6 +547,53 @@ mod tests {
         let independently_prepared = plan().await;
         assert!(original.prepared.ford_key != independently_prepared.prepared.ford_key);
         assert!(recovered.complete(asset(&independently_prepared)).is_err());
+    }
+
+    #[tokio::test]
+    async fn recovered_plan_feeds_exact_preparation_and_rewound_bytes_to_native_upload() {
+        let original = plan().await;
+        let recovered = AttachmentUploadPlan::decode(&original.encode().unwrap()).unwrap();
+        let mut consumed_source = Cursor::new(CONTENT.to_vec());
+        consumed_source.set_position(CONTENT.len() as u64);
+        let mut input = recovered
+            .native_upload_input(
+                PARENT,
+                &"a".repeat(64),
+                &record(),
+                "local-upload".to_owned(),
+                "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB".to_owned(),
+                consumed_source,
+            )
+            .unwrap();
+        assert_eq!(input.server_record_name, RECORD);
+        assert_eq!(input.reader.position(), 0);
+        assert_eq!(
+            input.prepared.encode_v2_upload_snapshot().unwrap(),
+            original.prepared.encode_v2_upload_snapshot().unwrap()
+        );
+        let mut bytes = Vec::new();
+        input.reader.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, CONTENT);
+        assert!(recovered
+            .native_upload_input(
+                PARENT,
+                &"a".repeat(64),
+                &record(),
+                "local-upload".to_owned(),
+                "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB".to_owned(),
+                Cursor::new(vec![0; CONTENT.len()]),
+            )
+            .is_err());
+        assert!(recovered
+            .native_upload_input(
+                PARENT,
+                &"b".repeat(64),
+                &record(),
+                "local-upload".to_owned(),
+                "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB".to_owned(),
+                Cursor::new(CONTENT.to_vec()),
+            )
+            .is_err());
     }
 
     #[tokio::test]

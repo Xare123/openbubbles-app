@@ -149,7 +149,9 @@ void main() {
       final current = getObjectBoxModel();
       final previousMap = current.model.toMap();
       (previousMap['entities'] as List).removeWhere(
-        (entity) => entity['name'] == 'CloudSyncLocalSendIntentEntity',
+        (entity) =>
+            entity['name'] == 'CloudSyncLocalSendIntentEntity' ||
+            entity['name'] == 'CloudAttachmentUploadEntity',
       );
       // Exact counters from the qualified pre-journal model, not a fresh store
       // with the new model. All predecessor entity definitions stay unchanged.
@@ -157,7 +159,9 @@ void main() {
       previousMap['lastIndexId'] = '92:7759272949562488518';
       final previous = obx.ModelDefinition(
         obx.ModelInfo.fromMap(previousMap),
-        Map.of(current.bindings)..remove(CloudSyncLocalSendIntentEntity),
+        Map.of(current.bindings)
+          ..remove(CloudSyncLocalSendIntentEntity)
+          ..remove(CloudAttachmentUploadEntity),
       );
       final oldStore = Store(previous, directory: directory.path);
       late final int messageId;
@@ -470,8 +474,9 @@ void main() {
         final upgraded = await openStore(directory: directory.path);
         try {
           expect(upgraded.box<CloudSyncLocalSendIntentEntity>().count(), 3);
-          final pending =
-              upgraded.box<CloudSyncLocalSendIntentEntity>().get(pendingId)!;
+          final pending = upgraded.box<CloudSyncLocalSendIntentEntity>().get(
+            pendingId,
+          )!;
           expect(pending.intentKey, 'synthetic-protected-source-pending');
           expect(pending.state, 0);
           expect(pending.writerEpoch, 3);
@@ -486,8 +491,9 @@ void main() {
           expect(pending.protectedSourceBinding, isNull);
           expect(pending.createdAtMs, 1000);
           expect(pending.updatedAtMs, 2000);
-          final deferred =
-              upgraded.box<CloudSyncLocalSendIntentEntity>().get(deferredId)!;
+          final deferred = upgraded.box<CloudSyncLocalSendIntentEntity>().get(
+            deferredId,
+          )!;
           expect(deferred.intentKey, 'synthetic-protected-source-deferred');
           expect(deferred.state, 3);
           expect(deferred.writerEpoch, 5);
@@ -502,8 +508,9 @@ void main() {
           expect(deferred.protectedSourceBinding, isNull);
           expect(deferred.createdAtMs, 1100);
           expect(deferred.updatedAtMs, 2100);
-          final adopted =
-              upgraded.box<CloudSyncLocalSendIntentEntity>().get(adoptedId)!;
+          final adopted = upgraded.box<CloudSyncLocalSendIntentEntity>().get(
+            adoptedId,
+          )!;
           expect(adopted.intentKey, 'synthetic-protected-source-adopted');
           expect(adopted.state, 2);
           expect(adopted.writerEpoch, 7);
@@ -537,8 +544,9 @@ void main() {
       ).encode();
       final writable = await openStore(directory: directory.path);
       try {
-        final pending =
-            writable.box<CloudSyncLocalSendIntentEntity>().get(pendingId)!;
+        final pending = writable.box<CloudSyncLocalSendIntentEntity>().get(
+          pendingId,
+        )!;
         pending.protectedSourceBinding = expectedBinding;
         writable.box<CloudSyncLocalSendIntentEntity>().put(pending);
       } finally {
@@ -547,8 +555,9 @@ void main() {
       for (var restart = 0; restart < 2; restart++) {
         final reopened = await openStore(directory: directory.path);
         try {
-          final pending =
-              reopened.box<CloudSyncLocalSendIntentEntity>().get(pendingId)!;
+          final pending = reopened.box<CloudSyncLocalSendIntentEntity>().get(
+            pendingId,
+          )!;
           expect(pending.protectedSourceBinding, expectedBinding);
           expect(
             CloudSyncLocalSendSourceBinding.decode(
@@ -649,7 +658,11 @@ void main() {
           '33:7403419454425897175',
         ),
       );
-      expect(model['lastEntityId'], '33:7403419454425897175');
+      expect(
+        entities,
+        containsPair('CloudAttachmentUploadEntity', '34:2734237264100580081'),
+      );
+      expect(model['lastEntityId'], '34:2734237264100580081');
       expect(model['modelVersion'], 5);
       expect(model['modelVersionParserMinimum'], 5);
 
@@ -756,9 +769,7 @@ void main() {
       );
       expect(chatAliasProperties['chatId']?['id'], '18:1466186784207767557');
 
-      final intentProperties = propertiesFor(
-        'CloudSyncLocalSendIntentEntity',
-      );
+      final intentProperties = propertiesFor('CloudSyncLocalSendIntentEntity');
       expect(
         intentProperties['idsConfirmationVersion']?['id'],
         '15:7746544196685616233',
@@ -774,6 +785,129 @@ void main() {
           );
       expect(intentEntity['id'], '33:7403419454425897175');
       expect(intentEntity['lastPropertyId'], '16:5377428623302990429');
+    },
+  );
+
+  test(
+    'adding the attachment upload journal preserves chats, messages, and checkpoints',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'cloud-sync-upload-journal-upgrade-',
+      );
+      addTearDown(() async {
+        if (directory.existsSync()) await directory.delete(recursive: true);
+      });
+      final current = getObjectBoxModel();
+      final previousMap = current.model.toMap();
+      (previousMap['entities'] as List).removeWhere(
+        (entity) => entity['name'] == 'CloudAttachmentUploadEntity',
+      );
+      // Exact counters from the qualified pre-upload model, not a fresh store
+      // with the new model. All predecessor entity definitions stay unchanged.
+      previousMap['lastEntityId'] = '33:7403419454425897175';
+      previousMap['lastIndexId'] = '95:4712335069625825055';
+      final previous = obx.ModelDefinition(
+        obx.ModelInfo.fromMap(previousMap),
+        Map.of(current.bindings)..remove(CloudAttachmentUploadEntity),
+      );
+      final oldStore = Store(previous, directory: directory.path);
+      late final int messageId;
+      late final int chatId;
+      late final int checkpointId;
+      try {
+        final chat = Chat(guid: 'iMessage;-;synthetic-upload@example.com');
+        chatId = oldStore.box<Chat>().put(chat);
+        final message = Message(
+          guid: 'synthetic-upload-migration-guid',
+          text: 'synthetic upload migration sentinel',
+          dateCreated: DateTime.utc(2026, 9, 4),
+          isFromMe: true,
+        )..chat.target = chat;
+        messageId = oldStore.box<Message>().put(message);
+        checkpointId = oldStore.box<CloudSyncCheckpointEntity>().put(
+          CloudSyncCheckpointEntity(
+            checkpointKey: 'synthetic-upload-checkpoint',
+            accountFingerprint: 'A' * 43,
+            container: 'com.apple.messages.cloud',
+            database: 'private',
+            zone: 'messageManateeZone',
+            streamKind: 'messages',
+            generation: 7,
+            fetchedSequence: 43,
+            appliedSequence: 41,
+            mutationRevisionCounter: 12,
+            updatedAtMs: 1000,
+          ),
+        );
+      } finally {
+        oldStore.close();
+      }
+
+      final upgraded = await openStore(directory: directory.path);
+      try {
+        expect(upgraded.box<Message>().count(), 1);
+        expect(
+          upgraded.box<Message>().get(messageId)?.text,
+          'synthetic upload migration sentinel',
+        );
+        expect(upgraded.box<Message>().get(messageId)?.chat.targetId, chatId);
+        final checkpoint = upgraded.box<CloudSyncCheckpointEntity>().get(
+          checkpointId,
+        )!;
+        expect(checkpoint.generation, 7);
+        expect(checkpoint.fetchedSequence, 43);
+        expect(checkpoint.appliedSequence, 41);
+        expect(checkpoint.mutationRevisionCounter, 12);
+        expect(upgraded.box<CloudAttachmentUploadEntity>().count(), 0);
+        final uploadId = upgraded.box<CloudAttachmentUploadEntity>().put(
+          CloudAttachmentUploadEntity(
+            uploadKey: 'synthetic-upload-key',
+            accountFingerprint: 'A' * 43,
+            writerEpoch: 3,
+            checkpointGeneration: 7,
+            localSendIntentId: 42,
+            messageGuidHash: 'B' * 64,
+            sourceSha256: 'C' * 64,
+            protectedStoreIdentity: 'obcs2.protected.${'P' * 32}',
+            attachmentKeyHash: 'D' * 64,
+            serverRecordIdHash: 'S' * 43,
+            planReference: 'obcs2.plan.${'Q' * 32}',
+            planLeaseReference: 'obcs2.plan-lease.${'R' * 32}',
+            planPayloadSha256: 'E' * 64,
+            createdAtMs: 1000,
+            updatedAtMs: 2000,
+          ),
+        );
+        final upload = upgraded.box<CloudAttachmentUploadEntity>().get(
+          uploadId,
+        )!;
+        expect(upload.state, 0);
+        expect(upload.attemptId, isNull);
+        expect(upload.resultReference, isNull);
+        expect(upload.resultPayloadSha256, isNull);
+        expect(upload.admittedOperationId, isNull);
+        expect(upload.uploadKey, 'synthetic-upload-key');
+        expect(upload.serverRecordIdHash, 'S' * 43);
+      } finally {
+        upgraded.close();
+      }
+      final reopened = await openStore(directory: directory.path);
+      try {
+        expect(
+          reopened.box<Message>().get(messageId)?.text,
+          'synthetic upload migration sentinel',
+        );
+        expect(
+          reopened
+              .box<CloudSyncCheckpointEntity>()
+              .get(checkpointId)
+              ?.generation,
+          7,
+        );
+        expect(reopened.box<CloudAttachmentUploadEntity>().count(), 1);
+      } finally {
+        reopened.close();
+      }
     },
   );
 }

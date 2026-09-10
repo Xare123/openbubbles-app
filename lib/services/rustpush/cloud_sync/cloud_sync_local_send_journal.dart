@@ -868,15 +868,21 @@ final class CloudSyncLocalSendJournal {
     final messageId = message.id;
     final stableGuid = message.stagingGuid;
     if (messageId == null || messageId <= 0 || stableGuid == null) return false;
-    final query = store.box<CloudSyncLocalSendIntentEntity>().query(
-      CloudSyncLocalSendIntentEntity_.localMessageId.equals(messageId).and(
-        CloudSyncLocalSendIntentEntity_.messageGuidHash.equals(
-          CloudSyncLocalSendIdentity._digest([
-            'cloud-sync-local-send-guid-v1', stableGuid,
-          ]),
-        ),
-      ),
-    ).build();
+    final query = store
+        .box<CloudSyncLocalSendIntentEntity>()
+        .query(
+          CloudSyncLocalSendIntentEntity_.localMessageId
+              .equals(messageId)
+              .and(
+                CloudSyncLocalSendIntentEntity_.messageGuidHash.equals(
+                  CloudSyncLocalSendIdentity._digest([
+                    'cloud-sync-local-send-guid-v1',
+                    stableGuid,
+                  ]),
+                ),
+              ),
+        )
+        .build();
     try {
       return query.count() != 0;
     } finally {
@@ -1272,6 +1278,34 @@ final class CloudSyncLocalSendJournal {
     }
     return readProtectedSource(intentId: intent.id, currentAuth: currentAuth);
   });
+
+  /// Called inside the upload journal's transaction, with the same Store.
+  /// A pending send or a protected source alone is never upload authority.
+  ({int writerEpoch, CloudSyncLocalSendSourceBinding source})
+  requireConfirmedAttachmentUploadOrigin({
+    required Store transactionStore,
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) {
+    if (!identical(transactionStore, _store)) {
+      throw StateError('cloud_sync_local_send_adoption_store_mismatch');
+    }
+    _verifyLocalOwnership();
+    final intent = _readBoundIntent(intentId);
+    if (intent.state != 1 && intent.state != 2) {
+      throw StateError('cloud_sync_local_send_not_ready');
+    }
+    _requireIdsConfirmation(intent);
+    if (intent.state == 1) _validatedMessage(intent);
+    final source = readProtectedSource(
+      intentId: intentId,
+      currentAuth: currentAuth,
+    );
+    if (source == null) {
+      throw StateError('cloud_sync_local_send_protected_source_missing');
+    }
+    return (writerEpoch: intent.writerEpoch, source: source);
+  }
 
   /// A retry may re-use an existing intent, but cannot invent local origin for
   /// a GUID that predated this journal. Only the fresh IDS GUID path may create.

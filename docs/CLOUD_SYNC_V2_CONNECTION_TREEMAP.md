@@ -98,8 +98,20 @@ Its only failure was the expected bridge-drift gate; artifact `10170133961`
 was reviewed and imported. All 475 cases in the twelve targeted Dart suites
 passed against that bridge. Analyzer found zero errors and four pre-existing
 brace-style infos. Both cloud instance and runner inventories were empty after
-cleanup. The combined source still needs a reproducible green bridge run.
-The actual CloudKit attachment uploader remains integration work.
+cleanup. Combined source `42647ee3a` passed GCE `34523305646`, including
+native tests and bridge reproducibility. Cleanup passed and both inventories
+returned zero. The actual CloudKit attachment uploader remains integration work.
+
+Current upload integration separates three states of evidence:
+`original IDS source -> durable byte-upload attempt/result -> final record-save
+outbox -> exact attachment readback -> parent message dependency`. A new
+content-free upload journal adds entity 34 and preserves every prior
+entity/property/index definition. Parent passed 220 targeted Dart tests,
+including 13 real-ObjectBox upload recovery cases and the additive migration.
+The one-attempt native uploader is dependency `975015f`; it and the recovered
+file adapter await GCE compilation. Production network orchestration, protected
+attempt/result recovery, final-save admission and parent wiring remain open. Neither
+upload success nor a missing record proves parent-message synchronization.
 The known-good local executable is still the qualified `6abbeede2` bundle.
 
 The first September 10 attempt failed on retained IDS credentials before send.

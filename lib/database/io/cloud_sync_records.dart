@@ -1042,3 +1042,69 @@ class CloudKitDeletionQuarantineEntity {
     required this.createdAtMs,
   });
 }
+
+/// Durable CloudKit attachment upload-attempt record, separate from the final
+/// save-envelope outbox. Contains only hashes, protected-store references,
+/// and content-free digests. Never stores bodies, keys, raw record IDs, or
+/// upload receipts in plaintext.
+@Entity()
+class CloudAttachmentUploadEntity {
+  int id;
+
+  @Index(type: IndexType.hash64)
+  @Unique()
+  String uploadKey;
+
+  @Index(type: IndexType.hash64)
+  String accountFingerprint;
+
+  int writerEpoch;
+  int checkpointGeneration;
+  int localSendIntentId;
+  String messageGuidHash;
+  String sourceSha256;
+  String protectedStoreIdentity;
+  String attachmentKeyHash;
+  String serverRecordIdHash;
+  String planReference;
+  String planLeaseReference;
+  String planPayloadSha256;
+
+  /// Stable codes: 0 prepared, 1 started, 2 uploaded, 3 adopted, 4 unknown.
+  /// Never infer retry authority from state; unknown requires explicit
+  /// recovery authorization and missing-record lookup is not retry proof.
+  int state;
+
+  String? attemptId;
+  String? resultReference;
+  String? resultLeaseReference;
+  String? resultPayloadSha256;
+  String? admittedOperationId;
+  int createdAtMs;
+  int updatedAtMs;
+
+  CloudAttachmentUploadEntity({
+    this.id = 0,
+    required this.uploadKey,
+    required this.accountFingerprint,
+    required this.writerEpoch,
+    required this.checkpointGeneration,
+    required this.localSendIntentId,
+    required this.messageGuidHash,
+    required this.sourceSha256,
+    required this.protectedStoreIdentity,
+    required this.attachmentKeyHash,
+    required this.serverRecordIdHash,
+    required this.planReference,
+    required this.planLeaseReference,
+    required this.planPayloadSha256,
+    this.state = 0,
+    this.attemptId,
+    this.resultReference,
+    this.resultLeaseReference,
+    this.resultPayloadSha256,
+    this.admittedOperationId,
+    required this.createdAtMs,
+    required this.updatedAtMs,
+  });
+}
