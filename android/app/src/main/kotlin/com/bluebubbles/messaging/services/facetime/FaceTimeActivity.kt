@@ -201,7 +201,7 @@ class FaceTimeActivity : Activity() {
                     scheduleConnectionProbe(FaceTimeConnectionProbePolicy.pendingDelayMillis)
                     return@requestMediaEvidence
                 }
-                FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.MEDIA_PROBE, state = "sampled")
+                FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.MEDIA_PROBE, state = "sampled", evidence = evidence)
                 FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.ICE_STATE, state = evidence.iceState.name.lowercase())
                 FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.REMOTE_AUDIO_TRACK, count = evidence.remoteAudioTracks)
                 FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.REMOTE_VIDEO_TRACK, count = evidence.remoteVideoTracks)

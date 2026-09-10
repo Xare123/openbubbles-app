@@ -119,4 +119,49 @@ class FaceTimeDiagnosticLogTest {
             assertEquals(1, contents(directory).lines().count { it.isNotEmpty() })
         } finally { pool.shutdownNow() }
     }
+
+    @Test fun replayRetainsAtomicSamePeerSamplesAndTerminationWithoutLogcat() {
+        val directory = temporary.newFolder()
+        val log = writer(directory)
+        fun sample(peer: Int?, bytes: Long?) = FaceTimeMediaEvidence(
+            FaceTimeIceState.CONNECTED, 1, 0, bytes, true, peer,
+        )
+        assertTrue(log.record(FaceTimeDiagnosticStage.LIFECYCLE, "created"))
+        assertTrue(log.record(FaceTimeDiagnosticStage.MEDIA_PROBE, "sampled", evidence = sample(1, 0)))
+        now += 1000
+        assertTrue(log.record(FaceTimeDiagnosticStage.MEDIA_PROBE, "sampled", evidence = sample(1, 128)))
+        now += 1000
+        assertTrue(log.record(FaceTimeDiagnosticStage.MEDIA_PROBE, "sampled", evidence = sample(2, 256)))
+        now += 1000
+        assertTrue(log.record(FaceTimeDiagnosticStage.MEDIA_PROBE, "sampled", evidence = sample(2, null)))
+        // Counter spam cannot bypass the existing finite stage/state rate limit.
+        repeat(100) {
+            assertFalse(log.record(FaceTimeDiagnosticStage.MEDIA_PROBE, "sampled", evidence = sample(it + 3, 999)))
+        }
+        assertTrue(log.record(FaceTimeDiagnosticStage.LEAVE, "requested"))
+        assertTrue(log.record(FaceTimeDiagnosticStage.CLOSE_REASON, "web_leave"))
+        assertTrue(log.record(FaceTimeDiagnosticStage.LIFECYCLE, "finishing_destroyed"))
+        val lines = contents(directory).lines().filter { it.isNotEmpty() }
+        assertEquals(listOf(
+            "time_ms=1234 stage=lifecycle state=created",
+            "time_ms=1234 stage=media_probe state=sampled peer=1 ice=connected audio=1 video=0 bytes=0",
+            "time_ms=1234 stage=media_probe state=sampled peer=1 ice=connected audio=1 video=0 bytes=128",
+            "time_ms=1234 stage=media_probe state=sampled peer=2 ice=connected audio=1 video=0 bytes=256",
+            "time_ms=1234 stage=media_probe state=sampled peer=2 ice=connected audio=1 video=0 bytes=unavailable",
+            "time_ms=1234 stage=leave state=requested",
+            "time_ms=1234 stage=close_reason state=web_leave",
+            "time_ms=1234 stage=lifecycle state=finishing_destroyed",
+        ), lines)
+    }
+
+    @Test fun sampleFieldsAreBoundedTypedAndRestrictedToSampledStage() {
+        val evidence = FaceTimeMediaEvidence(FaceTimeIceState.UNKNOWN, -1, Int.MAX_VALUE, -1, false, -1)
+        assertEquals("stage=media_probe state=sampled peer=none ice=unknown audio=0 video=65535 bytes=unavailable",
+            FaceTimeDiagnosticPolicy.formatStage(FaceTimeDiagnosticStage.MEDIA_PROBE, "sampled", evidence = evidence))
+        assertEquals("stage=close_reason state=web_leave",
+            FaceTimeDiagnosticPolicy.formatStage(FaceTimeDiagnosticStage.CLOSE_REASON, "web_leave", evidence = evidence))
+        val maximum = evidence.copy(peerId = Int.MAX_VALUE, mediaBytes = Long.MAX_VALUE)
+        val line = FaceTimeDiagnosticPolicy.formatStage(FaceTimeDiagnosticStage.MEDIA_PROBE, "sampled", evidence = maximum)
+        assertTrue(("time_ms=${Long.MAX_VALUE} $line\n").toByteArray().size <= FaceTimeDiagnosticLog.maxLineBytes)
+    }
 }

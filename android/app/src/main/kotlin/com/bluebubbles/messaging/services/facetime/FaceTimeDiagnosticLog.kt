@@ -45,7 +45,8 @@ internal object FaceTimeDiagnosticPolicy {
         return normalized.takeIf { it in states[stage].orEmpty() } ?: "unknown"
     }
 
-    fun formatStage(stage: FaceTimeDiagnosticStage, state: String? = null, count: Int? = null, bytes: Long? = null): String =
+    fun formatStage(stage: FaceTimeDiagnosticStage, state: String? = null, count: Int? = null, bytes: Long? = null,
+        evidence: FaceTimeMediaEvidence? = null): String =
         buildList {
             add("stage=${stage.wireName}")
             state?.let { add("state=${safeState(stage, it)}") }
@@ -55,6 +56,15 @@ internal object FaceTimeDiagnosticPolicy {
                 count?.let { add("count=${it.coerceIn(0, 65535)}") }
             }
             if (stage == FaceTimeDiagnosticStage.MEDIA_BYTES) bytes?.let { add("bytes=${it.coerceAtLeast(0)}") }
+            // One resolved sample, not independently throttled counters from different peers.
+            // peer is a document-local ordinal, never a call/account/track identifier.
+            if (stage == FaceTimeDiagnosticStage.MEDIA_PROBE && state == "sampled" && evidence != null) {
+                add("peer=${evidence.peerId?.takeIf { it > 0 } ?: "none"}")
+                add("ice=${safeState(FaceTimeDiagnosticStage.ICE_STATE, evidence.iceState.name)}")
+                add("audio=${evidence.remoteAudioTracks.coerceIn(0, 65535)}")
+                add("video=${evidence.remoteVideoTracks.coerceIn(0, 65535)}")
+                add("bytes=${evidence.mediaBytes?.takeIf { it >= 0 } ?: "unavailable"}")
+            }
         }.joinToString(" ")
 }
 
@@ -80,13 +90,14 @@ internal class FaceTimeDiagnosticLog(
     private val last = mutableMapOf<Pair<FaceTimeDiagnosticStage, String?>, Last>()
 
     @Synchronized
-    fun record(stage: FaceTimeDiagnosticStage, state: String? = null, count: Int? = null, bytes: Long? = null): Boolean {
+    fun record(stage: FaceTimeDiagnosticStage, state: String? = null, count: Int? = null, bytes: Long? = null,
+        evidence: FaceTimeMediaEvidence? = null): Boolean {
         try {
             if (!enabled()) {
                 last.clear()
                 return false
             }
-            val line = FaceTimeDiagnosticPolicy.formatStage(stage, state, count, bytes)
+            val line = FaceTimeDiagnosticPolicy.formatStage(stage, state, count, bytes, evidence)
             val key = stage to state?.let { FaceTimeDiagnosticPolicy.safeState(stage, it) }
             val now = monotonicMillis()
             val prior = last[key]
