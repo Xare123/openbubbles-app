@@ -104,6 +104,9 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String, 
     internal fun matchesSession(link: String, callId: String?): Boolean =
         FaceTimeMediaProbe.canReusePage(launchUrl, sessionId, link, callId)
 
+    internal fun matchesCallId(callId: String?): Boolean =
+        FaceTimeTimeoutPolicy.matchesCall(callId, sessionId)
+
     internal fun requestMediaEvidence(callback: (String?) -> Unit) = mediaProbe.request(callback)
     internal var mediaDocumentChanged: (() -> Unit)? = null
 

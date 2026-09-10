@@ -106,6 +106,19 @@ internal class FaceTimeCallLifecycle {
     }
 }
 
+/** A delayed terminal event owns only the call identified by its nonblank UUID. */
+internal object FaceTimeTimeoutPolicy {
+    fun matchesCall(eventCallUuid: String?, targetCallUuid: String?): Boolean =
+        !eventCallUuid.isNullOrBlank() && eventCallUuid == targetCallUuid
+
+    fun shouldFinishActivity(
+        eventCallUuid: String?,
+        activityCallUuid: String?,
+        answered: Boolean,
+        isCall: Boolean,
+    ): Boolean = matchesCall(eventCallUuid, activityCallUuid) && !answered && isCall
+}
+
 internal object FaceTimeControlPolicy {
     fun shouldShowNativeEndControl(inPictureInPicture: Boolean = false): Boolean = !inPictureInPicture
 

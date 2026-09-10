@@ -7,6 +7,75 @@ import org.junit.Test
 
 class FaceTimeJoinPolicyTest {
     @Test
+    fun lateAndDuplicateTimeoutsCannotDestroyTheNextCall() {
+        var cachedCall: String? = "call-a"
+        var activityCall: String? = null
+        val destroyedPages = mutableListOf<String>()
+        val finishedActivities = mutableListOf<String>()
+        fun timeout(eventCall: String?) {
+            if (FaceTimeTimeoutPolicy.matchesCall(eventCall, cachedCall)) {
+                destroyedPages.add(cachedCall!!)
+                cachedCall = null
+            }
+            if (FaceTimeTimeoutPolicy.shouldFinishActivity(eventCall, activityCall, false, true)) {
+                finishedActivities.add(activityCall!!)
+                activityCall = null
+            }
+        }
+
+        // A ends, B preloads, then a duplicate/delayed A terminal event arrives.
+        timeout("call-a")
+        cachedCall = "call-b"
+        timeout("call-a")
+        assertEquals("call-b", cachedCall)
+        assertEquals(listOf("call-a"), destroyedPages)
+
+        // B takes ownership of its page; a further A event cannot finish B.
+        activityCall = cachedCall
+        cachedCall = null
+        timeout("call-a")
+        assertEquals("call-b", activityCall)
+        assertTrue(finishedActivities.isEmpty())
+
+        // Legitimate B cleanup still works, and a duplicate is harmless.
+        timeout("call-b")
+        timeout("call-b")
+        assertEquals(null, activityCall)
+        assertEquals(listOf("call-b"), finishedActivities)
+    }
+
+    @Test
+    fun timeoutRequiresAnExactNonblankIdentityOnBothSides() {
+        for (eventCall in listOf(null, "", " ", "\t", "call-a", "call-b ", "CALL-B")) {
+            assertFalse(FaceTimeTimeoutPolicy.matchesCall(eventCall, "call-b"))
+            assertFalse(FaceTimeTimeoutPolicy.shouldFinishActivity(eventCall, "call-b", false, true))
+        }
+        for (missing in listOf(null, "", " ", "\t")) {
+            assertFalse(FaceTimeTimeoutPolicy.matchesCall(missing, missing))
+            assertFalse(FaceTimeTimeoutPolicy.matchesCall("call-b", missing))
+            assertFalse(FaceTimeTimeoutPolicy.shouldFinishActivity("call-b", missing, false, true))
+        }
+        assertTrue(FaceTimeTimeoutPolicy.matchesCall("call-b", "call-b"))
+    }
+
+    @Test
+    fun timeoutPreservesAnsweredCallsAndNonCallActivities() {
+        assertTrue(FaceTimeTimeoutPolicy.shouldFinishActivity("call-b", "call-b", false, true))
+        assertFalse(FaceTimeTimeoutPolicy.shouldFinishActivity("call-b", "call-b", true, true))
+        assertFalse(FaceTimeTimeoutPolicy.shouldFinishActivity("call-b", "call-b", false, false))
+        assertFalse(FaceTimeTimeoutPolicy.shouldFinishActivity("call-b", "call-b", true, false))
+    }
+
+    @Test
+    fun timeoutChecksActivityAndCacheOwnershipIndependently() {
+        // Finishing A does not discard a preloaded B, and clearing B does not end A.
+        assertTrue(FaceTimeTimeoutPolicy.shouldFinishActivity("call-a", "call-a", false, true))
+        assertFalse(FaceTimeTimeoutPolicy.matchesCall("call-a", "call-b"))
+        assertFalse(FaceTimeTimeoutPolicy.shouldFinishActivity("call-b", "call-a", false, true))
+        assertTrue(FaceTimeTimeoutPolicy.matchesCall("call-b", "call-b"))
+    }
+
+    @Test
     fun clickedRequestsAdmissionButDoesNotClaimJoined() {
         val decision = FaceTimeJoinPolicy().record("\"clicked\"")
 

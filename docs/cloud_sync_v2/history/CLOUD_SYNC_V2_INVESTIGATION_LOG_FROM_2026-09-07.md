@@ -1114,3 +1114,14 @@ This is a chronological evidence log. It does not override the
   `102999506731` explicitly checked out and verified source `389465734` at
   18:37:46Z, resolving the import worker's provenance concern. Its reviewed
   source and test log remain retained; the completed bridge worker was closed.
+- Source `da428b635` commits the receipt boundary repair and reviewed bridge.
+  Source-only GCE `34517138488` requalifies it on N2D-16 / `us-west1-a`, with
+  writer and automatic uploads disabled. No APK is requested.
+- Astra found and repaired a separate FaceTime teardown defect: the native
+  timeout handler ignored its event call UUID and could finish or discard a
+  newer call. Exact nonblank ID matching now gates activity and cache cleanup
+  independently. Parent reviewed all five changed files and the activity's
+  existing instance-bound `onDestroy`; accepted the patch. Worker tests passed
+  58 Kotlin, 9 Dart and 10 JavaScript cases, including an A/B stale-timeout
+  trace and a production wiring regression that failed before the fix.
+  Android runtime and the reported media-establishment cutout remain unproven.

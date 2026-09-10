@@ -3,6 +3,25 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('timeouts are scoped to the activity and cached page call IDs', () {
+    final handler = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeCallStateHandler.kt',
+    ).readAsStringSync();
+    final timeout = handler.substring(handler.indexOf('} else if (state == "timeout")'));
+    expect(timeout, contains('val callUuid = call.argument<String>("callUuid")'));
+    expect(timeout, contains('FaceTimeTimeoutPolicy.shouldFinishActivity(callUuid, it.callUuid, it.answered, it.isCall)'));
+    expect(timeout, contains('cachedWebview?.takeIf { it.matchesCallId(callUuid) }?.let'));
+    expect(timeout, contains('it.cancelCallbacks()'));
+    expect(timeout, contains('it.webView.destroy()'));
+    expect(timeout, contains('FaceTimeActivity.cachedWebview = null'));
+
+    final cached = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/CachedWebview.kt',
+    ).readAsStringSync();
+    expect(cached, contains('internal fun matchesCallId(callId: String?): Boolean ='));
+    expect(cached, contains('FaceTimeTimeoutPolicy.matchesCall(callId, sessionId)'));
+  });
+
   test('PiP and probe updates share one native visibility and footer owner', () {
     final activity = File(
       'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',

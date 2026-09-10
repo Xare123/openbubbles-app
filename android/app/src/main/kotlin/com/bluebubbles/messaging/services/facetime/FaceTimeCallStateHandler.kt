@@ -28,15 +28,16 @@ class FaceTimeCallStateHandler: MethodCallHandlerImpl() {
                 FaceTimeActivity.cachedWebview = CachedWebview(context, name, desc, url, call.argument<String>("callUuid"))
             }
         } else if (state == "timeout") {
-            // finish any still ringing activity
+            val callUuid = call.argument<String>("callUuid")
+            // Late cancellation of a previous call must not close a newer call.
             FaceTimeActivity.activeFaceTimeActivity?.let {
-                if (!it.answered && it.isCall) {
+                if (FaceTimeTimeoutPolicy.shouldFinishActivity(callUuid, it.callUuid, it.answered, it.isCall)) {
                     FaceTimeDiagnostics.logStage(context, FaceTimeDiagnosticStage.CLOSE_REASON, state = "ring_timeout")
                     it.finishAndRemoveTask()
                 }
             }
-            // cancel any unused webview
-            FaceTimeActivity.cachedWebview?.let {
+            // Discard only the unused page belonging to this terminal event.
+            FaceTimeActivity.cachedWebview?.takeIf { it.matchesCallId(callUuid) }?.let {
                 it.cancelCallbacks()
                 it.webView.destroy()
                 FaceTimeActivity.cachedWebview = null
