@@ -173,8 +173,11 @@ part)` key as ingestion. Existing differently keyed plans remain retained,
 not silently relabeled. Only generated bridge drift failed; artifact
 `10177858701` supplied the seven reviewed/hash-verified bindings. Cleanup and
 independent VM/runner inventories passed. These are component checks, not a
-working end-to-end attachment writer: runtime plan coordination and protected
-parent staging/prepare/readback remain in implementation.
+working end-to-end attachment writer. Original-plan coordination and source-bound
+header encoding passed 57 combined Dart cases (including existing plaintext and
+reaction regressions); actual runtime composition and protected parent
+staging/prepare/readback remain in implementation. Native restored-group parent
+routing still needs its own verified chat binding, not an inferred direct route.
 Completed upload fence recovery is implemented and tested. The epoch counterexample is
 now explicit: write ambiguity advances
 the writer from E to E+1, then E+2 after reconciliation, while the upload journal

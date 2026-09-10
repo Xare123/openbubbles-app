@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_encoder.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
@@ -19,6 +20,60 @@ void main() {
     }
   });
   tearDownAll(RustLib.dispose);
+
+  for (final group in [false, true]) {
+    test('attachment headers omit mutable content (group=$group)', () {
+      final message = _attachmentHeaderMessage(group: group);
+      final source = _attachmentSource(message);
+      final bodies = message.attributedBody;
+      final encoded = encodeCloudSyncLocalSendAttachmentHeaders(
+        message,
+        source: source,
+      );
+      final proto = api.decodeMessageproto(wrapped: encoded.msgProto);
+      expect(proto.text, isNull);
+      expect(proto.attributedBody, isNull);
+      expect(proto.payloadData, isNull);
+      expect(encoded.guid, message.guid);
+      expect(
+        encoded.chatId,
+        group ? 'opaque-apple-group-id' : message.chat.target!.guid,
+      );
+      expect(encoded.destinationCallerId, 'sender@example.com');
+      expect(
+        api.decodeMessageproto4(wrapped: encoded.msgProto4!).groupId,
+        message.chat.target!.guid,
+      );
+      expect(identical(message.attributedBody, bodies), isTrue);
+      expect(_attachmentSource(message).sourceSha256, source.sourceSha256);
+      expect(
+        () => encodeCloudSyncLocalSendPlainText(message),
+        throwsStateError,
+      );
+    });
+  }
+  test(
+    'attachment headers reject source, GUID, route and failed-send drift',
+    () {
+      for (final mutate in <void Function(Message)>[
+      (m) => m.attachments.first!.metadata = {'rustpush': '<changed/>'},
+        (m) => m.guid = 'CC6165FC-EFF7-40A7-8F11-C0D3D397597B',
+        (m) => m.chat.target!.usingHandle = 'mailto:other@example.com',
+        (m) => m.error = 1,
+      ]) {
+        final message = _attachmentHeaderMessage();
+        final source = _attachmentSource(message);
+        mutate(message);
+        expect(
+          () => encodeCloudSyncLocalSendAttachmentHeaders(
+            message,
+            source: source,
+          ),
+          throwsStateError,
+        );
+      }
+    },
+  );
 
   for (final text in ['plain text', 'A😀B\nhttps://example.com/a+b?x=1&y=2']) {
     test(
@@ -292,6 +347,47 @@ Message _groupMessage(String text) {
     isFromMe: true,
     attributedBody: [AttributedBody.raw(text)],
   )..chat.target = chat;
+}
+
+Message _attachmentHeaderMessage({bool group = false}) {
+  final message = group ? _groupMessage(' ') : _message(' ');
+  message.hasAttachments = true;
+  message.attachments.add(
+    Attachment(
+      guid: 'LOCAL-ATTACHMENT',
+      metadata: const {'rustpush': '<attachment><id>A</id></attachment>'},
+    ),
+  );
+  message.attributedBody = [
+    AttributedBody(
+      string: ' ',
+      runs: [
+        Run(
+          range: const [0, 1],
+          attributes: Attributes(attachmentGuid: 'LOCAL-ATTACHMENT'),
+        ),
+      ],
+    ),
+  ];
+  return message;
+}
+
+CloudSyncLocalSendSourceBinding _attachmentSource(Message message) {
+  final identity = CloudSyncLocalSendIdentity.captureAttachment(
+    message,
+    message.chat.target!,
+    message.guid!,
+  )!;
+  return CloudSyncLocalSendSourceBinding(
+    accountFingerprint: 'A' * 43,
+    protectedStoreIdentity: 'obcs2.store.${'S' * 43}',
+    messageGuidHash: identity.guidHash,
+    sourceSha256: identity.sourceSha256,
+    protectedReference: 'obcs2.ref.${'P' * 43}',
+    leaseReference: 'obcs2.lease.${'a' * 32}',
+    payloadSha256: 'b' * 64,
+    payloadLength: 10,
+  );
 }
 
 Message _reactionMessage({required String type, int? part}) {

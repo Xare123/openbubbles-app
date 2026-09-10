@@ -1425,3 +1425,21 @@ This is a chronological evidence log. It does not override the
 - Next implementation: native source-bound parent envelope with unchanged
   plaintext/reaction gates, plus original-plan coordination before upload.
   Source credentials and messages remained local. No live write or APK install.
+
+## 2026-09-10, original-plan coordination and parent-header contract
+
+- Added the bounded plan coordinator: inspect the pinned native source, validate
+  the full inventory before staging, reuse retained plans, adopt/commit new plans
+  once, and preserve ambiguous adoption/commit outcomes. Parent review corrected
+  an invalid UUID-only assumption: reflected IDs are `<messageGuid>_<part>`.
+  Source/auth are explicit callback inputs and the inventory is frozen.
+- Added header-only encoding for the native attachment-parent route. It checks
+  the retained source digest against the current local message and leaves text
+  and attributed bytes absent, for reconstruction from the original native IDS
+  source. Existing direct plaintext encoding shares its unchanged header logic.
+- Parent-run encoder/coordinator tests passed 57 cases; targeted analysis found
+  no issues. The coordinator worker was reviewed, closed and shutdown verified.
+- Astra is implementing native source-bound parent staging, reopening and exact
+  readback. Review requires reuse of the existing bounded typedstream decoder
+  where possible; group parent routing and runtime child-dependency admission
+  remain open. Header tests are not native group-send proof.

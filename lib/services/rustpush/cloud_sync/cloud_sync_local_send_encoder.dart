@@ -3,6 +3,7 @@ import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 
 import 'cloud_sync_local_send_journal.dart';
+import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_group_send_route.dart';
 import 'cloud_sync_reaction_send_identity.dart';
 
@@ -22,20 +23,35 @@ api.CloudMessage encodeCloudSyncLocalSendPlainText(Message message) {
       CloudSyncLocalSendIdentity.capture(message, chat, guid) == null) {
     throw StateError('cloud_sync_outbound_unsupported_message');
   }
+  return _encodeOrdinaryHeaders(
+    message,
+    chatId: chat.guid,
+    sender: chat.usingHandle!
+        .replaceFirst('mailto:', '')
+        .replaceFirst('tel:', ''),
+    text: message.text,
+  );
+}
+
+api.CloudMessage _encodeOrdinaryHeaders(
+  Message message, {
+  required String chatId,
+  required String sender,
+  required String? text,
+}) {
+  final chat = message.chat.target!;
   return api.CloudMessage(
     utm: api.utmNow(),
     type: 1,
     error: message.error,
-    chatId: chat.guid,
+    chatId: chatId,
     sender: '',
     time: RustPushBBUtils.nsSinceAppleEpoch(message.dateCreated!),
-    destinationCallerId: chat.usingHandle!
-        .replaceFirst('mailto:', '')
-        .replaceFirst('tel:', ''),
+    destinationCallerId: sender,
     msgProto: api.encodeMessageproto(
       messageproto: api.MessageProto(
         unk1: 1,
-        text: message.text,
+        text: text,
         dateRead: message.dateRead == null
             ? 0
             : RustPushBBUtils.nsSinceAppleEpoch(message.dateRead!),
@@ -56,7 +72,7 @@ api.CloudMessage encodeCloudSyncLocalSendPlainText(Message message) {
           (message.isDelivered ? IS_DELIVERED : 0) |
           (message.dateRead != null ? IS_READ : 0),
     ),
-    guid: guid,
+    guid: message.guid!,
     msgProto3: api.encodeMessageproto3(
       messageproto3: const api.MessageProto3(unk2: 0, unk3: 0),
     ),
@@ -70,6 +86,52 @@ api.CloudMessage encodeCloudSyncLocalSendPlainText(Message message) {
         sentOrReceivedOffGrid: 0,
       ),
     ),
+  );
+}
+
+/// Header-only input for the explicit native attachment-parent staging route.
+/// Neither mutable local text nor attributed bytes enter the native envelope.
+/// The native route reconstructs them from the committed original IDS source.
+/// This function proves local source consistency, not IDS confirmation, write
+/// authority or completed child records; admission must prove those separately.
+api.CloudMessage encodeCloudSyncLocalSendAttachmentHeaders(
+  Message message, {
+  required CloudSyncLocalSendSourceBinding source,
+}) {
+  final chat = message.chat.target;
+  final guid = message.guid;
+  final identity = chat == null || guid == null
+      ? null
+      : CloudSyncLocalSendIdentity.captureAttachment(
+          message,
+          chat,
+          guid,
+          expectedSourceSha256: source.sourceSha256,
+        );
+  if (chat == null ||
+      identity == null ||
+      message.error != 0 ||
+      identity.guidHash != source.messageGuidHash) {
+    throw StateError('cloud_sync_outbound_attachment_source_changed');
+  }
+  source.requireOrigin(
+    messageGuidHash: identity.guidHash,
+    sourceSha256: identity.sourceSha256,
+    accountFingerprint: source.accountFingerprint,
+  );
+  final route = chat.style == 43 ? CloudSyncGroupSendRoute.capture(chat) : null;
+  if (chat.style == 43
+      ? route == null || route.provisional || route.groupId == null
+      : chat.guid != 'iMessage;-;${chat.chatIdentifier}') {
+    throw StateError('cloud_sync_outbound_unsupported_message');
+  }
+  return _encodeOrdinaryHeaders(
+    message,
+    chatId: route?.groupId ?? chat.guid,
+    sender:
+        route?.sender ??
+        chat.usingHandle!.replaceFirst('mailto:', '').replaceFirst('tel:', ''),
+    text: null,
   );
 }
 
