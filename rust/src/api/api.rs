@@ -9029,6 +9029,7 @@ pub async fn send(
         return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
     }
     let result = state.send(&mut msg).await?;
+    let confirmation = result.confirmation();
     info!("send_finish");
 
     let local = local.clone();
@@ -9042,6 +9043,7 @@ pub async fn send(
                     result,
                     native_receipt_context,
                     &uuid,
+                    || confirmation.require_confirmed(),
                 ),
                 Err(_) => (
                     Some("cloud_sync_native_send_completion_unknown".to_owned()),
@@ -9060,12 +9062,13 @@ pub async fn send(
         });
         Ok(true)
     } else if native_receipt_context.is_some() {
-        // A missing handle is native's synchronous-success case. Route tracked
-        // sends through the same receipt-backed event path so a crash after
-        // this FFI return cannot erase IDS completion evidence.
+        // A missing handle can be synchronous completion OR a zero-target
+        // no-op. Require actual participant acceptance before emitting a
+        // protected success receipt in either completion path.
         let uuid = msg.id.clone();
         let (error, native_receipt, native_receipt_error) =
-            cloud_sync_send_confirmation_fields(Ok(()), native_receipt_context, &uuid);
+            cloud_sync_send_confirmation_fields(Ok(()), native_receipt_context, &uuid,
+                || confirmation.require_confirmed());
         let _ = local
             .send(PushMessage::SendConfirm {
                 uuid,
@@ -9085,11 +9088,21 @@ fn cloud_sync_send_confirmation_fields(
     result: Result<(), PushError>,
     native_receipt_context: Option<CloudSyncNativeSendReceiptContext>,
     stable_guid: &str,
+    confirm_participants: impl FnOnce() -> Result<(), PushError>,
 ) -> (
     Option<String>,
     Option<CloudSyncNativeSendReceipt>,
     Option<String>,
 ) {
+    // Legacy/untracked send semantics stay unchanged. Strict V2 receipts need
+    // both job completion and positive acceptance, not APSError/TimedOut
+    // progress or a missing native handle. Fixed errors cannot trigger the
+    // Dart wrapper's automatic "Send timeout; try again" resubmission.
+    let result = if native_receipt_context.is_some() {
+        result.and_then(|_| confirm_participants())
+    } else {
+        result
+    };
     match result {
         Ok(()) => match native_receipt_context {
             Some(context) => match persist_cloud_sync_native_send_receipt(context, stable_guid) {
@@ -9170,19 +9183,23 @@ pub async fn cloud_sync_windows_send_confirmed(
     }
     let result = state.send(&mut msg).await
         .map_err(|_| anyhow!("cloud_sync_windows_sender_send_failed"))?;
-    cloud_sync_windows_finish_send_job(result.handle).await
+    let confirmation = result.confirmation();
+    cloud_sync_windows_finish_send_job(result.handle,
+        || confirmation.require_confirmed()).await
 }
 
 #[frb(ignore)]
 async fn cloud_sync_windows_finish_send_job(
     handle: Option<tokio::task::JoinHandle<Result<(), PushError>>>,
+    confirm_participants: impl FnOnce() -> Result<(), PushError>,
 ) -> anyhow::Result<()> {
     if let Some(handle) = handle {
         handle.await
             .map_err(|_| anyhow!("cloud_sync_windows_sender_completion_unknown"))?
             .map_err(|_| anyhow!("cloud_sync_windows_sender_send_failed"))?;
     }
-    Ok(())
+    confirm_participants()
+        .map_err(|_| anyhow!("cloud_sync_windows_sender_unconfirmed"))
 }
 
 #[cfg(test)]
@@ -9193,7 +9210,7 @@ mod cloud_sync_windows_sender_tests {
     async fn cloud_sync_windows_sender_waits_for_actual_completion() {
         let (release, wait) = tokio::sync::oneshot::channel();
         let native = tokio::spawn(async move { wait.await.unwrap(); Ok(()) });
-        let completion = tokio::spawn(cloud_sync_windows_finish_send_job(Some(native)));
+        let completion = tokio::spawn(cloud_sync_windows_finish_send_job(Some(native), || Ok(())));
         tokio::task::yield_now().await;
         assert!(!completion.is_finished());
         release.send(()).unwrap();
@@ -9203,7 +9220,7 @@ mod cloud_sync_windows_sender_tests {
     #[tokio::test]
     async fn cloud_sync_windows_sender_failure_never_confirms() {
         let native = tokio::spawn(async { Err(PushError::TokenMissing) });
-        let error = cloud_sync_windows_finish_send_job(Some(native)).await.unwrap_err();
+        let error = cloud_sync_windows_finish_send_job(Some(native), || panic!("failed job must not confirm")).await.unwrap_err();
         assert_eq!(error.to_string(), "cloud_sync_windows_sender_send_failed");
     }
 
@@ -9211,9 +9228,9 @@ mod cloud_sync_windows_sender_tests {
     async fn cloud_sync_windows_sender_lost_job_is_unknown() {
         let native = tokio::spawn(async { std::future::pending::<Result<(), PushError>>().await });
         native.abort();
-        let error = cloud_sync_windows_finish_send_job(Some(native)).await.unwrap_err();
+        let error = cloud_sync_windows_finish_send_job(Some(native), || panic!("lost job must not confirm")).await.unwrap_err();
         assert_eq!(error.to_string(), "cloud_sync_windows_sender_completion_unknown");
-        cloud_sync_windows_finish_send_job(None).await.unwrap();
+        cloud_sync_windows_finish_send_job(None, || Ok(())).await.unwrap();
     }
 
     #[test]
@@ -9228,13 +9245,57 @@ mod cloud_sync_windows_sender_tests {
         };
 
         let (send_error, receipt, receipt_error) =
-            cloud_sync_send_confirmation_fields(Ok(()), Some(context), stable_guid);
+            cloud_sync_send_confirmation_fields(Ok(()), Some(context), stable_guid, || Ok(()));
         assert_eq!(send_error, None);
         assert!(receipt.is_none());
         assert_eq!(
             receipt_error.as_deref(),
             Some("cloud_sync_native_send_receipt_persist_failed")
         );
+    }
+
+    #[tokio::test]
+    async fn cloud_sync_windows_completed_job_without_acceptance_never_confirms() {
+        let missing_targets = cloud_sync_windows_finish_send_job(
+            None, || Err(PushError::NoValidTargets),
+        ).await.unwrap_err();
+        assert_eq!(missing_targets.to_string(), "cloud_sync_windows_sender_unconfirmed");
+        let completed = tokio::spawn(async { Ok(()) });
+        let no_ack = cloud_sync_windows_finish_send_job(
+            Some(completed), || Err(PushError::SendTimedOut),
+        ).await.unwrap_err();
+        assert_eq!(no_ack.to_string(), "cloud_sync_windows_sender_unconfirmed");
+    }
+
+    #[test]
+    fn tracked_completion_without_acceptance_never_persists_a_receipt() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let stable_guid = "11111111-2222-4abc-8def-555555555555";
+        let context = CloudSyncNativeSendReceiptContext {
+            storage_directory: directory.path().to_string_lossy().into_owned(),
+            guid_hash: cloud_sync_local_send_guid_hash(stable_guid),
+            account_fingerprint: "A".repeat(43),
+            protected_store_identity: format!("obcs2.store.{}", "S".repeat(43)),
+            native_session_id: "N".repeat(43),
+        };
+        for failure in [PushError::NoValidTargets, PushError::SendTimedOut, PushError::SendErr(6005)] {
+            let (error, receipt, receipt_error) = cloud_sync_send_confirmation_fields(
+                Ok(()), Some(context.clone()), stable_guid, || Err(failure),
+            );
+            assert_eq!(error.as_deref(), Some("cloud_sync_native_send_failed"));
+            assert!(receipt.is_none());
+            assert!(receipt_error.is_none());
+        }
+        // Negative confirmation must not even initialize the protected store.
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn untracked_send_keeps_legacy_completion_semantics() {
+        let result = cloud_sync_send_confirmation_fields(
+            Ok(()), None, "unused", || panic!("untracked send must not require strict proof"),
+        );
+        assert!(result.0.is_none() && result.1.is_none() && result.2.is_none());
     }
 
     #[tokio::test]
@@ -9255,7 +9316,7 @@ mod cloud_sync_windows_sender_tests {
         };
 
         let (send_error, receipt, receipt_error) =
-            cloud_sync_send_confirmation_fields(Ok(()), Some(context), stable_guid);
+            cloud_sync_send_confirmation_fields(Ok(()), Some(context), stable_guid, || Ok(()));
         assert_eq!(send_error, None);
         assert_eq!(receipt_error, None);
         let receipt = receipt.expect("durable receipt returned");

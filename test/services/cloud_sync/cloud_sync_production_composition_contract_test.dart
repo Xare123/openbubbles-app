@@ -356,6 +356,7 @@ void main() {
     final confirm = source.substring(confirmStart, replayStart);
     final replay = source.substring(replayStart, replayEnd);
     expect(confirm, contains('CloudSyncNativeReceiptReplayBinding? replayBinding'));
+    expect(confirm, contains('if (nativeReceipt == null) return;'));
     expect(confirm, contains('replayBinding?.requireCapturedAuth(auth);'));
     expect(confirm, contains('stillCurrent: confirmationBindingCurrent'));
     expect(replay, contains('final storagePath = statePath;'));

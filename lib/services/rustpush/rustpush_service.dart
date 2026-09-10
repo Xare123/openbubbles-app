@@ -5902,12 +5902,12 @@ class RustPushService extends GetxService {
       message.sendingServiceId = null;
       message.save(updateSendingServiceId: true);
       if (push.error == null) {
-        if (push.nativeReceiptError == null) {
+        if (push.nativeReceiptError == null && push.nativeReceipt != null) {
           await _confirmCloudSyncV2NativeSend(
             push.uuid,
             nativeReceipt: push.nativeReceipt,
           );
-        } else {
+        } else if (push.nativeReceiptError != null) {
           Logger.warn(
             'Cloud Sync V2 IDS success not journaled; durable native receipt unavailable',
           );
@@ -8206,6 +8206,10 @@ class RustPushService extends GetxService {
   Future<void> _confirmCloudSyncV2NativeSend(String stableGuid,
       {api.CloudSyncNativeSendReceipt? nativeReceipt,
       CloudSyncNativeReceiptReplayBinding? replayBinding}) async {
+    // Untracked SendConfirm events can be legacy no-ops or completed jobs
+    // without recipient acceptance. Only a protected native receipt carries
+    // the strict confirmation needed to promote an existing V2 intent.
+    if (nativeReceipt == null) return;
     if (!CloudKitWriterOwnership.v2MutationsEnabled ||
         !CloudSyncDevGate.manualOutboundCanaryEnabled ||
         !_cloudSyncV2CanaryRuntimeAllowed || loggingOut ||
@@ -8239,8 +8243,8 @@ class RustPushService extends GetxService {
     }
     // This is a local keystore identity read, not an Apple request. Failures
     // before durable confirmation propagate to the existing bounded in-memory
-    // receive retry queue. A tracked send also has a protected native receipt;
-    // untracked events still depend on the in-memory retry queue.
+    // receive retry queue. The protected native receipt also survives restart;
+    // untracked events cannot promote V2 intents.
     final auth = await captureAuth();
     if (auth == null || !stillCurrent()) return;
     replayBinding?.requireCapturedAuth(auth);
@@ -8250,43 +8254,37 @@ class RustPushService extends GetxService {
     final journal = CloudSyncLocalSendJournal(
       store: objectBox, authority: authority, authoritySnapshot: owner,
     );
-    var confirmationGuid = stableGuid;
-    if (nativeReceipt != null) {
-      // A live callback must remain bound to the exact client generation that
-      // initiated the send. A replayed receipt crossed a process boundary by
-      // definition, so its native session will be different; native replay
-      // already authenticates the protected account/store envelope and the
-      // journal below revalidates owner epoch, GUID hash and immutable source.
-      if (replayBinding == null &&
-          nativeReceipt.nativeSessionId != auth.nativeSessionId) {
-        return;
+    // A live callback must remain bound to the exact client generation that
+    // initiated the send. A replayed receipt crossed a process boundary by
+    // definition, so its native session will be different; native replay
+    // already authenticates the protected account/store envelope and the
+    // journal below revalidates owner epoch, GUID hash and immutable source.
+    if (replayBinding == null &&
+        nativeReceipt.nativeSessionId != auth.nativeSessionId) {
+      return;
+    }
+    final resolution = journal.resolveNativeSendReceipt(nativeReceipt.guidHash);
+    if (resolution == null) return;
+    if (resolution.alreadyDurable) {
+      try {
+        api.cloudSyncAcknowledgeNativeSendReceipt(
+          storageDirectory: storagePath,
+          expectedAccountFingerprint: auth.accountFingerprint,
+          expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+          receipt: nativeReceipt,
+        );
+      } catch (_) {
+        Logger.warn(
+          'Cloud Sync V2 native send receipt acknowledgement deferred',
+        );
       }
-      final resolution = journal.resolveNativeSendReceipt(
-        nativeReceipt.guidHash,
-      );
-      if (resolution == null) return;
-      if (resolution.alreadyDurable) {
-        try {
-          api.cloudSyncAcknowledgeNativeSendReceipt(
-            storageDirectory: storagePath,
-            expectedAccountFingerprint: auth.accountFingerprint,
-            expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
-            receipt: nativeReceipt,
-          );
-        } catch (_) {
-          Logger.warn(
-            'Cloud Sync V2 native send receipt acknowledgement deferred',
-          );
-        }
-        _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
-        return;
-      }
-      final resolvedGuid = resolution.stableGuid;
-      if (resolvedGuid == null ||
-          (confirmationGuid.isNotEmpty && confirmationGuid != resolvedGuid)) {
-        return;
-      }
-      confirmationGuid = resolvedGuid;
+      _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
+      return;
+    }
+    final confirmationGuid = resolution.stableGuid;
+    if (confirmationGuid == null ||
+        (stableGuid.isNotEmpty && stableGuid != confirmationGuid)) {
+      return;
     }
     final int? intentId;
     try {
@@ -8312,28 +8310,20 @@ class RustPushService extends GetxService {
           'code=${cloudSyncV2SafeFailureCode(error)}');
       return;
     }
-    if (nativeReceipt != null) {
-      var durable = intentId != null;
-      if (!durable) {
-        durable =
-            journal
-                .resolveNativeSendReceipt(nativeReceipt.guidHash)
-                ?.alreadyDurable ==
-            true;
-      }
-      if (!durable) return;
-      try {
-        api.cloudSyncAcknowledgeNativeSendReceipt(
-          storageDirectory: storagePath,
-          expectedAccountFingerprint: auth.accountFingerprint,
-          expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
-          receipt: nativeReceipt,
-        );
-      } catch (_) {
-        Logger.warn(
-          'Cloud Sync V2 native send receipt acknowledgement deferred',
-        );
-      }
+    final durable = intentId != null ||
+        journal.resolveNativeSendReceipt(nativeReceipt.guidHash)?.alreadyDurable == true;
+    if (!durable) return;
+    try {
+      api.cloudSyncAcknowledgeNativeSendReceipt(
+        storageDirectory: storagePath,
+        expectedAccountFingerprint: auth.accountFingerprint,
+        expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+        receipt: nativeReceipt,
+      );
+    } catch (_) {
+      Logger.warn(
+        'Cloud Sync V2 native send receipt acknowledgement deferred',
+      );
     }
     final confirmedIntentId = intentId;
     if (confirmedIntentId == null) return;

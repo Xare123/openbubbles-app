@@ -70,7 +70,7 @@ const IDS_SEND_RECEIPT_SUFFIX: &str = ".receipt";
 const MAX_IDS_SEND_RECEIPTS_PER_REPLAY: usize = 64;
 const MAX_IDS_SEND_RECEIPT_BYTES: u64 = 64 * 1024;
 const IDS_SEND_RECEIPT_ID_DOMAIN: &[u8] =
-    b"OpenBubbles Cloud Sync V2 IDS send receipt identity v1\0";
+    b"OpenBubbles Cloud Sync V2 IDS send receipt identity v2\0";
 const GC_CURSOR_FILE_NAME: &str = ".cursor";
 const RAW_ENVELOPE_MAGIC: &[u8] = b"OBCS2-NATIVE-RAW";
 const CHECKPOINT_MAGIC: &[u8] = b"OBCS2-NATIVE-CHECKPOINT";
@@ -1762,7 +1762,7 @@ impl CloudNativeIdsSendReceipt {
     fn encode(&self) -> Result<String, CloudNativeStoreFailure> {
         self.validate()?;
         Ok(serde_json::json!({
-            "version": 1,
+            "version": 2,
             "guidHash": self.guid_hash,
             "accountFingerprint": self.account_fingerprint,
             "protectedStoreIdentity": self.protected_store_identity,
@@ -1778,7 +1778,10 @@ impl CloudNativeIdsSendReceipt {
             .as_object()
             .filter(|object| object.len() == 5)
             .ok_or(CloudNativeStoreFailure::InvalidReference)?;
-        if object.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+        // Version 1 certified SendJob completion, which also included no-op
+        // sends and failed recipient progress. Retain it as legacy evidence,
+        // but do not replay it as positive participant acceptance.
+        if object.get("version").and_then(serde_json::Value::as_u64) != Some(2) {
             return Err(CloudNativeStoreFailure::InvalidReference);
         }
         let receipt = Self {
@@ -6038,6 +6041,38 @@ mod tests {
         assert_eq!(replayed[0].receipt_id, first);
         assert_eq!(replayed[0].guid_hash, receipt.guid_hash);
         assert_eq!(replayed[0].native_session_id, receipt.native_session_id);
+    }
+
+    #[test]
+    fn legacy_completion_only_receipt_is_retained_but_never_replayed_or_acknowledged() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let receipt = ids_send_receipt_fixture(directory.path(), 'a', 'A', 'N');
+        let receipt_id = store.persist_ids_send_receipt(&receipt).unwrap();
+        let path = store.ids_send_receipt_path(&receipt_id).unwrap();
+        let mut legacy: serde_json::Value = serde_json::from_str(&receipt.encode().unwrap()).unwrap();
+        legacy["version"] = serde_json::json!(1);
+        assert!(CloudNativeIdsSendReceipt::decode(&legacy.to_string()).is_err());
+        let scope = CloudNativeProtectionScope::new(
+            receipt.account_fingerprint.clone(), CloudNativeStream::Messages,
+        ).unwrap();
+        let ciphertext = store.protect_one(&scope, &CloudNativePlaintext {
+            purpose: CloudNativeProtectionPurpose::IdsSendReceipt,
+            value: legacy.to_string(),
+        }).unwrap();
+        fs::write(&path, ciphertext.as_bytes()).unwrap();
+        let page = store.replay_ids_send_receipts(
+            &receipt.account_fingerprint, &receipt.protected_store_identity, None,
+        ).unwrap();
+        assert!(page.receipts.is_empty());
+        let replay = CloudNativeIdsSendReceiptReplay {
+            receipt_id, guid_hash: receipt.guid_hash.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+        };
+        assert!(store.acknowledge_ids_send_receipt(
+            &replay, &receipt.account_fingerprint, &receipt.protected_store_identity,
+        ).is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), ciphertext);
     }
 
     #[test]
