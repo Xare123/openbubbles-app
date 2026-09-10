@@ -55,7 +55,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Candidate | Code `731988a3d` persists IDS proof version 2 through journal admission and restart, above positive-acknowledgment native base `35551340c`. Pre-proof rows retain version 0. They cannot initiate a new CloudKit save, but their original protected envelopes remain readable for exact outcome reconciliation. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
+| Candidate | Code `e060bcb41` repairs retained-queue scheduling above persisted IDS-proof base `731988a3d` and positive-acknowledgment native base `35551340c`. Pre-proof rows retain version 0 and cannot initiate a new CloudKit save; original envelopes remain recoverable. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
 | Pending qualification | GCE `34441590911` finished with 2,553 Dart tests passing and one old-schema fixture failure. The new IDS-proof upgrade/admission tests passed; the older readback-marker fixture incorrectly retained property 15 below lastPropertyId 13 and is corrected in this candidate. Runner deletion and zero VM/registration inventory were independently verified. New retained-queue integration tests await the next Dart-only run. Locally, 59 queue/composition checks and Windows launcher tests pass; local ObjectBox execution remains unavailable (DLL 126). Native base `35551340c` passed 377 app Rust and 260 rustpush tests. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
 | Dependency | rustpush `2bfbe8a06168a203c7c9f162b6fcbb45f1224560` adds a shared acknowledgment tracker above attachment-integrity base `a78ccfd`. Only explicit status 0 qualifies; the legacy meaning of 5008 is not assumed. Missing intended group targets remain unconfirmed. Ordinary send progress behavior is preserved. All seven tracker tests passed within the 260-test native run. |
@@ -69,6 +69,17 @@ Windows validation: the on-disk harness receipt still names the older
 -SkipBuild` only with an exact source/configuration and binary-hash receipt.
 Writer and read-only build identities differ. This is test-loop plumbing, not
 live CloudKit proof. Alpha and its identity remain untouched.
+
+Current execution: Dart-only GCE `34443435257` is testing exact source
+`e060bcb41cb72593ec17d48308a7a94dc63a99c3` (pilot `e4baad9ee`, T2D-32,
+`us-west1-a`). Windows build-only failed before launch: Code Integrity events
+3033/3077 explicitly blocked `proc_macro_signing_wrapper_delayed.exe` under
+policy `0283ac0f-fff1-49ae-ada1-8a933130cad6`, despite a valid self-signed
+development certificate. No policy, certificate trust, or security setting
+was changed. A valid Authenticode result is not proof the policy permits execution.
+Pixel reconnected wirelessly; installed Canary is `1.15.0`/`20002227`, updated
+2026-09-08. Its control receiver reported `adb_app_not_ready`; no launch,
+install, send, or clear-data operation was performed.
 
 ### What the candidate includes
 

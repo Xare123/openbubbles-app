@@ -541,3 +541,11 @@ This is a chronological evidence log. It does not override the
   no app launch, no production Store close, exact writer configuration receipt
   before reuse. Both agents are closed and verified absent. No dedicated
   worktrees were created; their reviewed source and provenance are retained.
+- Candidate `e060bcb41` was pushed to the fork and dispatched to Dart-only GCE
+  `34443435257` on T2D-32 in `us-west1-a`. The local build-only writer refresh
+  failed in 8.9 seconds because Application Control explicitly blocked the
+  compiler helper. Its self-signed development certificate verifies, but does
+  not satisfy the execution policy. No policy bypass, trust modification, or
+  repeated build attempt was made. Receipt remains the old one. Wireless ADB
+  reconnected to Pixel; Canary metadata and a no-launch status check were read.
+  The diagnostic engine was not ready. Neither app was launched or modified.
