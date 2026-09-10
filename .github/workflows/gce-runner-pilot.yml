@@ -662,6 +662,63 @@ jobs:
           path: build/app/outputs/flutter-apk/app-${{ inputs.flavor || 'beta' }}-debug.apk
           if-no-files-found: error
 
+      # Full-mode gate: ready-handshake/engine-lifetime Kotlin JVM tests were
+      # never executed (flutter/Rust/APK only). Same VM after qualified APK,
+      # reusing pinned Gradle 8.9 install above (no new download). Flutter APK
+      # already qualified exact android-arm64 outputs, so exclude only
+      # compileFlutterBuild<Flavor>Debug; keep Kotlin/test compilation.
+      # Fails closed when prerequisite APK is absent.
+      - name: Run Android JVM unit tests
+        id: android-jvm
+        if: ${{ env.VALIDATION_MODE == 'full' }}
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="../build/app/outputs/flutter-apk/app-${BUILD_FLAVOR}-debug.apk"
+          if [[ ! -f "$apk" ]]; then
+            echo "Prerequisite APK absent: $apk" >&2
+            exit 1
+          fi
+          case "$BUILD_FLAVOR" in
+            beta) flavor=Beta ;;
+            canary) flavor=Canary ;;
+            *) echo "Unexpected flavor: $BUILD_FLAVOR" >&2; exit 1 ;;
+          esac
+          gradle --no-daemon --max-workers=8 --console=plain ":app:test${flavor}DebugUnitTest" -x ":app:compileFlutterBuild${flavor}Debug" -Ptarget-platform=android-arm64
+          python3 - "$flavor" <<'PY'
+          import sys, glob, xml.etree.ElementTree as ET
+          flavor = sys.argv[1]
+          pat = "../build/app/test-results/test" + flavor + "DebugUnitTest/*.xml"
+          files = sorted(glob.glob(pat))
+          if not files:
+              print("No JVM test XML", file=sys.stderr)
+              sys.exit(1)
+          tests = failures = errors = skipped = 0
+          for f in files:
+              root = ET.parse(f).getroot()
+              suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
+              for s in suites:
+                  tests += int(s.get("tests", 0))
+                  failures += int(s.get("failures", 0))
+                  errors += int(s.get("errors", 0))
+                  skipped += int(s.get("skipped", 0))
+          msg = "JVM unit tests " + flavor + ": files=" + str(len(files)) + " tests=" + str(tests) + " failures=" + str(failures) + " errors=" + str(errors) + " skipped=" + str(skipped)
+          print(msg)
+          if tests - skipped <= 0 or failures or errors:
+              print("JVM tests were not executed or reported failures; failing closed.", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Upload Android JVM unit test results
+        if: ${{ always() && env.VALIDATION_MODE == 'full' && steps.android-jvm.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: GCE Android JVM unit tests (${{ env.BUILD_FLAVOR }} debug)
+          path: build/app/test-results/test*DebugUnitTest/*.xml
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Fail on generated bridge drift
         if: ${{ steps.binding-drift.outputs.drift == 'true' }}
         shell: bash
