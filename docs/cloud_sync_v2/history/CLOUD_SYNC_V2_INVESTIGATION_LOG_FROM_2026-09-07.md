@@ -312,6 +312,12 @@ This is a chronological evidence log. It does not override the
   and uncertain-record-save states in the upcoming attachment implementation;
   source-level content hashing does not prove server-side upload deduplication.
 - Retained-history review corrected the claim that no bounded sweep existed.
-  A targeted already-applied replay convergence repair is being qualified;
-  the old 1,893/1,693 live blocking counts are not evidence that this defect
-  explains those rows. No current Pixel recount has been obtained.
+  Parent rejected the proposed already-applied replay change: the agent's
+  fixture independently seeded an applied marker plus a retained inbox row,
+  while production commits replay and inbox state atomically and validates
+  exact inbox sequence, payload, record map, and revision. The existing suite
+  explicitly requires retaining this conflicting state. No legitimate path or
+  live evidence justified weakening that guard. The agent patch and duplicate
+  synthetic test were removed, with the original files restored exactly.
+  The old 1,893/1,693 live blocking counts remain historical observations,
+  not a current recount or a diagnosed single-cause backlog.
