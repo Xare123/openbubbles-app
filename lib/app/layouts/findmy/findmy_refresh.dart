@@ -1,3 +1,5 @@
+import 'dart:async';
+
 /// Per-section last-good data and retry state. A failed service cannot invalidate
 /// another section or make a failed refresh look fresh.
 class FindMyRefreshState<T> {
@@ -14,9 +16,10 @@ class FindMyRefreshState<T> {
     bool force = false,
     Duration? maxAge,
     DateTime Function()? clock,
+    bool Function()? isActive,
   }) async {
     final now = clock ?? DateTime.now;
-    if (loading) return false;
+    if (loading || isActive?.call() == false) return false;
     final started = now();
     if (!force) {
       if (retryAfter?.isAfter(started) == true) return false;
@@ -30,12 +33,14 @@ class FindMyRefreshState<T> {
     loading = true;
     try {
       final next = await fetch();
+      if (isActive?.call() == false) return false;
       value = next;
       lastSuccessAt = now();
       retryAfter = null;
       error = null;
       return true;
     } catch (failure) {
+      if (isActive?.call() == false) return false;
       error = failure;
       retryAfter = now().add(const Duration(minutes: 1));
       return false;
@@ -43,6 +48,95 @@ class FindMyRefreshState<T> {
       loading = false;
     }
   }
+}
+
+/// People polls and selections share a FIFO through projection and publication.
+/// Follow-up selection must be awaited by the caller after this method returns,
+/// never from [publish], so it cannot wait on its own queue slot.
+class FindMyPeopleRefreshState<R, T> extends FindMyRefreshState<List<T>> {
+  FindMyPeopleRefreshState(super.value);
+
+  Future<void> _tail = Future<void>.value();
+
+  Future<bool> refreshAndPublish({
+    required Future<Iterable<R>> Function() fetch,
+    required List<T> Function(Iterable<R>) project,
+    required void Function() publish,
+    bool force = false,
+    bool Function()? isActive,
+    void Function(Iterable<R>, List<T>)? onSuccess,
+    void Function(String stage, Object error)? onFailure,
+  }) async {
+    final previous = _tail;
+    final done = Completer<void>();
+    _tail = done.future;
+    await previous;
+    try {
+      if (isActive?.call() == false) return false;
+      final succeeded = await refresh(
+        () async {
+          var stage = 'fetch';
+          try {
+            final rows = await fetch();
+            if (isActive?.call() == false) return value;
+            stage = 'projection';
+            final projected = project(rows);
+            onSuccess?.call(rows, projected);
+            return projected;
+          } catch (error) {
+            onFailure?.call(stage, error);
+            rethrow;
+          }
+        },
+        force: force,
+        isActive: isActive,
+      );
+      if (isActive?.call() != false) publish();
+      return succeeded;
+    } finally {
+      done.complete();
+    }
+  }
+}
+
+/// Popup events echo explicit selections. Remember intent before awaiting the
+/// request so repeated events cannot enqueue the same selection recursively.
+class FindMySelectionIntent {
+  String? selected;
+
+  bool acceptPopup(String? next) {
+    if (selected == next) return false;
+    selected = next;
+    return true;
+  }
+}
+
+String findMyPeopleSummary({
+  required bool selection,
+  required int roster,
+  required int nativeLocations,
+  required int projectedLocations,
+  required int locating,
+  bool? selectedPresent,
+  bool? selectedHasLocation,
+}) =>
+    'Find My People source=${selection ? 'selection' : 'poll'} '
+    'roster=$roster native_locations=$nativeLocations '
+    'projected_valid_locations=$projectedLocations locating=$locating'
+    '${selectedPresent == null ? '' : ' selected_present=$selectedPresent selected_has_location=$selectedHasLocation'}';
+
+/// Keep the existing (0, 0) unknown-location sentinel, but allow either zero
+/// axis individually. Invalid/missing coordinates belong in the other bucket.
+bool hasFindMyLocation(double? latitude, double? longitude) {
+  return latitude != null &&
+      longitude != null &&
+      latitude.isFinite &&
+      longitude.isFinite &&
+      latitude >= -90 &&
+      latitude <= 90 &&
+      longitude >= -180 &&
+      longitude <= 180 &&
+      (latitude != 0 || longitude != 0);
 }
 
 List<T> projectFindMyPeople<R, T>(

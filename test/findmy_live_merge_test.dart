@@ -1,8 +1,28 @@
 import "package:bluebubbles/app/layouts/findmy/findmy_page.dart";
 import "package:bluebubbles/database/global/findmy_friend.dart";
 import "package:flutter_test/flutter_test.dart";
+import "package:flutter/widgets.dart";
+import "package:flutter_map/flutter_map.dart";
+import "package:latlong2/latlong.dart";
 
 void main() {
+  test('friend marker replacement preserves current/device/item markers', () {
+    Marker marker(String key) => Marker(
+      key: ValueKey(key), point: const LatLng(1, 1), child: const SizedBox(),
+    );
+    final current = marker('current');
+    final device = marker('device-synthetic');
+    final item = marker('item-synthetic');
+    final markers = <String, Marker>{
+      'current': current, 'device': device, 'item': item,
+      'old-friend': marker('friend-synthetic'),
+    };
+    removeFindMyFriendMarkers(markers);
+    expect(markers, {'current': current, 'device': device, 'item': item});
+    removeFindMyFriendMarkers(markers);
+    expect(markers.length, 3);
+  });
+
   group("deriveFindMyStateCode", () {
     test("returns null for null, empty, and single-character areas", () {
       expect(deriveFindMyStateCode(null), isNull);

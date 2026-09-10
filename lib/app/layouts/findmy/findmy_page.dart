@@ -77,6 +77,14 @@ bool shouldApplyLiveFriendUpdate({required LocationStatus? existingStatus, requi
 enum LiveFriendMergeAction { append, replace, ignore }
 
 @visibleForTesting
+void removeFindMyFriendMarkers(Map<String, Marker> markers) {
+  markers.removeWhere((_, marker) {
+    final key = marker.key;
+    return key is ValueKey<String> && key.value.startsWith('friend-');
+  });
+}
+
+@visibleForTesting
 LiveFriendMergeAction decideLiveFriendMerge({required int existingIndex, required LocationStatus? existingStatus, required LocationStatus? incomingStatus, required bool incomingLocatingInProgress}) {
   if (existingIndex == -1) return LiveFriendMergeAction.append;
   final apply = shouldApplyLiveFriendUpdate(existingStatus: existingStatus, incomingStatus: incomingStatus, incomingLocatingInProgress: incomingLocatingInProgress);
@@ -131,7 +139,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   bool nearbyAccessoryBusy = false;
   bool locationsRequestInFlight = false;
   bool currentLocationRequestInFlight = false;
-  final _peopleRefresh = FindMyRefreshState<List<FindMyFriend>>([]);
+  final _peopleRefresh = FindMyPeopleRefreshState<api.Follow, FindMyFriend>([]);
+  final _peopleSelection = FindMySelectionIntent();
   final _devicesRefresh = FindMyRefreshState<List<FindMyDevice>>([]);
   final _itemsRefresh = FindMyRefreshState<List<api.DartBeacon>>([]);
   Completer<void>? fmipRequest;
@@ -365,7 +374,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       try {
         final friend = FindMyFriend.fromJson(data);
         Logger.info("Received new location for ${friend.handle?.address}");
-        if ((friend.latitude ?? 0) == 0 && (friend.longitude ?? 0) == 0) return;
+        if (!hasFindMyLocation(friend.latitude, friend.longitude)) return;
         final existingFriendIndex = friends.indexWhere((e) => e.handle?.uniqueAddressAndService == friend.handle?.uniqueAddressAndService);
         final existingStatus = existingFriendIndex == -1 ? null : friends[existingFriendIndex].status;
         final mergeAction = decideLiveFriendMerge(existingIndex: existingFriendIndex, existingStatus: existingStatus, incomingStatus: friend.status, incomingLocatingInProgress: friend.locatingInProgress);
@@ -377,8 +386,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
             friends[existingFriendIndex] = friend;
           }
 
-          friendsWithLocation = friends.where((item) => (item.latitude ?? 0) != 0 && (item.longitude ?? 0) != 0).toList();
-          friendsWithoutLocation = friends.where((item) => (item.latitude ?? 0) == 0 && (item.longitude ?? 0) == 0).toList();
+          friendsWithLocation = friends.where((item) => hasFindMyLocation(item.latitude, item.longitude)).toList();
+          friendsWithoutLocation = friends.where((item) => !hasFindMyLocation(item.latitude, item.longitude)).toList();
 
           buildFriendMarker(friend);
           setState(() {});
@@ -471,7 +480,36 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   }
 
   Future<void> refreshPeople({required bool refreshFriends, required bool force}) async {
-    await _peopleRefresh.refresh(() async {
+    final succeeded = await requestPeople(refreshFriends: refreshFriends, force: force);
+    if (!mounted || !succeeded || widget.defaultFriend == null) return;
+    final friendId = widget.defaultFriend;
+    widget.defaultFriend = null;
+    if (!friends.any((friend) => friend.id == friendId)) return;
+
+    // The poll has released the People queue before this follow-up selection.
+    if (!await selectPerson(friendId!)) return;
+    if (!mounted) return;
+    final friend = friends.firstWhereOrNull((friend) => friend.id == friendId);
+    if (friend == null || !hasFindMyLocation(friend.latitude, friend.longitude)) return;
+    if (context.isPhone) await panelController.close();
+    await completer.future;
+    if (!mounted) return;
+    final marker = markers.values.firstWhereOrNull(
+        (e) => (e.key as ValueKey?)?.value == "friend-${friend.handle?.uniqueAddressAndService}");
+    if (marker == null) return;
+    popupController.showPopupsOnlyFor([marker]);
+    mapController.move(LatLng(friend.latitude!, friend.longitude!), 10);
+  }
+
+  Future<bool> selectPerson(String? friendId) async {
+    _peopleSelection.selected = friendId;
+    final succeeded = await requestPeople(refreshFriends: true, force: true, selection: true, selectedFriend: friendId);
+    if (!succeeded && mounted) showSnackbar("Find My", "Could not refresh the selected person.");
+    return succeeded;
+  }
+
+  Future<bool> requestPeople({required bool refreshFriends, required bool force, bool selection = false, String? selectedFriend}) {
+    return _peopleRefresh.refreshAndPublish(fetch: () async {
       var isNew = fmfClient == null;
       fmfClient ??= await api.makeFindMyFriends(
         path: pushService.statePath,
@@ -480,12 +518,17 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         anisette: pushService.state!.anisette,
         provider: pushService.state!.icloudServices!.tokenProvider,
       );
-      if (refreshFriends && !isNew) {
-        await api.refreshFollowing(config: pushService.state!.osConfig, client: fmfClient!);
+      // Disposal can also happen during native client initialization.
+      if (!mounted) return <api.Follow>[];
+      // Null is an explicit deselection for map-popup events, not a poll.
+      if (selection) {
+        return api.selectFriend(config: pushService.state!.osConfig, client: fmfClient!, friend: selectedFriend);
       }
-
-      var following = await api.getFollowing(client: fmfClient!);
-    
+      if (refreshFriends && !isNew) {
+        return api.refreshFollowing(config: pushService.state!.osConfig, client: fmfClient!);
+      }
+      return api.getFollowing(client: fmfClient!);
+    }, project: (following) {
       return projectFindMyPeople(
           following,
           handles: (e) => e.invitationAcceptedHandles,
@@ -501,55 +544,42 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
               handle: Handle.findOne(addressAndService: Tuple2(address, "iMessage")) ?? Handle(address: address),
               lastUpdated: e.lastLocation?.timestamp != null ? DateTime.fromMillisecondsSinceEpoch(e.lastLocation!.timestamp) : null,
               status: null, 
-              locatingInProgress: false,
+              locatingInProgress: e.locateInProgress,
               id: e.id,
             );
           });
-    }, force: force);
+    }, force: force, isActive: () => mounted, publish: publishPeople,
+    onSuccess: (rows, projected) {
+      final selected = selectedFriend == null ? null : rows.firstWhereOrNull((row) => row.id == selectedFriend);
+      Logger.info(findMyPeopleSummary(
+        selection: selection,
+        roster: rows.length,
+        nativeLocations: rows.where((row) => row.lastLocation != null).length,
+        projectedLocations: projected.where((row) => hasFindMyLocation(row.latitude, row.longitude)).length,
+        locating: rows.where((row) => row.locateInProgress).length,
+        selectedPresent: selection && selectedFriend != null ? selected != null : null,
+        selectedHasLocation: selection && selectedFriend != null ? selected?.lastLocation != null : null,
+      ));
+    }, onFailure: (stage, error) {
+      Logger.info('Find My People source=${selection ? 'selection' : 'poll'} failed stage=$stage type=${error.runtimeType}');
+    });
+  }
+
+  void publishPeople() {
     if (!mounted) return;
     friends = _peopleRefresh.value;
 
-      friendsWithLocation = friends.where((item) => (item.latitude ?? 0) != 0 && (item.longitude ?? 0) != 0).toList();
-      friendsWithoutLocation = friends.where((item) => (item.latitude ?? 0) == 0 && (item.longitude ?? 0) == 0).toList();
+    friendsWithLocation = friends.where((item) => hasFindMyLocation(item.latitude, item.longitude)).toList();
+    friendsWithoutLocation = friends.where((item) => !hasFindMyLocation(item.latitude, item.longitude)).toList();
 
-      for (FindMyFriend e in friendsWithLocation) {
-        buildFriendMarker(e);
-      }
-      setState(() {
-        fetching2 = _peopleRefresh.error == null ? false : null;
-        refreshing2 = false;
-      });
-      if (_peopleRefresh.error == null && widget.defaultFriend != null) {
-        var friend = friends.firstWhereOrNull((friend) => friend.id == widget.defaultFriend);
-        widget.defaultFriend = null;
-        if (friend != null) {
-          if (context.isPhone) {
-            await panelController.close();
-          }
-          await completer.future;
-
-          if (!mounted) return;
-          try {
-            await api.selectFriend(config: pushService.state!.osConfig, client: fmfClient!, friend: friend.id);
-          } catch (_) {
-            // Selection is not a failed People/Devices/Items refresh.
-            if (mounted) showSnackbar("Find My", "Could not refresh the selected person.");
-            return;
-          }
-          if (!mounted) return;
-
-
-          if (friend.latitude != null) {
-
-            final marker = markers.values.firstWhereOrNull(
-                (e) => (e.key as ValueKey?)?.value == "friend-${friend.handle?.uniqueAddressAndService}");
-            if (marker == null) return;
-            popupController.showPopupsOnlyFor([marker]);
-            mapController.move(LatLng(friend.latitude!, friend.longitude!), 10);
-
-          }
-        }
-      }
+    removeFindMyFriendMarkers(markers);
+    for (FindMyFriend e in friendsWithLocation) {
+      buildFriendMarker(e);
+    }
+    setState(() {
+      fetching2 = _peopleRefresh.error == null ? false : null;
+      refreshing2 = false;
+    });
   }
 
   Future<void> refreshCloudDevices({required bool refreshDevices, required bool force}) async {
@@ -1465,7 +1495,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                                 title: Text(item.handle?.displayName ?? item.title ?? "Unknown Friend"),
                                 subtitle: Text(ss.settings.redactedMode.value ? "Location" : (item.longAddress ?? "No location found")),
                                 onTap: () async {
-                                  await api.selectFriend(config: pushService.state!.osConfig, client: fmfClient!, friend: item.id);
+                                  if (item.id != null) await selectPerson(item.id!);
                                 },
                                 onLongPress: () async {
                                   const encoder = JsonEncoder.withIndent("     ");
@@ -2125,13 +2155,13 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         PopupMarkerLayer(
           options: PopupMarkerLayerOptions(
             onPopupEvent: (ev, m) async {
+              if (!mounted) return;
               final friend = m.isEmpty
                   ? null
                   : friends.firstWhereOrNull(
-                      (e) => e.latitude == m[0].point.latitude && e.longitude == m[0].point.longitude);
-              if (fmfClient != null) {
-                await api.selectFriend(
-                    config: pushService.state!.osConfig, client: fmfClient!, friend: friend?.id);
+                      (e) => m[0].key == ValueKey('friend-${e.handle?.uniqueAddressAndService}'));
+              if (fmfClient != null && _peopleSelection.acceptPopup(friend?.id)) {
+                await selectPerson(friend?.id);
               }
             },
             popupController: popupController,
