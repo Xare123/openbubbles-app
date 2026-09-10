@@ -268,6 +268,66 @@ thing standing between the current tree and a public Windows release.
 This gate is unrelated to Cloud Sync. The CloudKit-relevant Windows artifact,
 the Rust bridge, builds and verifies for both architectures.
 
+## Isolated engineering build (September 10)
+
+The isolated pilot branch now has `windows-cloudkit-fast-loop.yml`, backed by
+`tooling/windows-cloudkit-build/build_and_smoke.ps1`. It uses GitHub's native
+`windows-11-arm` host, a previously successful Rust build platform for this
+fork. No GCE Windows bootstrap, Apple profile upload, PC security change, or
+production signing is required. Linux-only GCE tests remain a separate lane.
+
+The job builds the minimal CloudKit Flutter harness, not the full native-media
+application. `local-write` is an explicit compile variant with automatic-send
+runtime disabled. Build identity is derived with the existing launcher before
+generated files change the checkout. The source SHA, variant, binary hashes,
+and unsigned engineering status are recorded; public redistribution is not
+qualified by this job.
+
+Runtime proof requires the full native encoder suite against the packaged
+DLL: 48 cases on current source `6c628feb6`. An invalid-launch GUI diagnostic
+only qualifies startup if its exact Dart marker is captured. DLL load or any
+nonzero exit alone is not that proof. Artifact logs/archives expire in three
+days, and the Windows VM lifetime is bounded by its 90-minute job.
+
+Verified successful build: [run 34491135220](https://github.com/Xare123/openbubbles-app/actions/runs/34491135220),
+pilot `a2680baac`, source `6c628feb6`. Job time was 23m27s, including 15m43.7s
+Flutter compilation. The 29 focused Dart tests, both PowerShell contracts,
+48 native-DLL codec cases, ARM64 PE checks, and actual invalid-launch Dart
+marker all passed. This is engineering qualification, not a live sync result.
+The previous run `34489497490` passed 27 focused Dart cases but failed two
+database-backed cases with missing `objectbox.dll` (loader error 126), before
+native compilation. Supply the pinned ObjectBox 5.3.2 Windows ARM64 release
+archive on the runner's PATH before `flutter test`, not just during CMake.
+The pilot checks its SHA256 and PE ARM64 architecture, without global install
+or application changes. The replacement run completed those missing checks.
+Import into the retained local profile still requires hash/identity verification,
+local signing if required, and matching launch receipts. No identity or message
+database should be overwritten by an engineering-bundle update.
+
+### Preserve the ObjectBox vendor bytes
+
+The imported bundle's 78 files matched the cloud manifest. Local re-signing of
+`objectbox.dll` then caused App Control 4551 before the real database opened.
+Both the old and newly self-signed copies were blocked. The verified,
+unmodified ObjectBox 5.3.2 ARM64 DLL loaded under the same unchanged policy.
+Replacing only that DLL in the qualified runtime allowed the retained profile
+to open and an existing-request resume to finish. No trust or security setting
+was changed. This counterexample is specific to these bytes and this host;
+it does not establish that every unsigned binary will be accepted.
+
+- Required vendor DLL SHA256: `9c8583c4015ab9e4ce2ed3d2d581811fa059e03bb528cb8c8387adcdfda8d8a5`.
+- `Get-HarnessSignableArtifacts` excludes `objectbox.dll`; the launcher checks
+  its exact version-bound hash before fresh builds or reuse. Review this pin
+  when the dependency version changes. Never strip or replace signatures to
+  satisfy this check; recover the original verified release artifact.
+- Qualified checkout: `C:\Codex\OpenBubblesReview\worktrees\windows-cloudkit-qualified`.
+- Provenance, original archive, rejected DLL and old receipt remain under
+  `C:\Codex\OpenBubblesReview\build-evidence\windows-fast-loop-34491135220`.
+
+The first fresh send test reached recipient lookup but failed with IDS `6005`.
+It never created a claim or sent a message. That is an account-registration
+boundary, not another loader failure or evidence of a CloudKit write failure.
+
 ## Not covered here
 
 Android release signing needs a keystore and `android/key.properties`, neither

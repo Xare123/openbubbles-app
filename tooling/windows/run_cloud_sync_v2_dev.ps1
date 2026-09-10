@@ -26,6 +26,7 @@ param(
     [switch] $StagedChatIdentityObservation,
     [switch] $LocalWrite,
     [switch] $MessageFeedProbe,
+    [switch] $FindMyProbe,
     [ValidateRange(30, 3600)]
     [int] $RunOnceTimeoutSeconds = 600,
     [ValidateRange(60, 7200)]
@@ -50,11 +51,15 @@ $selectedOperations = @(
         $ChatIdentityObservation,
         $StagedChatIdentityObservation,
         $LocalWrite,
-        $MessageFeedProbe
+        $MessageFeedProbe,
+        $FindMyProbe
     ) | Where-Object { $_ }
 )
 if ($selectedOperations.Count -gt 1) {
     throw "Choose only one harness operation."
+}
+if ($FindMyProbe -and $ReplayExcludedChats) {
+    throw 'FindMyProbe cannot select a replay or writer configuration.'
 }
 if ($BuildOnly -and $SkipBuild) {
     throw "BuildOnly cannot be combined with SkipBuild."
@@ -105,7 +110,27 @@ function Get-HarnessSignableArtifacts {
             ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
             throw "A harness binary is outside its physical build directory."
         }
+        # Preserve the publisher's bytes. Re-signing the vendor ObjectBox DLL
+        # made this host reject it with App Control 4551; its untouched release
+        # binary loads successfully under the same unchanged policy.
+        if ($file.Name -ieq 'objectbox.dll') { continue }
         $file.FullName
+    }
+}
+
+function Assert-HarnessObjectBoxRuntime {
+    param([Parameter(Mandatory)][string] $RunnerDirectory)
+
+    $library = Get-Item -LiteralPath (Join-Path $RunnerDirectory 'objectbox.dll') -ErrorAction Stop
+    if ($library.PSIsContainer -or ($library.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'The vendor ObjectBox runtime must be a physical DLL.'
+    }
+    # ObjectBox 5.3.2 Windows ARM64, as pinned by objectbox_flutter_libs and
+    # verified in the source-only cloud bundle. Review this pin on upgrades.
+    $expected = '9c8583c4015ab9e4ce2ed3d2d581811fa059e03bb528cb8c8387adcdfda8d8a5'
+    $actual = (Get-FileHash -LiteralPath $library.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -cne $expected) {
+        throw 'Expected the unmodified ObjectBox 5.3.2 Windows ARM64 runtime. Restore the verified vendor DLL; do not re-sign it.'
     }
 }
 if ($ReplayExcludedChats -and -not $Drain) {
@@ -441,7 +466,8 @@ function Read-FreshHarnessStatus {
         [Parameter(Mandatory)][datetime] $LaunchStartedUtc,
         [Parameter(Mandatory)][datetime] $BaselineWriteUtc,
         [Parameter(Mandatory)][string] $ExpectedLaunchId,
-        [Parameter(Mandatory)][int] $ExpectedProcessId
+        [Parameter(Mandatory)][int] $ExpectedProcessId,
+        [string] $ExpectedBuildIdentifier
     )
 
     try {
@@ -453,6 +479,34 @@ function Read-FreshHarnessStatus {
             return $null
         }
         $payload = Read-HarnessStatusText -Path $StatusPath | ConvertFrom-Json
+        if ($ExpectedBuildIdentifier) {
+            $buildProperty = $payload.PSObject.Properties['build_identifier']
+            if ($null -eq $buildProperty -or
+                [string]$buildProperty.Value -cne $ExpectedBuildIdentifier) {
+                return $null
+            }
+            if ($payload.state -eq 'finished') {
+                $report = $payload.detail | ConvertFrom-Json
+                if ($report.version -cne 'windows-findmy-probe-v1' -or
+                    $report.launch_id -cne $ExpectedLaunchId -or
+                    $report.build_identifier -cne $ExpectedBuildIdentifier -or
+                    $report.live_reads_admitted -ne $true) { return $null }
+                $devicesObserved = $report.devices.state -eq 'observed' -and
+                    $report.devices.fresh_request_completed -eq $true
+                $peopleObserved = $report.people.state -eq 'observed' -and
+                    $report.people.fresh_request_completed -eq $true
+                $selectedObserved = $report.selected.requested -eq $false -or
+                    ($report.selected.state -eq 'observed' -and
+                        $report.selected.fresh_request_completed -eq $true)
+                $expectedStage = if ($devicesObserved -and $peopleObserved -and $selectedObserved) {
+                    'findmy-probe-complete'
+                } elseif ($devicesObserved -or $peopleObserved) {
+                    'findmy-probe-partial'
+                } else { 'findmy-probe-reads-failed' }
+                if ($payload.stage -cne $expectedStage -or
+                    $expectedStage -eq 'findmy-probe-reads-failed') { return $null }
+            }
+        }
         $updatedProperty = $payload.PSObject.Properties['updated_utc']
         $versionProperty = $payload.PSObject.Properties['version']
         $launchIdProperty = $payload.PSObject.Properties['launch_id']
@@ -582,12 +636,18 @@ function Wait-HarnessOperation {
             'chat-identity-observation',
             'staged-chat-identity-observation',
             'local-write',
-            'message-feed-probe'
+            'message-feed-probe',
+            'findmy-probe'
         )]
         [string] $ExpectedOperation,
-        [Parameter(Mandatory)][int] $TimeoutSeconds
+        [Parameter(Mandatory)][int] $TimeoutSeconds,
+        [string] $ExpectedBuildIdentifier
     )
 
+    if ($ExpectedOperation -eq 'findmy-probe' -and
+        $ExpectedBuildIdentifier -cnotmatch '^[a-f0-9]{7,40}(-dirty-[a-f0-9]{12})?$') {
+        throw 'FindMy probe requires an exact read-only build identifier.'
+    }
     $deadlineUtc = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
     while ([datetime]::UtcNow -lt $deadlineUtc) {
         $status = Read-FreshHarnessStatus `
@@ -595,7 +655,8 @@ function Wait-HarnessOperation {
             -LaunchStartedUtc $LaunchStartedUtc `
             -BaselineWriteUtc $BaselineWriteUtc `
             -ExpectedLaunchId $ExpectedLaunchId `
-            -ExpectedProcessId $Process.Id
+            -ExpectedProcessId $Process.Id `
+            -ExpectedBuildIdentifier $ExpectedBuildIdentifier
         if ($null -ne $status) {
             if ($status.state -eq 'finished') {
                 $acceptedFinishedStage = if ($ExpectedOperation -eq 'drain') {
@@ -621,6 +682,9 @@ function Wait-HarnessOperation {
                 }
                 elseif ($ExpectedOperation -eq 'message-feed-probe') {
                     $status.stage -eq 'message-feed-probe-complete'
+                }
+                elseif ($ExpectedOperation -eq 'findmy-probe') {
+                    $status.stage -in @('findmy-probe-complete', 'findmy-probe-partial')
                 }
                 else {
                     $status.stage -eq 'semantic-pull'
@@ -661,6 +725,10 @@ function Wait-HarnessOperation {
                 )
             }
             if ($status.state -eq 'waiting-user') {
+                if ($ExpectedOperation -eq 'findmy-probe') {
+                    Stop-ExactLaunchedHarness -Process $Process -ExpectedExecutable $ExpectedExecutable
+                    throw 'FindMy probe cannot enter interactive authentication.'
+                }
                 Write-Host (
                     "Cloud Sync V2 Windows harness is waiting for user input at " +
                     "stage $($status.stage) (PID $($Process.Id)); leaving it running."
@@ -679,6 +747,10 @@ function Wait-HarnessOperation {
     $Process.Refresh()
     if ($Process.HasExited) {
         throw "The Windows harness exited before recording a terminal status."
+    }
+    if ($ExpectedOperation -eq 'findmy-probe') {
+        Stop-ExactLaunchedHarness -Process $Process -ExpectedExecutable $ExpectedExecutable
+        throw 'FindMy probe exceeded its bounded deadline; the exact harness was stopped.'
     }
     throw (
         "Timed out waiting for the Windows harness terminal status; " +
@@ -805,6 +877,7 @@ $previousLcAll = $env:LC_ALL
 # Match the qualified native-test profile across fresh shells. Inheriting the
 # default Rust debug/incremental settings creates a second dependency tree.
 $nativeEnvironment = @{
+    OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_FINDMY_PROBE = $(if ($FindMyProbe) { '1' } else { $null })
     CARGO_BUILD_JOBS = '4'
     CARGO_PROFILE_DEV_DEBUG = '0'
     CARGO_PROFILE_DEV_INCREMENTAL = 'false'
@@ -884,9 +957,10 @@ try {
         }
     }
 
+    Assert-HarnessObjectBoxRuntime -RunnerDirectory $runnerDirectory
     if (-not $SkipBuild) {
-        # Smart App Control checks every loaded plugin, not just the Rust DLL.
-        # Sign only this freshly built bundle; preserve valid vendor signatures.
+        # Sign this freshly built bundle, preserving valid vendor signatures
+        # and the separately hash-verified, unmodified ObjectBox runtime.
         foreach ($binary in @(Get-HarnessSignableArtifacts -RunnerDirectory $runnerDirectory)) {
             if ((Get-AuthenticodeSignature -LiteralPath $binary).Status -ne
                 [System.Management.Automation.SignatureStatus]::Valid) {
@@ -906,7 +980,7 @@ try {
             -Runner $runner `
             -RustLibrary $rustLibrary
     }
-    elseif ($ProjectionViewer -or $ProjectionDetailViewer -or $LocalWrite) {
+    elseif ($ProjectionViewer -or $ProjectionDetailViewer -or $LocalWrite -or $FindMyProbe) {
         if (-not (Test-HarnessBuildReceipt `
             -ReceiptPath $buildReceiptPath `
             -BuildIdentifier $buildIdentifier `
@@ -985,13 +1059,16 @@ try {
     elseif ($MessageFeedProbe) {
         $harnessArguments = @("probe-message-feed") + $harnessArguments
     }
+    elseif ($FindMyProbe) {
+        $harnessArguments = @('probe-findmy') + $harnessArguments
+    }
     $startParameters = @{
         FilePath = $runner
         WorkingDirectory = $runnerDirectory
         PassThru = $true
         ArgumentList = $harnessArguments
     }
-    if ($ChatIdentityObservation -or $StagedChatIdentityObservation -or $LocalWrite -or $MessageFeedProbe) { $startParameters.WindowStyle = 'Hidden' }
+    if ($ChatIdentityObservation -or $StagedChatIdentityObservation -or $LocalWrite -or $MessageFeedProbe -or $FindMyProbe) { $startParameters.WindowStyle = 'Hidden' }
     $statusPath = Join-Path $profile "cloud-sync-v2\windows-harness-status.json"
     $statusBaselineWriteUtc = [datetime]::MinValue
     if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
@@ -1012,8 +1089,11 @@ try {
         throw "The Windows Cloud Sync V2 harness exited during startup."
     }
     Write-Host "Cloud Sync V2 Windows harness started (PID $($process.Id))."
-    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse -or $ChatIdentityObservation -or $StagedChatIdentityObservation -or $LocalWrite -or $MessageFeedProbe) {
-        $operationTimeoutSeconds = if ($Drain) {
+    if ($RunOnce -or $Drain -or $AttachmentProbe -or $AttachmentProbeReuse -or $ChatIdentityObservation -or $StagedChatIdentityObservation -or $LocalWrite -or $MessageFeedProbe -or $FindMyProbe) {
+        $operationTimeoutSeconds = if ($FindMyProbe) {
+            120
+        }
+        elseif ($Drain) {
             $DrainTimeoutSeconds
         }
         elseif ($AttachmentProbe -or $AttachmentProbeReuse) {
@@ -1029,6 +1109,7 @@ try {
             -LaunchStartedUtc $launchStartedUtc `
             -BaselineWriteUtc $statusBaselineWriteUtc `
             -ExpectedLaunchId $launchId `
+            -ExpectedBuildIdentifier $(if ($FindMyProbe) { $buildIdentifier } else { $null }) `
             -ExpectedOperation $(if ($Drain) {
                 'drain'
             } elseif ($AttachmentProbe) {
@@ -1043,6 +1124,8 @@ try {
                 'local-write'
             } elseif ($MessageFeedProbe) {
                 'message-feed-probe'
+            } elseif ($FindMyProbe) {
+                'findmy-probe'
             } else {
                 'run-once'
             }) `

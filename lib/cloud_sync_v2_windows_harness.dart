@@ -37,6 +37,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 import 'cloud_sync_v2_windows_local_write.dart';
 import 'cloud_sync_v2_windows_feed_probe.dart';
+import 'cloud_sync_v2_windows_findmy_probe.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -51,6 +52,12 @@ Future<void> main(List<String> arguments) async {
   final operation = launch.operation;
 
   fs.configureCloudSyncV2WindowsDevProfile();
+  // Find My has its own bounded retained-account bootstrap. Never fall through
+  // to Database, CloudKit/keychain activation or semantic-runtime rebuilding.
+  if (operation == CloudSyncV2WindowsHarnessOperation.findMyProbe) {
+    await _runWindowsFindMyProbe();
+    return;
+  }
   if ((operation == CloudSyncV2WindowsHarnessOperation.attachmentProbe ||
           operation ==
               CloudSyncV2WindowsHarnessOperation.attachmentReuseProbe) &&
@@ -116,7 +123,8 @@ enum CloudSyncV2WindowsHarnessOperation {
   chatIdentityObservation,
   stagedChatIdentityObservation,
   localWrite,
-  messageFeedProbe;
+  messageFeedProbe,
+  findMyProbe;
 
   static CloudSyncV2WindowsHarnessOperation parse(List<String> arguments) {
     return CloudSyncV2WindowsHarnessLaunch.parse(arguments).operation;
@@ -516,6 +524,12 @@ final class CloudSyncV2WindowsHarnessLaunch {
           }
           operation = CloudSyncV2WindowsHarnessOperation.messageFeedProbe;
           operationSeen = true;
+        case 'probe-findmy':
+          if (operationSeen) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          operation = CloudSyncV2WindowsHarnessOperation.findMyProbe;
+          operationSeen = true;
         case 'observe-chat-identity':
         case 'observe-staged-chat-identity':
           if (operationSeen) {
@@ -589,6 +603,56 @@ Future<void> _harnessStatusWriteTail = Future<void>.value();
 var _harnessStatusTemporarySequence = 0;
 late final String _harnessLaunchId;
 
+Future<void> _runWindowsFindMyProbe() async {
+  const build = String.fromEnvironment('OPENBUBBLES_BUILD_COMMIT');
+  var stage = 'findmy-probe-preflight';
+  Future<void> markStage(String value) {
+    stage = value;
+    return _writeHarnessStatus(state: 'initializing', stage: stage)
+        .timeout(const Duration(seconds: 3));
+  }
+  try {
+    if (Platform.environment['OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_FINDMY_PROBE'] != '1' ||
+        CloudSyncDevGate.manualOutboundCanaryEnabled ||
+        CloudSyncDevGate.localSendRuntimeEnabled ||
+        const String.fromEnvironment('OPENBUBBLES_CLOUDKIT_WRITER_OWNER') == 'v2' ||
+        const bool.fromEnvironment(
+          'OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_REPLAY_EXCLUDED_CHATS',
+        )) {
+      throw StateError('findmy_probe_writer_build_rejected');
+    }
+    final request = await FindMyProbeRequest.read(fs.appDocDir)
+        .timeout(const Duration(seconds: 2));
+    await markStage('findmy-probe-native-init');
+    await RustLib.init().timeout(const Duration(seconds: 10));
+    await markStage('findmy-probe-keystore');
+    await api.doFirstTimeInit(path: fs.appDocDir.path).timeout(const Duration(seconds: 5));
+    final reads = await prepareWindowsFindMyProbeReads(fs.appDocDir, onStage: markStage);
+    stage = 'findmy-probe-reads';
+    await _writeHarnessStatus(state: 'running', stage: stage)
+        .timeout(const Duration(seconds: 3));
+    final report = await runWindowsFindMyProbe(
+      launchId: _harnessLaunchId,
+      buildIdentifier: build,
+      request: request,
+      reads: reads,
+    );
+    final terminal = windowsFindMyProbeTerminal(report);
+    await _writeHarnessStatus(
+      state: terminal.$1,
+      stage: terminal.$2,
+      safeCode: terminal.$1 == 'failed' ? 'findmy_probe_reads_failed' : null,
+      detail: jsonEncode(report),
+    ).timeout(const Duration(seconds: 3));
+  } catch (_) {
+    await _writeHarnessStatus(
+      state: 'failed',
+      stage: stage,
+      safeCode: 'findmy_probe_operation_failed',
+    ).timeout(const Duration(seconds: 3));
+  }
+}
+
 Map<String, Object?> cloudSyncV2WindowsHarnessStatusPayload({
   required String launchId,
   required int processId,
@@ -609,6 +673,7 @@ Map<String, Object?> cloudSyncV2WindowsHarnessStatusPayload({
   return <String, Object?>{
     'version': 'cloud-sync-v2-windows-harness-status-v2',
     'launch_id': launchId,
+    'build_identifier': const String.fromEnvironment('OPENBUBBLES_BUILD_COMMIT'),
     'process_id': processId,
     'state': state,
     'stage': stage,
@@ -1032,6 +1097,8 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
     switch (widget.operation) {
       case CloudSyncV2WindowsHarnessOperation.interactive:
         return;
+      case CloudSyncV2WindowsHarnessOperation.findMyProbe:
+        throw StateError('findmy_probe_requires_prebootstrap_dispatch');
       case CloudSyncV2WindowsHarnessOperation.runOnce:
         await _runSemanticPull();
       case CloudSyncV2WindowsHarnessOperation.drain:
@@ -1070,13 +1137,18 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       final result = await CloudSyncWindowsLocalWrite(
         readClient: () => _activeClient,
         reportStage: (stage) => _setRuntimeStage(stage, state: 'running'),
-        prepareSender: (sender, recipient) async {
+        prepareSender: (sender, recipient, {required refreshAuthentication}) async {
           final config = _osConfig!;
           final connection = _connection!;
           final hardware = api.readHardware(path: fs.appDocDir.path);
           if (hardware == null) throw StateError('cloud_sync_windows_sender_hardware_unavailable');
           final identity = api.decodeIdentity(identity: hardware.identity);
-          var users = api.restoreUsers(path: fs.appDocDir.path);
+          // Explicit pre-send repair uses the bound GSA session and the same
+          // hardware identity. Do not reuse a terminally rejected IDS user or
+          // delete id.plist first; registerIds persists only after success.
+          var users = refreshAuthentication
+              ? null
+              : api.restoreUsers(path: fs.appDocDir.path);
           if (users == null || users.isEmpty) {
             await _setRuntimeStage('windows-write-ids-authentication', state: 'running');
             final user = await api.cloudSyncWindowsAuthenticateSender(

@@ -86,7 +86,7 @@ try {
     $bundle = Join-Path $testDirectory 'bundle'
     $nestedBundle = Join-Path $bundle 'nested'
     New-Item -ItemType Directory -Path $nestedBundle -Force | Out-Null
-    foreach ($name in @('runner.exe', 'plugin.dll', 'symbols.pdb', 'notes.txt')) {
+    foreach ($name in @('runner.exe', 'plugin.dll', 'objectbox.dll', 'symbols.pdb', 'notes.txt')) {
         Set-Content -LiteralPath (Join-Path $bundle $name) -Value 'fixture'
     }
     Set-Content -LiteralPath (Join-Path $nestedBundle 'unrelated.dll') -Value 'fixture'
@@ -97,6 +97,13 @@ try {
         -Message 'The plugin DLL was omitted from signing selection.'
     Assert-True -Condition ($selectedBinaries -contains (Join-Path $bundle 'runner.exe')) `
         -Message 'The runner executable was omitted from signing selection.'
+    Assert-True -Condition ($selectedBinaries -notcontains (Join-Path $bundle 'objectbox.dll')) `
+        -Message 'The vendor ObjectBox DLL must not be re-signed.'
+    $vendorHashError = Invoke-ExpectedFailure {
+        Assert-HarnessObjectBoxRuntime -RunnerDirectory $bundle
+    }
+    Assert-True -Condition ($vendorHashError -like '*unmodified ObjectBox 5.3.2 Windows ARM64*') `
+        -Message 'Modified or unknown vendor ObjectBox bytes were accepted.'
     $fileDirectoryError = Invoke-ExpectedFailure {
         Get-HarnessSignableArtifacts -RunnerDirectory (Join-Path $bundle 'plugin.dll')
     }
@@ -228,7 +235,7 @@ try {
         -Message 'A read-only receipt must never qualify a writer or replay build.'
     & $launcher -FunctionsOnlyForTest -BuildOnly -LocalWrite
     Assert-True `
-        -Condition ($launcherSource.Contains('elseif ($ProjectionViewer -or $ProjectionDetailViewer -or $LocalWrite)')) `
+        -Condition ($launcherSource.Contains('elseif ($ProjectionViewer -or $ProjectionDetailViewer -or $LocalWrite -or $FindMyProbe)')) `
         -Message 'Writer reuse must use the exact binary-and-configuration receipt check.'
     $buildOnlyMatches = [regex]::Matches(
         $launcherSource,

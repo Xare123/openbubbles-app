@@ -678,3 +678,101 @@ This is a chronological evidence log. It does not override the
   mock-only cast with the production `decodeMessageproto4` API plus the mock
   adapter implementation. All 47 portable cases pass; the real DLL lane adds
   a legacy/V2 comparison and must run separately. No wire encoder changed.
+- Isolated Windows sidecar was reviewed and pushed as pilot `00aca7383`, then
+  `36fc1c15b` to derive the build identifier with the real retained launcher
+  rather than an incompatible full-SHA assumption. Initial run `34489111897`
+  was canceled during SDK setup before compilation. Its replacement is
+  `34489497490`, explicitly building source `6c628feb6` and variant
+  `local-write`; this run is in progress, not verified successful.
+- Registration-only run `34489067885` succeeded. The two unrelated workflows
+  triggered by that pilot push (`34489067831` and `34489067790`) were canceled
+  and verified terminal, avoiding redundant full-app builds of the pilot tree.
+  Subsequent pilot commits use skip-CI messages and explicit exact-source
+  dispatch. No default-branch merge, GCE infrastructure change, or secret
+  change was made.
+- Parent validated PowerShell/YAML syntax and the test JSON protocol against
+  all 47 portable encoder cases (47 visible successes, zero skipped/failing,
+  terminal success). Native mode must separately prove 48. The sidecar also
+  checks lockfile drift, keeps ARM-mutated SDKs out of shared x64 caches, and
+  uploads the compressed bundle once rather than duplicating its raw contents.
+- Closed Pauli (`01a08b94-1a70-79b2-8b7c-cd113ec6e2be`) after integration;
+  the follow-up control reports `not_found`. The two committed pilot files and
+  provenance remain; no dedicated worktree was created. Supported transcript
+  deletion remains unavailable. C: had 68.58 GiB free; no cleanup deletion.
+- Windows run `34489497490` finished failed: 27 focused Dart tests passed,
+  but two ObjectBox-backed cases could not load `objectbox.dll` (error 126).
+  Native compilation never started; teardown's uninitialized store was a
+  consequence, not a new application failure. Pilot `a2680baac` supplies the
+  official ObjectBox 5.3.2 ARM64 archive, SHA256-pinned and PE-checked, only on
+  the ephemeral runner PATH. Dispatched same app source `6c628feb6`, variant
+  `local-write`, as `34491135220`. YAML and embedded PowerShell parse passed;
+  no local security policy, production signing, or Apple profile changed.
+- Pascal's real Find My adapter replaced the rejected callback-less scaffold.
+  Parent accepted the bounded retained-account read design and finite error
+  categories, preserving numeric HTTP statuses without bodies or URLs. Parent
+  reran 22 focused Dart tests and the launcher contract successfully. Native
+  compilation remains unverified; all changes are retained uncommitted and
+  excluded from the Windows baseline. Existing Friends 401 token refresh does
+  not reissue the request and is not claimed repaired.
+- Closed Pascal (`01a08b85-8db6-7032-aa36-9c6263d174b9`) after review, transferring
+  remaining native qualification to the parent. No dedicated worktree was
+  created; shared source and unique uncommitted work are required and retained.
+  Supported transcript deletion remains unavailable. No files were removed;
+  C: had 68.54 GiB free.
+- Condensed the Windows history on the active treemap and separated installed
+  Android code from the new Windows candidate. Preserved prior local policy
+  evidence here: events 3033/3077 blocked
+  `proc_macro_signing_wrapper_delayed.exe` under policy
+  `0283ac0f-fff1-49ae-ada1-8a933130cad6`, despite valid self-signed Authenticode.
+  The September 10 recheck could load/unload the existing native DLL and run
+  the wrapper's `rustc --version`, but actual compilation still failed on the
+  signed `slab` build script with error 4551. No policy or trust change occurred.
+- Read-only local preparation confirmed retained hardware/account/streams
+  files and no running Windows app. The existing immutable version-2 write
+  request targets an authorized test number and already has a claim. Resume
+  checks must reconcile that claim without a new native send. No account
+  request or message send was performed during this build-environment repair.
+
+### 2026-09-10: qualified Windows startup and fresh IDS counterexample
+
+- Windows run `34491135220` succeeded on source `6c628feb6`, pilot `a2680baac`:
+  29 focused Dart cases, 48 real Rust-DLL codec cases, two launcher contracts,
+  ARM64 checks and the actual invalid-launch Dart marker. Job 23m27s; Flutter
+  compile 15m43.7s. GCE instance and self-hosted runner inventories were empty.
+- Verified all 78 manifest files, path safety, lengths and SHA256s. Original
+  ZIP SHA256: `25887ebfe37647851687adc329dbd232eba2a136067020f9c128385fc308e910`.
+  Preserved source-only cloud provenance and the archive locally. No account
+  credentials, message database, or hardware identity went to cloud runners.
+- Re-signing ObjectBox produced a locally valid developer signature but loader
+  4551; Code Integrity 3033/3077 named the unchanged policy. The old developer
+  copy had identical blocked bytes. Original vendor DLL SHA256
+  `9c8583c4015ab9e4ce2ed3d2d581811fa059e03bb528cb8c8387adcdfda8d8a5`
+  loaded under that same policy. Restored only the new qualified runtime's DLL.
+  The blocked copy and prior receipt are retained as evidence/rollback.
+- The detached `windows-cloudkit-qualified` checkout uses exact source `6c628feb6`
+  and matching local-write receipt. At 15:22:43Z it finished a prior-request
+  resume: native confirmation was already retained, admissions/deferred were
+  zero and outbox was not blocked. This proves startup/resume, not a new send.
+- At 15:32:43Z fresh request `qualification-20260910-03` failed before intent
+  creation at recipient lookup with fixed code
+  `cloud_sync_windows_sender_bad_authentication`. The old request was preserved,
+  new claim is absent, and the process exited. No new native send or remote
+  CloudKit save occurred. The current native path already attempts registration
+  refresh with the retained IDS user; explicit fresh IDS authentication from
+  the retained GSA account is the next distinct action, not a blind retry.
+- Added source-only explicit sender-auth refresh input, bound to the immutable
+  request, without deleting retained users first or restarting onboarding.
+  Claimed requests still skip preparation/sending. Not in the qualified binary.
+- Vendor-byte launcher protection and the updated writer/Find My receipt
+  contract passed parent tests. All three previously closed agents returned
+  `not_found`; shared unique changes/evidence remain retained. C: 68.29 GiB free.
+- Parent ran 50 focused Windows harness/write/Find My Dart tests after adding
+  explicit repair; all passed, and targeted Dart analysis reported no issues.
+  This covers source behavior, not successful Apple authentication.
+- Darwin (`01a08bf4-211a-7723-920a-256cc65c0795`, Muse contributor) independently
+  reviewed the pending native Find My adapter and bridge signatures. No concrete
+  blocker was found; no native build or account access was performed. Parent
+  reviewed the cited code, retained native qualification as open, closed the
+  agent and verified `not_found`. No dedicated worktree/log artifacts existed;
+  its review remains necessary evidence and supported transcript deletion is
+  unavailable. No files were deleted. C: 68.26 GiB free.

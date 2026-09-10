@@ -263,7 +263,9 @@ fn initialize_windows_protected_keystore(directory: &std::path::Path) -> anyhow:
 pub fn do_first_time_init(path: String) {
     let dir = PathBuf::from_str(&path).unwrap();
 
-    init_logger(&dir);
+    // This dedicated process emits only the Dart allowlisted probe report.
+    // Authentication errors must not escape into unrestricted native logs.
+    if !windows_findmy_probe_enabled() { init_logger(&dir); }
 
     #[cfg(target_os = "windows")]
     if let Err(error) = initialize_windows_protected_keystore(&dir) {
@@ -6748,9 +6750,134 @@ pub fn new_ngm_identity() -> anyhow::Result<IDSNGMIdentity> {
 #[frb(sync)]
 pub fn read_hardware(path: String) -> Option<SavedHardwareState> {
     let dir = PathBuf::from_str(&path).unwrap();
+    if windows_findmy_probe_enabled() {
+        require_windows_findmy_probe_profile(&dir).ok()?;
+    }
     let hw_config_path = dir.join("hw_info.plist");
 
-    plist::from_file::<_, SavedHardwareState>(&hw_config_path).ok()
+    let hardware = plist::from_file::<_, SavedHardwareState>(&hw_config_path).ok()?;
+    if windows_findmy_probe_enabled() {
+        let account: GSAConfig = plist::from_file(dir.join("gsa.plist")).ok()?;
+        validate_findmy_probe_retained_state(
+            account.postdata_done,
+            !hardware.identity.is_empty(),
+            hardware.push.keypair.is_some(),
+            hardware.push.token.is_some(),
+        ).ok()?;
+        // The Find My constructors read this retained DSID, never create it.
+        let streams: SharedStreamsState = plist::from_file(dir.join("sharedstreams.plist")).ok()?;
+        if streams.dsid.is_empty() { return None; }
+    }
+    Some(hardware)
+}
+
+fn windows_findmy_probe_enabled() -> bool {
+    cfg!(target_os = "windows") &&
+        std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_FINDMY_PROBE").as_deref() == Ok("1")
+}
+
+fn require_windows_findmy_probe_profile(directory: &std::path::Path) -> anyhow::Result<()> {
+    let expected = PathBuf::from(std::env::var_os("APPDATA")
+        .ok_or_else(|| anyhow!("findmy_probe_profile_required"))?)
+        .join("OpenBubbles").join("cloudkit-v2-dev");
+    if fs::canonicalize(directory)? != fs::canonicalize(&expected)? ||
+        !is_cloud_sync_windows_dev_profile(&directory.to_string_lossy()) {
+        return Err(anyhow!("findmy_probe_profile_required"));
+    }
+    Ok(())
+}
+
+fn validate_findmy_probe_retained_state(
+    postdata_done: Option<bool>, identity_present: bool, aps_key_present: bool, aps_token_present: bool,
+) -> anyhow::Result<()> {
+    if postdata_done != Some(true) || !identity_present || !aps_key_present || !aps_token_present {
+        return Err(anyhow!("findmy_probe_retained_state_required"));
+    }
+    Ok(())
+}
+
+async fn findmy_probe_native_read<T>(
+    future: impl std::future::Future<Output = Result<T, PushError>>,
+) -> anyhow::Result<T> {
+    if windows_findmy_probe_enabled() {
+        // Cancel the native read itself, not merely Dart's wait for its result.
+        bounded_findmy_probe_read(Duration::from_secs(15), future).await
+    } else {
+        future.await.map_err(Into::into)
+    }
+}
+
+async fn bounded_findmy_probe_read<T>(
+    deadline: Duration, future: impl Future<Output = Result<T, PushError>>,
+) -> anyhow::Result<T> {
+    tokio::time::timeout(deadline, future).await
+        .map_err(|_| anyhow!("findmy_probe_native_timeout"))?
+        .map_err(|error| match error {
+            // Never format the original error: it may contain bodies, URLs or credentials.
+            PushError::StatusError(status) => anyhow!("findmy_probe_native_http_{}", status.as_u16()),
+            PushError::RequestError(error) if error.is_timeout() => anyhow!("findmy_probe_native_timeout"),
+            PushError::RequestError(error) if error.is_decode() => anyhow!("findmy_probe_native_decode"),
+            PushError::JsonError(_) | PushError::PlistError(_) => anyhow!("findmy_probe_native_decode"),
+            PushError::RequestError(_) | PushError::IoError(_) | PushError::TLSError(_) => anyhow!("findmy_probe_native_transport"),
+            _ => anyhow!("findmy_probe_native_read_failed"),
+        })
+}
+
+#[cfg(test)]
+mod findmy_probe_guard_tests {
+    use super::{bounded_findmy_probe_read, validate_findmy_probe_retained_state, Duration, PushError};
+
+    #[tokio::test]
+    async fn native_deadline_drops_read_and_failures_do_not_expose_details() {
+        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        struct Dropped(Arc<AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) { self.0.store(true, Ordering::SeqCst); }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let flag = dropped.clone();
+        let pending = async move {
+            let _guard = Dropped(flag);
+            std::future::pending::<Result<(), PushError>>().await
+        };
+        let error = bounded_findmy_probe_read(Duration::from_millis(1), pending).await.unwrap_err();
+        assert_eq!(error.to_string(), "findmy_probe_native_timeout");
+        assert!(dropped.load(Ordering::SeqCst));
+        let failure = async { Err::<(), _>(PushError::MobileMeError("private-error-body".into(), None)) };
+        let error = bounded_findmy_probe_read(Duration::from_secs(1), failure).await.unwrap_err();
+        assert_eq!(error.to_string(), "findmy_probe_native_read_failed");
+        assert_eq!(bounded_findmy_probe_read(Duration::from_secs(1), async { Ok(7) }).await.unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn native_failures_preserve_only_category_and_numeric_http_status() {
+        for code in [401, 429, 503] {
+            let failure = PushError::StatusError(code.to_string().parse().unwrap());
+            let error = bounded_findmy_probe_read(Duration::from_secs(1), async { Err::<(), _>(failure) }).await.unwrap_err();
+            assert_eq!(error.to_string(), format!("findmy_probe_native_http_{code}"));
+        }
+        let failures = [
+            (PushError::JsonError(serde_json::from_str::<serde_json::Value>("private-body").unwrap_err()), "findmy_probe_native_decode"),
+            (PushError::IoError(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "private-url-and-body")), "findmy_probe_native_transport"),
+            (PushError::MobileMeError("findmy_probe_native_http_401 private-body".into(), None), "findmy_probe_native_read_failed"),
+        ];
+        for (failure, expected) in failures {
+            let error = bounded_findmy_probe_read(Duration::from_secs(1), async { Err::<(), _>(failure) }).await.unwrap_err();
+            assert_eq!(error.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn requires_completed_postdata_and_every_retained_identity_component() {
+        assert!(validate_findmy_probe_retained_state(Some(true), true, true, true).is_ok());
+        for postdata in [None, Some(false)] {
+            assert!(validate_findmy_probe_retained_state(postdata, true, true, true).is_err());
+        }
+        for (identity, key, token) in [(false, true, true), (true, false, true), (true, true, false)] {
+            let error = validate_findmy_probe_retained_state(Some(true), identity, key, token).unwrap_err();
+            assert_eq!(error.to_string(), "findmy_probe_retained_state_required");
+        }
+    }
 }
 
 #[frb(sync)]
@@ -7153,6 +7280,13 @@ pub async fn restore_account(
     let _lifecycle_guard = lifecycle_gate.lock().await;
 
     let mut state = plist::from_file::<_, GSAConfig>(&dir.join("gsa.plist")).ok()?;
+
+    // Recheck the exact state read under the existing lifecycle lock. A separate
+    // preflight is not authority to update postdata or restore a fresh account.
+    if windows_findmy_probe_enabled() {
+        require_windows_findmy_probe_profile(&dir).ok()?;
+        if state.postdata_done != Some(true) { return None; }
+    }
 
     let mut apple_account = AppleAccount::new_with_anisette(
         get_login_config(&dir, config, conn).await,
@@ -9524,14 +9658,13 @@ pub async fn make_find_my_phone(
     let id_path = dir.join("sharedstreams.plist");
     let state: SharedStreamsState = plist::from_file(id_path)?;
 
-    Ok(FindMyPhoneClient::new(
+    findmy_probe_native_read(FindMyPhoneClient::new(
         &*config.config(),
         state.dsid.clone(),
         aps.clone(),
         anisette.clone(),
         provider.clone(),
-    )
-    .await?)
+    )).await
 }
 
 pub async fn get_devices(
@@ -9544,7 +9677,7 @@ pub async fn refresh_devices(
     config: &JoinedOSConfig,
     client: &mut FindMyPhoneClient<DefaultAnisetteProvider>,
 ) -> anyhow::Result<Vec<FoundDevice>> {
-    client.refresh(&*config.config()).await?;
+    findmy_probe_native_read(client.refresh(&*config.config())).await?;
     Ok(client.devices.clone())
 }
 
@@ -9569,15 +9702,14 @@ pub async fn make_find_my_friends(
     let id_path = dir.join("sharedstreams.plist");
     let state: SharedStreamsState = plist::from_file(id_path)?;
 
-    let fmf_client = FindMyFriendsClient::new(
+    let fmf_client = findmy_probe_native_read(FindMyFriendsClient::new(
         &*config.config(),
         state.dsid.clone(),
         provider.clone(),
         aps.clone(),
         anisette.clone(),
         false,
-    )
-    .await?;
+    )).await?;
     Ok(fmf_client)
 }
 
@@ -9696,7 +9828,7 @@ pub async fn refresh_following(
     config: &JoinedOSConfig,
     client: &mut FindMyFriendsClient<DefaultAnisetteProvider>,
 ) -> anyhow::Result<Vec<Follow>> {
-    client.refresh(&*config.config()).await?;
+    findmy_probe_native_read(client.refresh(&*config.config())).await?;
     Ok(client.following.clone())
 }
 
@@ -9706,7 +9838,7 @@ pub async fn select_friend(
     friend: Option<String>,
 ) -> anyhow::Result<Vec<Follow>> {
     client.selected_friend = friend;
-    client.refresh(&*config.config()).await?;
+    findmy_probe_native_read(client.refresh(&*config.config())).await?;
     Ok(client.following.clone())
 }
 

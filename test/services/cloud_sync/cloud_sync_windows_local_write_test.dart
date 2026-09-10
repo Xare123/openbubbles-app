@@ -72,11 +72,53 @@ void main() {
       {'sender': 'mailto:sender@example.com'},
       {'text': ''},
       {'text': 'x' * 513},
+      {'refreshSenderAuthentication': 'true'},
+      {'refreshSenderAuthentication': null},
     ]) {
       expect(
         () => CloudSyncWindowsWriteRequest.fromJson({...request(), ...changes}),
         throwsStateError,
       );
+    }
+  });
+  test('sender repair is explicit and old request bindings stay unchanged', () {
+    for (final input in [
+      request(),
+      {...request(), 'version': 2, 'existingChatFromRequestId': 'previous-1'},
+    ]) {
+      final retained = CloudSyncWindowsWriteRequest.fromJson(input);
+      final explicitRetain = CloudSyncWindowsWriteRequest.fromJson({
+        ...input,
+        'refreshSenderAuthentication': false,
+      });
+      final repair = CloudSyncWindowsWriteRequest.fromJson({
+        ...input,
+        'refreshSenderAuthentication': true,
+      });
+      final originalFields = input['version'] == 1
+          ? [
+              'windows-local-write-v1',
+              retained.id,
+              retained.recipient,
+              retained.sender,
+              retained.text,
+            ]
+          : [
+              'windows-local-write-v2',
+              retained.id,
+              retained.recipient,
+              retained.sender,
+              retained.text,
+              retained.existingChatFromRequestId,
+            ];
+      expect(retained.refreshSenderAuthentication, isFalse);
+      expect(explicitRetain.binding, retained.binding);
+      expect(
+        retained.binding,
+        sha256.convert(utf8.encode(jsonEncode(originalFields))).toString(),
+      );
+      expect(repair.refreshSenderAuthentication, isTrue);
+      expect(repair.binding, isNot(retained.binding));
     }
   });
   test('replay binds request id, body, recipient and sender', () {
@@ -272,6 +314,28 @@ void main() {
     expect(source, contains('initialOwnerOnly: true'));
     expect(source, contains('runExactIntent('));
     expect(source, isNot(contains('.forTest(')));
+    final preparation = source.indexOf('await prepareSender(');
+    expect(
+      source.lastIndexOf('if (!claim.existsSync())', preparation),
+      greaterThan(0),
+    );
+    expect(
+      preparation,
+      lessThan(source.indexOf('claim.create(exclusive: true)')),
+    );
+    expect(
+      source,
+      contains('refreshAuthentication: request.refreshSenderAuthentication'),
+    );
+    final harness = File(
+      'lib/cloud_sync_v2_windows_harness.dart',
+    ).readAsStringSync();
+    expect(harness, contains('var users = refreshAuthentication'));
+    expect(harness, contains('api.cloudSyncWindowsAuthenticateSender('));
+    expect(
+      harness,
+      isNot(contains("File(path.join(fs.appDocDir.path, 'id.plist')).delete")),
+    );
     expect(
       source.indexOf('claim.create(exclusive: true)'),
       lessThan(source.indexOf('await sendConfirmed(wire)')),

@@ -47,6 +47,7 @@ final class CloudSyncWindowsWriteRequest {
       recipient = json['recipient'] as String,
       sender = json['sender'] as String,
       text = json['text'] as String,
+      refreshSenderAuthentication = json['refreshSenderAuthentication'] == true,
       existingChatFromRequestId = json['existingChatFromRequestId'] as String? {
     final validVersion = json['version'] == 1
         ? existingChatFromRequestId == null
@@ -57,6 +58,8 @@ final class CloudSyncWindowsWriteRequest {
               ).hasMatch(existingChatFromRequestId!) &&
               existingChatFromRequestId != id;
     if (!validVersion ||
+        (json.containsKey('refreshSenderAuthentication') &&
+            json['refreshSenderAuthentication'] is! bool) ||
         json['allowSend'] != true ||
         !RegExp(r'^[a-z0-9-]{1,64}$').hasMatch(id) ||
         !RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(recipient) ||
@@ -71,13 +74,24 @@ final class CloudSyncWindowsWriteRequest {
   final String recipient;
   final String sender;
   final String text;
+
+  /// Explicit operator repair before any new intent or send. Never implicit
+  /// retry after failure and never a reason to clear hardware or CloudKit state.
+  final bool refreshSenderAuthentication;
   final String? existingChatFromRequestId;
   String get binding => sha256
       .convert(
         utf8.encode(
           jsonEncode(
             existingChatFromRequestId == null
-                ? ['windows-local-write-v1', id, recipient, sender, text]
+                ? [
+                    'windows-local-write-v1',
+                    id,
+                    recipient,
+                    sender,
+                    text,
+                    if (refreshSenderAuthentication) 'refresh-sender-auth-v1',
+                  ]
                 : [
                     'windows-local-write-v2',
                     id,
@@ -85,6 +99,7 @@ final class CloudSyncWindowsWriteRequest {
                     sender,
                     text,
                     existingChatFromRequestId,
+                    if (refreshSenderAuthentication) 'refresh-sender-auth-v1',
                   ],
           ),
         ),
@@ -159,7 +174,12 @@ final class CloudSyncWindowsLocalWrite {
   });
 
   final Object? Function() readClient;
-  final Future<void> Function(String sender, String recipient) prepareSender;
+  final Future<void> Function(
+    String sender,
+    String recipient, {
+    required bool refreshAuthentication,
+  })
+  prepareSender;
   final Future<void> Function(api.MessageInst message) sendConfirmed;
   final Future<void> Function(String stage) reportStage;
 
@@ -207,6 +227,7 @@ final class CloudSyncWindowsLocalWrite {
       await prepareSender(
         'mailto:${request.sender}',
         'tel:${request.recipient}',
+        refreshAuthentication: request.refreshSenderAuthentication,
       );
     }
     final auth = await authProvider.capture();

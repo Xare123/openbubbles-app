@@ -55,7 +55,8 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Candidate | Code `e060bcb41` repairs retained-queue scheduling above persisted IDS-proof base `731988a3d` and positive-acknowledgment native base `35551340c`. Pre-proof rows retain version 0 and cannot initiate a new CloudKit save; original envelopes remain recoverable. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
+| Installed Android candidate | Code `e060bcb41` repairs retained-queue scheduling above persisted IDS-proof base `731988a3d` and positive-acknowledgment native base `35551340c`. Pre-proof rows retain version 0 and cannot initiate a new CloudKit save; original envelopes remain recoverable. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
+| Windows candidate | Source `6c628feb6`, manual-write variant, passed isolated ARM64 build, 29 focused Dart tests and 48 real Rust-DLL codec tests. Imported and verified locally, including retained-profile startup and prior-request resume. Fresh request failed at IDS recipient lookup with `6005`, before send/claim. Later native Find My probe, explicit sender repair, and vendor-DLL launcher protection are uncommitted and excluded from this binary. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
 | Dependency | rustpush `2bfbe8a06168a203c7c9f162b6fcbb45f1224560` adds a shared acknowledgment tracker above attachment-integrity base `a78ccfd`. Only explicit status 0 qualifies; the legacy meaning of 5008 is not assumed. Missing intended group targets remain unconfirmed. Ordinary send progress behavior is preserved. All seven tracker tests passed within the 260-test native run. |
@@ -63,33 +64,32 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
-Windows validation: the on-disk harness receipt still names the older
-`cf8ae21b61ea-dirty-b3f4575d0e4c` build until rebuilt. The launcher now supports
-`-BuildOnly -LocalWrite` without app launch or Apple access, then `-LocalWrite
--SkipBuild` only with an exact source/configuration and binary-hash receipt.
-Writer and read-only build identities differ. This is test-loop plumbing, not
-live CloudKit proof. Alpha and its identity remain untouched.
+Windows next gate: repair the rejected retained IDS authentication using the
+already-bound GSA session and unchanged hardware, then retry the unclaimed
+controlled request and prove exact CloudKit readback. Run `34491135220` passed
+in 23m27s; all 78 packaged files and the source/configuration receipt were
+verified. The qualified runtime is in `../windows-cloudkit-qualified`.
+Re-signing the vendor ObjectBox DLL caused loader error 4551; restoring its
+verified original bytes fixed startup under unchanged PC policy. A resumed
+old claim completed with zero new admissions, which is not a fresh save proof.
 
-Latest execution: Dart-only GCE `34485566441` passed exact source
-`7df4fced8b0d5846039674e5c899e6ed3d8029b6` (pilot `e4baad9ee`, T2D-32,
-`us-west1-a`), in 9m06s including provisioning and verified cleanup.
-The Dart suite itself took 3m56s. This is not a full APK timing comparison.
-Windows build-only previously failed before launch: Code Integrity events
-3033/3077 explicitly blocked `proc_macro_signing_wrapper_delayed.exe` under
-policy `0283ac0f-fff1-49ae-ada1-8a933130cad6`, despite a valid self-signed
-development certificate. No policy, certificate trust, or security setting
-was changed. A valid Authenticode result is not proof the policy permits execution.
-The later 2026-09-10 Windows recheck narrows the blocker: the existing signed
-native DLL loads/unloads, and the compiler wrapper returns `rustc --version`.
-Actual compilation still stops at the signed `slab` build-script executable
-with policy error 4551, before native tests run. Do not repeat this unchanged
-local build or present loader success as a rebuilt or live-qualified harness.
-The user approved an isolated cloud build environment, with a $200 ceiling
-through September 15. Keep Apple credentials and message stores local.
-Targeted Windows Dart tests can run: use the existing x64 ObjectBox 5.3.2
-library on the test process PATH. This resolved loader error 126 without any
-installation, certificate, or policy change.
-Subsequently, full signed GCE run `34444190598` passed for app source
+The September 10 fresh attempt stopped at `windows-write-recipient-lookup`
+with `cloud_sync_windows_sender_bad_authentication`. The new claim does not
+exist; no send or CloudKit save was reached. The native client already tried
+re-registering its retained IDS user. Repeating that same user is not repair.
+An explicit, request-bound sender-authentication refresh is in source for the
+next binary. It does not reset onboarding, hardware, CloudKit keys, or cursors,
+and it does not retry any send. If the retained GSA session cannot authenticate,
+stop for sign-in rather than clearing state.
+
+Keep native compilation isolated: the local signed `slab` build script remains
+blocked by App Control error 4551. No security policy was changed. Targeted
+Dart tests work with the matching ObjectBox library on PATH. The approved
+cloud budget is $200 through September 15; Apple credentials and message stores
+remain local. [Build runbook](WINDOWS_HOST_BUILD_ENVIRONMENT.md) contains setup
+and import boundaries; the investigation log retains failed-run evidence.
+
+Installed Canary remains the result of full signed GCE run `34444190598`, app source
 `3dc614c9eced02b49f130a2752ce531d9e6aec7a` (code `e060bcb41`): build,
 GitHub-hosted signing, and cleanup jobs all succeeded. The signature-verified
 APK was installed in place on Canary at 2026-09-09 23:43:18 Pacific; Alpha's
