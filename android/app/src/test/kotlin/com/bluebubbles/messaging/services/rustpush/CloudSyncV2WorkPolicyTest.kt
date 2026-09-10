@@ -2,14 +2,15 @@ package com.bluebubbles.messaging.services.rustpush
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CloudSyncV2WorkPolicyTest {
     @Test
-    fun `durable scheduling gate is closed by default`() {
-        assertFalse(CloudSyncV2WorkScheduler.schedulingEnabled)
+    fun `durable registration accepts only a canonical lowercase scope hash`() {
+        assertTrue(CloudSyncV2WorkRegistration.isCanonicalScopeHash("a".repeat(64)))
+        assertFalse(CloudSyncV2WorkRegistration.isCanonicalScopeHash("A".repeat(64)))
+        assertFalse(CloudSyncV2WorkRegistration.isCanonicalScopeHash("account-fingerprint"))
     }
 
     @Test
@@ -42,15 +43,38 @@ class CloudSyncV2WorkPolicyTest {
     }
 
     @Test
-    fun `unique work name hashes the complete scope and does not expose it`() {
-        val scope = "account-fingerprint\u001fcontainer\u001fprivate\u001fzone\u001fmessages\u001f2"
-        val name = CloudSyncV2WorkScheduler.uniqueWorkNameForScopeKey(scope)
+    fun `unique work name accepts only the already redacted scope hash`() {
+        val hash = "0123456789abcdef".repeat(4)
+        val name = CloudSyncV2WorkScheduler.uniqueWorkNameForScopeHash(hash)
 
         assertTrue(name.startsWith("cloud-sync-v2/"))
-        assertFalse(name.contains("account-fingerprint"))
-        assertNotEquals(
-            name,
-            CloudSyncV2WorkScheduler.uniqueWorkNameForScopeKey("$scope-other"),
+        assertEquals("cloud-sync-v2/$hash", name)
+    }
+
+    @Test
+    fun `fixed worker outcomes are bounded and fail closed`() {
+        assertEquals(
+            CloudSyncV2WorkerDisposition.SUCCESS,
+            CloudSyncV2WorkOutcomePolicy.resolve("complete", 0),
+        )
+        assertEquals(
+            CloudSyncV2WorkerDisposition.SUCCESS,
+            CloudSyncV2WorkOutcomePolicy.resolve("stale", 0),
+        )
+        assertEquals(
+            CloudSyncV2WorkerDisposition.RETRY,
+            CloudSyncV2WorkOutcomePolicy.resolve("retry", 0),
+        )
+        assertEquals(
+            CloudSyncV2WorkerDisposition.FAILURE,
+            CloudSyncV2WorkOutcomePolicy.resolve(
+                "retry",
+                CloudSyncV2WorkOutcomePolicy.MAX_ATTEMPTS - 1,
+            ),
+        )
+        assertEquals(
+            CloudSyncV2WorkerDisposition.FAILURE,
+            CloudSyncV2WorkOutcomePolicy.resolve("unknown", 0),
         )
     }
 }

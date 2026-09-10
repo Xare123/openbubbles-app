@@ -36,6 +36,14 @@ abstract final class CloudSyncDevGate {
     defaultValue: false,
   );
 
+  /// Independent read-only Android lifecycle gate. This never enables the
+  /// outbound writer or ordinary-send consumer and is fenced to Canary again
+  /// at runtime on both sides of the method channel.
+  static const bool androidBackgroundReadEnabled = bool.fromEnvironment(
+    'OPENBUBBLES_CLOUD_SYNC_V2_ANDROID_BACKGROUND_READ',
+    defaultValue: false,
+  );
+
   /// Separate compile-time availability gate for the local-only protocol
   /// evidence trace. Ordinary Alpha, Beta, and production artifacts omit the
   /// toggle even if a stale preference exists.

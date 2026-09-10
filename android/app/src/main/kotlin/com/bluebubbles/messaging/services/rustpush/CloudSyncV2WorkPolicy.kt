@@ -18,6 +18,27 @@ internal enum class CloudSyncV2NetworkRequirement {
     UNMETERED,
 }
 
+internal enum class CloudSyncV2WorkerDisposition {
+    SUCCESS,
+    RETRY,
+    FAILURE,
+}
+
+internal object CloudSyncV2WorkOutcomePolicy {
+    const val MAX_ATTEMPTS = 5
+
+    fun resolve(outcome: String?, runAttemptCount: Int): CloudSyncV2WorkerDisposition =
+        when (outcome) {
+            "complete", "stale" -> CloudSyncV2WorkerDisposition.SUCCESS
+            "retry" -> if (runAttemptCount + 1 >= MAX_ATTEMPTS) {
+                CloudSyncV2WorkerDisposition.FAILURE
+            } else {
+                CloudSyncV2WorkerDisposition.RETRY
+            }
+            else -> CloudSyncV2WorkerDisposition.FAILURE
+        }
+}
+
 internal data class CloudSyncV2WorkPolicy(
     val networkRequirement: CloudSyncV2NetworkRequirement,
     val requiresBatteryNotLow: Boolean = true,

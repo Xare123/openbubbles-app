@@ -37,6 +37,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_downlo
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_production_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_sync_gate.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_android_background.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
@@ -2300,6 +2301,7 @@ class RustPushService extends GetxService {
             ? "Connected through TCP 443 fallback"
             : null;
         _queueCloudSyncV2LocalSends(CloudSyncTrigger.networkReconnect);
+        unawaited(enqueueCloudSyncV2AndroidBackgroundReadHint());
         return;
       case AppleNetworkHealth.reconnecting:
         appleNetworkDetail.value = "Reconnecting to Apple messaging...";
@@ -7698,6 +7700,9 @@ class RustPushService extends GetxService {
     if (ls.isUiThread) await cs.refreshContacts();
     Logger.info("finishInit");
     _queueCloudSyncV2LocalSends(CloudSyncTrigger.startup);
+    if (ls.isUiThread && !mcs.background) {
+      unawaited(_configureCloudSyncV2AndroidBackgroundRead());
+    }
   }
 
   void checkIncident() {
@@ -7775,6 +7780,7 @@ class RustPushService extends GetxService {
   bool _cloudSyncV2NativeReceiptReplayNeedsContinuation = false;
   bool _cloudSyncV2NativeReceiptReplayContinuationScheduled = false;
   bool _cloudSyncV2OutboundQuiescing = false;
+  bool _cloudSyncV2AndroidBackgroundRegistered = false;
   static const _cloudSyncV2SemanticPullQuiescenceTimeout =
       Duration(seconds: 50);
   static const _cloudSyncV2PcsOperationTimeout = Duration(seconds: 30);
@@ -7785,6 +7791,102 @@ class RustPushService extends GetxService {
         isAndroid: Platform.isAndroid,
         packageName: fs.packageInfo.packageName,
       );
+
+  bool get _cloudSyncV2AndroidBackgroundRuntimeAllowed =>
+      CloudSyncDevGate.androidBackgroundReadEnabled &&
+      CloudSyncDevGate.manualSemanticPullEnabled &&
+      _cloudSyncV2CanaryRuntimeAllowed &&
+      _cloudSyncV2DeveloperRuntimeAllowed;
+
+  Future<String?> _cloudSyncV2AndroidBackgroundScopeHash() async {
+    final expectedState = state;
+    final client = expectedState?.icloudServices?.cloudMessagesClient;
+    final storage = statePath;
+    if (client == null || storage.isEmpty) return null;
+    final provider = CloudSyncProductionAuthSnapshotProvider(
+      readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+      nativeAuthBinding: FrbCloudSyncNativeAuthBinding(),
+      privateStorageDirectory: storage,
+    );
+    final auth = await provider.capture();
+    if (auth == null ||
+        !identical(expectedState, state) ||
+        !identical(client, state?.icloudServices?.cloudMessagesClient) ||
+        storage != statePath) {
+      return null;
+    }
+    return CloudSyncAndroidBackgroundPolicy.scopeHash(
+      CloudSyncAndroidBackgroundPolicy.semanticMessageScope(
+        auth.accountFingerprint,
+      ),
+    );
+  }
+
+  Future<void> _configureCloudSyncV2AndroidBackgroundRead() async {
+    if (!Platform.isAndroid || !ls.isUiThread || mcs.background) return;
+    if (!_cloudSyncV2AndroidBackgroundRuntimeAllowed ||
+        ss.settings.cloudSyncingEnabled.value ||
+        state?.icloudServices?.cloudMessagesClient == null) {
+      await _disableCloudSyncV2AndroidBackgroundRead();
+      return;
+    }
+    try {
+      final scopeHash = await _cloudSyncV2AndroidBackgroundScopeHash();
+      if (scopeHash == null) return;
+      final accepted = await mcs.invokeMethod(
+        'cloud-sync-v2-background-control',
+        <String, Object>{'action': 'configure', 'scopeHash': scopeHash},
+      );
+      _cloudSyncV2AndroidBackgroundRegistered = accepted == true;
+      if (!_cloudSyncV2AndroidBackgroundRegistered) {
+        Logger.warn('Cloud Sync V2 Android background registration rejected');
+      }
+    } catch (_) {
+      _cloudSyncV2AndroidBackgroundRegistered = false;
+      Logger.warn('Cloud Sync V2 Android background registration unavailable');
+    }
+  }
+
+  Future<void> _disableCloudSyncV2AndroidBackgroundRead() async {
+    _cloudSyncV2AndroidBackgroundRegistered = false;
+    if (!Platform.isAndroid ||
+        !ls.isUiThread ||
+        mcs.background ||
+        !_cloudSyncV2CanaryRuntimeAllowed) {
+      return;
+    }
+    try {
+      await mcs.invokeMethod(
+        'cloud-sync-v2-background-control',
+        const <String, Object>{'action': 'disable'},
+      );
+    } catch (_) {
+      Logger.warn('Cloud Sync V2 Android background disable unavailable');
+    }
+  }
+
+  /// Coalesces one content-free metadata wake. It never invokes CloudKit on
+  /// the APNs/network callback and never touches the outbound writer.
+  Future<void> enqueueCloudSyncV2AndroidBackgroundReadHint() async {
+    if (!Platform.isAndroid ||
+        !_cloudSyncV2AndroidBackgroundRuntimeAllowed) {
+      return;
+    }
+    final uiCaller = ls.isUiThread && !mcs.background;
+    final backgroundCaller = !ls.isUiThread && mcs.background;
+    if ((!uiCaller && !backgroundCaller) ||
+        (uiCaller && !_cloudSyncV2AndroidBackgroundRegistered)) {
+      return;
+    }
+    try {
+      await mcs.invokeMethod(
+        'cloud-sync-v2-background-control',
+        const <String, Object>{'action': 'hint', 'kind': 'METADATA'},
+      );
+    } catch (_) {
+      Logger.warn('Cloud Sync V2 Android background hint unavailable');
+    }
+  }
 
   void _queueCloudSyncV2LocalSends(CloudSyncTrigger trigger) {
     if (!CloudSyncDevGate.localSendRuntimeEnabled ||
@@ -8763,6 +8865,7 @@ class RustPushService extends GetxService {
         if (resumeAutomaticUploads) {
           _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
         }
+        unawaited(_configureCloudSyncV2AndroidBackgroundRead());
       }
     });
   }
@@ -8810,6 +8913,7 @@ class RustPushService extends GetxService {
       if (identical(_cloudSyncV2SemanticPullInFlight, future)) {
         _cloudSyncV2SemanticPullInFlight = null;
         _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
+        unawaited(_configureCloudSyncV2AndroidBackgroundRead());
       }
     });
   }
@@ -8855,8 +8959,90 @@ class RustPushService extends GetxService {
       if (identical(_cloudSyncV2SemanticPullInFlight, future)) {
         _cloudSyncV2SemanticPullInFlight = null;
         // Deliberately no _queueCloudSyncV2LocalSends: read-only entry.
+        unawaited(_configureCloudSyncV2AndroidBackgroundRead());
       }
     });
+  }
+
+  /// One WorkManager-owned, read-only semantic batch. The supplied hash must
+  /// match the currently authenticated account's complete semantic scope.
+  /// The method returns only a fixed disposition and never wakes uploads.
+  Future<CloudSyncAndroidBackgroundOutcome>
+  runCloudSyncV2AndroidBackgroundReadOnly({
+    required Object? scopeHash,
+    required Object? workKind,
+  }) async {
+    try {
+      if (!CloudSyncDevGate.androidBackgroundReadEnabled) {
+        throw StateError('cloud_sync_android_background_disabled');
+      }
+      if (!CloudSyncDevGate.manualSemanticPullEnabled) {
+        throw StateError('cloud_sync_semantic_pull_disabled');
+      }
+      if (!_cloudSyncV2CanaryRuntimeAllowed) {
+        throw StateError('cloud_sync_canary_package_required');
+      }
+      if (!_cloudSyncV2DeveloperRuntimeAllowed) {
+        throw StateError('cloud_sync_developer_mode_required');
+      }
+      if (!CloudSyncAndroidBackgroundPolicy.isCanonicalScopeHash(scopeHash)) {
+        throw StateError('cloud_sync_android_background_scope_mismatch');
+      }
+      if (!CloudSyncAndroidBackgroundPolicy.isSupportedWorkKind(workKind)) {
+        throw StateError('cloud_sync_android_background_work_kind_invalid');
+      }
+      if (!ls.isUiThread && !mcs.background) {
+        throw StateError('cloud_sync_android_background_disabled');
+      }
+      if (_serviceClosing || loggingOut) {
+        throw StateError('cloud_sync_native_auth_account_changed');
+      }
+      if (ss.settings.cloudSyncingEnabled.value || isSyncing.value != null) {
+        throw StateError('cloud_sync_legacy_sync_active');
+      }
+      if (_cloudSyncV2SemanticPullQuiescing ||
+          _cloudSyncV2SemanticPullInFlight != null) {
+        throw StateError('cloud_sync_semantic_pull_active');
+      }
+      final expectedClient = state?.icloudServices?.cloudMessagesClient;
+      if (expectedClient == null || statePath.isEmpty) {
+        throw StateError('cloud_sync_native_auth_account_unavailable');
+      }
+      final currentScopeHash =
+          await _cloudSyncV2AndroidBackgroundScopeHash();
+      if (currentScopeHash == null) {
+        throw StateError('cloud_sync_native_auth_account_unavailable');
+      }
+      if (currentScopeHash != scopeHash) {
+        throw StateError('cloud_sync_android_background_scope_mismatch');
+      }
+
+      final future = _runCloudSyncV2ManualSemanticPull(
+        maximumPasses: CloudSyncSemanticDrainController.defaultMaximumPasses,
+        allowAndroidBackgroundIsolate: true,
+      );
+      _cloudSyncV2SemanticPullInFlight = future;
+      try {
+        final result = await future;
+        return result.remoteDrained &&
+                result.projectionComplete &&
+                result.retainedSaveProjectionComplete
+            ? CloudSyncAndroidBackgroundOutcome.complete
+            : CloudSyncAndroidBackgroundOutcome.retry;
+      } finally {
+        if (identical(_cloudSyncV2SemanticPullInFlight, future)) {
+          _cloudSyncV2SemanticPullInFlight = null;
+          // Deliberately no _queueCloudSyncV2LocalSends.
+        }
+      }
+    } catch (error) {
+      final outcome =
+          CloudSyncAndroidBackgroundPolicy.classifyFailure(error);
+      Logger.info(
+        'Cloud Sync V2 Android background outcome=${outcome.wireValue}',
+      );
+      return outcome;
+    }
   }
 
   Future<CloudSyncSemanticDrainResult>
@@ -8911,7 +9097,10 @@ class RustPushService extends GetxService {
   }
 
   Future<CloudSyncSemanticDrainResult>
-  _runCloudSyncV2ManualSemanticPull({required int maximumPasses}) {
+  _runCloudSyncV2ManualSemanticPull({
+    required int maximumPasses,
+    bool allowAndroidBackgroundIsolate = false,
+  }) {
     final expectedClient = state?.icloudServices?.cloudMessagesClient;
     final expectedStorage = statePath;
     _validateCloudSyncV2QueuedRead(
@@ -8922,6 +9111,7 @@ class RustPushService extends GetxService {
       maximumPasses: maximumPasses,
       expectedClient: expectedClient,
       expectedStorage: expectedStorage,
+      allowAndroidBackgroundIsolate: allowAndroidBackgroundIsolate,
     );
   }
 
@@ -8946,6 +9136,7 @@ class RustPushService extends GetxService {
     required int maximumPasses,
     required Object? expectedClient,
     required String expectedStorage,
+    bool allowAndroidBackgroundIsolate = false,
   }) async {
     if (statePath.isEmpty || !Directory(statePath).existsSync()) {
       throw StateError('cloud_sync_private_storage_unavailable');
@@ -8962,7 +9153,11 @@ class RustPushService extends GetxService {
               abi == ffi.Abi.windowsArm64 ||
               abi == ffi.Abi.windowsX64;
         },
-        uiIsolate: () => ls.isUiThread,
+        uiIsolate: () =>
+            ls.isUiThread ||
+            (allowAndroidBackgroundIsolate &&
+                Platform.isAndroid &&
+                mcs.background),
         rustPushReady: () =>
             state?.icloudServices?.cloudMessagesClient != null,
         localState: ObjectBoxCloudSyncPreflightReader.fromDatabase().read,
@@ -9682,6 +9877,7 @@ class RustPushService extends GetxService {
   }
 
   Future reset(bool hw, bool logout, bool setup) async {
+    await _disableCloudSyncV2AndroidBackgroundRead();
     final shadowOwner = _cloudSyncV2ShadowOwner;
     _cloudSyncV2PcsPreparationQuiescing = true;
     _cloudSyncV2SemanticPullQuiescing = true;
@@ -9896,6 +10092,7 @@ class RustPushService extends GetxService {
   @override
   void onClose() {
     _serviceClosing = true;
+    unawaited(_disableCloudSyncV2AndroidBackgroundRead());
     _networkRefreshTimer?.cancel();
     _networkSubscription?.cancel();
     for (final timer in _profileRetryTimers.values) {

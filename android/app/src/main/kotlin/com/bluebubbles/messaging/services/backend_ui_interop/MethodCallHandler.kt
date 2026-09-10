@@ -41,6 +41,7 @@ import com.bluebubbles.messaging.services.foreground.StartForegroundServiceHandl
 import com.bluebubbles.messaging.services.foreground.StopForegroundServiceHandler
 import com.bluebubbles.messaging.services.notifications.CreateMissedFaceTimeNotification
 import com.bluebubbles.messaging.services.rustpush.AppleAccountLoginHandler
+import com.bluebubbles.messaging.services.rustpush.CloudSyncV2WorkControlHandler
 import com.bluebubbles.messaging.services.rustpush.EAPAKAGateway
 import com.bluebubbles.messaging.services.rustpush.GetNativeHandleHandler
 import com.bluebubbles.messaging.services.rustpush.KeystoreUnlockHandler
@@ -136,6 +137,7 @@ class MethodCallHandler {
             OpenSMSAppHandler.tag -> OpenSMSAppHandler().handleMethodCall(call, result, context)
             CreateDocumentHandler.tag -> CreateDocumentHandler().handleMethodCall(call, result, context)
             AppleAccountLoginHandler.tag -> AppleAccountLoginHandler().handleMethodCall(call, result, context)
+            CloudSyncV2WorkControlHandler.tag -> CloudSyncV2WorkControlHandler().handleMethodCall(call, result, context)
             HeifEncoder.tag -> HeifEncoder().handleMethodCall(call, result, context)
             CircleProximitySessionHandler.tag -> CircleProximitySessionHandler().handleMethodCall(call, result, context)
             EnableBTHandler.tag -> EnableBTHandler().handleMethodCall(call, result, context)

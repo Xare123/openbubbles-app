@@ -9,6 +9,7 @@ import androidx.work.ListenableWorker
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.bluebubbles.messaging.Constants
+import com.bluebubbles.messaging.MainActivity
 import com.bluebubbles.messaging.MainActivity.Companion.engine
 import com.bluebubbles.messaging.R
 import com.bluebubbles.messaging.services.rustpush.APNService
@@ -29,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import java.util.Timer
 import kotlin.concurrent.schedule
 import kotlin.coroutines.resume
@@ -36,10 +38,13 @@ import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.guava.future
 import java.util.TimerTask
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 class DartWorker(context: Context, workerParams: WorkerParameters): ListenableWorker(context, workerParams) {
 
     companion object {
+        private const val RESULT_ENGINE_READY_TIMEOUT_MILLIS = 60_000L
         var workerEngine: FlutterEngine? = null
         var engineReady = Mutex()
 
@@ -67,13 +72,27 @@ class DartWorker(context: Context, workerParams: WorkerParameters): ListenableWo
                     Log.d(Constants.logTag, "Engine is being destroyed")
                 }
             })
-            suspendCoroutine { cont ->
+            val initializingEngine = workerEngine!!
+            suspendCancellableCoroutine<Unit> { cont ->
+                val readyCompleted = AtomicBoolean(false)
+                cont.invokeOnCancellation {
+                    if (readyCompleted.compareAndSet(false, true)) {
+                        CoroutineScope(Dispatchers.Main.immediate).launch {
+                            if (workerEngine === initializingEngine) {
+                                initializingEngine.destroy()
+                                workerEngine = null
+                            }
+                        }
+                    }
+                }
                 // set up the method channel to receive events from Dart
                 MethodChannel(workerEngine!!.dartExecutor.binaryMessenger, Constants.methodChannel).setMethodCallHandler {
                         call, result -> run {
                     if (call.method == "ready") {
                         Log.d(Constants.logTag, "Dart engine is ready!")
-                        cont.resume(Unit)
+                        if (readyCompleted.compareAndSet(false, true) && cont.isActive) {
+                            cont.resume(Unit)
+                        }
                     } else {
                         MethodCallHandler().methodCallHandler(call, result, applicationContext)
                     }
@@ -154,6 +173,94 @@ class DartWorker(context: Context, workerParams: WorkerParameters): ListenableWo
             } catch (e: Exception) {
                 Log.d(Constants.logTag, "Error sending method $method to Dart: ${e.message}")
                 throw e
+            }
+        }
+
+        /**
+         * Result-bearing method-channel call used only by bounded workers that
+         * need an explicit Dart disposition. Existing fire-and-forget callers
+         * retain [callMethod]'s behavior.
+         */
+        suspend fun callMethodForOutcome(
+            applicationContext: Context,
+            method: String,
+            arguments: Map<String, Any>,
+        ): String {
+            engineReady.withLock {
+                if (engine != null && !MainActivity.engine_ready) {
+                    throw IllegalStateException("main_engine_not_ready")
+                }
+                if (engine == null && workerEngine == null) {
+                    Log.d(Constants.logTag, "Initializing engine for result-bearing worker")
+                    withTimeout(RESULT_ENGINE_READY_TIMEOUT_MILLIS) {
+                        initNewEngine(applicationContext)
+                    }
+                }
+            }
+            val engineToUse = if (engine != null && MainActivity.engine_ready) {
+                engine
+            } else {
+                workerEngine
+            } ?: throw IllegalStateException("worker_engine_unavailable")
+
+            return suspendCancellableCoroutine { cont ->
+                val finished = AtomicBoolean(false)
+                currentJobs.getAndIncrement()
+
+                fun closeOnce() {
+                    if (finished.compareAndSet(false, true)) {
+                        closeEngineIfNeeded(applicationContext)
+                    }
+                }
+
+                cont.invokeOnCancellation { closeOnce() }
+                MethodChannel(
+                    engineToUse.dartExecutor.binaryMessenger,
+                    Constants.methodChannel,
+                ).invokeMethod(method, arguments, object : MethodChannel.Result {
+                    override fun success(result: Any?) {
+                        if (cont.isActive) {
+                            if (result is String) {
+                                cont.resume(result)
+                            } else {
+                                cont.resumeWith(
+                                    kotlin.Result.failure(
+                                        IllegalStateException("dart_outcome_invalid"),
+                                    ),
+                                )
+                            }
+                        }
+                        closeOnce()
+                    }
+
+                    override fun error(
+                        errorCode: String,
+                        errorMessage: String?,
+                        errorDetails: Any?,
+                    ) {
+                        Log.e(Constants.logTag, "Result-bearing Dart worker failed")
+                        if (cont.isActive) {
+                            cont.resumeWith(
+                                kotlin.Result.failure(
+                                    IllegalStateException("dart_outcome_error"),
+                                ),
+                            )
+                        }
+                        closeOnce()
+                    }
+
+                    override fun notImplemented() {
+                        Log.e(Constants.logTag, "Result-bearing Dart worker is unavailable")
+                        if (cont.isActive) {
+                            cont.resumeWith(
+                                kotlin.Result.failure(
+                                    IllegalStateException("dart_outcome_unavailable"),
+                                ),
+                            )
+                        }
+                        closeOnce()
+                    }
+                })
             }
         }
     }

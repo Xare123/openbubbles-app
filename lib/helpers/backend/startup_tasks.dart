@@ -19,10 +19,17 @@ import 'package:window_manager/window_manager.dart';
 class StartupTasks {
 
   static final Completer<void> uiReady = Completer<void>();
+  static final Completer<void> _isolateServicesReady = Completer<void>();
 
   static Future<void> waitForUI() async {
     await uiReady.future;
   }
+
+  /// The native method channel becomes reachable before the headless service
+  /// graph is complete. Result-bearing workers wait here before touching the
+  /// database or RustPush state.
+  static Future<void> waitForIsolateServices() =>
+      _isolateServicesReady.future;
 
   static Future<void> initStartupServices({bool isBubble = false}) async {
     debugPrint("Initializing startup services...");
@@ -81,6 +88,9 @@ class StartupTasks {
     await Database.init();
     await mcs.init(headless: true);
     await ls.init(headless: true);
+    if (!_isolateServicesReady.isCompleted) {
+      _isolateServicesReady.complete();
+    }
   }
 
   static Future<void> initIncrementalSyncServices() async {

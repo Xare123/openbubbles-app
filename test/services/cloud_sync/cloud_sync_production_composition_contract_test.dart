@@ -9,6 +9,7 @@ void main() {
     expect(CloudSyncDevGate.manualSemanticPullEnabled, isFalse);
     expect(CloudSyncDevGate.manualOutboundCanaryEnabled, isFalse);
     expect(CloudSyncDevGate.localSendRuntimeEnabled, isFalse);
+    expect(CloudSyncDevGate.androidBackgroundReadEnabled, isFalse);
     expect(CloudSyncDevGate.protocolEvidenceAvailable, isFalse);
   });
 
@@ -82,6 +83,12 @@ void main() {
     expect(
       canaryBuild,
       contains('--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true'),
+    );
+    expect(
+      canaryBuild,
+      contains(
+        '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_ANDROID_BACKGROUND_READ=true',
+      ),
     );
     expect(
       canaryBuild,
@@ -394,7 +401,7 @@ void main() {
       'runCloudSyncV2AutomaticSemanticCatchUpConfirmed()',
     );
     final end = source.indexOf(
-      '_runCloudSyncV2ManualSemanticPull({required int maximumPasses}) {',
+      '_runCloudSyncV2ManualSemanticPull({',
       start,
     );
 

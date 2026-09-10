@@ -6,7 +6,6 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /**
@@ -22,18 +21,15 @@ internal object CloudSyncV2WorkScheduler {
     const val INPUT_WORK_KIND = "cloud_sync_v2_work_kind"
     private const val UNIQUE_WORK_PREFIX = "cloud-sync-v2/"
 
-    /** Closed unless a future reviewed composition explicitly opens it. */
-    @Volatile
-    var schedulingEnabled: Boolean = false
-
-    fun enqueueHint(
+    fun enqueueScopeHash(
         context: Context,
-        scopeKey: String,
+        scopeHash: String,
         kind: CloudSyncV2WorkKind = CloudSyncV2WorkKind.METADATA,
     ): Boolean {
-        if (!schedulingEnabled) return false
-
-        val scopeHash = hashScope(scopeKey)
+        if (context.packageName != CloudSyncV2WorkRegistration.CANARY_PACKAGE ||
+            !CloudSyncV2WorkRegistration.isCanonicalScopeHash(scopeHash)) {
+            return false
+        }
         val policy = CloudSyncV2WorkPolicy.forKind(kind)
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(
@@ -69,22 +65,16 @@ internal object CloudSyncV2WorkScheduler {
         return true
     }
 
-    fun cancel(context: Context, scopeKey: String) {
+    fun cancelScopeHash(context: Context, scopeHash: String) {
+        if (!CloudSyncV2WorkRegistration.isCanonicalScopeHash(scopeHash)) return
         WorkManager.getInstance(context.applicationContext).cancelUniqueWork(
-            uniqueWorkName(hashScope(scopeKey)),
+            uniqueWorkName(scopeHash),
         )
     }
 
-    internal fun uniqueWorkNameForScopeKey(scopeKey: String): String =
-        uniqueWorkName(hashScope(scopeKey))
-
-    internal fun hashScope(scopeKey: String): String {
-        require(scopeKey.isNotBlank()) { "Cloud Sync V2 scope key must not be blank" }
-        return MessageDigest.getInstance("SHA-256")
-            .digest(scopeKey.toByteArray(Charsets.UTF_8))
-            .joinToString(separator = "") { byte ->
-                "%02x".format(byte.toInt() and 0xff)
-            }
+    internal fun uniqueWorkNameForScopeHash(scopeHash: String): String {
+        require(CloudSyncV2WorkRegistration.isCanonicalScopeHash(scopeHash))
+        return uniqueWorkName(scopeHash)
     }
 
     private fun uniqueWorkName(scopeHash: String): String = UNIQUE_WORK_PREFIX + scopeHash

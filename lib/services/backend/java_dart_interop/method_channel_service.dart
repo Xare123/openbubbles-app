@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:bluebubbles/helpers/backend/settings_helpers.dart';
+import 'package:bluebubbles/helpers/backend/startup_tasks.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -9,6 +10,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_canary_adb_control.dart'; // CANARY_ADB_HOOK: remove with canary ADB control.
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_android_background.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
@@ -49,7 +51,7 @@ class MethodChannelService extends GetxService {
     Logger.debug("MethodChannelService initialized");
   }
 
-  Future<bool> _callHandler(MethodCall call) async {
+  Future<Object?> _callHandler(MethodCall call) async {
     final Map<String, dynamic>? arguments = call.arguments is String ? jsonDecode(call.arguments) : call.arguments?.cast<String, Object>();
     
     // ONLY RETURN Future.value or Future.error
@@ -87,11 +89,32 @@ class MethodChannelService extends GetxService {
           Logger.info("rustpush_receive dispatch_start retry=$retry");
           await pushService.recievedMsgPointer(pointer, retry);
           Logger.info("rustpush_receive dispatch_complete retry=$retry");
+          unawaited(pushService.enqueueCloudSyncV2AndroidBackgroundReadHint());
         } catch (e, s) {
           Logger.error("APN MSG error", error: e, trace: s);
           rethrow;
         }
         return true;
+      case "cloud-sync-v2-background-wake":
+        try {
+          if (background) {
+            await StartupTasks.waitForIsolateServices();
+          }
+          await pushService.initFuture;
+          final outcome =
+              await pushService.runCloudSyncV2AndroidBackgroundReadOnly(
+            scopeHash: arguments?['scopeHash'],
+            workKind: arguments?['kind'],
+          );
+          return outcome.wireValue;
+        } catch (error) {
+          final outcome =
+              CloudSyncAndroidBackgroundPolicy.classifyFailure(error);
+          Logger.info(
+            'Cloud Sync V2 Android background dispatch=${outcome.wireValue}',
+          );
+          return outcome.wireValue;
+        }
       case "apple-network-route":
         final data = arguments;
         if (data != null) {
