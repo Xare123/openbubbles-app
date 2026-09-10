@@ -321,3 +321,16 @@ This is a chronological evidence log. It does not override the
   synthetic test were removed, with the original files restored exactly.
   The old 1,893/1,693 live blocking counts remain historical observations,
   not a current recount or a diagnosed single-cause backlog.
+- Lifecycle code committed and pushed to the user's fork at `f4ba34d8e`;
+  reviewed source `68d5958b5a2d1b12cda75b87887c198e4b80944f` is under full
+  GCE qualification in run `34427563744`. Isolated pilot commit `a35bfc526`
+  adds selected-flavor Android JVM tests after APK assembly, reuses existing
+  ARM64 Flutter output, rejects missing/zero-executed/failing XML reports,
+  and retains those reports for seven days. Parent corrected the proposed
+  artifact path and verified YAML, Bash, and embedded Python syntax before
+  dispatch. No infrastructure, signing, or cleanup policy was changed.
+- All three bounded agents were reviewed and closed; supported agent controls
+  report their handles absent. Research evidence stays in native task history;
+  no dedicated worktrees were created or credential/user-data artifacts deleted.
+  C: retained approximately 64.9 GiB free at the checkpoint. Pixel ADB had no
+  connected devices, so no install or account mutation was attempted.
