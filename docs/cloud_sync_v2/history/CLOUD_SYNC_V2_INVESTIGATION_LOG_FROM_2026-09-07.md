@@ -508,3 +508,14 @@ This is a chronological evidence log. It does not override the
   tests. Infrastructure, signing, and existing full qualification stay separate.
   Pixel ADB inventory is empty. Alpha and device data remain untouched. C: has
   over 63 GiB free; no evidence, sessions, or user data were removed.
+- The workflow worker's partial patch was reviewed, then the worker was stopped
+  and verified absent so parent could finish the immediate critical path. Parent
+  corrected input indentation and APK upload/signing exclusions, checked all
+  prior-mode step selections unchanged, and verified orchestration, cleanup,
+  environment, and signing steps unchanged. Isolated pilot `e4baad9ee` was pushed;
+  run `34441590911` uses exact source `423a084250758246f7331501165b498651bcd34a`
+  (code `731988a3d`), T2D-32, primary lane, `us-west1-a`, writer/automatic uploads
+  off. No production claim, artifact install, or Apple access is implied.
+- Parent also kept the broader consumer gate explicit: a lease skip is not proof
+  that the shared queue drain lets fresh sends proceed past safe old pending work.
+  This must be resolved without skipping unknown outcomes or deleting evidence.
