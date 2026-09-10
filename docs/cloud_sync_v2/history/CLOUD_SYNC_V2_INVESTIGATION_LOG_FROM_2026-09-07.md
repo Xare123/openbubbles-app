@@ -425,3 +425,10 @@ This is a chronological evidence log. It does not override the
   supported session deletion is unavailable in this tool surface, so no shared
   database or raw transcript deletion was attempted. C: retained over 63 GiB
   free before cloud dispatch, with zero GCE CPU/SSD usage.
+- Exact-source full run `34437303360` failed before building with
+  `ZONE_RESOURCE_POOL_EXHAUSTED` for T2D-60 in `us-west1-b`. Cleanup succeeded;
+  independent GCE and GitHub runner inventories were empty. This is capacity
+  failure, not a code/test result. Retried the unchanged source `75440cafc`
+  and pilot `f8520b1ee` in `us-west1-a`, run `34437410835`, manual writer and
+  background read on, automatic uploads off. Trusted-source validation passed
+  and runner creation is in progress; every downstream result is still pending.
