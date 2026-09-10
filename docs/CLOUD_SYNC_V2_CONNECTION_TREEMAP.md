@@ -56,7 +56,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
 | Installed Android candidate | Code `e060bcb41` repairs retained-queue scheduling above persisted IDS-proof base `731988a3d` and positive-acknowledgment native base `35551340c`. Pre-proof rows retain version 0 and cannot initiate a new CloudKit save; original envelopes remain recoverable. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
-| Windows candidate | Source `6c628feb6`, manual-write variant, passed isolated ARM64 build, 29 focused Dart tests and 48 real Rust-DLL codec tests. Imported and verified locally, including retained-profile startup and prior-request resume. Fresh request failed at IDS recipient lookup with `6005`, before send/claim. Later native Find My probe, explicit sender repair, and vendor-DLL launcher protection are uncommitted and excluded from this binary. |
+| Windows candidate | Qualified source `6c628feb6`, manual-write variant, passed isolated ARM64 build, 29 focused Dart tests and 48 real Rust-DLL codec tests. Imported and verified locally, including retained-profile startup and prior-request resume. Fresh request failed at IDS recipient lookup with `6005`, before send/claim. Next source `6abbeede2` adds the native Find My probe, explicit sender repair, and vendor-DLL launcher protection; isolated qualification is running, not a passed result. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
 | Dependency | rustpush `2bfbe8a06168a203c7c9f162b6fcbb45f1224560` adds a shared acknowledgment tracker above attachment-integrity base `a78ccfd`. Only explicit status 0 qualifies; the legacy meaning of 5008 is not assumed. Missing intended group targets remain unconfirmed. Ordinary send progress behavior is preserved. All seven tracker tests passed within the 260-test native run. |
@@ -77,10 +77,25 @@ The September 10 fresh attempt stopped at `windows-write-recipient-lookup`
 with `cloud_sync_windows_sender_bad_authentication`. The new claim does not
 exist; no send or CloudKit save was reached. The native client already tried
 re-registering its retained IDS user. Repeating that same user is not repair.
-An explicit, request-bound sender-authentication refresh is in source for the
-next binary. It does not reset onboarding, hardware, CloudKit keys, or cursors,
+An explicit, request-bound sender-authentication refresh is in source `6abbeede2`
+for the next binary. It does not reset onboarding, hardware, CloudKit keys, or cursors,
 and it does not retry any send. If the retained GSA session cannot authenticate,
 stop for sign-in rather than clearing state.
+
+Current exact-source qualification: app `6abbeede2`, rustpush `f33dcac`, pilot
+`a2680baac`. GCE app Rust `34497413348` passed 380 tests and rustpush
+`34497413071` passed 261. Both cleanup jobs passed; independent inventories
+showed zero VMs and zero runner registrations. Neither run built an APK or
+accessed Apple credentials. Windows `34497409120` failed on package-download
+authorization before compilation; its one failed-job retry is running.
+Preserve the previous qualified runtime until the Windows batch passes.
+
+Offline inspection of the retained September 7 test on a disposable database
+copy confirmed one canonical legible message with a valid source binding, but
+IDS proof remains version 0 and the exact-readback marker is absent. The
+retained confirmed outbox row alone is not full write proof. Source database,
+request and claim stayed unchanged; the temporary database copy was removed.
+This corroborates the fresh-send/readback gate rather than closing it.
 
 Keep native compilation isolated: the local signed `slab` build script remains
 blocked by App Control error 4551. No security policy was changed. Targeted
@@ -163,7 +178,7 @@ evidence paths. Causal edit/unsend writes remain a gap, not a passed gate.
 | Reactions on read | `LIVE-PROVEN` for representative records | Continue retaining unavailable parents; qualify current candidate on Pixel. |
 | Photos and videos on read | `SOURCE-IMPLEMENTED` after prior live proof | Current source resolves generic and UTI-only image/video records consistently across profile and message surfaces. Pixel must prove HEIC, video, and tap-to-open behavior; GIF data remains preserved but profile animation is not a release requirement. |
 | Documents and plugin payloads | `TEST-PROVEN` | Supported documents remain visible, unknown opaque files remain available, and only the exact `.pluginPayloadAttachment` suffix is hidden from profile media/documents without deleting its row. Pixel UI proof remains. |
-| Direct plaintext create | `LIVE-PROVEN` in the Windows development loop | Confirm exact remote readback, restart no-save replay, independent Apple-device visibility, and ordinary Pixel composer convergence. |
+| Direct plaintext create | Prior Windows initial-create proof; current candidate unqualified | Fresh send currently stops at IDS authentication. Require version-2 positive IDS confirmation, exact remote readback, restart no-save replay, independent Apple-device visibility, and ordinary Pixel composer convergence. |
 | Restored-group plaintext create | `SOURCE-IMPLEMENTED` and exact-source qualified | Perform one authorized live group test with pinned route/binding plus exact readback/restart proof. Provisional group creation remains closed. |
 | Write-send provenance | `SOURCE-IMPLEMENTED` | Native positive-acceptance tests pass. Qualify the additive persisted-proof upgrade and dispatch/reconciliation tests. Old deferred/ready intents cannot promote or enter fresh admission without new proof; old adopted pending entries are retained and skipped for new leases. Submission rechecks proof. Exact readback remains allowed and does not retroactively prove IDS acceptance. A fresh v2 native confirmation can requalify the exact unchanged old source without resending it. Automatic uploads remain off pending execution and live proof. |
 | Retained writer queue usability | `TEST-PROVEN` | One journal-bound, read-only classifier covers queue drain, queued Chat observation, and preflight. It exempts only pristine pending creates with proof version 0, exact protected envelope/mapping, current owner/generation, no lease, attempt, Apple UUID or receipt. All rows remain counted and fingerprinted; no upload, acknowledgement, deletion, or proof upgrade occurs. GCE passed the real consumer/admission/store regression with a fresh qualified send beside retained work and reopen without duplicate submission. Apple responses are synthetic in this test; live proof remains. Unknown/retried/leased/malformed rows still block. |
@@ -438,7 +453,10 @@ CloudKit readback or independent Apple-device display.
 
 ### Write qualification
 
-- [x] Direct plaintext create has bounded Windows save/readback/restart proof.
+- [ ] Current direct plaintext candidate has positive IDS version-2 confirmation
+  and exact Windows save/readback/restart proof. Historical bounded experiments
+  remain evidence, but the retained September 7 request lacks the current proof
+  markers and the fresh September 10 request stopped before sending.
 - [x] Host-controlled Pixel prepare/run/verify tooling exercises the existing
   exact-intent production path across fresh Canary processes, rejects candidate
   drift, redacts arbitrary failures, and requires automatic uploads off. Live
@@ -469,7 +487,11 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Qualify the repaired lifecycle candidate before another Pixel install. Then prove composer admission and the native IDS receipt across an
+1. Finish isolated Windows source `6abbeede2` qualification. Repair retained IDS
+   authentication once using the same account/hardware, execute the unclaimed
+   authorized direct test, and inspect exact readback before any claim of write
+   completion. Qualify the repaired lifecycle candidate before another Pixel
+   install. Then prove composer admission and the native IDS receipt across an
    intentional process death, then verify state-3 recovery, one protected
    outbox adoption, exact CloudKit readback, and zero duplicate local/remote
    records. Do not touch Alpha.
@@ -494,9 +516,13 @@ CloudKit readback or independent Apple-device display.
 
 ## Next falsification test
 
-First qualify the ready/lease/budget repair with Android behavioral tests and
+First use the isolated Windows candidate to falsify same-account sender repair
+and fresh direct write, followed by exact readback and restart without resending.
+The offline proof inspector must distinguish retained readable text from
+version-2 positive IDS confirmation and a persisted exact-readback marker.
+Then qualify the ready/lease/budget repair with Android behavioral tests and
 an exact-source signed APK. Do not install `fc132e5f8` as background-qualified.
-Then use one batched Pixel session: cold read, idempotent
+Use one batched Pixel session: cold read, idempotent
 second read, background/lock/APNs/reconnect, expired-token/restart recovery, and
 the authorized direct process-death write test. The write must recover state 3,
 adopt exactly one
@@ -533,8 +559,11 @@ Apple carries edit history and retracted parts inside the existing message's
 `msgProto.messageSummaryInfo` blob (`ec`, `ep`, `otr`, and `rp`). The read path
 already validates part-key consistency, monotonic edit revisions, and the rule
 that present-but-empty collections are absent rather than an explicit clear.
-The underlying CloudKit client exposes update save semantics and stale-record
-conflicts, but V2 transport deliberately remains initial-create-only.
+The legacy `Message.toCloud` already serializes these fields, and generic
+`CloudMessagesClient.save_records` is called by `save_messages` for message
+updates. Reuse that encoding. Its `SaveRecordOperation::try_new(update=true)`
+does not set a predecessor record ETag; it is not evidence of V2-safe causal
+conflict handling. V2 transport currently remains initial-create-only.
 
 Do not enable update transport from structural inference alone. First capture
 one genuine Apple edit and one unsend read-only, proving the same record name,
@@ -543,11 +572,6 @@ or merged field set, and the resulting `messageSummaryInfo` bytes. Then require
 stale-tag refetch and reapply, exact retry identity, and anti-resurrection proof.
 Explicit `NOT_FOUND` is not permission to recreate a previously known message.
 
-A reviewed three-file first-edit identity scaffold remains deliberately outside
-this candidate. It has no production call site, Apple record or native wire
-fixture, journal/admission integration, or content-derived proof that its
-caller-supplied pre/post digests match the actual message text. Its operation
-identity also cannot establish the required predecessor change tag or monotonic
-CloudKit mutation revision. Retain it only as design evidence; do not integrate
-it until the live capture above determines the real zone, record, and compare-
-and-swap contract.
+An older review mentioned a three-file identity scaffold without identifying
+its paths. It was not located in the current checkout and must not be counted
+as implementation. Historical discussion remains in the investigation log.

@@ -776,3 +776,79 @@ This is a chronological evidence log. It does not override the
   agent and verified `not_found`. No dedicated worktree/log artifacts existed;
   its review remains necessary evidence and supported transcript deletion is
   unavailable. No files were deleted. C: 68.26 GiB free.
+- Committed/pushed reviewed source as app `6abbeede2cf522706d619c16d3aee147d14d6e64`
+  and rustpush `f33dcacc043b2a2363a0b8d12e4429bf936b6856`. Preserved unrelated
+  CRLF-only modifications. Both Rust files parsed without modification; the
+  expanded nine-test Windows local-write suite passed. No native or live repair
+  success is implied by those checks.
+- Dispatched source-only Windows `34497409120`, GCE app-rust-only `34497413348`
+  on primary T2D-32 and rustpush-only `34497413071` on parallel T2D-32, all pilot
+  `a2680baac`. Preflight inventories were empty. Regional T2D quota was 100 CPUs,
+  SSD 500 GB, and all-regions CPU quota was 164 with zero usage. Combined GCE
+  request is 64 CPUs and 200 GB SSD; original exact-instance cleanup and VM
+  lifetime remain unchanged. Dispatch succeeded; outcomes still pending.
+- Preserved the failed fresh-request status in build evidence as
+  `fresh-write-qualification-20260910-03-failed.json`, SHA256
+  `51b6fa7b8230f64edb5848fc30fa5e9a6b989763a7f08570ed96319b176e774d`.
+
+### 2026-09-10: native qualification and retained-write evidence audit
+
+- Exact source `6abbeede2` passed 380 app Rust tests in `34497413348` and
+  261 rustpush tests in `34497413071`. Both ephemeral-runner cleanup jobs
+  succeeded. Independent GCE and GitHub inventories returned zero instances
+  and zero self-hosted runners. No APK, Apple session, or production signing
+  was used by these runs.
+- Windows `34497409120` attempt 1 failed before compilation with dependency
+  download authorization (Flutter exit 69). Lockfiles were unchanged from the
+  successful baseline. Reran the failed Windows job once, not the passing GCE
+  tests; attempt 2 is still running. No guessed package or credential repair.
+- Added an offline readback inspector reusing the production exact-intent
+  validator. Three ObjectBox tests passed, including rejection of fabricated
+  matching flags without real admission authority. Targeted Dart analysis
+  passed. A historical request can be selected without replacing the current
+  request or launching the native writer.
+- With the Windows app exited, inspected request `qualification-20260907-02`
+  using a disposable copy of the retained ObjectBox database. One canonical
+  message was legible and source-valid, but its IDS proof version was 0 and
+  exact-readback marker absent. The outbox was confirmed, but that alone did
+  not prove end-to-end write. Saved the content-free result under
+  `build-evidence/windows-fast-loop-34491135220/retained-write-proof-qualification-20260907-02.json`.
+  Before/after hashes proved the source database, request and claim unchanged.
+  The copied database and its generated lock file were removed after close;
+  no source data or rollback evidence was removed. Scratch inspection was empty.
+- Bernoulli's edit/unsend review identified useful decode/projection entrypoints,
+  but parent rejected its conclusion that legacy `save_records(update=true)`
+  applies only to chats. `CloudMessagesClient.save_messages` invokes that generic
+  path for `messageManateeZone`; `Message.toCloud` serializes `ec/ep/otr/rp`.
+  `RustPushService.unsend` and `edit` call the legacy upload paths. These are
+  reusable wire primitives, not proof of a safe V2 causal mutation. The generic
+  constructor does not set a predecessor record ETag; V2 still needs exact
+  conflict, admission, readback and replay behavior. Do not invent schema or
+  treat an unnamed historical three-file scaffold as available implementation.
+- Parent also rejected the proposed Dart-only acceleration as unproven:
+  `-SkipBuild` cannot incorporate source edits, and normal `flutter build`
+  invokes the native graph blocked locally by policy. Reusing DLL bytes alone
+  does not supply CargoKit intermediates or prove a rebuilt kernel's identity.
+  No launcher safety check was bypassed and no local native build was started.
+- Rawls reviewed FaceTime guest admission and the possible media/completion
+  cycle. Source does not establish a cycle: Android clicks Join before media
+  confirmation; Dart completes its correlation ticket after the native answer;
+  Rust approval/group progression does not read Android media state. Parent
+  accepted this as a negative source finding, not proof that calls work. Latest
+  retained logs predate bounded persistent diagnostics and do not classify the
+  terminal event. Keep verification intact and capture a future authorized
+  call on the diagnostic-enabled Android candidate. No calls or account access
+  occurred in these reviews.
+- Closed Bernoulli and Rawls after integrating the accepted findings and
+  explicitly rejecting the unsupported conclusions above. Supported agent
+  controls then reported both `not_found`. No dedicated worktrees existed;
+  review evidence and transcripts remain necessary provenance. Supported
+  transcript/session deletion is unavailable. No agent artifacts were deleted.
+- Accepted Bacon's two bundle-verifier files after parent repairs for strict
+  boolean flags, exact native path, safe fixture ownership and actual cloud
+  variant identifiers. Parent reran 16 checks, including all 78 files in the
+  retained real bundle; all passed. Unsupported replay bundles are rejected.
+  Closed Bacon and verified `not_found`. An earlier abandoned synthetic fixture
+  contains one zero-byte ZIP and two directories; exact cleanup was rejected by
+  tool policy, so retained it without trying another deletion route. Manifest:
+  `build-evidence/agent-bacon-cleanup-20260910.json`. Reclaimed zero bytes.
