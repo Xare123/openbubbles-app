@@ -477,3 +477,34 @@ This is a chronological evidence log. It does not override the
   only the two new narrow-validation runners remain. Both new runs passed
   trusted-source validation and started builds. Pixel ADB inventory was empty;
   no app was installed and no device data or messages were changed.
+
+## 2026-09-09, persisted IDS proof and a shorter database-test loop
+
+- Parent reviewed the complete read/write flow after the user's status request.
+  Media upload primitives are not integrated attachment writes; edits/unsends
+  remain gaps. No production claim or narrowed completion gate was made.
+- Source `731988a3d` adds one ObjectBox property, IDS confirmation version,
+  preserving entity IDs and existing data. Absent proof stays 0; positive native
+  confirmation writes 2. New dispatch rejects old proof; exact envelope recovery
+  and CloudKit readback remain available without treating readback as IDS proof.
+  Old pending entries do not consume eligible-send windows. Nothing is deleted,
+  blindly resent, or automatically enabled. Database behavior remains unverified
+  until the new regression and actual predecessor-schema tests execute.
+- Prior native code `35551340c` completed 377 app Rust and 260 rustpush tests.
+  Both GCE cleanup jobs succeeded, and independent inventories showed no VMs or
+  registered GitHub runners. Current 27 composition contracts pass; Dart analysis
+  reports no errors/warnings (four pre-existing service style infos). Local
+  database tests compiled but failed setup with ObjectBox DLL error 126. This is
+  not a pass and does not establish a behavioral regression in the patch.
+- A bounded worker supplied the predecessor-schema regression; parent corrected
+  inconsistent sentinel bindings and missing assertions before accepting it.
+  The Windows inventory worker found a signed existing DLL but its exact build
+  receipt proves `cf8ae21b61ea-dirty-b3f4575d0e4c`, not the current native code.
+  Parent rejected the worker's initial claim that a dirty tree or SAC being On
+  alone proves Windows execution impossible. Both workers are closed and verified
+  absent; their findings and test source are retained. No credentials were read.
+- The isolated pilot is receiving a Dart-only validation lane, with no Android
+  build or Rust recompile, to remove the full-APK prerequisite for ObjectBox
+  tests. Infrastructure, signing, and existing full qualification stay separate.
+  Pixel ADB inventory is empty. Alpha and device data remain untouched. C: has
+  over 63 GiB free; no evidence, sessions, or user data were removed.
