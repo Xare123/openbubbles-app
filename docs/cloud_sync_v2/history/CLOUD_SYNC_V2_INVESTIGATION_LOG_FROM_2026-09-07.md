@@ -1334,3 +1334,31 @@ This is a chronological evidence log. It does not override the
   upload timeout/receipt/asset-shape boundary at `cloudkit.rs:5778-5817` and kept
   unknown attempts fenced. A missing final record is not an MMCS status query.
   Research agent reviewed and closed, independently verified not_found.
+
+## 2026-09-10, native compile repair and upload evidence/authority separation
+
+- Runs `34536416793` (T2D-32/a) and `34536976956` (N2D-16/b) exhausted
+  zonal capacity before compiling. `34537137418` (C4D-16/a) instead failed
+  the C4D family quota, currently zero. Do not retry C4D without a separate
+  quota approval. No quota or infrastructure configuration was changed.
+- N2D-8/c run `34537334179` successfully provisioned and compiled source
+  `9a503bbf2`, then failed at three native integration errors: two optional
+  failure classes passed to a non-optional mapper, and FRB's automatic opaque
+  result getter requiring a clone of a deliberately single-use upload owner.
+  Corrected optional mapping and explicitly non-opaque result serialization;
+  the owner itself remains non-cloneable. These source repairs await rerun.
+- Artifact `10176146633` was downloaded only for diagnosis. Its generated
+  files were not imported because they reproduce the failing result getter.
+  Cleanup succeeded and independent inventories returned no VMs or runners.
+- Added native completed-receipt verification without restaging: it binds the
+  original plan/attempt/source and live auth, returns content-free completion
+  hashes, and preserves an already-adopted result lease. Synthetic tests check
+  missing completion, original-attempt matching, wrong plan, and repeated
+  inspection without receipt-file changes. No live account operation occurred.
+- Parent and Muse identified a runtime mismatch: mutation fencing advances the
+  writer epoch but upload recovery re-entered the new-send epoch check. Astra
+  confirmed it affects read, late receipt retention, final admission and dispatch.
+  Repair direction: immutable original evidence survives epoch rotation; new
+  byte attempts remain strict, and final saves need current stable authority.
+  No old row, plan, epoch, or receipt is rewritten. Unknown upload isolation
+  still requires proved native quiescence, not a Dart timeout or absent record.

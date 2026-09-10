@@ -10,7 +10,7 @@
 
 use std::{
     io::{self, Cursor, Read, Seek, SeekFrom},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -358,6 +358,27 @@ impl AttachmentUploadPlan {
 
     pub(crate) fn validate_parent_source(&self, guid: &str, sha256: &str) -> Result<(), Failure> {
         self.validate_origin(guid, sha256, &self.record_identifier)
+    }
+
+    /// Inspect a completed receipt without creating a new envelope or lease.
+    /// The caller separately validates the live auth and committed source.
+    pub(crate) fn recover_completed_receipt(
+        &self,
+        storage: &Path,
+        binding: &crate::cloud_sync_attachment_upload_receipt::AttachmentUploadReceiptBinding,
+    ) -> Result<Option<Vec<u8>>, Failure> {
+        if binding.plan_payload_sha256 != digest(&self.encode()?)
+            || binding.upload_attempt_id != self.upload_attempt_id()?
+        {
+            return Err(Failure::BindingMismatch);
+        }
+        let encoded =
+            crate::cloud_sync_attachment_upload_receipt::recover_completed(storage, binding)
+                .map_err(|_| Failure::ProtectedStorage)?;
+        if let Some(value) = &encoded {
+            self.validate_completed_envelope(value)?;
+        }
+        Ok(encoded)
     }
 
     /// Bounded-memory validation of the retained plaintext file. This does not
@@ -839,6 +860,75 @@ mod tests {
             .is_err());
         assert!(original
             .validate_completed_envelope(b"not a receipt")
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn completed_receipt_inspection_preserves_existing_files_and_exact_attempt() {
+        use crate::cloud_sync_attachment_upload_receipt::{
+            claim_attempt, persist_completed, AttachmentUploadReceiptBinding,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let original = plan().await;
+        let binding = AttachmentUploadReceiptBinding {
+            account_fingerprint: "A".repeat(43),
+            protected_store_identity: crate::cloud_sync_protector::protected_store_identity(
+                directory.path().to_string_lossy().into_owned(),
+            )
+            .unwrap(),
+            plan_payload_sha256: digest(&original.encode().unwrap()),
+            upload_attempt_id: original.upload_attempt_id().unwrap().to_owned(),
+        };
+        assert!(original
+            .recover_completed_receipt(directory.path(), &binding)
+            .unwrap()
+            .is_none());
+        claim_attempt(directory.path(), &binding).unwrap();
+        assert!(original
+            .recover_completed_receipt(directory.path(), &binding)
+            .unwrap()
+            .is_none());
+        let encoded =
+            encode_attachment(&original.complete(asset(&original)).unwrap(), RECORD).unwrap();
+        persist_completed(directory.path(), &binding, &encoded).unwrap();
+        let receipts = directory
+            .path()
+            .join("cloud_sync_v2_native_store")
+            .join(".attachment-upload-receipts");
+        let snapshot = || {
+            let mut files = std::fs::read_dir(&receipts)
+                .unwrap()
+                .map(|entry| {
+                    let path = entry.unwrap().path();
+                    (path.clone(), std::fs::read(path).unwrap())
+                })
+                .collect::<Vec<_>>();
+            files.sort_by(|a, b| a.0.cmp(&b.0));
+            files
+        };
+        let before = snapshot();
+        for _ in 0..2 {
+            assert_eq!(
+                original
+                    .recover_completed_receipt(directory.path(), &binding)
+                    .unwrap(),
+                Some(encoded.clone())
+            );
+        }
+        assert_eq!(snapshot(), before); // No new stage, lease, or replacement receipt.
+        let mut other = binding.clone();
+        other.upload_attempt_id = Uuid::new_v4().to_string().to_uppercase();
+        assert!(original
+            .recover_completed_receipt(directory.path(), &other)
+            .is_err());
+        other = binding.clone();
+        other.plan_payload_sha256 = "b".repeat(64);
+        assert!(original
+            .recover_completed_receipt(directory.path(), &other)
+            .is_err());
+        let other_plan = plan().await;
+        assert!(other_plan
+            .recover_completed_receipt(directory.path(), &binding)
             .is_err());
     }
 

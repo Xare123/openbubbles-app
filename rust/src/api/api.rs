@@ -762,6 +762,9 @@ enum CloudSyncAttachmentUploadOwner {
     },
 }
 
+// Move the opaque owner into the Dart result, as with prepared record saves.
+// Auto-opaque field access would generate a Clone requirement for that owner.
+#[frb(non_opaque)]
 #[derive(Debug)]
 pub struct CloudSyncPreparedAttachmentUploadResult {
     pub handle: CloudSyncPreparedAttachmentUploadHandle,
@@ -789,6 +792,17 @@ pub struct CloudSyncAttachmentUploadConsumeResult {
     pub stage: Option<CloudSyncProtectedOutboundStage>,
     pub failure_class: Option<CloudSyncOutboundFailureClass>,
     pub retry_after_seconds: Option<u64>,
+}
+
+/// Authenticated native completion evidence, not a record-save receipt. No
+/// asset keys, URLs or plaintext cross the bridge. Inspection creates no lease.
+#[derive(Debug)]
+pub struct CloudSyncAttachmentUploadReceiptEvidence {
+    pub upload_attempt_id: String,
+    pub plan_payload_sha256: String,
+    pub completed_payload_sha256: String,
+    pub logical_entity_key_hash: String,
+    pub server_record_id_hash: String,
 }
 
 fn cloud_sync_open_journaled_upload(context: &CloudSyncNativeSendReceiptContext,
@@ -967,12 +981,12 @@ pub async fn cloud_sync_consume_prepared_attachment_upload(
                 },
                 NativeResult::Failed { failure_class, retry_after } => {
                     result.disposition = CloudSyncOutboundSaveDisposition::Failed;
-                    result.failure_class = Some(map_cloud_sync_outbound_failure_class(failure_class));
+                    result.failure_class = failure_class.map(map_cloud_sync_outbound_failure_class);
                     result.retry_after_seconds = retry_after.map(|value| value.as_secs());
                     None
                 },
                 NativeResult::UnknownOutcome { failure_class, retry_after } => {
-                    result.failure_class = Some(map_cloud_sync_outbound_failure_class(failure_class));
+                    result.failure_class = failure_class.map(map_cloud_sync_outbound_failure_class);
                     result.retry_after_seconds = retry_after.map(|value| value.as_secs());
                     None
                 },
@@ -1017,6 +1031,53 @@ pub async fn cloud_sync_consume_prepared_attachment_upload(
     Ok(result)
 }
 
+async fn cloud_sync_load_attachment_upload_completion(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: &CloudSyncNativeSendReceiptContext,
+    plan_stage: &CloudSyncAttachmentUploadPlanReference,
+) -> anyhow::Result<(crate::cloud_sync_attachment_upload::AttachmentUploadPlan, Option<Vec<u8>>)> {
+    let auth = cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone()).await
+        .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
+    let encoded_source = cloud_sync_open_attachment_source_bound(context, &auth)?;
+    let decoded = crate::cloud_sync_ids_attachment_source::decode_ids_attachment_source(&encoded_source)
+        .map_err(|_| anyhow!("cloud_sync_attachment_upload_source_invalid"))?;
+    let plan = cloud_sync_open_journaled_upload(context, plan_stage)?;
+    plan.validate_parent_source(&decoded.message_guid, &context.source_binding.as_ref()
+        .ok_or_else(|| anyhow!("cloud_sync_attachment_upload_source_missing"))?.source_sha256)
+        .map_err(|_| anyhow!("cloud_sync_attachment_upload_source_changed"))?;
+    let binding = cloud_sync_upload_receipt_binding(context, plan_stage, &plan)?;
+    let encoded = plan.recover_completed_receipt(
+        std::path::Path::new(&context.storage_directory), &binding,
+    ).map_err(|_| anyhow!("cloud_sync_attachment_upload_receipt_unavailable"))?;
+    let after = cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone()).await
+        .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
+    cloud_sync_require_source_context_auth(context, &after)?;
+    Ok((plan, encoded))
+}
+
+/// No upload, record save, envelope staging or lease creation. This lets the
+/// writer verify an already-adopted result without replacing its durable lease.
+pub async fn cloud_sync_verify_attachment_upload_receipt(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncNativeSendReceiptContext,
+    plan_stage: CloudSyncAttachmentUploadPlanReference,
+    expected_attempt_id: String,
+) -> anyhow::Result<Option<CloudSyncAttachmentUploadReceiptEvidence>> {
+    let (plan, encoded) = cloud_sync_load_attachment_upload_completion(
+        cloud_messages_client, &context, &plan_stage,
+    ).await?;
+    if plan.upload_attempt_id().map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_invalid"))? != expected_attempt_id {
+        return Err(anyhow!("cloud_sync_attachment_upload_attempt_changed"));
+    }
+    Ok(encoded.map(|value| CloudSyncAttachmentUploadReceiptEvidence {
+        upload_attempt_id: expected_attempt_id,
+        plan_payload_sha256: plan_stage.payload_sha256,
+        completed_payload_sha256: format!("{:x}", sha2::Sha256::digest(&value)),
+        logical_entity_key_hash: plan_stage.logical_entity_key_hash,
+        server_record_id_hash: plan_stage.server_record_id_hash,
+    }))
+}
+
 /// No network mutation. Reconstructs a lost bridge result from the original
 /// native receipt. Use only while the local upload is started/unknown; if Dart
 /// already adopted a result, commit/reuse that exact existing lease instead.
@@ -1025,24 +1086,12 @@ pub async fn cloud_sync_recover_attachment_upload(
     context: CloudSyncNativeSendReceiptContext,
     plan_stage: CloudSyncAttachmentUploadPlanReference,
 ) -> anyhow::Result<Option<CloudSyncProtectedOutboundStage>> {
-    let auth = cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone()).await
-        .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
-    let encoded_source = cloud_sync_open_attachment_source_bound(&context, &auth)?;
-    let decoded = crate::cloud_sync_ids_attachment_source::decode_ids_attachment_source(&encoded_source)
-        .map_err(|_| anyhow!("cloud_sync_attachment_upload_source_invalid"))?;
-    let plan = cloud_sync_open_journaled_upload(&context, &plan_stage)?;
-    plan.validate_parent_source(&decoded.message_guid, &context.source_binding.as_ref()
-        .ok_or_else(|| anyhow!("cloud_sync_attachment_upload_source_missing"))?.source_sha256)
-        .map_err(|_| anyhow!("cloud_sync_attachment_upload_source_changed"))?;
-    let binding = cloud_sync_upload_receipt_binding(&context, &plan_stage, &plan)?;
-    let Some(encoded) = crate::cloud_sync_attachment_upload_receipt::recover_completed(
-        std::path::Path::new(&context.storage_directory), &binding,
-    ).map_err(|_| anyhow!("cloud_sync_attachment_upload_receipt_unavailable"))? else { return Ok(None); };
+    let (plan, encoded) = cloud_sync_load_attachment_upload_completion(
+        cloud_messages_client, &context, &plan_stage,
+    ).await?;
+    let Some(encoded) = encoded else { return Ok(None); };
     let attachment = plan.validate_completed_envelope(&encoded)
         .map_err(|_| anyhow!("cloud_sync_attachment_upload_result_invalid"))?;
-    let after = cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone()).await
-        .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
-    cloud_sync_require_source_context_auth(&context, &after)?;
     Ok(Some(cloud_sync_bridge_stage(crate::cloud_sync_outbound_attachment::stage_outbound_attachment(
         PathBuf::from(context.storage_directory), context.account_fingerprint, attachment,
         plan.record_name().map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_invalid"))?,

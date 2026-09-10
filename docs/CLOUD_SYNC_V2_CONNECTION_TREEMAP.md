@@ -146,10 +146,21 @@ A native exclusive claim precedes upload; encrypted completion is durable before
 Dart return and can reconstruct a lost result without another Apple request.
 Parent review corrected Unix rename overwrite, directory-symlink traversal and
 unbounded-read races in the worker receipt store. This candidate still awaits
-GCE qualification. The resume input now matches the persisted journal fields,
+GCE qualification. Run `34537334179` reached native compilation and found two
+optional failure-class mappings and an auto-opaque FRB result getter that tried
+to clone the single-use owner. The next candidate maps optional failures and
+makes the result non-opaque without making the owner cloneable. It also adds
+native completion inspection that creates no replacement envelope/lease, needed
+when Dart already retained the result. These repairs are not yet qualified.
+The resume input now matches the persisted journal fields,
 which do not include the discarded transient envelope length.
 Runtime coordinator/fence recovery, final-save handoff and parent wiring remain
-open. Metadata is derived from
+open. The epoch counterexample is now explicit: record-write ambiguity advances
+the writer from E to E+1, then E+2 after reconciliation, while the upload journal
+previously required its original source epoch to equal the current permit epoch.
+Recovery must validate retained original evidence separately from fresh write
+authority; do not rewrite the old epoch or infer another upload from no receipt.
+Metadata is derived from
 the pinned body's projection, never a caller-supplied GUID guess. Neither
 upload success nor a missing record proves
 parent-message synchronization.
