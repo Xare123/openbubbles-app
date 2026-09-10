@@ -51,6 +51,7 @@ function page(origin = 'https://facetime.apple.com', iframe = false) {
   return {
     context,
     window,
+    peer,
     // Android returns the serialized immediate result, not an awaited Promise.
     evaluate: script => JSON.stringify(vm.runInContext(script, context)),
     delayStats: promise => { nextStats = promise; },
@@ -85,6 +86,62 @@ test('pending getStats is never returned as a ready media sample', async () => {
   resolve();
   await flush();
   assert.equal(JSON.parse(JSON.parse(p.evaluate(readScript('delayed')))).mediaBytes, 200);
+});
+
+test('a peer closed during getStats cannot hide the remaining live peer', async () => {
+  for (const rejectStats of [false, true]) {
+    const p = page();
+    const closingPeer = new p.window.RTCPeerConnection();
+    let settleStats;
+    closingPeer.getStats = () => new Promise((resolve, reject) => {
+      settleStats = () => rejectStats
+        ? reject(new Error('synthetic closed peer'))
+        : resolve(new Map([['inbound', { type: 'inbound-rtp', bytesReceived: 900 }]]));
+    });
+
+    p.evaluate(startScript('closing-peer'));
+    await flush();
+    assert.equal(p.evaluate(readScript('closing-peer')), '"pending"');
+    closingPeer.iceConnectionState = 'closed';
+    closingPeer.listeners.iceconnectionstatechange();
+    settleStats();
+    await flush();
+
+    const first = JSON.parse(JSON.parse(p.evaluate(readScript('closing-peer'))));
+    assert.equal(first.peerId, 1, 'closed peer must not replace live media evidence');
+    assert.equal(first.iceState, 'connected');
+    assert.equal(first.remoteAudioTracks, 1);
+
+    p.evaluate(startScript('remaining-peer'));
+    await flush();
+    const second = JSON.parse(JSON.parse(p.evaluate(readScript('remaining-peer'))));
+    assert.equal(second.peerId, first.peerId);
+    assert.ok(second.mediaBytes > first.mediaBytes, 'live peer retains advancing evidence');
+  }
+});
+
+test('a sampled peer closed during a later peer await cannot win on stale byte progress', async () => {
+  const p = page();
+  await p.window.__obFaceTimeDiagnostics.snapshot(); // establish peer 1's byte baseline
+  const replacement = new p.window.RTCPeerConnection();
+  let resolveStats;
+  replacement.getStats = () => new Promise(resolve => { resolveStats = resolve; });
+  replacement.listeners.track({
+    track: { id: 'replacement', kind: 'audio', readyState: 'live', addEventListener() {} },
+  });
+  p.evaluate(startScript('replacement'));
+  await flush();
+  p.peer.iceConnectionState = 'closed';
+  p.peer.listeners.iceconnectionstatechange();
+  resolveStats(new Map([['inbound', { type: 'inbound-rtp', bytesReceived: 50 }]]));
+  await flush();
+
+  const sample = JSON.parse(JSON.parse(p.evaluate(readScript('replacement'))));
+  assert.equal(sample.peerId, 2, 'closed peer byte progress must not outrank its replacement');
+  assert.equal(sample.iceState, 'connected');
+  assert.equal(sample.remoteAudioTracks, 1);
+  assert.equal(sample.mediaBytes, 50);
+  assert.equal(Object.hasOwn(sample, 'peer'), false, 'peer objects stay inside the probe');
 });
 
 test('a late previous request cannot replace the new request mailbox', async () => {

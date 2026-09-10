@@ -302,6 +302,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String, 
                   bytes > peerState.previousInboundBytes;
                 peerState.previousInboundBytes = bytesObserved ? bytes : null;
                 candidates.push({
+                  peer,
                   peerId: peerState.id,
                   iceState: peerState.iceState,
                   remoteAudioTracks,
@@ -310,8 +311,14 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String, 
                   bytesAdvancing,
                 });
               }
-              const active = [...candidates].reverse().find((candidate) => candidate.bytesAdvancing)
-                || candidates.at(-1)
+              // A peer can close during its own or a later peer's getStats await.
+              // Recheck all candidates before selecting evidence for this sample.
+              const liveCandidates = candidates.filter((candidate) => {
+                updateIceState(candidate);
+                return candidate.iceState !== "closed";
+              });
+              const active = [...liveCandidates].reverse().find((candidate) => candidate.bytesAdvancing)
+                || liveCandidates.at(-1)
                 || null;
               const controls = {
                 join: controlState(["join"]),
