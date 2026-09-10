@@ -564,8 +564,11 @@ jobs:
             --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
             --dart-define=OPENBUBBLES_BUILD_COMMIT="$(git rev-parse HEAD)"
           )
+          android_background_read=false
           if [[ "$BUILD_FLAVOR" == 'canary' ]]; then
+            android_background_read=true
             build_args+=(
+              --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_ANDROID_BACKGROUND_READ=true
               --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true
               --dart-define=OPENBUBBLES_CANARY_ADB_CONTROL=true
             )
@@ -611,6 +614,7 @@ jobs:
             echo "- Machine: \`${MACHINE_TYPE}\`"
             echo "- Outbound writer: \`${OUTBOUND_WRITER}\`"
             echo "- Automatic uploads: \`${AUTOMATIC_UPLOADS}\`"
+            echo "- Android background read: \`${android_background_read}\`"
             echo "- Flutter build time: \`${elapsed}s\`"
             echo "- Build exit status: \`${build_status}\`"
           } >> "$GITHUB_STEP_SUMMARY"
