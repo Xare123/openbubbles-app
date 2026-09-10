@@ -47,6 +47,26 @@ const MAX_IDENTIFIER_BYTES: usize = 4 * 1024;
 /// ATTACHMENT_CREATE_ZONE in attachment_create.
 const ATTACHMENT_CREATE_ZONE: &str = "attachmentManateeZone";
 
+/// Same initial-create identity as Dart, with an Attachment-only scope.
+/// A syntactically valid Message/Chat/mutation ID is not interchangeable.
+pub(crate) fn initial_attachment_create_operation_id(
+    account_fingerprint: &str,
+    logical_entity_key_hash: &str,
+) -> Result<String, Failure> {
+    if [account_fingerprint, logical_entity_key_hash].iter().any(|value| {
+        value.len() != 43 || !value.bytes().all(|byte|
+            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    }) {
+        return Err(Failure::BindingMismatch);
+    }
+    let canonical = [
+        "cloud-sync-initial-create-v1", account_fingerprint,
+        "com.apple.messages.cloud", "private", ATTACHMENT_CREATE_ZONE,
+        "messages", "2", "semantic", logical_entity_key_hash, "save", "1",
+    ].join("\u{001f}");
+    Ok(format!("op1:{}", digest(canonical.as_bytes())))
+}
+
 /// Serialize a completed attachment with its allocated record name.
 ///
 /// Requires the completed-asset shape: outgoing metadata version 1, matching
@@ -391,6 +411,18 @@ mod tests {
 
     const RECORD: &str = "DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD";
     const OTHER_RECORD: &str = "EEEEEEEE-EEEE-4EEE-8EEE-EEEEEEEEEEEE";
+
+    #[test]
+    fn attachment_initial_operation_matches_fixed_dart_domain_vector() {
+        assert_eq!(
+            initial_attachment_create_operation_id(&"A".repeat(43), &"L".repeat(43)).unwrap(),
+            "op1:7b2b89e41a267f080a5bdc0e27e83abbbfaa0cd14d1c7e0cbadccbd52ff5a04c"
+        );
+        for invalid in [String::new(), "A".repeat(42), "A".repeat(44), "!".repeat(43)] {
+            assert!(initial_attachment_create_operation_id(&invalid, &"L".repeat(43)).is_err());
+            assert!(initial_attachment_create_operation_id(&"A".repeat(43), &invalid).is_err());
+        }
+    }
 
     fn attachment_zone() -> rustpush::cloudkit_proto::RecordZoneIdentifier {
         rustpush::cloudkit_proto::RecordZoneIdentifier {

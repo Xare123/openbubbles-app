@@ -7,6 +7,7 @@
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
@@ -173,7 +174,7 @@ void main() {
       stillCurrent: () => true,
       now: _time(3),
     );
-    attachment.guid = stableGuid + '_0';
+    attachment.guid = '${stableGuid}_0';
     store.box<Attachment>().put(attachment);
     message
       ..guid = stableGuid
@@ -509,7 +510,7 @@ void main() {
       );
       expect(calls, 1);
       expect(adopted.state, CloudAttachmentUploadState.adopted);
-      expect(adopted.admittedOperationId, _digest('e'));
+      expect(adopted.admittedOperationId, _initialOperation(_resultA()));
       expect(store.box<CloudOutboxOperationEntity>().count(), 1);
       adopted = uploads.adoptRecordCreate(
         id: uploaded.id,
@@ -522,7 +523,7 @@ void main() {
       );
       expect(calls, 1);
       expect(adopted.state, CloudAttachmentUploadState.adopted);
-      expect(adopted.admittedOperationId, _digest('e'));
+      expect(adopted.admittedOperationId, _initialOperation(_resultA()));
       await reopen();
       adopted = uploads.adoptRecordCreate(
         id: uploaded.id,
@@ -587,6 +588,34 @@ void main() {
         uploads.read(second.id).state,
         CloudAttachmentUploadState.uploaded,
       );
+    },
+  );
+
+  test(
+    'handoff rejects bare hashes and another canonical operation identity',
+    () {
+      final intentId = seedConfirmedIntent();
+      final uploaded = toUploaded(intentId, _planA(), _resultA(), _attemptA);
+      for (final wrongId in [_digest('e'), _initialOperation(_resultB())]) {
+        expect(
+          () => uploads.adoptRecordCreate(
+            id: uploaded.id,
+            admit: (tx, result) {
+              _persistFinalOperation(tx, result, operationId: wrongId);
+              return _finalOperation(result, operationId: wrongId);
+            },
+            now: _time(10),
+          ),
+          throwsA(
+            _stateFailure('cloud_sync_attachment_upload_adoption_changed'),
+          ),
+        );
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(
+          uploads.read(uploaded.id).state,
+          CloudAttachmentUploadState.uploaded,
+        );
+      }
     },
   );
 
@@ -780,7 +809,7 @@ Message _attachmentMessage({
   required String attachmentGuid,
 }) {
   return Message(
-    guid: 'local-' + stableGuid,
+    guid: 'local-$stableGuid',
     text: ' ',
     dateCreated: _time(1),
     isFromMe: true,
@@ -883,7 +912,7 @@ CloudOutboxOperation _finalOperation(
   String? payload,
 }) => CloudOutboxOperation(
   scope: _uploadScope,
-  operationId: operationId ?? _digest('e'),
+  operationId: operationId ?? _initialOperation(result),
   logicalEntityKeyHash: result.logicalEntityKeyHash,
   action: CloudOutboxAction.save,
   payloadVersion: 1,
@@ -904,7 +933,7 @@ void _persistFinalOperation(
 }) {
   tx.box<CloudOutboxOperationEntity>().put(
     CloudOutboxOperationEntity(
-      operationId: operationId ?? _digest('e'),
+      operationId: operationId ?? _initialOperation(result),
       scopeKey: cloudSyncPersistentScopeKey(_uploadScope),
       accountFingerprint: _accountA,
       zone: 'attachmentManateeZone',
@@ -925,12 +954,19 @@ void _persistFinalOperation(
 Matcher _stateFailure(String message) =>
     isA<StateError>().having((error) => error.message, 'message', message);
 
+String _initialOperation(CloudSyncProtectedOutboundStageData stage) =>
+    CloudOperationIdentity.forInitialCreate(
+      scope: _uploadScope,
+      logicalEntityKeyHash: stage.logicalEntityKeyHash,
+      payloadVersion: 1,
+    );
+
 DateTime _time(int seconds) => DateTime.utc(2026, 9, 4, 12, 0, seconds);
 
 String _token(String char) => List.filled(43, char).join();
 String _digest(String char) => List.filled(64, char).join();
-String _ref(String char) => 'obcs2.ref.' + _token(char);
-String _lease(String char) => 'obcs2.lease.' + List.filled(32, char).join();
+String _ref(String char) => 'obcs2.ref.${_token(char)}';
+String _lease(String char) => 'obcs2.lease.${List.filled(32, char).join()}';
 
 const _accountA = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const _accountB = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';

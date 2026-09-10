@@ -11,6 +11,7 @@
 use std::{
     io::{self, Cursor, Read, Seek, SeekFrom},
     path::PathBuf,
+    time::Duration,
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -18,8 +19,9 @@ use prost::Message;
 use rustpush::{
     cloud_messages::{
         AttachmentMeta, CloudAttachment, CloudAttachmentNativeUploadInput, CloudMessagesClient,
-        GZipWrapper,
+        CloudMessagesPreparedUploadSubmission, CloudMessagesWriterPreparationBinding, GZipWrapper,
     },
+    cloudkit::CloudKitRequestIdentity,
     cloudkit_proto::{Asset, RecordIdentifier},
     mmcs::PreparedPut,
     DefaultAnisetteProvider,
@@ -45,7 +47,7 @@ mod wire {
     ));
 }
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const MAX_PLAN_BYTES: usize = 2 * 1024 * 1024;
 const MAX_METADATA_BYTES: usize = 1024 * 1024;
 const MAX_IDENTIFIER_BYTES: usize = 4096;
@@ -128,6 +130,9 @@ pub(crate) struct AttachmentUploadPlan {
     metadata: AttachmentMeta,
     prepared: PreparedPut,
     source_file_sha256: String,
+    // None only for a retained version-1 plan. Its original preparation stays
+    // readable, but lack of an original request identity cannot permit upload.
+    upload_identity: Option<CloudKitRequestIdentity>,
 }
 
 impl AttachmentUploadPlan {
@@ -148,12 +153,22 @@ impl AttachmentUploadPlan {
             metadata,
             prepared,
             source_file_sha256,
+            upload_identity: Some(
+                CloudKitRequestIdentity::new(
+                    Uuid::new_v4().to_string().to_uppercase(),
+                    vec![Uuid::new_v4().to_string().to_uppercase()],
+                )
+                .map_err(|_| Failure::MalformedMessage)?,
+            ),
         };
         plan.validated_preparation_snapshot()?;
         Ok(plan)
     }
 
     fn validated_preparation_snapshot(&self) -> Result<Vec<u8>, Failure> {
+        if let Some(identity) = &self.upload_identity {
+            validate_upload_identity(identity)?;
+        }
         if !Uuid::parse_str(&self.parent_message_guid)
             .is_ok_and(|id| id.get_version() == Some(uuid::Version::Random))
             || !is_sha256(&self.parent_source_sha256)
@@ -186,6 +201,17 @@ impl AttachmentUploadPlan {
             .as_ref()
             .and_then(|id| id.name.as_deref())
             .ok_or(Failure::MalformedMessage)
+    }
+
+    /// Content-free correlation returned to the durable upload journal. The
+    /// HTTP identity remains native inside this same protected plan.
+    pub(crate) fn upload_attempt_id(&self) -> Result<&str, Failure> {
+        let identity = self
+            .upload_identity
+            .as_ref()
+            .ok_or(Failure::BindingMismatch)?;
+        validate_upload_identity(identity)?;
+        Ok(&identity.operation_uuids()[0])
     }
 
     /// Require the same immutable local origin AND exact container-issued
@@ -251,6 +277,9 @@ impl AttachmentUploadPlan {
         mut source: R,
     ) -> Result<CloudAttachmentNativeUploadInput<R>, Failure> {
         self.validate_origin(parent_message_guid, parent_source_sha256, record_identifier)?;
+        if self.upload_attempt_id()? != apple_operation_uuid {
+            return Err(Failure::BindingMismatch);
+        }
         let snapshot = self.validated_preparation_snapshot()?;
         source
             .seek(SeekFrom::Start(0))
@@ -269,6 +298,47 @@ impl AttachmentUploadPlan {
         })
     }
 
+    /// Binds the actual native owner to the request already sealed in the
+    /// plan. Reopening must never allocate a replacement request identity.
+    /// Caller must durably begin this attempt before consuming the owner.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn prepare_native_submission<R: Read + Seek + Send + Sync>(
+        &self,
+        client: &CloudMessagesClient<DefaultAnisetteProvider>,
+        writer_binding: &CloudMessagesWriterPreparationBinding<DefaultAnisetteProvider>,
+        parent_message_guid: &str,
+        parent_source_sha256: &str,
+        record_identifier: &RecordIdentifier,
+        local_operation_id: String,
+        source: R,
+        timeout: Duration,
+    ) -> Result<
+        CloudMessagesPreparedUploadSubmission<DefaultAnisetteProvider, R>,
+        AttachmentUploadPreparationFailure,
+    > {
+        let identity = self
+            .upload_identity
+            .as_ref()
+            .ok_or(Failure::BindingMismatch)?;
+        let input = self.native_upload_input(
+            parent_message_guid,
+            parent_source_sha256,
+            record_identifier,
+            local_operation_id,
+            self.upload_attempt_id()?.to_owned(),
+            source,
+        )?;
+        client
+            .prepare_attachment_native_upload_submission(
+                writer_binding,
+                input,
+                identity.clone(),
+                timeout,
+            )
+            .await
+            .map_err(|_| AttachmentUploadPreparationFailure::PreparationUnavailable)
+    }
+
     fn encode(&self) -> Result<Vec<u8>, Failure> {
         let prepared_put_snapshot = self.validated_preparation_snapshot()?;
         let mut metadata = Vec::new();
@@ -280,13 +350,27 @@ impl AttachmentUploadPlan {
             return Err(Failure::OversizedMessage);
         }
         let wire = wire::CloudSyncAttachmentUploadV1 {
-            schema_version: VERSION,
+            schema_version: if self.upload_identity.is_some() {
+                VERSION
+            } else {
+                1
+            },
             parent_message_guid: self.parent_message_guid.clone(),
             parent_source_sha256: self.parent_source_sha256.clone(),
             record_identifier_proto: self.record_identifier.encode_to_vec(),
             attachment_meta_plist: metadata,
             prepared_put_snapshot,
             source_file_sha256: self.source_file_sha256.clone(),
+            upload_request_uuid: self
+                .upload_identity
+                .as_ref()
+                .map(|identity| identity.http_request_uuid().to_owned())
+                .unwrap_or_default(),
+            upload_operation_uuid: self
+                .upload_identity
+                .as_ref()
+                .map(|identity| identity.operation_uuids()[0].clone())
+                .unwrap_or_default(),
         };
         if wire.encoded_len() > MAX_PLAN_BYTES {
             return Err(Failure::OversizedMessage);
@@ -300,23 +384,39 @@ impl AttachmentUploadPlan {
         }
         let wire = wire::CloudSyncAttachmentUploadV1::decode(bytes)
             .map_err(|_| Failure::MalformedMessage)?;
-        if wire.schema_version != VERSION
+        if !matches!(wire.schema_version, 1 | VERSION)
             || wire.attachment_meta_plist.len() > MAX_METADATA_BYTES
             || wire.record_identifier_proto.len() > MAX_IDENTIFIER_BYTES
         {
             return Err(Failure::MalformedMessage);
         }
-        Self::new(
-            wire.parent_message_guid,
-            wire.parent_source_sha256,
-            RecordIdentifier::decode(wire.record_identifier_proto.as_slice())
+        let upload_identity = match wire.schema_version {
+            1 if wire.upload_request_uuid.is_empty() && wire.upload_operation_uuid.is_empty() => {
+                None
+            }
+            VERSION => Some(
+                CloudKitRequestIdentity::new(
+                    wire.upload_request_uuid,
+                    vec![wire.upload_operation_uuid],
+                )
                 .map_err(|_| Failure::MalformedMessage)?,
-            plist::from_reader(Cursor::new(wire.attachment_meta_plist))
+            ),
+            _ => return Err(Failure::MalformedMessage),
+        };
+        let plan = Self {
+            parent_message_guid: wire.parent_message_guid,
+            parent_source_sha256: wire.parent_source_sha256,
+            record_identifier: RecordIdentifier::decode(wire.record_identifier_proto.as_slice())
                 .map_err(|_| Failure::MalformedMessage)?,
-            PreparedPut::from_v2_upload_snapshot(&wire.prepared_put_snapshot)
+            metadata: plist::from_reader(Cursor::new(wire.attachment_meta_plist))
                 .map_err(|_| Failure::MalformedMessage)?,
-            wire.source_file_sha256,
-        )
+            prepared: PreparedPut::from_v2_upload_snapshot(&wire.prepared_put_snapshot)
+                .map_err(|_| Failure::MalformedMessage)?,
+            source_file_sha256: wire.source_file_sha256,
+            upload_identity,
+        };
+        plan.validated_preparation_snapshot()?;
+        Ok(plan)
     }
 
     /// Bind the byte-upload result to the exact persisted preparation. This
@@ -347,6 +447,23 @@ impl AttachmentUploadPlan {
         encode_attachment(&attachment, self.record_name()?)?;
         Ok(attachment)
     }
+}
+
+fn validate_upload_identity(identity: &CloudKitRequestIdentity) -> Result<(), Failure> {
+    let valid = |value: &str| {
+        Uuid::parse_str(value).is_ok_and(|id| {
+            id.get_version() == Some(uuid::Version::Random)
+                && id.to_string().to_uppercase() == value
+        })
+    };
+    if identity.operation_uuids().len() != 1
+        || !valid(identity.http_request_uuid())
+        || !valid(&identity.operation_uuids()[0])
+        || identity.http_request_uuid() == identity.operation_uuids()[0]
+    {
+        return Err(Failure::MalformedMessage);
+    }
+    Ok(())
 }
 
 pub(crate) fn stage_attachment_upload(
@@ -561,7 +678,7 @@ mod tests {
                 &"a".repeat(64),
                 &record(),
                 "local-upload".to_owned(),
-                "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB".to_owned(),
+                recovered.upload_attempt_id().unwrap().to_owned(),
                 consumed_source,
             )
             .unwrap();
@@ -580,7 +697,7 @@ mod tests {
                 &"a".repeat(64),
                 &record(),
                 "local-upload".to_owned(),
-                "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB".to_owned(),
+                recovered.upload_attempt_id().unwrap().to_owned(),
                 Cursor::new(vec![0; CONTENT.len()]),
             )
             .is_err());
@@ -590,7 +707,7 @@ mod tests {
                 &"b".repeat(64),
                 &record(),
                 "local-upload".to_owned(),
-                "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB".to_owned(),
+                recovered.upload_attempt_id().unwrap().to_owned(),
                 Cursor::new(CONTENT.to_vec()),
             )
             .is_err());
@@ -716,9 +833,9 @@ mod tests {
         let original = plan().await;
         let encoded = original.encode().unwrap();
         let mut wire = wire::CloudSyncAttachmentUploadV1::decode(encoded.as_slice()).unwrap();
-        wire.schema_version = 2;
+        wire.schema_version = VERSION + 1;
         assert!(AttachmentUploadPlan::decode(&wire.encode_to_vec()).is_err());
-        wire.schema_version = 1;
+        wire.schema_version = VERSION;
         wire.prepared_put_snapshot.truncate(3);
         assert!(AttachmentUploadPlan::decode(&wire.encode_to_vec()).is_err());
         assert!(AttachmentUploadPlan::decode(&encoded[..encoded.len() - 1]).is_err());
@@ -729,5 +846,72 @@ mod tests {
         changed.metadata.total_bytes -= 1;
         changed.metadata.filename = Some("x".repeat(MAX_METADATA_BYTES + 1));
         assert!(changed.encode().is_err());
+    }
+
+    #[tokio::test]
+    async fn upload_plan_persists_request_identity_and_rejects_replacement_attempt() {
+        let original = plan().await;
+        let recovered = AttachmentUploadPlan::decode(&original.encode().unwrap()).unwrap();
+        assert_eq!(original.upload_identity, recovered.upload_identity);
+        assert_eq!(
+            original.upload_attempt_id().unwrap(),
+            recovered.upload_attempt_id().unwrap()
+        );
+        let independent = plan().await;
+        assert_ne!(original.upload_identity, independent.upload_identity);
+        assert!(recovered
+            .native_upload_input(
+                PARENT,
+                &"a".repeat(64),
+                &record(),
+                "local-upload".to_owned(),
+                independent.upload_attempt_id().unwrap().to_owned(),
+                Cursor::new(CONTENT),
+            )
+            .is_err());
+        let bytes = original.encode().unwrap();
+        let mutations: &[fn(&mut wire::CloudSyncAttachmentUploadV1)] = &[
+            |wire| wire.upload_request_uuid.clear(),
+            |wire| wire.upload_operation_uuid.clear(),
+            |wire| wire.upload_operation_uuid = wire.upload_request_uuid.clone(),
+            |wire| wire.upload_operation_uuid = "aaaaaaaa-bbbb-4ccc-8ddd-000000000001".to_owned(),
+            |wire| wire.upload_request_uuid = Uuid::nil().to_string().to_uppercase(),
+            |wire| wire.schema_version = 1,
+        ];
+        for mutate in mutations {
+            let mut wire = wire::CloudSyncAttachmentUploadV1::decode(bytes.as_slice()).unwrap();
+            mutate(&mut wire);
+            assert!(AttachmentUploadPlan::decode(&wire.encode_to_vec()).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn old_upload_plan_keeps_original_material_without_inventing_request_authority() {
+        let original = plan().await;
+        let mut wire =
+            wire::CloudSyncAttachmentUploadV1::decode(original.encode().unwrap().as_slice())
+                .unwrap();
+        wire.schema_version = 1;
+        wire.upload_request_uuid.clear();
+        wire.upload_operation_uuid.clear();
+        let bytes = wire.encode_to_vec();
+        let recovered = AttachmentUploadPlan::decode(&bytes).unwrap();
+        assert_eq!(recovered.encode().unwrap(), bytes);
+        assert!(recovered.upload_identity.is_none());
+        assert!(recovered.upload_attempt_id().is_err());
+        assert!(recovered
+            .native_upload_input(
+                PARENT,
+                &"a".repeat(64),
+                &record(),
+                "local-upload".to_owned(),
+                original.upload_attempt_id().unwrap().to_owned(),
+                Cursor::new(CONTENT),
+            )
+            .is_err());
+        // A previously obtained matching result can still be validated and
+        // recovered. Reading old state neither drops keys nor creates an upload.
+        recovered.validate_source(Cursor::new(CONTENT)).unwrap();
+        assert!(recovered.complete(asset(&original)).is_ok());
     }
 }

@@ -57,6 +57,10 @@ message CloudSyncAttachmentUploadV1 {
   bytes attachment_meta_plist = 5;
   bytes prepared_put_snapshot = 6;
   string source_file_sha256 = 7;
+  // Version 2 pins the one byte-upload request before journal admission.
+  // Version 1 is recoverable for inspection/result validation, never submission.
+  string upload_request_uuid = 8;
+  string upload_operation_uuid = 9;
 }
 // Native-only IDS composer source: the provided pre-send MessageInst
 // plus explicit ordered local attachment GUIDs paired to the

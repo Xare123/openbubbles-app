@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 
+import 'cloud_operation_identity.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
@@ -291,7 +292,12 @@ final class CloudSyncAttachmentUploadJournal {
     } finally {
       query.close();
     }
-    if (!_digest.hasMatch(operationId) ||
+    if (operationId !=
+            CloudOperationIdentity.forInitialCreate(
+              scope: _scope,
+              logicalEntityKeyHash: upload.attachmentKeyHash,
+              payloadVersion: 1,
+            ) ||
         row == null ||
         row.action != CloudOutboxAction.save.index ||
         row.payloadVersion != 1 ||
@@ -413,7 +419,7 @@ void validateCloudAttachmentUploadRow(CloudAttachmentUploadEntity row) {
                 row.resultLeaseReference != null ||
                 row.resultPayloadSha256 != null) ||
       (row.state == CloudAttachmentUploadState.adopted.index
-          ? !_digest.hasMatch(row.admittedOperationId ?? '')
+          ? !_operationId.hasMatch(row.admittedOperationId ?? '')
           : row.admittedOperationId != null)) {
     throw StateError('cloud_sync_attachment_upload_row_invalid');
   }
@@ -422,6 +428,7 @@ void validateCloudAttachmentUploadRow(CloudAttachmentUploadEntity row) {
 
 final _token = RegExp(r'^[A-Za-z0-9_-]{43}$');
 final _digest = RegExp(r'^[a-f0-9]{64}$');
+final _operationId = RegExp(r'^op1:[a-f0-9]{64}$');
 final _uuid = RegExp(
   r'^[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$',
 );

@@ -1222,3 +1222,35 @@ This is a chronological evidence log. It does not override the
   This is evidence-selection qualification, not proof that calls now connect.
   The worker was closed and independently returned `not_found`; reviewed
   shared source and necessary test evidence are retained.
+
+### 2026-09-10: upload identity and final-record integration
+
+- Exact checkpoint `78a872dda` passed 419 app-native tests and bridge
+  reproducibility in GCE `34526397409`. Dependency `975015f` passed 269 tests in
+  `34526397036`. Both cleanup jobs succeeded; independent inventories returned
+  zero instances and zero registered runners. Job labels still say APK but
+  validation modes were app-rust-only and rustpush-only, with no APK/signing.
+- Parent reproduced a journal rejection with real `CloudOperationIdentity`
+  output: the old validator expected bare hex, while production uses `op1:`.
+  The corrected validator requires the exact attachment initial-create ID.
+  All 221 targeted Dart cases then passed, including atomic rejection/rollback
+  for foreign operation IDs. The added cross-language fixed vector and journal
+  also passed a focused 15-case rerun; analyzer reported no issues.
+- The pending native candidate retains both original upload UUIDs in version-2
+  protected plans. Version-1 material remains readable without manufacturing
+  a new request. Attachment record prepare/readback now uses the existing
+  single-use, capability-fenced consumer and exact stable-content witness.
+  Authentication/transport failure remains unresolved, not record absence.
+  Native compilation and generated-bridge qualification are still pending.
+- Reviewed Muse source adds descriptor-bound metadata selection and local
+  plaintext verification. Parent removed duplicated reader/metadata conversion,
+  corrected test types and rejected a default-timestamp restriction. Dependency
+  `f2e8ea3` retains the same immutable handle after original-key/signature check.
+  Actual canonical parent-part mapping and immutable-file orchestration still
+  need integration; none of these helpers alone authorizes network upload.
+- Astra reviewed the retained FaceTime trace: admission is recorded, but the
+  post-admission media progression and terminating event are missing. No new
+  speculative handshake patch was made. Its 12 JavaScript cases passed again;
+  parent checked the evidence and closed the worker, verified `not_found`.
+- C: has approximately 65 GiB free. No storage cleanup was needed or performed.
+  Shared source, unresolved evidence, user data and credentials are retained.
