@@ -55,10 +55,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Candidate | Source `925b02181c99985763df7a52d27dcb2b6371559c` includes lifecycle code `f4ba34d8e`, atomic VM observations, and upload-integrity repair. It supersedes `fc132e5f8`, whose signed build contains a headless ready-handshake deadlock. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
-| Pending qualification | Full GCE run `34434823427` targets `925b02181` using pilot `a35bfc526` on T2D-60. Runner creation passed; tests, APK, signing, and cleanup remain pending. Manual writer/background read are enabled, automatic uploads off. Previous run `34427563744` failed the VM-observer race before APK assembly; the reproduced fix passes 15 focused tests and analysis. Independent inventories confirmed cleanup of that failed run. |
+| Candidate | Code `2e89e642cdf5f9d71dbfdb0e6b16b085b59c1345` includes lifecycle code `f4ba34d8e`, atomic VM observations, corrected notification contract, complete attachment-byte checks, and typed attachment save/readback primitives. It supersedes `fc132e5f8`, whose signed build contains a headless ready-handshake deadlock. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
+| Pending qualification | Full GCE run `34434823427` failed one stale notification-suppression source assertion after the drain gained a budget argument. Bridge generation, drift verification, and Rust type-check passed; later native suites and APK/signing did not run. Fix `4479546f4` passes 42 focused Dart/VM tests. Cleanup succeeded and independent inventories found no runners or VMs. Pilot `f8520b1ee` now collects independent test failures, then blocks packaging unless every selected suite's original outcome is success; 23 executable gate cases pass. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
-| Dependency | rustpush `9584f0c28afb31e17a1883d54301ec6faf195341`: upload preflight, checked authorization/receipts, preserved record and encryption metadata. Rust compilation/tests remain pending. |
+| Dependency | rustpush `a78ccfd25eb324c7561146aff784b4e293ced1c1`: preserves upload integrity from `9584f0c`, adds lookup-only boundary keys, bounded typed attachment save/readback, complete-download checks, and short-write/size safeguards. New native code is syntax-checked but awaits cloud compilation/execution. These primitives are not yet V2 composer admission. |
 | Full qualification | GCE run `34423632222` qualified exact source `fc132e5f8`: 2,542 Dart tests, 359 app Rust tests, 226 rustpush tests, 34 protector tests, 14 semantic-outbox cases, and 3 evidence-output cases passed; bindings reproduced; the ARM64 Canary contained every required native library and was signed on the trusted GitHub-hosted path. Background read and manual writer controls were on; automatic uploads were off. Independent inventories found zero remaining runners and zero GCE instances. |
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
@@ -227,8 +227,9 @@ The next vertical slice must connect the existing composer journal to this
 entire chain, not merely add an upload validator:
 
 ```text
-confirmed local attachment send
-  -> protected immutable file + metadata + one retained record identity
+exact attachment descriptor actually sent through IDS
+  -> protected descriptor + metadata + one retained record identity
+  -> verified original MMCS bytes, exact pinned length
   -> existing account/container + attachment-zone PCS + boundary-key lookup
   -> byte upload, retaining its receipt or unresolved-upload state
   -> create-only CloudAttachment(cm metadata, lqa asset)
@@ -237,14 +238,26 @@ confirmed local attachment send
 ```
 
 - `cloud_sync_outbound_staging.dart` and `cloud_sync_outbound.proto` currently
-  stage only Messages/Chats. Attachment envelope, file lease, and upload receipt
-  persistence are the first missing durable boundary.
+  stage only Messages/Chats. Attachment envelope, exact-source binding, and
+  upload receipt persistence are the first missing durable boundary.
+- Existing `Attachment.metadata["rustpush"]` stores an MMCS descriptor with
+  decryption material at upload-finish, before IDS send success. It is mutable,
+  not an encrypted receipt or proof of what IDS sent. Pin the actual wire
+  descriptor into protected admission before send, then bind native success to
+  it; the current content-free native receipt has no attachment descriptor.
+- Re-fetching that pinned MMCS object avoids a second permanent plaintext-byte
+  journal and mutable-file reuse. It needs APS/MMCS availability, complete
+  target/chunk validation, and the pinned plaintext length. A missing or expired
+  object must defer, not substitute a different local file. Chunk integrity and
+  length do not validate a guessed CTR key; the key must be the one actually sent.
 - Reuse `CloudMessagesPreparedSaveSubmission` for record-save correlation and
-  single consumption; add a typed attachment preparation path. Do not use
+  single consumption; the next native candidate supplies typed preparation
+  and checked readback without enabling admission. Do not use
   legacy `save_attachments`, which enters generic update-capable saving.
 - Legacy `prepare_file` calls `get_boundary_key`, which can create a keychain
-  item. V2 staging needs lookup-only key access or explicit setup, not hidden
-  key creation during the protected sync transaction.
+  item. V2 lookup must also use keystore `get_secret`, not `ensure_secret`, when
+  unwrapping existing boundary material. Keep the DSID and entry under the same
+  state lock; a missing key fails without generating either local or remote keys.
 - Reuse the outbox dependency mechanism, but extend admission and parent
   encoding together. Current local-send encoding deliberately rejects media.
 - Record identity must be persisted before first upload and reused on retry.

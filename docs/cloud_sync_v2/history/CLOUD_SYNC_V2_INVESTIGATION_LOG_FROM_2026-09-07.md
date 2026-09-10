@@ -373,3 +373,55 @@ This is a chronological evidence log. It does not override the
   automatic uploads off, and pilot `a35bfc526`. Quota readback showed 100 T2D
   CPUs/500 GB SSD available with zero usage before dispatch. Runner creation
   passed. Compilation, tests, APK/signing, and cleanup remain to be verified.
+
+## 2026-09-09, qualification gate and exact attachment bytes
+
+- Run `34434823427` completed unsuccessfully because a source-contract test
+  still searched for `drainConfirmedAndPersist()` without its new budget
+  argument. `4479546f4` corrects the search and validates offsets before using
+  them. The full production-composition plus real-VM suites pass 42 tests.
+  This run passed bridge generation/drift checks and Rust type checking, but
+  did not execute native tests or build an APK. Cleanup passed; independent
+  runner and VM inventories were empty.
+- Isolated pilot `f8520b1ee` collects independent Dart/Rust/protector failures
+  in the same run, then requires every selected original step outcome to be
+  success before packaging. YAML/Bash/wiring and 23 executable success,
+  failure, skipped, cancelled, and missing-outcome cases passed. The official
+  GitHub steps-context documentation confirms why `outcome`, not the adjusted
+  `conclusion`, is required. No signing or infrastructure configuration changed.
+  An initial push used the upstream remote and was denied; the corrected push
+  updated only the user's fork. No upstream change occurred.
+- Parent rejected the first attachment-reuse claim that saved XML metadata was
+  an encrypted receipt: it contains an MMCS descriptor and key saved before
+  actual IDS completion, and the Attachment row remains mutable. The chosen
+  direction pins the exact sent descriptor in protected state and recovers
+  original bytes from MMCS, rather than adding another permanent plaintext
+  journal or uploading whichever local file happens to occupy the path.
+- Source inspection found the standard MMCS download lane lacked the complete
+  target checks already required by closed CloudKit downloads. Parent also
+  found `IMessageContainer` ignored short sink writes. Current native repairs
+  require complete targets, use `write_all`, and bind successful plaintext
+  length to the original descriptor. Their cloud execution remains pending.
+- Boundary-key review rejected `state.get_data` as truly lookup-only because
+  it calls `ensure_secret` for wrapped entries. The reviewed replacement uses
+  the vendored keystore's `get_secret`, an exact DSID under the entry lock,
+  and injected AES-SIV tests that never initialize or mutate the global store.
+- Typed attachment save/readback is a native primitive, not full V2 upload
+  admission. It reuses single-use save ownership, verifies both required
+  fields with checked crypto instead of generated default filling, and bounds
+  decompression. Protected descriptor staging, upload uncertainty recovery,
+  and parent-message dependency integration remain required.
+- The old non-Pixel agent's claimed test file was absent from the current
+  checkout and Git history. Its stale result was rejected as current proof,
+  and the unused agent was closed. Native task history remains evidence;
+  no shared session database, credentials, or user data was deleted.
+- Reviewed native code was committed/pushed as `a78ccfd25eb324c7561146aff784b4e293ced1c1`
+  and pinned by app code `2e89e642c`. Parent rejected the proposed checksum-only
+  fanout, retained the existing selector, and required complete target coverage
+  instead. Current V2 source recovery will request one pinned descriptor at a
+  time; ambiguous duplicate standard Ford references remain an explicit gap.
+  All current child handles were closed after review and verified absent.
+  No dedicated worktrees were created. Required native task history is retained;
+  supported session deletion is unavailable in this tool surface, so no shared
+  database or raw transcript deletion was attempted. C: retained over 63 GiB
+  free before cloud dispatch, with zero GCE CPU/SSD usage.
