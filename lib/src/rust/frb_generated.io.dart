@@ -1989,6 +1989,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_cloud_sync_attachment_materialization_result(dynamic raw);
 
   @protected
+  CloudSyncAttachmentUploadPlanResult
+  dco_decode_cloud_sync_attachment_upload_plan_result(dynamic raw);
+
+  @protected
   CloudSyncChatIdentityComparison
   dco_decode_cloud_sync_chat_identity_comparison(dynamic raw);
 
@@ -5698,6 +5702,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentMaterializationResult
   sse_decode_cloud_sync_attachment_materialization_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncAttachmentUploadPlanResult
+  sse_decode_cloud_sync_attachment_upload_plan_result(
     SseDeserializer deserializer,
   );
 
@@ -10089,6 +10099,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_attachment_materialization_result(
     CloudSyncAttachmentMaterializationResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_attachment_upload_plan_result(
+    CloudSyncAttachmentUploadPlanResult self,
     SseSerializer serializer,
   );
 

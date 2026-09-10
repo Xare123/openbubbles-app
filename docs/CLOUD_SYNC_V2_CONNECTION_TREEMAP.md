@@ -124,15 +124,24 @@ initial reflection uses the explicit indexed-part index, or the current rendered
 attachment count, not MMCS `part`. The corrected source projects that same
 algorithm and rejects duplicate/missing final body references. This later
 correction, immutable-source integration and Dart routing await qualification.
-The next reviewed candidate connects the pinned IDS envelope, reflected metadata
+Source `04a0d6384` connects the pinned IDS envelope, reflected metadata
 and private immutable file to the native upload-plan staging API. It revalidates
 the same live account/store/container after preparation; the original randomized
 plan must be adopted before upload. Attachment record prepare, consume and exact
 unknown-outcome readback now route through Attachment-specific bindings in Dart
-and its mutation guard. Parent independently passed all 113 transport/guard tests.
-The new native source and generated bridge still need GCE qualification.
+and its mutation guard. GCE `34532764241` passed all 441 app-native cases. The
+expected bridge drift produced artifact `10174428804`; all seven files were
+manifest/hash-verified and imported. The earlier N2D attempt `34532630728` hit
+zone capacity exhaustion before compilation. Both cleanup jobs passed; independent
+inventories returned zero instances and runner registrations.
+The later local candidate atomically admits a completed upload, record mapping
+and Attachment-v1 outbox save, then revalidates its upload journal at dispatch.
+All 340 cases in eight targeted Dart suites passed against the imported bindings;
+the three changed journal/store/test files analyze cleanly. A store without the
+exact attachment-upload journal cannot lease these saves. Runtime injection of
+that journal and the byte-upload consumer still require integration.
 Production byte-upload consumption, protected attempt/result recovery,
-final-save admission and parent wiring remain open. Metadata is derived from
+runtime final-save handoff and parent wiring remain open. Metadata is derived from
 the pinned body's projection, never a caller-supplied GUID guess. Neither
 upload success nor a missing record proves
 parent-message synchronization.

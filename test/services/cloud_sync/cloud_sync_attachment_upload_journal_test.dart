@@ -231,6 +231,251 @@ void main() {
     );
   }
 
+  void seedAccountReadReady() {
+    final box = store.box<CloudSyncCheckpointEntity>();
+    for (final zone in [
+      'chatManateeZone',
+      'messageManateeZone',
+      'attachmentManateeZone',
+    ]) {
+      final scope = CloudSyncScope(
+        accountFingerprint: _accountA,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: zone,
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      final key = cloudSyncPersistentScopeKey(scope);
+      final query = box
+          .query(CloudSyncCheckpointEntity_.checkpointKey.equals(key))
+          .build();
+      final CloudSyncCheckpointEntity row;
+      try {
+        row =
+            query.findUnique() ??
+            CloudSyncCheckpointEntity(
+              checkpointKey: key,
+              accountFingerprint: _accountA,
+              container: scope.container,
+              database: scope.database,
+              zone: zone,
+              streamKind: 'messages',
+              schemaVersion: 2,
+              persistenceLane: 'semantic',
+              generation: 1,
+              updatedAtMs: _time(0).millisecondsSinceEpoch,
+            );
+      } finally {
+        query.close();
+      }
+      row.lastSuccessfulAtMs = _time(5).millisecondsSinceEpoch;
+      box.put(row);
+    }
+  }
+
+  test(
+    'completed upload atomically enters real record map and final-save outbox once across reopen',
+    () async {
+      final intent = seedConfirmedIntent();
+      final uploaded = toUploaded(intent, _planA(), _resultA(), _attemptA);
+      seedAccountReadReady();
+      final adopted = _liveStore(store).admitCompletedAttachmentUpload(
+        scope: _uploadScope,
+        uploads: uploads,
+        uploadId: uploaded.id,
+        createdAt: _time(9),
+      );
+      expect(adopted.state, CloudAttachmentUploadState.adopted);
+      final outbox = store.box<CloudOutboxOperationEntity>().getAll().single;
+      final mapping = store.box<CloudRecordMapEntity>().getAll().single;
+      expect(outbox.operationId, adopted.admittedOperationId);
+      expect(outbox.state, CloudOutboxStatus.pending.index);
+      expect(outbox.attemptCount, 0);
+      expect(outbox.payloadVersion, 1);
+      expect(outbox.appleOperationUuid, isNull);
+      expect(outbox.encryptedPayloadRef, _resultA().protectedEnvelopeReference);
+      expect(mapping.logicalEntityKeyHash, _resultA().logicalEntityKeyHash);
+      expect(mapping.serverRecordIdHash, _resultA().serverRecordIdHash);
+      expect(
+        mapping.encryptedServerRecordId,
+        _resultA().protectedEnvelopeReference,
+      );
+      await reopen();
+      final recovered = _liveStore(store).admitCompletedAttachmentUpload(
+        scope: _uploadScope,
+        uploads: uploads,
+        uploadId: uploaded.id,
+        createdAt: _time(10),
+      );
+      expect(recovered.admittedOperationId, adopted.admittedOperationId);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+      expect(store.box<CloudRecordMapEntity>().count(), 1);
+    },
+  );
+
+  test(
+    'blocked projection retains completed upload without partial final-save admission',
+    () {
+      final uploaded = toUploaded(
+        seedConfirmedIntent(),
+        _planA(),
+        _resultA(),
+        _attemptA,
+      );
+      expect(
+        () => _liveStore(store).admitCompletedAttachmentUpload(
+          scope: _uploadScope,
+          uploads: uploads,
+          uploadId: uploaded.id,
+          createdAt: _time(9),
+        ),
+        throwsA(isA<CloudSyncFailure>()),
+      );
+      expect(
+        uploads.read(uploaded.id).state,
+        CloudAttachmentUploadState.uploaded,
+      );
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(store.box<CloudRecordMapEntity>().count(), 0);
+      seedAccountReadReady();
+      expect(
+        _liveStore(store)
+            .admitCompletedAttachmentUpload(
+              scope: _uploadScope,
+              uploads: uploads,
+              uploadId: uploaded.id,
+              createdAt: _time(10),
+            )
+            .state,
+        CloudAttachmentUploadState.adopted,
+      );
+    },
+  );
+
+  test(
+    'prepared and unknown bytes cannot become final records, nor cross scope',
+    () {
+      final plan = uploads.adoptPlan(
+        localSendIntentId: seedConfirmedIntent(),
+        plan: _planA(),
+        now: _time(6),
+      );
+      seedAccountReadReady();
+      void attempt() => _liveStore(store).admitCompletedAttachmentUpload(
+        scope: _uploadScope,
+        uploads: uploads,
+        uploadId: plan.id,
+        createdAt: _time(9),
+      );
+      expect(
+        attempt,
+        throwsA(_stateFailure('cloud_sync_attachment_upload_result_missing')),
+      );
+      uploads.beginAttempt(id: plan.id, attemptId: _attemptA, now: _time(7));
+      uploads.markUnknown(id: plan.id, attemptId: _attemptA, now: _time(8));
+      expect(
+        attempt,
+        throwsA(_stateFailure('cloud_sync_attachment_upload_result_missing')),
+      );
+      expect(
+        () => _liveStore(store).admitCompletedAttachmentUpload(
+          scope: CloudSyncScope(
+            accountFingerprint: _accountA,
+            container: 'com.apple.messages.cloud',
+            database: 'private',
+            zone: 'messageManateeZone',
+            persistenceLane: CloudSyncPersistenceLane.semantic,
+          ),
+          uploads: uploads,
+          uploadId: plan.id,
+          createdAt: _time(9),
+        ),
+        throwsA(isA<CloudSyncFailure>()),
+      );
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(store.box<CloudRecordMapEntity>().count(), 0);
+    },
+  );
+
+  test(
+    'final attachment save requires its upload journal again when leased',
+    () async {
+      final completed = toUploaded(
+        seedConfirmedIntent(),
+        _planA(),
+        _resultA(),
+        _attemptA,
+      );
+      seedAccountReadReady();
+      final adopted = _liveStore(store).admitCompletedAttachmentUpload(
+        scope: _uploadScope,
+        uploads: uploads,
+        uploadId: completed.id,
+        createdAt: _time(9),
+      );
+      Future<List<CloudOutboxOperation>> lease(
+        ObjectBoxCloudSyncStore target,
+      ) => target.leaseEligibleOutbox(
+        _uploadScope,
+        now: _time(10),
+        limit: 1,
+        leaseId: 'fixture-attachment-save',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      await expectLater(
+        lease(_liveStore(store)),
+        throwsA(_stateFailure('cloud_sync_attachment_upload_journal_required')),
+      );
+      expect(
+        store.box<CloudOutboxOperationEntity>().getAll().single.state,
+        CloudOutboxStatus.pending.index,
+      );
+      await reopen();
+      final leased = await lease(_liveStore(store, uploads: uploads));
+      expect(leased.single.operationId, adopted.admittedOperationId);
+      expect(leased.single.status, CloudOutboxStatus.leased);
+      expect(leased.single.serverRecordIdHash, _resultA().serverRecordIdHash);
+    },
+  );
+
+  test(
+    'changed upload origin cannot lease an already admitted final save',
+    () async {
+      final completed = toUploaded(
+        seedConfirmedIntent(),
+        _planA(),
+        _resultA(),
+        _attemptA,
+      );
+      seedAccountReadReady();
+      _liveStore(store).admitCompletedAttachmentUpload(
+        scope: _uploadScope,
+        uploads: uploads,
+        uploadId: completed.id,
+        createdAt: _time(9),
+      );
+      final box = store.box<CloudAttachmentUploadEntity>();
+      final changed = box.get(completed.id)!..sourceSha256 = _digest('e');
+      box.put(changed);
+      await expectLater(
+        _liveStore(store, uploads: uploads).leaseEligibleOutbox(
+          _uploadScope,
+          now: _time(10),
+          limit: 1,
+          leaseId: 'fixture-changed-origin',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(
+        store.box<CloudOutboxOperationEntity>().getAll().single.state,
+        CloudOutboxStatus.pending.index,
+      );
+    },
+  );
+
   test('pending or IDS-unconfirmed origin cannot adopt a plan', () {
     final attachment = Attachment(
       guid: 'LOCAL-ATTACHMENT-A',
@@ -798,9 +1043,13 @@ final class _FakeProtector implements CloudSyncProtector {
   }) async => 'plaintext';
 }
 
-ObjectBoxCloudSyncStore _liveStore(Store store) => ObjectBoxCloudSyncStore(
+ObjectBoxCloudSyncStore _liveStore(
+  Store store, {
+  CloudSyncAttachmentUploadJournal? uploads,
+}) => ObjectBoxCloudSyncStore(
   store: store,
   protector: _FakeProtector(),
+  attachmentUploadJournal: uploads,
   clock: () => _time(30),
 );
 

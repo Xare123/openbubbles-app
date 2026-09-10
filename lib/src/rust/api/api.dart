@@ -177,6 +177,27 @@ Future<CloudSyncNativeSendSourceBinding> cloudSyncStageIdsAttachmentSource({
   attachmentGuids: attachmentGuids,
 );
 
+/// Stage one original upload plan from the exact retained IDS source. The
+/// caller holds the V2 writer interlock and protected-store exclusion, proves
+/// the local intent has a positive IDS receipt, then adopts/commits this plan
+/// before any upload. Recovery opens that plan rather than calling this again.
+/// File keys, original record name and plaintext never cross back into Dart.
+Future<CloudSyncAttachmentUploadPlanResult> cloudSyncStageAttachmentUploadPlan({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncNativeSendReceiptContext context,
+  required String originalAttachmentGuid,
+  required String sourcePath,
+  required PlatformInt64 startDateNs,
+  required PlatformInt64 createdDateNs,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageAttachmentUploadPlan(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+  originalAttachmentGuid: originalAttachmentGuid,
+  sourcePath: sourcePath,
+  startDateNs: startDateNs,
+  createdDateNs: createdDateNs,
+);
+
 /// Explicitly authenticates the read-only Cloud Sync V2 container.
 ///
 /// Callers must hold the CloudKit operation interlock. This may perform one
@@ -3042,6 +3063,29 @@ class CloudSyncAttachmentMaterializationResult {
           completed == other.completed &&
           verifiedBytes == other.verifiedBytes &&
           failure == other.failure;
+}
+
+/// Protected byte-upload preparation only. This is not an uploaded asset,
+/// final-record envelope, IDS confirmation, or permission to send anything.
+class CloudSyncAttachmentUploadPlanResult {
+  final CloudSyncProtectedOutboundStage stage;
+  final String uploadAttemptId;
+
+  const CloudSyncAttachmentUploadPlanResult({
+    required this.stage,
+    required this.uploadAttemptId,
+  });
+
+  @override
+  int get hashCode => stage.hashCode ^ uploadAttemptId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncAttachmentUploadPlanResult &&
+          runtimeType == other.runtimeType &&
+          stage == other.stage &&
+          uploadAttemptId == other.uploadAttemptId;
 }
 
 /// Redacted identity binding for one active Cloud Messages client.

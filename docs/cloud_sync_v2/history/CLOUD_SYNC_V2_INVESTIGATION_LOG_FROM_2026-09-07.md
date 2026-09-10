@@ -1288,3 +1288,20 @@ This is a chronological evidence log. It does not override the
   and reviewed the seven snapshot cases. Native compilation remains pending.
   Snapshot worker closed and independently verified `not_found`; required shared
   source/evidence retained. Supported transcript deletion is unavailable.
+
+- Checkpoint `04a0d6384211e19e9aeaa6f70b6f79f531e696aa`: N2D run
+  `34532630728` failed before compile with `ZONE_RESOURCE_POOL_EXHAUSTED`.
+  Cleanup passed and both inventories were empty before retrying on T2D-32.
+  Replacement `34532764241` passed 441 native tests; only expected bridge drift
+  failed. Artifact `10174428804` contained the seven expected generated files,
+  all imported with exact SHA-256 matches. Cleanup passed, independently zero
+  instances/runners. No APK, signing, live account data or remote write involved.
+- Parent added the real ObjectBox completed-upload admission path: upload row,
+  original record map and pending final save are one transaction. Restart does
+  not re-admit or allocate another record. Leasing revalidates the same upload
+  journal and original positive IDS source; generic stores cannot dispatch these
+  saves. Five new behavioral cases cover handoff/reopen, incomplete-read rollback,
+  unuploaded/unknown rejection, mandatory journal at dispatch and changed-origin
+  rejection. All 340 cases across eight targeted Dart suites passed after bridge
+  import. Three changed source/test files analyze cleanly. Full runtime uploader
+  and parent-message dependency remain open, not claimed by these component tests.

@@ -82,6 +82,43 @@ final class CloudSyncAttachmentUploadJournal {
   Box<CloudAttachmentUploadEntity> get _uploads =>
       _store.box<CloudAttachmentUploadEntity>();
 
+  bool isBoundTo(Store store, CloudSyncScope scope) =>
+      identical(_store, store) && _scope == scope;
+
+  /// Revalidate the completed upload and original IDS source at dispatch, not
+  /// just admission. Called synchronously within the outbox store transaction.
+  void requireAdoptedOperation(CloudOutboxOperation operation) {
+    if (operation.scope != _scope ||
+        operation.checkpointGeneration != _generation) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final query = _uploads
+        .query(
+          CloudAttachmentUploadEntity_.admittedOperationId.equals(
+            operation.operationId,
+          ),
+        )
+        .build();
+    final CloudAttachmentUploadEntity? candidate;
+    try {
+      candidate = query.findUnique();
+    } finally {
+      query.close();
+    }
+    if (candidate == null) {
+      throw StateError('cloud_sync_attachment_upload_origin_missing');
+    }
+    final row = _readBound(candidate.id);
+    if (row.state != CloudAttachmentUploadState.adopted.index ||
+        row.attachmentKeyHash != operation.logicalEntityKeyHash ||
+        row.serverRecordIdHash != operation.serverRecordIdHash ||
+        row.resultReference != operation.encryptedPayloadReference ||
+        row.resultPayloadSha256 != operation.payloadSha256) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
+    _requireFinalOperation(row, operation.operationId);
+  }
+
   CloudAttachmentUploadSnapshot adoptPlan({
     required int localSendIntentId,
     required CloudSyncProtectedOutboundStageData plan,

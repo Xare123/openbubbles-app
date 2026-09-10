@@ -46,10 +46,14 @@ class ObjectBoxCloudSyncStore
     required this._protector,
     DateTime Function()? clock,
     CloudSyncLocalSendJournal? localSendJournal,
+    CloudSyncAttachmentUploadJournal? attachmentUploadJournal,
     this._readChatIdentityEvidence,
     CloudSyncSemanticDiagnosticRecorder? recordExistingHistoryDiagnostic,
   }) : _store = store,
        _localSendJournal = localSendJournal,
+       // Keep the public named parameter stable while the field stays private.
+       // ignore: prefer_initializing_formals
+       _attachmentUploadJournal = attachmentUploadJournal,
        // Keep the public named parameter stable while the field stays private.
        // ignore: prefer_initializing_formals
        _recordExistingHistoryDiagnostic = recordExistingHistoryDiagnostic,
@@ -102,6 +106,7 @@ class ObjectBoxCloudSyncStore
   // Explicitly scoped by the production local-send session. Generic/legacy
   // stores never infer local origin or relax their existing projection gate.
   final CloudSyncLocalSendJournal? _localSendJournal;
+  final CloudSyncAttachmentUploadJournal? _attachmentUploadJournal;
   final CloudSyncProtector _protector;
   final DateTime Function() _clock;
   final Box<CloudSyncCheckpointEntity> _checkpoints;
@@ -1994,6 +1999,47 @@ class ObjectBoxCloudSyncStore
     ),
   );
 
+  /// Atomic handoff of a completed byte upload, its original record mapping,
+  /// and a pending Attachment-v1 save. The upload journal validates the exact
+  /// IDS-confirmed origin, account, generation and result before this callback.
+  /// No network I/O or plaintext reconstruction takes place here.
+  CloudAttachmentUploadSnapshot admitCompletedAttachmentUpload({
+    required CloudSyncScope scope,
+    required CloudSyncAttachmentUploadJournal uploads,
+    required int uploadId,
+    required DateTime createdAt,
+  }) {
+    if (!uploads.isBoundTo(_store, scope)) {
+      throw _storageFailure('attachment_upload_adoption_store_mismatch');
+    }
+    return uploads.adoptRecordCreate(
+      id: uploadId,
+      now: createdAt,
+      admit: (transactionStore, stage) => _admitProtectedOutboundCreate(
+        CloudOutboxDraft(
+          scope: scope,
+          logicalEntityKeyHash: stage.logicalEntityKeyHash,
+          action: CloudOutboxAction.save,
+          payloadVersion: 1,
+          dependencyOperationIds: const {},
+          createdAt: createdAt,
+          encryptedPayloadReference: stage.protectedEnvelopeReference,
+          payloadSha256: stage.payloadSha256,
+          serverRecordIdHash: stage.serverRecordIdHash,
+          protectedLeaseReference: stage.leaseReference,
+        ),
+        CloudRecordMapEntry(
+          scope: scope,
+          logicalEntityKeyHash: stage.logicalEntityKeyHash,
+          serverRecordIdHash: stage.serverRecordIdHash,
+          encryptedServerRecordId: stage.protectedEnvelopeReference,
+          updatedAt: createdAt,
+        ),
+        isAttachmentCreate: true,
+      ),
+    );
+  }
+
   CloudOutboxOperation _admitProtectedOutboundCreate(
     CloudOutboxDraft draft,
     CloudRecordMapEntry recordMapping, {
@@ -2003,13 +2049,18 @@ class ObjectBoxCloudSyncStore
     CloudSyncOutboundChatOrigin? chatOrigin,
     CloudSyncLocalSendAdmissionSource? chatLocalSendSource,
     CloudSyncChatIdentityEvidence? chatIdentityEvidence,
+    bool isAttachmentCreate = false,
   }) {
     final isChatCreate = chatOrigin != null;
     if (draft.action != CloudOutboxAction.save ||
         draft.payloadVersion !=
-            (isChatCreate
-                ? cloudSyncOutboundChatPayloadVersion
-                : cloudSyncOutboundPayloadVersion) ||
+            (isAttachmentCreate
+                ? 1
+                : isChatCreate
+                    ? cloudSyncOutboundChatPayloadVersion
+                    : cloudSyncOutboundPayloadVersion) ||
+        (isAttachmentCreate &&
+            (isChatCreate || draft.scope.zone != 'attachmentManateeZone')) ||
         (isChatCreate &&
             (chatOrigin.scope != draft.scope ||
                 draft.scope.zone != 'chatManateeZone')) ||
@@ -2138,6 +2189,16 @@ class ObjectBoxCloudSyncStore
           localSendSource,
           adopting: true,
         );
+        _requireMessagesCloudAccountProjectionReadyLocked(
+          draft.scope,
+          allowRetainedForFreshCreate: true,
+          freshRecordIdHash: draft.serverRecordIdHash,
+        );
+      } else if (isAttachmentCreate) {
+        // Only the completed-upload journal reaches this branch. Its fresh,
+        // IDS-confirmed source has the same retained-history treatment as a
+        // fresh Message create; checkpoint errors and exact tombstones still
+        // block. Recovered envelopes above never allocate another record.
         _requireMessagesCloudAccountProjectionReadyLocked(
           draft.scope,
           allowRetainedForFreshCreate: true,
@@ -2346,7 +2407,8 @@ class ObjectBoxCloudSyncStore
             _hasUnmarkedPendingInboxLocked(scope, checkpoint)) {
           throw _storageFailure('checkpoint_pending_page_unresolved');
         }
-        if (_localSendJournal == null) {
+        if (_localSendJournal == null &&
+            _attachmentUploadJournal?.isBoundTo(_store, scope) != true) {
           _requireMessagesCloudAccountProjectionReadyLocked(scope);
         }
       }
@@ -3987,6 +4049,21 @@ class ObjectBoxCloudSyncStore
     CloudOutboxOperationEntity entity,
   ) {
     final operation = _outboxFromEntity(scope, entity);
+    if (_isMessagesCloudSemanticScope(scope) &&
+        scope.zone == 'attachmentManateeZone' &&
+        operation.payloadVersion == 1) {
+      final uploads = _attachmentUploadJournal;
+      if (uploads == null || !uploads.isBoundTo(_store, scope)) {
+        throw StateError('cloud_sync_attachment_upload_journal_required');
+      }
+      uploads.requireAdoptedOperation(operation);
+      _requireMessagesCloudAccountProjectionReadyLocked(
+        scope,
+        allowRetainedForFreshCreate: true,
+        freshRecordIdHash: operation.serverRecordIdHash,
+      );
+      return;
+    }
     final origin = _captureJournalBoundChatOriginLocked(scope, entity);
     if (origin != null) {
       _requireMessagesCloudAccountProjectionReadyLocked(scope,
