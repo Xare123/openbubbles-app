@@ -149,6 +149,23 @@ void cloudSyncAcknowledgeNativeSendReceipt({
   receipt: receipt,
 );
 
+/// Stages the provided native IDS attachment value without sending anything or
+/// touching Apple. Caller must journal ownership and commit the lease under
+/// the protected-store exclusive lock before passing this binding to send().
+Future<CloudSyncNativeSendSourceBinding> cloudSyncStageIdsAttachmentSource({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncNativeSendReceiptContext context,
+  required String localSourceSha256,
+  required MessageInst message,
+  required List<String> attachmentGuids,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageIdsAttachmentSource(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+  localSourceSha256: localSourceSha256,
+  message: message,
+  attachmentGuids: attachmentGuids,
+);
+
 /// Explicitly authenticates the read-only Cloud Sync V2 container.
 ///
 /// Callers must hold the CloudKit operation interlock. This may perform one
@@ -3016,16 +3033,21 @@ class CloudSyncNativeSendReceipt {
   final String receiptId;
   final String guidHash;
   final String nativeSessionId;
+  final CloudSyncNativeSendSourceBinding? sourceBinding;
 
   const CloudSyncNativeSendReceipt({
     required this.receiptId,
     required this.guidHash,
     required this.nativeSessionId,
+    this.sourceBinding,
   });
 
   @override
   int get hashCode =>
-      receiptId.hashCode ^ guidHash.hashCode ^ nativeSessionId.hashCode;
+      receiptId.hashCode ^
+      guidHash.hashCode ^
+      nativeSessionId.hashCode ^
+      sourceBinding.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3034,7 +3056,8 @@ class CloudSyncNativeSendReceipt {
           runtimeType == other.runtimeType &&
           receiptId == other.receiptId &&
           guidHash == other.guidHash &&
-          nativeSessionId == other.nativeSessionId;
+          nativeSessionId == other.nativeSessionId &&
+          sourceBinding == other.sourceBinding;
 }
 
 /// Content-free context for making one successful native SendJob completion
@@ -3045,6 +3068,7 @@ class CloudSyncNativeSendReceiptContext {
   final String accountFingerprint;
   final String protectedStoreIdentity;
   final String nativeSessionId;
+  final CloudSyncNativeSendSourceBinding? sourceBinding;
 
   const CloudSyncNativeSendReceiptContext({
     required this.storageDirectory,
@@ -3052,6 +3076,7 @@ class CloudSyncNativeSendReceiptContext {
     required this.accountFingerprint,
     required this.protectedStoreIdentity,
     required this.nativeSessionId,
+    this.sourceBinding,
   });
 
   @override
@@ -3060,7 +3085,8 @@ class CloudSyncNativeSendReceiptContext {
       guidHash.hashCode ^
       accountFingerprint.hashCode ^
       protectedStoreIdentity.hashCode ^
-      nativeSessionId.hashCode;
+      nativeSessionId.hashCode ^
+      sourceBinding.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3071,7 +3097,8 @@ class CloudSyncNativeSendReceiptContext {
           guidHash == other.guidHash &&
           accountFingerprint == other.accountFingerprint &&
           protectedStoreIdentity == other.protectedStoreIdentity &&
-          nativeSessionId == other.nativeSessionId;
+          nativeSessionId == other.nativeSessionId &&
+          sourceBinding == other.sourceBinding;
 }
 
 class CloudSyncNativeSendReceiptPage {
@@ -3093,6 +3120,43 @@ class CloudSyncNativeSendReceiptPage {
           runtimeType == other.runtimeType &&
           receipts == other.receipts &&
           nextCursor == other.nextCursor;
+}
+
+/// Content-free ownership of an already-staged IDS attachment source. This
+/// identifies protected local data, never delivery or CloudKit write authority.
+class CloudSyncNativeSendSourceBinding {
+  final String sourceSha256;
+  final String protectedReference;
+  final String leaseReference;
+  final String payloadSha256;
+  final BigInt payloadLength;
+
+  const CloudSyncNativeSendSourceBinding({
+    required this.sourceSha256,
+    required this.protectedReference,
+    required this.leaseReference,
+    required this.payloadSha256,
+    required this.payloadLength,
+  });
+
+  @override
+  int get hashCode =>
+      sourceSha256.hashCode ^
+      protectedReference.hashCode ^
+      leaseReference.hashCode ^
+      payloadSha256.hashCode ^
+      payloadLength.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncNativeSendSourceBinding &&
+          runtimeType == other.runtimeType &&
+          sourceSha256 == other.sourceSha256 &&
+          protectedReference == other.protectedReference &&
+          leaseReference == other.leaseReference &&
+          payloadSha256 == other.payloadSha256 &&
+          payloadLength == other.payloadLength;
 }
 
 class CloudSyncOutboundConsumeResult {

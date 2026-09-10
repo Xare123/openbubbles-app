@@ -1750,8 +1750,7 @@ impl PlatformCloudNativeProtectedStore {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CloudNativeIdsSendSourceBinding {
     pub(crate) source_sha256: String,
     pub(crate) protected_reference: String,
@@ -1761,6 +1760,35 @@ pub(crate) struct CloudNativeIdsSendSourceBinding {
 }
 
 impl CloudNativeIdsSendSourceBinding {
+    // Keep the native seam's DTOs non-serializable. Only these content-free
+    // receipt fields have an explicit, versioned persistence representation.
+    fn receipt_value(&self) -> serde_json::Value {
+        serde_json::json!({
+            "source_sha256": self.source_sha256,
+            "protected_reference": self.protected_reference,
+            "lease_reference": self.lease_reference,
+            "payload_sha256": self.payload_sha256,
+            "payload_length": self.payload_length,
+        })
+    }
+
+    fn from_receipt_value(value: &serde_json::Value) -> Result<Self, CloudNativeStoreFailure> {
+        let object = value.as_object().filter(|object| object.len() == 5)
+            .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+        let string = |key: &str| object.get(key).and_then(serde_json::Value::as_str)
+            .map(str::to_owned).ok_or(CloudNativeStoreFailure::InvalidReference);
+        let binding = Self {
+            source_sha256: string("source_sha256")?,
+            protected_reference: string("protected_reference")?,
+            lease_reference: string("lease_reference")?,
+            payload_sha256: string("payload_sha256")?,
+            payload_length: object.get("payload_length").and_then(serde_json::Value::as_u64)
+                .ok_or(CloudNativeStoreFailure::InvalidReference)?,
+        };
+        binding.validate()?;
+        Ok(binding)
+    }
+
     fn validate(&self) -> Result<(), CloudNativeStoreFailure> {
         if !is_hex_digest(&self.source_sha256)
             || !is_hex_digest(&self.payload_sha256)
@@ -1822,7 +1850,7 @@ impl CloudNativeIdsSendReceipt {
                 "accountFingerprint": self.account_fingerprint,
                 "protectedStoreIdentity": self.protected_store_identity,
                 "nativeSessionId": self.native_session_id,
-                "sourceBinding": binding,
+                "sourceBinding": binding.receipt_value(),
             })
             .to_string())
         } else {
@@ -1884,9 +1912,7 @@ impl CloudNativeIdsSendReceipt {
                 let binding_value = object
                     .get("sourceBinding")
                     .ok_or(CloudNativeStoreFailure::InvalidReference)?;
-                let source_binding: CloudNativeIdsSendSourceBinding =
-                    serde_json::from_value(binding_value.clone())
-                        .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+                let source_binding = CloudNativeIdsSendSourceBinding::from_receipt_value(binding_value)?;
                 let receipt = Self {
                     guid_hash: object
                         .get("guidHash")
@@ -6424,6 +6450,19 @@ mod tests {
         let mut bad_nested = valid_value.clone();
         bad_nested["sourceBinding"]["payload_length"] = serde_json::json!(0);
         assert!(CloudNativeIdsSendReceipt::decode(&bad_nested.to_string()).is_err());
+        for invalid in [serde_json::Value::Null, serde_json::json!([]), serde_json::json!("binding")] {
+            let mut wrong_shape = valid_value.clone();
+            wrong_shape["sourceBinding"] = invalid;
+            assert!(CloudNativeIdsSendReceipt::decode(&wrong_shape.to_string()).is_err());
+        }
+        for invalid in [serde_json::json!(-1), serde_json::json!(1.5), serde_json::json!("123"), serde_json::json!(true)] {
+            let mut wrong_length = valid_value.clone();
+            wrong_length["sourceBinding"]["payload_length"] = invalid;
+            assert!(CloudNativeIdsSendReceipt::decode(&wrong_length.to_string()).is_err());
+        }
+        let mut missing_field = valid_value.clone();
+        missing_field["sourceBinding"].as_object_mut().unwrap().remove("source_sha256");
+        assert!(CloudNativeIdsSendReceipt::decode(&missing_field.to_string()).is_err());
     }
 
     #[test]

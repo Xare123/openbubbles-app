@@ -1077,3 +1077,40 @@ This is a chronological evidence log. It does not override the
 - This newer API/receipt integration is uncompiled and needs bridge regeneration
   in the next source-only run. Composer attachment capture/adoption and durable
   CloudKit upload attempts remain unfinished; no production enablement occurred.
+- Committed source/API slice `389465734` to the fork and dispatched source-only
+  GCE `34515270061` on the known-working N2D-16 / `us-west1-a` configuration.
+  Writer and automatic uploads are false. Binding drift is expected because this
+  introduces an additive bridge type/field; review the generated artifact before
+  committing it, then run the Dart journal/receipt regressions against that API.
+  All three used child agents were closed and independently returned `not_found`.
+  C: remained about 64.8 GiB free; no local account/device data was accessed.
+
+### 2026-09-10: receipt boundary qualification and attachment reflection
+
+- GCE `34515270061` compiled source `389465734` and ran 414 native tests:
+  413 passed, including all new source-bound receipt/API cases. The one failure
+  was `native_seam_source_has_no_frb_or_serializable_raw_dto`, which correctly
+  rejected the added derive on the content-free binding. Parent removed the
+  general serialization implementation in favor of explicit versioned receipt
+  fields, preserving the unchanged source guard and nested-field validation.
+  Added malformed nested shape/type cases. This repair awaits requalification.
+- Generated bridge artifact `10167797226` is retained for exact-source import
+  and review. No APK or account-bound test ran. The failed workflow's cleanup
+  completed; independent GCE and GitHub inventories both returned zero runners.
+- Source inspection found that normal attachment reflection changes local GUIDs
+  and placeholder characters. Both upload finish and reflection use the same
+  `saveAttachment` representation of the MMCS descriptor. The next composer
+  identity must compare ordered descriptor contents and text, tolerating only
+  these expected UI transformations. Legacy `getAttachmentMeta` also derives
+  Apple's attachment GUID from the reflected local alias; V2 must preserve the
+  corresponding parent references instead of using a pre-send temporary GUID.
+- Two bounded Muse workers handle bridge import/tests and the attachment-body
+  comparison helper. An Astra worker examines one offline-testable FaceTime
+  establishment/retry defect, with parent approval before edits. No personal
+  device or Apple account is being exercised by these workers.
+- Parent reviewed the generated API/codec changes and imported artifact
+  `10167797226`; all 398 targeted Dart tests passed against the new bridge.
+  The pilot workflow head differs from the app source by design. Native job
+  `102999506731` explicitly checked out and verified source `389465734` at
+  18:37:46Z, resolving the import worker's provenance concern. Its reviewed
+  source and test log remain retained; the completed bridge worker was closed.

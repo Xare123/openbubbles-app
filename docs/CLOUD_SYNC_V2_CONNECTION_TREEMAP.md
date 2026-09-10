@@ -331,12 +331,13 @@ exact attachment descriptor actually sent through IDS
   decryption material at upload-finish, before IDS send success. It is mutable,
   not an encrypted receipt or proof of what IDS sent. Pin the actual wire
   descriptor into protected admission before send, then bind native success to
-  it; the current content-free native receipt has no attachment descriptor.
+  it. The v3 receipt now carries the protected source binding, not raw keys or
+  descriptors. Composer staging/adoption is still being integrated.
 - Do not put the source only inside the IDS receipt: acknowledgment deletes
   that file immediately after durable confirmation, before outbound admission.
   A protected source needs its own durable reference and recovery/GC ownership
-  through parent adoption. The existing journal has no such reference field;
-  avoiding an ObjectBox migration does not remove this ownership requirement.
+  through parent adoption. The additive journal `protectedSourceBinding` field
+  now owns that reference independently; old rows remain null and unqualified.
 - Re-fetching that pinned MMCS object avoids a second permanent plaintext-byte
   journal and mutable-file reuse. It needs APS/MMCS availability, complete
   target/chunk validation, and the pinned plaintext length. A missing or expired
@@ -378,6 +379,13 @@ exact attachment descriptor actually sent through IDS
   participant), with all body/recipient/attachment fields unchanged, if that
   avoids a new two-phase send API. Freezing the prepared submission is an
   alternative, not a prerequisite. Do not ignore arbitrary changed fields.
+- Local reflection is another normal transformation: `indexedPartsToAttributedBodyDyn`
+  changes attachment GUIDs to `<messageGuid>_<part>` and inserts a space where
+  the composer may use an object placeholder. Source identity must bind ordered
+  descriptors and actual text/formatting, not these local aliases. Resolve each
+  body reference to its exact attachment; do not accept count-only matching,
+  unrelated rows, substituted descriptors or changed text. The native protected
+  source still pins the actual sent descriptor, independently of local UI IDs.
 
 ## Fast qualification loop
 
@@ -544,6 +552,10 @@ CloudKit readback or independent Apple-device display.
    receipt/replay/ack and Dart promotion checks are under qualification. The
    attachment composer still does not select this path. Wire its origin and
    stage/adopt/commit lifecycle next; do not use mutable metadata after sending.
+   GCE `34515270061` compiled the new API and passed 413 tests; the remaining
+   native-seam source guard rejected an unnecessary serialization derive. The
+   fix uses explicit content-free receipt field encoding and retains the guard.
+   Import/review the generated bridge and requalify before enabling the composer.
 2. Preserve qualified Windows direct request `qualification-20260910-03` and
    its proof. No additional direct send is needed merely to recheck that result.
    The exact restored-group route is implemented/tested, but no group with the
