@@ -1,0 +1,175 @@
+name: Windows CloudKit fast loop
+
+on:
+  # A push containing only this sidecar registers the workflow from the pilot
+  # branch without merging it to the repository's default branch. It does not
+  # build application source; the exact-source build remains manual.
+  push:
+    branches:
+      - agent/gce-runner-pilot
+    paths:
+      - ".github/workflows/windows-cloudkit-fast-loop.yml"
+      - "tooling/windows-cloudkit-build/**"
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Full 40-character SHA at the trusted CloudKit source branch head
+        required: true
+        default: 6c628feb688521c34fe378248e322e89dbd5c78b
+        type: string
+      build_variant:
+        description: Engineering harness configuration to compile; neither variant is run against CloudKit
+        required: true
+        default: local-write
+        type: choice
+        options:
+          - local-write
+          - read-only
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-cloudkit-fast-loop
+  cancel-in-progress: true
+
+env:
+  SOURCE_REF: ${{ inputs.source_ref }}
+  BUILD_VARIANT: ${{ inputs.build_variant }}
+  TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-sms-chat-contract
+
+jobs:
+  register:
+    name: Register pilot workflow only
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: echo 'Windows CloudKit fast-loop workflow registered; no source build ran.'
+
+  build-and-smoke:
+    name: Build and smoke Windows ARM64 harness
+    if: github.event_name == 'workflow_dispatch'
+    # This is a fresh GitHub-hosted ARM64 VM. GitHub decommissions it after the
+    # job, including timeout/cancellation, so there is no persistent runner or
+    # GCE instance to delete from this bounded path.
+    runs-on: windows-11-arm
+    timeout-minutes: 90
+    steps:
+      - name: Validate exact reviewed source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:SOURCE_REF -cnotmatch '^[0-9a-f]{40}$') {
+            throw 'source_ref must be a lowercase full 40-character commit SHA.'
+          }
+          $remote = "https://github.com/$env:GITHUB_REPOSITORY.git"
+          $line = @(git ls-remote $remote "refs/heads/$env:TRUSTED_SOURCE_BRANCH")
+          if ($LASTEXITCODE -ne 0 -or $line.Count -ne 1) {
+            throw "Unable to resolve trusted branch $env:TRUSTED_SOURCE_BRANCH."
+          }
+          $trusted = ($line[0] -split "`t")[0]
+          if ($trusted -cnotmatch '^[0-9a-f]{40}$' -or $env:SOURCE_REF -cne $trusted) {
+            throw "source_ref is not the current trusted branch head. Expected $trusted."
+          }
+
+      - name: Check out bounded sidecar
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: sidecar
+          persist-credentials: false
+
+      - name: Check out reviewed application source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          path: source
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up Flutter 3.44.8 archive
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: 3.44.8
+          architecture: x64
+          # ARM bootstrap mutates the archive's x64 SDK. Do not save it under
+          # a shared x64 cache identity for other Windows workflows.
+          cache: false
+
+      - name: Bootstrap native ARM64 Dart and Flutter engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $flutterRoot = $env:FLUTTER_ROOT
+          $updater = Join-Path $flutterRoot 'bin/internal/update_dart_sdk.ps1'
+          if (-not (Test-Path -LiteralPath $updater -PathType Leaf)) {
+            throw "Flutter SDK layout changed: $updater is absent."
+          }
+          Remove-Item -LiteralPath (Join-Path $flutterRoot 'bin/cache/engine-dart-sdk.stamp') -Force -ErrorAction SilentlyContinue
+          & $updater
+          Remove-Item -LiteralPath (Join-Path $flutterRoot 'bin/cache/flutter_tools.snapshot') -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath (Join-Path $flutterRoot 'bin/cache/flutter_tools.stamp') -Force -ErrorAction SilentlyContinue
+          $dartVersion = & (Join-Path $flutterRoot 'bin/dart.bat') --version 2>&1 | Out-String
+          if ($dartVersion -notmatch 'windows_arm64') {
+            throw "Expected native ARM64 Dart, received: $dartVersion"
+          }
+          & (Join-Path $flutterRoot 'bin/flutter.bat') precache --windows
+          if (-not (Test-Path -LiteralPath (
+            Join-Path $flutterRoot 'bin/cache/artifacts/engine/windows-arm64'
+          ) -PathType Container)) {
+            throw 'Flutter did not install the Windows ARM64 engine.'
+          }
+
+      - name: Set up Rust ARM64 MSVC target
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - name: Set up pinned Protocol Buffers compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '29.5'
+          $expected = '633d3e555fc97f0a1f55b4adb03256cd94b8059e51e7abbae98ff39e58a9dfa5'
+          $archive = Join-Path $env:RUNNER_TEMP "protoc-$version-win64.zip"
+          $destination = Join-Path $env:RUNNER_TOOL_CACHE "protoc\$version\x64"
+          $uri = "https://github.com/protocolbuffers/protobuf/releases/download/v$version/protoc-$version-win64.zip"
+          Invoke-WebRequest -Uri $uri -OutFile $archive
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw 'protoc archive checksum mismatch.' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          (Join-Path $destination 'bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build, test, and package the executable loop
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'windows-cloudkit-fast-loop'
+          & ./sidecar/tooling/windows-cloudkit-build/build_and_smoke.ps1 `
+            -SourceRoot ./source `
+            -ExpectedSourceCommit $env:SOURCE_REF `
+            -SidecarCommit '${{ github.sha }}' `
+            -BuildVariant $env:BUILD_VARIANT `
+            -OutputRoot $output
+
+      - name: Upload short-lived engineering bundle and provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-cloudkit-fast-loop-arm64-${{ env.BUILD_VARIANT }}-${{ env.SOURCE_REF }}
+          path: |
+            ${{ runner.temp }}/windows-cloudkit-fast-loop/*.zip
+            ${{ runner.temp }}/windows-cloudkit-fast-loop/*.sha256
+            ${{ runner.temp }}/windows-cloudkit-fast-loop/*.json
+            ${{ runner.temp }}/windows-cloudkit-fast-loop/*.log
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Preserve bounded failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-cloudkit-failure-${{ github.run_id }}
+          path: ${{ runner.temp }}/windows-cloudkit-fast-loop/*.log
+          if-no-files-found: ignore
+          retention-days: 3
