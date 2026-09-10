@@ -248,6 +248,129 @@ pub(crate) fn decode_ids_attachment_source(
 ) -> Result<DecodedIdsAttachmentSource, Failure> {
     decoded_from_dto(decode_envelope(encoded)?)
 }
+/// Rebuild the exact pre-send MessageInst pinned by a decoded source.
+///
+/// Restart-safe alternative to rebuilding ConversationData from a mutable
+/// chat: every admitted field comes from `decoded`, preserving part order,
+/// per-part indexes, MMCS bytes and metadata, participant order, and the
+/// embedded profile. Descriptors and routes are never replaced with live
+/// chat state. The caller supplies no chat; pair the returned GUID list
+/// with the returned message in slot order.
+pub(crate) fn message_inst_from_decoded_source(
+    decoded: &DecodedIdsAttachmentSource,
+) -> Result<(MessageInst, Vec<String>), Failure> {
+    let mut ordered_guids = Vec::with_capacity(decoded.attachment_guids.len());
+    let mut parts = Vec::with_capacity(decoded.parts.len());
+    for part in &decoded.parts {
+        match part {
+            DecodedPart::Text { text, idx } => {
+                let idx = match idx {
+                    None => None,
+                    Some(v) => Some(usize::try_from(*v).map_err(|_| Failure::OversizedMessage)?),
+                };
+                parts.push(rustpush::IndexedMessagePart {
+                    part: MessagePart::Text(text.clone(), Default::default()),
+                    idx,
+                    ext: None,
+                });
+            }
+            DecodedPart::Attachment(d) => {
+                if d.size > MAX_CONTENT_BYTES {
+                    return Err(Failure::OversizedMessage);
+                }
+                let size = usize::try_from(d.size).map_err(|_| Failure::OversizedMessage)?;
+                let idx = match d.idx {
+                    None => None,
+                    Some(v) => Some(usize::try_from(v).map_err(|_| Failure::OversizedMessage)?),
+                };
+                ordered_guids.push(d.guid.clone());
+                parts.push(rustpush::IndexedMessagePart {
+                    part: MessagePart::Attachment(rustpush::Attachment {
+                        a_type: AttachmentType::MMCS(rustpush::MMCSFile {
+                            signature: d.signature.clone(),
+                            object: d.object.clone(),
+                            url: d.url.clone(),
+                            key: d.key.clone(),
+                            size,
+                        }),
+                        part: d.part,
+                        uti_type: d.uti_type.clone(),
+                        mime: d.mime.clone(),
+                        name: d.name.clone(),
+                        iris: d.iris,
+                    }),
+                    idx,
+                    ext: None,
+                });
+            }
+        }
+    }
+    if ordered_guids.is_empty() || ordered_guids != decoded.attachment_guids {
+        return Err(Failure::BindingMismatch);
+    }
+    let embedded_profile = match &decoded.embedded_profile {
+        None => None,
+        Some(p) => Some(rustpush::ShareProfileMessage {
+            cloud_kit_decryption_record_key: p.decryption_key.clone(),
+            cloud_kit_record_key: p.record_key.clone(),
+            poster: p.poster.as_ref().map(|q| rustpush::SharedPoster {
+                low_res_wallpaper_tag: q.low_res.clone(),
+                wallpaper_tag: q.wallpaper.clone(),
+                message_tag: q.message.clone(),
+            }),
+        }),
+    };
+    let normal = rustpush::NormalMessage {
+        parts: rustpush::MessageParts(parts),
+        effect: None,
+        reply_guid: None,
+        reply_part: None,
+        service: MessageType::IMessage,
+        subject: None,
+        app: None,
+        link_meta: None,
+        voice: false,
+        scheduled: None,
+        embedded_profile,
+    };
+    let msg = MessageInst {
+        id: decoded.message_guid.clone(),
+        sender: Some(decoded.sender.clone()),
+        conversation: Some(rustpush::ConversationData {
+            participants: decoded.participants.clone(),
+            cv_name: decoded.cv_name.clone(),
+            sender_guid: decoded.sender_guid.clone(),
+            after_guid: decoded.after_guid.clone(),
+        }),
+        message: Message::Message(normal),
+        sent_timestamp: decoded.sent_timestamp,
+        target: None,
+        send_delivered: decoded.send_delivered,
+        verification_failed: false,
+        certified_context: None,
+    };
+    Ok((msg, decoded.attachment_guids.clone()))
+}
+/// Validated-decode then rebuild, for a stored envelope after open/verify.
+pub(crate) fn message_inst_from_stored_envelope(
+    encoded: &[u8],
+) -> Result<(MessageInst, Vec<String>), Failure> {
+    let decoded = decode_ids_attachment_source(encoded)?;
+    message_inst_from_decoded_source(&decoded)
+}
+/// Restore the exact pre-send MessageInst from an already-opened source
+/// envelope. The caller supplies only envelope bytes from protected storage
+/// after its own committed-lease, account, store, auth, and GUID checks;
+/// this function performs the validated decode, rebuilds every admitted
+/// field from the envelope alone, and requires byte-equal re-encode before
+/// returning. No mutable-chat state is consulted.
+pub(crate) fn restore_ids_attachment_message(encoded: &[u8]) -> Result<MessageInst, Failure> {
+    let (msg, guids) = message_inst_from_stored_envelope(encoded)?;
+    if encode_ids_attachment_source(&msg, &guids)? != encoded {
+        return Err(Failure::BindingMismatch);
+    }
+    Ok(msg)
+}
 pub(crate) fn stage_ids_attachment_source(
     storage_directory: PathBuf,
     account_fingerprint: String,
@@ -1642,5 +1765,157 @@ mod tests {
             ),
             Err(Failure::MalformedMessage)
         ));
+    }
+    #[test]
+    fn decoded_source_rebuild_roundtrip_direct() {
+        let (msg, guids) = fixture();
+        let encoded = encode_ids_attachment_source(&msg, &guids).unwrap();
+        let (rebuilt, rebuilt_guids) = message_inst_from_stored_envelope(&encoded).unwrap();
+        assert_eq!(rebuilt_guids, guids);
+        assert_eq!(rebuilt.id, msg.id);
+        assert_eq!(
+            rebuilt.conversation.as_ref().unwrap().participants,
+            msg.conversation.as_ref().unwrap().participants
+        );
+        validate_ids_attachment_source(&encoded, &rebuilt, &rebuilt_guids).unwrap();
+        assert_eq!(
+            encode_ids_attachment_source(&rebuilt, &rebuilt_guids).unwrap(),
+            encoded
+        );
+        let restored = restore_ids_attachment_message(&encoded).unwrap();
+        assert_eq!(restored.id, msg.id);
+        assert_eq!(
+            encode_ids_attachment_source(&restored, &guids).unwrap(),
+            encoded
+        );
+    }
+    #[test]
+    fn decoded_source_rebuild_roundtrip_group_multi_part_profile_optional() {
+        let (mut msg, guids) = fixture_two();
+        let conversation = msg.conversation.as_mut().unwrap();
+        conversation
+            .participants
+            .push("third@example.invalid".to_owned());
+        conversation.cv_name = Some("Synthetic group".to_owned());
+        conversation.after_guid = Some("prior-message".to_owned());
+        if let Message::Message(normal) = &mut msg.message {
+            normal.parts.0[1].idx = None;
+            if let MessagePart::Attachment(a) = &mut normal.parts.0[2].part {
+                a.iris = true;
+            }
+            normal.embedded_profile = Some(rustpush::ShareProfileMessage {
+                cloud_kit_record_key: "synthetic-profile".to_owned(),
+                cloud_kit_decryption_record_key: vec![3; 32],
+                poster: Some(rustpush::SharedPoster {
+                    low_res_wallpaper_tag: vec![1, 2],
+                    wallpaper_tag: vec![3, 4],
+                    message_tag: vec![5, 6],
+                }),
+            });
+        }
+        let encoded = encode_ids_attachment_source(&msg, &guids).unwrap();
+        let (rebuilt, rebuilt_guids) = message_inst_from_stored_envelope(&encoded).unwrap();
+        let rebuilt_conversation = rebuilt.conversation.as_ref().unwrap();
+        let original_conversation = msg.conversation.as_ref().unwrap();
+        assert_eq!(
+            rebuilt_conversation.participants,
+            original_conversation.participants
+        );
+        assert_eq!(rebuilt_conversation.cv_name, original_conversation.cv_name);
+        assert_eq!(
+            rebuilt_conversation.sender_guid,
+            original_conversation.sender_guid
+        );
+        assert_eq!(
+            rebuilt_conversation.after_guid,
+            original_conversation.after_guid
+        );
+        if let Message::Message(normal) = &rebuilt.message {
+            assert!(normal.parts.0[1].idx.is_none());
+            assert_eq!(normal.parts.0[2].idx, Some(2));
+            if let MessagePart::Attachment(a) = &normal.parts.0[2].part {
+                assert!(a.iris);
+                assert_eq!(a.name, "photo-9.jpg");
+            } else {
+                panic!("expected attachment");
+            }
+            let profile = normal.embedded_profile.as_ref().unwrap();
+            assert_eq!(profile.cloud_kit_record_key, "synthetic-profile");
+            let poster = profile.poster.as_ref().unwrap();
+            assert_eq!(poster.message_tag, vec![5, 6]);
+        } else {
+            panic!("expected normal message");
+        }
+        assert_eq!(
+            encode_ids_attachment_source(&rebuilt, &rebuilt_guids).unwrap(),
+            encoded
+        );
+    }
+    #[test]
+    fn rebuilt_message_ignores_mutable_chat_state() {
+        let (msg, guids) = fixture();
+        let encoded = encode_ids_attachment_source(&msg, &guids).unwrap();
+        let (rebuilt, rebuilt_guids) = message_inst_from_stored_envelope(&encoded).unwrap();
+        // Simulate a restarted mutable chat that drifted: reorder participants
+        // and replace after_guid, sender_guid, and cv_name.
+        let mut drifted = msg.clone();
+        let conversation = drifted.conversation.as_mut().unwrap();
+        conversation.participants.reverse();
+        conversation.after_guid = Some("restart-after-guid".to_owned());
+        conversation.sender_guid = Some(uuid::Uuid::new_v4().to_string());
+        conversation.cv_name = Some("Restart chat".to_owned());
+        let rebuilt_conversation = rebuilt.conversation.as_ref().unwrap();
+        let drifted_conversation = drifted.conversation.as_ref().unwrap();
+        assert_ne!(
+            rebuilt_conversation.participants,
+            drifted_conversation.participants
+        );
+        assert_ne!(
+            rebuilt_conversation.after_guid,
+            drifted_conversation.after_guid
+        );
+        validate_ids_attachment_source(&encoded, &rebuilt, &rebuilt_guids).unwrap();
+        // Adopting the drifted route breaks the binding.
+        let mut adopted = rebuilt.clone();
+        adopted.conversation.as_mut().unwrap().after_guid = drifted_conversation.after_guid.clone();
+        assert!(validate_ids_attachment_source(&encoded, &adopted, &rebuilt_guids).is_err());
+        // Replacing the stored descriptor breaks the binding.
+        let mut replaced = rebuilt.clone();
+        if let Message::Message(normal) = &mut replaced.message {
+            if let MessagePart::Attachment(a) = &mut normal.parts.0[1].part {
+                if let AttachmentType::MMCS(mmcs) = &mut a.a_type {
+                    mmcs.key[0] ^= 0xFF;
+                }
+            }
+        }
+        assert!(validate_ids_attachment_source(&encoded, &replaced, &rebuilt_guids).is_err());
+    }
+    #[test]
+    fn rebuild_rejects_invalid_decoded_content() {
+        let (msg, guids) = fixture();
+        let encoded = encode_ids_attachment_source(&msg, &guids).unwrap();
+        // Oversized stored descriptor is rejected, not rebuilt.
+        let mut decoded = decode_ids_attachment_source(&encoded).unwrap();
+        if let DecodedPart::Attachment(a) = &mut decoded.parts[1] {
+            a.size = MAX_CONTENT_BYTES + 1;
+        } else {
+            panic!("expected attachment");
+        }
+        assert!(matches!(
+            message_inst_from_decoded_source(&decoded),
+            Err(Failure::OversizedMessage)
+        ));
+        // Swapped GUID order no longer matches part order.
+        let (msg2, guids2) = fixture_two();
+        let encoded2 = encode_ids_attachment_source(&msg2, &guids2).unwrap();
+        let mut decoded2 = decode_ids_attachment_source(&encoded2).unwrap();
+        decoded2.attachment_guids.swap(0, 1);
+        assert!(matches!(
+            message_inst_from_decoded_source(&decoded2),
+            Err(Failure::BindingMismatch)
+        ));
+        // Truncated and empty envelopes are rejected.
+        assert!(restore_ids_attachment_message(&encoded[..encoded.len() - 10]).is_err());
+        assert!(restore_ids_attachment_message(&[]).is_err());
     }
 }

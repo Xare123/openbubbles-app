@@ -505,6 +505,70 @@ pub fn cloud_sync_acknowledge_native_send_receipt(
 
 const CLOUD_SYNC_READ_AUTH_WARM_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[frb(ignore)]
+fn cloud_sync_require_source_context_auth(
+    context: &CloudSyncNativeSendReceiptContext,
+    auth: &CloudSyncNativeAuthMetadata,
+) -> anyhow::Result<()> {
+    if auth.account_fingerprint != context.account_fingerprint
+        || auth.protected_store_identity != context.protected_store_identity
+        || auth.native_session_id != context.native_session_id
+    {
+        return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
+    }
+    Ok(())
+}
+
+/// Restores only the exact committed local source for an authenticated retry.
+/// No Apple request, upload or send is performed. The caller still validates
+/// its current local body/route and journal before handing this value to IDS.
+pub async fn cloud_sync_restore_ids_attachment_source(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    context: CloudSyncNativeSendReceiptContext,
+) -> anyhow::Result<MessageInst> {
+    let auth = cloud_sync_capture_auth_snapshot(
+        cloud_messages_client, context.storage_directory.clone(),
+    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let message = cloud_sync_restore_attachment_source_bound(&context, &auth)?;
+    let after = cloud_sync_capture_auth_snapshot(
+        cloud_messages_client, context.storage_directory.clone(),
+    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    cloud_sync_require_source_context_auth(&context, &after)?;
+    Ok(message)
+}
+
+#[frb(ignore)]
+fn cloud_sync_restore_attachment_source_bound(
+    context: &CloudSyncNativeSendReceiptContext,
+    auth: &CloudSyncNativeAuthMetadata,
+) -> anyhow::Result<MessageInst> {
+    cloud_sync_require_source_context_auth(context, auth)?;
+    let binding = context.source_binding.as_ref()
+        .ok_or_else(|| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
+    let identity = crate::cloud_sync_protector::protected_store_identity(
+        context.storage_directory.clone(),
+    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
+    if identity != context.protected_store_identity {
+        return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
+    }
+    let stage = crate::cloud_sync_ids_attachment_source::NativeIdsAttachmentSourceStage {
+        protected_reference: binding.protected_reference.clone(),
+        lease_reference: binding.lease_reference.clone(),
+        payload_sha256: binding.payload_sha256.clone(),
+        payload_length: binding.payload_length,
+    };
+    let envelope = crate::cloud_sync_ids_attachment_source::open_staged_source_envelope(
+        PathBuf::from(&context.storage_directory), context.account_fingerprint.clone(),
+        &binding.source_sha256, &stage,
+    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
+    let message = crate::cloud_sync_ids_attachment_source::restore_ids_attachment_message(&envelope)
+        .map_err(|_| anyhow!("cloud_sync_native_attachment_source_invalid"))?;
+    if cloud_sync_local_send_guid_hash(&message.id) != context.guid_hash {
+        return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
+    }
+    Ok(message)
+}
+
 /// Stages the provided native IDS attachment value without sending anything or
 /// touching Apple. Caller must journal ownership and commit the lease under
 /// the protected-store exclusive lock before passing this binding to send().
@@ -523,12 +587,7 @@ pub async fn cloud_sync_stage_ids_attachment_source(
     let auth = cloud_sync_capture_auth_snapshot(
         cloud_messages_client, context.storage_directory.clone(),
     ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
-    if auth.account_fingerprint != context.account_fingerprint
-        || auth.protected_store_identity != context.protected_store_identity
-        || auth.native_session_id != context.native_session_id
-    {
-        return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
-    }
+    cloud_sync_require_source_context_auth(&context, &auth)?;
     let staged = crate::cloud_sync_ids_attachment_source::stage_ids_attachment_source(
         PathBuf::from(context.storage_directory), context.account_fingerprint,
         &local_source_sha256, &message, &attachment_guids,
@@ -9636,12 +9695,36 @@ mod cloud_sync_windows_sender_tests {
                 payload_length: stage.payload_length,
             }),
         };
+        let auth = CloudSyncNativeAuthMetadata {
+            account_fingerprint: context.account_fingerprint.clone(),
+            protected_store_identity: context.protected_store_identity.clone(),
+            native_session_id: context.native_session_id.clone(),
+        };
+        assert!(cloud_sync_restore_attachment_source_bound(&context, &auth).is_err());
         assert!(cloud_sync_attachment_send_source(Some(&context), &message).is_err());
         crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
             directory.path().to_path_buf(), &stage.lease_reference,
             std::slice::from_ref(&stage.protected_reference),
         ).unwrap();
         let (source, guids) = cloud_sync_attachment_send_source(Some(&context), &message).unwrap().unwrap();
+        let restored = cloud_sync_restore_attachment_source_bound(&context, &auth).unwrap();
+        assert!(cloud_sync_attachment_send_source(Some(&context), &restored).is_ok());
+        for field in 0..4 {
+            let mut wrong = context.clone();
+            match field {
+                0 => wrong.guid_hash = "b".repeat(64),
+                1 => wrong.account_fingerprint = "B".repeat(43),
+                2 => wrong.native_session_id = "B".repeat(43),
+                _ => wrong.protected_store_identity = format!("obcs2.store.{}", "B".repeat(43)),
+            }
+            assert!(cloud_sync_restore_attachment_source_bound(&wrong, &auth).is_err());
+        }
+        let mut missing = context.clone();
+        missing.source_binding = None;
+        assert!(cloud_sync_restore_attachment_source_bound(&missing, &auth).is_err());
+        let mut corrupted = context.clone();
+        corrupted.source_binding.as_mut().unwrap().payload_sha256 = "b".repeat(64);
+        assert!(cloud_sync_restore_attachment_source_bound(&corrupted, &auth).is_err());
         let mut changed = message.clone();
         changed.send_delivered = true;
         assert!(cloud_sync_attachment_send_source(Some(&context), &changed).is_err());
