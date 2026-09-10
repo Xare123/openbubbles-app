@@ -11937,60 +11937,311 @@ pub async fn download_cloud_group_photos(
     Ok(())
 }
 
+/// Reject ambiguous identities before opening files or initializing a container.
+fn preflight_upload_request_records(files: &[(String, String)]) -> anyhow::Result<()> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    for (_, record) in files {
+        if record.is_empty() {
+            return Err(anyhow!("upload request record identifier was missing"));
+        }
+        if !seen.insert(record.as_str()) {
+            return Err(anyhow!("duplicate upload request record"));
+        }
+    }
+    Ok(())
+}
+/// Bind by record identity, not the first matching content signature. Distinct
+/// records may have identical bytes. These IDs are constructed by rustpush from
+/// the request: correlation is not proof that a CloudKit record was saved.
+fn match_upload_results_to_records(
+    expected: &[(String, Vec<u8>)],
+    results: Vec<Asset>,
+) -> anyhow::Result<HashMap<String, Asset>> {
+    let mut expected_sigs: HashMap<&str, &[u8]> = HashMap::new();
+    for (record, sig) in expected {
+        if sig.is_empty() {
+            return Err(anyhow!("upload request signature was missing"));
+        }
+        if expected_sigs
+            .insert(record.as_str(), sig.as_slice())
+            .is_some()
+        {
+            return Err(anyhow!("duplicate upload request record"));
+        }
+    }
+    if results.len() != expected.len() {
+        return Err(anyhow!(
+            "upload result count mismatch: expected {} results, got {}",
+            expected.len(),
+            results.len()
+        ));
+    }
+    let mut finish: HashMap<String, Asset> = HashMap::with_capacity(results.len());
+    for result in results {
+        let name = result
+            .record_id
+            .as_ref()
+            .and_then(|id| id.value.as_ref())
+            .and_then(|value| value.name.as_deref())
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| anyhow!("upload result was missing its record identifier"))?;
+        let expected_sig = expected_sigs
+            .get(name)
+            .ok_or_else(|| anyhow!("upload result referenced an unexpected record"))?;
+        let actual_sig = result
+            .signature
+            .as_deref()
+            .ok_or_else(|| anyhow!("upload result was missing its signature"))?;
+        if actual_sig != *expected_sig {
+            return Err(anyhow!("upload result signature mismatch"));
+        }
+        if finish.insert(name.to_string(), result).is_some() {
+            return Err(anyhow!("duplicate upload result record"));
+        }
+    }
+    if finish.len() != expected.len() {
+        return Err(anyhow!("upload reply was missing results"));
+    }
+    Ok(finish)
+}
+
 pub async fn upload_cloud_attachments(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     files: Vec<(String, String)>,
 ) -> anyhow::Result<HashMap<String, Asset>> {
+    preflight_upload_request_records(&files)?;
+    if files.is_empty() {
+        return Ok(HashMap::new());
+    }
     let mut to_upload = vec![];
-    let mut hashes = vec![];
+    let mut expected: Vec<(String, Vec<u8>)> = vec![];
     for (file, record) in &files {
         let prepared = cloud_messages_client
             .prepare_file(std::fs::File::open(file)?)
             .await?;
-        hashes.push(prepared.total_sig.clone());
+        expected.push((record.clone(), prepared.total_sig.clone()));
         to_upload.push((prepared, std::fs::File::open(file)?, record.clone()));
     }
 
     let results = cloud_messages_client.upload_attachments(to_upload).await?;
 
-    let mut finish = HashMap::new();
-    for result in results {
-        let idx = hashes
-            .iter()
-            .position(|h| h == result.signature.as_ref().unwrap())
-            .unwrap();
-        finish.insert(files[idx].1.clone(), result);
-    }
-
-    Ok(finish)
+    match_upload_results_to_records(&expected, results)
 }
 
 pub async fn upload_group_photo(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     files: Vec<(String, String)>,
 ) -> anyhow::Result<HashMap<String, Asset>> {
+    preflight_upload_request_records(&files)?;
+    if files.is_empty() {
+        return Ok(HashMap::new());
+    }
     let mut to_upload = vec![];
-    let mut hashes = vec![];
+    let mut expected: Vec<(String, Vec<u8>)> = vec![];
     for (file, record) in &files {
         let prepared = cloud_messages_client
             .prepare_file(std::fs::File::open(file)?)
             .await?;
-        hashes.push(prepared.total_sig.clone());
+        expected.push((record.clone(), prepared.total_sig.clone()));
         to_upload.push((prepared, std::fs::File::open(file)?, record.clone()));
     }
 
     let results = cloud_messages_client.upload_group_photo(to_upload).await?;
 
-    let mut finish = HashMap::new();
-    for result in results {
-        let idx = hashes
-            .iter()
-            .position(|h| h == result.signature.as_ref().unwrap())
-            .unwrap();
-        finish.insert(files[idx].1.clone(), result);
+    match_upload_results_to_records(&expected, results)
+}
+
+#[cfg(test)]
+mod upload_result_integrity_tests {
+    use super::*;
+
+    fn test_asset(record_name: Option<&str>, signature: Option<Vec<u8>>) -> Asset {
+        Asset {
+            signature,
+            record_id: record_name.map(|name| rustpush::cloudkit_proto::RecordIdentifier {
+                value: Some(rustpush::cloudkit_proto::Identifier {
+                    name: Some(name.to_string()),
+                    r#type: Some(rustpush::cloudkit_proto::identifier::Type::Record as i32),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
     }
 
-    Ok(finish)
+    fn expected_two() -> Vec<(String, Vec<u8>)> {
+        vec![
+            ("record-a".to_string(), b"sig-a".to_vec()),
+            ("record-b".to_string(), b"sig-b".to_vec()),
+        ]
+    }
+
+    #[test]
+    fn duplicate_content_distinct_ids_bind_exactly() {
+        let sig = b"sig-sentinel-duplicate-bytes".to_vec();
+        let expected = vec![
+            ("record-a".to_string(), sig.clone()),
+            ("record-b".to_string(), sig.clone()),
+        ];
+        let results = vec![
+            test_asset(Some("record-b"), Some(sig.clone())),
+            test_asset(Some("record-a"), Some(sig.clone())),
+        ];
+        let bound = match_upload_results_to_records(&expected, results).unwrap();
+        assert_eq!(bound.len(), 2);
+        assert_eq!(bound["record-a"].signature.as_deref(), Some(&sig[..]));
+        assert_eq!(bound["record-b"].signature.as_deref(), Some(&sig[..]));
+    }
+
+    #[test]
+    fn reordered_results_still_bind() {
+        let expected = expected_two();
+        let results = vec![
+            test_asset(Some("record-b"), Some(b"sig-b".to_vec())),
+            test_asset(Some("record-a"), Some(b"sig-a".to_vec())),
+        ];
+        let bound = match_upload_results_to_records(&expected, results).unwrap();
+        assert_eq!(bound["record-a"].signature.as_deref(), Some(&b"sig-a"[..]));
+        assert_eq!(bound["record-b"].signature.as_deref(), Some(&b"sig-b"[..]));
+    }
+
+    #[test]
+    fn wrong_signature_rejected_without_content_leak() {
+        let expected = expected_two();
+        let results = vec![
+            test_asset(Some("record-a"), Some(b"sig-a".to_vec())),
+            test_asset(Some("record-b"), Some(b"sig-sentinel-wrong".to_vec())),
+        ];
+        let err = match_upload_results_to_records(&expected, results).unwrap_err();
+        let rendered = format!("{err:?}");
+        assert!(rendered.contains("signature mismatch"));
+        assert!(!rendered.contains("sig-sentinel-wrong"));
+    }
+
+    #[test]
+    fn missing_signature_rejected() {
+        let expected = expected_two();
+        let results = vec![
+            test_asset(Some("record-a"), Some(b"sig-a".to_vec())),
+            test_asset(Some("record-b"), None),
+        ];
+        let err = match_upload_results_to_records(&expected, results).unwrap_err();
+        assert!(format!("{err:?}").contains("missing its signature"));
+    }
+
+    #[test]
+    fn missing_record_id_rejected() {
+        let expected = expected_two();
+        let missing = vec![
+            test_asset(Some("record-a"), Some(b"sig-a".to_vec())),
+            test_asset(None, Some(b"sig-b".to_vec())),
+        ];
+        let err = match_upload_results_to_records(&expected, missing).unwrap_err();
+        assert!(format!("{err:?}").contains("missing its record identifier"));
+        let empty_name = vec![
+            test_asset(Some("record-a"), Some(b"sig-a".to_vec())),
+            test_asset(Some(""), Some(b"sig-b".to_vec())),
+        ];
+        let err = match_upload_results_to_records(&expected, empty_name).unwrap_err();
+        assert!(format!("{err:?}").contains("missing its record identifier"));
+    }
+
+    #[test]
+    fn unexpected_record_id_rejected() {
+        let expected = expected_two();
+        let results = vec![
+            test_asset(Some("record-a"), Some(b"sig-a".to_vec())),
+            test_asset(Some("record-unknown"), Some(b"sig-b".to_vec())),
+        ];
+        let err = match_upload_results_to_records(&expected, results).unwrap_err();
+        assert!(format!("{err:?}").contains("unexpected record"));
+    }
+
+    #[test]
+    fn duplicate_results_rejected() {
+        let expected = expected_two();
+        let results = vec![
+            test_asset(Some("record-a"), Some(b"sig-a".to_vec())),
+            test_asset(Some("record-a"), Some(b"sig-a".to_vec())),
+        ];
+        let err = match_upload_results_to_records(&expected, results).unwrap_err();
+        assert!(format!("{err:?}").contains("duplicate upload result"));
+    }
+
+    #[test]
+    fn partial_reply_rejected() {
+        let expected = expected_two();
+        let results = vec![test_asset(Some("record-a"), Some(b"sig-a".to_vec()))];
+        let err = match_upload_results_to_records(&expected, results).unwrap_err();
+        assert!(format!("{err:?}").contains("count mismatch"));
+    }
+
+    #[test]
+    fn extra_results_rejected() {
+        let expected = expected_two();
+        let results = vec![
+            test_asset(Some("record-a"), Some(b"sig-a".to_vec())),
+            test_asset(Some("record-b"), Some(b"sig-b".to_vec())),
+            test_asset(Some("record-a"), Some(b"sig-a".to_vec())),
+        ];
+        let err = match_upload_results_to_records(&expected, results).unwrap_err();
+        assert!(format!("{err:?}").contains("count mismatch"));
+    }
+
+    #[test]
+    fn duplicate_request_ids_rejected() {
+        let expected = vec![
+            ("record-a".to_string(), b"sig-a".to_vec()),
+            ("record-a".to_string(), b"sig-a".to_vec()),
+        ];
+        let results = vec![
+            test_asset(Some("record-a"), Some(b"sig-a".to_vec())),
+            test_asset(Some("record-a"), Some(b"sig-a".to_vec())),
+        ];
+        let err = match_upload_results_to_records(&expected, results).unwrap_err();
+        assert!(format!("{err:?}").contains("duplicate upload request"));
+    }
+
+    #[test]
+    fn preflight_rejects_duplicate_request_ids_before_any_io() {
+        let files = vec![
+            ("a.bin".to_string(), "record-a".to_string()),
+            ("b.bin".to_string(), "record-a".to_string()),
+        ];
+        let err = preflight_upload_request_records(&files).unwrap_err();
+        assert!(format!("{err:?}").contains("duplicate upload request"));
+    }
+
+    #[test]
+    fn preflight_rejects_empty_request_ids() {
+        let files = vec![
+            ("a.bin".to_string(), "record-a".to_string()),
+            ("b.bin".to_string(), String::new()),
+        ];
+        let err = preflight_upload_request_records(&files).unwrap_err();
+        assert!(format!("{err:?}").contains("missing"));
+        let ok = vec![
+            ("a.bin".to_string(), "record-a".to_string()),
+            ("b.bin".to_string(), "record-b".to_string()),
+        ];
+        assert!(preflight_upload_request_records(&ok).is_ok());
+    }
+
+    #[test]
+    fn preflight_accepts_empty_batch() {
+        assert!(preflight_upload_request_records(&[]).is_ok());
+    }
+
+    #[test]
+    fn empty_expected_signature_rejected() {
+        let expected = vec![("record-a".to_string(), Vec::new())];
+        let empty_result = vec![test_asset(Some("record-a"), Some(Vec::new()))];
+        let err = match_upload_results_to_records(&expected, empty_result).unwrap_err();
+        assert!(format!("{err:?}").contains("signature was missing"));
+        let mismatched = vec![test_asset(Some("record-a"), Some(b"sig-a".to_vec()))];
+        let err = match_upload_results_to_records(&expected, mismatched).unwrap_err();
+        assert!(format!("{err:?}").contains("signature was missing"));
+    }
 }
 
 pub async fn change_escrow_password(

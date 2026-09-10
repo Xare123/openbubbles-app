@@ -86,7 +86,15 @@ Future<List<String>> _waitForObservation({
   }
   final watch = Stopwatch()..start();
   while (watch.elapsed < timeout) {
-    final current = await service.getObject(isolateId, observerId);
+    final box = await service.getObject(isolateId, observerId);
+    if (box is! Instance || box.elements?.length != 1) {
+      throw StateError('cloud_sync_write_observer_invalid');
+    }
+    final snapshot = box.elements!.single;
+    if (snapshot is! InstanceRef || snapshot.id == null) {
+      throw StateError('cloud_sync_write_observer_invalid');
+    }
+    final current = await service.getObject(isolateId, snapshot.id!);
     if (current is! Instance || current.elements?.length != expectedLength) {
       throw StateError('cloud_sync_write_observer_invalid');
     }
@@ -122,7 +130,9 @@ Future<CloudKitWritePreparation> invokePrepareAndSelect({
     libraryId,
     '''
     (() {
-      final observation = <String>['pending', '', '', ''];
+      // Publish a complete immutable snapshot with one reference assignment.
+      // A VM-service read can otherwise observe a partially updated list.
+      final observation = <List<String>>[<String>['pending', '', '', '']];
       Future<void> run() async {
         try {
           await writeTarget.prepareCloudSyncV2OutboundWriter();
@@ -130,17 +140,18 @@ Future<CloudKitWritePreparation> invokePrepareAndSelect({
             expectedRecipient: $recipientLiteral,
           );
           if (selected == null) {
-            observation[0] = 'no_candidate';
+            observation[0] = <String>['no_candidate', '', '', ''];
             return;
           }
-          observation[2] = selected.guidHash;
-          observation[3] = selected.createdAtUtc.toIso8601String();
-          observation[0] = 'prepared';
+          observation[0] = <String>[
+            'prepared', '', selected.guidHash,
+            selected.createdAtUtc.toIso8601String(),
+          ];
         } catch (error) {
-          observation[0] = 'failed';
           final candidate = error is StateError ? error.message.toString() : '';
-          observation[1] = RegExp(r'^cloud_sync_[a-z0-9_]+\$').hasMatch(candidate)
+          final code = RegExp(r'^cloud_sync_[a-z0-9_]+\$').hasMatch(candidate)
               ? candidate : 'cloud_sync_write_operation_failed';
+          observation[0] = <String>['failed', code, '', ''];
         }
       }
       Future<void>(run);
@@ -195,7 +206,9 @@ Future<CloudKitWriteResult> invokeExactIntentAndWait({
     libraryId,
     '''
     (() {
-      final observation = <String>['pending', '', '', '', '', '', '', ''];
+      final observation = <List<String>>[
+        <String>['pending', '', '', '', '', '', '', ''],
+      ];
       Future<void> run() async {
         try {
           final selected = await writeTarget.selectCloudSyncV2ExactIntent(
@@ -206,18 +219,18 @@ Future<CloudKitWriteResult> invokeExactIntentAndWait({
           }
           final result = await writeTarget
               .runCloudSyncV2ExactIntentConfirmed(selected);
-          observation[2] = selected.guidHash;
-          observation[3] = result.admitted.toString();
-          observation[4] = result.deferred.toString();
-          observation[5] = result.outboxBlocked.toString();
-          observation[6] = result.chatReadbackPending.toString();
-          observation[7] = result.candidateLimitReached.toString();
-          observation[0] = 'completed';
+          observation[0] = <String>[
+            'completed', '', selected.guidHash,
+            result.admitted.toString(), result.deferred.toString(),
+            result.outboxBlocked.toString(),
+            result.chatReadbackPending.toString(),
+            result.candidateLimitReached.toString(),
+          ];
         } catch (error) {
-          observation[0] = 'failed';
           final candidate = error is StateError ? error.message.toString() : '';
-          observation[1] = RegExp(r'^cloud_sync_[a-z0-9_]+\$').hasMatch(candidate)
+          final code = RegExp(r'^cloud_sync_[a-z0-9_]+\$').hasMatch(candidate)
               ? candidate : 'cloud_sync_write_operation_failed';
+          observation[0] = <String>['failed', code, '', '', '', '', '', ''];
         }
       }
       Future<void>(run);

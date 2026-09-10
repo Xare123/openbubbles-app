@@ -334,3 +334,36 @@ This is a chronological evidence log. It does not override the
   no dedicated worktrees were created or credential/user-data artifacts deleted.
   C: retained approximately 64.9 GiB free at the checkpoint. Pixel ADB had no
   connected devices, so no install or account mutation was attempted.
+
+## 2026-09-09, atomic VM observation and upload integrity
+
+- Full run `34427563744` failed at the write-preparation VM test, before Rust
+  tests or APK assembly. The observer published result fields individually,
+  so a VM-service poll could see a GUID with status still `pending`.
+  Read and write tooling now publish a complete snapshot through one reference
+  assignment. A real-VM fixture with a slow result getter reproduces the old
+  failure when field-by-field publication is restored and passes with the fix.
+  All 15 focused VM tests pass; targeted analysis reports no issues.
+- Cleanup for the failed run succeeded. Independent GitHub runner and GCE
+  instance inventories were empty. No APK from this run was installed.
+- Reviewed the Muse API patch and required identity preflight before file or
+  container I/O, a no-I/O empty-batch return, and rejection of empty expected
+  signatures. Attachment and group-photo uploads now correlate by record ID
+  plus expected signature, not the first matching hash. Identical file bytes
+  under distinct records no longer collapse into the first record. Fourteen
+  synthetic API tests cover these cases, pending cloud compilation/execution.
+- Native dependency `9584f0c28afb31e17a1883d54301ec6faf195341` validates upload
+  request identity and the uint32 wire-size limit before authorization. Missing
+  authorization fields or receipts return content-free errors instead of
+  panicking. Six new tests cover malformed requests, authorization, partial
+  receipts, duplicate content, and preserved encryption metadata. Syntax
+  parsing passed; Rust type checking and execution remain pending.
+- This repairs shared upload primitives, not the full V2 attachment-write
+  state machine. Returned record IDs are constructed from local requests.
+  An MMCS receipt does not prove a CloudAttachment record was saved, and a
+  missing record does not prove an earlier byte upload never happened.
+- The existing Muse agent's earlier implementation/report was preserved and
+  reviewed. Its accepted read-only follow-up later returned `not_found` with
+  no parent close or follow-up result. The exact agent/submission handles were
+  sent to the designated repair task. No replacement worktree, task database
+  edit, or transcript deletion was attempted.

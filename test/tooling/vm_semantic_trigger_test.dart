@@ -251,6 +251,23 @@ void main() {
     },
   );
 
+  test(
+    'write preparation publishes fields atomically during VM polling',
+    () async {
+      final target = await writeTarget('write-slow-fields');
+      final result = await write_trigger.invokePrepareAndSelect(
+        service: service,
+        isolateId: isolateId,
+        libraryId: libraryId,
+        targetId: target.id!,
+        recipient: '+15555550123',
+      );
+      expect(result.candidateFound, isTrue);
+      expect(result.guidHash, '0123456789abcdef');
+      expect(result.createdAtUtc, '2026-09-10T01:02:03.000Z');
+    },
+  );
+
   test('write preparation reports no candidate without fallback', () async {
     final target = await writeTarget('write-none');
     final result = await write_trigger.invokePrepareAndSelect(

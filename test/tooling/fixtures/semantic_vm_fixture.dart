@@ -36,6 +36,7 @@ class FixtureService {
     return FixtureSelection(
       mode == 'write-changed' ? 'ffffffffffffffff' : '0123456789abcdef',
       DateTime.utc(2026, 9, 10, 1, 2, 3),
+      slowFields: mode == 'write-slow-fields',
     );
   }
 
@@ -61,9 +62,23 @@ class FixtureService {
 }
 
 final class FixtureSelection {
-  const FixtureSelection(this.guidHash, this.createdAtUtc);
+  const FixtureSelection(
+    this.guidHash,
+    this._createdAtUtc, {
+    this.slowFields = false,
+  });
   final String guidHash;
-  final DateTime createdAtUtc;
+  final DateTime _createdAtUtc;
+  final bool slowFields;
+  DateTime get createdAtUtc {
+    if (slowFields) {
+      // Let VM-service polling interrupt between result-field evaluations.
+      // The old mutable observer exposed a GUID while its state was pending.
+      final watch = Stopwatch()..start();
+      while (watch.elapsedMilliseconds < 300) {}
+    }
+    return _createdAtUtc;
+  }
 }
 
 final class FixtureWriteResult {

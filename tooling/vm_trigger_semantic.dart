@@ -24,17 +24,16 @@ Future<void> invokeSemanticAndWait({
     libraryId,
     '''
     (() {
-      final observation = <String>['pending', ''];
+      final observation = <List<String>>[<String>['pending', '']];
       Future<void> run() async {
         try {
           await semanticTarget.$selector();
-          observation[0] = 'completed';
+          observation[0] = <String>['completed', ''];
         } catch (error) {
-          observation[0] = 'failed';
-          observation[1] = 'semantic_operation_failed';
           final candidate = error is StateError ? error.message.toString() : '';
-          observation[1] = RegExp(r'^cloud_sync_[a-z0-9_]+\$').hasMatch(candidate)
+          final code = RegExp(r'^cloud_sync_[a-z0-9_]+\$').hasMatch(candidate)
               ? candidate : 'semantic_operation_failed';
+          observation[0] = <String>['failed', code];
         }
       }
       // Schedule after evaluation returns. The real-VM regression reproduces
@@ -51,7 +50,17 @@ Future<void> invokeSemanticAndWait({
   }
   final watch = Stopwatch()..start();
   while (watch.elapsed < timeout) {
-    final current = await service.getObject(isolateId, observer.id!);
+    // The box publishes one complete snapshot. Never mutate its fields after
+    // publication: VM-service reads may interrupt the target between writes.
+    final box = await service.getObject(isolateId, observer.id!);
+    if (box is! Instance || box.elements?.length != 1) {
+      throw StateError('semantic_observer_invalid');
+    }
+    final snapshot = box.elements!.single;
+    if (snapshot is! InstanceRef || snapshot.id == null) {
+      throw StateError('semantic_observer_invalid');
+    }
+    final current = await service.getObject(isolateId, snapshot.id!);
     if (current is! Instance || current.elements?.length != 2) {
       throw StateError('semantic_observer_invalid');
     }
