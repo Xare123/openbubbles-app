@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/imessage_initial_submission.dart';
@@ -165,6 +166,111 @@ void main() {
       stillCurrent: () => true, now: _time(3)),
       throwsA(_stateFailure('cloud_sync_local_send_protected_source_too_late')));
     expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.protectedSourceBinding, isNull);
+  });
+
+  test('attachment origin survives normal reflection and database reopen', () async {
+    final attachment = Attachment(guid: 'temp-attachment',
+        metadata: {'rustpush': '<plist>synthetic-sent-descriptor</plist>'});
+    final message = _message(chat: chat, text: '', stagingGuid: _guidA,
+        attachments: [attachment]);
+    message.attributedBody = [];
+    store.box<Attachment>().put(attachment);
+    message.dbAttachments.add(attachment);
+    final identity = CloudSyncLocalSendIdentity.captureAttachment(message, chat, _guidA)!;
+    expect(CloudSyncLocalSendIdentity.capture(message, chat, _guidA), isNull,
+        reason: 'Plaintext admission must remain unchanged');
+    journal.saveSubmission(identity: identity, newlyGeneratedGuid: true,
+        persistMessage: () => store.box<Message>().put(message), now: _time(2));
+    final source = _protectedSource(identity);
+    final auth = _auth(Object());
+    journal.adoptProtectedSource(identity: identity, source: source,
+        capturedAuth: auth, stillCurrent: () => true, now: _time(3));
+    expect(journal.readSubmissionProtectedSource(identity: identity,
+        currentAuth: auth)!.encode(), source.encode());
+
+    // Actual outgoing reflection renames the local attachment and introduces
+    // a one-character display placeholder, but keeps the sent MMCS descriptor.
+    attachment.guid = '${_guidA}_0';
+    store.box<Attachment>().put(attachment);
+    message..guid = _guidA..stagingGuid = null..text = ' '
+      ..attributedBody = [AttributedBody(string: ' ', runs: [Run(range: [0, 1],
+        attributes: Attributes(messagePart: 0, attachmentGuid: attachment.guid))])];
+    store.box<Message>().put(message);
+    expect(CloudSyncLocalSendIdentity.captureAttachment(message, chat, _guidA,
+        expectedSourceSha256: identity.sourceSha256)?.sourceSha256, identity.sourceSha256);
+    await reopen();
+    final restored = store.box<Message>().get(message.id!)!;
+    expect(CloudSyncLocalSendIdentity.captureAttachment(restored, restored.chat.target!, _guidA,
+        expectedSourceSha256: identity.sourceSha256)?.sourceSha256, identity.sourceSha256);
+    final confirmed = confirmNative(protectedSource: source)!;
+    expect(store.box<CloudSyncLocalSendIntentEntity>().get(confirmed)!.state, 3);
+    await reopen();
+    expect(journal.readProtectedSource(intentId: confirmed,
+        currentAuth: _auth(Object()))!.encode(), source.encode());
+  });
+
+  test('generic completion cannot bypass attachment source-bound receipt', () {
+    final attachment = Attachment(guid: 'temp-attachment',
+        metadata: {'rustpush': '<plist>synthetic-sent-descriptor</plist>'});
+    final message = _message(chat: chat, text: '', stagingGuid: _guidA,
+        attachments: [attachment]);
+    message.attributedBody = [];
+    store.box<Attachment>().put(attachment);
+    message.dbAttachments.add(attachment);
+    final identity = CloudSyncLocalSendIdentity.captureAttachment(message, chat, _guidA)!;
+    journal.saveSubmission(identity: identity, newlyGeneratedGuid: true,
+        persistMessage: () => store.box<Message>().put(message), now: _time(2));
+    final source = _protectedSource(identity);
+    journal.adoptProtectedSource(identity: identity, source: source,
+        capturedAuth: _auth(Object()), stillCurrent: () => true, now: _time(3));
+    message..guid = _guidA..stagingGuid = null;
+    expect(() => journal.saveConfirmedSubmission(identity: identity,
+        persistMessage: () => store.box<Message>().put(message), now: _time(4)),
+        throwsA(_stateFailure('cloud_sync_local_send_receipt_source_required')));
+    expect(() => journal.saveIdsConfirmedDeferredSubmission(identity: identity,
+        capturedAuth: _auth(Object()), stillCurrent: () => true,
+        persistMessage: () => store.box<Message>().put(message), now: _time(4)),
+        throwsA(_stateFailure('cloud_sync_local_send_receipt_source_changed')));
+    expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+    expect(() => journal.saveIdsConfirmedDeferredSubmission(identity: identity,
+        capturedAuth: _auth(Object(), store: 'obcs2.store.${'B' * 43}'),
+        stillCurrent: () => true, protectedSource: source,
+        persistMessage: () => store.box<Message>().put(message), now: _time(4)),
+        throwsA(_stateFailure('cloud_sync_local_send_protected_source_changed')));
+    attachment.metadata = {'rustpush': '<plist>different-descriptor</plist>'};
+    store.box<Attachment>().put(attachment);
+    expect(() => confirmNative(protectedSource: source),
+        throwsA(_stateFailure('cloud_sync_local_send_source_changed')));
+    expect(store.box<CloudSyncLocalSendIntentEntity>().getAll().single.state, 0);
+  });
+
+  test('attachment wire capture binds descriptor and rechecks after await', () async {
+    const descriptor = '<plist>synthetic-wire-descriptor</plist>';
+    final attachment = Attachment(guid: 'temp-attachment', metadata: {'rustpush': descriptor});
+    final message = _message(chat: chat, text: '', attachments: [attachment]);
+    message.attributedBody = [];
+    final wire = _wire(chat);
+    wire.message = api.Message.message(api.NormalMessage(
+      parts: api.MessageParts(field0: [api.IndexedMessagePart(part_: api.MessagePart.attachment(
+        api.Attachment(aType: api.AttachmentType.mmcs(api.MMCSFile(
+          signature: Uint8List(21), object: 'synthetic-object', url: 'https://example.invalid',
+          key: Uint8List(32), size: 3)), part_: 0, utiType: 'public.data',
+          mime: 'application/octet-stream', name: 'synthetic.bin', iris: false)))]),
+      service: const api.MessageType.iMessage(), voice: false));
+    final initial = CloudSyncLocalSendIdentity.captureAttachment(message, chat, _guidA)!;
+    final captured = await journal.captureAttachmentSubmissionWire(message: message,
+        chat: chat, wire: wire, initialSourceSha256: initial.sourceSha256,
+        serializeAttachment: (_) async => descriptor);
+    expect(captured?.sourceSha256, initial.sourceSha256);
+    expect(await journal.captureAttachmentSubmissionWire(message: message,
+        chat: chat, wire: wire, initialSourceSha256: initial.sourceSha256,
+        serializeAttachment: (_) async => 'different-descriptor'), isNull);
+    expect(await journal.captureAttachmentSubmissionWire(message: message,
+        chat: chat, wire: wire, initialSourceSha256: initial.sourceSha256,
+        serializeAttachment: (_) async {
+          attachment.metadata = {'rustpush': 'different-after-await'};
+          return descriptor;
+        }), isNull);
   });
 
   test('background send return is not confirmation; native success records proof', () {

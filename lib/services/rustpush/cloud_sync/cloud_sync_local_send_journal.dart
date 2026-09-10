@@ -14,6 +14,7 @@ import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloud_sync_group_send_route.dart';
 import 'cloud_sync_reaction_send_identity.dart';
 import 'cloud_sync_local_send_source_binding.dart';
+import 'cloud_sync_attachment_send_body.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
@@ -30,8 +31,10 @@ final class CloudSyncLocalSendIdentity {
     this.sourceSha256,
     this._usesProvisionalOrigin, {
     bool isReaction = false,
+    bool isAttachment = false,
     CloudSyncGroupSendRoute? groupRoute,
   }) : _isReaction = isReaction,
+       _isAttachment = isAttachment,
        _groupRoute = groupRoute;
 
   final String _guid;
@@ -39,6 +42,8 @@ final class CloudSyncLocalSendIdentity {
   final String sourceSha256;
   final bool _usesProvisionalOrigin;
   final bool _isReaction;
+  final bool _isAttachment;
+  bool get isAttachment => _isAttachment;
   final CloudSyncGroupSendRoute? _groupRoute;
 
   /// Explicit local reaction provenance. Plain-text capture remains unchanged.
@@ -109,6 +114,12 @@ final class CloudSyncLocalSendIdentity {
         chat,
         stableGuid,
         expectedSourceSha256: expectedSourceSha256,
+      ) ??
+      captureAttachment(
+        message,
+        chat,
+        stableGuid,
+        expectedSourceSha256: expectedSourceSha256,
       );
 
   CloudSyncLocalSendIdentity? _revalidate(Message message, Chat chat) =>
@@ -119,13 +130,52 @@ final class CloudSyncLocalSendIdentity {
           _guid,
           expectedSourceSha256: sourceSha256,
         )
+      : _isAttachment
+      ? captureAttachment(
+          message,
+          chat,
+          _guid,
+          expectedSourceSha256: sourceSha256,
+        )
       : capture(message, chat, _guid, expectedSourceSha256: sourceSha256);
+
+  /// Explicit attachment origin, independent of local display GUIDs. This is
+  /// not enabled merely because the ordinary plaintext capture was attempted.
+  static CloudSyncLocalSendIdentity? captureAttachment(
+    Message message,
+    Chat chat,
+    String stableGuid, {
+    String? expectedSourceSha256,
+  }) {
+    final body = CloudSyncAttachmentSendBody.capture(message);
+    if (body == null) return null;
+    return _capture(
+      message,
+      chat,
+      stableGuid,
+      expectedSourceSha256: expectedSourceSha256,
+      attachmentBody: body,
+    );
+  }
 
   static CloudSyncLocalSendIdentity? capture(
     Message message,
     Chat chat,
     String stableGuid, {
     String? expectedSourceSha256,
+  }) => _capture(
+    message,
+    chat,
+    stableGuid,
+    expectedSourceSha256: expectedSourceSha256,
+  );
+
+  static CloudSyncLocalSendIdentity? _capture(
+    Message message,
+    Chat chat,
+    String stableGuid, {
+    String? expectedSourceSha256,
+    CloudSyncAttachmentSendBody? attachmentBody,
   }) {
     if (!RegExp(
       r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
@@ -143,9 +193,10 @@ final class CloudSyncLocalSendIdentity {
         message.dateDeleted != null ||
         message.dateEdited != null ||
         message.subject?.isNotEmpty == true ||
-        message.hasAttachments ||
-        message.attachments.isNotEmpty ||
-        message.dbAttachments.isNotEmpty ||
+        (attachmentBody == null &&
+            (message.hasAttachments ||
+                message.attachments.isNotEmpty ||
+                message.dbAttachments.isNotEmpty)) ||
         message.messageSummaryInfo.isNotEmpty ||
         message.associatedMessageGuid != null ||
         message.associatedMessagePart != null ||
@@ -165,35 +216,39 @@ final class CloudSyncLocalSendIdentity {
         message.groupTitle != null) {
       return null;
     }
-    final text = message.text;
-    if (text == null ||
-        text.trim().isEmpty ||
-        message.attributedBody.length != 1) {
+    final text = attachmentBody?.sourceSha256 ?? message.text;
+    if (attachmentBody == null &&
+        (text == null ||
+            text.trim().isEmpty ||
+            message.attributedBody.length != 1)) {
       return null;
     }
-    final body = message.attributedBody.single;
-    if (body.string != text || body.runs.isEmpty) return null;
-    var end = 0;
-    for (final run in body.runs) {
-      final attributes = run.attributes;
-      if (run.range.length != 2 ||
-          run.range.first != end ||
-          run.range.last <= 0 ||
-          attributes == null ||
-          attributes.messagePart != 0 ||
-          attributes.attachmentGuid != null ||
-          attributes.mention != null ||
-          attributes.audioTranscript != null ||
-          attributes.stickerData != null ||
-          attributes.textEffect != null ||
-          attributes.bold == true ||
-          attributes.italic == true ||
-          attributes.strikethrough == true ||
-          attributes.underline == true) {
-        return null;
+    if (text == null) return null;
+    var end = attachmentBody == null ? 0 : text.length;
+    if (attachmentBody == null) {
+      final body = message.attributedBody.single;
+      if (body.string != text || body.runs.isEmpty) return null;
+      for (final run in body.runs) {
+        final attributes = run.attributes;
+        if (run.range.length != 2 ||
+            run.range.first != end ||
+            run.range.last <= 0 ||
+            attributes == null ||
+            attributes.messagePart != 0 ||
+            attributes.attachmentGuid != null ||
+            attributes.mention != null ||
+            attributes.audioTranscript != null ||
+            attributes.stickerData != null ||
+            attributes.textEffect != null ||
+            attributes.bold == true ||
+            attributes.italic == true ||
+            attributes.strikethrough == true ||
+            attributes.underline == true) {
+          return null;
+        }
+        end += run.range.last;
+        if (end > text.length) return null;
       }
-      end += run.range.last;
-      if (end > text.length) return null;
     }
     final group = CloudSyncGroupSendRoute.capture(chat);
     if (group != null) {
@@ -203,7 +258,9 @@ final class CloudSyncLocalSendIdentity {
       // capture is not upload permission: group encoding/dependency gates are
       // deliberately still required by outbound admission.
       final canonicalHash = _digest([
-        'cloud-sync-local-send-group-v1',
+        attachmentBody == null
+            ? 'cloud-sync-local-send-group-v1'
+            : 'cloud-sync-local-attachment-group-v1',
         stableGuid,
         text,
         group.chatId,
@@ -215,7 +272,9 @@ final class CloudSyncLocalSendIdentity {
       final originHash = group.originalGuid == null
           ? null
           : _digest([
-              'cloud-sync-local-send-group-origin-v1',
+              attachmentBody == null
+                  ? 'cloud-sync-local-send-group-origin-v1'
+                  : 'cloud-sync-local-attachment-group-origin-v1',
               stableGuid,
               text,
               group.chatId,
@@ -226,10 +285,11 @@ final class CloudSyncLocalSendIdentity {
       final sourceHash = group.provisional
           ? originHash
           : expectedSourceSha256 != null && expectedSourceSha256 == originHash
-              ? originHash
-              : canonicalHash;
+          ? originHash
+          : canonicalHash;
       if (sourceHash == null ||
-          (expectedSourceSha256 != null && expectedSourceSha256 != sourceHash)) {
+          (expectedSourceSha256 != null &&
+              expectedSourceSha256 != sourceHash)) {
         return null;
       }
       return CloudSyncLocalSendIdentity._(
@@ -237,6 +297,7 @@ final class CloudSyncLocalSendIdentity {
         _digest(['cloud-sync-local-send-guid-v1', stableGuid]),
         sourceHash,
         sourceHash == originHash,
+        isAttachment: attachmentBody != null,
         groupRoute: group,
       );
     }
@@ -271,7 +332,9 @@ final class CloudSyncLocalSendIdentity {
     // canonical adoption must select it with the previously persisted hash,
     // never rewrite the journal to match whatever row happens to exist now.
     final legacyHash = _digest([
-      'cloud-sync-local-send-source-v1',
+      attachmentBody == null
+          ? 'cloud-sync-local-send-source-v1'
+          : 'cloud-sync-local-attachment-source-v1',
       stableGuid,
       text,
       chat.guid,
@@ -286,7 +349,9 @@ final class CloudSyncLocalSendIdentity {
             originalChatGuid != null &&
             _uuid.hasMatch(originalChatGuid)
         ? _digest([
-            'cloud-sync-local-send-source-v2',
+            attachmentBody == null
+                ? 'cloud-sync-local-send-source-v2'
+                : 'cloud-sync-local-attachment-source-v2',
             stableGuid,
             text,
             chat.id,
@@ -312,6 +377,7 @@ final class CloudSyncLocalSendIdentity {
       _digest(['cloud-sync-local-send-guid-v1', stableGuid]),
       sourceHash,
       sourceHash == originHash,
+      isAttachment: attachmentBody != null,
     );
   }
 
@@ -347,6 +413,55 @@ final class CloudSyncLocalSendIdentity {
       wire.id,
       expectedSourceSha256: expectedSourceSha256,
     );
+    return _validateWire(message, chat, wire, identity);
+  }
+
+  static Future<CloudSyncLocalSendIdentity?> captureAttachmentWire(
+    Message message,
+    Chat chat,
+    api.MessageInst wire, {
+    String? expectedSourceSha256,
+    required Future<String> Function(api.Attachment) serializeAttachment,
+  }) async {
+    final body = CloudSyncAttachmentSendBody.capture(message);
+    final initial = captureAttachment(
+      message,
+      chat,
+      wire.id,
+      expectedSourceSha256: expectedSourceSha256,
+    );
+    if (body == null ||
+        initial == null ||
+        !await body.matchesWire(
+          wire,
+          serializeAttachment: serializeAttachment,
+        )) {
+      return null;
+    }
+    // Native serialization awaited above. Recheck the local row and route
+    // against the pre-await identity, not the model's possibly newer contents.
+    final current = captureAttachment(
+      message,
+      chat,
+      wire.id,
+      expectedSourceSha256: initial.sourceSha256,
+    );
+    return _validateWire(
+      message,
+      chat,
+      wire,
+      current,
+      attachmentBodyMatched: true,
+    );
+  }
+
+  static CloudSyncLocalSendIdentity? _validateWire(
+    Message message,
+    Chat chat,
+    api.MessageInst wire,
+    CloudSyncLocalSendIdentity? identity, {
+    bool attachmentBodyMatched = false,
+  }) {
     if (identity == null ||
         wire.verificationFailed ||
         wire.target != null ||
@@ -354,7 +469,8 @@ final class CloudSyncLocalSendIdentity {
             (identity._usesProvisionalOrigin
                 ? wire.sender == null ||
                       !_compatibleRoutePrefix(wire.sender!) ||
-                      _bareSender(wire.sender!) != _bareSender(chat.usingHandle!)
+                      _bareSender(wire.sender!) !=
+                          _bareSender(chat.usingHandle!)
                 : wire.sender != chat.usingHandle)) ||
         wire.message is! api.Message_Message) {
       return null;
@@ -373,27 +489,34 @@ final class CloudSyncLocalSendIdentity {
       return null;
     }
     final text = StringBuffer();
-    for (final indexed in normal.parts.field0) {
-      final part = indexed.part_;
-      if (indexed.ext != null ||
-          (indexed.idx != null && indexed.idx != 0) ||
-          part is! api.MessagePart_Text ||
-          part.field1 is! api.TextFormat_Flags) {
-        return null;
+    if (!attachmentBodyMatched) {
+      for (final indexed in normal.parts.field0) {
+        final part = indexed.part_;
+        if (indexed.ext != null ||
+            (indexed.idx != null && indexed.idx != 0) ||
+            part is! api.MessagePart_Text ||
+            part.field1 is! api.TextFormat_Flags) {
+          return null;
+        }
+        final flags = (part.field1 as api.TextFormat_Flags).field0;
+        if (flags.bold ||
+            flags.italic ||
+            flags.underline ||
+            flags.strikethrough) {
+          return null;
+        }
+        text.write(part.field0);
       }
-      final flags = (part.field1 as api.TextFormat_Flags).field0;
-      if (flags.bold ||
-          flags.italic ||
-          flags.underline ||
-          flags.strikethrough) {
-        return null;
-      }
-      text.write(part.field0);
     }
+    final bodyMatches =
+        attachmentBodyMatched || text.toString() == message.text;
     final group = identity._groupRoute;
     if (group != null) {
-      return text.toString() == message.text &&
-              group.matchesWire(wire, usesOriginalGuid: identity._usesProvisionalOrigin)
+      return bodyMatches &&
+              group.matchesWire(
+                wire,
+                usesOriginalGuid: identity._usesProvisionalOrigin,
+              )
           ? identity
           : null;
     }
@@ -416,7 +539,7 @@ final class CloudSyncLocalSendIdentity {
       }
       expectedParticipants.sort();
     }
-    if (text.toString() != message.text ||
+    if (!bodyMatches ||
         (conversation?.senderGuid != chat.guid &&
             !(identity._usesProvisionalOrigin &&
                 chat.cloudGuid != null &&
@@ -718,9 +841,11 @@ final class CloudSyncLocalSendJournal {
     if (messageId == null || messageId <= 0 || stableGuid == null) return false;
     final query = store
         .box<CloudSyncLocalSendIntentEntity>()
-        .query(CloudSyncLocalSendIntentEntity_.localMessageId
-            .equals(messageId)
-            .and(CloudSyncLocalSendIntentEntity_.state.equals(0)))
+        .query(
+          CloudSyncLocalSendIntentEntity_.localMessageId
+              .equals(messageId)
+              .and(CloudSyncLocalSendIntentEntity_.state.equals(0)),
+        )
         .build();
     final List<CloudSyncLocalSendIntentEntity> found;
     try {
@@ -746,13 +871,16 @@ final class CloudSyncLocalSendJournal {
     final unresolvedState = CloudSyncLocalSendIntentEntity_.state
         .equals(0)
         .or(CloudSyncLocalSendIntentEntity_.state.equals(3));
-    final query = store
-        .box<CloudSyncLocalSendIntentEntity>()
-        .query(CloudSyncLocalSendIntentEntity_.localMessageId
-            .equals(messageId)
-            .and(unresolvedState))
-        .build()
-      ..limit = 1;
+    final query =
+        store
+            .box<CloudSyncLocalSendIntentEntity>()
+            .query(
+              CloudSyncLocalSendIntentEntity_.localMessageId
+                  .equals(messageId)
+                  .and(unresolvedState),
+            )
+            .build()
+          ..limit = 1;
     try {
       return query.findFirst() != null;
     } finally {
@@ -957,27 +1085,7 @@ final class CloudSyncLocalSendJournal {
     required String initialSourceSha256,
     required bool reaction,
   }) => _store.runInTransaction(TxMode.read, () {
-    _verifyLocalOwnership();
-    final key = CloudSyncLocalSendIdentity._digest([
-      'cloud-sync-local-send-intent-v1',
-      _binding.scope.accountFingerprint,
-      CloudSyncLocalSendIdentity._digest([
-        'cloud-sync-local-send-guid-v1',
-        wire.id,
-      ]),
-    ]);
-    final query = _intents
-        .query(CloudSyncLocalSendIntentEntity_.intentKey.equals(key))
-        .build();
-    final CloudSyncLocalSendIntentEntity? existing;
-    try {
-      existing = query.findUnique();
-    } finally {
-      query.close();
-    }
-    final expected = existing == null
-        ? initialSourceSha256
-        : _readBoundIntent(existing.id).sourceSha256;
+    final expected = _submissionSource(wire.id, initialSourceSha256);
     if (reaction) {
       return CloudSyncLocalSendIdentity.captureReactionWire(
         message,
@@ -993,6 +1101,52 @@ final class CloudSyncLocalSendJournal {
       expectedSourceSha256: expected,
     );
   });
+
+  Future<CloudSyncLocalSendIdentity?> captureAttachmentSubmissionWire({
+    required Message message,
+    required Chat chat,
+    required api.MessageInst wire,
+    required String initialSourceSha256,
+    required Future<String> Function(api.Attachment) serializeAttachment,
+  }) async {
+    final expected = _submissionSource(wire.id, initialSourceSha256);
+    final identity = await CloudSyncLocalSendIdentity.captureAttachmentWire(
+      message,
+      chat,
+      wire,
+      expectedSourceSha256: expected,
+      serializeAttachment: serializeAttachment,
+    );
+    // A journal/auth change during descriptor serialization invalidates capture.
+    return _submissionSource(wire.id, initialSourceSha256) == expected
+        ? identity
+        : null;
+  }
+
+  String _submissionSource(String stableGuid, String initialSourceSha256) =>
+      _store.runInTransaction(TxMode.read, () {
+        _verifyLocalOwnership();
+        final key = CloudSyncLocalSendIdentity._digest([
+          'cloud-sync-local-send-intent-v1',
+          _binding.scope.accountFingerprint,
+          CloudSyncLocalSendIdentity._digest([
+            'cloud-sync-local-send-guid-v1',
+            stableGuid,
+          ]),
+        ]);
+        final query = _intents
+            .query(CloudSyncLocalSendIntentEntity_.intentKey.equals(key))
+            .build();
+        final CloudSyncLocalSendIntentEntity? existing;
+        try {
+          existing = query.findUnique();
+        } finally {
+          query.close();
+        }
+        return existing == null
+            ? initialSourceSha256
+            : _readBoundIntent(existing.id).sourceSha256;
+      });
 
   /// Adopt one already-protected native source before IDS submission. The
   /// caller holds the native protected-store lock across stage/adopt/commit.
@@ -1019,12 +1173,13 @@ final class CloudSyncLocalSendJournal {
       throw StateError('cloud_sync_local_send_auth_changed');
     }
     final key = CloudSyncLocalSendIdentity._digest([
-      'cloud-sync-local-send-intent-v1', source.accountFingerprint,
+      'cloud-sync-local-send-intent-v1',
+      source.accountFingerprint,
       identity.guidHash,
     ]);
-    final found = _readUnique(_intents.query(
-      CloudSyncLocalSendIntentEntity_.intentKey.equals(key),
-    ));
+    final found = _readUnique(
+      _intents.query(CloudSyncLocalSendIntentEntity_.intentKey.equals(key)),
+    );
     if (found == null) {
       throw StateError('cloud_sync_local_send_origin_missing');
     }
@@ -1041,10 +1196,13 @@ final class CloudSyncLocalSendJournal {
     }
     final message = _messages.get(intent.localMessageId);
     final chat = message?.chat.target;
-    if (intent.state != 0 || intent.idsConfirmationVersion != 0 ||
-        message == null || chat == null ||
+    if (intent.state != 0 ||
+        intent.idsConfirmationVersion != 0 ||
+        message == null ||
+        chat == null ||
         message.stagingGuid != identity._guid ||
-        identity._revalidate(message, chat)?.sourceSha256 != identity.sourceSha256) {
+        identity._revalidate(message, chat)?.sourceSha256 !=
+            identity.sourceSha256) {
       throw StateError('cloud_sync_local_send_protected_source_too_late');
     }
     intent
@@ -1069,6 +1227,27 @@ final class CloudSyncLocalSendJournal {
       protectedStoreIdentity: currentAuth.protectedStoreIdentity,
     );
     return source;
+  });
+
+  CloudSyncLocalSendSourceBinding? readSubmissionProtectedSource({
+    required CloudSyncLocalSendIdentity identity,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyLocalOwnership();
+    final key = CloudSyncLocalSendIdentity._digest([
+      'cloud-sync-local-send-intent-v1',
+      _binding.scope.accountFingerprint,
+      identity.guidHash,
+    ]);
+    final found = _readUnique(
+      _intents.query(CloudSyncLocalSendIntentEntity_.intentKey.equals(key)),
+    );
+    if (found == null) throw StateError('cloud_sync_local_send_origin_missing');
+    final intent = _readBoundIntent(found.id);
+    if (intent.sourceSha256 != identity.sourceSha256) {
+      throw StateError('cloud_sync_local_send_source_changed');
+    }
+    return readProtectedSource(intentId: intent.id, currentAuth: currentAuth);
   });
 
   /// A retry may re-use an existing intent, but cannot invent local origin for
@@ -1111,6 +1290,7 @@ final class CloudSyncLocalSendJournal {
     required bool Function() stillCurrent,
     required int Function() persistMessage,
     required DateTime now,
+    CloudSyncLocalSendSourceBinding? protectedSource,
   }) {
     return _store.runInTransaction(TxMode.write, () {
       if (!stillCurrent()) {
@@ -1149,6 +1329,16 @@ final class CloudSyncLocalSendJournal {
         throw StateError('cloud_sync_local_send_intent_changed');
       }
       final authBinding = _authBinding(capturedAuth);
+      _requireNativeReceiptSource(intent, protectedSource);
+      if (identity.isAttachment && protectedSource == null) {
+        throw StateError('cloud_sync_local_send_receipt_source_required');
+      }
+      protectedSource?.requireOrigin(
+        accountFingerprint: capturedAuth.accountFingerprint,
+        messageGuidHash: identity.guidHash,
+        sourceSha256: identity.sourceSha256,
+        protectedStoreIdentity: capturedAuth.protectedStoreIdentity,
+      );
       if (intent.state == 3 && intent.admittedBindingSha256 != authBinding) {
         throw StateError('cloud_sync_local_send_auth_changed');
       }
@@ -1265,6 +1455,7 @@ final class CloudSyncLocalSendJournal {
         stillCurrent: stillCurrent,
         persistMessage: () => _messages.put(message),
         now: now,
+        protectedSource: protectedSource,
       );
     });
   }
@@ -1382,6 +1573,10 @@ final class CloudSyncLocalSendJournal {
       }
       if (previous == null && (!newlyGeneratedGuid || confirmed)) {
         throw StateError('cloud_sync_local_send_origin_missing');
+      }
+      if (confirmed &&
+          (identity.isAttachment || previous?.protectedSourceBinding != null)) {
+        throw StateError('cloud_sync_local_send_receipt_source_required');
       }
       if (previous != null &&
           (previous.accountFingerprint != _binding.scope.accountFingerprint ||

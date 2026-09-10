@@ -1125,3 +1125,20 @@ This is a chronological evidence log. It does not override the
   58 Kotlin, 9 Dart and 10 JavaScript cases, including an A/B stale-timeout
   trace and a production wiring regression that failed before the fix.
   Android runtime and the reported media-establishment cutout remain unproven.
+- GCE `34517138488` completed successfully for source `da428b635`: all 414
+  app-native tests and generated-bridge reproducibility passed. Cleanup passed;
+  independent GCE and GitHub inventories returned zero instances/registrations.
+- Parent connected explicit attachment-body identity to journal capture,
+  reflection/reopen validation and source-bound native confirmation. Plaintext
+  hash domains and admission remain unchanged. Generic completion APIs cannot
+  qualify an attachment source; receipt and auth-store bindings remain required.
+  All 401 tests in the eight journal/schema/admission/lifecycle suites passed.
+  The worker's additional helper test initially failed to compile and is under
+  correction; it is not counted as qualified. Production composer/uploader
+  calls remain disabled until stage/adopt/commit is integrated and tested.
+- Parent reviewed the helper's before/after wire fingerprint and independently
+  ran helper plus journal: all 110 tests passed, including descriptor replacement,
+  wire-message replacement and in-place MMCS/list mutation during serializer
+  awaits. Together with the unchanged seven suites above, this qualifies 428
+  targeted cases. The earlier helper syntax failure is resolved. This proves
+  identity/journal behavior, not production attachment upload or device UI.

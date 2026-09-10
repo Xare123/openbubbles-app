@@ -88,9 +88,11 @@ Source `11de45796` with rustpush `f041db67` passed isolated GCE runs
 `34508598558` (397 app Rust tests) and `34508602298` (265 rustpush tests).
 Both cleanup jobs passed; independent inventories returned zero VMs/runners.
 These prove randomized upload-plan recovery and validation components, not an
-end-to-end attachment send. The new unqualified source-capture/journal slice
-must retain exact native descriptors through stage/adopt/lease-commit and IDS
-receipt acknowledgment before the uploader can consume them.
+end-to-end attachment send. Source `da428b635` then passed GCE `34517138488`:
+414 app-native tests, bridge reproducibility, and cleanup. Independent inventories
+returned zero instances/runners. Source staging, prepared-message validation and
+source-bound receipt recovery are qualified components; composer stage/adopt/commit
+and the actual uploader remain integration work.
 The known-good local executable is still the qualified `6abbeede2` bundle.
 
 The first September 10 attempt failed on retained IDS credentials before send.
@@ -100,7 +102,7 @@ state. `setup_push` rewrites saved APS connection material, so the full hardware
 file hash is not a hardware-identity comparison. The OS-config fingerprint and
 immutable request claim stayed unchanged across the subsequent restart.
 
-Current exact-source qualification: app `6abbeede2`, rustpush `f33dcac`, pilot
+Retained Windows exact-source qualification: app `6abbeede2`, rustpush `f33dcac`, pilot
 `a2680baac`. GCE app Rust `34497413348` passed 380 tests and rustpush
 `34497413071` passed 261. Both cleanup jobs passed; independent inventories
 showed zero VMs and zero runner registrations. Neither run built an APK or
@@ -552,10 +554,12 @@ CloudKit readback or independent Apple-device display.
    receipt/replay/ack and Dart promotion checks are under qualification. The
    attachment composer still does not select this path. Wire its origin and
    stage/adopt/commit lifecycle next; do not use mutable metadata after sending.
-   GCE `34515270061` compiled the new API and passed 413 tests; the remaining
-   native-seam source guard rejected an unnecessary serialization derive. The
-   fix uses explicit content-free receipt field encoding and retains the guard.
-   Import/review the generated bridge and requalify before enabling the composer.
+   GCE `34517138488` passed all 414 native tests and bridge reproducibility after
+   the receipt fix, with the native-seam guard unchanged. The local attachment
+   identity now survives reflection aliases and database reopen in journal tests.
+   Before runtime enablement, test stage/adopt/commit against concurrent recovery
+   and active background read: a long CloudKit read must not make ordinary IDS
+   sending unusable, and failed capture must not certify an untracked source.
 2. Preserve qualified Windows direct request `qualification-20260910-03` and
    its proof. No additional direct send is needed merely to recheck that result.
    The exact restored-group route is implemented/tested, but no group with the
