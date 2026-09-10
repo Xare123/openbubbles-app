@@ -56,46 +56,46 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
 | Installed Android candidate | Code `e060bcb41` repairs retained-queue scheduling above persisted IDS-proof base `731988a3d` and positive-acknowledgment native base `35551340c`. Pre-proof rows retain version 0 and cannot initiate a new CloudKit save; original envelopes remain recoverable. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
-| Windows candidate | Qualified source `6c628feb6`, manual-write variant, passed isolated ARM64 build, 29 focused Dart tests and 48 real Rust-DLL codec tests. Imported and verified locally, including retained-profile startup and prior-request resume. Fresh request failed at IDS recipient lookup with `6005`, before send/claim. Next source `6abbeede2` adds the native Find My probe, explicit sender repair, and vendor-DLL launcher protection; isolated qualification is running, not a passed result. |
+| Windows candidate | Qualified source `6abbeede2`, manual-write variant: 30 focused Dart and 48 real Rust-DLL codec tests, 380 app Rust and 261 rustpush tests. One-time sender repair succeeded. At 16:20:53Z a fresh direct message was confirmed/admitted and exact-readback proof persisted; restart admitted zero new writes and retained one canonical message. Independent Apple-device display and ordinary Pixel composer convergence remain open. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
-| Dependency | rustpush `2bfbe8a06168a203c7c9f162b6fcbb45f1224560` adds a shared acknowledgment tracker above attachment-integrity base `a78ccfd`. Only explicit status 0 qualifies; the legacy meaning of 5008 is not assumed. Missing intended group targets remain unconfirmed. Ordinary send progress behavior is preserved. All seven tracker tests passed within the 260-test native run. |
+| Dependency | rustpush `f33dcacc043b2a2363a0b8d12e4429bf936b6856` adds finite Find My HTTP-status errors above `2bfbe8a` acknowledgment tracking and attachment-integrity base `a78ccfd`. Only explicit status 0 qualifies; the legacy meaning of 5008 is not assumed. Missing intended group targets remain unconfirmed. All 261 dependency tests passed. |
 | Prior-source qualification | GCE run `34437410835` fully succeeded for exact source `75440cafc`: full Dart suite, 373 app Rust tests, 253 rustpush tests, 34 protector tests, bridge drift checks, APK/native-library verification, Android JVM tests, trusted signing, and cleanup. This APK lacks the new positive-acknowledgment repair and is not a write-qualified release candidate. Older `fc132e5f8` also has the headless ready-handshake deadlock. |
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
-Windows next gate: repair the rejected retained IDS authentication using the
-already-bound GSA session and unchanged hardware, then retry the unclaimed
-controlled request and prove exact CloudKit readback. Run `34491135220` passed
-in 23m27s; all 78 packaged files and the source/configuration receipt were
-verified. The qualified runtime is in `../windows-cloudkit-qualified`.
-Re-signing the vendor ObjectBox DLL caused loader error 4551; restoring its
-verified original bytes fixed startup under unchanged PC policy. A resumed
-old claim completed with zero new admissions, which is not a fresh save proof.
+Windows next gate: extend the controlled qualification route to one exact
+restored group, then qualify reactions and independent Apple-device visibility.
+Current private request `qualification-20260910-03` is claimed: do not change
+it or send it again. The runtime is in `../windows-cloudkit-qualified-6abbeede2`;
+the older runtime and receipt remain rollback material.
 
-The September 10 fresh attempt stopped at `windows-write-recipient-lookup`
-with `cloud_sync_windows_sender_bad_authentication`. The new claim does not
-exist; no send or CloudKit save was reached. The native client already tried
-re-registering its retained IDS user. Repeating that same user is not repair.
-An explicit, request-bound sender-authentication refresh is in source `6abbeede2`
-for the next binary. It does not reset onboarding, hardware, CloudKit keys, or cursors,
-and it does not retry any send. If the retained GSA session cannot authenticate,
-stop for sign-in rather than clearing state.
+The first September 10 attempt failed on retained IDS credentials before send.
+Explicit request-bound sender authentication from the same retained GSA session
+then succeeded on `6abbeede2`. It did not reset onboarding or clear CloudKit
+state. `setup_push` rewrites saved APS connection material, so the full hardware
+file hash is not a hardware-identity comparison. The OS-config fingerprint and
+immutable request claim stayed unchanged across the subsequent restart.
 
 Current exact-source qualification: app `6abbeede2`, rustpush `f33dcac`, pilot
 `a2680baac`. GCE app Rust `34497413348` passed 380 tests and rustpush
 `34497413071` passed 261. Both cleanup jobs passed; independent inventories
 showed zero VMs and zero runner registrations. Neither run built an APK or
-accessed Apple credentials. Windows `34497409120` failed on package-download
-authorization before compilation; its one failed-job retry is running.
-Preserve the previous qualified runtime until the Windows batch passes.
+accessed Apple credentials. Windows `34497409120` attempt 2 passed in 24m17s
+(Flutter compile 945.8s), following one package-download failure before compile.
+All 78 bundle files were verified before extraction. Local signing preserved
+the vendor ObjectBox DLL, native load/unload passed, and the invalid-launch
+marker was observed with zero dummy-profile files. No PC policy was changed.
 
 Offline inspection of the retained September 7 test on a disposable database
 copy confirmed one canonical legible message with a valid source binding, but
 IDS proof remains version 0 and the exact-readback marker is absent. The
 retained confirmed outbox row alone is not full write proof. Source database,
 request and claim stayed unchanged; the temporary database copy was removed.
-This corroborates the fresh-send/readback gate rather than closing it.
+The new September 10 request independently passed all these checks with IDS
+version 2, valid source binding, legible text, exact-readback marker and released
+receipt. Restart kept those proofs and one canonical message with zero new
+admissions. This closes that bounded Windows gate, not full production parity.
 
 Keep native compilation isolated: the local signed `slab` build script remains
 blocked by App Control error 4551. No security policy was changed. Targeted
@@ -178,7 +178,7 @@ evidence paths. Causal edit/unsend writes remain a gap, not a passed gate.
 | Reactions on read | `LIVE-PROVEN` for representative records | Continue retaining unavailable parents; qualify current candidate on Pixel. |
 | Photos and videos on read | `SOURCE-IMPLEMENTED` after prior live proof | Current source resolves generic and UTI-only image/video records consistently across profile and message surfaces. Pixel must prove HEIC, video, and tap-to-open behavior; GIF data remains preserved but profile animation is not a release requirement. |
 | Documents and plugin payloads | `TEST-PROVEN` | Supported documents remain visible, unknown opaque files remain available, and only the exact `.pluginPayloadAttachment` suffix is hidden from profile media/documents without deleting its row. Pixel UI proof remains. |
-| Direct plaintext create | Prior Windows initial-create proof; current candidate unqualified | Fresh send currently stops at IDS authentication. Require version-2 positive IDS confirmation, exact remote readback, restart no-save replay, independent Apple-device visibility, and ordinary Pixel composer convergence. |
+| Direct plaintext create | `LIVE-PROVEN` for bounded Windows request `qualification-20260910-03` | Positive IDS version 2, exact-readback marker, one canonical legible message and restart with zero new admissions passed. Independent Apple-device display and ordinary Pixel composer convergence remain open. |
 | Restored-group plaintext create | `SOURCE-IMPLEMENTED` and exact-source qualified | Perform one authorized live group test with pinned route/binding plus exact readback/restart proof. Provisional group creation remains closed. |
 | Write-send provenance | `SOURCE-IMPLEMENTED` | Native positive-acceptance tests pass. Qualify the additive persisted-proof upgrade and dispatch/reconciliation tests. Old deferred/ready intents cannot promote or enter fresh admission without new proof; old adopted pending entries are retained and skipped for new leases. Submission rechecks proof. Exact readback remains allowed and does not retroactively prove IDS acceptance. A fresh v2 native confirmation can requalify the exact unchanged old source without resending it. Automatic uploads remain off pending execution and live proof. |
 | Retained writer queue usability | `TEST-PROVEN` | One journal-bound, read-only classifier covers queue drain, queued Chat observation, and preflight. It exempts only pristine pending creates with proof version 0, exact protected envelope/mapping, current owner/generation, no lease, attempt, Apple UUID or receipt. All rows remain counted and fingerprinted; no upload, acknowledgement, deletion, or proof upgrade occurs. GCE passed the real consumer/admission/store regression with a fresh qualified send beside retained work and reopen without duplicate submission. Apple responses are synthetic in this test; live proof remains. Unknown/retried/leased/malformed rows still block. |
@@ -453,10 +453,11 @@ CloudKit readback or independent Apple-device display.
 
 ### Write qualification
 
-- [ ] Current direct plaintext candidate has positive IDS version-2 confirmation
-  and exact Windows save/readback/restart proof. Historical bounded experiments
-  remain evidence, but the retained September 7 request lacks the current proof
-  markers and the fresh September 10 request stopped before sending.
+- [x] Source `6abbeede2` direct plaintext request `qualification-20260910-03`
+  has positive IDS version-2 confirmation, a persisted exact-readback marker,
+  one canonical legible message, and restart with zero new admissions. The
+  earlier pre-repair failure and September 7 weaker proof remain historical
+  counterexamples, not substitutes for this fresh observation.
 - [x] Host-controlled Pixel prepare/run/verify tooling exercises the existing
   exact-intent production path across fresh Canary processes, rejects candidate
   drift, redacts arbitrary failures, and requires automatic uploads off. Live
@@ -487,10 +488,10 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Finish isolated Windows source `6abbeede2` qualification. Repair retained IDS
-   authentication once using the same account/hardware, execute the unclaimed
-   authorized direct test, and inspect exact readback before any claim of write
-   completion. Qualify the repaired lifecycle candidate before another Pixel
+1. Bounded Windows direct qualification passed on `6abbeede2`; preserve its
+   claimed request and proof. Add an exact restored-group qualification input
+   using the existing production admission and encoder, not a new uploader.
+   Qualify the repaired lifecycle candidate before another Pixel
    install. Then prove composer admission and the native IDS receipt across an
    intentional process death, then verify state-3 recovery, one protected
    outbox adoption, exact CloudKit readback, and zero duplicate local/remote
@@ -516,10 +517,11 @@ CloudKit readback or independent Apple-device display.
 
 ## Next falsification test
 
-First use the isolated Windows candidate to falsify same-account sender repair
-and fresh direct write, followed by exact readback and restart without resending.
-The offline proof inspector must distinguish retained readable text from
-version-2 positive IDS confirmation and a persisted exact-readback marker.
+The isolated Windows direct test and restart passed. Next falsify exact
+restored-group selection, positive acceptance by every intended target, native
+group encoding, remote readback and restart without resending. Preserve the
+existing direct claim. The offline inspector must continue distinguishing
+readable text from positive IDS confirmation and exact-readback proof.
 Then qualify the ready/lease/budget repair with Android behavioral tests and
 an exact-source signed APK. Do not install `fc132e5f8` as background-qualified.
 Use one batched Pixel session: cold read, idempotent

@@ -852,3 +852,46 @@ This is a chronological evidence log. It does not override the
   contains one zero-byte ZIP and two directories; exact cleanup was rejected by
   tool policy, so retained it without trying another deletion route. Manifest:
   `build-evidence/agent-bacon-cleanup-20260910.json`. Reclaimed zero bytes.
+
+### 2026-09-10: repaired Windows fresh write and restart passed
+
+- Windows `34497409120` attempt 2 succeeded on app `6abbeede2`, pilot
+  `a2680baac`: 24m17s job, 945.8s Flutter compile, 30 focused Dart tests,
+  48 real Rust-DLL codec cases, launcher contracts and invalid-launch marker.
+  Downloaded artifact `10161789903`; verified all 78 files and original ZIP
+  SHA256 `ed2e69228661ff1d6f19344ad00f2c8b7038f570dee03f6c359ec5e799f4eb13`.
+- Imported to detached `worktrees/windows-cloudkit-qualified-6abbeede2` without
+  touching the prior runtime. Signed five binaries with the existing development
+  certificate, preserved the pinned vendor ObjectBox bytes, and verified native
+  load/unload. A local invalid-launch smoke observed its exact marker and zero
+  dummy-profile state files; only that smoke process was terminated after its
+  bounded wait. No security policy/trust change or account export occurred.
+- Preserved the old build receipt and current unclaimed request before adding
+  `refreshSenderAuthentication:true`. Wrote/verified the matching local receipt.
+  At `2026-09-10T16:20:53.242725Z`, PID 7536 finished the fresh request:
+  `native_send_confirmed=true`, admitted 1, deferred 0, outbox not blocked,
+  no pending Chat readback. This is a real authorized test send, not a resumed
+  old claim. Sender authentication/registration recovered without new user 2FA.
+- With the process exited, the offline inspector independently read a disposable
+  database copy: IDS version 2, exact source binding, one canonical legible
+  message, exact-readback marker matching admission, released protected receipt.
+  `persisted_readback_proven=true`; all source/request/claim hashes unchanged by
+  inspection. The marker is set only by the production exact remote-readback
+  callback, not generic save success or report cleanup.
+- At `2026-09-10T16:22:49.471789Z`, PID 16396 resumed the identical claimed
+  request and finished with admitted 0, deferred 0, outbox not blocked. Claim
+  bytes and OS-config fingerprint remained identical across restart. The
+  repeated offline inspector still found one canonical message and all proofs.
+  `save_attempt_count` remained 0; it is not a network-call counter. No new
+  admissions or duplicate local test message were observed. The existing-claim
+  code path skips sender preparation and native sending, including repair.
+- The full `hw_info.plist` hash changed during fresh startup, as `setup_push`
+  rewrites APS connection material and saved identity representation. It is not
+  proof that hardware identity changed; same-profile account/config fences ran
+  and the OS configuration remained stable across the subsequent restart.
+- Content-free import, fresh/restart statuses and both proof results are under
+  `build-evidence/windows-fast-loop-34497409120`. Retained earlier weaker proof,
+  pre-repair failure, old runtime and request remain rollback/provenance.
+  This closes bounded Windows direct write qualification only. Independent
+  Apple-device display, restored groups, reactions, attachment writes, causal
+  edits/unsends, Android convergence/lifecycle and FaceTime remain unqualified.
