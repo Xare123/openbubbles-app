@@ -4,10 +4,14 @@ import 'dart:typed_data';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/imessage_initial_submission.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_encoder.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_staging.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
@@ -92,6 +96,238 @@ void main() {
         now: _time(4),
         protectedSource: protectedSource,
       );
+
+  CloudAttachmentUploadEntity seedUploadedOrigin() {
+    final attachment = Attachment(guid: 'LOCAL-ATTACHMENT-A',
+      metadata: {'rustpush': '<plist>synthetic-sent-descriptor</plist>'});
+    store.box<Attachment>().put(attachment);
+    final message = _message(chat: chat, text: '', stagingGuid: _guidA,
+      attachments: [attachment])..attributedBody = [];
+    message.dbAttachments.add(attachment);
+    final identity = CloudSyncLocalSendIdentity.captureAttachment(
+      message, chat, _guidA)!;
+    final auth = _auth(Object());
+    final source = _protectedSource(identity);
+    journal.saveSubmission(identity: identity, newlyGeneratedGuid: true,
+      persistMessage: () => store.box<Message>().put(message), now: _time(2));
+    journal.adoptProtectedSource(identity: identity, source: source,
+      capturedAuth: auth, stillCurrent: () => true, now: _time(3));
+    message..guid = _guidA..stagingGuid = null;
+    store.box<Message>().put(message);
+    final intentId = confirmNative(protectedSource: source)!;
+    journal.promoteIdsConfirmedDeferred(intentId: intentId,
+      currentAuth: auth, now: _time(5));
+    store.box<CloudSyncCheckpointEntity>().put(CloudSyncCheckpointEntity(
+      checkpointKey: cloudSyncPersistentScopeKey(_attachmentUploadScope),
+      accountFingerprint: _scope.accountFingerprint,
+      container: _attachmentUploadScope.container,
+      database: _attachmentUploadScope.database,
+      zone: _attachmentUploadScope.zone,
+      streamKind: 'messages', schemaVersion: 2, persistenceLane: 'semantic',
+      generation: 1, updatedAtMs: _time(1).millisecondsSinceEpoch,
+    ));
+    final uploads = CloudSyncAttachmentUploadJournal(store: store,
+      localSends: journal, scope: _attachmentUploadScope,
+      checkpointGeneration: 1, currentAuth: auth);
+    CloudSyncProtectedOutboundStageData stage(String marker) =>
+      CloudSyncProtectedOutboundStageData(
+        logicalEntityKeyHash: 'C' * 43, serverRecordIdHash: 'D' * 43,
+        protectedEnvelopeReference: 'obcs2.ref.${marker * 43}',
+        leaseReference: 'obcs2.lease.${marker.toLowerCase() * 32}',
+        payloadSha256: marker.toLowerCase() * 64,
+      );
+    final prepared = uploads.adoptPlan(localSendIntentId: intentId,
+      plan: stage('E'), now: _time(6));
+    uploads.beginAttempt(id: prepared.id, attemptId: _guidA, now: _time(7));
+    uploads.recordUploaded(id: prepared.id, attemptId: _guidA,
+      result: stage('F'), now: _time(8));
+    return store.box<CloudAttachmentUploadEntity>().get(prepared.id)!;
+  }
+
+  ({int writerEpoch, CloudSyncLocalSendSourceBinding source}) readUpload(int id) =>
+    journal.readConfirmedOriginForExistingUpload(transactionStore: store,
+      uploadId: id, currentAuth: _auth(Object()));
+
+  test('persisted upload evidence survives +1/+2 and reopen without granting writes', () async {
+    final upload = seedUploadedOrigin();
+    final originalIntent = store.box<CloudSyncLocalSendIntentEntity>()
+      .get(upload.localSendIntentId)!;
+    final original = readUpload(upload.id);
+    final oldJournal = journal;
+    final permit = journal.requireCurrentAttachmentWriteAuthority(store);
+    expect(permit.epoch, upload.writerEpoch);
+    authority.markMutationUnknown(permit, now: _time(9));
+    expect(authority.read(_scope)!.epoch, upload.writerEpoch + 1);
+    expect(readUpload(upload.id).source.encode(), original.source.encode());
+    expect(() => journal.requireCurrentAttachmentWriteAuthority(store),
+      throwsA(isA<CloudKitWriterAuthorityFailure>()));
+    expect(() => journal.readProtectedSource(intentId: upload.localSendIntentId,
+      currentAuth: _auth(Object())),
+      throwsA(_stateFailure('cloud_sync_local_send_owner_changed')));
+    authority.reconcileMutationFence(_scope, owner: CloudKitWriterOwner.v2,
+      fencedEpoch: upload.writerEpoch, now: _time(10));
+    final freshPermit = oldJournal.requireCurrentAttachmentWriteAuthority(store);
+    expect(freshPermit.epoch, upload.writerEpoch + 2);
+    authority.verifyPermit(freshPermit);
+    expect(() => authority.verifyPermit(permit),
+      throwsA(_authorityFailure('cloudkit_writer_permit_stale')));
+    expect(() => oldJournal.requireConfirmedAttachmentUploadOrigin(
+      transactionStore: store, intentId: upload.localSendIntentId,
+      currentAuth: _auth(Object())),
+      throwsA(_stateFailure('cloud_sync_local_send_owner_changed')));
+    await reopen();
+    final recovered = readUpload(upload.id);
+    expect(recovered.writerEpoch, upload.writerEpoch);
+    expect(recovered.source.encode(), original.source.encode());
+    expect(() => journal.readProtectedSource(intentId: upload.localSendIntentId,
+      currentAuth: _auth(Object())),
+      throwsA(_stateFailure('cloud_sync_local_send_intent_changed')));
+    expect(() => journal.requireConfirmedAttachmentUploadOrigin(
+      transactionStore: store, intentId: upload.localSendIntentId,
+      currentAuth: _auth(Object())),
+      throwsA(_stateFailure('cloud_sync_local_send_intent_changed')));
+    final retained = store.box<CloudAttachmentUploadEntity>().get(upload.id)!;
+    expect([retained.uploadKey, retained.writerEpoch, retained.state,
+      retained.planReference, retained.planLeaseReference, retained.planPayloadSha256,
+      retained.attemptId, retained.resultReference, retained.resultLeaseReference,
+      retained.resultPayloadSha256, retained.updatedAtMs],
+      [upload.uploadKey, upload.writerEpoch, upload.state,
+      upload.planReference, upload.planLeaseReference, upload.planPayloadSha256,
+      upload.attemptId, upload.resultReference, upload.resultLeaseReference,
+      upload.resultPayloadSha256, upload.updatedAtMs]);
+    final intent = store.box<CloudSyncLocalSendIntentEntity>().get(upload.localSendIntentId)!;
+    expect([intent.writerEpoch, intent.intentKey, intent.protectedSourceBinding,
+      intent.sourceSha256, intent.state, intent.updatedAtMs],
+      [originalIntent.writerEpoch, originalIntent.intentKey,
+      originalIntent.protectedSourceBinding, originalIntent.sourceSha256,
+      originalIntent.state, originalIntent.updatedAtMs]);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 1);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 1);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  test('persisted upload evidence reopens during mutationUnknown', () async {
+    final upload = seedUploadedOrigin();
+    final source = readUpload(upload.id).source.encode();
+    authority.markMutationUnknown(journal.requireCurrentAttachmentWriteAuthority(store),
+      now: _time(9));
+    await reopen();
+    expect(readUpload(upload.id).source.encode(), source);
+    expect(readUpload(upload.id).writerEpoch, upload.writerEpoch);
+    expect(() => journal.requireCurrentAttachmentWriteAuthority(store),
+      throwsA(isA<CloudKitWriterAuthorityFailure>()));
+  });
+
+  test('upload evidence and current authority reject a different Store', () async {
+    final upload = seedUploadedOrigin();
+    final other = await openStore(directory: '${directory.path}/other');
+    try {
+      expect(() => journal.readConfirmedOriginForExistingUpload(
+        transactionStore: other, uploadId: upload.id, currentAuth: _auth(Object())),
+        throwsA(_stateFailure('cloud_sync_local_send_adoption_store_mismatch')));
+      expect(() => journal.requireCurrentAttachmentWriteAuthority(other),
+        throwsA(_stateFailure('cloud_sync_local_send_adoption_store_mismatch')));
+    } finally {
+      other.close();
+    }
+  });
+
+  test('upload evidence rejects changed current account and protected store', () {
+    final upload = seedUploadedOrigin();
+    for (final auth in [_auth(Object(), account: _otherAccount),
+      _auth(Object(), store: 'obcs2.store.$_otherAccount')]) {
+      expect(() => journal.readConfirmedOriginForExistingUpload(
+        transactionStore: store, uploadId: upload.id, currentAuth: auth),
+        throwsA(_stateFailure('cloud_sync_attachment_upload_binding_changed')));
+    }
+  });
+
+  test('upload evidence cannot be selected by intent id or an unknown id', () {
+    final upload = seedUploadedOrigin();
+    for (final id in [0, -1, upload.id + 999]) {
+      expect(() => readUpload(id),
+        throwsA(_stateFailure('cloud_sync_attachment_upload_binding_changed')));
+    }
+    store.box<CloudAttachmentUploadEntity>().remove(upload.id);
+    expect(() => readUpload(upload.localSendIntentId),
+      throwsA(_stateFailure('cloud_sync_attachment_upload_binding_changed')));
+  });
+
+  for (final change in <String, void Function(CloudAttachmentUploadEntity)>{
+    'account': (row) => row.accountFingerprint = _otherAccount,
+    'protected store': (row) => row.protectedStoreIdentity = 'obcs2.store.$_otherAccount',
+    'origin epoch': (row) => row.writerEpoch += 1,
+    'origin GUID': (row) => row.messageGuidHash = 'a' * 64,
+    'origin SHA': (row) => row.sourceSha256 = 'a' * 64,
+    'missing intent': (row) => row.localSendIntentId += 999,
+    'upload key': (row) => row.uploadKey = 'a' * 64,
+    'attachment key': (row) => row.attachmentKeyHash = 'Z' * 43,
+    'state': (row) => row.state = 99,
+    'attempt': (row) => row.attemptId = null,
+    'plan': (row) => row.planReference = 'invalid',
+    'result': (row) => row.resultReference = null,
+    'adoption': (row) => row.admittedOperationId = 'op1:${'a' * 64}',
+  }.entries) {
+    test('upload evidence rejects changed persisted ${change.key}', () {
+      final upload = seedUploadedOrigin();
+      change.value(upload);
+      store.box<CloudAttachmentUploadEntity>().put(upload);
+      expect(() => readUpload(upload.id), throwsA(isA<StateError>()));
+    });
+  }
+
+  for (final change in <String, void Function(CloudSyncLocalSendIntentEntity)>{
+    'epoch': (row) => row.writerEpoch += 1,
+    'account': (row) => row.accountFingerprint = _otherAccount,
+    'GUID': (row) => row.messageGuidHash = 'a' * 64,
+    'source SHA': (row) => row.sourceSha256 = 'a' * 64,
+    'key': (row) => row.intentKey = 'a' * 64,
+    'IDS proof': (row) => row.idsConfirmationVersion = 0,
+    'pending state': (row) => row.state = 0,
+    'deferred state': (row) => row.state = 3,
+    'adoption': (row) => row.admittedOperationId = 'op1:${'a' * 64}',
+    'readback binding': (row) => row.confirmedReadbackBindingSha256 = 'a' * 64,
+    'missing source': (row) => row.protectedSourceBinding = null,
+    'malformed source': (row) => row.protectedSourceBinding = 'invalid',
+    'source protected store': (row) => row.protectedSourceBinding =
+      row.protectedSourceBinding!.replaceFirst('obcs2.store.${'A' * 43}',
+        'obcs2.store.$_otherAccount'),
+  }.entries) {
+    test('upload evidence rejects changed intent ${change.key}', () {
+      final upload = seedUploadedOrigin();
+      final intent = store.box<CloudSyncLocalSendIntentEntity>().get(upload.localSendIntentId)!;
+      change.value(intent);
+      store.box<CloudSyncLocalSendIntentEntity>().put(intent);
+      expect(() => readUpload(upload.id), throwsA(isA<StateError>()));
+    });
+  }
+
+  for (final transition in [false, true]) {
+    test('upload evidence and current permit reject ${transition ? 'owner transition' : 'legacy owner'}', () {
+      final upload = seedUploadedOrigin();
+      final box = store.box<CloudKitWriterAuthorityEntity>();
+      final row = box.getAll().single;
+      if (transition) {
+        row..state = 1..targetOwner = 1..transitionIdHash = 'a' * 64;
+      } else {
+        row.owner = 1;
+      }
+      box.put(row);
+      expect(() => readUpload(upload.id),
+        throwsA(_stateFailure('cloud_sync_local_send_owner_changed')));
+      expect(() => journal.requireCurrentAttachmentWriteAuthority(store),
+        throwsA(isA<CloudKitWriterAuthorityFailure>()));
+    });
+  }
+
+  test('current attachment authority enforces selected owner', () {
+    final otherAuthority = ObjectBoxCloudKitWriterAuthority.forTest(store: store,
+      buildDecision: CloudKitWriterOwnership.resolve('legacy'));
+    final otherJournal = CloudSyncLocalSendJournal(store: store,
+      authority: otherAuthority, authoritySnapshot: authoritySnapshot);
+    expect(() => otherJournal.requireCurrentAttachmentWriteAuthority(store),
+      throwsA(isA<CloudKitWriterAuthorityFailure>()));
+  });
 
   test('journaled retry lookup includes confirmed origins and pins row and GUID', () {
     final message = awaitingNativeConfirmation(reflected: false);
@@ -2103,6 +2339,11 @@ const _completeEvidence = CloudKitWriterTransitionEvidence.forTest(
   legacyMutationQueues: LegacyMutationQueueDisposition.empty,
 );
 
+final _attachmentUploadScope = CloudSyncScope(
+  accountFingerprint: _scope.accountFingerprint,
+  container: 'com.apple.messages.cloud', database: 'private',
+  zone: 'attachmentManateeZone', persistenceLane: CloudSyncPersistenceLane.semantic,
+);
 final _scope = CloudKitWriterScope(
   accountFingerprint: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
 );

@@ -11,6 +11,7 @@ import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_production_sampler_adapter.dart';
 import 'cloudkit_operation_interlock.dart';
 import 'cloudkit_writer_authority.dart';
@@ -138,6 +139,19 @@ abstract interface class CloudKitWriterAttachmentReconciliationBinding
   });
 }
 
+/// Byte completion is verified by native code, not inferred from record lookup
+/// or a Dart-constructed receipt. Verification must not restage an adopted lease.
+abstract interface class CloudKitWriterUploadReconciliationBinding
+    implements CloudKitWriterReconciliationBinding {
+  Future<frb_api.CloudSyncAttachmentUploadReceiptEvidence?>
+  verifyAttachmentUploadReceipt({
+    required Object cloudMessagesClient,
+    required frb_api.CloudSyncNativeSendReceiptContext context,
+    required frb_api.CloudSyncAttachmentUploadPlanReference planStage,
+    required String expectedAttemptId,
+  });
+}
+
 /// Non-constructible, single-use native mutation capability.
 ///
 /// The raw random token exists only for the lifetime of one guarded action.
@@ -188,7 +202,8 @@ final class CloudKitWriterMutationGuard
     CloudSyncNativeAuthBinding? nativeAuthBinding,
     CloudKitWriterReconciliationBinding? reconciliationBinding,
     DateTime Function()? clock,
-  }) : _readActiveClient = readActiveClient,
+  }) : _store = store,
+       _readActiveClient = readActiveClient,
        _privateStorageDirectory = privateStorageDirectory,
        _clock = clock ?? DateTime.now,
        _nativeAuthBinding =
@@ -212,7 +227,8 @@ final class CloudKitWriterMutationGuard
     CloudSyncNativeAuthBinding? nativeAuthBinding,
     CloudKitWriterReconciliationBinding? reconciliationBinding,
     DateTime Function()? clock,
-  }) : _readActiveClient = readActiveClient,
+  }) : _store = store,
+       _readActiveClient = readActiveClient,
        _privateStorageDirectory = privateStorageDirectory,
        _clock = clock ?? DateTime.now,
        _nativeAuthBinding =
@@ -231,6 +247,7 @@ final class CloudKitWriterMutationGuard
     }
   }
 
+  final Store _store;
   final ActiveCloudKitClientReader _readActiveClient;
   final String _privateStorageDirectory;
   final CloudSyncNativeAuthBinding _nativeAuthBinding;
@@ -271,6 +288,145 @@ final class CloudKitWriterMutationGuard
     if (active == null) return;
     active.forcedUnknown = true;
     _markMutationUnknownFailClosed(active.permit);
+  }
+
+  /// Releases only the fence for this exact byte upload after native completion
+  /// verification. Missing/ambiguous completion remains unresolved. The journal
+  /// keeps its original epoch; final record saving needs a new current permit.
+  Future<bool> reconcileAttachmentUpload({
+    required Object expectedClient,
+    required CloudSyncAttachmentUploadJournal uploads,
+    required int uploadId,
+  }) async {
+    CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);
+    if (!uploads.isBoundTo(_store, uploads.scope) ||
+        _activeMutation != null ||
+        !identical(expectedClient, _readActiveClient())) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_upload_recovery_owner_mismatch',
+      );
+    }
+    final upload = uploads.read(uploadId);
+    final bindingSha256 = uploads.reconciliationBindingSha256(uploadId);
+    final source = uploads.readOriginalSource(uploadId);
+    final identity = await _capture(expectedClient);
+    void requireIdentity(CloudSyncNativeAuthMetadata value) {
+      CloudKitOperationInterlock.requireActive(
+        CloudKitOperationKind.v2ReadWrite,
+      );
+      if (!identical(expectedClient, _readActiveClient()) ||
+          value.accountFingerprint != source.accountFingerprint ||
+          value.protectedStoreIdentity != source.protectedStoreIdentity ||
+          value.nativeSessionId != identity.nativeSessionId ||
+          uploads.reconciliationBindingSha256(uploadId) != bindingSha256) {
+        throw const CloudKitWriterAuthorityFailure(
+          'cloudkit_upload_recovery_identity_changed',
+        );
+      }
+    }
+
+    requireIdentity(identity);
+    final scope = CloudKitWriterScope(
+      accountFingerprint: identity.accountFingerprint,
+    );
+    final persistentFence = _PersistentCloudKitMutationFence(
+      privateStorageDirectory: _privateStorageDirectory,
+    );
+    final initialFence = persistentFence.readForReconciliation();
+    void requireFence(_CloudKitMutationFenceRecord? fence) {
+      final authority = _authority.read(scope);
+      if (fence == null) {
+        if (initialFence != null) {
+          throw const CloudKitWriterAuthorityFailure(
+            'cloudkit_upload_recovery_fence_changed',
+          );
+        }
+        _requireStableReconciledAuthority(authority, CloudKitWriterOwner.v2);
+        return;
+      }
+      if (initialFence == null ||
+          fence.encoded != initialFence.encoded ||
+          fence.epoch != initialFence.epoch ||
+          fence.scope != scope ||
+          fence.owner != CloudKitWriterOwner.v2 ||
+          fence.protectedStoreIdentity != identity.protectedStoreIdentity ||
+          fence.reconciliationBindingSha256 != bindingSha256 ||
+          authority == null ||
+          authority.owner != CloudKitWriterOwner.v2 ||
+          authority.targetOwner != CloudKitWriterOwner.none ||
+          authority.transitionIdHash != null ||
+          !((authority.state == CloudKitWriterAuthorityState.stable &&
+                  (authority.epoch == fence.epoch ||
+                      authority.epoch == fence.epoch + 2)) ||
+              (authority.state ==
+                      CloudKitWriterAuthorityState.mutationUnknown &&
+                  authority.epoch == fence.epoch + 1))) {
+        throw const CloudKitWriterAuthorityFailure(
+          'cloudkit_upload_recovery_fence_mismatch',
+        );
+      }
+    }
+
+    requireFence(initialFence);
+    final binding = _reconciliationBinding;
+    if (binding is! CloudKitWriterUploadReconciliationBinding) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_upload_recovery_binding_missing',
+      );
+    }
+    final result = await binding.verifyAttachmentUploadReceipt(
+      cloudMessagesClient: expectedClient,
+      context: frb_api.CloudSyncNativeSendReceiptContext(
+        storageDirectory: _privateStorageDirectory,
+        guidHash: source.messageGuidHash,
+        accountFingerprint: identity.accountFingerprint,
+        protectedStoreIdentity: identity.protectedStoreIdentity,
+        nativeSessionId: identity.nativeSessionId,
+        sourceBinding: frb_api.CloudSyncNativeSendSourceBinding(
+          sourceSha256: source.sourceSha256,
+          protectedReference: source.protectedReference,
+          leaseReference: source.leaseReference,
+          payloadSha256: source.payloadSha256,
+          payloadLength: BigInt.from(source.payloadLength),
+        ),
+      ),
+      planStage: frb_api.CloudSyncAttachmentUploadPlanReference(
+        logicalEntityKeyHash: upload.plan.logicalEntityKeyHash,
+        protectedPayloadReference: upload.plan.protectedEnvelopeReference,
+        payloadSha256: upload.plan.payloadSha256,
+        serverRecordIdHash: upload.plan.serverRecordIdHash,
+        leaseReference: upload.plan.leaseReference,
+      ),
+      expectedAttemptId: upload.attemptId!,
+    );
+    requireIdentity(await _capture(expectedClient));
+    final finalFence = persistentFence.readForReconciliation();
+    requireFence(finalFence);
+    if (result == null) return false;
+    final current = uploads.read(uploadId);
+    if (result.uploadAttemptId != upload.attemptId ||
+        result.planPayloadSha256 != upload.plan.payloadSha256 ||
+        result.logicalEntityKeyHash != upload.plan.logicalEntityKeyHash ||
+        result.serverRecordIdHash != upload.plan.serverRecordIdHash ||
+        !_cloudKitWriterSha256Pattern.hasMatch(result.completedPayloadSha256) ||
+        (current.result != null &&
+            current.result!.payloadSha256 != result.completedPayloadSha256)) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_upload_recovery_receipt_mismatch',
+      );
+    }
+    // No await after the exact final identity/fence/journal checks. The native
+    // verifier proves upload completion, never a new byte attempt or record save.
+    if (finalFence != null) {
+      _authority.reconcileMutationFence(
+        scope,
+        owner: CloudKitWriterOwner.v2,
+        fencedEpoch: finalFence.epoch,
+        now: _clock(),
+      );
+      persistentFence.disarmReconciled(finalFence);
+    }
+    return true;
   }
 
   @override
@@ -369,9 +525,9 @@ final class CloudKitWriterMutationGuard
         ? (binding as CloudKitWriterChatReconciliationBinding)
               .reconcileChatCreate
         : isAttachment
-            ? (binding as CloudKitWriterAttachmentReconciliationBinding)
-                  .reconcileAttachmentCreate
-            : binding.reconcileMessageCreate;
+        ? (binding as CloudKitWriterAttachmentReconciliationBinding)
+              .reconcileAttachmentCreate
+        : binding.reconcileMessageCreate;
     final result = await reconcile(
       cloudMessagesClient: expectedClient,
       storageDirectory: _privateStorageDirectory,
@@ -512,8 +668,7 @@ final class CloudKitWriterMutationGuard
   ) {
     final expectedPayloadVersion = switch (operation.scope.zone) {
       'chatManateeZone' => cloudSyncOutboundChatPayloadVersion,
-      'attachmentManateeZone' =>
-        _cloudKitWriterAttachmentCreatePayloadVersion,
+      'attachmentManateeZone' => _cloudKitWriterAttachmentCreatePayloadVersion,
       'messageManateeZone' => cloudSyncOutboundPayloadVersion,
       _ => null,
     };

@@ -114,6 +114,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider;
 
   CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_CloudSyncPreparedAttachmentUploadHandlePtr =>
+      wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle;
+
+  CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_CloudSyncPreparedMessageCreateHandlePtr =>
       wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle;
 
@@ -366,6 +370,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CircleClientSessionDefaultAnisetteProvider
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncPreparedAttachmentUploadHandle
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
     dynamic raw,
   );
 
@@ -696,6 +706,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   ArcTokenProviderDefaultAnisetteProvider
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncPreparedAttachmentUploadHandle
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
     dynamic raw,
   );
 
@@ -1067,6 +1083,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CircleClientSessionDefaultAnisetteProvider
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncPreparedAttachmentUploadHandle
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
     dynamic raw,
   );
 
@@ -1510,6 +1532,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentMaterializationFailureCode
   dco_decode_box_autoadd_cloud_sync_attachment_materialization_failure_code(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncAttachmentUploadPlanReference
+  dco_decode_box_autoadd_cloud_sync_attachment_upload_plan_reference(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncAttachmentUploadReceiptEvidence
+  dco_decode_box_autoadd_cloud_sync_attachment_upload_receipt_evidence(
     dynamic raw,
   );
 
@@ -1991,8 +2025,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_cloud_sync_attachment_materialization_result(dynamic raw);
 
   @protected
+  CloudSyncAttachmentUploadConsumeResult
+  dco_decode_cloud_sync_attachment_upload_consume_result(dynamic raw);
+
+  @protected
+  CloudSyncAttachmentUploadPlanReference
+  dco_decode_cloud_sync_attachment_upload_plan_reference(dynamic raw);
+
+  @protected
   CloudSyncAttachmentUploadPlanResult
   dco_decode_cloud_sync_attachment_upload_plan_result(dynamic raw);
+
+  @protected
+  CloudSyncAttachmentUploadReceiptEvidence
+  dco_decode_cloud_sync_attachment_upload_receipt_evidence(dynamic raw);
 
   @protected
   CloudSyncChatIdentityComparison
@@ -2061,6 +2107,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudSyncOutboundSaveOutcome dco_decode_cloud_sync_outbound_save_outcome(
     dynamic raw,
   );
+
+  @protected
+  CloudSyncPreparedAttachmentUploadResult
+  dco_decode_cloud_sync_prepared_attachment_upload_result(dynamic raw);
 
   @protected
   CloudSyncPreparedMessageCreateInput
@@ -2958,6 +3008,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentMaterializationFailureCode?
   dco_decode_opt_box_autoadd_cloud_sync_attachment_materialization_failure_code(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncAttachmentUploadReceiptEvidence?
+  dco_decode_opt_box_autoadd_cloud_sync_attachment_upload_receipt_evidence(
     dynamic raw,
   );
 
@@ -3883,6 +3939,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncPreparedAttachmentUploadHandle
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncPreparedMessageCreateHandle
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     SseDeserializer deserializer,
@@ -4209,6 +4271,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   ArcTokenProviderDefaultAnisetteProvider
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncPreparedAttachmentUploadHandle
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
     SseDeserializer deserializer,
   );
 
@@ -4604,6 +4672,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CircleClientSessionDefaultAnisetteProvider
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncPreparedAttachmentUploadHandle
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
     SseDeserializer deserializer,
   );
 
@@ -5071,6 +5145,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentMaterializationFailureCode
   sse_decode_box_autoadd_cloud_sync_attachment_materialization_failure_code(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncAttachmentUploadPlanReference
+  sse_decode_box_autoadd_cloud_sync_attachment_upload_plan_reference(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncAttachmentUploadReceiptEvidence
+  sse_decode_box_autoadd_cloud_sync_attachment_upload_receipt_evidence(
     SseDeserializer deserializer,
   );
 
@@ -5708,8 +5794,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncAttachmentUploadConsumeResult
+  sse_decode_cloud_sync_attachment_upload_consume_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncAttachmentUploadPlanReference
+  sse_decode_cloud_sync_attachment_upload_plan_reference(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncAttachmentUploadPlanResult
   sse_decode_cloud_sync_attachment_upload_plan_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncAttachmentUploadReceiptEvidence
+  sse_decode_cloud_sync_attachment_upload_receipt_evidence(
     SseDeserializer deserializer,
   );
 
@@ -5786,6 +5890,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudSyncOutboundSaveOutcome sse_decode_cloud_sync_outbound_save_outcome(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncPreparedAttachmentUploadResult
+  sse_decode_cloud_sync_prepared_attachment_upload_result(
     SseDeserializer deserializer,
   );
 
@@ -6827,6 +6937,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentMaterializationFailureCode?
   sse_decode_opt_box_autoadd_cloud_sync_attachment_materialization_failure_code(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncAttachmentUploadReceiptEvidence?
+  sse_decode_opt_box_autoadd_cloud_sync_attachment_upload_receipt_evidence(
     SseDeserializer deserializer,
   );
 
@@ -7945,6 +8061,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
+    CloudSyncPreparedAttachmentUploadHandle self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     CloudSyncPreparedMessageCreateHandle self,
     SseSerializer serializer,
@@ -8325,6 +8448,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
     ArcTokenProviderDefaultAnisetteProvider self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
+    CloudSyncPreparedAttachmentUploadHandle self,
     SseSerializer serializer,
   );
 
@@ -8790,6 +8920,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider(
     CircleClientSessionDefaultAnisetteProvider self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
+    CloudSyncPreparedAttachmentUploadHandle self,
     SseSerializer serializer,
   );
 
@@ -9347,6 +9484,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_box_autoadd_cloud_sync_attachment_materialization_failure_code(
     CloudSyncAttachmentMaterializationFailureCode self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_sync_attachment_upload_plan_reference(
+    CloudSyncAttachmentUploadPlanReference self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_sync_attachment_upload_receipt_evidence(
+    CloudSyncAttachmentUploadReceiptEvidence self,
     SseSerializer serializer,
   );
 
@@ -10105,8 +10254,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_sync_attachment_upload_consume_result(
+    CloudSyncAttachmentUploadConsumeResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_attachment_upload_plan_reference(
+    CloudSyncAttachmentUploadPlanReference self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_attachment_upload_plan_result(
     CloudSyncAttachmentUploadPlanResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_attachment_upload_receipt_evidence(
+    CloudSyncAttachmentUploadReceiptEvidence self,
     SseSerializer serializer,
   );
 
@@ -10197,6 +10364,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_outbound_save_outcome(
     CloudSyncOutboundSaveOutcome self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_prepared_attachment_upload_result(
+    CloudSyncPreparedAttachmentUploadResult self,
     SseSerializer serializer,
   );
 
@@ -11441,6 +11614,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_opt_box_autoadd_cloud_sync_attachment_materialization_failure_code(
     CloudSyncAttachmentMaterializationFailureCode? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_attachment_upload_receipt_evidence(
+    CloudSyncAttachmentUploadReceiptEvidence? self,
     SseSerializer serializer,
   );
 
@@ -12920,6 +13099,22 @@ class RustLibWire implements BaseWire {
       );
 
   void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
+        ptr,
+      );
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
+        ptr,
+      );
+
+  void
   rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     int ptr,
   ) => wasmModule
@@ -13617,6 +13812,16 @@ extension type RustLibWasmModule._(JSObject _) implements JSObject {
 
   external void
   rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider(
+    int ptr,
+  );
+
+  external void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
+    int ptr,
+  );
+
+  external void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedAttachmentUploadHandle(
     int ptr,
   );
 

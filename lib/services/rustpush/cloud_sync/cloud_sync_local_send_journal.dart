@@ -7,6 +7,8 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:crypto/crypto.dart';
 
 import 'cloud_operation_identity.dart';
+import 'cloud_sync_attachment_upload_journal.dart'
+    show validateCloudAttachmentUploadRow;
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
@@ -1305,6 +1307,109 @@ final class CloudSyncLocalSendJournal {
       throw StateError('cloud_sync_local_send_protected_source_missing');
     }
     return (writerEpoch: intent.writerEpoch, source: source);
+  }
+
+  /// Reads immutable source evidence only for an actual persisted upload.
+  /// The original epoch binds the intent to that upload, not to today's permit.
+  /// This does not authorize preparation, another attempt, or a record save.
+  /// Caller still owns live native-auth capture and checkpoint validation.
+  ({int writerEpoch, CloudSyncLocalSendSourceBinding source})
+  readConfirmedOriginForExistingUpload({
+    required Store transactionStore,
+    required int uploadId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireAttachmentAuthorityScope(transactionStore);
+    final upload = uploadId > 0
+        ? _store.box<CloudAttachmentUploadEntity>().get(uploadId)
+        : null;
+    if (upload == null ||
+        currentAuth.accountFingerprint != _binding.scope.accountFingerprint ||
+        upload.accountFingerprint != currentAuth.accountFingerprint ||
+        upload.protectedStoreIdentity != currentAuth.protectedStoreIdentity) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    validateCloudAttachmentUploadRow(upload);
+    final current = _authority.read(_binding.scope);
+    if (current == null ||
+        current.owner != CloudKitWriterOwner.v2 ||
+        current.targetOwner != CloudKitWriterOwner.none ||
+        current.transitionIdHash != null ||
+        (current.state != CloudKitWriterAuthorityState.stable &&
+            current.state != CloudKitWriterAuthorityState.mutationUnknown) ||
+        current.epoch < upload.writerEpoch) {
+      throw StateError('cloud_sync_local_send_owner_changed');
+    }
+    final intent = _intents.get(upload.localSendIntentId);
+    if (intent == null ||
+        intent.accountFingerprint != upload.accountFingerprint ||
+        intent.writerEpoch != upload.writerEpoch ||
+        intent.messageGuidHash != upload.messageGuidHash ||
+        intent.sourceSha256 != upload.sourceSha256 ||
+        (intent.state != 1 && intent.state != 2) ||
+        !_hasConsistentAdoption(intent) ||
+        intent.intentKey != CloudSyncLocalSendIdentity._digest([
+          'cloud-sync-local-send-intent-v1',
+          intent.accountFingerprint,
+          intent.messageGuidHash,
+        ])) {
+      throw StateError('cloud_sync_local_send_intent_changed');
+    }
+    final scope = CloudSyncScope(
+      accountFingerprint: upload.accountFingerprint,
+      container: _binding.scope.container,
+      database: _binding.scope.database,
+      zone: 'attachmentManateeZone',
+      streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: 2,
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    if (upload.uploadKey != CloudSyncLocalSendIdentity._digest([
+      'cloud-sync-attachment-upload-v1',
+      scope.storageKey,
+      upload.messageGuidHash,
+      upload.sourceSha256,
+      upload.attachmentKeyHash,
+    ])) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    _requireIdsConfirmation(intent);
+    final encoded = intent.protectedSourceBinding;
+    if (encoded == null) {
+      throw StateError('cloud_sync_local_send_protected_source_missing');
+    }
+    final source = CloudSyncLocalSendSourceBinding.decode(encoded);
+    source.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+      messageGuidHash: upload.messageGuidHash,
+      sourceSha256: upload.sourceSha256,
+    );
+    return (writerEpoch: intent.writerEpoch, source: source);
+  });
+
+  /// Fresh authority for final-record admission/dispatch of retained evidence.
+  /// Does not rebind that evidence or authorize a new byte-upload attempt.
+  CloudKitWriterPermit requireCurrentAttachmentWriteAuthority(
+    Store transactionStore,
+  ) {
+    _requireAttachmentAuthorityScope(transactionStore);
+    return _authority.issuePermit(
+      _binding.scope,
+      expectedOwner: CloudKitWriterOwner.v2,
+    );
+  }
+
+  void _requireAttachmentAuthorityScope(Store transactionStore) {
+    if (!identical(transactionStore, _store)) {
+      throw StateError('cloud_sync_local_send_adoption_store_mismatch');
+    }
+    if (_binding.owner != CloudKitWriterOwner.v2 ||
+        _binding.epoch <= 0 ||
+        _binding.scope.container != 'com.apple.messages.cloud' ||
+        _binding.scope.database != 'private') {
+      throw StateError('cloud_sync_local_send_owner_invalid');
+    }
   }
 
   /// A retry may re-use an existing intent, but cannot invent local origin for

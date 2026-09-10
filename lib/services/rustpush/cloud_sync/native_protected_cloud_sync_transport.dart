@@ -806,13 +806,13 @@ final class NativeProtectedCloudSyncTransport
     final reconcile = isChat
         ? _requireChatWriteBindings().reconcileChatCreate
         : isAttachment
-            ? _requireAttachmentWriteBindings().reconcileAttachmentCreate
-            : bindings.reconcileMessageCreate;
+        ? _requireAttachmentWriteBindings().reconcileAttachmentCreate
+        : bindings.reconcileMessageCreate;
     final prepare = isChat
         ? _requireChatWriteBindings().prepareChatCreate
         : isAttachment
-            ? _requireAttachmentWriteBindings().prepareAttachmentCreate
-            : bindings.prepareMessageCreate;
+        ? _requireAttachmentWriteBindings().prepareAttachmentCreate
+        : bindings.prepareMessageCreate;
     final preparation = await _runProtectedStoreOperation(() async {
       final remoteInputs = <frb_api.CloudSyncPreparedMessageCreateInput>[];
       final preconfirmedReceipts = <CloudOutboxCreateReceipt>[];
@@ -2206,8 +2206,8 @@ final class NativeProtectedCloudSyncTransport
     final reconcile = scope.zone == 'chatManateeZone'
         ? _requireChatWriteBindings().reconcileChatCreate
         : scope.zone == 'attachmentManateeZone'
-            ? _requireAttachmentWriteBindings().reconcileAttachmentCreate
-            : _requireWriteBindings().reconcileMessageCreate;
+        ? _requireAttachmentWriteBindings().reconcileAttachmentCreate
+        : _requireWriteBindings().reconcileMessageCreate;
     final payloadReference = operation.encryptedPayloadReference;
     final payloadSha256 = operation.payloadSha256;
     final serverRecordIdHash = operation.serverRecordIdHash;
@@ -2345,6 +2345,7 @@ final class FrbNativeProtectedCloudSyncBindings
         CloudKitWriterChatReconciliationBinding,
         NativeProtectedCloudSyncChatWriteBindings,
         NativeProtectedCloudSyncAttachmentWriteBindings,
+        CloudKitWriterUploadReconciliationBinding,
         CloudKitWriterAttachmentReconciliationBinding {
   FrbNativeProtectedCloudSyncBindings({RustLibApi? api})
     // ignore: invalid_use_of_internal_member
@@ -2497,6 +2498,20 @@ final class FrbNativeProtectedCloudSyncBindings
     expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
     requestUuid: requestUuid,
     input: input,
+  );
+
+  @override
+  Future<frb_api.CloudSyncAttachmentUploadReceiptEvidence?>
+  verifyAttachmentUploadReceipt({
+    required Object cloudMessagesClient,
+    required frb_api.CloudSyncNativeSendReceiptContext context,
+    required frb_api.CloudSyncAttachmentUploadPlanReference planStage,
+    required String expectedAttemptId,
+  }) => _api.crateApiApiCloudSyncVerifyAttachmentUploadReceipt(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    context: context,
+    planStage: planStage,
+    expectedAttemptId: expectedAttemptId,
   );
 
   @override

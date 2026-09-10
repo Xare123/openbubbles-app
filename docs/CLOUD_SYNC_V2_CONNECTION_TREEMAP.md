@@ -145,17 +145,25 @@ the existing mutation fence, with an immutable verified file and original plan.
 A native exclusive claim precedes upload; encrypted completion is durable before
 Dart return and can reconstruct a lost result without another Apple request.
 Parent review corrected Unix rename overwrite, directory-symlink traversal and
-unbounded-read races in the worker receipt store. This candidate still awaits
-GCE qualification. Run `34537334179` reached native compilation and found two
+unbounded-read races in the worker receipt store. Run `34537334179` reached native compilation and found two
 optional failure-class mappings and an auto-opaque FRB result getter that tried
 to clone the single-use owner. The next candidate maps optional failures and
 makes the result non-opaque without making the owner cloneable. It also adds
 native completion inspection that creates no replacement envelope/lease, needed
-when Dart already retained the result. These repairs are not yet qualified.
+when Dart already retained the result. Source `0ef0b3099` compiled in isolated
+GCE run `34538305947` and passed all 457 Rust library tests. The sole failing
+gate was generated bridge drift. Artifact `10176572039` contained exactly the
+seven expected bridge files, which were hash-verified before and after import.
+All 386 cases in the eight combined Dart suites passed against those bindings,
+including late completion across writer recovery and exact fence discharge.
+An Astra read-only review found no concrete correctness bugs in that bounded
+recovery change. Cleanup passed; independent inventories showed zero VMs and
+runner registrations. These are component checks, not live attachment-send proof.
 The resume input now matches the persisted journal fields,
 which do not include the discarded transient envelope length.
-Runtime coordinator/fence recovery, final-save handoff and parent wiring remain
-open. The epoch counterexample is now explicit: record-write ambiguity advances
+Runtime coordinator, final-save handoff and parent wiring remain open. Completed
+upload fence recovery is implemented and tested. The epoch counterexample is
+now explicit: write ambiguity advances
 the writer from E to E+1, then E+2 after reconciliation, while the upload journal
 previously required its original source epoch to equal the current permit epoch.
 Recovery must validate retained original evidence separately from fresh write
@@ -402,9 +410,9 @@ exact attachment descriptor actually sent through IDS
   -> parent Message with the same attachment references
 ```
 
-- The Dart staging/admission path still supports only Messages/Chats. The native
-  completed-attachment codec passed qualification, but is not an uploader.
-  In-progress native integration separates protected pre-upload preparation
+- The Dart store now atomically admits completed Attachment-v1 uploads, but the
+  runtime byte-upload coordinator and parent-message connection are still absent.
+  Native integration separates protected pre-upload preparation
   (`outboundAttachmentUpload`) from completed record-create material
   (`outboundAttachment`). Neither grants network permission or parent admission.
 - Existing `Attachment.metadata["rustpush"]` stores an MMCS descriptor with
@@ -412,7 +420,8 @@ exact attachment descriptor actually sent through IDS
   not an encrypted receipt or proof of what IDS sent. Pin the actual wire
   descriptor into protected admission before send, then bind native success to
   it. The v3 receipt now carries the protected source binding, not raw keys or
-  descriptors. Composer staging/adoption is still being integrated.
+  descriptors. Composer source staging/adoption is connected; whole-runtime
+  attachment qualification remains separate.
 - Do not put the source only inside the IDS receipt: acknowledgment deletes
   that file immediately after durable confirmation, before outbound admission.
   A protected source needs its own durable reference and recovery/GC ownership
@@ -622,27 +631,17 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Connect attachment local origin to the protected upload plan. Extend the
-   local-send journal's ownership of the exact native attachment descriptor,
-   then add durable upload-attempt/result state, record-create/readback and
-   parent dependency. The additive `protectedSourceBinding` field and immutable
-   journal adoption now retain the source independently of the acknowledged IDS
-   receipt. GC and native lease recovery include it. Source staging and native
-   pre-send/prepared-message validation now have an API hook; source-bound v3
-   receipt/replay/ack and Dart promotion checks passed native qualification.
-   The source candidate now selects attachment identity from the composer,
-   journals the pending row, stages/adopts/commits the native source, and passes
-   its binding into IDS. Retry reuses the MMCS descriptor and reconstructs the
-   original native message, including conversation ordering/profile fields.
-   Qualify the new retry bridge; do not rebuild upload material after sending.
-   GCE `34517138488` passed all 414 native tests and bridge reproducibility after
-   the receipt fix, with the native-seam guard unchanged. The local attachment
-   identity now survives reflection aliases and database reopen in journal tests.
-   Source staging currently rejects a busy cross-process CloudKit lock promptly
-   and retains the pending message without sending. This prevents an untracked
-   source but is NOT the final background-read/send UX. Before runtime enablement,
-   provide bounded coordination with long reads and prove no starvation or lost
-   source, then connect durable upload attempts and parent dependencies.
+1. Finish the attachment vertical path, not another independent validator.
+   The composer retains its actual IDS source; the upload journal retains its
+   original randomized plan, attempt and result; final-record admission exists.
+   Qualify native upload execution and completion inspection, import the exact
+   bridge, then connect the runtime coordinator to lease commit, create/readback
+   and parent-message dependencies. The pending recovery repair separates old
+   source evidence from current writer permission across E/E+1/E+2. Complete
+   evidence may resolve its exact fence; no receipt never authorizes reupload.
+   Unknown byte-upload isolation requires native quiescence before unrelated
+   writes resume. Also prove bounded source-staging coordination with long reads:
+   retaining an unsent message on lock contention is safe, not final send UX.
 2. Preserve qualified Windows direct request `qualification-20260910-03` and
    its proof. No additional direct send is needed merely to recheck that result.
    The exact restored-group route is implemented/tested, but no group with the

@@ -1362,3 +1362,23 @@ This is a chronological evidence log. It does not override the
   byte attempts remain strict, and final saves need current stable authority.
   No old row, plan, epoch, or receipt is rewritten. Unknown upload isolation
   still requires proved native quiescence, not a Dart timeout or absent record.
+
+## 2026-09-10, completed-upload recovery qualification
+
+- N2D-8/c run `34538305947`, exact source `0ef0b3099`, compiled the regenerated
+  bridge and passed all 457 Rust library tests. Only the bridge-drift gate failed.
+  Artifact `10176572039` contained exactly seven expected files; SHA-256 checks
+  matched each downloaded file to its imported repository counterpart.
+- The combined eight targeted Dart suites passed 386 cases after import. They
+  cover historical source evidence across writer E/E+1/E+2, fresh authority for
+  final admission, exact completion/attempt/result/fence matching, missing
+  receipts, identity changes and restart persistence. No uncertain upload is
+  replayed merely because its receipt is absent.
+- Astra reviewed the native inspection API, journal authority separation and
+  guard release without finding a concrete correctness bug. Reviewed agents
+  were closed and shutdown verified. Shared source and necessary evidence remain;
+  no supported per-agent session deletion was available.
+- Cleanup completed successfully. Independent GCE and GitHub inventories were
+  empty. No Apple credentials or messages were uploaded, no live account writes
+  occurred, and no APK/runtime was installed. Runtime attachment execution and
+  parent-message integration remain required.

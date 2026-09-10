@@ -198,6 +198,66 @@ Future<CloudSyncAttachmentUploadPlanResult> cloudSyncStageAttachmentUploadPlan({
   createdDateNs: createdDateNs,
 );
 
+/// Reopens the adopted original plan; does not upload. Caller must retain the
+/// protected-store exclusion and V2 interlock, and durably begin the same
+/// journal attempt before calling consume under the mutation guard.
+Future<CloudSyncPreparedAttachmentUploadResult>
+cloudSyncPrepareAttachmentUpload({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncNativeSendReceiptContext context,
+  required CloudSyncAttachmentUploadPlanReference planStage,
+  required String originalAttachmentGuid,
+  required String sourcePath,
+  required BigInt requestTimeoutSeconds,
+}) => RustLib.instance.api.crateApiApiCloudSyncPrepareAttachmentUpload(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+  planStage: planStage,
+  originalAttachmentGuid: originalAttachmentGuid,
+  sourcePath: sourcePath,
+  requestTimeoutSeconds: requestTimeoutSeconds,
+);
+
+/// The journal starts before this call. Native exclusive claim is an additional
+/// cross-process barrier: a second prepared handle cannot repeat that attempt.
+/// A completed receipt is encrypted and made durable before staging/returning.
+Future<CloudSyncAttachmentUploadConsumeResult>
+cloudSyncConsumePreparedAttachmentUpload({
+  required CloudSyncPreparedAttachmentUploadHandle handle,
+  required String mutationCapabilityToken,
+}) => RustLib.instance.api.crateApiApiCloudSyncConsumePreparedAttachmentUpload(
+  handle: handle,
+  mutationCapabilityToken: mutationCapabilityToken,
+);
+
+/// No upload, record save, envelope staging or lease creation. This lets the
+/// writer verify an already-adopted result without replacing its durable lease.
+Future<CloudSyncAttachmentUploadReceiptEvidence?>
+cloudSyncVerifyAttachmentUploadReceipt({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncNativeSendReceiptContext context,
+  required CloudSyncAttachmentUploadPlanReference planStage,
+  required String expectedAttemptId,
+}) => RustLib.instance.api.crateApiApiCloudSyncVerifyAttachmentUploadReceipt(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+  planStage: planStage,
+  expectedAttemptId: expectedAttemptId,
+);
+
+/// No network mutation. Reconstructs a lost bridge result from the original
+/// native receipt. Use only while the local upload is started/unknown; if Dart
+/// already adopted a result, commit/reuse that exact existing lease instead.
+Future<CloudSyncProtectedOutboundStage?> cloudSyncRecoverAttachmentUpload({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncNativeSendReceiptContext context,
+  required CloudSyncAttachmentUploadPlanReference planStage,
+}) => RustLib.instance.api.crateApiApiCloudSyncRecoverAttachmentUpload(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+  planStage: planStage,
+);
+
 /// Explicitly authenticates the read-only Cloud Sync V2 container.
 ///
 /// Callers must hold the CloudKit operation interlock. This may perform one
@@ -2099,6 +2159,10 @@ abstract class ChannelInterestToken implements RustOpaqueInterface {}
 abstract class CircleClientSessionDefaultAnisetteProvider
     implements RustOpaqueInterface {}
 
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedAttachmentUploadHandle>>
+abstract class CloudSyncPreparedAttachmentUploadHandle
+    implements RustOpaqueInterface {}
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedMessageCreateHandle>>
 abstract class CloudSyncPreparedMessageCreateHandle
     implements RustOpaqueInterface {}
@@ -3065,6 +3129,80 @@ class CloudSyncAttachmentMaterializationResult {
           failure == other.failure;
 }
 
+/// `Succeeded` means uploaded bytes with a protected receipt, NOT record save
+/// or parent-message synchronization. Unknown never grants another upload.
+class CloudSyncAttachmentUploadConsumeResult {
+  final String uploadAttemptId;
+  final CloudSyncOutboundSaveDisposition disposition;
+  final CloudSyncProtectedOutboundStage? stage;
+  final CloudSyncOutboundFailureClass? failureClass;
+  final BigInt? retryAfterSeconds;
+
+  const CloudSyncAttachmentUploadConsumeResult({
+    required this.uploadAttemptId,
+    required this.disposition,
+    this.stage,
+    this.failureClass,
+    this.retryAfterSeconds,
+  });
+
+  @override
+  int get hashCode =>
+      uploadAttemptId.hashCode ^
+      disposition.hashCode ^
+      stage.hashCode ^
+      failureClass.hashCode ^
+      retryAfterSeconds.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncAttachmentUploadConsumeResult &&
+          runtimeType == other.runtimeType &&
+          uploadAttemptId == other.uploadAttemptId &&
+          disposition == other.disposition &&
+          stage == other.stage &&
+          failureClass == other.failureClass &&
+          retryAfterSeconds == other.retryAfterSeconds;
+}
+
+/// Exactly the fields persisted in CloudSyncAttachmentUploadJournal. Do not
+/// require a discarded transient stage length to resume after process death.
+class CloudSyncAttachmentUploadPlanReference {
+  final String logicalEntityKeyHash;
+  final String protectedPayloadReference;
+  final String payloadSha256;
+  final String serverRecordIdHash;
+  final String leaseReference;
+
+  const CloudSyncAttachmentUploadPlanReference({
+    required this.logicalEntityKeyHash,
+    required this.protectedPayloadReference,
+    required this.payloadSha256,
+    required this.serverRecordIdHash,
+    required this.leaseReference,
+  });
+
+  @override
+  int get hashCode =>
+      logicalEntityKeyHash.hashCode ^
+      protectedPayloadReference.hashCode ^
+      payloadSha256.hashCode ^
+      serverRecordIdHash.hashCode ^
+      leaseReference.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncAttachmentUploadPlanReference &&
+          runtimeType == other.runtimeType &&
+          logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          protectedPayloadReference == other.protectedPayloadReference &&
+          payloadSha256 == other.payloadSha256 &&
+          serverRecordIdHash == other.serverRecordIdHash &&
+          leaseReference == other.leaseReference;
+}
+
 /// Protected byte-upload preparation only. This is not an uploaded asset,
 /// final-record envelope, IDS confirmation, or permission to send anything.
 class CloudSyncAttachmentUploadPlanResult {
@@ -3086,6 +3224,43 @@ class CloudSyncAttachmentUploadPlanResult {
           runtimeType == other.runtimeType &&
           stage == other.stage &&
           uploadAttemptId == other.uploadAttemptId;
+}
+
+/// Authenticated native completion evidence, not a record-save receipt. No
+/// asset keys, URLs or plaintext cross the bridge. Inspection creates no lease.
+class CloudSyncAttachmentUploadReceiptEvidence {
+  final String uploadAttemptId;
+  final String planPayloadSha256;
+  final String completedPayloadSha256;
+  final String logicalEntityKeyHash;
+  final String serverRecordIdHash;
+
+  const CloudSyncAttachmentUploadReceiptEvidence({
+    required this.uploadAttemptId,
+    required this.planPayloadSha256,
+    required this.completedPayloadSha256,
+    required this.logicalEntityKeyHash,
+    required this.serverRecordIdHash,
+  });
+
+  @override
+  int get hashCode =>
+      uploadAttemptId.hashCode ^
+      planPayloadSha256.hashCode ^
+      completedPayloadSha256.hashCode ^
+      logicalEntityKeyHash.hashCode ^
+      serverRecordIdHash.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncAttachmentUploadReceiptEvidence &&
+          runtimeType == other.runtimeType &&
+          uploadAttemptId == other.uploadAttemptId &&
+          planPayloadSha256 == other.planPayloadSha256 &&
+          completedPayloadSha256 == other.completedPayloadSha256 &&
+          logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          serverRecordIdHash == other.serverRecordIdHash;
 }
 
 /// Redacted identity binding for one active Cloud Messages client.
@@ -3396,6 +3571,31 @@ class CloudSyncOutboundSaveOutcome {
           retryAfterSeconds == other.retryAfterSeconds &&
           serverRecordIdHash == other.serverRecordIdHash &&
           etagHash == other.etagHash;
+}
+
+class CloudSyncPreparedAttachmentUploadResult {
+  final CloudSyncPreparedAttachmentUploadHandle handle;
+  final String handleBindingSha256;
+  final String uploadAttemptId;
+
+  const CloudSyncPreparedAttachmentUploadResult({
+    required this.handle,
+    required this.handleBindingSha256,
+    required this.uploadAttemptId,
+  });
+
+  @override
+  int get hashCode =>
+      handle.hashCode ^ handleBindingSha256.hashCode ^ uploadAttemptId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncPreparedAttachmentUploadResult &&
+          runtimeType == other.runtimeType &&
+          handle == other.handle &&
+          handleBindingSha256 == other.handleBindingSha256 &&
+          uploadAttemptId == other.uploadAttemptId;
 }
 
 class CloudSyncPreparedMessageCreateInput {

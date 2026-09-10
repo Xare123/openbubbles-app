@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_local_send_journal.dart';
+import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_staging.dart';
@@ -85,9 +86,25 @@ final class CloudSyncAttachmentUploadJournal {
   bool isBoundTo(Store store, CloudSyncScope scope) =>
       identical(_store, store) && _scope == scope;
 
+  CloudSyncScope get scope => _scope;
+
+  /// Immutable source evidence for an existing upload, never new-send authority.
+  CloudSyncLocalSendSourceBinding readOriginalSource(int id) =>
+      _store.runInTransaction(TxMode.read, () {
+        _readBound(id);
+        return _localSends
+            .readConfirmedOriginForExistingUpload(
+              transactionStore: _store,
+              uploadId: id,
+              currentAuth: _auth,
+            )
+            .source;
+      });
+
   /// Revalidate the completed upload and original IDS source at dispatch, not
   /// just admission. Called synchronously within the outbox store transaction.
   void requireAdoptedOperation(CloudOutboxOperation operation) {
+    _localSends.requireCurrentAttachmentWriteAuthority(_store);
     if (operation.scope != _scope ||
         operation.checkpointGeneration != _generation) {
       throw StateError('cloud_sync_attachment_upload_binding_changed');
@@ -189,6 +206,43 @@ final class CloudSyncAttachmentUploadJournal {
     () => CloudAttachmentUploadSnapshot._(_readBound(id)),
   );
 
+  /// Deterministic byte-upload reconciliation binding over the original
+  /// envelope (scope, writer epoch, generation, store identity, local
+  /// source, upload key, attachment identity, plan, attempt). Result,
+  /// state, and admitted operation never enter the hash. Requires an
+  /// attempted row; byte reconciliation never touches the record outbox.
+  String reconciliationBindingSha256(int id) =>
+      _store.runInTransaction(TxMode.read, () {
+        final row = _readBound(id);
+        if (row.state == CloudAttachmentUploadState.prepared.index ||
+            row.attemptId == null ||
+            !_uuid.hasMatch(row.attemptId!)) {
+          throw StateError('cloud_sync_attachment_upload_not_started');
+        }
+        return sha256
+            .convert(
+              utf8.encode(
+                jsonEncode([
+                  'cloud-sync-attachment-upload-reconciliation-v1',
+                  _scope.storageKey,
+                  row.writerEpoch,
+                  row.checkpointGeneration,
+                  row.protectedStoreIdentity,
+                  row.messageGuidHash,
+                  row.sourceSha256,
+                  row.uploadKey,
+                  row.attachmentKeyHash,
+                  row.serverRecordIdHash,
+                  row.planReference,
+                  row.planLeaseReference,
+                  row.planPayloadSha256,
+                  row.attemptId,
+                ]),
+              ),
+            )
+            .toString();
+      });
+
   /// No idempotent repeat is returned as another consumable attempt. If the
   /// caller cannot observe this transaction, it must inspect/recover, not send.
   CloudAttachmentUploadSnapshot beginAttempt({
@@ -203,6 +257,17 @@ final class CloudSyncAttachmentUploadJournal {
     if (row.state != CloudAttachmentUploadState.prepared.index) {
       throw StateError('cloud_sync_attachment_upload_already_attempted');
     }
+    // Reading retained evidence across a writer recovery never grants a new
+    // byte attempt under an old epoch. Preparation remains strictly current.
+    final origin = _localSends.requireConfirmedAttachmentUploadOrigin(
+      transactionStore: _store,
+      intentId: row.localSendIntentId,
+      currentAuth: _auth,
+    );
+    if (origin.writerEpoch != row.writerEpoch) {
+      throw StateError('cloud_sync_attachment_upload_origin_changed');
+    }
+    _localSends.requireCurrentAttachmentWriteAuthority(_store);
     row
       ..state = CloudAttachmentUploadState.started.index
       ..attemptId = attemptId
@@ -294,6 +359,7 @@ final class CloudSyncAttachmentUploadJournal {
     if (row.state != CloudAttachmentUploadState.uploaded.index) {
       throw StateError('cloud_sync_attachment_upload_result_missing');
     }
+    _localSends.requireCurrentAttachmentWriteAuthority(_store);
     final operation = admit(_store, _result(row));
     if (operation.scope != _scope ||
         operation.action != CloudOutboxAction.save ||
@@ -394,9 +460,9 @@ final class CloudSyncAttachmentUploadJournal {
       throw StateError('cloud_sync_attachment_upload_binding_changed');
     }
     validateCloudAttachmentUploadRow(row);
-    final origin = _localSends.requireConfirmedAttachmentUploadOrigin(
+    final origin = _localSends.readConfirmedOriginForExistingUpload(
       transactionStore: _store,
-      intentId: row.localSendIntentId,
+      uploadId: row.id,
       currentAuth: _auth,
     );
     if (origin.writerEpoch != row.writerEpoch ||

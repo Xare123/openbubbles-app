@@ -17,6 +17,11 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_sta
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
+import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1021,6 +1026,423 @@ void main() {
     ).readLiveProtectedOutboundLeaseReferences(maximumCount: 4096);
     expect(live, containsAll([_lease('d'), _lease('1'), _lease('2')]));
   });
+
+  test('reconciliation binding is stable across attempt lifecycle stages', () {
+    final intentId = seedConfirmedIntent();
+    final prepared = uploads.adoptPlan(
+      localSendIntentId: intentId,
+      plan: _planA(),
+      now: _time(6),
+    );
+    uploads.beginAttempt(id: prepared.id, attemptId: _attemptA, now: _time(7));
+    final started = uploads.reconciliationBindingSha256(prepared.id);
+    uploads.markUnknown(id: prepared.id, attemptId: _attemptA, now: _time(8));
+    expect(uploads.reconciliationBindingSha256(prepared.id), started);
+    uploads.recordUploaded(
+      id: prepared.id,
+      attemptId: _attemptA,
+      result: _resultA(),
+      now: _time(9),
+    );
+    expect(uploads.reconciliationBindingSha256(prepared.id), started);
+    uploads.adoptRecordCreate(
+      id: prepared.id,
+      admit: (tx, result) {
+        _persistFinalOperation(tx, result);
+        return _finalOperation(result);
+      },
+      now: _time(10),
+    );
+    expect(uploads.reconciliationBindingSha256(prepared.id), started);
+    expect(uploads.read(prepared.id).state, CloudAttachmentUploadState.adopted);
+  });
+
+  test('reconciliation binding separates origin, plan, and attempt', () {
+    final firstId = seedConfirmedIntent();
+    final first = uploads.adoptPlan(
+      localSendIntentId: firstId,
+      plan: _planA(),
+      now: _time(6),
+    );
+    uploads.beginAttempt(id: first.id, attemptId: _attemptA, now: _time(7));
+    final baseline = uploads.reconciliationBindingSha256(first.id);
+    final uploadsBox = store.box<CloudAttachmentUploadEntity>();
+    // Attempt alone changes the digest.
+    uploadsBox.put(uploadsBox.get(first.id)!..attemptId = _attemptB);
+    expect(uploads.reconciliationBindingSha256(first.id), isNot(baseline));
+    // Restored attempt reproduces the baseline; plan lease alone changes it.
+    uploadsBox.put(uploadsBox.get(first.id)!..attemptId = _attemptA);
+    expect(uploads.reconciliationBindingSha256(first.id), baseline);
+    uploadsBox.put(uploadsBox.get(first.id)!..planLeaseReference = _lease('9'));
+    expect(uploads.reconciliationBindingSha256(first.id), isNot(baseline));
+    uploadsBox.put(uploadsBox.get(first.id)!..planLeaseReference = _lease('d'));
+    expect(uploads.reconciliationBindingSha256(first.id), baseline);
+    // A distinct origin, plan, and attempt binds distinctly.
+    final secondId = seedConfirmedIntent(
+      stableGuid: _guidB,
+      attachmentGuid: 'LOCAL-ATTACHMENT-B',
+    );
+    final second = uploads.adoptPlan(
+      localSendIntentId: secondId,
+      plan: _planB(),
+      now: _time(6),
+    );
+    uploads.beginAttempt(id: second.id, attemptId: _attemptB, now: _time(7));
+    expect(uploads.reconciliationBindingSha256(second.id), isNot(baseline));
+  });
+
+  test('reconciliation binding refuses a row before its attempt begins', () {
+    final prepared = uploads.adoptPlan(
+      localSendIntentId: seedConfirmedIntent(),
+      plan: _planA(),
+      now: _time(6),
+    );
+    expect(
+      () => uploads.reconciliationBindingSha256(prepared.id),
+      throwsA(_stateFailure('cloud_sync_attachment_upload_not_started')),
+    );
+  });
+
+  test('reconciliation binding drifts with auth and checkpoint generation', () {
+    final intentId = seedConfirmedIntent();
+    final prepared = uploads.adoptPlan(
+      localSendIntentId: intentId,
+      plan: _planA(),
+      now: _time(6),
+    );
+    uploads.beginAttempt(id: prepared.id, attemptId: _attemptA, now: _time(7));
+    final other = buildUploads(authOverride: _auth(Object(), store: _storeB));
+    expect(
+      () => other.reconciliationBindingSha256(prepared.id),
+      throwsA(_stateFailure('cloud_sync_attachment_upload_binding_changed')),
+    );
+    seedCheckpoint(2);
+    expect(
+      () => uploads.reconciliationBindingSha256(prepared.id),
+      throwsA(_stateFailure('cloud_sync_attachment_upload_generation_changed')),
+    );
+  });
+
+  for (final scenario in [
+    'completed',
+    'missing',
+    'other_attempt',
+    'other_result',
+    'other_fence',
+    'client_changed',
+  ]) {
+    test(
+      'upload fence recovery requires exact native evidence: $scenario',
+      () async {
+        final originalEpoch = authoritySnapshot.epoch;
+        final upload = uploads.adoptPlan(
+          localSendIntentId: seedConfirmedIntent(),
+          plan: _planA(),
+          now: _time(6),
+        );
+        uploads.beginAttempt(
+          id: upload.id,
+          attemptId: _attemptA,
+          now: _time(7),
+        );
+        var activeClient = auth.cloudMessagesClient;
+        final expectedClient = activeClient;
+        final binding = _UploadRecoveryBinding();
+        final guard = CloudKitWriterMutationGuard.forTest(
+          store: store,
+          readActiveClient: () => activeClient,
+          privateStorageDirectory: directory.path,
+          buildDecision: CloudKitWriterOwnership.resolve('v2'),
+          nativeAuthBinding: binding,
+          reconciliationBinding: binding,
+        );
+        final interlock = CloudKitOperationInterlock(
+          privateStorageDirectory: directory.path,
+          fenceStore: InMemoryCloudSyncStore(),
+        );
+        Future<T> run<T>(Future<T> Function() action) => interlock.runExclusive(
+          kind: CloudKitOperationKind.v2ReadWrite,
+          action: action,
+        );
+        await expectLater(
+          run(
+            () => guard.runAuthorized<void>(
+              owner: CloudKitWriterOwner.v2,
+              expectedClient: expectedClient,
+              expectedAccountFingerprint: _accountA,
+              preparedHandleBindingSha256: _digest('a'),
+              reconciliationBindingSha256: scenario == 'other_fence'
+                  ? _digest('b')
+                  : uploads.reconciliationBindingSha256(upload.id),
+              requireAdmission: () {},
+              requireDurableAdmission: () async {},
+              action: (capability) async {
+                capability.consumeForNative();
+                throw StateError('synthetic_lost_response');
+              },
+            ),
+          ),
+          throwsA(isA<CloudKitWriterAuthorityFailure>()),
+        );
+        expect(authority.read(_writerScope)!.epoch, originalEpoch + 1);
+        if (scenario == 'other_result' || scenario == 'completed') {
+          uploads.recordUploaded(
+            id: upload.id,
+            attemptId: _attemptA,
+            result: _resultA(),
+            now: _time(8),
+          );
+        }
+        binding.result = scenario == 'missing'
+            ? null
+            : frb_api.CloudSyncAttachmentUploadReceiptEvidence(
+                uploadAttemptId: scenario == 'other_attempt'
+                    ? _attemptB
+                    : _attemptA,
+                planPayloadSha256: _planA().payloadSha256,
+                logicalEntityKeyHash: _planA().logicalEntityKeyHash,
+                serverRecordIdHash: _planA().serverRecordIdHash,
+                completedPayloadSha256: scenario == 'other_result'
+                    ? _digest('b')
+                    : _resultA().payloadSha256,
+              );
+        if (scenario == 'client_changed') {
+          binding.afterVerify = () {
+            activeClient = Object();
+          };
+        }
+        final recovery = run(
+          () => guard.reconcileAttachmentUpload(
+            expectedClient: expectedClient,
+            uploads: uploads,
+            uploadId: upload.id,
+          ),
+        );
+        if (scenario == 'completed') {
+          expect(await recovery, isTrue);
+          guard.requireClear();
+          expect(authority.read(_writerScope)!.epoch, originalEpoch + 2);
+          // Repeat after a restart-shaped read keeps the original result and epoch.
+          expect(
+            await run(
+              () => guard.reconcileAttachmentUpload(
+                expectedClient: expectedClient,
+                uploads: uploads,
+                uploadId: upload.id,
+              ),
+            ),
+            isTrue,
+          );
+          expect(authority.read(_writerScope)!.epoch, originalEpoch + 2);
+          expect(
+            uploads.read(upload.id).result!.leaseReference,
+            _resultA().leaseReference,
+          );
+        } else {
+          if (scenario == 'missing') {
+            expect(await recovery, isFalse);
+          } else {
+            await expectLater(
+              recovery,
+              throwsA(isA<CloudKitWriterAuthorityFailure>()),
+            );
+          }
+          expect(
+            () => guard.requireClear(),
+            throwsA(isA<CloudKitWriterAuthorityFailure>()),
+          );
+          expect(authority.read(_writerScope)!.epoch, originalEpoch + 1);
+        }
+        expect(
+          binding.calls,
+          scenario == 'other_fence'
+              ? 0
+              : scenario == 'completed'
+              ? 2
+              : 1,
+        );
+        expect(
+          store.box<CloudAttachmentUploadEntity>().get(upload.id)!.attemptId,
+          _attemptA,
+        );
+        expect(store.box<CloudOutboxOperationEntity>().getAll(), isEmpty);
+      },
+    );
+  }
+
+  test(
+    'retained evidence survives epoch rotation without granting a new attempt',
+    () {
+      final prepared = uploads.adoptPlan(
+        localSendIntentId: seedConfirmedIntent(),
+        plan: _planA(),
+        now: _time(6),
+      );
+      final authorityBox = store.box<CloudKitWriterAuthorityEntity>();
+      authorityBox.put(authorityBox.getAll().single..epoch += 1);
+      // A retained plan remains inspectable, but its old intent cannot acquire
+      // another attempt. Rebinding the reader to the new epoch does not help.
+      provisionJournal();
+      uploads = buildUploads();
+      expect(
+        uploads.read(prepared.id).state,
+        CloudAttachmentUploadState.prepared,
+      );
+      expect(
+        () => uploads.beginAttempt(
+          id: prepared.id,
+          attemptId: _attemptA,
+          now: _time(8),
+        ),
+        throwsA(_stateFailure('cloud_sync_local_send_intent_changed')),
+      );
+    },
+  );
+
+  test(
+    'late receipt and final admission survive writer reconciliation without rekeying',
+    () async {
+      final originalEpoch = authoritySnapshot.epoch;
+      final intentId = seedConfirmedIntent();
+      final prepared = uploads.adoptPlan(
+        localSendIntentId: intentId,
+        plan: _planA(),
+        now: _time(6),
+      );
+      uploads.beginAttempt(
+        id: prepared.id,
+        attemptId: _attemptA,
+        now: _time(7),
+      );
+      final binding = uploads.reconciliationBindingSha256(prepared.id);
+      final originalSource = uploads.readOriginalSource(prepared.id).encode();
+      await CloudKitOperationInterlock(
+        privateStorageDirectory: directory.path,
+        fenceStore: InMemoryCloudSyncStore(),
+      ).runExclusive(
+        kind: CloudKitOperationKind.v2ReadWrite,
+        action: () async {
+          final permit = authority.issuePermit(
+            _writerScope,
+            expectedOwner: CloudKitWriterOwner.v2,
+          );
+          authority.markMutationUnknown(permit, now: _time(8));
+          expect(authority.read(_writerScope)!.epoch, originalEpoch + 1);
+          // A native completion can be retained while the global writer is fenced.
+          uploads.markUnknown(
+            id: prepared.id,
+            attemptId: _attemptA,
+            now: _time(9),
+          );
+          uploads.recordUploaded(
+            id: prepared.id,
+            attemptId: _attemptA,
+            result: _resultA(),
+            now: _time(10),
+          );
+          var admissions = 0;
+          CloudOutboxOperation admit(
+            Store tx,
+            CloudSyncProtectedOutboundStageData result,
+          ) {
+            admissions++;
+            _persistFinalOperation(tx, result);
+            return _finalOperation(result);
+          }
+
+          expect(
+            () => uploads.adoptRecordCreate(
+              id: prepared.id,
+              admit: admit,
+              now: _time(11),
+            ),
+            throwsA(isA<CloudKitWriterAuthorityFailure>()),
+          );
+          expect(admissions, 0);
+          authority.reconcileMutationFence(
+            _writerScope,
+            owner: CloudKitWriterOwner.v2,
+            fencedEpoch: originalEpoch,
+            now: _time(12),
+          );
+          provisionJournal();
+          uploads = buildUploads();
+          final adopted = uploads.adoptRecordCreate(
+            id: prepared.id,
+            admit: admit,
+            now: _time(13),
+          );
+          uploads.adoptRecordCreate(
+            id: prepared.id,
+            admit: admit,
+            now: _time(14),
+          );
+          uploads.requireAdoptedOperation(_finalOperation(_resultA()));
+          expect(adopted.state, CloudAttachmentUploadState.adopted);
+          expect(admissions, 1);
+          expect(uploads.reconciliationBindingSha256(prepared.id), binding);
+          expect(
+            uploads.readOriginalSource(prepared.id).encode(),
+            originalSource,
+          );
+          expect(
+            store
+                .box<CloudAttachmentUploadEntity>()
+                .get(prepared.id)!
+                .writerEpoch,
+            originalEpoch,
+          );
+          expect(
+            store
+                .box<CloudSyncLocalSendIntentEntity>()
+                .get(intentId)!
+                .writerEpoch,
+            originalEpoch,
+          );
+        },
+      );
+    },
+  );
+}
+
+final class _UploadRecoveryBinding
+    implements
+        CloudSyncNativeAuthBinding,
+        CloudKitWriterUploadReconciliationBinding {
+  int calls = 0;
+  void Function()? afterVerify;
+  frb_api.CloudSyncAttachmentUploadReceiptEvidence? result;
+
+  @override
+  Future<CloudSyncNativeAuthMetadata> capture({
+    required Object cloudMessagesClient,
+    required String privateStorageDirectory,
+  }) async => const CloudSyncNativeAuthMetadata(
+    nativeSessionId: 'native-session',
+    accountFingerprint: _accountA,
+    protectedStoreIdentity: _storeA,
+  );
+
+  @override
+  Future<frb_api.CloudSyncAttachmentUploadReceiptEvidence?>
+  verifyAttachmentUploadReceipt({
+    required Object cloudMessagesClient,
+    required frb_api.CloudSyncNativeSendReceiptContext context,
+    required frb_api.CloudSyncAttachmentUploadPlanReference planStage,
+    required String expectedAttemptId,
+  }) async {
+    calls++;
+    expect(context.accountFingerprint, _accountA);
+    expect(context.sourceBinding, isNotNull);
+    expect(planStage.payloadSha256, _planA().payloadSha256);
+    expect(expectedAttemptId, _attemptA);
+    afterVerify?.call();
+    return result;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('unexpected_native_operation');
 }
 
 final class _FakeProtector implements CloudSyncProtector {
