@@ -2342,7 +2342,16 @@ class ObjectBoxCloudSyncStore
         });
         if (!dependenciesConfirmed) continue;
 
-        _requireOperationProjectionReadyLocked(scope, entity);
+        try {
+          _requireOperationProjectionReadyLocked(scope, entity);
+        } on StateError catch (error) {
+          if (error.message != 'cloud_sync_local_send_ids_proof_required') {
+            rethrow;
+          }
+          // Retain pre-proof pending work without letting it monopolize every
+          // lease pass. This neither resolves unknown outcomes nor resends IDS.
+          continue;
+        }
 
         entity
           ..state = _outboxStatusToInt(CloudOutboxStatus.leased)
@@ -3958,6 +3967,7 @@ class ObjectBoxCloudSyncStore
     }
     // Validate mapping, original protected envelope and current generation in
     // this same transaction, including after restart and after lease changes.
+    journal.requireIdsConfirmationForDispatch(source);
     readAdoptedLocalSendOperation(scope, journal: journal, source: source);
     requireCloudSyncAdoptedLocalSendDependencies(
       store: _store,

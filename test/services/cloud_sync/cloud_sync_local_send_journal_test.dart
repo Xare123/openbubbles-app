@@ -103,6 +103,126 @@ void main() {
     expect(journal.readReady(), hasLength(1));
   });
 
+  test(
+    'old deferred proof stays retained and cannot promote after restart',
+    () async {
+      awaitingNativeConfirmation();
+      final id = confirmNative()!;
+      final old = store.box<CloudSyncLocalSendIntentEntity>().get(id)!
+        ..idsConfirmationVersion = 0;
+      final binding = old.admittedBindingSha256;
+      store.box<CloudSyncLocalSendIntentEntity>().put(old);
+      await reopen();
+      expect(
+        journal.readIdsConfirmedDeferred(currentAuth: _auth(Object())),
+        isEmpty,
+      );
+      expect(
+        () => journal.promoteIdsConfirmedDeferred(
+          intentId: id,
+          currentAuth: _auth(Object()),
+          now: _time(5),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'code',
+            'cloud_sync_local_send_ids_proof_required',
+          ),
+        ),
+      );
+      final retained = store.box<CloudSyncLocalSendIntentEntity>().get(id)!;
+      expect(retained.state, 3);
+      expect(retained.idsConfirmationVersion, 0);
+      expect(retained.admittedBindingSha256, binding);
+      expect(confirmNative(succeeded: false), isNull);
+      expect(
+        store
+            .box<CloudSyncLocalSendIntentEntity>()
+            .get(id)!
+            .idsConfirmationVersion,
+        0,
+      );
+      // Only a new positive native confirmation requalifies the original row.
+      expect(confirmNative(), id);
+      expect(
+        journal.readIdsConfirmedDeferred(currentAuth: _auth(Object())),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'old ready row requires new proof before receipt acknowledgment or admission',
+    () async {
+      awaitingNativeConfirmation();
+      final id = confirmNative()!;
+      journal.promoteIdsConfirmedDeferred(
+        intentId: id,
+        currentAuth: _auth(Object()),
+        now: _time(5),
+      );
+      final old = store.box<CloudSyncLocalSendIntentEntity>().get(id)!
+        ..idsConfirmationVersion = 0;
+      store.box<CloudSyncLocalSendIntentEntity>().put(old);
+      await reopen();
+      expect(journal.readReady(), isEmpty);
+      expect(
+        () => journal.readForAdmission(id),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'code',
+            'cloud_sync_local_send_ids_proof_required',
+          ),
+        ),
+      );
+      final resolution = journal.resolveNativeSendReceipt(old.messageGuidHash)!;
+      expect(resolution.alreadyDurable, isFalse);
+      expect(resolution.stableGuid, _guidA);
+      expect(() => confirmNative(current: false), throwsStateError);
+      expect(journal.readReady(), isEmpty);
+      expect(confirmNative(), isNull);
+      expect(
+        journal.resolveNativeSendReceipt(old.messageGuidHash)!.alreadyDurable,
+        isTrue,
+      );
+      expect(journal.readReady().single.id, id);
+      expect(journal.readReady().single.idsConfirmationVersion, 2);
+    },
+  );
+
+  test(
+    'legacy ready rows do not consume the bounded qualified-send window',
+    () {
+      awaitingNativeConfirmation();
+      final id = confirmNative()!;
+      journal.promoteIdsConfirmedDeferred(
+        intentId: id,
+        currentAuth: _auth(Object()),
+        now: _time(5),
+      );
+      final ready = store.box<CloudSyncLocalSendIntentEntity>().get(id)!;
+      for (var i = 0; i < 60; i++) {
+        store.box<CloudSyncLocalSendIntentEntity>().put(
+          CloudSyncLocalSendIntentEntity(
+            intentKey: 'synthetic-pre-proof-$i',
+            accountFingerprint: ready.accountFingerprint,
+            writerEpoch: ready.writerEpoch,
+            localMessageId: ready.localMessageId,
+            messageGuidHash: 'synthetic-$i',
+            sourceSha256: ready.sourceSha256,
+            state: 1,
+            createdAtMs: 1,
+            updatedAtMs: 1,
+          ),
+        );
+      }
+      expect(journal.readReady(limit: 1).single.id, id);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 61);
+    },
+  );
+
   test('startup failure sweep retains only unresolved native confirmation', () {
     final message = awaitingNativeConfirmation();
     expect(

@@ -2917,7 +2917,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(33, 7403419454425897175),
     name: 'CloudSyncLocalSendIntentEntity',
-    lastPropertyId: const obx_int.IdUid(14, 6652370228940045642),
+    lastPropertyId: const obx_int.IdUid(15, 7746544196685616233),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -3005,6 +3005,12 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(14, 6652370228940045642),
         name: 'confirmedReadbackBindingSha256',
         type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 7746544196685616233),
+        name: 'idsConfirmationVersion',
+        type: 6,
         flags: 0,
       ),
     ],
@@ -6973,7 +6979,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
                 object.confirmedReadbackBindingSha256 == null
                 ? null
                 : fbb.writeString(object.confirmedReadbackBindingSha256!);
-            fbb.startTable(15);
+            fbb.startTable(16);
             fbb.addInt64(0, object.id);
             fbb.addOffset(1, intentKeyOffset);
             fbb.addOffset(2, accountFingerprintOffset);
@@ -6988,6 +6994,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
             fbb.addOffset(11, admittedBindingSha256Offset);
             fbb.addOffset(12, admittedChatBindingOffset);
             fbb.addOffset(13, confirmedReadbackBindingSha256Offset);
+            fbb.addInt64(14, object.idsConfirmationVersion);
             fbb.finish(fbb.endTable());
             return object.id;
           },
@@ -7042,6 +7049,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final confirmedReadbackBindingSha256Param = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 30);
+            final idsConfirmationVersionParam = const fb.Int64Reader()
+                .vTableGet(buffer, rootOffset, 32, 0);
             final createdAtMsParam = const fb.Int64Reader().vTableGet(
               buffer,
               rootOffset,
@@ -7068,6 +7077,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
               admittedChatBinding: admittedChatBindingParam,
               confirmedReadbackBindingSha256:
                   confirmedReadbackBindingSha256Param,
+              idsConfirmationVersion: idsConfirmationVersionParam,
               createdAtMs: createdAtMsParam,
               updatedAtMs: updatedAtMsParam,
             );
@@ -9513,5 +9523,11 @@ class CloudSyncLocalSendIntentEntity_ {
   static final confirmedReadbackBindingSha256 =
       obx.QueryStringProperty<CloudSyncLocalSendIntentEntity>(
         _entities[24].properties[13],
+      );
+
+  /// See [CloudSyncLocalSendIntentEntity.idsConfirmationVersion].
+  static final idsConfirmationVersion =
+      obx.QueryIntegerProperty<CloudSyncLocalSendIntentEntity>(
+        _entities[24].properties[14],
       );
 }

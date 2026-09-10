@@ -17,6 +17,8 @@ import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 
+const int cloudSyncIdsConfirmationVersion = 2;
+
 /// Immutable local send identity. Raw routing/content never leaves this
 /// capture; the raw GUID is retained in memory only for exact revalidation.
 final class CloudSyncLocalSendIdentity {
@@ -663,6 +665,9 @@ final class CloudSyncLocalSendJournal {
             intent.sourceSha256 != identity.sourceSha256) {
           throw StateError('cloud_sync_local_send_source_changed');
         }
+        if (intent.idsConfirmationVersion != cloudSyncIdsConfirmationVersion) {
+          return false;
+        }
         if (intent.state == 1) {
           _validatedMessage(intent);
           return true;
@@ -707,6 +712,7 @@ final class CloudSyncLocalSendJournal {
             actual.sourceSha256 == identity.sourceSha256 &&
             saved!.stagingGuid == identity._guid;
       });
+
   /// Resolves a content-free native receipt only against this exact account,
   /// owner epoch and existing journal row. Missing or source-changed rows are
   /// not acknowledged by callers. State 1/2 is already durable and needs no
@@ -741,7 +747,8 @@ final class CloudSyncLocalSendJournal {
     }
     if (found == null) return null;
     final intent = _readBoundIntent(found.id);
-    if (intent.state == 1 || intent.state == 2) {
+    if ((intent.state == 1 || intent.state == 2) &&
+        intent.idsConfirmationVersion == cloudSyncIdsConfirmationVersion) {
       if (intent.state == 2) {
         _validatedExactAdoptedMessage(intent);
       } else {
@@ -859,8 +866,8 @@ final class CloudSyncLocalSendJournal {
     confirmed: false,
   );
 
-  /// Call only after the matching IDS send future succeeds. A failed or
-  /// interrupted send never advances the durable intent to ready.
+  /// Call only after positive IDS participant acceptance is verified. A
+  /// completed job alone, failure, or interruption never authorizes upload.
   void saveConfirmedSubmission({
     required CloudSyncLocalSendIdentity identity,
     required int Function() persistMessage,
@@ -873,8 +880,8 @@ final class CloudSyncLocalSendJournal {
     confirmed: true,
   );
 
-  /// Records a completed IDS send without awaiting native auth again. The
-  /// caller must invoke this only after the matching send future succeeds and
+  /// Records positive IDS participant acceptance without awaiting native auth
+  /// again. Call only after a v2 native receipt or the strict Windows send and
   /// provide the original captured auth plus a bounded synchronous proof that
   /// its in-memory client/session is still current. State 3 is durable but is
   /// never eligible for admission until [promoteIdsConfirmedDeferred] succeeds.
@@ -940,6 +947,7 @@ final class CloudSyncLocalSendJournal {
       intent
         ..localMessageId = messageId
         ..state = 3
+        ..idsConfirmationVersion = cloudSyncIdsConfirmationVersion
         ..admittedBindingSha256 = authBinding
         ..updatedAtMs = now.millisecondsSinceEpoch;
       return _intents.put(intent);
@@ -984,7 +992,28 @@ final class CloudSyncLocalSendJournal {
       }
       if (found == null) return null;
       final intent = _readBoundIntent(found.id);
-      if (intent.state == 1 || intent.state == 2) return null;
+      if (intent.state == 1 || intent.state == 2) {
+        if (intent.idsConfirmationVersion != cloudSyncIdsConfirmationVersion) {
+          // A fresh v2 receipt may requalify this exact prior intent. Merely
+          // reopening or inspecting an older row never changes its proof.
+          if (!stillCurrent() ||
+              capturedAuth.accountFingerprint != intent.accountFingerprint ||
+              !now.isUtc ||
+              now.millisecondsSinceEpoch <= 0) {
+            throw StateError('cloud_sync_local_send_identity_changed');
+          }
+          if (intent.state == 2) {
+            _validatedExactAdoptedMessage(intent);
+          } else {
+            _validatedMessage(intent);
+          }
+          intent
+            ..idsConfirmationVersion = cloudSyncIdsConfirmationVersion
+            ..updatedAtMs = now.millisecondsSinceEpoch;
+          _intents.put(intent);
+        }
+        return null;
+      }
       final message = _messages.get(intent.localMessageId);
       final chat = message?.chat.target;
       if (message == null ||
@@ -1044,6 +1073,10 @@ final class CloudSyncLocalSendJournal {
                     )
                     .and(CloudSyncLocalSendIntentEntity_.state.equals(3))
                     .and(
+                      CloudSyncLocalSendIntentEntity_.idsConfirmationVersion
+                          .equals(cloudSyncIdsConfirmationVersion),
+                    )
+                    .and(
                       CloudSyncLocalSendIntentEntity_.admittedBindingSha256
                           .equals(_authBinding(currentAuth)),
                     ),
@@ -1086,6 +1119,7 @@ final class CloudSyncLocalSendJournal {
       if (intent.state != 3) {
         throw StateError('cloud_sync_local_send_not_deferred');
       }
+      _requireIdsConfirmation(intent);
       if (currentAuth.accountFingerprint != intent.accountFingerprint ||
           intent.admittedBindingSha256 != _authBinding(currentAuth)) {
         throw StateError('cloud_sync_local_send_auth_changed');
@@ -1163,7 +1197,11 @@ final class CloudSyncLocalSendJournal {
             updatedAtMs: now.millisecondsSinceEpoch,
           );
       intent.localMessageId = messageId;
-      if (confirmed && intent.state == 0) intent.state = 1;
+      if (confirmed && intent.state == 0) {
+        intent
+          ..state = 1
+          ..idsConfirmationVersion = cloudSyncIdsConfirmationVersion;
+      }
       intent.updatedAtMs = now.millisecondsSinceEpoch;
       _intents.put(intent);
     });
@@ -1185,7 +1223,11 @@ final class CloudSyncLocalSendJournal {
                         _binding.epoch,
                       ),
                     )
-                    .and(CloudSyncLocalSendIntentEntity_.state.equals(1)),
+                    .and(CloudSyncLocalSendIntentEntity_.state.equals(1))
+                    .and(
+                      CloudSyncLocalSendIntentEntity_.idsConfirmationVersion
+                          .equals(cloudSyncIdsConfirmationVersion),
+                    ),
               )
               .order(CloudSyncLocalSendIntentEntity_.updatedAtMs)
               .order(CloudSyncLocalSendIntentEntity_.id)
@@ -1209,6 +1251,7 @@ final class CloudSyncLocalSendJournal {
         if (intent.state != 1 && intent.state != 2) {
           throw StateError('cloud_sync_local_send_not_ready');
         }
+        if (intent.state == 1) _requireIdsConfirmation(intent);
         final message = intent.state == 1 ? _validatedMessage(intent) : null;
         return CloudSyncLocalSendAdmissionSource._(intent, message);
       });
@@ -1277,8 +1320,29 @@ final class CloudSyncLocalSendJournal {
             : 'cloud_sync_local_send_not_ready',
       );
     }
+    _requireIdsConfirmation(intent);
     return _validatedMessage(intent);
   });
+
+  /// Only new submission needs current IDS proof. Reading an old adopted
+  /// envelope and reconciling a possibly completed remote write remain legal;
+  /// otherwise an upgrade would strand ambiguity or invite blind resending.
+  void requireIdsConfirmationForDispatch(
+    CloudSyncLocalSendAdmissionSource expected,
+  ) => _store.runInTransaction(TxMode.read, () {
+    _verifyLocalOwnership();
+    final intent = _readBoundIntent(expected.intentId);
+    if (!expected._matches(intent)) {
+      throw StateError('cloud_sync_local_send_adoption_changed');
+    }
+    _requireIdsConfirmation(intent);
+  });
+
+  static void _requireIdsConfirmation(CloudSyncLocalSendIntentEntity intent) {
+    if (intent.idsConfirmationVersion != cloudSyncIdsConfirmationVersion) {
+      throw StateError('cloud_sync_local_send_ids_proof_required');
+    }
+  }
 
   /// Resolve explicit adoption, never origin inferred from an outgoing row.
   /// The immutable envelope binding survives restart and receipt transitions.
@@ -1526,6 +1590,7 @@ final class CloudSyncLocalSendJournal {
         operation.createdAt.millisecondsSinceEpoch != intent.createdAtMs) {
       throw StateError('cloud_sync_local_send_adoption_changed');
     }
+    _requireIdsConfirmation(intent);
     final chatBinding = requireCloudSyncLocalSendDependencies(
       store: _store,
       messageScope: operation.scope,
@@ -1969,6 +2034,7 @@ final class CloudSyncLocalSendAdmissionSource {
       admittedOperationId = intent.admittedOperationId,
       admittedBindingSha256 = intent.admittedBindingSha256,
       admittedChatBinding = intent.admittedChatBinding,
+      idsConfirmationVersion = intent.idsConfirmationVersion,
       state = intent.state,
       createdAtUtc = DateTime.fromMillisecondsSinceEpoch(
         intent.createdAtMs,
@@ -1985,6 +2051,7 @@ final class CloudSyncLocalSendAdmissionSource {
   final String? admittedOperationId;
   final String? admittedBindingSha256;
   final String? admittedChatBinding;
+  final int idsConfirmationVersion;
   final int state;
   final DateTime createdAtUtc;
   final Message? message;
@@ -2001,6 +2068,7 @@ final class CloudSyncLocalSendAdmissionSource {
       admittedOperationId == intent.admittedOperationId &&
       admittedBindingSha256 == intent.admittedBindingSha256 &&
       admittedChatBinding == intent.admittedChatBinding &&
+      idsConfirmationVersion == intent.idsConfirmationVersion &&
       createdAtUtc.millisecondsSinceEpoch == intent.createdAtMs;
 
   @override

@@ -2512,7 +2512,7 @@
     },
     {
       "id": "33:7403419454425897175",
-      "lastPropertyId": "14:6652370228940045642",
+      "lastPropertyId": "15:7746544196685616233",
       "name": "CloudSyncLocalSendIntentEntity",
       "properties": [
         {
@@ -2591,6 +2591,11 @@
           "id": "14:6652370228940045642",
           "name": "confirmedReadbackBindingSha256",
           "type": 9
+        },
+        {
+          "id": "15:7746544196685616233",
+          "name": "idsConfirmationVersion",
+          "type": 6
         }
       ],
       "relations": []

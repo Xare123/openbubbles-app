@@ -609,6 +609,112 @@ void main() {
     });
 
     test(
+      'old adopted source can recover but cannot obtain a new send lease',
+      () async {
+        transport.stages.add(_stage('a', 'P', 'L', 'S'));
+        final first = await admit();
+        objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+          intent()..idsConfirmationVersion = 0,
+        );
+        final recovered = await admit();
+        expect(recovered.operationId, first.operationId);
+        expect(encodes, 1);
+        store = ObjectBoxCloudSyncStore(
+          store: objectBox,
+          protector: _Protector(),
+          clock: () => testEpoch,
+          localSendJournal: journal,
+        );
+        expect(
+          await store.leaseEligibleOutbox(
+            scope,
+            now: testEpoch,
+            limit: 1,
+            leaseId: 'pre-proof-no-send',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save},
+          ),
+          isEmpty,
+        );
+        final retained = (await store.readOutboxEntries(scope)).single;
+        expect(retained.status, CloudOutboxStatus.pending);
+        expect(
+          retained.encryptedPayloadReference,
+          first.encryptedPayloadReference,
+        );
+        expect(intent().state, 2);
+        expect(intent().idsConfirmationVersion, 0);
+      },
+    );
+
+    test(
+      'proof is rechecked at submission even after lease acquisition',
+      () async {
+        transport.stages.add(_stage('a', 'P', 'L', 'S'));
+        final operation = await admit();
+        store = ObjectBoxCloudSyncStore(
+          store: objectBox,
+          protector: _Protector(),
+          clock: () => testEpoch,
+          localSendJournal: journal,
+        );
+        await store.leaseEligibleOutbox(
+          scope,
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'proof-changed',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        );
+        objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+          intent()..idsConfirmationVersion = 0,
+        );
+        await expectLater(
+          store.markOutboxSubmissionStarted(
+            scope,
+            leaseId: 'proof-changed',
+            now: testEpoch,
+            submissionIdentity: testSubmissionIdentity([operation.operationId]),
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'code',
+              'cloud_sync_local_send_ids_proof_required',
+            ),
+          ),
+        );
+        final retained = (await store.readOutboxEntries(scope)).single;
+        expect(retained.status, CloudOutboxStatus.leased);
+        expect(retained.appleRequestUuid, isNull);
+      },
+    );
+
+    test(
+      'old IDS proof does not prevent exact CloudKit readback reconciliation',
+      () async {
+        final operation = await confirmCloudSave();
+        final old = intent()..idsConfirmationVersion = 0;
+        final binding = old.admittedBindingSha256;
+        objectBox.box<CloudSyncLocalSendIntentEntity>().put(old);
+        await store.clearConfirmedProtectedOutboundLeaseReference(
+          expectedOperation: operation,
+          recordVerifiedLocalSendReadback: true,
+        );
+        expect(intent().confirmedReadbackBindingSha256, binding);
+        expect(
+          intent().idsConfirmationVersion,
+          0,
+          reason: 'CloudKit presence is not retroactive IDS acceptance',
+        );
+        expect(
+          (await store.readOutboxEntries(scope)).single.protectedLeaseReference,
+          isNull,
+        );
+      },
+    );
+
+    test(
       'verified replay persists the immutable binding with receipt release',
       () async {
         final operation = await confirmCloudSave();

@@ -8327,7 +8327,12 @@ class RustPushService extends GetxService {
       );
     }
     final confirmedIntentId = intentId;
-    if (confirmedIntentId == null) return;
+    if (confirmedIntentId == null) {
+      // A fresh v2 receipt can requalify an older ready/adopted row without
+      // repeating its state transition. Wake the worker after durable proof.
+      _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
+      return;
+    }
     try {
       await CloudSyncLocalSendAuthFence(
         expected: auth,

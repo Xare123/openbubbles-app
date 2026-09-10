@@ -51,6 +51,11 @@ class CloudSyncLocalSendIntentEntity {
   /// verified replay callback, atomically with durable receipt release.
   String? confirmedReadbackBindingSha256;
 
+  /// 0 on pre-proof rows. Version 2 records positive IDS participant
+  /// acceptance, not merely completion of the native send job. Never infer
+  /// this value from state, message flags, CloudKit readback, or an upgrade.
+  int idsConfirmationVersion;
+
   int createdAtMs;
   int updatedAtMs;
 
@@ -67,6 +72,7 @@ class CloudSyncLocalSendIntentEntity {
     this.admittedBindingSha256,
     this.admittedChatBinding,
     this.confirmedReadbackBindingSha256,
+    this.idsConfirmationVersion = 0,
     required this.createdAtMs,
     required this.updatedAtMs,
   });

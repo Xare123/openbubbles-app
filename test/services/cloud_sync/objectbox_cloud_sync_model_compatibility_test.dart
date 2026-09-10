@@ -266,6 +266,7 @@ void main() {
           'admittedBindingSha256',
           'admittedChatBinding',
           'confirmedReadbackBindingSha256',
+          'idsConfirmationVersion',
         ].contains(property['name']),
       );
       intentModel['lastPropertyId'] = '10:3816774319385985138';
@@ -338,6 +339,7 @@ void main() {
       (property) => [
         'admittedChatBinding',
         'confirmedReadbackBindingSha256',
+        'idsConfirmationVersion',
       ].contains(property['name']),
     );
     intentModel['lastPropertyId'] = '12:8651771725641056063';
