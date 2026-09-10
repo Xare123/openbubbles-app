@@ -5,6 +5,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_production_preflight.dart';
+import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloud_sync_models.dart';
 import 'cloudkit_operation_interlock.dart';
@@ -18,7 +19,11 @@ final class ObjectBoxCloudSyncPreflightReader {
     required Store store,
     DateTime Function()? now,
     Set<String>? ignoredScopeKeys,
+    CloudSyncLocalSendJournal? localSendJournal,
   }) : _store = store,
+       // Keep this optional injection named without exposing the private field.
+       // ignore: prefer_initializing_formals
+       _localSendJournal = localSendJournal,
        _leases = store.box<CloudSyncLeaseEntity>(),
        _outbox = store.box<CloudOutboxOperationEntity>(),
        _checkpoints = store.box<CloudSyncCheckpointEntity>(),
@@ -31,6 +36,7 @@ final class ObjectBoxCloudSyncPreflightReader {
       ObjectBoxCloudSyncPreflightReader(store: Database.store);
 
   final Store _store;
+  final CloudSyncLocalSendJournal? _localSendJournal;
   final Box<CloudSyncLeaseEntity> _leases;
   final Box<CloudOutboxOperationEntity> _outbox;
   final Box<CloudSyncCheckpointEntity> _checkpoints;
@@ -58,13 +64,33 @@ final class ObjectBoxCloudSyncPreflightReader {
           for (final checkpoint in _checkpoints.getAll())
             checkpoint.checkpointKey: checkpoint,
         };
+        final journals = <String, CloudSyncLocalSendJournal?>{};
+        final heldRows = <int>{};
+        for (final row in rows) {
+          if (row.state != CloudOutboxStatus.pending.index) continue;
+          final journal =
+              _localSendJournal ??
+              journals.putIfAbsent(
+                row.accountFingerprint,
+                () => CloudSyncLocalSendJournal.forRetainedQueueInspection(
+                  _store,
+                  row.accountFingerprint,
+                ),
+              );
+          if (journal != null &&
+              journal.isBoundToStore(_store) &&
+              journal.isRetainedPreproofPendingCreate(row)) {
+            heldRows.add(row.id);
+          }
+        }
         return CloudSyncLocalPreflightState(
           objectBoxReady: true,
           coordinatorLeaseActive: query.findFirst() != null,
           outboxCount: rows.length,
-          settledOutboxFingerprint: settledAuditFingerprint(
+          settledOutboxFingerprint: _settledAuditFingerprint(
             rows,
             currentCheckpoints: checkpoints,
+            retainedPreproofRowIds: heldRows,
           ),
         );
       } finally {
@@ -83,6 +109,14 @@ final class ObjectBoxCloudSyncPreflightReader {
   static String? settledAuditFingerprint(
     List<CloudOutboxOperationEntity> rows, {
     Map<String, CloudSyncCheckpointEntity> currentCheckpoints = const {},
+  }) => _settledAuditFingerprint(rows, currentCheckpoints: currentCheckpoints);
+
+  // Only read() can supply held IDs after checking the live journal binding.
+  // The public row-only helper must not infer proof from a pending row's shape.
+  static String? _settledAuditFingerprint(
+    List<CloudOutboxOperationEntity> rows, {
+    Map<String, CloudSyncCheckpointEntity> currentCheckpoints = const {},
+    Set<int> retainedPreproofRowIds = const {},
   }) {
     if (rows.isEmpty) return null;
     final generationFences = <int?>[];
@@ -93,6 +127,7 @@ final class ObjectBoxCloudSyncPreflightReader {
       );
       generationFences.add(fencedGeneration);
       if (fencedGeneration != null ||
+          retainedPreproofRowIds.contains(row.id) ||
           cloudSyncIsRetiredUnsubmittedChatCreate(row)) {
         continue;
       }
@@ -132,7 +167,17 @@ final class ObjectBoxCloudSyncPreflightReader {
         .convert(
           utf8.encode(
             jsonEncode(
-              hasGenerationFence
+              retainedPreproofRowIds.isNotEmpty
+                  ? [
+                      'cloud-sync-settled-outbox-v3',
+                      for (var index = 0; index < rows.length; index++)
+                        [
+                          retainedPreproofRowIds.contains(rows[index].id),
+                          generationFences[index],
+                          ..._auditColumns(rows[index]),
+                        ],
+                    ]
+                  : hasGenerationFence
                   ? [
                       'cloud-sync-settled-outbox-v2',
                       for (var index = 0; index < rows.length; index++)

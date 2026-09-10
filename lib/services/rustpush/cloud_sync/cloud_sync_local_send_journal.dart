@@ -10,6 +10,7 @@ import 'cloud_operation_identity.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
+import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloud_sync_group_send_route.dart';
 import 'cloud_sync_reaction_send_identity.dart';
 import 'cloud_sync_persistent_keys.dart';
@@ -569,6 +570,145 @@ final class CloudSyncLocalSendJournal {
   final Box<Message> _messages;
 
   bool isBoundToStore(Store store) => identical(store, _store);
+
+  /// Reconstruct local ownership for read-only queue inspection, not sending.
+  static CloudSyncLocalSendJournal? forRetainedQueueInspection(
+    Store store,
+    String accountFingerprint,
+  ) {
+    final authority = ObjectBoxCloudKitWriterAuthority(store: store);
+    final owner = authority.read(
+      CloudKitWriterScope(accountFingerprint: accountFingerprint),
+    );
+    if (owner == null || owner.owner != CloudKitWriterOwner.v2) return null;
+    return CloudSyncLocalSendJournal(
+      store: store,
+      authority: authority,
+      authoritySnapshot: owner,
+    );
+  }
+
+  /// A retained pre-upgrade origin is not an upload candidate or a receipt.
+  /// Only a pristine, never-submitted create may stop blocking unrelated work.
+  /// Re-evaluate from the same transaction as the caller's queue snapshot.
+  bool isRetainedPreproofPendingCreate(CloudOutboxOperationEntity row) =>
+      _store.runInTransaction(TxMode.read, () {
+        if (row.state != CloudOutboxStatus.pending.index ||
+            row.action != CloudOutboxAction.save.index ||
+            row.accountFingerprint != _binding.scope.accountFingerprint ||
+            !{'chatManateeZone', 'messageManateeZone'}.contains(row.zone) ||
+            row.attemptCount != 0 ||
+            row.appleRequestUuid != null ||
+            row.appleOperationUuid != null ||
+            row.confirmedAtMs != 0 ||
+            row.leaseIdHash != null ||
+            row.leaseExpiresAtMs != 0 ||
+            row.nextEligibleAtMs != 0 ||
+            row.lastErrorCategory != null ||
+            row.dependencyOperationIdsJson != '[]' ||
+            row.checkpointGeneration <= 0 ||
+            row.createdAtMs <= 0 ||
+            row.updatedAtMs < row.createdAtMs ||
+            !RegExp(
+              r'^obcs2\.lease\.[0-9a-f]{32}$',
+            ).hasMatch(row.protectedLeaseReference ?? '') ||
+            !RegExp(
+              r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$',
+            ).hasMatch(row.encryptedPayloadRef ?? '') ||
+            !RegExp(r'^[0-9a-f]{64}$').hasMatch(row.payloadSha256 ?? '') ||
+            !RegExp(
+              r'^[A-Za-z0-9_-]{43}$',
+            ).hasMatch(row.serverRecordIdHash ?? '')) {
+          return false;
+        }
+        final scope = CloudSyncScope(
+          accountFingerprint: row.accountFingerprint,
+          container: _binding.scope.container,
+          database: _binding.scope.database,
+          zone: row.zone,
+          streamKind: CloudSyncStreamKind.messages,
+          schemaVersion: cloudSyncSchemaVersion,
+          persistenceLane: CloudSyncPersistenceLane.semantic,
+        );
+        if (row.scopeKey != cloudSyncPersistentScopeKey(scope)) return false;
+        final operation = CloudOutboxOperation(
+          scope: scope,
+          operationId: row.operationId,
+          logicalEntityKeyHash: row.logicalEntityKeyHash,
+          action: CloudOutboxAction.save,
+          payloadVersion: row.payloadVersion,
+          mutationRevision: row.mutationRevision,
+          checkpointGeneration: row.checkpointGeneration,
+          dependencyOperationIds: const {},
+          createdAt: DateTime.fromMillisecondsSinceEpoch(
+            row.createdAtMs,
+            isUtc: true,
+          ),
+          encryptedPayloadReference: row.encryptedPayloadRef,
+          payloadSha256: row.payloadSha256,
+          serverRecordIdHash: row.serverRecordIdHash,
+        );
+        try {
+          _verifyLocalOwnership();
+          final CloudSyncLocalSendAdmissionSource? source;
+          if (scope.zone == 'chatManateeZone') {
+            if (!cloudSyncIsNeverSubmittedChatCreate(row)) return false;
+            final binding = cloudSyncOutboundChatOriginSendProof(
+              row.localChatOrigin!,
+            );
+            if (binding == null) return false;
+            source = _readChatCreateBindingSource(
+              _store,
+              operation,
+              cloudSyncOutboundChatOriginId(row.localChatOrigin!),
+              cloudSyncOutboundChatOriginIdentity(row.localChatOrigin!),
+              binding,
+            );
+          } else {
+            if (row.localChatOrigin != null) return false;
+            source = readAdoptedCreateSource(_store, operation);
+          }
+          if (source == null || source.idsConfirmationVersion != 0) {
+            return false;
+          }
+          final checkpoint = _readUnique(
+            _store.box<CloudSyncCheckpointEntity>().query(
+              CloudSyncCheckpointEntity_.checkpointKey.equals(row.scopeKey),
+            ),
+          );
+          final mapping = _readUnique(
+            _store.box<CloudRecordMapEntity>().query(
+              CloudRecordMapEntity_.scopeKey
+                  .equals(row.scopeKey)
+                  .and(
+                    CloudRecordMapEntity_.logicalEntityKeyHash.equals(
+                      row.logicalEntityKeyHash,
+                    ),
+                  ),
+            ),
+          );
+          return checkpoint != null &&
+              checkpoint.accountFingerprint == row.accountFingerprint &&
+              checkpoint.container == scope.container &&
+              checkpoint.database == scope.database &&
+              checkpoint.zone == scope.zone &&
+              checkpoint.streamKind == scope.streamKind.name &&
+              checkpoint.schemaVersion == scope.schemaVersion &&
+              checkpoint.persistenceLane == scope.persistenceLane.name &&
+              checkpoint.generation == row.checkpointGeneration &&
+              mapping != null &&
+              mapping.accountFingerprint == row.accountFingerprint &&
+              mapping.zone == row.zone &&
+              mapping.generation == row.checkpointGeneration &&
+              mapping.serverRecordIdHash == row.serverRecordIdHash &&
+              mapping.encryptedServerRecordId == row.encryptedPayloadRef;
+        } on StateError {
+          // Unrecognized, changed or malformed evidence remains blocking.
+          return false;
+        } on CloudKitWriterAuthorityFailure {
+          return false;
+        }
+      });
 
   /// Local routing check only. It grants no admission or writer authority.
   static bool hasPendingComposerAdmission(Store store, Message message) {

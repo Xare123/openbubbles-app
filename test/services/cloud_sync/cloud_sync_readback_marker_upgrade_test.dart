@@ -28,6 +28,11 @@ void main() {
         );
         expect(added['id'], '14:6652370228940045642');
         properties.remove(added);
+        // This predecessor predates both additions. Leaving property 15 in
+        // a model whose last property is 13 creates an invalid test database.
+        properties.removeWhere(
+          (row) => row['name'] == 'idsConfirmationVersion',
+        );
         entity['properties'] = properties;
         entity['lastPropertyId'] = '13:3888648459471300555';
         // Use the real pre-field schema, not an empty store already upgraded to
@@ -83,6 +88,7 @@ void main() {
             state == 2 ? 'synthetic-chat-binding' : null,
           );
           expect(row.confirmedReadbackBindingSha256, isNull);
+          expect(row.idsConfirmationVersion, 0);
         }
         // Storage round-trip only. This does not simulate a verified Apple read.
         box.put(box.get(ids[2])!..confirmedReadbackBindingSha256 = 'b' * 64);

@@ -25,9 +25,10 @@ CloudOutboxOperation op(
   CloudSyncScope scope,
   CloudOutboxStatus status, {
   bool lease = false,
+  String? id,
 }) => CloudOutboxOperation(
   scope: scope,
-  operationId: 'synthetic-${scope.zone}',
+  operationId: id ?? 'synthetic-${scope.zone}',
   logicalEntityKeyHash: 'synthetic',
   action: CloudOutboxAction.save,
   payloadVersion: scope == chat ? 1 : 2,
@@ -54,6 +55,9 @@ class Fixture {
   String? driftAfter;
   bool wrongScopeOnReread = false;
   int reads = 0;
+  Future<bool> Function(CloudOutboxOperation)? isHeld;
+  final ackedIds = <String>[];
+  final retainOnFlush = <String>{};
   void event(String value) {
     events.add(value);
     if (driftAfter == value) current = false;
@@ -61,6 +65,12 @@ class Fixture {
 
   Future<bool> run() => drainCloudSyncCreateQueues(
     scopes: scopes,
+    isRetainedPreproofPendingCreate: isHeld == null
+        ? null
+        : (o) async {
+            event('held:${o.scope.zone}:${o.operationId}');
+            return isHeld!(o);
+          },
     validateAccount: () async {
       events.add('auth');
       if (!current) throw StateError('synthetic account drift');
@@ -78,11 +88,17 @@ class Fixture {
     flush: (s) async {
       event('flush:${s.zone}');
       if (flushSettles) {
-        queues[s] = [op(s, CloudOutboxStatus.confirmed, lease: true)];
+        final retained =
+            queues[s]!.where((o) => retainOnFlush.contains(o.operationId)).toList();
+        queues[s] = [
+          ...retained,
+          op(s, CloudOutboxStatus.confirmed, lease: true),
+        ];
       }
     },
     acknowledgeConfirmed: (s, o) async {
       expect(o.scope, s);
+      ackedIds.add(o.operationId);
       event('ack:${s.zone}');
       if (ackFails) throw StateError('synthetic ack failure');
     },
@@ -217,6 +233,97 @@ void main() {
         f.work.any((e) => e.startsWith('flush:') || e.startsWith('ack:')),
         isFalse,
       );
+    },
+  );
+  test(
+    'retained preproof held-only traverses without flush or ack',
+    () async {
+      final f = Fixture();
+      f.queues[chat] = [op(chat, CloudOutboxStatus.pending, id: 'held-chat')];
+      f.queues[message] = [
+        op(message, CloudOutboxStatus.pending, id: 'held-message'),
+      ];
+      f.isHeld = (o) async => o.operationId.startsWith('held-');
+      expect(await f.run(), isTrue);
+      expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
+      expect(f.work.any((e) => e.startsWith('ack:')), isFalse);
+      expect(f.work.any((e) => e.startsWith('reconcile:')), isFalse);
+      expect(f.work, contains('held:${chat.zone}:held-chat'));
+      expect(f.work, contains('held:${message.zone}:held-message'));
+      for (var i = 0; i < f.events.length; i++) {
+        if (f.events[i] != 'auth') expect(f.events[i + 1], 'auth');
+      }
+    },
+  );
+  test(
+    'mixed held plus qualified flushes qualified then acks qualified only',
+    () async {
+      final f = Fixture();
+      f.queues[chat] = [
+        op(chat, CloudOutboxStatus.pending, id: 'held-chat'),
+        op(chat, CloudOutboxStatus.pending),
+      ];
+      f.queues[message] = [];
+      f.retainOnFlush.add('held-chat');
+      f.isHeld = (o) async => o.operationId == 'held-chat';
+      expect(await f.run(), isTrue);
+      expect(f.work, contains('flush:${chat.zone}'));
+      expect(f.ackedIds, ['synthetic-${chat.zone}']);
+      expect(f.ackedIds, isNot(contains('held-chat')));
+      final heldChecks =
+          f.work.where((e) => e == 'held:${chat.zone}:held-chat').length;
+      expect(heldChecks, greaterThanOrEqualTo(2));
+      for (var i = 0; i < f.events.length; i++) {
+        if (f.events[i] != 'auth') expect(f.events[i + 1], 'auth');
+      }
+    },
+  );
+  test(
+    'unknown still blocks even when held callback always true',
+    () async {
+      final f = Fixture();
+      f.queues[chat] = [op(chat, CloudOutboxStatus.pending, id: 'held-chat')];
+      f.queues[message] = [op(message, CloudOutboxStatus.unknownOutcome)];
+      f.isHeld = (_) async => true;
+      expect(await f.run(), isFalse);
+      expect(f.work, contains('reconcile:${message.zone}'));
+      expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
+      expect(f.work.any((e) => e.startsWith('ack:')), isFalse);
+    },
+  );
+  test(
+    'account drift during held callback stops next work',
+    () async {
+      final f = Fixture()..driftAfter = 'held:${chat.zone}:held-chat';
+      f.queues[chat] = [op(chat, CloudOutboxStatus.pending, id: 'held-chat')];
+      f.queues[message] = [];
+      f.isHeld = (_) async => true;
+      await expectLater(f.run(), throwsStateError);
+      expect(f.work.last, 'held:${chat.zone}:held-chat');
+      expect(f.work.any((e) => e.startsWith('flush:')), isFalse);
+      expect(f.work.any((e) => e.startsWith('ack:')), isFalse);
+    },
+  );
+  test(
+    'leased paused quarantined never exempt via held callback',
+    () async {
+      for (final status in [
+        CloudOutboxStatus.leased,
+        CloudOutboxStatus.paused,
+        CloudOutboxStatus.quarantined,
+      ]) {
+        final f = Fixture()..flushSettles = false;
+        f.queues[chat] = [op(chat, status, id: 'held-chat')];
+        f.queues[message] = [];
+        final consulted = <String>[];
+        f.isHeld = (o) async {
+          consulted.add(o.operationId);
+          return true;
+        };
+        expect(await f.run(), isFalse, reason: '$status');
+        expect(consulted, isEmpty, reason: '$status consulted');
+        expect(f.ackedIds, isEmpty, reason: '$status ack');
+      }
     },
   );
   final invalid = <List<CloudSyncScope>>[

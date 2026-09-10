@@ -5,6 +5,9 @@ import 'dart:io';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_create_queue_drain.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
@@ -13,6 +16,18 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'cloud_sync_test_helpers.dart';
 import 'cloud_sync_restored_chat_test_fixture.dart';
+
+final class _ConsumerExclusion implements CloudKitOperationExclusion {
+  @override
+  Future<T> runExclusive<T>({
+    required CloudKitOperationKind kind,
+    required CloudKitOperationBody<T> action,
+  }) => action();
+
+  @override
+  void poisonUntilProcessRestart() =>
+      throw StateError('unexpected test poison');
+}
 
 void main() {
   late Directory directory;
@@ -644,6 +659,227 @@ void main() {
         );
         expect(intent().state, 2);
         expect(intent().idsConfirmationVersion, 0);
+        expect(store.isRetainedPreproofPendingCreate(retained), isTrue);
+        final preflight = ObjectBoxCloudSyncPreflightReader(
+          store: objectBox,
+          localSendJournal: journal,
+        );
+        expect(preflight.read().outboxCount, 1);
+        expect(preflight.read().settledOutboxFingerprint, isNotNull);
+        expect(
+          ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint(
+            objectBox.box<CloudOutboxOperationEntity>().getAll(),
+          ),
+          isNull,
+          reason: 'A pending row shape alone is never an exemption',
+        );
+        final held = objectBox
+            .box<CloudOutboxOperationEntity>()
+            .getAll()
+            .single;
+        for (final mutate in <void Function(CloudOutboxOperationEntity)>[
+          (row) => row.attemptCount = 1,
+          (row) => row.appleRequestUuid = 'synthetic-request',
+          (row) => row.appleOperationUuid = 'synthetic-operation',
+          (row) => row.leaseIdHash = 'synthetic-lease',
+          (row) => row.leaseExpiresAtMs = 1,
+          (row) => row.confirmedAtMs = 1,
+          (row) => row.lastErrorCategory = CloudFailureCategory.unknown.name,
+          (row) => row.state = CloudOutboxStatus.unknownOutcome.index,
+          (row) => row.payloadSha256 = 'f' * 64,
+          (row) => row.checkpointGeneration += 1,
+        ]) {
+          final changed = objectBox.box<CloudOutboxOperationEntity>().get(
+            held.id,
+          )!;
+          mutate(changed);
+          objectBox.box<CloudOutboxOperationEntity>().put(changed);
+          expect(preflight.read().settledOutboxFingerprint, isNull);
+          objectBox.box<CloudOutboxOperationEntity>().put(held);
+        }
+        objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+          intent()..idsConfirmationVersion = cloudSyncIdsConfirmationVersion,
+        );
+        expect(store.isRetainedPreproofPendingCreate(retained), isFalse);
+        expect(
+          preflight.read().settledOutboxFingerprint,
+          isNull,
+          reason: 'A newly qualified pending send needs real submission',
+        );
+      },
+    );
+
+    test(
+      'ordinary consumer archives a fresh send beside retained pre-proof work',
+      () async {
+        transport.stages.add(_stage('a', 'P', 'L', 'S'));
+        final oldOperation = await admit();
+        final oldIntentId = intentId;
+        objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+          intent()..idsConfirmationVersion = 0,
+        );
+        final original = objectBox
+            .box<CloudOutboxOperationEntity>()
+            .getAll()
+            .single;
+        const newGuid = 'AAAAAAAB-BBBB-4CCC-8DDD-EEEEEEEEEEEE';
+        final chat = local.chat.target!;
+        local = Message(
+          guid: 'temp-New12345',
+          stagingGuid: newGuid,
+          text: 'synthetic fresh send',
+          isFromMe: true,
+          dateCreated: testEpoch,
+          attributedBody: [AttributedBody.raw('synthetic fresh send')],
+        )..chat.target = chat;
+        journal.saveSubmission(
+          identity: CloudSyncLocalSendIdentity.capture(local, chat, newGuid)!,
+          newlyGeneratedGuid: true,
+          persistMessage: () => objectBox.box<Message>().put(local),
+          now: testEpoch,
+        );
+        intentId = objectBox
+            .box<CloudSyncLocalSendIntentEntity>()
+            .getAll()
+            .singleWhere((row) => row.localMessageId == local.id)
+            .id;
+        confirm(newGuid);
+        transport.stages.add(_stage('b', 'Q', 'M', 'T'));
+        store = ObjectBoxCloudSyncStore(
+          store: objectBox,
+          protector: _Protector(),
+          clock: () => testEpoch,
+          localSendJournal: journal,
+        );
+        coordinator = CloudSyncOutboundAdmissionCoordinator(
+          store: store,
+          transport: transport,
+          ensureProtectedStoreRecovered: () async {},
+        );
+        final submitted = <String>[];
+        final acknowledged = <String>[];
+        var flushes = 0;
+        Future<bool> drain() async {
+          final settled = await drainCloudSyncCreateQueues(
+            scopes: [siblingScope('chatManateeZone'), scope],
+            readOutbox: store.readOutboxEntries,
+            validateAccount: () => authFence.run(() {}),
+            recoverExpired: (target) =>
+                store.recoverExpiredOutboxLeases(target, now: testEpoch),
+            reconcileUnknown: (_) async => fail('Unexpected unknown outcome'),
+            isRetainedPreproofPendingCreate: (op) async =>
+                store.isRetainedPreproofPendingCreate(op),
+            flush: (target) async {
+              flushes++;
+              final leased = await store.leaseEligibleOutbox(
+                target,
+                now: testEpoch,
+                limit: 5,
+                leaseId: 'fresh-send',
+                leaseDuration: const Duration(minutes: 1),
+                allowedActions: const {CloudOutboxAction.save},
+              );
+              expect(
+                leased.map((op) => op.operationId),
+                isNot(contains(oldOperation.operationId)),
+              );
+              final started = await store.markOutboxSubmissionStarted(
+                target,
+                leaseId: 'fresh-send',
+                now: testEpoch,
+                submissionIdentity: testSubmissionIdentity(
+                  leased.map((op) => op.operationId).toList(),
+                ),
+              );
+              for (final op in started) {
+                submitted.add(op.operationId);
+                // Synthetic Apple response at the native boundary; real durable transitions.
+                await store.commitOutboxCreateReceipt(
+                  target,
+                  leaseId: 'fresh-send',
+                  receipt: CloudOutboxCreateReceipt(
+                    operationId: op.operationId,
+                    logicalEntityKeyHash: op.logicalEntityKeyHash,
+                    serverRecordIdHash: op.serverRecordIdHash!,
+                    etagHash: 'E' * 43,
+                  ),
+                  retainProtectedLeaseReference: true,
+                  now: testEpoch.add(const Duration(seconds: 1)),
+                );
+              }
+            },
+            acknowledgeConfirmed: (target, op) async {
+              acknowledged.add(op.operationId);
+              await store.clearConfirmedProtectedOutboundLeaseReference(
+                expectedOperation: op,
+                recordVerifiedLocalSendReadback: true,
+              );
+            },
+          );
+          final local = ObjectBoxCloudSyncPreflightReader(
+            store: objectBox,
+            localSendJournal: journal,
+          ).read();
+          return settled &&
+              !local.coordinatorLeaseActive &&
+              (local.outboxCount == 0 ||
+                  local.settledOutboxFingerprint != null);
+        }
+
+        CloudSyncLocalSendConsumer consumer() => CloudSyncLocalSendConsumer(
+          scope: scope,
+          journal: journal,
+          authFence: authFence,
+          exclusion: _ConsumerExclusion(),
+          drainExisting: drain,
+          admit: (_) => admit(),
+          clock: () => testEpoch,
+        );
+        final result = await consumer().runOnce();
+        expect(result.outboxBlocked, isFalse);
+        expect(result.admitted, 1);
+        expect(submitted, hasLength(1));
+        expect(acknowledged, submitted);
+        expect(flushes, 1);
+        expect(
+          intent().confirmedReadbackBindingSha256,
+          intent().admittedBindingSha256,
+        );
+        expect(
+          (await store.readOutboxEntries(scope))
+              .singleWhere((op) => op.operationId == oldOperation.operationId)
+              .sameDurableSnapshotAs(oldOperation),
+          isTrue,
+        );
+        expect(
+          objectBox
+              .box<CloudOutboxOperationEntity>()
+              .get(original.id)!
+              .protectedLeaseReference,
+          original.protectedLeaseReference,
+        );
+        expect(
+          objectBox
+              .box<CloudSyncLocalSendIntentEntity>()
+              .get(oldIntentId)!
+              .idsConfirmationVersion,
+          0,
+        );
+        objectBox.close();
+        objectBox = await openStore(directory: directory.path);
+        bindJournal();
+        store = ObjectBoxCloudSyncStore(
+          store: objectBox,
+          protector: _Protector(),
+          clock: () => testEpoch,
+          localSendJournal: journal,
+        );
+        final restarted = await consumer().runOnce();
+        expect(restarted.outboxBlocked, isFalse);
+        expect(restarted.admitted, 0);
+        expect(submitted, hasLength(1));
+        expect(acknowledged, hasLength(1));
+        expect(flushes, 1);
       },
     );
 

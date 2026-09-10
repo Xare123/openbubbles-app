@@ -32,7 +32,8 @@ param(
     [int] $DrainTimeoutSeconds = 3600,
     [ValidateRange(60, 1800)]
     [int] $AttachmentProbeTimeoutSeconds = 900,
-    [switch] $FunctionsOnlyForTest
+    [switch] $FunctionsOnlyForTest,
+    [switch] $BuildOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,6 +55,21 @@ $selectedOperations = @(
 )
 if ($selectedOperations.Count -gt 1) {
     throw "Choose only one harness operation."
+}
+if ($BuildOnly -and $SkipBuild) {
+    throw "BuildOnly cannot be combined with SkipBuild."
+}
+if ($BuildOnly -and $selectedOperations.Count -ne 0 -and -not $LocalWrite) {
+    throw "BuildOnly can select LocalWrite compilation, but cannot run an operation."
+}
+
+function Get-HarnessConfigurationIdentifier {
+    param([Parameter(Mandatory)][string] $SourceIdentifier,
+        [switch] $WriterBuild, [switch] $ReplayBuild)
+    if ($WriterBuild -and $ReplayBuild) { throw 'Conflicting harness configurations.' }
+    if ($WriterBuild) { return "$SourceIdentifier-local-write" }
+    if ($ReplayBuild) { return "$SourceIdentifier-replay-excluded-chats" }
+    return $SourceIdentifier
 }
 
 function Get-Sha256Hex {
@@ -316,6 +332,24 @@ function Stop-StoreOpenBubbles {
         if (-not $storeProcess.WaitForExit(10000)) {
             throw "Microsoft Store OpenBubbles did not close within 10 seconds."
         }
+    }
+}
+
+function Assert-NoForeignOpenBubblesProcess {
+    param([Parameter(Mandatory)][string] $StoreExecutable)
+
+    $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+        Where-Object { $_.Name -eq "bluebubbles_app.exe" })
+    $foreign = @($processes | Where-Object {
+        [string]::IsNullOrWhiteSpace($_.ExecutablePath) -or
+        -not [System.String]::Equals(
+            $_.ExecutablePath,
+            $StoreExecutable,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    })
+    if ($foreign.Count -ne 0) {
+        throw "A non-Store OpenBubbles process is running; refusing to rebuild it."
     }
 }
 
@@ -721,7 +755,8 @@ if (-not (Test-Path -LiteralPath $harnessSource -PathType Leaf)) {
     throw "The Windows Cloud Sync V2 harness source file was not found."
 }
 $buildIdentifier = Resolve-HarnessBuildIdentifier -Repository $repo
-if ($ReplayExcludedChats) { $buildIdentifier += '-replay-excluded-chats' }
+$buildIdentifier = Get-HarnessConfigurationIdentifier `
+    -SourceIdentifier $buildIdentifier -WriterBuild:$LocalWrite -ReplayBuild:$ReplayExcludedChats
 $storeExecutable = Resolve-StoreOpenBubblesExecutable
 $runnerDirectory = Join-Path $repo "build\windows\arm64\runner\Debug"
 $runnerDirectory = [System.IO.Path]::GetFullPath($runnerDirectory).TrimEnd('\')
@@ -751,7 +786,6 @@ if ($ReplayExcludedChats) {
 if ($LocalWrite) {
     $arguments += '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true'
     $arguments += '--dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2'
-    if ($SkipBuild) { throw 'LocalWrite requires a verified writer build.' }
 }
 
 $launcherLock = Enter-ProfileScopedLauncherLock -ProfilePath $profile
@@ -824,7 +858,14 @@ try {
     # A timeout or waiting-user return deliberately leaves the exact harness
     # alive. Reject that process before touching its build artifacts, then
     # repeat the same check immediately before this invocation launches.
-    Stop-StoreOpenBubbles -StoreExecutable $storeExecutable
+    # BuildOnly must not close the production Store app; it only refuses a
+    # running non-Store harness so the bundle cannot be overwritten.
+    if ($BuildOnly) {
+        Assert-NoForeignOpenBubblesProcess -StoreExecutable $storeExecutable
+    }
+    else {
+        Stop-StoreOpenBubbles -StoreExecutable $storeExecutable
+    }
     if (-not $SkipBuild) {
         & $flutter @arguments
         if ($LASTEXITCODE -ne 0) {
@@ -865,14 +906,14 @@ try {
             -Runner $runner `
             -RustLibrary $rustLibrary
     }
-    elseif ($ProjectionViewer -or $ProjectionDetailViewer) {
+    elseif ($ProjectionViewer -or $ProjectionDetailViewer -or $LocalWrite) {
         if (-not (Test-HarnessBuildReceipt `
             -ReceiptPath $buildReceiptPath `
             -BuildIdentifier $buildIdentifier `
             -Runner $runner `
             -RustLibrary $rustLibrary
         )) {
-            throw "No matching receipt proves the existing viewer build."
+            throw "No matching receipt proves the existing harness configuration."
         }
     }
     else {
@@ -902,6 +943,14 @@ try {
     if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
         $signature.SignerCertificate.Thumbprint -ne $SigningThumbprint) {
         throw "The Windows harness Rust library signature is not valid."
+    }
+
+    if ($BuildOnly) {
+        Write-Host (
+            "Cloud Sync V2 Windows harness build-only refresh finished at {0}." -f
+            $buildIdentifier
+        )
+        return
     }
 
     $launchId = New-CryptographicLaunchId

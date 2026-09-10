@@ -14,6 +14,7 @@ Future<bool> drainCloudSyncCreateQueues({
   acknowledgeConfirmed,
   required Future<void> Function() validateAccount,
   Future<bool> Function(CloudOutboxOperation)? isRetiredUnsubmittedChatCreate,
+  Future<bool> Function(CloudOutboxOperation)? isRetainedPreproofPendingCreate,
 }) async {
   final ordered = List<CloudSyncScope>.unmodifiable(scopes);
   const zones = ['chatManateeZone', 'messageManateeZone'];
@@ -52,6 +53,11 @@ Future<bool> drainCloudSyncCreateQueues({
   }
 
   await validateAccount();
+  Future<bool> isHeld(CloudOutboxOperation operation) async =>
+      operation.status == CloudOutboxStatus.pending &&
+      operation.action == CloudOutboxAction.save &&
+      isRetainedPreproofPendingCreate != null &&
+      await checked(() => isRetainedPreproofPendingCreate(operation));
   // Recovery may expose an interrupted submission. Inspect every queue before
   // any reconciliation, flush, or receipt acknowledgement.
   for (final scope in ordered) {
@@ -76,11 +82,15 @@ Future<bool> drainCloudSyncCreateQueues({
 
   for (var i = 0; i < ordered.length; i++) {
     final scope = ordered[i];
-    if (queues[i].any(
-      (operation) =>
-          operation.status != CloudOutboxStatus.confirmed &&
-          operation.status != CloudOutboxStatus.quarantined,
-    )) {
+    var needsFlush = false;
+    for (final operation in queues[i]) {
+      if (operation.status != CloudOutboxStatus.confirmed &&
+          operation.status != CloudOutboxStatus.quarantined &&
+          !await isHeld(operation)) {
+        needsFlush = true;
+      }
+    }
+    if (needsFlush) {
       await checked(() => flush(scope));
     }
     final after = await read(scope);
@@ -88,6 +98,9 @@ Future<bool> drainCloudSyncCreateQueues({
     for (final operation in after) {
       if (operation.status == CloudOutboxStatus.confirmed) {
         confirmed.add(operation);
+      } else if (await isHeld(operation)) {
+        // Retain the original envelope. No lease, remote save or receipt ack.
+        continue;
       } else if (operation.status != CloudOutboxStatus.quarantined ||
           isRetiredUnsubmittedChatCreate == null ||
           !await checked(() => isRetiredUnsubmittedChatCreate(operation))) {

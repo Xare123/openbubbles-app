@@ -519,3 +519,25 @@ This is a chronological evidence log. It does not override the
 - Parent also kept the broader consumer gate explicit: a lease skip is not proof
   that the shared queue drain lets fresh sends proceed past safe old pending work.
   This must be resolved without skipping unknown outcomes or deleting evidence.
+
+### 2026-09-09: whole-flow queue repair and Windows loop refresh path
+
+- GCE `34441590911` completed: 2,553 Dart tests passed; one predecessor-schema
+  fixture failed because property 15 remained below declared lastPropertyId 13.
+  Parent corrected the fixture and retained the no-auto-proof assertions. The
+  new persisted IDS-proof and upgrade tests passed. VM and runner inventories
+  were empty after cleanup. No Apple credentials or phone changes were involved.
+- Queue review found three linked gates, not only leasing: shared drain,
+  queued Chat observation, and account preflight. A single journal-bound
+  read-only classifier now recognizes pristine unsubmitted pre-proof creates
+  across those gates. Protected envelopes and journal rows remain unchanged;
+  uncertain/retried/leased/malformed work remains blocking. A real consumer,
+  admission, ObjectBox transition and reopen test was added with synthetic
+  Apple responses. This is not live end-to-end qualification.
+- Local queue/composition tests: 59 passed. A Muse test worker's nonterminal
+  case originally simulated successful flush, contradicting its expected
+  blocked result; parent caught it and the fixture was corrected. Windows
+  launcher tests pass. Parent reviewed and refined Muse's build-only patch:
+  no app launch, no production Store close, exact writer configuration receipt
+  before reuse. Both agents are closed and verified absent. No dedicated
+  worktrees were created; their reviewed source and provenance are retained.

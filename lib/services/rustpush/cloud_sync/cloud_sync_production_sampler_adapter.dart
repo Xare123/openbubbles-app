@@ -884,6 +884,7 @@ final class CloudSyncProductionLocalSendAdapter {
       if (target != chatScope) return;
       for (final operation in await durable.readOutboxEntries(target)) {
         if (operation.status != CloudOutboxStatus.pending) continue;
+        if (durable.isRetainedPreproofPendingCreate(operation)) continue;
         final origin = await fence.run(
           () => durable.captureQueuedChatObservationOrigin(operation));
         if (origin == null) continue; // Legacy/manual origins keep strict gates.
@@ -938,6 +939,8 @@ final class CloudSyncProductionLocalSendAdapter {
         scopes: [chatScope, scope],
         isRetiredUnsubmittedChatCreate: (operation) async =>
             durable.isRetiredUnsubmittedChatCreate(operation),
+        isRetainedPreproofPendingCreate: (operation) async =>
+            durable.isRetainedPreproofPendingCreate(operation),
         readOutbox: (target) async {
           final rows = await durable.readOutboxEntries(target);
           if (selection == null) return rows;
@@ -1008,7 +1011,8 @@ final class CloudSyncProductionLocalSendAdapter {
       guard.requireClear();
       // Use the same durable quiescence evidence as semantic reads. A bare
       // confirmed status must not hide malformed or unacknowledged receipts.
-      final local = ObjectBoxCloudSyncPreflightReader(store: objectBox).read();
+      final local = ObjectBoxCloudSyncPreflightReader(
+        store: objectBox, localSendJournal: journal).read();
       if (!local.objectBoxReady || local.coordinatorLeaseActive ||
           (local.outboxCount != 0 && local.settledOutboxFingerprint == null)) {
         return false;

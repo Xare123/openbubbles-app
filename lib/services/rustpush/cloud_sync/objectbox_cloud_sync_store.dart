@@ -1788,6 +1788,14 @@ class ObjectBoxCloudSyncStore
         _outboxFromEntity(expected.scope, row).sameDurableSnapshotAs(expected);
   });
 
+  bool isRetainedPreproofPendingCreate(CloudOutboxOperation expected) =>
+      _store.runInTransaction(TxMode.read, () {
+    final row = _findOutboxByOperationIdLocked(expected.operationId);
+    return row != null && row.scopeKey == _scopeKey(expected.scope) &&
+        _outboxFromEntity(expected.scope, row).sameDurableSnapshotAs(expected) &&
+        (_localSendJournal?.isRetainedPreproofPendingCreate(row) ?? false);
+  });
+
   /// Candidate capture only, never adoption or permission to create remotely.
   CloudSyncOutboundChatOrigin captureOutboundChatObservationOrigin(
     CloudSyncScope scope,

@@ -195,7 +195,11 @@ try {
     $launcherSource = Get-Content -LiteralPath $launcher -Raw
     $processChecks = [regex]::Matches(
         $launcherSource,
-        '(?m)^\s{4}Stop-StoreOpenBubbles -StoreExecutable \$storeExecutable\s*$'
+        '(?m)^\s+Stop-StoreOpenBubbles -StoreExecutable \$storeExecutable\s*$'
+    )
+    $buildOnlyGuard = [regex]::Matches(
+        $launcherSource,
+        '(?m)^\s+Assert-NoForeignOpenBubblesProcess -StoreExecutable \$storeExecutable\s*$'
     )
     $buildInvocation = $launcherSource.IndexOf(
         '& $flutter @arguments',
@@ -203,12 +207,62 @@ try {
     )
     Assert-True `
         -Condition ($processChecks.Count -eq 2 -and
+            $buildOnlyGuard.Count -eq 1 -and
+            $buildOnlyGuard[0].Index -lt $buildInvocation -and
             $processChecks[0].Index -lt $buildInvocation -and
             $buildInvocation -lt $processChecks[1].Index) `
         -Message (
             'The launcher must reject a retained harness before rebuilding ' +
             'and recheck immediately before launch.'
         )
+    Assert-True `
+        -Condition ($launcherSource.Contains('[switch] $BuildOnly')) `
+        -Message 'The launcher is missing the BuildOnly switch.'
+    Assert-True `
+        -Condition ($launcherSource.Contains('if ($BuildOnly -and $SkipBuild)')) `
+        -Message 'BuildOnly must be mutually exclusive with SkipBuild.'
+    Assert-True `
+        -Condition ((Get-HarnessConfigurationIdentifier -SourceIdentifier 'source') -eq 'source' -and
+            (Get-HarnessConfigurationIdentifier -SourceIdentifier 'source' -WriterBuild) -eq 'source-local-write' -and
+            (Get-HarnessConfigurationIdentifier -SourceIdentifier 'source' -ReplayBuild) -eq 'source-replay-excluded-chats') `
+        -Message 'A read-only receipt must never qualify a writer or replay build.'
+    & $launcher -FunctionsOnlyForTest -BuildOnly -LocalWrite
+    Assert-True `
+        -Condition ($launcherSource.Contains('elseif ($ProjectionViewer -or $ProjectionDetailViewer -or $LocalWrite)')) `
+        -Message 'Writer reuse must use the exact binary-and-configuration receipt check.'
+    $buildOnlyMatches = [regex]::Matches(
+        $launcherSource,
+        '(?m)^\s+if \(\$BuildOnly\) \{\s*$'
+    )
+    Assert-True `
+        -Condition ($buildOnlyMatches.Count -ge 2) `
+        -Message 'The launcher must have distinct pre-build and post-sign BuildOnly blocks.'
+    $buildOnlyExit = $buildOnlyMatches[$buildOnlyMatches.Count - 1].Index
+    $receiptInvocation = $launcherSource.LastIndexOf(
+        '        Write-HarnessBuildReceipt',
+        [System.StringComparison]::Ordinal
+    )
+    $signatureInvocation = $launcherSource.IndexOf(
+        '$signature = Get-AuthenticodeSignature',
+        [System.StringComparison]::Ordinal
+    )
+    $launchInvocation = $launcherSource.IndexOf(
+        '$launchId = New-CryptographicLaunchId',
+        [System.StringComparison]::Ordinal
+    )
+    $startInvocation = $launcherSource.IndexOf(
+        'Start-Process @startParameters',
+        [System.StringComparison]::Ordinal
+    )
+    $buildOnlyBlock = $launcherSource.Substring(
+        $buildOnlyExit,
+        $launchInvocation - $buildOnlyExit
+    )
+    Assert-True `
+        -Condition ($receiptInvocation -ge 0 -and $receiptInvocation -lt $signatureInvocation -and
+            $signatureInvocation -lt $buildOnlyExit -and $buildOnlyExit -lt $launchInvocation -and
+            $launchInvocation -lt $startInvocation -and $buildOnlyBlock.Contains('return')) `
+        -Message 'BuildOnly must exit after signing before any harness launch.'
 
     $lockProfile = Join-Path $testDirectory 'profile'
     $profileLock = Enter-ProfileScopedLauncherLock -ProfilePath $lockProfile
