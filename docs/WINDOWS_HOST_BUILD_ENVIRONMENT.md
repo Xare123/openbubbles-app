@@ -4,7 +4,7 @@ title: OpenBubbles Windows ARM64 Host Build Environment
 description: Verified toolchain layout and the non-obvious constraints for building the Rust bridge and running the test suites for Android, Windows ARM64, and Windows x64 from one Windows-on-ARM host.
 resource: openbubbles-app
 tags: [windows, arm64, x64, android, rust, objectbox, openssl, toolchain, testing]
-timestamp: 2026-08-06
+timestamp: 2026-09-10
 ---
 
 # OpenBubbles Windows ARM64 host build environment
@@ -149,11 +149,23 @@ What this does and does not block:
   tests run on ARM64.
 - **Affected:** `cargo test` on the main crate.
 
-Do not disable Smart App Control to work around this; on Windows 11 it cannot be
-re-enabled without reinstalling. Run the main crate's Rust tests on a host or CI
-runner without the policy. This is the open item that the live-validation
+Keep Smart App Control unchanged for this project. Microsoft's current
+[FAQ](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions)
+says recent Windows updates support re-enabling it without reinstalling,
+subject to device eligibility; the older universal reinstall claim is obsolete.
+That does not create a per-app exception or authorize a protection change.
+Run the main crate's Rust tests on an approved isolated build host. This is
+the open item that the live-validation
 document records as "run the x64 harness without triggering Windows Application
 Control".
+
+**September 10 recheck:** the retained ARM64 DLL loads, and the signed compiler
+wrapper starts, but actual native test compilation is blocked at a generated
+`slab` build-script executable with error 4551 despite valid Authenticode.
+There is no current guarantee that release builds or individual helpers avoid
+the policy. See the treemap for the approved isolated cloud build path. Windows
+Dart tests can use the existing x64 ObjectBox 5.3.2 directory on their process
+PATH; six database-backed manual-selection tests passed with that configuration.
 
 ## Defect: CargoKit silently skipped the entire Rust build on Flutter 3.44.8
 

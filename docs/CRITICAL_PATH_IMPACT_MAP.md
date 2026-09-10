@@ -4,7 +4,7 @@ title: OpenBubbles Critical-Path Impact Map
 description: Operational dependency map for live messaging, startup, CloudKit, outbound sends, and account transitions.
 resource: openbubbles-app
 tags: [openbubbles, architecture, messaging, cloudkit, regression-prevention]
-timestamp: 2026-09-05
+timestamp: 2026-09-10
 ---
 
 # OpenBubbles critical-path impact map
@@ -406,6 +406,57 @@ Impact rule: timeout is not proof of quiescence. If an operation cannot reach
 a terminal state, preserve the native state and fail visibly rather than
 reporting a clean reset.
 
+## 7. Find My People
+
+```text
+native authenticated friend client
+  -> roster and location responses
+  -> native join by exact friend ID and last-location cache
+  -> periodic refresh OR selected-person refresh
+  -> shared Dart People projection and last-good state
+  -> complementary located / unavailable lists and map markers
+```
+
+Self-location through Geolocator is an independent branch. Its timeout does
+not establish a friend-service failure or revoked sharing. A roster entry
+without coordinates means location unavailable, not permission denied.
+
+September 10 source review confirmed that selected-person responses were
+discarded by the installed candidate. The fix must publish that response
+without waiting for another poll, serialize People requests, retain last-good
+state on error, and never leave partially invalid coordinates in neither list.
+Do not alter native ID matching or explicit-null cache semantics without
+sanitized response evidence. Device proof of the selected person's location
+remains required even when the focused tests pass.
+
+The reviewed local candidate now implements that publication path, with 38
+focused Find My tests passing. It is not yet installed or live-verified. New
+aggregate People logs distinguish missing native locations from projection
+loss without recording identities or coordinates.
+
+## 8. FaceTime lifecycle and media evidence
+
+```text
+native call admission -> Apple WebView -> asynchronous media sample
+  -> validated remote tracks and advancing inbound bytes -> connected UI
+  -> pending / failed / leave / activity destruction
+```
+
+Admission and local camera preview do not prove remote media. The latest device
+failure lost its terminal Android ring-buffer evidence, so the candidate records
+allowlisted stages in two 64 KiB native files when developer diagnostics are on.
+Log export and clear target only those filenames. No SDP, keys, account names,
+URLs, or media are persisted by this channel.
+
+Native End has a reserved footer outside the WebView rather than following
+Apple's changing DOM placement. PiP hides that in-view control and releases the
+footer; the existing PiP End action remains. Layout, inset, and media callbacks
+share that visibility rule. This patch does not change transport or admission.
+
+Parent verification: 54 Kotlin host tests, 11 Dart diagnostic/export tests,
+and 10 JavaScript media-probe tests passed. Android compilation, rendered
+layout/PiP, and an actual bidirectional call remain unverified.
+
 ## Required tests before changing a shared gate
 
 1. Live APN projection completes before acknowledgement.
@@ -439,6 +490,7 @@ matched real failures across several pull requests.
 | Cloud Sync Dart implementation | Full Cloud Sync Dart suite, ObjectBox persistence subset, cooperative-yield/query-bound tests, device ANR replay, and web parity |
 | Rust bridge, rustpush gitlink, generated bindings, or CargoKit | Binding reproducibility, Rust tests, rustpush tests, protector harness, and an APK packaging check |
 | FaceTime-only implementation | Dart FaceTime tests, Android FaceTime tests, and WebRTC diagnostic replay |
+| Find My People UI/refresh only | People publication, failure-retention, request-ordering and coordinate-classification tests; live selected-person refresh on the exact candidate |
 | Windows-only implementation | Windows x64 gates and ARM64 architecture/native-library verification |
 | Documentation only | Frontmatter and link validation only |
 | Dependencies, workflows, packaging, or ambiguous shared configuration | Full validation and artifact builds |

@@ -642,3 +642,33 @@ This is a chronological evidence log. It does not override the
   package option, script, URI, and flags. This is host invocation proof, not
   a device send or CloudKit write result.
 - Storage checkpoint: C: had 68.62 GiB free. No cleanup deletion was needed.
+
+### 2026-09-10: isolated suite and companion patch review
+
+- Source `7df4fced8b0d5846039674e5c899e6ed3d8029b6` was pushed to the fork.
+  GCE run `34485566441`, pilot `e4baad9ee5d7883ad4bb53610ea7720e504eab0e`,
+  uses one T2D-32 runner in dart-only mode. The displayed build job name still
+  mentions an APK, but this mode produces none. No Apple profile was uploaded.
+  The full run succeeded: 2,566 Dart tests plus 14 semantic outbox and 3
+  evidence-output cases. The test step took 3m56s, and dispatch through cleanup
+  took 9m06s. Independent GCE inventory and GitHub registration queries both
+  returned empty after the cleanup job passed. No actual billing total is
+  claimed from elapsed time alone.
+- Accepted the FaceTime native log/footer patch after catching and correcting
+  its PiP footer regression. Parent checks passed: 54 Kotlin host tests,
+  11 Dart diagnostic/export tests, and 10 JavaScript media-probe tests.
+  The agent's broader JavaScript count is not substituted for this parent
+  result. No Android build, call, or rendered PiP proof is claimed.
+- Closed Boole (`01a08b86-f285-70d3-a249-1a4c4c8d2643`) after reviewing its
+  patch; the follow-up control reports `not_found`. Shared-tree source and
+  review provenance are retained for integration and rollback. No supported
+  session/transcript deletion tool is available, and no dedicated worktree
+  was created. No shared session database or source tree was deleted.
+- Pascal's initial Find My probe was explicitly rejected as usable evidence:
+  it had no native read callbacks. It remains uncommitted while the agent
+  implements real devices/people reads with retained-account guards. Items
+  remain untested; a scaffold-only pass is not a native service result.
+- Accepted companion source commits `e3fa462a2` (FaceTime) and `e5e8288c3`
+  (Find My People). The latter's 29 publication/merge/refresh tests were rerun
+  successfully; the earlier 38 count also included play-sound tests. These
+  commits are newer than the completed GCE run and are not installed.

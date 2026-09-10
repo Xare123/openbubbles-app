@@ -56,7 +56,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
 | Candidate | Code `e060bcb41` repairs retained-queue scheduling above persisted IDS-proof base `731988a3d` and positive-acknowledgment native base `35551340c`. Pre-proof rows retain version 0 and cannot initiate a new CloudKit save; original envelopes remain recoverable. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
-| Qualification | GCE `34443435257` passed all 2,560 Dart tests on exact code `e060bcb41`, including additive schema upgrades, mixed retained/fresh-send consumer execution, and reopen without duplicate submission. Also passed 14 semantic outbox and 3 evidence-output cases. Full signed qualification `34444190598` subsequently passed. Runner deletion and zero VM/registration inventory were verified. The next local diagnostic-selection patch passes six real ObjectBox tests and targeted analysis; its full-suite qualification remains. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
+| Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
 | Dependency | rustpush `2bfbe8a06168a203c7c9f162b6fcbb45f1224560` adds a shared acknowledgment tracker above attachment-integrity base `a78ccfd`. Only explicit status 0 qualifies; the legacy meaning of 5008 is not assumed. Missing intended group targets remain unconfirmed. Ordinary send progress behavior is preserved. All seven tracker tests passed within the 260-test native run. |
 | Prior-source qualification | GCE run `34437410835` fully succeeded for exact source `75440cafc`: full Dart suite, 373 app Rust tests, 253 rustpush tests, 34 protector tests, bridge drift checks, APK/native-library verification, Android JVM tests, trusted signing, and cleanup. This APK lacks the new positive-acknowledgment repair and is not a write-qualified release candidate. Older `fc132e5f8` also has the headless ready-handshake deadlock. |
@@ -70,9 +70,11 @@ Windows validation: the on-disk harness receipt still names the older
 Writer and read-only build identities differ. This is test-loop plumbing, not
 live CloudKit proof. Alpha and its identity remain untouched.
 
-Latest execution: Dart-only GCE `34443435257` passed exact source
-`e060bcb41cb72593ec17d48308a7a94dc63a99c3` (pilot `e4baad9ee`, T2D-32,
-`us-west1-a`). Windows build-only failed before launch: Code Integrity events
+Latest execution: Dart-only GCE `34485566441` passed exact source
+`7df4fced8b0d5846039674e5c899e6ed3d8029b6` (pilot `e4baad9ee`, T2D-32,
+`us-west1-a`), in 9m06s including provisioning and verified cleanup.
+The Dart suite itself took 3m56s. This is not a full APK timing comparison.
+Windows build-only previously failed before launch: Code Integrity events
 3033/3077 explicitly blocked `proc_macro_signing_wrapper_delayed.exe` under
 policy `0283ac0f-fff1-49ae-ada1-8a933130cad6`, despite a valid self-signed
 development certificate. No policy, certificate trust, or security setting
