@@ -4,7 +4,7 @@ title: Cloud Sync V2 Current Connection Treemap
 description: Current source of truth for CloudKit V2 architecture, safety boundaries, qualification state, and next gates.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-09
+timestamp: 2026-09-10
 ---
 
 # Cloud Sync V2 current connection treemap
@@ -56,7 +56,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
 | Candidate | Code `e060bcb41` repairs retained-queue scheduling above persisted IDS-proof base `731988a3d` and positive-acknowledgment native base `35551340c`. Pre-proof rows retain version 0 and cannot initiate a new CloudKit save; original envelopes remain recoverable. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
-| Qualification | GCE `34443435257` passed all 2,560 Dart tests on exact code `e060bcb41`, including additive schema upgrades, mixed retained/fresh-send consumer execution, and reopen without duplicate submission. Also passed 14 semantic outbox and 3 evidence-output cases. Runner deletion and zero VM/registration inventory independently verified. Locally, 59 queue/composition checks, changed-file analysis, and Windows launcher tests pass; local ObjectBox execution remains unavailable (DLL 126). Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Signed Android qualification and live ordinary-send/save/readback remain. |
+| Qualification | GCE `34443435257` passed all 2,560 Dart tests on exact code `e060bcb41`, including additive schema upgrades, mixed retained/fresh-send consumer execution, and reopen without duplicate submission. Also passed 14 semantic outbox and 3 evidence-output cases. Full signed qualification `34444190598` subsequently passed. Runner deletion and zero VM/registration inventory were verified. The next local diagnostic-selection patch passes six real ObjectBox tests and targeted analysis; its full-suite qualification remains. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
 | Dependency | rustpush `2bfbe8a06168a203c7c9f162b6fcbb45f1224560` adds a shared acknowledgment tracker above attachment-integrity base `a78ccfd`. Only explicit status 0 qualifies; the legacy meaning of 5008 is not assumed. Missing intended group targets remain unconfirmed. Ordinary send progress behavior is preserved. All seven tracker tests passed within the 260-test native run. |
 | Prior-source qualification | GCE run `34437410835` fully succeeded for exact source `75440cafc`: full Dart suite, 373 app Rust tests, 253 rustpush tests, 34 protector tests, bridge drift checks, APK/native-library verification, Android JVM tests, trusted signing, and cleanup. This APK lacks the new positive-acknowledgment repair and is not a write-qualified release candidate. Older `fc132e5f8` also has the headless ready-handshake deadlock. |
@@ -77,9 +77,34 @@ Latest execution: Dart-only GCE `34443435257` passed exact source
 policy `0283ac0f-fff1-49ae-ada1-8a933130cad6`, despite a valid self-signed
 development certificate. No policy, certificate trust, or security setting
 was changed. A valid Authenticode result is not proof the policy permits execution.
-Pixel reconnected wirelessly; installed Canary is `1.15.0`/`20002227`, updated
-2026-09-08. Its control receiver reported `adb_app_not_ready`; no launch,
-install, send, or clear-data operation was performed.
+The later 2026-09-10 Windows recheck narrows the blocker: the existing signed
+native DLL loads/unloads, and the compiler wrapper returns `rustc --version`.
+Actual compilation still stops at the signed `slab` build-script executable
+with policy error 4551, before native tests run. Do not repeat this unchanged
+local build or present loader success as a rebuilt or live-qualified harness.
+The user approved an isolated cloud build environment, with a $200 ceiling
+through September 15. Keep Apple credentials and message stores local.
+Targeted Windows Dart tests can run: use the existing x64 ObjectBox 5.3.2
+library on the test process PATH. This resolved loader error 126 without any
+installation, certificate, or policy change.
+Subsequently, full signed GCE run `34444190598` passed for app source
+`3dc614c9eced02b49f130a2752ce531d9e6aec7a` (code `e060bcb41`): build,
+GitHub-hosted signing, and cleanup jobs all succeeded. The signature-verified
+APK was installed in place on Canary at 2026-09-09 23:43:18 Pacific; Alpha's
+package snapshot and Canary's UID/data directory/first-install time were
+preserved. Host preflight verifies artifact identity, not the running Dart
+build: `sourceCommitDeviceVerified` remains false. The manual write harness
+still needs its runtime-mode check resolved before a controlled remote save.
+
+Latest live observation, 2026-09-10 05:43-05:50 Pacific: two user-triggered
+plaintext sends received native confirmations which were journaled. The test
+conversation rendered the edited message and the subsequent unsend notice.
+This qualifies that local live-send/UI boundary only. No exact CloudKit
+save/readback, restart, or independent-device edit/unsend proof was obtained.
+The conversation-list preview still displayed the retracted message's text,
+an observed stale-preview defect. A semantic pull remained active and was not
+restarted. See the current investigation log for timestamps and private
+evidence paths. Causal edit/unsend writes remain a gap, not a passed gate.
 
 ### What the candidate includes
 

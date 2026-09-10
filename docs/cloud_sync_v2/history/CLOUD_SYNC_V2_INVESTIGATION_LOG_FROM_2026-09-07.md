@@ -4,7 +4,7 @@ title: Cloud Sync V2 Investigation Log from 2026-09-07
 description: Chronological qualification results after the current treemap was separated from the historical investigation record.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, investigation, evidence, canary]
-timestamp: 2026-09-07
+timestamp: 2026-09-10
 ---
 
 # Cloud Sync V2 investigation log from 2026-09-07
@@ -557,3 +557,88 @@ This is a chronological evidence log. It does not override the
   Next: one full signed Canary qualification build, then the controlled live
   plaintext send/save/readback. No claim of completed attachment writing or
   causal edits/unsends/deletion is made.
+
+### 2026-09-10: installed candidate and user send/edit/unsend observation
+
+- Full signed run `34444190598` completed successfully for app source
+  `3dc614c9eced02b49f130a2752ce531d9e6aec7a`, with pilot workflow head
+  `e4baad9ee5d7883ad4bb53610ea7720e504eab0e`. Those are distinct provenance
+  roles. Build, signing/verification, and runner deletion jobs passed.
+- Installed artifact SHA-256:
+  `b16dbac5fbd04f838ea6c12ffade4d4b001eeed04f3c70475d1512674735285a`.
+  The saved after-install preflight records v2 signature verified, one signer,
+  separate Alpha/Canary UIDs and data directories, and Canary update time
+  2026-09-09 23:43:18 Pacific. That timestamp was rechecked during this test.
+  It explicitly records `sourceCommitDeviceVerified: false`; do not replace
+  the unresolved running-build/mode gate with artifact provenance.
+- User performed two new tests on the approved direct test conversation:
+  send then edit, and send then edit then undo-send. At 12:43:04.168558Z and
+  12:44:01.468636Z, the application logged native send confirmation journaled.
+  The subsequent local change events were at 12:43:50.025983Z,
+  12:44:15.074803Z, and 12:44:20.043559Z. The generic logger calls an unsend
+  `state=edited`, so that label alone is not proof of retraction.
+- Parent opened only the already-observed approved test conversation and
+  visually confirmed the edited bubble and latest unsend notice. No message,
+  edit, unsend, CloudKit write, logout, restart, install, or reset was invoked
+  by the parent in this observation. Opening the conversation is ordinary UI
+  navigation, not a claim that all app activity is read-only.
+- Counterexample: before opening it, the conversation-list preview still
+  contained the latest retracted message text. Investigate preview selection
+  and invalidation separately from remote mutation semantics. Local rendering
+  and send acceptance do not establish CloudKit edit/unsend durability.
+- Earlier, at 12:38:27Z, a send failed with registration 6005. Subsequent
+  tested sends succeeded. Three PCS-zone read-auth failures were recorded
+  before the later active semantic pull, which was processing records during
+  observation. Do not attribute those earlier failures to the successful
+  edit/unsend sequence, or mistake quarantine counts for failed live sends.
+- Both ADB status checks reported the semantic pull/coordinator active and
+  outbox empty. The semantic summary simultaneously reported idle/no passes;
+  this inconsistent progress display is retained evidence, not a completed
+  pull. No restart was used to obtain a VM endpoint while the pull was active.
+- Private evidence root:
+  `C:\Codex\OpenBubblesReview\device-evidence\pixel-write-20260909-3dc614c9e`.
+  `send-edit-undo-app-20260910-0547.log` contains the persisted app trace;
+  `send-edit-undo-20260910-0546.log` is the bounded live logcat capture;
+  `test-conversation-20260910-0552.png` proves the local UI observation.
+  Screenshots and raw logs remain private and are not added to Git.
+  The first logcat launch rejected an incorrectly grouped PowerShell argument;
+  its empty log/error are not test evidence. The corrected capture and
+  persisted app log recovered the required event window.
+- Screen timeout readback remained 86400000 ms, with charging stay-awake 7.
+  Original 1800000 ms is saved in `awake-settings-restore.json` for restoration
+  after testing. PIN/keyguard were not changed. C: free space was 70.47 GiB;
+  these small captures do not require another large storage cleanup.
+
+### 2026-09-10: Windows build isolation and manual-selection qualification
+
+- Read-only loader check: the existing ARM64 `rust_lib_bluebubbles.dll` loads
+  and unloads, and the signed compiler wrapper invokes `rustc --version`.
+  Neither operation authenticates, launches the app, or changes its receipt.
+- The real `test_cloud_sync_v2_native.ps1 -TestFilter cloud_sync_` attempt
+  failed before tests executed. Application Control error 4551 blocked the
+  generated `slab-3f53265ea60998f8/build-script-build.exe`; both executable
+  aliases have identical SHA-256 and valid Authenticode status. Do not infer
+  an unsigned-file, missing-extension, or CloudKit protocol failure.
+  Local evidence: `evidence/windows-native-tests/20260910-063634-9b5e75f7`.
+- Policy enumeration returned Access denied. No security setting, signer
+  trust, or application-control policy was changed. The user approved an
+  isolated cloud build environment within $200 of credits through September
+  15. At the start of that work, GCE instances and GitHub runner registrations
+  were both empty. Existing Linux GCE qualification and a Windows fast-loop
+  binary build are distinct jobs; Linux results cannot prove Windows loading.
+- The six manual-selection retained-queue tests initially failed in setup
+  because the test process could not find `objectbox.dll`. Prepending the
+  existing `C:/Codex/Toolchains/objectbox-windows-x64-v5.3.2/lib` to that
+  process's PATH resolved it. All six real ObjectBox-backed tests passed,
+  and the three changed Dart files passed analysis. No dependency download,
+  real message database, app profile, or Apple account was involved.
+- The selection now pins journal-proven pristine pre-proof creates while
+  permitting a fresh exact selection. Tests reject attempt, proof, account,
+  generation, and deletion drift. Pinned rows are not uploaded, acknowledged,
+  deleted, or retroactively given proof. Full-suite and live server readback
+  remain required.
+- Four host argument-array tests also passed. The repaired Pixel helper
+  preserves separate arguments with spaces instead of concatenating the
+  package option, script, URI, and flags. This is host invocation proof, not
+  a device send or CloudKit write result.
+- Storage checkpoint: C: had 68.62 GiB free. No cleanup deletion was needed.

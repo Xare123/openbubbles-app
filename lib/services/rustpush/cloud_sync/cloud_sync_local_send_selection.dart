@@ -31,9 +31,9 @@ final class CloudSyncLocalSendExactSelection {
   String? _messageOperationBinding;
   final Map<String, String> _inertAuditRows = {};
 
-  /// Only initial, fully settled history may be excluded from the diagnostic
-  /// drain. Each row remains byte-for-byte pinned and is never acknowledged,
-  /// reconciled or submitted by this selection.
+  /// Only initial settled history or journal-proven held creates may be
+  /// excluded from the diagnostic drain. Each row remains byte-for-byte pinned
+  /// and is never acknowledged, reconciled or submitted by this selection.
   bool isInertAuditOperation(String operationId) =>
       _inertAuditRows.containsKey(operationId);
 
@@ -81,23 +81,27 @@ final class CloudSyncLocalSendExactSelection {
       throw StateError('cloud_sync_local_send_selection_changed');
     }
     // Inspect the whole store, not just the selected account's two queues.
-    // Unrelated active work blocks. Initial, fully settled audit history is
-    // immutable and excluded from every diagnostic drain callback.
+    // Unrelated active work blocks. Initial settled history and pristine
+    // pre-proof creates are pinned and excluded from every drain callback.
+    String? inertFingerprint(CloudOutboxOperationEntity row) =>
+        ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint([row]) ??
+        ObjectBoxCloudSyncPreflightReader.retainedPreproofAuditFingerprint(
+          row,
+          journal: journal,
+        );
     final rows = store.box<CloudOutboxOperationEntity>().getAll();
     CloudOutboxOperationEntity? selectedChat;
     for (final row in rows) {
       final inert = _inertAuditRows[row.operationId];
       if (inert != null) {
-        if (ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint([row]) !=
-            inert) {
+        if (inertFingerprint(row) != inert) {
           throw StateError('cloud_sync_local_send_selection_changed');
         }
         continue;
       }
       if (_sourceBinding == null &&
           row.operationId != source.admittedOperationId) {
-        final settled =
-            ObjectBoxCloudSyncPreflightReader.settledAuditFingerprint([row]);
+        final settled = inertFingerprint(row);
         if (settled != null) {
           _inertAuditRows[row.operationId] = settled;
           continue;

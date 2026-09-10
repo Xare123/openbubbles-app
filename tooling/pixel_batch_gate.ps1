@@ -219,7 +219,7 @@ function Wait-CanaryStopped {
 
 function Invoke-ChatRead {
     param([Parameter(Mandatory = $true)][string] $WsUri, [Parameter(Mandatory = $true)][int] $ChatId, [Parameter(Mandatory = $true)][string] $Scope, [string] $ExpectHash = '')
-    $chatArgs = @('--packages=' + $PackageConfig, $VmReadChatScript, $WsUri, [string]$ChatId, '--scope', $Scope)
+    $chatArgs = @(('--packages=' + $PackageConfig), $VmReadChatScript, $WsUri, [string]$ChatId, '--scope', $Scope)
     if ($ExpectHash -ne '') { $chatArgs += @('--expect-hash', $ExpectHash) }
     $lines = Invoke-BoundedText -FilePath $script:DartPath -Arguments $chatArgs -TimeoutSeconds $ProcessTimeoutSeconds -FailureCode 'chat_read_failed'
     $doc = ($lines -join "`n") | ConvertFrom-Json
@@ -229,7 +229,7 @@ function Invoke-ChatRead {
 
 function Invoke-UploadModeRead {
     param([Parameter(Mandatory = $true)][string] $WsUri)
-    $modeArgs = @('--packages=' + $PackageConfig, $VmReadUploadModeScript, $WsUri, '--expect-uploads-off')
+    $modeArgs = @(('--packages=' + $PackageConfig), $VmReadUploadModeScript, $WsUri, '--expect-uploads-off')
     $lines = Invoke-BoundedText -FilePath $script:DartPath -Arguments $modeArgs -TimeoutSeconds $ProcessTimeoutSeconds -FailureCode 'upload_mode_check_failed'
     $doc = ($lines -join "`n") | ConvertFrom-Json
     if ($doc.mode -cne 'uploads-off') { Fail-Gate 'uploads_not_off' }

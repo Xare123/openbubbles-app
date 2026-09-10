@@ -111,7 +111,22 @@ final class ObjectBoxCloudSyncPreflightReader {
     Map<String, CloudSyncCheckpointEntity> currentCheckpoints = const {},
   }) => _settledAuditFingerprint(rows, currentCheckpoints: currentCheckpoints);
 
-  // Only read() can supply held IDs after checking the live journal binding.
+  /// Pins a held row only after checking its live journal and ownership.
+  /// Call inside the same read transaction as the row snapshot, with a journal
+  /// bound to that store. Recompute on every validation; a new proof, attempt,
+  /// owner or generation makes the prior exemption invalid.
+  static String? retainedPreproofAuditFingerprint(
+    CloudOutboxOperationEntity row, {
+    required CloudSyncLocalSendJournal journal,
+  }) {
+    if (!journal.isRetainedPreproofPendingCreate(row)) return null;
+    return _settledAuditFingerprint(
+      [row],
+      retainedPreproofRowIds: {row.id},
+    );
+  }
+
+  // Held IDs are supplied only after checking the live journal binding.
   // The public row-only helper must not infer proof from a pending row's shape.
   static String? _settledAuditFingerprint(
     List<CloudOutboxOperationEntity> rows, {

@@ -220,12 +220,12 @@ try {
     }
     $script:AdbPath = Resolve-GateExecutable -Executable $AdbExecutable -Code 'adb_executable_unavailable'
     $script:DartPath = Resolve-GateExecutable -Executable $DartExecutable -Code 'dart_executable_unavailable'
-    $deviceState = Invoke-AdbLines @('get-state')
+    $deviceState = @(Invoke-AdbLines @('get-state'))
     if ($deviceState.Count -ne 1 -or $deviceState[0] -cne 'device') { Fail-Gate 'device_unavailable' }
 
     $channel = Open-VmChannel
     try {
-        $modeArgs = @('--packages=' + $PackageConfig, $VmReadUploadModeScript, $channel.WsUri, '--expect-manual-writer')
+        $modeArgs = @(('--packages=' + $PackageConfig), $VmReadUploadModeScript, $channel.WsUri, '--expect-manual-writer')
         $modeLines = Invoke-BoundedText -FilePath $script:DartPath -Arguments $modeArgs -TimeoutSeconds 60 -FailureCode 'manual_writer_mode_failed'
         $modeDoc = ($modeLines -join "`n") | ConvertFrom-Json
         if ($modeDoc.mode -cne 'manual-writer') { Fail-Gate 'manual_writer_mode_failed' }
@@ -234,7 +234,7 @@ try {
             Fail-Gate 'source_commit_mismatch'
         }
 
-        $writeArgs = @('--packages=' + $PackageConfig, $VmWriteScript, $channel.WsUri, ('--' + $Mode), '--expect-recipient-sha256', $ExpectedRecipientSha256)
+        $writeArgs = @(('--packages=' + $PackageConfig), $VmWriteScript, $channel.WsUri, ('--' + $Mode), '--expect-recipient-sha256', $ExpectedRecipientSha256)
         if ($Mode -ne 'prepare') { $writeArgs += $ExpectedGuidHash }
         $writeLines = Invoke-BoundedText -FilePath $script:DartPath -Arguments $writeArgs -TimeoutSeconds $ProcessTimeoutSeconds -FailureCode 'write_phase_failed'
         $writeDoc = ($writeLines -join "`n") | ConvertFrom-Json

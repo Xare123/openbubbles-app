@@ -98,8 +98,17 @@ function Invoke-BoundedText {
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
-    foreach ($argument in $Arguments) {
-        [void]$psi.ArgumentList.Add($argument)
+    if ($FilePath -ceq 'cmd.exe') {
+        if ($Arguments.Count -ne 3 -or $Arguments[0] -cne '/d' -or $Arguments[1] -cne '/c') {
+            Fail-Preflight 'batch_invocation_invalid'
+        }
+        # cmd does not decode ArgumentList's C-runtime quote escaping. The
+        # batch caller already supplies the double-quoted /c command boundary.
+        $psi.Arguments = '/d /s /c ' + $Arguments[2]
+    } else {
+        foreach ($argument in $Arguments) {
+            [void]$psi.ArgumentList.Add($argument)
+        }
     }
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $psi
