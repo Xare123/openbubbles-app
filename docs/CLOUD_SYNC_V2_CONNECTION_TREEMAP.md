@@ -140,11 +140,26 @@ All 340 cases in eight targeted Dart suites passed against the imported bindings
 the three changed journal/store/test files analyze cleanly. A store without the
 exact attachment-upload journal cannot lease these saves. Runtime injection of
 that journal and the byte-upload consumer still require integration.
-Production byte-upload consumption, protected attempt/result recovery,
-runtime final-save handoff and parent wiring remain open. Metadata is derived from
+The next native candidate implements byte-upload prepare/consume/recover under
+the existing mutation fence, with an immutable verified file and original plan.
+A native exclusive claim precedes upload; encrypted completion is durable before
+Dart return and can reconstruct a lost result without another Apple request.
+Parent review corrected Unix rename overwrite, directory-symlink traversal and
+unbounded-read races in the worker receipt store. This candidate still awaits
+GCE qualification. The resume input now matches the persisted journal fields,
+which do not include the discarded transient envelope length.
+Runtime coordinator/fence recovery, final-save handoff and parent wiring remain
+open. Metadata is derived from
 the pinned body's projection, never a caller-supplied GUID guess. Neither
 upload success nor a missing record proves
 parent-message synchronization.
+
+The current MMCS implementation does not demonstrate safe replay of an ambiguous
+byte upload: original CloudKit request UUIDs do not carry through to MMCS request
+UUIDs, and chunk deduplication is not a completed-asset recovery contract. Retain
+unknown attempts; neither missing final records nor the same preparation grants
+automatic replay. Protected local completed receipts cover lost Dart responses,
+not network outcomes for which no valid receipt was received.
 The known-good local executable is still the qualified `6abbeede2` bundle.
 
 The first September 10 attempt failed on retained IDS credentials before send.

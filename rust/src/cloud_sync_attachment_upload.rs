@@ -253,6 +253,91 @@ impl AttachmentUploadPlan {
         Ok(&identity.operation_uuids()[0])
     }
 
+    /// Reopen the original plan against the pinned IDS source. Copy and verify
+    /// the current file once, then retain that immutable handle for consumption.
+    /// No new preparation, file keys, record name, or request UUID is allocated.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn prepare_verified_submission<R: Read + Send>(
+        &self,
+        client: &CloudMessagesClient<DefaultAnisetteProvider>,
+        writer_binding: &CloudMessagesWriterPreparationBinding<DefaultAnisetteProvider>,
+        decoded: &crate::cloud_sync_ids_attachment_source::DecodedIdsAttachmentSource,
+        parent_source_sha256: &str,
+        original_attachment_guid: &str,
+        record_identifier: &RecordIdentifier,
+        local_operation_id: String,
+        source: &mut R,
+        private_directory: &std::path::Path,
+        timeout: Duration,
+    ) -> Result<
+        CloudMessagesPreparedUploadSubmission<
+            DefaultAnisetteProvider,
+            crate::cloud_sync_attachment_source_file::OwnedAttachmentSource,
+        >,
+        AttachmentUploadPreparationFailure,
+    > {
+        self.validate_origin(
+            &decoded.message_guid,
+            parent_source_sha256,
+            record_identifier,
+        )?;
+        let material = crate::cloud_sync_ids_attachment_source::decoded_attachment_upload_material(
+            decoded,
+            original_attachment_guid,
+            &crate::cloud_sync_ids_attachment_source::NativeAttachmentMetaTimes {
+                start_date_ns: self.metadata.start_date,
+                created_date_ns: self.metadata.created_date,
+            },
+        )?;
+        // The complete canonical metadata must still be the initial projection
+        // of the same original IDS body, including its attachment GUID.
+        let mut expected = Vec::new();
+        let mut actual = Vec::new();
+        plist::to_writer_binary(&mut expected, &self.metadata)
+            .map_err(|_| Failure::MalformedMessage)?;
+        plist::to_writer_binary(&mut actual, &material.meta)
+            .map_err(|_| Failure::MalformedMessage)?;
+        if expected != actual {
+            return Err(Failure::BindingMismatch.into());
+        }
+        let snapshot = crate::cloud_sync_attachment_source_file::snapshot_verified_source(
+            source,
+            &material.file,
+            private_directory,
+        )
+        .await
+        .map_err(|_| AttachmentUploadPreparationFailure::SourceUnavailable)?;
+        self.prepare_native_submission(
+            client,
+            writer_binding,
+            &decoded.message_guid,
+            parent_source_sha256,
+            record_identifier,
+            local_operation_id,
+            snapshot,
+            timeout,
+        )
+        .await
+    }
+
+    /// The receipt must contain the original metadata and the exact asset
+    /// validated by this plan, not merely another completed attachment.
+    pub(crate) fn validate_completed_envelope(
+        &self,
+        encoded: &[u8],
+    ) -> Result<CloudAttachment, Failure> {
+        let (attachment, record_name) =
+            crate::cloud_sync_outbound_attachment::decode_attachment_envelope(encoded)?;
+        if record_name != self.record_name()? {
+            return Err(Failure::BindingMismatch);
+        }
+        let validated = self.complete(attachment.lqa)?;
+        if encode_attachment(&validated, self.record_name()?)? != encoded {
+            return Err(Failure::BindingMismatch);
+        }
+        Ok(validated)
+    }
+
     /// Require the same immutable local origin AND exact container-issued
     /// record identifier immediately before using this plan. A matching file
     /// alone cannot transfer it to another message, recipient, or account.
@@ -269,6 +354,10 @@ impl AttachmentUploadPlan {
             return Err(Failure::BindingMismatch);
         }
         Ok(())
+    }
+
+    pub(crate) fn validate_parent_source(&self, guid: &str, sha256: &str) -> Result<(), Failure> {
+        self.validate_origin(guid, sha256, &self.record_identifier)
     }
 
     /// Bounded-memory validation of the retained plaintext file. This does not
@@ -543,6 +632,44 @@ pub(crate) fn open_attachment_upload(
     if stage.protected_payload_reference != stage.protected_server_record_reference {
         return Err(Failure::BindingMismatch);
     }
+    open_attachment_upload_bound(
+        storage_directory,
+        account_fingerprint,
+        stage,
+        Some(stage.payload_length),
+    )
+}
+
+/// The durable Dart journal stores references/hashes, not an envelope length.
+/// Hash verification and the native byte limit still cover the full envelope.
+/// A missing advisory length must not prevent recovery of a committed plan.
+pub(crate) fn open_journaled_attachment_upload(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    logical_entity_key_hash: &str,
+    protected_reference: &str,
+    payload_sha256: &str,
+    server_record_id_hash: &str,
+    lease_reference: &str,
+) -> Result<AttachmentUploadPlan, Failure> {
+    let stage = NativeProtectedOutboundStage {
+        logical_entity_key_hash: logical_entity_key_hash.to_owned(),
+        protected_payload_reference: protected_reference.to_owned(),
+        payload_sha256: payload_sha256.to_owned(),
+        payload_length: 0, // Not consulted: the persisted journal has no length.
+        protected_server_record_reference: protected_reference.to_owned(),
+        server_record_id_hash: server_record_id_hash.to_owned(),
+        lease_reference: lease_reference.to_owned(),
+    };
+    open_attachment_upload_bound(storage_directory, account_fingerprint, &stage, None)
+}
+
+fn open_attachment_upload_bound(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    stage: &NativeProtectedOutboundStage,
+    expected_length: Option<u64>,
+) -> Result<AttachmentUploadPlan, Failure> {
     cloud_sync_verify_committed_lease_exact(
         storage_directory.clone(),
         &stage.lease_reference,
@@ -561,7 +688,9 @@ pub(crate) fn open_attachment_upload(
     let bytes = URL_SAFE_NO_PAD
         .decode(value)
         .map_err(|_| Failure::MalformedMessage)?;
-    if digest(&bytes) != stage.payload_sha256 || bytes.len() as u64 != stage.payload_length {
+    if digest(&bytes) != stage.payload_sha256
+        || expected_length.is_some_and(|length| bytes.len() as u64 != length)
+    {
         return Err(Failure::BindingMismatch);
     }
     let plan = AttachmentUploadPlan::decode(&bytes)?;
@@ -685,6 +814,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn completed_receipt_recovery_rejects_other_plan_metadata_and_asset() {
+        let original = plan().await;
+        let completed = original.complete(asset(&original)).unwrap();
+        let encoded = encode_attachment(&completed, RECORD).unwrap();
+        original.validate_completed_envelope(&encoded).unwrap();
+        original
+            .validate_parent_source(PARENT, &"a".repeat(64))
+            .unwrap();
+        assert!(original
+            .validate_parent_source(PARENT, &"b".repeat(64))
+            .is_err());
+        let mut changed = completed.clone();
+        changed.cm.0.guid = "other-guid".to_owned();
+        assert!(original
+            .validate_completed_envelope(&encode_attachment(&changed, RECORD).unwrap())
+            .is_err());
+        let independently_prepared = plan().await;
+        let other = independently_prepared
+            .complete(asset(&independently_prepared))
+            .unwrap();
+        assert!(original
+            .validate_completed_envelope(&encode_attachment(&other, RECORD).unwrap())
+            .is_err());
+        assert!(original
+            .validate_completed_envelope(b"not a receipt")
+            .is_err());
+    }
+
+    #[tokio::test]
     async fn upload_plan_restores_exact_randomized_preparation_and_original_identity() {
         let original = plan().await;
         let encoded = original.encode().unwrap();
@@ -703,6 +861,44 @@ mod tests {
         let independently_prepared = plan().await;
         assert!(original.prepared.ford_key != independently_prepared.prepared.ford_key);
         assert!(recovered.complete(asset(&independently_prepared)).is_err());
+    }
+
+    #[tokio::test]
+    async fn journal_reference_reopens_committed_plan_without_discarded_length() {
+        let directory = tempfile::tempdir().unwrap();
+        let account = "A".repeat(43);
+        let original = plan().await;
+        let mut stage =
+            stage_attachment_upload(directory.path().into(), account.clone(), &original).unwrap();
+        let reopen = |stage: &NativeProtectedOutboundStage| {
+            open_journaled_attachment_upload(
+                directory.path().into(),
+                account.clone(),
+                &stage.logical_entity_key_hash,
+                &stage.protected_payload_reference,
+                &stage.payload_sha256,
+                &stage.server_record_id_hash,
+                &stage.lease_reference,
+            )
+        };
+        assert!(reopen(&stage).is_err()); // Stage not durably adopted yet.
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            directory.path().into(),
+            &stage.lease_reference,
+            std::slice::from_ref(&stage.protected_payload_reference),
+        )
+        .unwrap();
+        stage.payload_length = 0; // This field is absent from the Dart journal.
+        let recovered = reopen(&stage).unwrap();
+        assert_eq!(
+            recovered.upload_attempt_id().unwrap(),
+            original.upload_attempt_id().unwrap()
+        );
+        assert_eq!(recovered.encode().unwrap(), original.encode().unwrap());
+        // The length-strict native stage API retains its original contract.
+        assert!(open_attachment_upload(directory.path().into(), account.clone(), &stage).is_err());
+        stage.payload_sha256 = "e".repeat(64);
+        assert!(reopen(&stage).is_err());
     }
 
     #[tokio::test]

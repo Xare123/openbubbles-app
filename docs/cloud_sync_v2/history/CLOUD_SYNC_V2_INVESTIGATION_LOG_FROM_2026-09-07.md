@@ -1305,3 +1305,32 @@ This is a chronological evidence log. It does not override the
   rejection. All 340 cases across eight targeted Dart suites passed after bridge
   import. Three changed source/test files analyze cleanly. Full runtime uploader
   and parent-message dependency remain open, not claimed by these component tests.
+
+## 2026-09-10, native byte-upload execution and completed-result recovery
+
+- Parent connected original-plan reopen to the immutable IDS-verified file and
+  one-shot native upload owner. Prepare/consume/recover bridge APIs retain the
+  exact account/store/session/container and reuse the record-save mutation-fence
+  validator. The byte upload has its own durable identity, not a fabricated
+  final-record operation. No live upload or new runtime has been requested.
+- The native claim is made before upload; successful completed-envelope bytes
+  are protected before staging the result or returning to Dart. A lost response
+  or revoked fence retains the receipt. Recovery revalidates its exact asset,
+  metadata, record name and parent-source hash against the original plan.
+- The Dart journal does not retain the transient plan envelope length. The new
+  resume reference accepts its actual five persisted fields and keeps committed
+  lease, bounded native read, complete payload hash and semantic identity checks.
+  Added a real protected-store reopen test, not just a constructed DTO fixture.
+- Muse's receipt-store draft provided the encryption contract and six synthetic
+  tests. Parent found and corrected the cross-process claim race caused by Unix
+  rename replacement, directory-symlink traversal before containment checks,
+  and whole-file reads after a racy length check. Added no-clobber publication,
+  partial-claim and symlink tests, plus four shared native-consumer behavior tests.
+  This new batch is source-only until isolated GCE qualification completes.
+- Muse protocol audit reviewed rustpush `f2e8ea3`: CloudKit upload authorization
+  has original request/operation UUIDs, but MMCS generates its own fresh request
+  UUIDs (`mmcs.rs:1098`, `2095`, `2136`). Existing chunk states/receipts are content
+  deduplication, not evidence of safe ambiguous replay. Parent verified the native
+  upload timeout/receipt/asset-shape boundary at `cloudkit.rs:5778-5817` and kept
+  unknown attempts fenced. A missing final record is not an MMCS status query.
+  Research agent reviewed and closed, independently verified not_found.
