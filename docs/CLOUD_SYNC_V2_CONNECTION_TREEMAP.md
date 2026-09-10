@@ -55,8 +55,8 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Candidate | Exact-source app-code candidate `0b86a6465cdb6ff574b0e6a94b86a8c6c78f3c52`. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
-| Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, and manual read/write gates are wired with automatic uploads off. Reset-fenced old-generation outbox rows remain durable audit evidence but cannot block the new generation when an exact newer checkpoint proves them terminal. |
+| Candidate | App-code candidate `42a61b13c41184b8932195e6e9d588fba6fd372e`. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
+| Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
 | Dependency | rustpush `866560d38fcc544851c0b3d55414d25a29bba192`. |
 | Full qualification | GCE run `34414062044` qualified exact app code `0b86a6465`: 2,522 Dart tests, 359 app Rust tests, 226 rustpush tests, 34 protector tests, and the 14-case semantic outbox contract passed; bindings reproduced; the ARM64 Canary contained every required native library and was signed on the trusted GitHub-hosted path. Automatic uploads were off. Independent inventories found zero remaining runners and zero GCE instances. |
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
@@ -99,6 +99,11 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 - Startup receipt replay completes before stale-send normalization. The
   ObjectBox startup claim then retains native-confirmation work and clears only
   sends that are proven untracked in the same transaction.
+- Canary can register one exact, content-free semantic-scope hash with Android
+  WorkManager. Foreground, headless APNs, and network hints coalesce into a
+  metadata-only read. The worker is bounded to five attempts and eight minutes;
+  Flutter-engine readiness is cancellable and separately bounded to one minute.
+  Alpha, Beta, production, media-prefetch, and every outbound lane remain closed.
 
 ## Scope and current evidence
 
@@ -115,6 +120,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Attachment writes | `GAP` | Require protected asset staging, record binding, save/readback, and recovery. |
 | Tombstones and deletion | Closed | Define exact ownership and recoverable semantics before enabling any local or remote delete. |
 | Token expiry | `TEST-PROVEN` | Live expired-token/restart proof remains. The exact-source path requires an authenticated protected reset proof, releases the semantic read boundary, reacquires the destructive-reset interlock and native pause, advances once, reconciles authority after process death, and replays once. |
+| Android background catch-up | `TEST-PROVEN` | `42a61b13c` compiles for Canary; 40 focused Dart contracts and 10 Android unit tests pass. Signed Pixel proof across background, lock, process death, APNs, reconnect, and retry exhaustion remains. |
 | SMS, MMS, and RCS | Out of scope | Do not add them to this CloudKit V2 release path. |
 
 ## Safety gates
@@ -296,6 +302,7 @@ CloudKit readback or independent Apple-device display.
 | Composer origin, IDS completion, and write admission | [`rustpush_service.dart`](../lib/services/rustpush/rustpush_service.dart), [`cloud_sync_local_send_journal.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart), [`cloud_sync_manual_outbound_canary.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart), [`cloudkit_writer_mutation_guard.dart`](../lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart) | Atomic direct/restored-group composer admission, bounded awaited receipt replay, atomic startup claim, protected receipt recovery, and reset-required fencing are exact-source qualified through `0b86a6465`; live Pixel process-death recovery, remote readback, and duplicate suppression remain. |
 | Direct and group encoders | [`cloud_sync_local_send_encoder.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_local_send_encoder.dart), [`cloud_sync_outbound_group_binding.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart) | Direct live-proven on Windows; group source-implemented. |
 | Native create/readback receipt | [`api.rs`](../rust/src/api/api.rs), [`cloud_messages.rs`](../rustpush/src/imessage/cloud_messages.rs), [`chat_create.rs`](../rustpush/src/imessage/cloud_messages/chat_create.rs) | Direct Windows proof; exact-source suite and group live proof pending. |
+| Android durable read wake | [`CloudSyncV2WorkRegistration.kt`](../android/app/src/main/kotlin/com/bluebubbles/messaging/services/rustpush/CloudSyncV2WorkRegistration.kt), [`CloudSyncV2Worker.kt`](../android/app/src/main/kotlin/com/bluebubbles/messaging/services/rustpush/CloudSyncV2Worker.kt), [`cloud_sync_android_background.dart`](../lib/services/rustpush/cloud_sync/cloud_sync_android_background.dart) | Source and focused tests pass at `42a61b13c`; signed lifecycle proof remains. |
 
 ## Release gates
 
@@ -310,6 +317,8 @@ CloudKit readback or independent Apple-device display.
   is signed on the existing trusted GitHub-hosted signing path.
 - [x] Run `34414062044` deleted its VM and deregistered its runner; independent
   inventories confirmed zero remaining runners and zero GCE instances.
+- [ ] App-code candidate `42a61b13c` must reproduce the full suite, bindings,
+  signed ARM64 Canary, runner cleanup, and zero-instance proof in GCE.
 
 ### Read qualification
 
@@ -369,8 +378,10 @@ CloudKit readback or independent Apple-device display.
    must recover prepared or unknown authority without losing old evidence.
    Same-generation authentication may refresh once; account replacement must
    preserve evidence and fail closed.
-5. Add the durable Android background entrypoint and then enable incremental
-   automatic triggers behind a rollback gate.
+5. The durable Android metadata entrypoint is source-implemented and focused-
+   test proven at `42a61b13c`. Qualify its exact-source signed Canary, then prove
+   background, lock, APNs, reconnect, process restart, bounded retry, and stale-
+   identity behavior on Pixel before considering production enablement.
 6. Run lifecycle soak and produce one release-candidate report that proves
    identity stability, token continuity, zero duplicate writes, and honest
    retained counts. Direct reactions may follow text-sync MVP. Keep edits,
@@ -379,10 +390,11 @@ CloudKit readback or independent Apple-device display.
 
 ## Next falsification test
 
-Use the signed exact-source `0b86a6465` Canary from successful GCE run
-`34414062044` for one batched Pixel session: cold read, idempotent
-second read, expired-token/restart recovery, and the authorized direct
-process-death write test. The write must recover state 3, adopt exactly one
+First qualify app-code candidate `42a61b13c` in the full GCE lane and use its
+signed exact-source Canary for one batched Pixel session: cold read, idempotent
+second read, background/lock/APNs/reconnect, expired-token/restart recovery, and
+the authorized direct process-death write test. The write must recover state 3,
+adopt exactly one
 protected outbox operation, obtain exact CloudKit readback and independent
 Apple-device display, and create zero duplicate local or remote records.
 Automatic uploads remain disabled during this proof.
