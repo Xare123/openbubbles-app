@@ -325,10 +325,16 @@ void main() {
     );
     expect(
       compactShared,
-      contains("if (composerPreAdmitted) { throw StateError('cloud_sync_local_send_source_changed');"),
+      contains("if (composerPreAdmitted || retryContext.identity.isAttachment) { throw StateError('cloud_sync_local_send_source_changed');"),
     );
     expect(compactShared,
-        contains('expectedSourceSha256: localCloudIntent!.identity.sourceSha256'));
+        contains('expectedSourceSha256: retryContext.identity.sourceSha256'));
+    expect(compactShared.indexOf('confirmed: false,'),
+        lessThan(compactShared.indexOf('_prepareCloudSyncV2AttachmentSource(')));
+    expect(compactShared.indexOf('_prepareCloudSyncV2AttachmentSource('),
+        lessThan(compactShared.indexOf('await sendMsg(')));
+    expect(compactShared, contains('attachmentReceiptContext ?? context.nativeReceiptContext'));
+    expect(compactShared, contains('captureAttachmentWire('));
     expect(compactShared,
         contains('if (localCloudIntent != null && !backgroundSendPending)'));
     expect(RegExp(r'await sendMsg\(').allMatches(shared), hasLength(1));

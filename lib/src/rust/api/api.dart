@@ -149,6 +149,17 @@ void cloudSyncAcknowledgeNativeSendReceipt({
   receipt: receipt,
 );
 
+/// Restores only the exact committed local source for an authenticated retry.
+/// No Apple request, upload or send is performed. The caller still validates
+/// its current local body/route and journal before handing this value to IDS.
+Future<MessageInst> cloudSyncRestoreIdsAttachmentSource({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncNativeSendReceiptContext context,
+}) => RustLib.instance.api.crateApiApiCloudSyncRestoreIdsAttachmentSource(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+);
+
 /// Stages the provided native IDS attachment value without sending anything or
 /// touching Apple. Caller must journal ownership and commit the lease under
 /// the protected-store exclusive lock before passing this binding to send().

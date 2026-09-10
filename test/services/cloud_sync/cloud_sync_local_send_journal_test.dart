@@ -93,6 +93,20 @@ void main() {
         protectedSource: protectedSource,
       );
 
+  test('journaled retry lookup includes confirmed origins and pins row and GUID', () {
+    final message = awaitingNativeConfirmation(reflected: false);
+    expect(CloudSyncLocalSendJournal.hasJournaledSubmission(store, message), isTrue);
+    expect(confirmNative(), isNotNull);
+    expect(CloudSyncLocalSendJournal.hasJournaledSubmission(store, message), isTrue);
+    message.stagingGuid = _guidB;
+    expect(CloudSyncLocalSendJournal.hasJournaledSubmission(store, message), isFalse);
+    message.stagingGuid = _guidA;
+    message.id = 999999;
+    expect(CloudSyncLocalSendJournal.hasJournaledSubmission(store, message), isFalse);
+    message.id = null;
+    expect(CloudSyncLocalSendJournal.hasJournaledSubmission(store, message), isFalse);
+  });
+
   test('protected source ownership survives restart and IDS receipt consumption', () async {
     final message = _message(chat: chat, stagingGuid: _guidA);
     final identity = _identity(message, chat, _guidA);

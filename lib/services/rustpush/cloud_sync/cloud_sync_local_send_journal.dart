@@ -861,6 +861,29 @@ final class CloudSyncLocalSendJournal {
             ]);
   }
 
+  /// Prevents a retry from replacing an already journaled MMCS descriptor.
+  /// Includes confirmed origins: local reflection can fail after IDS succeeds.
+  /// This local check grants no send permission or remote confirmation.
+  static bool hasJournaledSubmission(Store store, Message message) {
+    final messageId = message.id;
+    final stableGuid = message.stagingGuid;
+    if (messageId == null || messageId <= 0 || stableGuid == null) return false;
+    final query = store.box<CloudSyncLocalSendIntentEntity>().query(
+      CloudSyncLocalSendIntentEntity_.localMessageId.equals(messageId).and(
+        CloudSyncLocalSendIntentEntity_.messageGuidHash.equals(
+          CloudSyncLocalSendIdentity._digest([
+            'cloud-sync-local-send-guid-v1', stableGuid,
+          ]),
+        ),
+      ),
+    ).build();
+    try {
+      return query.count() != 0;
+    } finally {
+      query.close();
+    }
+  }
+
   /// A startup crash sweep must not downgrade a send while durable native IDS
   /// evidence can still arrive or still needs authenticated promotion. This is
   /// a local recovery fence only; it neither confirms the send nor authorizes

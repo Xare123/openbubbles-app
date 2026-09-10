@@ -42,6 +42,9 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dar
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_send_body.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_staging.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_runtime.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
@@ -131,6 +134,17 @@ enum FaceTimeIncomingAdmissionStatus {
   mismatched,
   alreadyClaimed,
 }
+
+typedef _CloudSyncV2LocalSendContext = ({
+  CloudSyncLocalSendJournal journal,
+  CloudSyncLocalSendIdentity identity,
+  CloudSyncLocalSendAuthFence authFence,
+  CloudSyncNativeAuthSnapshot capturedAuth,
+  api.CloudSyncNativeSendReceiptContext nativeReceiptContext,
+  List<String>? attachmentGuids,
+  bool Function() stillCurrent,
+  bool composerPreAdmitted,
+});
 
 class FaceTimeIncomingAdmissionResult {
   const FaceTimeIncomingAdmissionResult._({
@@ -1040,23 +1054,33 @@ class RustPushBackend implements BackendService {
     if (chat.isRpSms && !smsForwardingEnabled()) {
       throw Exception("SMS is not enabled (enable in settings -> user)");
     }
-    var stream = api.uploadAttachment(
-      aps: pushService.state!.conn,
-      path: att.getFile().path!,
-      mime: att.mimeType ?? "application/octet-stream",
-      uti: att.uti ?? "public.data",
-      name: att.transferName!,
+    final retainedDescriptor = retainedAttachmentDescriptorForRetry(
+      journaledSubmission: CloudKitWriterOwnership.v2MutationsEnabled &&
+          CloudSyncDevGate.manualOutboundCanaryEnabled && !chat.isRpSms &&
+          CloudSyncLocalSendJournal.hasJournaledSubmission(Database.store, m),
+      attachment: att,
     );
     api.Attachment? attachment;
-    await for (final event in stream) {
-      if (event.attachment != null) {
-        Logger.info("upload finish");
-        attachment = event.attachment;
-        att.metadata = {"rustpush": await api.saveAttachment(att: attachment!)};
-        att.save(m);
-      } else if (onSendProgress != null) {
-        Logger.info("upload progress ${event.prog} of ${event.total}");
-        onSendProgress(event.prog, event.total);
+    if (retainedDescriptor != null) {
+      attachment = api.restoreAttachment(data: retainedDescriptor);
+    } else {
+      final stream = api.uploadAttachment(
+        aps: pushService.state!.conn,
+        path: att.getFile().path!,
+        mime: att.mimeType ?? "application/octet-stream",
+        uti: att.uti ?? "public.data",
+        name: att.transferName!,
+      );
+      await for (final event in stream) {
+        if (event.attachment != null) {
+          Logger.info("upload finish");
+          attachment = event.attachment;
+          att.metadata = {"rustpush": await api.saveAttachment(att: attachment!)};
+          att.save(m);
+        } else if (onSendProgress != null) {
+          Logger.info("upload progress ${event.prog} of ${event.total}");
+          onSendProgress(event.prog, event.total);
+        }
       }
     }
     Logger.info("uploaded");
@@ -1126,13 +1150,14 @@ class RustPushBackend implements BackendService {
         return buildWireMessage(api.restoreAttachment(data: retryAttachmentData));
       }
 
-      // Attachment CloudKit admission remains disabled. This only reuses the
-      // ordinary send's stable-ID, pending-row and native-confirmation path.
+      // Capture the exact source before IDS. CloudKit upload admission remains
+      // separate; the journal retains this source through reflection/restart.
       final pendingMessageGuid = m.guid;
       final Message reflected;
       try {
         reflected = await _sendPreparedMessage(
           chat, m, msg, buildWireMessage: rebuildWireMessage,
+          requireAttachmentOrigin: retainedDescriptor != null,
         );
       } catch (_) {
         retainAttachmentSubmissionForRetry(
@@ -1642,6 +1667,7 @@ class RustPushBackend implements BackendService {
   Future<Message> _sendPreparedMessage(
     Chat chat, Message m, api.MessageInst msg, {
     required Future<api.MessageInst> Function() buildWireMessage,
+    bool requireAttachmentOrigin = false,
   }) async {
     final generatedMessageId = msg.id;
     Logger.info("sending ${msg.id}");
@@ -1670,11 +1696,15 @@ class RustPushBackend implements BackendService {
       chat: chat,
       wire: msg,
     );
+    if (requireAttachmentOrigin && localCloudIntent?.identity.isAttachment != true) {
+      throw StateError('cloud_sync_local_send_journal_required');
+    }
     if (composerPreAdmitted &&
         (localCloudIntent == null || !localCloudIntent.composerPreAdmitted)) {
       throw StateError('cloud_sync_local_send_journal_required');
     }
     final originalCloudIntent = localCloudIntent;
+    api.CloudSyncNativeSendReceiptContext? attachmentReceiptContext;
     Future<api.MessageInst> rebuildWireMessage() async {
       if (originalCloudIntent != null && !originalCloudIntent.stillCurrent()) {
         throw StateError('cloud_sync_local_send_identity_changed');
@@ -1686,15 +1716,29 @@ class RustPushBackend implements BackendService {
       }
       // A transport rebuild must not certify a different payload as the
       // originally journaled send. Live retry behavior remains unchanged.
-      if (localCloudIntent != null &&
-          CloudSyncLocalSendIdentity.captureWire(m, chat, rebuilt,
-              expectedSourceSha256: localCloudIntent!.identity.sourceSha256)?.sourceSha256 !=
-              localCloudIntent!.identity.sourceSha256) {
-        if (composerPreAdmitted) {
+      final retryContext = localCloudIntent;
+      final retryIdentity = retryContext == null ? null :
+          retryContext.identity.isAttachment
+              ? await CloudSyncLocalSendIdentity.captureAttachmentWire(
+                  m, chat, rebuilt,
+                  expectedSourceSha256: retryContext.identity.sourceSha256,
+                  serializeAttachment: (attachment) => api.saveAttachment(att: attachment),
+                )
+              : CloudSyncLocalSendIdentity.captureWire(m, chat, rebuilt,
+                  expectedSourceSha256: retryContext.identity.sourceSha256);
+      if (retryContext != null &&
+          retryIdentity?.sourceSha256 != retryContext.identity.sourceSha256) {
+        if (composerPreAdmitted || retryContext.identity.isAttachment) {
           throw StateError('cloud_sync_local_send_source_changed');
         }
         localCloudIntent = null;
         Logger.warn('Cloud Sync V2 outgoing payload changed during retry; upload intent was not confirmed');
+      }
+      final receipt = attachmentReceiptContext;
+      if (retryContext != null && retryContext.identity.isAttachment && receipt != null) {
+        return pushService._restoreCloudSyncV2AttachmentWire(
+          retryContext, receipt, message: m, chat: chat,
+        );
       }
       return rebuilt;
     }
@@ -1705,6 +1749,18 @@ class RustPushBackend implements BackendService {
       confirmed: false,
       newlyGeneratedGuid: cloudSyncGuidIsNew,
     );
+    // Staging is local-only and completes before IDS. Any failure keeps the
+    // pending row/source for retry and must not turn into an untracked send.
+    attachmentReceiptContext = localCloudIntent?.identity.isAttachment == true
+        ? await pushService._prepareCloudSyncV2AttachmentSource(
+            localCloudIntent!, message: m, chat: chat, wire: msg,
+          )
+        : null;
+    if (attachmentReceiptContext != null) {
+      msg = await pushService._restoreCloudSyncV2AttachmentWire(
+        localCloudIntent!, attachmentReceiptContext, message: m, chat: chat,
+      );
+    }
     var backgroundSendPending = false;
     try {
       backgroundSendPending = await sendMsg(msg,
@@ -1719,7 +1775,7 @@ class RustPushBackend implements BackendService {
           if (!context.stillCurrent()) {
             throw StateError('cloud_sync_local_send_identity_changed');
           }
-          return context.nativeReceiptContext;
+          return attachmentReceiptContext ?? context.nativeReceiptContext;
         });
     } catch (e) {
       Logger.error(e);
@@ -8098,15 +8154,7 @@ class RustPushService extends GetxService {
     }
   }
 
-  Future<({
-    CloudSyncLocalSendJournal journal,
-    CloudSyncLocalSendIdentity identity,
-    CloudSyncLocalSendAuthFence authFence,
-    CloudSyncNativeAuthSnapshot capturedAuth,
-    api.CloudSyncNativeSendReceiptContext nativeReceiptContext,
-    bool Function() stillCurrent,
-    bool composerPreAdmitted,
-  })?> _captureCloudSyncV2LocalSend({
+  Future<_CloudSyncV2LocalSendContext?> _captureCloudSyncV2LocalSend({
     required Message message,
     required Chat chat,
     required api.MessageInst wire,
@@ -8122,9 +8170,12 @@ class RustPushService extends GetxService {
         return null;
       }
       final isReaction = wire.message is api.Message_React;
+      final attachmentBody = isReaction ? null : CloudSyncAttachmentSendBody.capture(message);
       final initialIdentity = isReaction
           ? CloudSyncLocalSendIdentity.captureReaction(message, chat, wire.id)
-          : CloudSyncLocalSendIdentity.capture(message, chat, wire.id);
+          : attachmentBody != null
+              ? CloudSyncLocalSendIdentity.captureAttachment(message, chat, wire.id)
+              : CloudSyncLocalSendIdentity.capture(message, chat, wire.id);
       if (initialIdentity == null) return null;
       final currentState = state;
       final client = currentState?.icloudServices?.cloudMessagesClient;
@@ -8173,7 +8224,13 @@ class RustPushService extends GetxService {
               message: message, chat: chat, wire: wire,
               initialSourceSha256: initialIdentity.sourceSha256,
             )
-          : journal.captureSubmissionWire(
+          : initialIdentity.isAttachment
+              ? await journal.captureAttachmentSubmissionWire(
+                  message: message, chat: chat, wire: wire,
+                  initialSourceSha256: initialIdentity.sourceSha256,
+                  serializeAttachment: (attachment) => api.saveAttachment(att: attachment),
+                )
+              : journal.captureSubmissionWire(
               message: message, chat: chat, wire: wire,
               initialSourceSha256: initialIdentity.sourceSha256,
             );
@@ -8183,6 +8240,7 @@ class RustPushService extends GetxService {
       return (
         journal: journal,
         identity: identity,
+        attachmentGuids: identity.isAttachment ? attachmentBody!.attachmentGuids : null,
         capturedAuth: auth,
         nativeReceiptContext: api.CloudSyncNativeSendReceiptContext(
           storageDirectory: storagePath,
@@ -8203,6 +8261,106 @@ class RustPushService extends GetxService {
       Logger.warn('Cloud Sync V2 local send capture unavailable; live sending remains independent');
       return null;
     }
+  }
+
+  Future<api.CloudSyncNativeSendReceiptContext> _prepareCloudSyncV2AttachmentSource(
+    _CloudSyncV2LocalSendContext context, {
+    required Message message,
+    required Chat chat,
+    required api.MessageInst wire,
+  }) async {
+    context.authFence.requireCurrentBinding(context.capturedAuth);
+    final client = state?.icloudServices?.cloudMessagesClient;
+    final guids = context.attachmentGuids;
+    if (client == null || !identical(client, context.capturedAuth.cloudMessagesClient) ||
+        guids == null || guids.isEmpty) {
+      throw StateError('cloud_sync_local_send_identity_changed');
+    }
+    final original = context.nativeReceiptContext;
+    final transport = NativeProtectedCloudSyncTransport(
+      cloudMessagesClient: client,
+      storageDirectory: original.storageDirectory,
+      protectedStoreIdentity: original.protectedStoreIdentity,
+    );
+    final exclusion = CloudKitOperationInterlock(
+      privateStorageDirectory: original.storageDirectory,
+      fenceStore: ObjectBoxCloudSyncStore.fromDatabase(
+        protector: RustCloudSyncProtector(storageDirectory: original.storageDirectory),
+      ),
+    );
+    final source = await CloudSyncLocalSendSourceStaging(
+      journal: context.journal, authFence: context.authFence,
+      capturedAuth: context.capturedAuth, stillCurrent: context.stillCurrent,
+      exclusion: exclusion, transport: transport,
+    ).prepare(
+      identity: context.identity,
+      validateWire: () async {
+        final current = await CloudSyncLocalSendIdentity.captureAttachmentWire(
+          message, chat, wire,
+          expectedSourceSha256: context.identity.sourceSha256,
+          serializeAttachment: (attachment) => api.saveAttachment(att: attachment),
+        );
+        return current?.sourceSha256 == context.identity.sourceSha256;
+      },
+      stage: () async {
+        final native = await api.cloudSyncStageIdsAttachmentSource(
+          cloudMessagesClient: client, context: original,
+          localSourceSha256: context.identity.sourceSha256,
+          message: wire, attachmentGuids: guids,
+        );
+        return CloudSyncLocalSendSourceBinding(
+          accountFingerprint: original.accountFingerprint,
+          protectedStoreIdentity: original.protectedStoreIdentity,
+          messageGuidHash: context.identity.guidHash,
+          sourceSha256: native.sourceSha256,
+          protectedReference: native.protectedReference,
+          leaseReference: native.leaseReference,
+          payloadSha256: native.payloadSha256,
+          payloadLength: native.payloadLength.toInt(),
+        );
+      },
+    );
+    return api.CloudSyncNativeSendReceiptContext(
+      storageDirectory: original.storageDirectory,
+      guidHash: original.guidHash,
+      accountFingerprint: original.accountFingerprint,
+      protectedStoreIdentity: original.protectedStoreIdentity,
+      nativeSessionId: original.nativeSessionId,
+      sourceBinding: api.CloudSyncNativeSendSourceBinding(
+        sourceSha256: source.sourceSha256,
+        protectedReference: source.protectedReference,
+        leaseReference: source.leaseReference,
+        payloadSha256: source.payloadSha256,
+        payloadLength: BigInt.from(source.payloadLength),
+      ),
+    );
+  }
+
+  Future<api.MessageInst> _restoreCloudSyncV2AttachmentWire(
+    _CloudSyncV2LocalSendContext context,
+    api.CloudSyncNativeSendReceiptContext receipt, {
+    required Message message,
+    required Chat chat,
+  }) async {
+    context.authFence.requireCurrentBinding(context.capturedAuth);
+    final client = state?.icloudServices?.cloudMessagesClient;
+    if (client == null || !identical(client, context.capturedAuth.cloudMessagesClient)) {
+      throw StateError('cloud_sync_local_send_identity_changed');
+    }
+    final restored = await api.cloudSyncRestoreIdsAttachmentSource(
+      cloudMessagesClient: client, context: receipt,
+    );
+    final identity = await CloudSyncLocalSendIdentity.captureAttachmentWire(
+      message, chat, restored,
+      expectedSourceSha256: context.identity.sourceSha256,
+      serializeAttachment: (attachment) => api.saveAttachment(att: attachment),
+    );
+    context.authFence.requireCurrentBinding(context.capturedAuth);
+    if (identity?.sourceSha256 != context.identity.sourceSha256 ||
+        identity?.guidHash != context.identity.guidHash) {
+      throw StateError('cloud_sync_local_send_source_changed');
+    }
+    return restored;
   }
 
   Future<void> _confirmCloudSyncV2NativeSend(String stableGuid,
@@ -8514,12 +8672,7 @@ class RustPushService extends GetxService {
   }
 
   Future<void> _saveCloudSyncV2LocalSend(
-    ({CloudSyncLocalSendJournal journal, CloudSyncLocalSendIdentity identity,
-      CloudSyncLocalSendAuthFence authFence,
-      CloudSyncNativeAuthSnapshot capturedAuth,
-      api.CloudSyncNativeSendReceiptContext nativeReceiptContext,
-      bool Function() stillCurrent,
-      bool composerPreAdmitted})? context,
+    _CloudSyncV2LocalSendContext? context,
     Message message,
     Chat chat, {
     required bool confirmed,

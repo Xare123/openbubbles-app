@@ -91,8 +91,15 @@ These prove randomized upload-plan recovery and validation components, not an
 end-to-end attachment send. Source `da428b635` then passed GCE `34517138488`:
 414 app-native tests, bridge reproducibility, and cleanup. Independent inventories
 returned zero instances/runners. Source staging, prepared-message validation and
-source-bound receipt recovery are qualified components; composer stage/adopt/commit
-and the actual uploader remain integration work.
+source-bound receipt recovery are qualified components. The current source now
+wires composer stage/adopt/commit and exact protected retry reconstruction.
+GCE `34521476151` compiled source `4164ea771` and passed 418 app-native tests.
+Its only failure was the expected bridge-drift gate; artifact `10170133961`
+was reviewed and imported. All 475 cases in the twelve targeted Dart suites
+passed against that bridge. Analyzer found zero errors and four pre-existing
+brace-style infos. Both cloud instance and runner inventories were empty after
+cleanup. The combined source still needs a reproducible green bridge run.
+The actual CloudKit attachment uploader remains integration work.
 The known-good local executable is still the qualified `6abbeede2` bundle.
 
 The first September 10 attempt failed on retained IDS credentials before send.
@@ -551,15 +558,20 @@ CloudKit readback or independent Apple-device display.
    journal adoption now retain the source independently of the acknowledged IDS
    receipt. GC and native lease recovery include it. Source staging and native
    pre-send/prepared-message validation now have an API hook; source-bound v3
-   receipt/replay/ack and Dart promotion checks are under qualification. The
-   attachment composer still does not select this path. Wire its origin and
-   stage/adopt/commit lifecycle next; do not use mutable metadata after sending.
+   receipt/replay/ack and Dart promotion checks passed native qualification.
+   The source candidate now selects attachment identity from the composer,
+   journals the pending row, stages/adopts/commits the native source, and passes
+   its binding into IDS. Retry reuses the MMCS descriptor and reconstructs the
+   original native message, including conversation ordering/profile fields.
+   Qualify the new retry bridge; do not rebuild upload material after sending.
    GCE `34517138488` passed all 414 native tests and bridge reproducibility after
    the receipt fix, with the native-seam guard unchanged. The local attachment
    identity now survives reflection aliases and database reopen in journal tests.
-   Before runtime enablement, test stage/adopt/commit against concurrent recovery
-   and active background read: a long CloudKit read must not make ordinary IDS
-   sending unusable, and failed capture must not certify an untracked source.
+   Source staging currently rejects a busy cross-process CloudKit lock promptly
+   and retains the pending message without sending. This prevents an untracked
+   source but is NOT the final background-read/send UX. Before runtime enablement,
+   provide bounded coordination with long reads and prove no starvation or lost
+   source, then connect durable upload attempts and parent dependencies.
 2. Preserve qualified Windows direct request `qualification-20260910-03` and
    its proof. No additional direct send is needed merely to recheck that result.
    The exact restored-group route is implemented/tested, but no group with the
@@ -596,9 +608,10 @@ and a validator for the actual `prepare_send` timestamp/routing changes are now
 qualified by GCE `34513911095` on source `8bbffb1ab`: 408 native tests passed,
 including all 11 new source cases; cleanup passed. The preceding T2D run failed
 before compilation due to zone capacity, so the existing N2D-16 option was used.
-The following source-bound receipt/API integration is not yet qualified and
-requires regenerated bridge bindings. Then wire composer/positive-IDS proof to
-the uploader's durable attempt state.
+The source-bound receipt/API integration passed 414 native tests in
+`34517138488`. The next exact-source run must regenerate and qualify the retry
+reconstruction bridge and rerun the composer/staging suites. Then connect
+positive-IDS proof to the uploader's durable attempt state.
 None of these tests alone proves an attachment was sent or saved.
 When the approved group is present, falsify exact selection, acceptance by every
 intended target, group encoding, readback and restart without resending. Preserve

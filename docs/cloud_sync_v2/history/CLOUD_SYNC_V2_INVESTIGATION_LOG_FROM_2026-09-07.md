@@ -1142,3 +1142,50 @@ This is a chronological evidence log. It does not override the
   awaits. Together with the unchanged seven suites above, this qualifies 428
   targeted cases. The earlier helper syntax failure is resolved. This proves
   identity/journal behavior, not production attachment upload or device UI.
+- Source checkpoint `4652d2e41` commits that reviewed identity slice. Parent then
+  wired composer capture, pending persistence, local source stage/adopt/commit
+  and native receipt context. The coordinator never owns exclusion during IDS;
+  busy history sync currently rejects preparation promptly with pending state
+  retained, which remains a production usability gate rather than silent success.
+- Concrete restart counterexample: a new MMCS upload changes encryption material,
+  while rebuilding ConversationData/profile from the current Chat can change the
+  original wire. Journaled attachment retries now retain their descriptor; a
+  native-only reconstruction helper and same-account/store/session/GUID API
+  restore the exact committed source. Generated bridge and native tests pending.
+  Parent's pre-bridge composer/journal/retry run passed 120 tests. The staging
+  worker reports nine behavioral tests passed before the new API reference; the
+  final combined run must await generated bindings. No APK or account access.
+- Native source `4164ea77160218111d49290a4ee84d6dfe00c225` is pushed to the
+  fork and under source-only qualification in GCE `34521476151` (N2D-16,
+  `us-west1-a`, app-rust-only, writer and automatic uploads false). Four new
+  native reconstruction tests cover exact round trips, optional/profile fields,
+  multi-part groups, drifted routes/descriptors and invalid input. Parent also
+  added auth/GUID/store/digest and uncommitted-lease rejection to the native
+  preflight test. Rustfmt syntax checks passed; Cargo results remain pending.
+- Parent accepted the two bounded workers' source after review. Curie's native
+  work is committed above; shutdown independently returned `not_found`. Cicero's
+  staging tests additionally prove both gates remain held through adoption and
+  commit with exactly the retained reference. Their final execution awaits the
+  generated retry API. Shared source and necessary evidence are retained; no
+  dedicated disposable worktree exists and no transcript-deletion tool is used.
+- GCE `34521476151` verified source `4164ea771` and passed all 418 native
+  tests, including the four new reconstruction cases. The only failed step
+  was expected generated-bridge drift. Parent reviewed artifact `10170133961`:
+  additive restore API, paired generated dispatch-ID shifts and content hash;
+  no manual generated-code edits. Imported the seven artifact paths (three
+  have substantive changes). Cleanup passed and independent GCE/GitHub
+  inventories both returned zero instances/registrations.
+- Parent ran all twelve targeted Dart suites against the imported API:
+  475 passed, including all ten staging cases. Analysis of the eight changed
+  Dart source/test files found zero errors and four existing brace-style infos.
+  This closes offline composer stage/adopt/commit qualification, not remote
+  upload/save or Pixel UI proof. Cicero's reviewed source is retained and its
+  shutdown independently returned `not_found`. No personal data was accessed.
+- Next integration is a separate durable upload-attempt phase followed by the
+  existing immutable final record-save outbox and parent dependency. Parent
+  rejected treating a preparation plan as an existing final save envelope or
+  using a missing CloudKit record as permission to replay an uncertain upload.
+  Original randomized preparation must stay bound across every transition.
+  Known production UX gaps remain: history-sync exclusion can reject a pending
+  attachment send, and source reuse alone does not prove that a retry after
+  positive IDS acceptance skips another IDS submission.

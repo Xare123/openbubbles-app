@@ -6,6 +6,23 @@ import 'package:bluebubbles/services/rustpush/imessage_attachment_submission.dar
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('journaled attachment retry reuses exact MMCS material', () {
+    final attachment = Attachment(guid: 'synthetic')
+      ..metadata = {'rustpush': 'synthetic-original-descriptor'};
+    expect(retainedAttachmentDescriptorForRetry(
+      journaledSubmission: true, attachment: attachment,
+    ), 'synthetic-original-descriptor');
+    expect(retainedAttachmentDescriptorForRetry(
+      journaledSubmission: false, attachment: attachment,
+    ), isNull);
+    for (final missing in [null, '', 12]) {
+      attachment.metadata = {'rustpush': missing};
+      expect(() => retainedAttachmentDescriptorForRetry(
+        journaledSubmission: true, attachment: attachment,
+      ), throwsStateError);
+    }
+  });
+
   final source = File(
     'lib/services/rustpush/rustpush_service.dart',
   ).readAsStringSync();
@@ -28,6 +45,10 @@ void main() {
   });
 
   test('attachment retry rebuilds from persisted IDS metadata', () {
+    expect(sendAttachment.indexOf('retainedAttachmentDescriptorForRetry('),
+      lessThan(sendAttachment.indexOf('api.uploadAttachment(')));
+    expect(sendAttachment, contains('if (retainedDescriptor != null)'));
+    expect(sendAttachment, contains('CloudSyncLocalSendJournal.hasJournaledSubmission'));
     expect(sendAttachment, contains('final initialConversation ='));
     expect(sendAttachment, contains('final initialSender ='));
     expect(
