@@ -1,19 +1,28 @@
 //! Native-only attachment initial-create envelope and readback witness.
 //! Persists the full completed upload for recovery; remote readback checks
 //! record identity and stable content, not temporary download credentials.
-//! Protected-store staging, transport, admission and parent linkage must still
-//! be integrated. This module alone cannot upload or authorize a remote write.
+//! Completed upload material uses its own protected purpose and attachment
+//! zone. Transport, admission and parent linkage must still be integrated.
+//! This module alone cannot upload or authorize a remote write.
 #![cfg_attr(not(test), allow(dead_code))]
 
-use std::io::Cursor;
+use std::{io::Cursor, path::PathBuf};
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use prost::Message;
 use rustpush::cloud_messages::{AttachmentMeta, CloudAttachment, GZipWrapper};
 use rustpush::cloudkit_proto::{Asset, RecordIdentifier};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::cloud_sync_outbound::CloudSyncOutboundFailure as Failure;
+use crate::{
+    cloud_sync_canonical_dto::CloudCanonicalEntityKind,
+    cloud_sync_native_fetch::{
+        cloud_sync_open_protected_outbound_attachment,
+        cloud_sync_stage_protected_outbound_attachment_envelope,
+    },
+    cloud_sync_outbound::{CloudSyncOutboundFailure as Failure, NativeProtectedOutboundStage},
+};
 
 mod wire {
     include!(concat!(
@@ -150,6 +159,75 @@ pub(crate) fn verify_attachment_readback(
     Ok(expected_digest)
 }
 
+/// Retains the original allocated name from the completed upload. A fresh
+/// UUID here would detach the create from the uploaded Asset's record binding.
+pub(crate) fn stage_outbound_attachment(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    attachment: CloudAttachment,
+    server_record_name: &str,
+) -> Result<NativeProtectedOutboundStage, Failure> {
+    let encoded = encode_attachment(&attachment, server_record_name)?;
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
+        storage_directory.to_string_lossy().into_owned(),
+    )
+    .map_err(|_| Failure::ProtectedStorage)?;
+    let logical_entity_key_hash = hasher
+        .canonical_entity_key_hash(CloudCanonicalEntityKind::Attachment, &attachment.cm.0.guid)
+        .map_err(|_| Failure::MalformedMessage)?
+        .value()
+        .to_owned();
+    let stage = cloud_sync_stage_protected_outbound_attachment_envelope(
+        storage_directory,
+        account_fingerprint,
+        URL_SAFE_NO_PAD.encode(&encoded),
+    )
+    .map_err(|_| Failure::ProtectedStorage)?;
+    Ok(NativeProtectedOutboundStage {
+        logical_entity_key_hash,
+        protected_payload_reference: stage.protected_envelope_reference.clone(),
+        payload_sha256: digest(&encoded),
+        payload_length: encoded.len() as u64,
+        protected_server_record_reference: stage.protected_envelope_reference,
+        server_record_id_hash: hasher.server_record_id_hash(server_record_name),
+        lease_reference: stage.lease_reference,
+    })
+}
+
+/// Caller verifies the committed lease before this open, as in chat create.
+pub(crate) fn open_staged_outbound_attachment(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+    expected_payload_sha256: &str,
+    expected_record_id_hash: &str,
+) -> Result<(CloudAttachment, String), Failure> {
+    let value = cloud_sync_open_protected_outbound_attachment(
+        storage_directory.clone(),
+        account_fingerprint,
+        protected_reference,
+    )
+    .map_err(|_| Failure::ProtectedStorage)?;
+    if value.len() > MAX_ATTACHMENT_ENVELOPE_BYTES.div_ceil(3) * 4 {
+        return Err(Failure::OversizedMessage);
+    }
+    let encoded = URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|_| Failure::MalformedMessage)?;
+    if digest(&encoded) != expected_payload_sha256 {
+        return Err(Failure::BindingMismatch);
+    }
+    let (attachment, record_name) = decode_attachment_envelope(&encoded)?;
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
+        storage_directory.to_string_lossy().into_owned(),
+    )
+    .map_err(|_| Failure::ProtectedStorage)?;
+    if hasher.server_record_id_hash(&record_name) != expected_record_id_hash {
+        return Err(Failure::BindingMismatch);
+    }
+    Ok((attachment, record_name))
+}
+
 /// Stable content equivalence between the persisted original and a fetched
 /// readback. Metadata compares as full plist bytes; the asset compares by
 /// size, signature, reference signature, and protection key, plus the
@@ -270,7 +348,7 @@ fn validate_completed_attachment_shape(attachment: &CloudAttachment) -> Result<(
 /// is account material stamped by the authenticated container at transport
 /// time, so this codec checks name plus zone and leaves the owner to
 /// transport and auth.
-fn validate_record_binding(
+pub(crate) fn validate_record_binding(
     record_id: Option<&RecordIdentifier>,
     record_name: &str,
 ) -> Result<(), Failure> {

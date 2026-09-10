@@ -80,8 +80,9 @@ the older runtime and receipt remain rollback material.
 
 Source `955d8acad` adds exact-group qualification and the native attachment
 envelope core, not a functioning attachment uploader. GCE run `34505595606`
-is testing the native crate on T2D-32 (`app-rust-only`); it was live in dependency
-setup at the last check. No APK or replacement Windows runtime was requested.
+passed all 389 native tests on T2D-32 (`app-rust-only`), including nine
+attachment-codec cases. Cleanup passed; independent inventories showed zero
+VMs and runner registrations. No APK or replacement Windows runtime was requested.
 The known-good local executable is still the qualified `6abbeede2` bundle.
 
 The first September 10 attempt failed on retained IDS credentials before send.
@@ -313,9 +314,11 @@ exact attachment descriptor actually sent through IDS
   -> parent Message with the same attachment references
 ```
 
-- `cloud_sync_outbound_staging.dart` and `cloud_sync_outbound.proto` currently
-  stage only Messages/Chats. Attachment envelope, exact-source binding, and
-  upload receipt persistence are the first missing durable boundary.
+- The Dart staging/admission path still supports only Messages/Chats. The native
+  completed-attachment codec passed qualification, but is not an uploader.
+  In-progress native integration separates protected pre-upload preparation
+  (`outboundAttachmentUpload`) from completed record-create material
+  (`outboundAttachment`). Neither grants network permission or parent admission.
 - Existing `Attachment.metadata["rustpush"]` stores an MMCS descriptor with
   decryption material at upload-finish, before IDS send success. It is mutable,
   not an encrypted receipt or proof of what IDS sent. Pin the actual wire
@@ -344,8 +347,19 @@ exact attachment descriptor actually sent through IDS
 - Record identity must be persisted before first upload and reused on retry.
   Legacy allocates a random attachment record ID; do not assume the proven
   Message GUID HMAC naming rule also applies to attachment records.
+- `prepare_put_v2` randomizes chunk keys, FORD key and IV. Re-preparing identical
+  plaintext retains neither the original encrypted descriptor nor its reference.
+  Preserve the entire `PreparedPut`, including each chunk's key/signature/length,
+  under platform protection before upload. Bind it to the original parent source,
+  attachment metadata, full container-issued record identifier and file digest.
+  A returned asset must match that exact preparation before record-create staging.
 - Upload uncertainty and record-save uncertainty are distinct. Record NotFound
   cannot authorize blind byte re-upload or record-ID replacement.
+- Next integration order: protected actual-IDS descriptor ownership in the
+  local-send journal; durable pre-upload plan and attempt state; exact completed
+  upload adoption; existing create-only record transport/readback; parent message
+  dependency and encoding. Do not bypass the missing journal ownership by calling
+  the legacy uploader or treating native codec tests as end-to-end qualification.
 
 ## Fast qualification loop
 

@@ -304,6 +304,8 @@ enum CloudNativeProtectionPurpose {
     ServerRecordId,
     OutboundMessage,
     OutboundChat,
+    OutboundAttachment,
+    OutboundAttachmentUpload,
     IdsSendReceipt,
     RawRecord,
 }
@@ -316,6 +318,8 @@ impl CloudNativeProtectionPurpose {
             Self::ServerRecordId => "serverRecordId",
             Self::OutboundMessage => "outboundMessage",
             Self::OutboundChat => "outboundChat",
+            Self::OutboundAttachment => "outboundAttachment",
+            Self::OutboundAttachmentUpload => "outboundAttachmentUpload",
             Self::IdsSendReceipt => "idsSendReceipt",
             Self::RawRecord => "rawRecord",
         }
@@ -4116,6 +4120,24 @@ pub(crate) fn cloud_sync_stage_protected_outbound_chat_envelope(
     )
 }
 
+pub(crate) fn cloud_sync_stage_protected_outbound_attachment_envelope(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    outbound_envelope: String,
+) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
+    stage_protected_outbound_value(storage_directory, account_fingerprint, outbound_envelope,
+        CloudNativeStream::Attachments, CloudNativeProtectionPurpose::OutboundAttachment)
+}
+
+pub(crate) fn cloud_sync_stage_protected_attachment_upload_envelope(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    outbound_envelope: String,
+) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
+    stage_protected_outbound_value(storage_directory, account_fingerprint, outbound_envelope,
+        CloudNativeStream::Attachments, CloudNativeProtectionPurpose::OutboundAttachmentUpload)
+}
+
 fn stage_protected_outbound_value(
     storage_directory: PathBuf,
     account_fingerprint: String,
@@ -4181,6 +4203,24 @@ pub(crate) fn cloud_sync_open_protected_outbound_chat(
         CloudNativeStream::Chats,
         CloudNativeProtectionPurpose::OutboundChat,
     )
+}
+
+pub(crate) fn cloud_sync_open_protected_outbound_attachment(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+) -> Result<String, CloudNativeFetchFailure> {
+    cloud_sync_open_protected_outbound_value(storage_directory, account_fingerprint, protected_reference,
+        CloudNativeStream::Attachments, CloudNativeProtectionPurpose::OutboundAttachment)
+}
+
+pub(crate) fn cloud_sync_open_protected_attachment_upload(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+) -> Result<String, CloudNativeFetchFailure> {
+    cloud_sync_open_protected_outbound_value(storage_directory, account_fingerprint, protected_reference,
+        CloudNativeStream::Attachments, CloudNativeProtectionPurpose::OutboundAttachmentUpload)
 }
 
 pub(crate) fn cloud_sync_persist_ids_send_receipt(

@@ -44,3 +44,17 @@ message CloudSyncOutboundAttachmentV1 {
   bytes attachment_meta_plist = 3;
   bytes asset_proto = 4;
 }
+
+// Native-only pre-upload recovery material, protected under a different
+// purpose from a completed attachment record. Contains encryption keys.
+// Preparation is randomized: recovery must restore these exact bytes, not
+// run prepare_put_v2 again. This is not permission to repeat an unknown upload.
+message CloudSyncAttachmentUploadV1 {
+  uint32 schema_version = 1;
+  string parent_message_guid = 2;
+  string parent_source_sha256 = 3;
+  bytes record_identifier_proto = 4;
+  bytes attachment_meta_plist = 5;
+  bytes prepared_put_snapshot = 6;
+  string source_file_sha256 = 7;
+}

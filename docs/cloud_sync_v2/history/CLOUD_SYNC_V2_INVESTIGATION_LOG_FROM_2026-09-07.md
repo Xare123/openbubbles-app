@@ -947,3 +947,45 @@ This is a chronological evidence log. It does not override the
   live. No account data was exported, no APK was built/requested, and the local
   qualified runtime/request remain unchanged. Follow this exact run through
   native tests and cleanup before claiming native qualification.
+
+### 2026-09-10: native attachment qualification and randomized-upload recovery
+
+- GCE `34505595606` completed successfully on exact source `955d8acad`: 389
+  native tests passed, including all nine attachment envelope/readback cases.
+  Cleanup succeeded. Independent GCE and GitHub inventories returned zero
+  instances and zero self-hosted runners. No APK or account-data transfer.
+- Source review distinguished byte-upload completion from attachment record save.
+  It also confirmed `prepare_put_v2` generates random chunk keys, FORD key and
+  IV even for identical file bytes. Restoring only a filename, content signature,
+  or record name cannot restore the original preparation. A complete protected
+  preparation snapshot is necessary before starting the byte upload.
+- Parent is integrating an exact upload plan with parent GUID/source hash,
+  full record identifier, metadata, file digest and original preparation. Two
+  bounded Muse tasks cover snapshot serialization and protected-purpose staging.
+  Neither a staged plan nor record NotFound grants upload-retry authority. The
+  actual IDS-descriptor journal, durable upload attempt, transport and parent
+  dependency remain required; no new write path is enabled by this slice.
+- Implemented source-only pre-upload staging and completed-attachment staging
+  on distinct protected purposes, with committed-lease, digest and identity
+  checks on upload-plan reopening. Preparation hashes the same bytes in the
+  same pass as lookup-only MMCS preparation. A fixed preparation-unavailable
+  error is distinct from protected-store failure. No raw keychain error escapes.
+- Reviewed Faraday's snapshot code and added the parent plan tests. Snapshot
+  decode validates FORD AES-SIV metadata and chunk-key/length consistency;
+  no regeneration, logging, file I/O or network permission is built into it.
+  Rejected the review suggestion to strip the original completed Asset's
+  transient fields: the recovery envelope deliberately retains the full
+  original upload, while remote readback uses the separate stable witness.
+  The review's absent IDS provenance is a real remaining integration gate,
+  already explicit in the tree, not authority supplied by this native plan.
+- Ptolemy's patch attempts failed because numeric unified-diff hunk headers
+  were interpreted as literal source context. Parent applied the reviewed
+  stage/open changes with bare `@@` headers. The repair task independently
+  confirmed the grammar error; no permission/security changes were needed.
+  Rejected a proposed test asserting attachment protobuf cannot parse as the
+  chat protobuf: those fields share wire types and unknown fields are ignored.
+  Actual protected-purpose separation is tested instead.
+- Both agents were closed with supported controls and verified `not_found`.
+  No dedicated worktrees, sessions or disposable agent files were deleted.
+  Reviewed source and required transcripts remain; session deletion is not
+  supported. Free C: space remained about 66.6 GiB before cloud qualification.

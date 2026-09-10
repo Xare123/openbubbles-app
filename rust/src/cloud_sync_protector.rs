@@ -139,6 +139,8 @@ impl CloudSyncProtectionContext {
                     | "serverRecordId"
                     | "outboundMessage"
                     | "outboundChat"
+                    | "outboundAttachment"
+                    | "outboundAttachmentUpload"
                     | "idsSendReceipt"
                     | "systemFields"
                     | "payloadReference"
@@ -938,6 +940,21 @@ mod tests {
         assert_eq!(plaintext, b"content-free reset evidence");
         assert!(decoded != context("checkpointToken"));
         assert!(decoded != context("rawRecord"));
+    }
+
+    #[test]
+    fn attachment_upload_and_completed_record_purposes_are_separate() {
+        let purposes = ["outboundAttachment", "outboundAttachmentUpload", "outboundMessage", "outboundChat", "rawRecord"];
+        for purpose in purposes {
+            let expected = context(purpose);
+            let encoded = encode_inner(&expected, b"synthetic protected material").unwrap();
+            let (decoded, plaintext) = decode_inner(&encoded).unwrap();
+            assert!(decoded == expected);
+            assert_eq!(plaintext, b"synthetic protected material");
+            for other in purposes {
+                assert_eq!(decoded == context(other), purpose == other);
+            }
+        }
     }
 
     #[test]
