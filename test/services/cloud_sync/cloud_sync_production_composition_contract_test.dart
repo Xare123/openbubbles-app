@@ -457,18 +457,18 @@ void main() {
     final capture = method.indexOf(
       'final restoringBeforeSemanticPull = chats.restoring;',
     );
+    expect(capture, greaterThanOrEqualTo(0));
     final suppress = method.indexOf('chats.restoring = true;', capture);
+    expect(suppress, greaterThan(capture));
     final run = method.indexOf(
-      'controller.drainConfirmedAndPersist()',
+      'controller.drainConfirmedAndPersist(',
       suppress,
     );
+    expect(run, greaterThan(suppress));
     final restore = method.indexOf(
       'chats.restoring = restoringBeforeSemanticPull;',
       run,
     );
-    expect(capture, greaterThanOrEqualTo(0));
-    expect(suppress, greaterThan(capture));
-    expect(run, greaterThan(suppress));
     expect(method, contains('finally'));
     expect(restore, greaterThan(run));
 
