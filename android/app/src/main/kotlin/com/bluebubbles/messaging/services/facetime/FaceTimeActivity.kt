@@ -108,48 +108,51 @@ class FaceTimeActivity : Activity() {
         }
     }
 
-    private fun positionNativeEndControl(webLeaveVisible: Boolean) {
+    private fun positionNativeEndControl(
+        windowInsets: WindowInsetsCompat? = ViewCompat.getRootWindowInsets(binding.root),
+        inPictureInPicture: Boolean = isInPictureInPictureMode,
+    ) {
+        // One visibility owner for PiP transitions, probes, insets and outgoing setup.
+        // PiP retains its existing RemoteAction End without an in-video native footer.
+        binding.nativeCallControls.visibility = if (binding.mainFrame.visibility == View.VISIBLE &&
+            FaceTimeControlPolicy.shouldShowNativeEndControl(inPictureInPicture)) View.VISIBLE else View.GONE
         val layoutParams = binding.nativeCallControls.layoutParams as? android.widget.FrameLayout.LayoutParams
             ?: return
         val density = resources.displayMetrics.density
-        val topMargin = (48 * density).roundToInt()
-        val bottomMargin = (96 * density).roundToInt()
-        when (FaceTimeControlPolicy.nativeEndPlacement(webLeaveVisible)) {
-            FaceTimeNativeEndPlacement.TOP_RIGHT -> {
-                layoutParams.gravity = Gravity.TOP or Gravity.END
-                layoutParams.topMargin = topMargin
-                layoutParams.bottomMargin = 0
-            }
+        val gap = (12 * density).roundToInt()
+        val insets = windowInsets?.getInsets(
+            WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+        )
+        val bottomInset = insets?.bottom ?: 0
+        when (FaceTimeControlPolicy.nativeEndPlacement()) {
             FaceTimeNativeEndPlacement.BOTTOM_LEFT -> {
                 layoutParams.gravity = Gravity.BOTTOM or Gravity.START
                 layoutParams.topMargin = 0
-                layoutParams.bottomMargin = bottomMargin
+                layoutParams.bottomMargin = bottomInset + gap
             }
         }
-        if (webLeaveVisible) {
-            layoutParams.marginStart = (20 * density).roundToInt()
-            layoutParams.marginEnd = 0
-        } else {
-            layoutParams.marginStart = 0
-            layoutParams.marginEnd = (20 * density).roundToInt()
-        }
+        layoutParams.marginStart = (20 * density).roundToInt() + maxOf(insets?.left ?: 0, insets?.right ?: 0)
+        layoutParams.marginEnd = 0
         binding.nativeCallControls.layoutParams = layoutParams
         binding.nativeCallControls.elevation = (12 * density)
+        // Reserve actual measured control height (including scaled text) outside the WebView.
+        // This remains disjoint even if Apple's controls move or probing never returns.
+        val reserved = FaceTimeControlPolicy.reservedBottomPixels(
+            maxOf(binding.nativeCallControls.measuredHeight, (80 * density).roundToInt()), gap, bottomInset,
+            inPictureInPicture = inPictureInPicture,
+        )
+        binding.mainFrame.updateLayoutParams<MarginLayoutParams> {
+            bottomMargin = reserved
+        }
     }
 
     private fun showCallUi(
         joined: Boolean,
-        webLeaveVisible: Boolean = false,
         pendingMessage: String? = null,
     ) {
         binding.mainFrame.visibility = View.VISIBLE
         binding.splashLayout.visibility = View.GONE
-        positionNativeEndControl(webLeaveVisible)
-        binding.nativeCallControls.visibility = if (FaceTimeControlPolicy.shouldShowNativeEndControl()) {
-            View.VISIBLE
-        } else {
-            View.GONE
-        }
+        positionNativeEndControl()
         binding.connectionStatus.visibility = if (joined) View.GONE else View.VISIBLE
         if (!joined) {
             binding.connectionStatus.text = pendingMessage
@@ -164,6 +167,9 @@ class FaceTimeActivity : Activity() {
     }
 
     private fun scheduleConnectionProbe(delayMillis: Long = 0) {
+        if (connectionProbeCount >= FaceTimeConnectionProbePolicy.maxProbes) {
+            FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.MEDIA_PROBE, state = "exhausted")
+        }
         if (callEnding || isFinishing || isDestroyed || connectionProbeInFlight || connectionProbeCount >= FaceTimeConnectionProbePolicy.maxProbes) return
         connectionProbeRunnable?.let(mainHandler::removeCallbacks)
         val runnable = Runnable {
@@ -178,6 +184,7 @@ class FaceTimeActivity : Activity() {
                 connectionProbeCount += 1
                 val evidence = parseMediaEvidence(result)
                 if (evidence == null) {
+                    FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.MEDIA_PROBE, state = "unavailable")
                     FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.ICE_STATE, state = "unknown")
                     // Invalidate the byte baseline: samples across navigations or
                     // missing probes must never combine to prove connection.
@@ -194,6 +201,7 @@ class FaceTimeActivity : Activity() {
                     scheduleConnectionProbe(FaceTimeConnectionProbePolicy.pendingDelayMillis)
                     return@requestMediaEvidence
                 }
+                FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.MEDIA_PROBE, state = "sampled")
                 FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.ICE_STATE, state = evidence.iceState.name.lowercase())
                 FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.REMOTE_AUDIO_TRACK, count = evidence.remoteAudioTracks)
                 FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.REMOTE_VIDEO_TRACK, count = evidence.remoteVideoTracks)
@@ -212,7 +220,6 @@ class FaceTimeActivity : Activity() {
                 }
                 showCallUi(
                     joined = decision.joined,
-                    webLeaveVisible = evidence.webLeaveVisible,
                     pendingMessage = FaceTimeConnectionStatusPolicy.pendingMessage(
                         evidence = evidence,
                         completedJoin = joinPolicy.completedJoin,
@@ -255,7 +262,6 @@ class FaceTimeActivity : Activity() {
             if (decision.revealManualRecovery) {
                 showCallUi(
                     joined = false,
-                    webLeaveVisible = decision.outcome == FaceTimeJoinOutcome.ALREADY_JOINED,
                 )
             }
             scheduleConnectionProbe(FaceTimeConnectionProbePolicy.initialDelayMillis)
@@ -284,6 +290,7 @@ class FaceTimeActivity : Activity() {
                 if (diagnosticsEnabled()) {
                     Log.w(diagnosticTag, "native end call fallback finishing activity")
                 }
+                FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.CLOSE_REASON, state = "native_end_fallback")
                 finishAndRemoveTask()
             }
         }
@@ -292,6 +299,11 @@ class FaceTimeActivity : Activity() {
         webView.evaluateJavascript(
             """(() => { const buttons = Array.from(document.querySelectorAll("button")); const label = (element) => (element?.innerText || element?.textContent || element?.getAttribute?.("aria-label") || "").trim(); const button = document.getElementById("callcontrols-leave-button-session-banner") || buttons.find((item) => /^(leave|end call)$/i.test(label(item))); if (!button) return "missing"; button.click(); return "clicked"; })()"""
         ) { result ->
+            FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.LEAVE, state = when (result) {
+                "\"clicked\"" -> "clicked"
+                "\"missing\"" -> "missing"
+                else -> "unknown"
+            })
             if (diagnosticsEnabled()) {
                 Log.i(diagnosticTag, "native end call result=$result")
             }
@@ -309,12 +321,14 @@ class FaceTimeActivity : Activity() {
         newConfig: Configuration?
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        positionNativeEndControl(inPictureInPicture = isInPictureInPictureMode)
         if (isInPictureInPictureMode) {
             hideControlsForPIP()
         }
     }
 
     private fun decline() {
+        FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.CLOSE_REASON, state = "declined")
         // delete notification
         if (notificationId != 0) {
             DeleteNotificationHandler().deleteNotification(this, notificationId, Constants.newFaceTimeNotificationTag)
@@ -456,6 +470,14 @@ class FaceTimeActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityFaceTimeBinding.inflate(layoutInflater)
+        FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.LIFECYCLE, state = "created")
+        binding.nativeCallControls.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) positionNativeEndControl()
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            positionNativeEndControl(insets)
+            insets
+        }
 
         activeFaceTimeActivity = this
 
@@ -566,7 +588,22 @@ class FaceTimeActivity : Activity() {
         requestPermissions(permissions.toTypedArray(), 1)
     }
 
+    override fun onPause() {
+        FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.LIFECYCLE, state = "paused")
+        super.onPause()
+    }
+
+    override fun onStop() {
+        FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.LIFECYCLE, state = "stopped")
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.LIFECYCLE, state = when {
+            isChangingConfigurations -> "configuration_destroyed"
+            isFinishing -> "finishing_destroyed"
+            else -> "destroyed"
+        })
         joinRetryRunnable?.let(mainHandler::removeCallbacks)
         manualRecoveryRunnable?.let(mainHandler::removeCallbacks)
         connectionProbeRunnable?.let(mainHandler::removeCallbacks)
@@ -683,6 +720,7 @@ class FaceTimeActivity : Activity() {
         }
 
         cached.endTask = {
+            FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.CLOSE_REASON, state = "web_leave")
             finishAndRemoveTask()
         }
         mirrorReady = cached.mirrorReady
@@ -699,6 +737,7 @@ class FaceTimeActivity : Activity() {
 
         webView = cached.webView
         cached.mediaDocumentChanged = {
+            FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.MEDIA_PROBE, state = "document_changed")
             if (answered && !callEnding && !isFinishing && !isDestroyed && activeFaceTimeActivity === this) {
                 joinPolicy.recordMediaEvidence(FaceTimeMediaEvidence(
                     FaceTimeIceState.UNKNOWN, 0, 0, null, false,
@@ -747,8 +786,7 @@ class FaceTimeActivity : Activity() {
         } else {
             binding.splashLayout.visibility = View.GONE
             binding.mainFrame.visibility = View.VISIBLE
-            positionNativeEndControl(webLeaveVisible = false)
-            binding.nativeCallControls.visibility = View.VISIBLE
+            positionNativeEndControl()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 window.setBackgroundBlurRadius(0)
             }

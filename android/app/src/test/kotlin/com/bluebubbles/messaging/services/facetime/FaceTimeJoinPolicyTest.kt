@@ -198,10 +198,31 @@ class FaceTimeJoinPolicyTest {
     }
 
     @Test
-    fun nativeEndRemainsAvailableAndMovesAwayFromWebLeave() {
+    fun nativeEndHasADedicatedRegionWithoutAnyDomInput() {
         assertTrue(FaceTimeControlPolicy.shouldShowNativeEndControl())
-        assertEquals(FaceTimeNativeEndPlacement.TOP_RIGHT, FaceTimeControlPolicy.nativeEndPlacement(false))
-        assertEquals(FaceTimeNativeEndPlacement.BOTTOM_LEFT, FaceTimeControlPolicy.nativeEndPlacement(true))
+        assertEquals(FaceTimeNativeEndPlacement.BOTTOM_LEFT, FaceTimeControlPolicy.nativeEndPlacement())
+        // Portrait, landscape, increased font size and system/cutout insets all leave a gap
+        // between the WebView bottom and the top of the native control's measured bounds.
+        for (height in listOf(80, 112, 224)) for (inset in listOf(0, 24, 96)) {
+            val reserved = FaceTimeControlPolicy.reservedBottomPixels(height, 12, inset)
+            val nativeTopFromBottom = height + 12 + inset
+            assertTrue(reserved > nativeTopFromBottom)
+        }
+        assertEquals(0, FaceTimeControlPolicy.reservedBottomPixels(-1, -1, -1))
+    }
+
+    @Test
+    fun pipReleasesFooterThroughRepeatedProbesAndRestoresItOnExit() {
+        for (height in listOf(80, 112, 224)) for (inset in listOf(0, 24, 96)) {
+            // Fullscreen, PiP entry, repeated probe/layout updates, then PiP exit.
+            for (pip in listOf(false, true, true, true, false)) {
+                assertEquals(!pip, FaceTimeControlPolicy.shouldShowNativeEndControl(pip))
+                assertEquals(
+                    if (pip) 0 else height + 24 + inset,
+                    FaceTimeControlPolicy.reservedBottomPixels(height, 12, inset, pip),
+                )
+            }
+        }
     }
 
     @Test

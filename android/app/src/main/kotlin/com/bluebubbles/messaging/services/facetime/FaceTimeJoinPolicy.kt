@@ -70,7 +70,6 @@ internal enum class FaceTimeIntentDisposition {
 }
 
 internal enum class FaceTimeNativeEndPlacement {
-    TOP_RIGHT,
     BOTTOM_LEFT,
 }
 
@@ -108,10 +107,15 @@ internal class FaceTimeCallLifecycle {
 }
 
 internal object FaceTimeControlPolicy {
-    fun shouldShowNativeEndControl(): Boolean = true
+    fun shouldShowNativeEndControl(inPictureInPicture: Boolean = false): Boolean = !inPictureInPicture
 
-    fun nativeEndPlacement(webLeaveVisible: Boolean): FaceTimeNativeEndPlacement =
-        if (webLeaveVisible) FaceTimeNativeEndPlacement.BOTTOM_LEFT else FaceTimeNativeEndPlacement.TOP_RIGHT
+    // Never depend on a DOM/media probe to keep an emergency control away from Apple Leave.
+    fun nativeEndPlacement(): FaceTimeNativeEndPlacement = FaceTimeNativeEndPlacement.BOTTOM_LEFT
+
+    fun reservedBottomPixels(controlHeight: Int, gap: Int, bottomInset: Int, inPictureInPicture: Boolean = false): Int =
+        if (shouldShowNativeEndControl(inPictureInPicture)) {
+            controlHeight.coerceAtLeast(0) + 2 * gap.coerceAtLeast(0) + bottomInset.coerceAtLeast(0)
+        } else 0
 }
 
 /** User-facing status derived from the same remote-media evidence as admission. */

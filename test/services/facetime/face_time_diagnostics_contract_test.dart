@@ -3,6 +3,31 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('PiP and probe updates share one native visibility and footer owner', () {
+    final activity = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
+    ).readAsStringSync();
+    final positionStart = activity.indexOf('private fun positionNativeEndControl(');
+    final showStart = activity.indexOf('private fun showCallUi(');
+    final probeStart = activity.indexOf('private fun scheduleConnectionProbe(');
+    final position = activity.substring(positionStart, showStart);
+    expect(position, contains('inPictureInPicture: Boolean = isInPictureInPictureMode'));
+    expect(position, contains('FaceTimeControlPolicy.shouldShowNativeEndControl(inPictureInPicture)'));
+    expect(position, contains('inPictureInPicture = inPictureInPicture'));
+    expect(position, contains('bottomMargin = reserved'));
+    expect(RegExp(r'binding\.nativeCallControls\.visibility\s*=').allMatches(activity), hasLength(1));
+    expect(activity.substring(showStart, probeStart), contains('positionNativeEndControl()'));
+    final pipStart = activity.indexOf('override fun onPictureInPictureModeChanged(');
+    final pipEnd = activity.indexOf('private fun decline()', pipStart);
+    expect(activity.substring(pipStart, pipEnd), contains(
+      'positionNativeEndControl(inPictureInPicture = isInPictureInPictureMode)',
+    ));
+    expect(activity, contains('.setActions(listOf('));
+    expect(activity, contains('RemoteAction('));
+    expect(activity, contains('"End this FaceTime Call"'));
+    expect(activity, contains('FaceTimeActionReceiver::class.java'));
+  });
+
   test('FaceTime diagnostics default off and persist through settings maps', () {
     final source = File('lib/database/global/settings.dart').readAsStringSync();
 
@@ -31,7 +56,11 @@ void main() {
 
     expect(source, contains('"flutter.developerEnabled"'));
     expect(source, contains('"flutter.faceTimeDiagnosticsEnabled"'));
-    expect(source, contains('developerModeEnabled && diagnosticsEnabled'));
+    expect(source, contains('FaceTimeDiagnosticPolicy.shouldEnable'));
+    final policy = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeDiagnosticLog.kt',
+    ).readAsStringSync();
+    expect(policy, contains('developerModeEnabled && diagnosticsEnabled'));
   });
 
   test('disabling developer mode also clears FaceTime diagnostics', () {

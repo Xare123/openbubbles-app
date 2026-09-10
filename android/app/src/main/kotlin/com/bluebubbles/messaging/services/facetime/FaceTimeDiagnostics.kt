@@ -2,28 +2,15 @@ package com.bluebubbles.messaging.services.facetime
 
 import android.content.Context
 import android.util.Log
-
-internal enum class FaceTimeDiagnosticStage(val wireName: String) {
-    WEBVIEW_LOADED("webview_loaded"),
-    JS_PATCHED("js_patched"),
-    PERMISSIONS_REQUESTED("permissions_requested"),
-    PERMISSIONS_RESULT("permissions_result"),
-    ADMISSION_REQUESTED("admission_requested"),
-    ADMITTED("admitted"),
-    ICE_STATE("ice_state"),
-    REMOTE_AUDIO_TRACK("remote_audio_track"),
-    REMOTE_VIDEO_TRACK("remote_video_track"),
-    MEDIA_BYTES("media_bytes"),
-    MEDIA_LOST("media_lost"),
-    LEAVE("leave"),
-    LIFECYCLE("lifecycle"),
-}
+import io.flutter.util.PathUtils
+import java.io.File
 
 internal object FaceTimeDiagnostics {
     private const val diagnosticTag = "FaceTimeDiag"
     private const val preferencesName = "FlutterSharedPreferences"
     private const val developerModeKey = "flutter.developerEnabled"
     private const val diagnosticsKey = "flutter.faceTimeDiagnosticsEnabled"
+    private var writer: FaceTimeDiagnosticLog? = null
 
     fun isEnabled(context: Context): Boolean {
         val preferences = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
@@ -36,23 +23,16 @@ internal object FaceTimeDiagnostics {
     internal fun shouldEnable(
         developerModeEnabled: Boolean,
         diagnosticsEnabled: Boolean,
-    ): Boolean = developerModeEnabled && diagnosticsEnabled
+    ): Boolean = FaceTimeDiagnosticPolicy.shouldEnable(developerModeEnabled, diagnosticsEnabled)
 
     internal fun formatStage(
         stage: FaceTimeDiagnosticStage,
         state: String? = null,
         count: Int? = null,
         bytes: Long? = null,
-    ): String {
-        val fields = buildList {
-            add("stage=${stage.wireName}")
-            state?.let { add("state=${safeValue(it)}") }
-            count?.let { add("count=${it.coerceAtLeast(0)}") }
-            bytes?.let { add("bytes=${it.coerceAtLeast(0)}") }
-        }
-        return fields.joinToString(" ")
-    }
+    ): String = FaceTimeDiagnosticPolicy.formatStage(stage, state, count, bytes)
 
+    @Synchronized
     internal fun logStage(
         context: Context,
         stage: FaceTimeDiagnosticStage,
@@ -60,17 +40,23 @@ internal object FaceTimeDiagnostics {
         count: Int? = null,
         bytes: Long? = null,
     ) {
-        if (isEnabled(context)) {
-            Log.i(diagnosticTag, formatStage(stage, state, count, bytes))
+        try {
+            if (!isEnabled(context)) return
+            val app = context.applicationContext
+            val log = writer ?: FaceTimeDiagnosticLog(
+                // Same PathUtils call used by path_provider_android for appDocDir.
+                // A subdirectory is essential: Dart AdvancedFileOutput prunes all root files.
+                File(PathUtils.getDataDirectory(app), "logs/facetime-native"),
+                enabled = { isEnabled(app) },
+            ).also { writer = it }
+            if (log.record(stage, state, count, bytes)) {
+                Log.i(diagnosticTag, formatStage(stage, state, count, bytes))
+            }
+        } catch (_: Exception) {
+            // Opt-in diagnostics must never interfere with a call, including End.
         }
     }
 
-    internal fun safeIceState(rawValue: String?): String = when (rawValue?.lowercase()) {
-        "new", "checking", "connected", "completed", "disconnected", "failed", "closed" -> rawValue.lowercase()
-        else -> "unknown"
-    }
-
-    private fun safeValue(value: String): String = value
-        .lowercase()
-        .replace(Regex("[^a-z0-9_.-]"), "_")
+    internal fun safeIceState(rawValue: String?): String =
+        FaceTimeDiagnosticPolicy.safeState(FaceTimeDiagnosticStage.ICE_STATE, rawValue ?: "unknown")
 }

@@ -189,6 +189,13 @@ class BaseLogger extends GetxService {
     _logger = createLogger();
   }
 
+  // Native diagnostics own their rotation. Keep them out of AdvancedFileOutput's
+  // root-file pruning, and never recursively include captures or other native data.
+  List<File> get nativeFaceTimeLogFiles => [
+        File(join(logDir, 'facetime-native', 'facetime-native-previous.log')),
+        File(join(logDir, 'facetime-native', 'facetime-native.log')),
+      ].where((file) => file.existsSync()).toList();
+
   String compressLogs() {
     final Directory logDir = Directory(Logger.logDir);
     final date = DateTime.now().toIso8601String().split('T').first;
@@ -200,6 +207,9 @@ class BaseLogger extends GetxService {
     final List<FileSystemEntity> logFiles =
         files.where((file) => file.path.endsWith(".log")).toList();
     final List<String> logPaths = logFiles.map((file) => file.path).toList();
+    logPaths.addAll(nativeFaceTimeLogFiles
+        .where((file) => file.lengthSync() <= 64 * 1024)
+        .map((file) => file.path));
 
     final encoder = ZipFileEncoder();
     encoder.create(zippedLogFile.path);
@@ -248,6 +258,10 @@ class BaseLogger extends GetxService {
   void clearLogs() {
     final Directory logDir = Directory(Logger.logDir);
     if (!logDir.existsSync()) return;
+
+    for (final file in nativeFaceTimeLogFiles) {
+      file.deleteSync();
+    }
 
     for (final file in logDir.listSync()) {
       if (file is File) {

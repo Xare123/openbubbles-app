@@ -31,6 +31,7 @@ class FaceTimeCallStateHandler: MethodCallHandlerImpl() {
             // finish any still ringing activity
             FaceTimeActivity.activeFaceTimeActivity?.let {
                 if (!it.answered && it.isCall) {
+                    FaceTimeDiagnostics.logStage(context, FaceTimeDiagnosticStage.CLOSE_REASON, state = "ring_timeout")
                     it.finishAndRemoveTask()
                 }
             }

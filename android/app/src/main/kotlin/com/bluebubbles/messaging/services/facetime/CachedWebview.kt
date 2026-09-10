@@ -432,7 +432,10 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String, 
         webView.addJavascriptInterface(object {
             @JavascriptInterface
             fun leave() {
-                callbackHandler.post { endTask() }
+                callbackHandler.post {
+                    FaceTimeDiagnostics.logStage(applicationContext, FaceTimeDiagnosticStage.LEAVE, state = "web_callback")
+                    endTask()
+                }
             }
             @JavascriptInterface
             fun mirrored() {
