@@ -274,23 +274,17 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
     return true;
   }
 
+  void refreshLogFileStats() {
+    final logFiles = Logger.exportLogFiles;
+    logFileCount.value = logFiles.length;
+    logFileSize.value = logFiles.fold<int>(0, (bytes, file) => bytes + file.lengthSync()) ~/ 1024;
+  }
+
   @override
   void initState() {
     super.initState();
 
-    // Count how many .log files are in the log directory
-    final Directory logDir = Directory(Logger.logDir);
-    if (logDir.existsSync()) {
-      final List<FileSystemEntity> files = logDir.listSync();
-      final logFiles =
-          files.where((file) => file.path.endsWith(".log")).toList();
-      logFileCount.value = logFiles.length;
-
-      // Size in KB
-      for (final file in logFiles) {
-        logFileSize.value += file.statSync().size ~/ 1024;
-      }
-    }
+    refreshLogFileStats();
 
     // Check if battery optimizations are disabled
     if (Platform.isAndroid) {
@@ -750,6 +744,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                         subtitle:
                             "${logFileCount.value} log file(s) | ${logFileSize.value} KB",
                         onTap: () async {
+                          refreshLogFileStats();
                           if (logFileCount.value == 0) {
                             showSnackbar("No Logs", "There are no logs to download!");
                             return;

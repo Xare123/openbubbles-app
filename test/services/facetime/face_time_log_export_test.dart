@@ -18,6 +18,76 @@ void main() {
   });
   tearDown(() => root.deleteSync(recursive: true));
 
+  for (final names in [
+    ['facetime-native.log'],
+    ['facetime-native-previous.log'],
+    ['facetime-native.log', 'facetime-native-previous.log'],
+  ]) {
+    test(
+      'native-only sources are eligible and exported: ${names.join(', ')}',
+      () {
+        final logger = BaseLogger();
+        expect(logger.exportLogFiles, isEmpty);
+        for (final name in names) {
+          File('${native.path}/$name').writeAsBytesSync(List.filled(1024, 65));
+        }
+        final sources = logger.exportLogFiles;
+        expect(sources.length, names.length);
+        expect(
+          sources.fold<int>(0, (bytes, file) => bytes + file.lengthSync()),
+          names.length * 1024,
+        );
+        expect(
+          root.listSync().whereType<File>(),
+          isEmpty,
+          reason: 'Counting must not create an export',
+        );
+        final archive = ZipDecoder().decodeBytes(
+          File(logger.compressLogs()).readAsBytesSync(),
+        );
+        expect(archive.files.map((file) => file.name), unorderedEquals(names));
+      },
+    );
+  }
+
+  test('eligibility excludes oversized, unrelated and directory entries', () {
+    File(
+      '${native.path}/facetime-native.log',
+    ).writeAsBytesSync(List.filled(65537, 65));
+    File(
+      '${native.path}/capture.log',
+    ).writeAsStringSync('not an export source');
+    Directory('${logs.path}/not-a-file.log').createSync();
+    expect(BaseLogger().exportLogFiles, isEmpty);
+    File(
+      '${native.path}/facetime-native-previous.log',
+    ).writeAsBytesSync(List.filled(65536, 65));
+    expect(BaseLogger().exportLogFiles.single.lengthSync(), 65536);
+  });
+
+  test('UI refreshes shared export sources before checking eligibility', () {
+    final source = File(
+      'lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart',
+    ).readAsStringSync();
+    final refresh = source.substring(
+      source.indexOf('void refreshLogFileStats()'),
+      source.indexOf('void initState()'),
+    );
+    expect(refresh, contains('final logFiles = Logger.exportLogFiles;'));
+    expect(refresh, contains('logFileCount.value = logFiles.length;'));
+    expect(refresh, contains('logFileSize.value = logFiles.fold<int>'));
+    final actionStart = source.indexOf('title: "Download / Share Logs"');
+    final action = source.substring(
+      actionStart,
+      source.indexOf('String filePath = Logger.compressLogs();', actionStart),
+    );
+    expect(action.indexOf('refreshLogFileStats();'), greaterThanOrEqualTo(0));
+    expect(
+      action.indexOf('refreshLogFileStats();'),
+      lessThan(action.indexOf('if (logFileCount.value == 0)')),
+    );
+  });
+
   test('production export includes only the two capped native generations', () {
     File('${logs.path}/bluebubbles-latest.log').writeAsStringSync('ordinary');
     File(

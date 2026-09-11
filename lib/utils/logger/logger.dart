@@ -196,25 +196,29 @@ class BaseLogger extends GetxService {
         File(join(logDir, 'facetime-native', 'facetime-native.log')),
       ].where((file) => file.existsSync()).toList();
 
+  // Shared by the export action and its UI eligibility/count. Metadata only.
+  List<File> get exportLogFiles {
+    final directory = Directory(logDir);
+    return [
+      if (directory.existsSync())
+        ...directory.listSync(followLinks: false).whereType<File>()
+            .where((file) => file.path.endsWith('.log')),
+      ...nativeFaceTimeLogFiles.where((file) => file.lengthSync() <= 64 * 1024),
+    ];
+  }
+
   String compressLogs() {
-    final Directory logDir = Directory(Logger.logDir);
     final date = DateTime.now().toIso8601String().split('T').first;
     final File zippedLogFile =
         File("${fs.appDocDir.path}/bluebubbles-logs-$date.zip");
     if (zippedLogFile.existsSync()) zippedLogFile.deleteSync();
 
-    final List<FileSystemEntity> files = logDir.listSync();
-    final List<FileSystemEntity> logFiles =
-        files.where((file) => file.path.endsWith(".log")).toList();
-    final List<String> logPaths = logFiles.map((file) => file.path).toList();
-    logPaths.addAll(nativeFaceTimeLogFiles
-        .where((file) => file.lengthSync() <= 64 * 1024)
-        .map((file) => file.path));
+    final logFiles = exportLogFiles;
 
     final encoder = ZipFileEncoder();
     encoder.create(zippedLogFile.path);
-    for (final logPath in logPaths) {
-      encoder.addFileSync(File(logPath));
+    for (final logFile in logFiles) {
+      encoder.addFileSync(logFile);
     }
     encoder.closeSync();
 
