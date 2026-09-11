@@ -3,6 +3,57 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('remote leave diagnostics observe refresh without controlling it', () {
+    final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final dispatch = source.substring(
+      source.indexOf('if (push is api.PushMessage_FaceTime) {'),
+      source.indexOf('String? ring;', source.indexOf('if (push is api.PushMessage_FaceTime) {')),
+    );
+    final refresh = dispatch.indexOf('await updateState();');
+    expect(dispatch.indexOf("unawaited(_traceFaceTimeRemoteLeave(facetime.guid, 'received'))"), lessThan(refresh));
+    expect(dispatch.indexOf("unawaited(_traceFaceTimeRemoteLeave(facetime.guid, 'refreshed'))"), greaterThan(refresh));
+    expect(dispatch, contains("unawaited(_traceFaceTimeRemoteLeave(facetime.guid, 'refresh_failed'))"));
+    expect(dispatch, contains('rethrow;'));
+    expect(RegExp(r'await updateState\(\);').allMatches(dispatch), hasLength(1));
+    expect(dispatch, isNot(contains('await _traceFaceTimeRemoteLeave')));
+  });
+
+  test('remote leave sender is gated redacted and has finite in-flight work', () {
+    final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final sender = source.substring(source.indexOf('Future<void> _traceFaceTimeRemoteLeave('),
+        source.indexOf('RxList<api.FTSession> sessions'));
+    expect(sender, contains('!Platform.isAndroid'));
+    expect(sender, contains('!ss.settings.developerEnabled.value'));
+    expect(sender, contains('!ss.settings.faceTimeDiagnosticsEnabled.value'));
+    expect(sender, contains("const {'received', 'refreshed', 'refresh_failed'}.contains(phase)"));
+    expect(sender, contains('_faceTimeLeaveDiagnosticsInFlight.add(phase)'));
+    expect(sender, contains('if (!claimed) return;'));
+    expect(sender, contains('_faceTimeLeaveDiagnosticsInFlight.remove(phase)'));
+    expect(sender, contains('catch (_)'));
+    expect(sender, contains("mcs.channel.invokeMethod<void>('update-call-state'"));
+    expect(sender, contains("'state': 'remote_leave_diagnostic'"));
+    expect(sender, contains('activeSessions.firstWhereOrNull'));
+    expect(sender, contains('sessions.firstWhereOrNull'));
+    for (final forbidden in ['Logger.', '.handle', '.token', '.participantId', 'api.', 'hideFaceTimeOverlay(', 'endCall(']) {
+      expect(sender, isNot(contains(forbidden)));
+    }
+  });
+
+  test('native remote leave branch is diagnostics only and returns early', () {
+    final source = File('android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeCallStateHandler.kt').readAsStringSync();
+    final diagnostic = source.substring(source.indexOf('if (state == "remote_leave_diagnostic")'),
+        source.indexOf('if (state == "ringing")'));
+    expect(diagnostic, contains('FaceTimeDiagnostics.isEnabled(context)'));
+    expect(diagnostic, contains('FaceTimeDiagnosticStage.REMOTE_LEAVE'));
+    expect(diagnostic, contains('FaceTimeRemoteLeaveEvidence.fromArguments('));
+    expect(diagnostic, contains('result.success(null)'));
+    expect(diagnostic, contains('return'));
+    expect(diagnostic, contains('catch (_: Exception)'));
+    for (final forbidden in ['finishAndRemoveTask', '.destroy(', 'cancelCallbacks', 'endCall(', 'Log.', 'CLOSE_REASON']) {
+      expect(diagnostic, isNot(contains(forbidden)));
+    }
+  });
+
   test('timeouts are scoped to the activity and cached page call IDs', () {
     final handler = File(
       'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeCallStateHandler.kt',

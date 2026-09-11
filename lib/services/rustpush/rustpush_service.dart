@@ -3492,6 +3492,40 @@ class RustPushService extends GetxService {
         (session.lastRekey ?? session.startTime)! > anHourAgo;
   }
 
+  // Finite phase keys only. Diagnostics never queue behind a stalled channel.
+  final _faceTimeLeaveDiagnosticsInFlight = <String>{};
+
+  Future<void> _traceFaceTimeRemoteLeave(String guid, String phase) async {
+    var claimed = false;
+    try {
+      if (!Platform.isAndroid ||
+          !ss.settings.developerEnabled.value ||
+          !ss.settings.faceTimeDiagnosticsEnabled.value ||
+          !const {'received', 'refreshed', 'refresh_failed'}.contains(phase)) {
+        return;
+      }
+      claimed = _faceTimeLeaveDiagnosticsInFlight.add(phase);
+      if (!claimed) return;
+      final snapshot = activeSessions.firstWhereOrNull((a) => a.groupId == guid) ??
+          sessions.firstWhereOrNull((a) => a.groupId == guid);
+      // Bypass the generic method-send logger. Only the bounded native diagnostic
+      // writer may persist this event; the UUID is used for equality, never logged.
+      await mcs.channel.invokeMethod<void>('update-call-state', {
+        'state': 'remote_leave_diagnostic',
+        'phase': phase,
+        'callUuid': guid,
+        'active': snapshot?.participants.values
+            .where((participant) => participant.active != null)
+            .length,
+        'total': snapshot?.participants.length,
+      });
+    } catch (_) {
+      // Missing plugin, settings or transport must not affect call handling.
+    } finally {
+      if (claimed) _faceTimeLeaveDiagnosticsInFlight.remove(phase);
+    }
+  }
+
   RxList<api.FTSession> sessions = <api.FTSession>[].obs;
   RxList<api.FTSession> activeSessions = <api.FTSession>[].obs;
   Future<void> updateState() async {
@@ -5718,11 +5752,24 @@ class RustPushService extends GetxService {
 
     if (push is api.PushMessage_FaceTime) {
       var facetime = push.field0;
+      if (facetime is api.FTMessage_LeaveEvent) {
+        unawaited(_traceFaceTimeRemoteLeave(facetime.guid, 'received'));
+      }
       if (facetime is api.FTMessage_AddMembers ||
           facetime is api.FTMessage_RemoveMembers ||
           facetime is api.FTMessage_LeaveEvent ||
           facetime is api.FTMessage_JoinEvent) {
-        await updateState();
+        try {
+          await updateState();
+        } catch (_) {
+          if (facetime is api.FTMessage_LeaveEvent) {
+            unawaited(_traceFaceTimeRemoteLeave(facetime.guid, 'refresh_failed'));
+          }
+          rethrow;
+        }
+        if (facetime is api.FTMessage_LeaveEvent) {
+          unawaited(_traceFaceTimeRemoteLeave(facetime.guid, 'refreshed'));
+        }
       }
       String? ring;
       if (facetime is api.FTMessage_JoinEvent) {

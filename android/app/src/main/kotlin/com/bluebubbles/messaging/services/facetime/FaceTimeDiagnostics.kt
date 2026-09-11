@@ -31,7 +31,8 @@ internal object FaceTimeDiagnostics {
         count: Int? = null,
         bytes: Long? = null,
         evidence: FaceTimeMediaEvidence? = null,
-    ): String = FaceTimeDiagnosticPolicy.formatStage(stage, state, count, bytes, evidence)
+        remoteLeave: FaceTimeRemoteLeaveEvidence? = null,
+    ): String = FaceTimeDiagnosticPolicy.formatStage(stage, state, count, bytes, evidence, remoteLeave)
 
     @Synchronized
     internal fun logStage(
@@ -41,6 +42,7 @@ internal object FaceTimeDiagnostics {
         count: Int? = null,
         bytes: Long? = null,
         evidence: FaceTimeMediaEvidence? = null,
+        remoteLeave: FaceTimeRemoteLeaveEvidence? = null,
     ) {
         try {
             if (!isEnabled(context)) return
@@ -51,8 +53,8 @@ internal object FaceTimeDiagnostics {
                 File(PathUtils.getDataDirectory(app), "logs/facetime-native"),
                 enabled = { isEnabled(app) },
             ).also { writer = it }
-            if (log.record(stage, state, count, bytes, evidence)) {
-                Log.i(diagnosticTag, formatStage(stage, state, count, bytes, evidence))
+            if (log.record(stage, state, count, bytes, evidence, remoteLeave)) {
+                Log.i(diagnosticTag, formatStage(stage, state, count, bytes, evidence, remoteLeave))
             }
         } catch (_: Exception) {
             // Opt-in diagnostics must never interfere with a call, including End.

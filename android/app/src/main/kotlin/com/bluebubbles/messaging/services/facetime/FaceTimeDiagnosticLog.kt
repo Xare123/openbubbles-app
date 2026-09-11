@@ -11,6 +11,25 @@ internal enum class FaceTimeDiagnosticStage(val wireName: String) {
     REMOTE_AUDIO_TRACK("remote_audio_track"), REMOTE_VIDEO_TRACK("remote_video_track"),
     MEDIA_BYTES("media_bytes"), MEDIA_LOST("media_lost"), LEAVE("leave"),
     LIFECYCLE("lifecycle"), CLOSE_REASON("close_reason"), MEDIA_PROBE("media_probe"),
+    REMOTE_LEAVE("remote_leave"),
+}
+
+/** Only typed counts and equality results cross into the formatter, never IDs. */
+internal data class FaceTimeRemoteLeaveEvidence(
+    val active: Int?, val total: Int?, val matchesActiveCall: Boolean?,
+) {
+    companion object {
+        fun fromArguments(arguments: Map<*, *>?, activeCallId: String?): FaceTimeRemoteLeaveEvidence {
+            val eventCallId = arguments?.get("callUuid") as? String
+            fun count(key: String): Int? = when (val value = arguments?.get(key)) {
+                is Int -> value.toLong()
+                is Long -> value
+                else -> null
+            }?.coerceIn(0L, 65535L)?.toInt()
+            return FaceTimeRemoteLeaveEvidence(count("active"), count("total"),
+                if (eventCallId.isNullOrEmpty() || activeCallId.isNullOrEmpty()) null else eventCallId == activeCallId)
+        }
+    }
 }
 
 /** Reject free text, rather than replacing punctuation in potentially secret values. */
@@ -37,6 +56,7 @@ internal object FaceTimeDiagnosticPolicy {
         ),
         FaceTimeDiagnosticStage.CLOSE_REASON to setOf("native_end_fallback", "web_leave", "declined", "ring_timeout"),
         FaceTimeDiagnosticStage.MEDIA_PROBE to setOf("unavailable", "sampled", "exhausted", "document_changed"),
+        FaceTimeDiagnosticStage.REMOTE_LEAVE to setOf("received", "refreshed", "refresh_failed"),
     )
 
     fun safeState(stage: FaceTimeDiagnosticStage, value: String): String {
@@ -46,10 +66,16 @@ internal object FaceTimeDiagnosticPolicy {
     }
 
     fun formatStage(stage: FaceTimeDiagnosticStage, state: String? = null, count: Int? = null, bytes: Long? = null,
-        evidence: FaceTimeMediaEvidence? = null): String =
+        evidence: FaceTimeMediaEvidence? = null, remoteLeave: FaceTimeRemoteLeaveEvidence? = null): String =
         buildList {
             add("stage=${stage.wireName}")
             state?.let { add("state=${safeState(stage, it)}") }
+            if (stage == FaceTimeDiagnosticStage.REMOTE_LEAVE && remoteLeave != null) {
+                add("reason=participant_leave")
+                add("active=${remoteLeave.active?.coerceIn(0, 65535) ?: "unavailable"}")
+                add("total=${remoteLeave.total?.coerceIn(0, 65535) ?: "unavailable"}")
+                add("matches_active_call=${remoteLeave.matchesActiveCall ?: "unavailable"}")
+            }
             if (stage in setOf(FaceTimeDiagnosticStage.JS_PATCHED, FaceTimeDiagnosticStage.PERMISSIONS_REQUESTED,
                     FaceTimeDiagnosticStage.ADMISSION_REQUESTED, FaceTimeDiagnosticStage.REMOTE_AUDIO_TRACK,
                     FaceTimeDiagnosticStage.REMOTE_VIDEO_TRACK)) {
@@ -91,13 +117,13 @@ internal class FaceTimeDiagnosticLog(
 
     @Synchronized
     fun record(stage: FaceTimeDiagnosticStage, state: String? = null, count: Int? = null, bytes: Long? = null,
-        evidence: FaceTimeMediaEvidence? = null): Boolean {
+        evidence: FaceTimeMediaEvidence? = null, remoteLeave: FaceTimeRemoteLeaveEvidence? = null): Boolean {
         try {
             if (!enabled()) {
                 last.clear()
                 return false
             }
-            val line = FaceTimeDiagnosticPolicy.formatStage(stage, state, count, bytes, evidence)
+            val line = FaceTimeDiagnosticPolicy.formatStage(stage, state, count, bytes, evidence, remoteLeave)
             val key = stage to state?.let { FaceTimeDiagnosticPolicy.safeState(stage, it) }
             val now = monotonicMillis()
             val prior = last[key]

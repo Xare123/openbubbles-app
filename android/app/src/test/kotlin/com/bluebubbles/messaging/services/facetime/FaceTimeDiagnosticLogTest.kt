@@ -18,6 +18,81 @@ class FaceTimeDiagnosticLogTest {
     private fun contents(directory: File) = directory.listFiles().orEmpty()
         .filter { it.name.endsWith(".log") }.joinToString("") { it.readText() }
 
+    @Test fun remoteLeaveRetainsOnlyCountsAndCallEquality() {
+        val secret = "https://facetime.apple.com/join#private"
+        val args = mapOf("callUuid" to secret, "active" to 1, "total" to 3,
+            "handle" to "alice@example.test", "reason" to secret, "participant" to secret)
+        val evidence = FaceTimeRemoteLeaveEvidence.fromArguments(args, secret)
+        assertEquals(FaceTimeRemoteLeaveEvidence(1, 3, true), evidence)
+        val directory = temporary.newFolder()
+        assertTrue(writer(directory).record(FaceTimeDiagnosticStage.REMOTE_LEAVE, "refreshed", remoteLeave = evidence))
+        assertEquals("time_ms=1234 stage=remote_leave state=refreshed reason=participant_leave active=1 total=3 matches_active_call=true\n",
+            contents(directory))
+        assertFalse(contents(directory).contains(secret))
+        assertFalse(contents(directory).contains("alice"))
+        assertEquals(false, FaceTimeRemoteLeaveEvidence.fromArguments(args, "other-call").matchesActiveCall)
+        assertEquals(null, FaceTimeRemoteLeaveEvidence.fromArguments(args, null).matchesActiveCall)
+        assertEquals(null, FaceTimeRemoteLeaveEvidence.fromArguments(mapOf("callUuid" to ""), secret).matchesActiveCall)
+    }
+
+    @Test fun remoteLeaveRejectsUntypedFieldsAndBoundsEveryLine() {
+        val malformed = FaceTimeRemoteLeaveEvidence.fromArguments(
+            mapOf("callUuid" to 42, "active" to "private", "total" to 1.5), "private")
+        assertEquals(FaceTimeRemoteLeaveEvidence(null, null, null), malformed)
+        val line = FaceTimeDiagnosticPolicy.formatStage(FaceTimeDiagnosticStage.REMOTE_LEAVE,
+            "alice@example.test", remoteLeave = malformed)
+        assertEquals("stage=remote_leave state=unknown reason=participant_leave active=unavailable total=unavailable matches_active_call=unavailable", line)
+        assertTrue(("time_ms=${Long.MAX_VALUE} $line\n").toByteArray().size <= FaceTimeDiagnosticLog.maxLineBytes)
+        assertEquals(FaceTimeRemoteLeaveEvidence(0, 65535, null),
+            FaceTimeRemoteLeaveEvidence.fromArguments(mapOf("active" to Long.MIN_VALUE, "total" to Long.MAX_VALUE), null))
+        assertEquals("stage=close_reason state=web_leave",
+            FaceTimeDiagnosticPolicy.formatStage(FaceTimeDiagnosticStage.CLOSE_REASON, "web_leave", remoteLeave = malformed))
+    }
+
+    @Test fun remoteLeaveIsOptInAndDoesNotConsumeCloseOrLifecycleBudget() {
+        val directory = File(temporary.root, "remote-leave")
+        val log = writer(directory)
+        val before = FaceTimeRemoteLeaveEvidence(2, 2, true)
+        val after = FaceTimeRemoteLeaveEvidence(1, 2, true)
+        optIn = false
+        assertFalse(log.record(FaceTimeDiagnosticStage.REMOTE_LEAVE, "received", remoteLeave = before))
+        assertFalse(directory.exists())
+        optIn = true
+        developer = false
+        assertFalse(log.record(FaceTimeDiagnosticStage.REMOTE_LEAVE, "received", remoteLeave = before))
+        assertFalse(directory.exists())
+        developer = true
+        assertTrue(log.record(FaceTimeDiagnosticStage.REMOTE_LEAVE, "received", remoteLeave = before))
+        assertTrue(log.record(FaceTimeDiagnosticStage.REMOTE_LEAVE, "refreshed", remoteLeave = after))
+        assertTrue(log.record(FaceTimeDiagnosticStage.REMOTE_LEAVE, "refresh_failed", remoteLeave = before))
+        repeat(100) {
+            assertFalse(log.record(FaceTimeDiagnosticStage.REMOTE_LEAVE, "refreshed", remoteLeave = after.copy(total = it)))
+        }
+        assertTrue(log.record(FaceTimeDiagnosticStage.LEAVE, "requested"))
+        assertTrue(log.record(FaceTimeDiagnosticStage.CLOSE_REASON, "web_leave"))
+        assertTrue(log.record(FaceTimeDiagnosticStage.LIFECYCLE, "finishing_destroyed"))
+        val retained = contents(directory)
+        optIn = false
+        now = 16000
+        assertFalse(log.record(FaceTimeDiagnosticStage.REMOTE_LEAVE, "received", remoteLeave = before))
+        assertEquals(retained, contents(directory))
+    }
+
+    @Test fun remoteLeaveRotatesInsideExistingTwoFileCap() {
+        val directory = temporary.newFolder()
+        val sentinel = File(directory, "capture.log").apply { writeText("preserve") }
+        val log = writer(directory, 256)
+        repeat(100) {
+            now += 16000
+            assertTrue(log.record(FaceTimeDiagnosticStage.REMOTE_LEAVE, "refreshed",
+                remoteLeave = FaceTimeRemoteLeaveEvidence(it, it + 1, false)))
+        }
+        assertTrue(File(directory, FaceTimeDiagnosticLog.currentName).length() in 1..256)
+        assertTrue(File(directory, FaceTimeDiagnosticLog.previousName).length() in 1..256)
+        assertEquals(3, directory.listFiles()!!.size)
+        assertEquals("preserve", sentinel.readText())
+    }
+
     @Test fun optOutCreatesNothingAndStopsAnExistingWriter() {
         val directory = File(temporary.root, "logs")
         val log = writer(directory)

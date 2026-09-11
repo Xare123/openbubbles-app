@@ -30,8 +30,8 @@ test('activity and cached view wire the resolved probe and lifecycle guards', ()
   assert.ok(cached.includes('mediaProbe.close()'));
   assert.ok(activity.includes('FaceTimeDiagnosticStage.MEDIA_PROBE, state = "sampled", evidence = evidence)'));
   const diagnostics = fs.readFileSync(path.join(native, 'FaceTimeDiagnostics.kt'), 'utf8');
-  assert.ok(diagnostics.includes('log.record(stage, state, count, bytes, evidence)'));
-  assert.ok(diagnostics.includes('formatStage(stage, state, count, bytes, evidence)'));
+  assert.ok(diagnostics.includes('log.record(stage, state, count, bytes, evidence, remoteLeave)'));
+  assert.ok(diagnostics.includes('formatStage(stage, state, count, bytes, evidence, remoteLeave)'));
 });
 
 function page(origin = 'https://facetime.apple.com', iframe = false) {

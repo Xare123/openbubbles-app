@@ -231,3 +231,92 @@ only. Astra additionally compiled the four new/changed XML resources. These chec
 do not compile the Activity or prove real portrait, landscape, large-font or PiP
 rendering. Android compilation and actual rendering remain release gates. No call,
 APK installation or account action was performed for this layout change.
+
+## September 11 bounded inbound LeaveEvent diagnostic follow-up
+
+Scope: `C:\Codex\OpenBubblesReview\worktrees\cloudkit-decoder-diagnostic`.
+The layout (`509aa1d34`) and native-only export (`b701e36a7`) review status was
+provided by the parent. This sidecar ran no Git commands and did not reverify
+commit/branch identity. No Android/device qualification is claimed.
+
+The gap exists. In current `rustpush/src/facetime.rs`, command 208 checks
+`last_join_date`, clears the participant's active state, possibly removes a
+temporary participant, updates ringing/missed state, and emits `FTMessage::LeaveEvent`.
+Its existing generic log lines do not describe that transition. The emitted
+event exposes only guid, participant and handle, with no protocol reason field.
+The Dart handler refreshes the session lists and applies its existing ringing
+overlay/missed-call handling without emitting a bounded native leave trace.
+Neither that event nor an all-inactive snapshot proves whole-session termination.
+
+The diagnostic-only change adds `stage=remote_leave` with three finite states:
+`received`, `refreshed`, and `refresh_failed`. It reuses `update-call-state` with
+an early-return `remote_leave_diagnostic` branch and the existing native writer.
+It does not send `timeout`/`ended`, invoke signaling, or change automatic teardown.
+The existing refresh still runs once; its original exception is rethrown.
+
+- Both Android and Dart require developer mode plus the existing default-off
+  FaceTime diagnostics setting. Diagnostic exceptions are swallowed without
+  logging their bodies. The Dart sender bypasses the generic method-send logger.
+- Each marker contains fixed `reason=participant_leave`, active/total participant
+  counts, and `matches_active_call=true|false|unavailable`. This reason labels the
+  event type, not why the peer left or a terminal reason code. Only equality is
+  persisted; the UUID is used internally in the existing channel, never logged.
+  No handles, participant IDs, tokens, links, SDP, media or account data are added.
+- `received` uses the currently cached Dart snapshot. `refreshed` uses the snapshot
+  after the existing refresh. `refresh_failed` may contain stale cached counts.
+  Both session lists are searched; missing snapshots produce `unavailable`, not
+  zero. These are observations around a refresh, not atomic native transitions.
+- Counts are typed and clamped to 0..65535. Native state strings are allowlisted.
+  Existing 256-byte lines, per-stage/state rate limits and two 64 KiB generations
+  remain. Four new executable Kotlin tests cover redaction, malformed data,
+  opt-out, rotation, throttling and independent close/lifecycle logging.
+- Dart never awaits diagnostics in call dispatch. A finite in-flight phase set
+  permits at most three pending channel operations per service, drops duplicate
+  phases while pending, and releases entries on completion/failure. There is no
+  retry, queue or new logger. Three Dart source-contract tests check this wiring.
+
+Limitations: rapid events may be coalesced by these bounds. Equality reflects the
+native Activity at marker handling time, not an immutable per-call correlation ID.
+Overlapping calls cannot be reconstructed from these markers alone. An inbound
+LeaveEvent may reflect another device or handoff; it does not prove the remote
+human pressed Hang Up. Native events suppressed by the timestamp guard and native
+protocol reason/transition details remain unobservable through the current event
+contract. No shared Rust API, FRB or generated changes were required or made.
+The offline analyzer is unchanged: it currently skips this new stage and clears
+its media baseline at an unknown record. Inspect the redacted exported lines
+directly for this evidence; do not interpret them as a new analyzer terminal verdict.
+
+Exact paths changed by this sidecar, relative to the worktree above:
+
+```text
+lib/services/rustpush/rustpush_service.dart
+android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeCallStateHandler.kt
+android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeDiagnosticLog.kt
+android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeDiagnostics.kt
+android/app/src/test/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeDiagnosticLogTest.kt
+test/services/facetime/face_time_diagnostics_contract_test.dart
+test/services/facetime/face_time_media_probe_test.cjs
+docs/FACETIME_ASTRA_LIFECYCLE_20260910.md
+```
+
+Validation from this worktree, using the supplied ARM64 Flutter/Dart SDK:
+
+```powershell
+& 'C:\Codex\Toolchains\flutter-3.44.8-arm64\bin\flutter.bat' test --no-pub --no-test-assets --reporter expanded test/services/facetime/face_time_outgoing_start_test.dart test/services/facetime/face_time_incoming_admission_test.dart test/services/facetime/face_time_diagnostics_contract_test.dart test/services/facetime/face_time_log_export_test.dart test/services/facetime/face_time_outgoing_lifecycle_test.dart
+& '.\test\services\facetime\run_face_time_host_tests.ps1'
+node --test tooling/facetime/web_leave_bridge.test.mjs tooling/facetime/web_rtc_diagnostic_bootstrap.test.mjs tooling/facetime/analyze_native_trace.test.mjs test/services/facetime/face_time_media_probe_test.cjs
+& 'C:\Codex\Toolchains\flutter-3.44.8-arm64\bin\dart.bat' analyze lib/services/rustpush/rustpush_service.dart test/services/facetime/face_time_diagnostics_contract_test.dart
+```
+
+Results: **49 Flutter tests passed; 74 Kotlin/JUnit tests passed; 63 JavaScript
+tests passed**. The first JavaScript run was 62/63 because the existing source
+contract required the old five-argument diagnostic forwarding call. Its two
+assertions now require forwarding both media and remote-leave evidence; rerun
+passed. Analyzer exited 0 with no errors/warnings and four style infos on untouched
+statements. These tests do not compile the Android-dependent handler/Activity,
+exercise the new channel on Android, or qualify a real call. No devices, calls,
+credentials, accounts, Git/push/CI, heavy builds or descendants were used. Other
+dirty files were not edited; existing targeted build/test outputs were reused.
+End-of-task read-only storage check: C: free 49.38 GiB; existing worktree `build`
+2.205 GiB and `.dart_tool` 7.502 GiB (whole-tree totals, not this patch's growth).
+The targeted Kotlin test jar is 99,065 bytes. No cleanup or deletion was performed.

@@ -19,6 +19,22 @@ class FaceTimeCallStateHandler: MethodCallHandlerImpl() {
     ) {
         val state = call.argument<String>("state")
 
+        if (state == "remote_leave_diagnostic") {
+            try {
+                if (FaceTimeDiagnostics.isEnabled(context)) {
+                    val arguments = call.arguments as? Map<*, *>
+                    FaceTimeDiagnostics.logStage(context, FaceTimeDiagnosticStage.REMOTE_LEAVE,
+                        state = arguments?.get("phase") as? String ?: "unknown",
+                        remoteLeave = FaceTimeRemoteLeaveEvidence.fromArguments(
+                            arguments, FaceTimeActivity.activeFaceTimeActivity?.callUuid))
+                }
+            } catch (_: Exception) {
+                // Diagnostics cannot authorize or interfere with teardown.
+            }
+            result.success(null)
+            return
+        }
+
         if (state == "ringing") {
             if (FaceTimeActivity.activeFaceTimeActivity == null && FaceTimeActivity.cachedWebview == null) {
                 val name = call.argument<String>("name")
