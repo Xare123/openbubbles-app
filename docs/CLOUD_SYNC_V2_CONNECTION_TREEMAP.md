@@ -830,8 +830,9 @@ acknowledging them. It is **not journal-adopted or connected to a CloudKit save*
 Generated bridge import is complete; app journal integration and live proof remain required.
 Text-with-flags edits and unsends are represented; unsupported replacement
 parts must remain explicit pending work, never flattened or counted complete.
-Next integration: durable mutation journal and app confirmation/reflection,
-then exact predecessor/readback. Initial-create admission remains unchanged.
+Next integration: protected source adoption/commit adapter and app receipt
+recovery with an exact-source local projector, then predecessor/readback.
+Initial-create admission remains unchanged.
 The codec-only checkpoint passed GitHub `34624049558`; expanded codec and
 protected staging passed exact-source GCE `34625938024` on `3d95920ff`:
 503 Rust tests and bridge reproduction succeeded. The subsequent API/send and
@@ -857,6 +858,29 @@ CloudKit admission. Remote-record availability gates the later CloudKit update,
 not ordinary IDS edit/unsend support. A missing remote predecessor never permits
 recreating a previously known message. Receipt recovery and all protected-byte
 liveness roots must include the new journal together, not in later patches.
+
+The local journal foundation is now source-implemented and covered by 351
+focused Dart tests across eight suites. It uses additive ObjectBox entity 35
+(all pre-existing entities and their UIDs are unchanged), with separate
+operation UUID and target GUID/part, a protected source binding, and a snapshot
+of the original target. The state path is staged -> submission claimed ->
+positive native receipt retained -> local reflection committed. A claimed
+unknown result cannot be resent automatically. Cold receipt replay retains
+the original native session binding, even under a new live authenticated
+session. Both protected-byte and lease scans retain every journal state/account.
+Three parent-authored regressions reproduced acceptance of a wire with an
+unrelated sender, recipient or conversation; route binding now rejects all
+three. A projection cannot change routing or writer epoch during its commit.
+Local projection currently has a tested transaction seam only, not a
+qualified source-derived projector. This is not connected to ordinary edit/
+unsend calls or a remote save. Stage/commit/restore composition and native
+receipt consumption must land before enabling capture, not as a follow-up.
+
+GCE Dart-only `34629000411` passed 3,184 Dart tests plus 14 outbox and three
+evidence-output cases on `b701e36a7`, before this journal addition. Cleanup
+succeeded at 17:51:15Z and independent inventories showed zero VMs/runners.
+Despite its generic job label, this run produced no APK. Exact journal-source
+full-suite qualification remains separate from these prior results.
 
 Retained-version inspection now has live **offline** evidence: the Windows
 profile contains 23,413 scoped record groups and zero multi-row groups, so

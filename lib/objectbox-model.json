@@ -2727,10 +2727,120 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "35:5717746217656693252",
+      "lastPropertyId": "19:7401126705954944764",
+      "name": "CloudSyncLocalMutationIntentEntity",
+      "properties": [
+        {
+          "id": "1:1975274717028514878",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:1314262630284791491",
+          "name": "intentKey",
+          "indexId": "98:5859088145948941962",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:6261898161881092698",
+          "name": "accountFingerprint",
+          "indexId": "99:4080419673920484278",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:5676120847300791766",
+          "name": "writerEpoch",
+          "type": 6
+        },
+        {
+          "id": "5:1400357268006926492",
+          "name": "localMessageId",
+          "type": 6
+        },
+        {
+          "id": "6:4077580394028332582",
+          "name": "localChatId",
+          "type": 6
+        },
+        {
+          "id": "7:8239593666410594690",
+          "name": "mutationGuidHash",
+          "type": 9
+        },
+        {
+          "id": "8:7795670564885991769",
+          "name": "targetGuidHash",
+          "type": 9
+        },
+        {
+          "id": "9:9081553234377707640",
+          "name": "targetPart",
+          "type": 6
+        },
+        {
+          "id": "10:4557537782995793867",
+          "name": "kind",
+          "type": 6
+        },
+        {
+          "id": "11:3782947487208155274",
+          "name": "sourceSha256",
+          "type": 9
+        },
+        {
+          "id": "12:2122345049408466509",
+          "name": "targetSnapshotSha256",
+          "type": 9
+        },
+        {
+          "id": "13:7670752379947654267",
+          "name": "protectedSourceBinding",
+          "type": 9
+        },
+        {
+          "id": "14:6245011271042695470",
+          "name": "state",
+          "indexId": "100:128294639452592612",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "15:3661796040010554176",
+          "name": "idsReceiptBindingSha256",
+          "type": 9
+        },
+        {
+          "id": "16:486591611944257682",
+          "name": "reflectedSnapshotSha256",
+          "type": 9
+        },
+        {
+          "id": "17:5312308255274305659",
+          "name": "createdAtMs",
+          "type": 6
+        },
+        {
+          "id": "18:6995970299197215584",
+          "name": "updatedAtMs",
+          "type": 6
+        },
+        {
+          "id": "19:7401126705954944764",
+          "name": "submissionAuthBindingSha256",
+          "type": 9
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "34:2734237264100580081",
-  "lastIndexId": "97:2075310387007054598",
+  "lastEntityId": "35:5717746217656693252",
+  "lastIndexId": "100:128294639452592612",
   "lastRelationId": "1:7492985733214117623",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

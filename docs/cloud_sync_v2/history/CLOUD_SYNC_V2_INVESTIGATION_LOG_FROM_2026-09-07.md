@@ -2645,3 +2645,42 @@ This is a chronological evidence log. It does not override the
   must be integrated coherently before enabling capture. Remote conditional saves
   still require an actual Apple before/after transition. No account data was read
   and no files changed by the agent; it was closed and shutdown verified.
+- Generated binding/evidence import committed as `2e87833b6`; the separately
+  reviewed native-only export fix committed as `b701e36a7`. Targeted Dart
+  analysis found no issues. Fork source `b701e36a7f91276f940000800ff340de4392a801`
+  is now running full Dart qualification in GCE `34629000411`, N2D-16 in
+  `us-west1-c`, dart-only with both writer flags off. Do not duplicate this run
+  or claim its result before completion. It does not compile the Android
+  viewer or install a matching native library on Windows/Pixel.
+- GCE `34629000411` completed on `b701e36a7`: 3,184 Dart tests, 14 semantic
+  outbox cases and three evidence-output cases passed. Cleanup completed at
+  17:51:15Z; independent VM and runner inventories were empty. The generic
+  build-job label was not an APK build in this dart-only run.
+- Parent integrated the separate local mutation journal foundation, entity 35
+  and both protected-reference scans. Existing ObjectBox entities, properties
+  and retired entity IDs are unchanged. Synthetic tests cover staged/claimed/
+  confirmed/reflected reopen, duplicate receipts, session-bound replay, stale
+  writer epochs, rollback, target drift and retained bytes/leases in all states.
+  This remains unconnected to the ordinary app path or a remote save. The
+  local reflection callback is a transaction seam, not proof of source-derived
+  edit history or unsend projection. Stage/commit/recovery composition remains.
+- Parent reproduced three route-substitution failures: the initial journal
+  accepted otherwise-valid mutations with a different sender, peer or chat.
+  The wire identity now binds a content-free route digest checked independently
+  against the target's persisted chat at capture and adoption. All three now
+  reject before inserting an intent. Eight focused suites passed 351 tests;
+  the run log is retained under local `build-evidence/mutation-journal-20260911`.
+- Final parent review also rejects a projector changing routing or advancing
+  writer authority during the transaction; both cases roll back all row changes.
+  Targeted analysis found no issues. Filtered ObjectBox/Freezed generation
+  completed successfully; existing warnings about unrelated DateTime fields
+  and unsupported transient properties remain unchanged.
+- Galileo's helper/tests were reviewed. Parent corrected two syntax defects,
+  replaced an inaccurate whitespace predicate with the native Unicode behavior,
+  and added route verification. Helper eligibility remains conservatively
+  limited to hyphenated UUID spellings; the native parser accepts more forms.
+  Agent was closed, shutdown verified, and its shared source retained. The older
+  upload-result worker was also closed after confirming its work was already
+  integrated at `925b02181`; no descendants or dedicated worktree existed.
+  Supported session deletion is unavailable, so transcript provenance remains.
+  C: free space was 49.7 GiB; no evidence, credentials or user data was removed.

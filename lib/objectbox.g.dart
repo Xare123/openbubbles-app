@@ -3167,6 +3167,133 @@ final _entities = <obx_int.ModelEntity>[
     relations: <obx_int.ModelRelation>[],
     backlinks: <obx_int.ModelBacklink>[],
   ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(35, 5717746217656693252),
+    name: 'CloudSyncLocalMutationIntentEntity',
+    lastPropertyId: const obx_int.IdUid(19, 7401126705954944764),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 1975274717028514878),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 1314262630284791491),
+        name: 'intentKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(98, 5859088145948941962),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 6261898161881092698),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(99, 4080419673920484278),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 5676120847300791766),
+        name: 'writerEpoch',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 1400357268006926492),
+        name: 'localMessageId',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 4077580394028332582),
+        name: 'localChatId',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 8239593666410594690),
+        name: 'mutationGuidHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 7795670564885991769),
+        name: 'targetGuidHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 9081553234377707640),
+        name: 'targetPart',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 4557537782995793867),
+        name: 'kind',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 3782947487208155274),
+        name: 'sourceSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 2122345049408466509),
+        name: 'targetSnapshotSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 7670752379947654267),
+        name: 'protectedSourceBinding',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 6245011271042695470),
+        name: 'state',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(100, 128294639452592612),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 3661796040010554176),
+        name: 'idsReceiptBindingSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 486591611944257682),
+        name: 'reflectedSnapshotSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(17, 5312308255274305659),
+        name: 'createdAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 6995970299197215584),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 7401126705954944764),
+        name: 'submissionAuthBindingSha256',
+        type: 9,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
 ];
 
 /// Shortcut for [obx.Store.new] that passes [getObjectBoxModel] and for Flutter
@@ -3212,8 +3339,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
     // Typically, this is done with `dart run build_runner build`.
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
-    lastEntityId: const obx_int.IdUid(34, 2734237264100580081),
-    lastIndexId: const obx_int.IdUid(97, 2075310387007054598),
+    lastEntityId: const obx_int.IdUid(35, 5717746217656693252),
+    lastIndexId: const obx_int.IdUid(100, 128294639452592612),
     lastRelationId: const obx_int.IdUid(1, 7492985733214117623),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [
@@ -7438,6 +7565,181 @@ obx_int.ModelDefinition getObjectBoxModel() {
             return object;
           },
         ),
+    CloudSyncLocalMutationIntentEntity:
+        obx_int.EntityDefinition<CloudSyncLocalMutationIntentEntity>(
+          model: _entities[26],
+          toOneRelations: (CloudSyncLocalMutationIntentEntity object) => [],
+          toManyRelations: (CloudSyncLocalMutationIntentEntity object) => {},
+          getId: (CloudSyncLocalMutationIntentEntity object) => object.id,
+          setId: (CloudSyncLocalMutationIntentEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB:
+              (CloudSyncLocalMutationIntentEntity object, fb.Builder fbb) {
+                final intentKeyOffset = fbb.writeString(object.intentKey);
+                final accountFingerprintOffset = fbb.writeString(
+                  object.accountFingerprint,
+                );
+                final mutationGuidHashOffset = fbb.writeString(
+                  object.mutationGuidHash,
+                );
+                final targetGuidHashOffset = fbb.writeString(
+                  object.targetGuidHash,
+                );
+                final sourceSha256Offset = fbb.writeString(object.sourceSha256);
+                final targetSnapshotSha256Offset = fbb.writeString(
+                  object.targetSnapshotSha256,
+                );
+                final protectedSourceBindingOffset = fbb.writeString(
+                  object.protectedSourceBinding,
+                );
+                final idsReceiptBindingSha256Offset =
+                    object.idsReceiptBindingSha256 == null
+                    ? null
+                    : fbb.writeString(object.idsReceiptBindingSha256!);
+                final reflectedSnapshotSha256Offset =
+                    object.reflectedSnapshotSha256 == null
+                    ? null
+                    : fbb.writeString(object.reflectedSnapshotSha256!);
+                final submissionAuthBindingSha256Offset =
+                    object.submissionAuthBindingSha256 == null
+                    ? null
+                    : fbb.writeString(object.submissionAuthBindingSha256!);
+                fbb.startTable(20);
+                fbb.addInt64(0, object.id);
+                fbb.addOffset(1, intentKeyOffset);
+                fbb.addOffset(2, accountFingerprintOffset);
+                fbb.addInt64(3, object.writerEpoch);
+                fbb.addInt64(4, object.localMessageId);
+                fbb.addInt64(5, object.localChatId);
+                fbb.addOffset(6, mutationGuidHashOffset);
+                fbb.addOffset(7, targetGuidHashOffset);
+                fbb.addInt64(8, object.targetPart);
+                fbb.addInt64(9, object.kind);
+                fbb.addOffset(10, sourceSha256Offset);
+                fbb.addOffset(11, targetSnapshotSha256Offset);
+                fbb.addOffset(12, protectedSourceBindingOffset);
+                fbb.addInt64(13, object.state);
+                fbb.addOffset(14, idsReceiptBindingSha256Offset);
+                fbb.addOffset(15, reflectedSnapshotSha256Offset);
+                fbb.addInt64(16, object.createdAtMs);
+                fbb.addInt64(17, object.updatedAtMs);
+                fbb.addOffset(18, submissionAuthBindingSha256Offset);
+                fbb.finish(fbb.endTable());
+                return object.id;
+              },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final intentKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final writerEpochParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              10,
+              0,
+            );
+            final localMessageIdParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              12,
+              0,
+            );
+            final localChatIdParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              14,
+              0,
+            );
+            final mutationGuidHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 16, '');
+            final targetGuidHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 18, '');
+            final targetPartParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              20,
+              0,
+            );
+            final kindParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              22,
+              0,
+            );
+            final sourceSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 24, '');
+            final targetSnapshotSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 26, '');
+            final protectedSourceBindingParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 28, '');
+            final stateParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              30,
+              0,
+            );
+            final submissionAuthBindingSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 40);
+            final idsReceiptBindingSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 32);
+            final reflectedSnapshotSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 34);
+            final createdAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              36,
+              0,
+            );
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              38,
+              0,
+            );
+            final object = CloudSyncLocalMutationIntentEntity(
+              id: idParam,
+              intentKey: intentKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              writerEpoch: writerEpochParam,
+              localMessageId: localMessageIdParam,
+              localChatId: localChatIdParam,
+              mutationGuidHash: mutationGuidHashParam,
+              targetGuidHash: targetGuidHashParam,
+              targetPart: targetPartParam,
+              kind: kindParam,
+              sourceSha256: sourceSha256Param,
+              targetSnapshotSha256: targetSnapshotSha256Param,
+              protectedSourceBinding: protectedSourceBindingParam,
+              state: stateParam,
+              submissionAuthBindingSha256: submissionAuthBindingSha256Param,
+              idsReceiptBindingSha256: idsReceiptBindingSha256Param,
+              reflectedSnapshotSha256: reflectedSnapshotSha256Param,
+              createdAtMs: createdAtMsParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
   };
 
   return obx_int.ModelDefinition(model, bindings);
@@ -10019,5 +10321,122 @@ class CloudAttachmentUploadEntity_ {
   static final updatedAtMs =
       obx.QueryIntegerProperty<CloudAttachmentUploadEntity>(
         _entities[25].properties[21],
+      );
+}
+
+/// [CloudSyncLocalMutationIntentEntity] entity fields to define ObjectBox queries.
+class CloudSyncLocalMutationIntentEntity_ {
+  /// See [CloudSyncLocalMutationIntentEntity.id].
+  static final id =
+      obx.QueryIntegerProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[0],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.intentKey].
+  static final intentKey =
+      obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[1],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[2],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.writerEpoch].
+  static final writerEpoch =
+      obx.QueryIntegerProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[3],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.localMessageId].
+  static final localMessageId =
+      obx.QueryIntegerProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[4],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.localChatId].
+  static final localChatId =
+      obx.QueryIntegerProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[5],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.mutationGuidHash].
+  static final mutationGuidHash =
+      obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[6],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.targetGuidHash].
+  static final targetGuidHash =
+      obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[7],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.targetPart].
+  static final targetPart =
+      obx.QueryIntegerProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[8],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.kind].
+  static final kind =
+      obx.QueryIntegerProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[9],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.sourceSha256].
+  static final sourceSha256 =
+      obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[10],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.targetSnapshotSha256].
+  static final targetSnapshotSha256 =
+      obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[11],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.protectedSourceBinding].
+  static final protectedSourceBinding =
+      obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[12],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.state].
+  static final state =
+      obx.QueryIntegerProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[13],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.idsReceiptBindingSha256].
+  static final idsReceiptBindingSha256 =
+      obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[14],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.reflectedSnapshotSha256].
+  static final reflectedSnapshotSha256 =
+      obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[15],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.createdAtMs].
+  static final createdAtMs =
+      obx.QueryIntegerProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[16],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[17],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.submissionAuthBindingSha256].
+  static final submissionAuthBindingSha256 =
+      obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[18],
       );
 }

@@ -1,0 +1,485 @@
+import 'dart:convert';
+
+import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:crypto/crypto.dart';
+
+import 'cloud_sync_local_mutation_identity.dart';
+import 'cloud_sync_local_mutation_source_binding.dart';
+import 'cloud_sync_local_send_journal.dart'
+    show CloudSyncNativeReceiptReplayBinding;
+import 'cloud_sync_manual_shadow_sampler.dart';
+import 'cloudkit_writer_authority.dart';
+import 'cloudkit_writer_ownership.dart';
+
+/// Retains edits/unsends without treating them as initial message creates.
+/// Network and native keystore work stay outside ObjectBox transactions.
+/// The source lease must be committed under the protected-store exclusion
+/// after adoption and before claiming submission. This journal never sends,
+/// acknowledges a native receipt, releases protected data or writes CloudKit.
+final class CloudSyncLocalMutationJournal {
+  CloudSyncLocalMutationJournal({
+    required Store store,
+    required ObjectBoxCloudKitWriterAuthority authority,
+    required CloudKitWriterAuthoritySnapshot authoritySnapshot,
+  }) : _store = store,
+       _authority = authority,
+       _owner = authoritySnapshot {
+    if (!authority.isBoundToStore(store)) _fail('authority_store_mismatch');
+  }
+
+  final Store _store;
+  final ObjectBoxCloudKitWriterAuthority _authority;
+  final CloudKitWriterAuthoritySnapshot _owner;
+  Box<CloudSyncLocalMutationIntentEntity> get _rows =>
+      _store.box<CloudSyncLocalMutationIntentEntity>();
+
+  /// Capture before any asynchronous staging. Its digest covers the exact
+  /// existing local body/history and route, not just a mutable message row ID.
+  String captureTargetSnapshot({
+    required int localMessageId,
+    required CloudSyncLocalMutationIdentity identity,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireOwner();
+    final target = _target(localMessageId, identity.targetGuidHash);
+    _requireRoute(target, identity);
+    return _snapshot(target);
+  });
+
+  int adoptSource({
+    required int localMessageId,
+    required CloudSyncLocalMutationIdentity identity,
+    required String targetSnapshotSha256,
+    required CloudSyncLocalMutationSourceBinding source,
+    required CloudSyncNativeAuthSnapshot capturedAuth,
+    required bool Function() stillCurrent,
+    required DateTime now,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _requireOwner();
+    _requireAuth(source, capturedAuth, stillCurrent);
+    source.requireOrigin(
+      accountFingerprint: _owner.scope.accountFingerprint,
+      mutationGuidHash: identity.guidHash,
+      targetGuidHash: identity.targetGuidHash,
+      targetPart: identity.targetPart,
+      sourceSha256: identity.sourceSha256,
+    );
+    final target = _target(localMessageId, identity.targetGuidHash);
+    _requireRoute(target, identity);
+    final key = _intentKey(_owner.scope.accountFingerprint, identity.guidHash);
+    final query = _rows
+        .query(CloudSyncLocalMutationIntentEntity_.intentKey.equals(key))
+        .build();
+    final CloudSyncLocalMutationIntentEntity? existing;
+    try {
+      existing = query.findUnique();
+    } finally {
+      query.close();
+    }
+    final time = _time(now);
+    if (existing != null) {
+      final old = _read(existing.id, originalEpoch: true);
+      if (old.localMessageId != localMessageId ||
+          old.localChatId != target.chat.targetId ||
+          old.kind != identity.kind.index ||
+          old.targetSnapshotSha256 != targetSnapshotSha256 ||
+          old.protectedSourceBinding != source.encode()) {
+        _fail('intent_changed');
+      }
+      // Duplicate adoption is bookkeeping, never permission to send again.
+      return old.id;
+    }
+    if (_snapshot(target) != targetSnapshotSha256) _fail('target_changed');
+    return _rows.put(
+      CloudSyncLocalMutationIntentEntity(
+        intentKey: key,
+        accountFingerprint: _owner.scope.accountFingerprint,
+        writerEpoch: _owner.epoch,
+        localMessageId: localMessageId,
+        localChatId: target.chat.targetId,
+        mutationGuidHash: identity.guidHash,
+        targetGuidHash: identity.targetGuidHash,
+        targetPart: identity.targetPart,
+        kind: identity.kind.index,
+        sourceSha256: identity.sourceSha256,
+        targetSnapshotSha256: targetSnapshotSha256,
+        protectedSourceBinding: source.encode(),
+        createdAtMs: time,
+        updatedAtMs: time,
+      ),
+    );
+  });
+
+  /// Claim exactly once, after the native committed source was reopened and
+  /// validated by the staging adapter. Interruption after this transaction
+  /// leaves an unknown result, not an automatically retryable intent.
+  void beginSubmission({
+    required int intentId,
+    required CloudSyncLocalMutationSourceBinding committedSource,
+    required CloudSyncNativeAuthSnapshot capturedAuth,
+    required bool Function() stillCurrent,
+    required DateTime now,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _requireOwner();
+    final row = _read(intentId, originalEpoch: true);
+    _requireAuth(committedSource, capturedAuth, stillCurrent);
+    if (row.protectedSourceBinding != committedSource.encode()) {
+      _fail('source_changed');
+    }
+    if (row.state != 0) _fail('already_claimed');
+    if (_snapshot(
+          _target(row.localMessageId, row.targetGuidHash, row.localChatId),
+        ) !=
+        row.targetSnapshotSha256) {
+      _fail('target_changed');
+    }
+    row
+      ..state = 1
+      ..submissionAuthBindingSha256 = _authHash(
+        capturedAuth.accountFingerprint,
+        capturedAuth.protectedStoreIdentity,
+        capturedAuth.nativeSessionId,
+      )
+      ..updatedAtMs = _advanceTime(row, now);
+    _rows.put(row);
+  });
+
+  /// Only the native positive-participant-acceptance receipt can promote a
+  /// claimed intent. A cold replay must carry the existing runtime/auth fence;
+  /// it cannot merely disable the native session check with a boolean flag.
+  void recordNativeReceipt({
+    required int intentId,
+    required api.CloudSyncNativeSendReceipt receipt,
+    required CloudSyncNativeAuthSnapshot capturedAuth,
+    required bool Function() stillCurrent,
+    required DateTime now,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _requireOwner();
+    final row = _read(intentId);
+    final source = validateCloudSyncMutationRow(row);
+    _requireAuth(source, capturedAuth, stillCurrent);
+    if (replayBinding == null) {
+      if (receipt.nativeSessionId != capturedAuth.nativeSessionId) {
+        _fail('receipt_session_changed');
+      }
+    } else {
+      replayBinding.requireCapturedAuth(capturedAuth);
+    }
+    final native = receipt.sourceBinding;
+    if (row.state == 0 ||
+        receipt.guidHash != row.mutationGuidHash ||
+        !_receiptId.hasMatch(receipt.receiptId) ||
+        receipt.nativeSessionId.isEmpty ||
+        row.submissionAuthBindingSha256 !=
+            _authHash(
+              source.accountFingerprint,
+              source.protectedStoreIdentity,
+              receipt.nativeSessionId,
+            ) ||
+        native == null ||
+        native.kind != api.CloudSyncNativeSendSourceKind.mutation ||
+        native.sourceSha256 != source.sourceSha256 ||
+        native.protectedReference != source.protectedReference ||
+        native.leaseReference != source.leaseReference ||
+        native.payloadSha256 != source.payloadSha256 ||
+        native.payloadLength != BigInt.from(source.payloadLength)) {
+      _fail('receipt_changed');
+    }
+    final proof = _digest([
+      'cloud-sync-mutation-ids-receipt-v1',
+      source.accountFingerprint,
+      source.protectedStoreIdentity,
+      receipt.receiptId,
+      receipt.nativeSessionId,
+      source.encode(),
+    ]);
+    if (row.idsReceiptBindingSha256 != null) {
+      if (row.idsReceiptBindingSha256 != proof) _fail('receipt_changed');
+      return;
+    }
+    row
+      ..idsReceiptBindingSha256 = proof
+      ..state = 2
+      ..updatedAtMs = _advanceTime(row, now);
+    _rows.put(row);
+  });
+
+  /// The caller prepares the exact protected mutation outside this transaction.
+  /// Commit its local projection only while the original target snapshot still
+  /// matches. A newer local/remote edit is retained, never silently overwritten.
+  /// Duplicate replay after state 3 does not call the projector again.
+  void reflectConfirmed({
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+    required Message Function(Message target) project,
+    required DateTime now,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _requireOwner();
+    final row = _read(intentId);
+    final source = validateCloudSyncMutationRow(row);
+    _requireAuth(source, currentAuth, stillCurrent);
+    if (row.state == 3) return;
+    if (row.state != 2) _fail('ids_unconfirmed');
+    final target = _target(
+      row.localMessageId,
+      row.targetGuidHash,
+      row.localChatId,
+    );
+    if (_snapshot(target) != row.targetSnapshotSha256) _fail('target_changed');
+    final route = _digest(_routingData(target));
+    final updated = project(target);
+    if (updated.id != row.localMessageId ||
+        updated.chat.targetId != row.localChatId ||
+        updated.guid == null ||
+        _guidHash(updated.guid!) != row.targetGuidHash ||
+        updated.isFromMe != true ||
+        updated.verificationFailed ||
+        updated.dateScheduled != null ||
+        _digest(_routingData(updated)) != route) {
+      _fail('reflection_target_changed');
+    }
+    final after = _snapshot(updated);
+    if (after == row.targetSnapshotSha256) _fail('reflection_unchanged');
+    _store.box<Message>().put(updated);
+    if (!stillCurrent()) _fail('auth_changed');
+    _requireOwner();
+    row
+      ..state = 3
+      ..reflectedSnapshotSha256 = after
+      ..updatedAtMs = _advanceTime(row, now);
+    _rows.put(row);
+  });
+
+  /// Read-only reconciliation inventory. Neither staged nor claimed intents
+  /// are returned as confirmed. Old epochs retain evidence but grant no send.
+  List<CloudSyncLocalMutationIntentEntity> readConfirmed({int limit = 50}) =>
+      _store.runInTransaction(TxMode.read, () {
+        _requireOwner();
+        if (limit < 1 || limit > 50) _fail('limit_invalid');
+        final query =
+            _rows
+                .query(
+                  CloudSyncLocalMutationIntentEntity_.accountFingerprint
+                      .equals(_owner.scope.accountFingerprint)
+                      .and(CloudSyncLocalMutationIntentEntity_.state.equals(2)),
+                )
+                .order(CloudSyncLocalMutationIntentEntity_.id)
+                .build()
+              ..limit = limit;
+        try {
+          return query
+              .find()
+              .map((row) => _read(row.id))
+              .toList(growable: false);
+        } finally {
+          query.close();
+        }
+      });
+
+  CloudSyncLocalMutationIntentEntity _read(
+    int id, {
+    bool originalEpoch = false,
+  }) {
+    final row = _rows.get(id);
+    if (row == null) _fail('intent_missing');
+    validateCloudSyncMutationRow(row);
+    if (row.accountFingerprint != _owner.scope.accountFingerprint ||
+        row.writerEpoch > _owner.epoch ||
+        (originalEpoch && row.writerEpoch != _owner.epoch)) {
+      _fail('owner_changed');
+    }
+    return row;
+  }
+
+  void _requireRoute(Message target, CloudSyncLocalMutationIdentity identity) {
+    final chat = target.chat.target!;
+    if (chat.isRoutingStub ||
+        chat.usingHandle?.isNotEmpty != true ||
+        (chat.style != 45 && chat.style != 43) ||
+        chat.handles.isEmpty ||
+        chat.handles.any((h) => h.service != 'iMessage') ||
+        !identity.matchesRoute(
+          sender: chat.usingHandle!,
+          chatGuid: chat.guid,
+          participants: chat.handles
+              .map(
+                (h) =>
+                    '${h.address.contains('@') ? 'mailto' : 'tel'}:${h.address}',
+              )
+              .toList(growable: false),
+        )) {
+      _fail('route_changed');
+    }
+  }
+
+  Message _target(int id, String guidHash, [int? chatId]) {
+    final target = id > 0 ? _store.box<Message>().get(id) : null;
+    if (target == null ||
+        target.guid == null ||
+        _guidHash(target.guid!) != guidHash ||
+        target.isFromMe != true ||
+        target.verificationFailed ||
+        target.temp ||
+        target.error != 0 ||
+        target.dateDeleted != null ||
+        target.dateScheduled != null ||
+        target.chat.targetId <= 0 ||
+        (chatId != null && target.chat.targetId != chatId) ||
+        target.chat.target == null ||
+        target.chat.target!.isRpSms ||
+        target.chat.target!.isRoutingStub) {
+      _fail('target_changed');
+    }
+    return target;
+  }
+
+  void _requireOwner() {
+    if (_owner.owner != CloudKitWriterOwner.v2 ||
+        _owner.epoch <= 0 ||
+        _owner.scope.container != 'com.apple.messages.cloud' ||
+        _owner.scope.database != 'private') {
+      _fail('owner_invalid');
+    }
+    final current = _authority.read(_owner.scope);
+    if (current == null ||
+        current.owner != _owner.owner ||
+        current.epoch != _owner.epoch) {
+      _fail('owner_changed');
+    }
+    // Journaling creates no remote write permit, including when uploads are fenced.
+  }
+
+  void _requireAuth(
+    CloudSyncLocalMutationSourceBinding source,
+    CloudSyncNativeAuthSnapshot auth,
+    bool Function() stillCurrent,
+  ) {
+    if (!stillCurrent() ||
+        auth.accountFingerprint != _owner.scope.accountFingerprint ||
+        source.accountFingerprint != auth.accountFingerprint ||
+        source.protectedStoreIdentity != auth.protectedStoreIdentity) {
+      _fail('auth_changed');
+    }
+  }
+
+  @override
+  String toString() => 'CloudSyncLocalMutationJournal(redacted)';
+}
+
+/// Shared by journal and *both* native GC roots. Every retained row, account and
+/// state owns its original source/lease, even after local reflection. No generic
+/// terminal flag is permission to reclaim the bytes or native acceptance receipt.
+CloudSyncLocalMutationSourceBinding validateCloudSyncMutationRow(
+  CloudSyncLocalMutationIntentEntity row,
+) {
+  if (row.id <= 0 ||
+      row.writerEpoch <= 0 ||
+      row.localMessageId <= 0 ||
+      row.localChatId <= 0 ||
+      row.kind < 0 ||
+      row.kind > 1 ||
+      row.state < 0 ||
+      row.state > 3 ||
+      row.createdAtMs <= 0 ||
+      row.updatedAtMs < row.createdAtMs ||
+      !_hash.hasMatch(row.targetSnapshotSha256) ||
+      row.intentKey !=
+          _intentKey(row.accountFingerprint, row.mutationGuidHash) ||
+      ((row.state == 0) != (row.submissionAuthBindingSha256 == null)) ||
+      (row.submissionAuthBindingSha256 != null &&
+          !_hash.hasMatch(row.submissionAuthBindingSha256!)) ||
+      ((row.state < 2) != (row.idsReceiptBindingSha256 == null)) ||
+      (row.idsReceiptBindingSha256 != null &&
+          !_hash.hasMatch(row.idsReceiptBindingSha256!)) ||
+      ((row.state < 3) != (row.reflectedSnapshotSha256 == null)) ||
+      (row.reflectedSnapshotSha256 != null &&
+          !_hash.hasMatch(row.reflectedSnapshotSha256!))) {
+    _fail('row_corrupt');
+  }
+  final source = CloudSyncLocalMutationSourceBinding.decode(
+    row.protectedSourceBinding,
+  );
+  source.requireOrigin(
+    accountFingerprint: row.accountFingerprint,
+    mutationGuidHash: row.mutationGuidHash,
+    targetGuidHash: row.targetGuidHash,
+    targetPart: row.targetPart,
+    sourceSha256: row.sourceSha256,
+  );
+  return source;
+}
+
+String _snapshot(Message target) {
+  final chat = target.chat.target;
+  if (chat == null) _fail('target_changed');
+  return _digest([
+    'cloud-sync-mutation-target-v1',
+    target.id,
+    target.guid,
+    target.chat.targetId,
+    target.isFromMe,
+    target.dateCreated?.millisecondsSinceEpoch,
+    target.dateEdited?.millisecondsSinceEpoch,
+    target.dateDeleted?.millisecondsSinceEpoch,
+    target.text,
+    target.subject,
+    target.attributedBody.map((part) => part.toMap()).toList(),
+    target.messageSummaryInfo.map((info) => info.toJson()).toList(),
+    target.dbAttachments
+        .map((attachment) => [attachment.id, attachment.guid])
+        .toList(),
+    ..._routingData(target),
+  ]);
+}
+
+List<Object?> _routingData(Message target) {
+  final chat = target.chat.target;
+  if (chat == null) _fail('target_changed');
+  return [
+    chat.guid,
+    chat.chatIdentifier,
+    chat.usingHandle,
+    chat.style,
+    chat.isRpSms,
+    chat.handles.map((handle) => [handle.address, handle.service]).toList(),
+  ];
+}
+
+// ObjectBox JSON map iteration order is not semantic. Canonicalize nested maps
+// while preserving list order and exact text/UUID spellings in the digest.
+Object? _canonical(Object? value) {
+  if (value is List) return value.map(_canonical).toList();
+  if (value is Map<String, dynamic>) {
+    final keys = value.keys.toList()..sort();
+    return {for (final key in keys) key: _canonical(value[key])};
+  }
+  return value;
+}
+
+String _digest(List<Object?> value) =>
+    sha256.convert(utf8.encode(jsonEncode(_canonical(value)))).toString();
+String _guidHash(String value) =>
+    _digest(['cloud-sync-local-send-guid-v1', value]);
+String _intentKey(String account, String guid) =>
+    _digest(['cloud-sync-local-mutation-intent-v1', account, guid]);
+String _authHash(String account, String store, String session) => _digest([
+  'cloud-sync-mutation-submission-auth-v1',
+  account,
+  store,
+  session,
+]);
+final _hash = RegExp(r'^[a-f0-9]{64}$');
+final _receiptId = RegExp(r'^obcs2\.ids\.[A-Za-z0-9_-]{43}$');
+int _time(DateTime now) {
+  if (!now.isUtc || now.millisecondsSinceEpoch <= 0) _fail('time_invalid');
+  return now.millisecondsSinceEpoch;
+}
+
+int _advanceTime(CloudSyncLocalMutationIntentEntity row, DateTime now) {
+  final time = _time(now);
+  return time < row.updatedAtMs ? row.updatedAtMs : time;
+}
+
+Never _fail(String code) => throw StateError('cloud_sync_local_mutation_$code');

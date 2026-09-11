@@ -8,6 +8,70 @@ import 'package:objectbox/objectbox.dart';
 /// written to ObjectBox in plaintext.
 const int cloudSyncSchemaVersion = 2;
 
+/// Exact edit/unsend intent. Separate from the initial-create journal so a
+/// mutation can never be uploaded as a newly created message. Metadata only;
+/// replacement text and original wire remain in the native protected source.
+@Entity()
+class CloudSyncLocalMutationIntentEntity {
+  int id;
+  @Index(type: IndexType.hash64)
+  @Unique()
+  String intentKey;
+  @Index(type: IndexType.hash64)
+  String accountFingerprint;
+  int writerEpoch;
+  int localMessageId;
+  int localChatId;
+  String mutationGuidHash;
+  String targetGuidHash;
+  int targetPart;
+
+  /// Stable codes: 0 edit, 1 unsend.
+  int kind;
+  String sourceSha256;
+  String targetSnapshotSha256;
+  String protectedSourceBinding;
+
+  /// 0 staged, 1 submission claimed (outcome may be unknown),
+  /// 2 positive IDS receipt retained, 3 local reflection committed.
+  /// No state grants remote CloudKit save authority or automatic IDS retry.
+  @Index()
+  int state;
+
+  /// Captured native session/account/store digest, set by the one-time claim.
+  String? submissionAuthBindingSha256;
+
+  /// Exact content-free receipt/auth digest. Null before positive acceptance.
+  String? idsReceiptBindingSha256;
+
+  /// Exact local post-reflection snapshot. Null until atomic reflection.
+  String? reflectedSnapshotSha256;
+  int createdAtMs;
+  int updatedAtMs;
+
+  CloudSyncLocalMutationIntentEntity({
+    this.id = 0,
+    required this.intentKey,
+    required this.accountFingerprint,
+    required this.writerEpoch,
+    required this.localMessageId,
+    required this.localChatId,
+    required this.mutationGuidHash,
+    required this.targetGuidHash,
+    required this.targetPart,
+    required this.kind,
+    required this.sourceSha256,
+    required this.targetSnapshotSha256,
+    required this.protectedSourceBinding,
+    this.state = 0,
+    this.submissionAuthBindingSha256,
+    this.idsReceiptBindingSha256,
+    this.reflectedSnapshotSha256,
+    required this.createdAtMs,
+    required this.updatedAtMs,
+  });
+}
+
 /// Local-origin send intent, separate from both restored history and the
 /// protected remote-mutation outbox. No body, handle or raw GUID is stored here.
 @Entity()

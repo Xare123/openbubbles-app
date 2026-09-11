@@ -8,6 +8,7 @@ import 'cloud_operation_identity.dart';
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
+import 'cloud_sync_local_mutation_journal.dart' show validateCloudSyncMutationRow;
 import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_chat_identity_evidence.dart';
 import 'cloud_sync_models.dart';
@@ -590,6 +591,16 @@ class ObjectBoxCloudSyncStore
       } finally {
         sources.close();
       }
+      final mutations = _store.box<CloudSyncLocalMutationIntentEntity>();
+      if (mutations.count() > maximumCount) {
+        throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+      }
+      for (final mutation in mutations.getAll()) {
+        references.add(validateCloudSyncMutationRow(mutation).leaseReference);
+        if (references.length > maximumCount) {
+          throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+        }
+      }
       // Upload preparation and result precede final-save outbox admission.
       // Retain leases across interruption/account replacement. The result
       // lease is also the final-save receipt: exact verified child readback
@@ -707,6 +718,7 @@ class ObjectBoxCloudSyncStore
           (_recordMaps.count() * 2) +
           _writerAuthorities.count() +
           _store.box<CloudSyncLocalSendIntentEntity>().count() +
+          _store.box<CloudSyncLocalMutationIntentEntity>().count() +
           (_store.box<CloudAttachmentUploadEntity>().count() * 2) +
           (_attachmentMaterializations.count() * 4);
       if (upperBound > maximumCount) {
@@ -787,6 +799,11 @@ class ObjectBoxCloudSyncStore
         (_store.box<CloudSyncLocalSendIntentEntity>().query()
               ..order(CloudSyncLocalSendIntentEntity_.id)).build(),
         (intent) => capture(_localSendSource(intent)?.protectedReference),
+      );
+      scanPaged(
+        (_store.box<CloudSyncLocalMutationIntentEntity>().query()
+              ..order(CloudSyncLocalMutationIntentEntity_.id)).build(),
+        (intent) => capture(validateCloudSyncMutationRow(intent).protectedReference),
       );
       // Upload plans and results own committed leases before final record
       // admission. Recovery must see their bytes, not only their lease IDs.
