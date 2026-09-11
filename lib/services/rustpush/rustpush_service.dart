@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:app_links/app_links.dart';
 import 'package:bluebubbles/services/rustpush/icloud_maintenance.dart';
 import 'package:bluebubbles/services/rustpush/face_time_outgoing_lifecycle.dart';
+import 'package:bluebubbles/services/rustpush/face_time_outgoing_acceptance.dart';
 import 'package:bluebubbles/services/rustpush/imessage_attachment_submission.dart';
 import 'package:bluebubbles/services/rustpush/imessage_initial_submission.dart';
 import 'package:bluebubbles/services/rustpush/imessage_reaction_payload.dart';
@@ -5816,22 +5817,50 @@ class RustPushService extends GetxService {
         }
         final outgoingCall = _outgoingCalls.current;
         if (outgoingCall != null && facetime.guid == outgoingCall.id) {
-          await _outgoingCalls.complete(outgoingCall, () async {
-            outgoingCall.state.value = "accepted";
-            hideFaceTimeOverlay(facetime.guid);
-            chosenFTRoomGuid = facetime.guid;
-            final incomingAdmission = _incomingAdmission;
-            // Keep launch data attached to this call across asynchronous handoff.
-            if (Platform.isAndroid) {
-              await mcs.invokeMethod("launch-facetime", outgoingCall.metadata);
-            } else {
-              await launchUrl(Uri.parse(outgoingCall.metadata['link']),
-                  mode: LaunchMode.externalApplication);
-            }
-            if (identical(_incomingAdmission, incomingAdmission)) {
-              _incomingAdmission = null;
-            }
-          });
+          // Narrow acceptance gate: a JoinEvent guid match alone (including
+          // our own self-echo join, which Rust stamps active) must not
+          // launch media. Require the refreshed exact-session snapshot to
+          // show this event's non-self handle as actively joined.
+          // updateState() already refreshed activeSessions/sessions above.
+          final snapshot = activeSessions.firstWhereOrNull(
+                (session) => session.groupId == facetime.guid,
+              ) ??
+              sessions.firstWhereOrNull(
+                (session) => session.groupId == facetime.guid,
+              );
+          final accepted = shouldAcceptOutgoingFaceTimeJoin(
+            sessionGroupId: snapshot?.groupId,
+            eventGuid: facetime.guid,
+            eventHandle: facetime.handle,
+            selfHandles: snapshot?.myHandles ?? const <String>[],
+            participants: (snapshot?.participants.values ??
+                    const <api.FTParticipant>[])
+                .map(
+                  (participant) => FaceTimeOutgoingParticipant(
+                    handle: participant.handle,
+                    active: participant.active != null,
+                  ),
+                ),
+          );
+          // Ring/overlay flow below is untouched; only acceptance is gated.
+          if (accepted) {
+            await _outgoingCalls.complete(outgoingCall, () async {
+              outgoingCall.state.value = "accepted";
+              hideFaceTimeOverlay(facetime.guid);
+              chosenFTRoomGuid = facetime.guid;
+              final incomingAdmission = _incomingAdmission;
+              // Keep launch data attached to this call across asynchronous handoff.
+              if (Platform.isAndroid) {
+                await mcs.invokeMethod("launch-facetime", outgoingCall.metadata);
+              } else {
+                await launchUrl(Uri.parse(outgoingCall.metadata['link']),
+                    mode: LaunchMode.externalApplication);
+              }
+              if (identical(_incomingAdmission, incomingAdmission)) {
+                _incomingAdmission = null;
+              }
+            });
+          }
         }
       } else if (facetime is api.FTMessage_AddMembers) {
         if (facetime.ring) {
