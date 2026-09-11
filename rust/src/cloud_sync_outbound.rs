@@ -17,7 +17,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::cloud_sync_canonical_dto::{
-    parse_associated_parent, CloudCanonicalEntityKind, CloudCanonicalReactionKind,
+    parse_associated_parent, CloudCanonicalChatPayload, CloudCanonicalChatStyle,
+    CloudCanonicalService, CloudCanonicalEntityKind, CloudCanonicalReactionKind,
 };
 use crate::cloud_sync_attachment_parent::project_parent_attributed_body;
 use crate::cloud_sync_ids_attachment_source::DecodedIdsAttachmentSource;
@@ -209,6 +210,7 @@ pub(crate) struct NativeOpenedAttachmentParent {
     message: CloudMessage,
     server_record_name: String,
     encoded: Vec<u8>,
+    group: Option<CloudCanonicalChatPayload>,
 }
 
 impl NativeOpenedAttachmentParent {
@@ -226,9 +228,21 @@ pub(crate) fn stage_outbound_attachment_parent(
     message_headers: CloudMessage,
     source: &DecodedIdsAttachmentSource,
 ) -> Result<NativeProtectedOutboundStage, CloudSyncOutboundFailure> {
+    stage_outbound_attachment_parent_with_group(storage_directory, account_fingerprint,
+        container_scoped_user_id, message_headers, source, None)
+}
+
+pub(crate) fn stage_outbound_attachment_parent_with_group(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    container_scoped_user_id: String,
+    message_headers: CloudMessage,
+    source: &DecodedIdsAttachmentSource,
+    group: Option<&CloudCanonicalChatPayload>,
+) -> Result<NativeProtectedOutboundStage, CloudSyncOutboundFailure> {
     let guid = message_headers.guid.clone();
     let record_name = deterministic_message_record_name(&guid, &container_scoped_user_id)?;
-    let encoded = encode_outbound_attachment_parent(message_headers, &record_name, source)?;
+    let encoded = encode_outbound_attachment_parent_with_group(message_headers, &record_name, source, group)?;
     stage_encoded_message(storage_directory, account_fingerprint,
         CloudCanonicalEntityKind::Message, &guid, &record_name, encoded)
 }
@@ -237,16 +251,25 @@ pub(crate) fn stage_outbound_attachment_parent(
 /// Record identity remains the existing V2 Message identity, not an attachment
 /// identity. The storage entry point derives the record name from native salt.
 pub(crate) fn encode_outbound_attachment_parent(
+    message_headers: CloudMessage,
+    server_record_name: &str,
+    source: &DecodedIdsAttachmentSource,
+) -> Result<Vec<u8>, CloudSyncOutboundFailure> {
+    encode_outbound_attachment_parent_with_group(message_headers, server_record_name, source, None)
+}
+
+pub(crate) fn encode_outbound_attachment_parent_with_group(
     mut message_headers: CloudMessage,
     server_record_name: &str,
     source: &DecodedIdsAttachmentSource,
+    group: Option<&CloudCanonicalChatPayload>,
 ) -> Result<Vec<u8>, CloudSyncOutboundFailure> {
     if message_headers.msg_proto.0.text.as_deref().is_some_and(|v| !v.is_empty())
         || message_headers.msg_proto.0.attributed_body.is_some()
     {
         return Err(CloudSyncOutboundFailure::UnsupportedMessage);
     }
-    validate_attachment_parent_headers(&message_headers, source)?;
+    validate_attachment_parent_headers(&message_headers, source, group)?;
     let projection = project_parent_attributed_body(source)?;
     message_headers.msg_proto.0.text = Some(projection.text);
     message_headers.msg_proto.0.attributed_body = Some(projection.encoded_body);
@@ -260,8 +283,16 @@ pub(crate) fn decode_outbound_attachment_parent(
     encoded: &[u8],
     source: &DecodedIdsAttachmentSource,
 ) -> Result<NativeOpenedAttachmentParent, CloudSyncOutboundFailure> {
+    decode_outbound_attachment_parent_with_group(encoded, source, None)
+}
+
+pub(crate) fn decode_outbound_attachment_parent_with_group(
+    encoded: &[u8],
+    source: &DecodedIdsAttachmentSource,
+    group: Option<&CloudCanonicalChatPayload>,
+) -> Result<NativeOpenedAttachmentParent, CloudSyncOutboundFailure> {
     let (message, server_record_name) = decode_message_fields(encoded)?;
-    validate_attachment_parent_headers(&message, source)?;
+    validate_attachment_parent_headers(&message, source, group)?;
     let projection = project_parent_attributed_body(source)?;
     if message.msg_proto.0.text.as_deref() != Some(projection.text.as_str()) {
         return Err(CloudSyncOutboundFailure::BindingMismatch);
@@ -275,7 +306,7 @@ pub(crate) fn decode_outbound_attachment_parent(
         return Err(CloudSyncOutboundFailure::MalformedMessage);
     }
     Ok(NativeOpenedAttachmentParent {
-        message, server_record_name, encoded: encoded.to_vec(),
+        message, server_record_name, encoded: encoded.to_vec(), group: group.cloned(),
     })
 }
 
@@ -285,6 +316,18 @@ pub(crate) fn open_staged_outbound_attachment_parent(
     protected_payload_reference: &str,
     expected_payload_sha256: &str,
     source: &DecodedIdsAttachmentSource,
+) -> Result<NativeOpenedAttachmentParent, CloudSyncOutboundFailure> {
+    open_staged_outbound_attachment_parent_with_group(storage_directory, account_fingerprint,
+        protected_payload_reference, expected_payload_sha256, source, None)
+}
+
+pub(crate) fn open_staged_outbound_attachment_parent_with_group(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_payload_reference: &str,
+    expected_payload_sha256: &str,
+    source: &DecodedIdsAttachmentSource,
+    group: Option<&CloudCanonicalChatPayload>,
 ) -> Result<NativeOpenedAttachmentParent, CloudSyncOutboundFailure> {
     let protected = cloud_sync_open_protected_outbound_message(
         storage_directory, account_fingerprint, protected_payload_reference,
@@ -297,7 +340,7 @@ pub(crate) fn open_staged_outbound_attachment_parent(
     if sha256_hex(&encoded) != expected_payload_sha256 {
         return Err(CloudSyncOutboundFailure::BindingMismatch);
     }
-    decode_outbound_attachment_parent(&encoded, source)
+    decode_outbound_attachment_parent_with_group(&encoded, source, group)
 }
 
 /// Same exact CloudKit Date roundtrip exception as plaintext readback. Every
@@ -316,7 +359,7 @@ pub(crate) fn verify_attachment_parent_readback(
     if digest != expected_payload_sha256 {
         return Err(CloudSyncOutboundFailure::BindingMismatch);
     }
-    let reopened = decode_outbound_attachment_parent(&expected.encoded, source)?;
+    let reopened = decode_outbound_attachment_parent_with_group(&expected.encoded, source, expected.group.as_ref())?;
     if actual.utm != reopened.message.utm {
         let value = reopened.message.utm.ok_or(CloudSyncOutboundFailure::BindingMismatch)?;
         if value < UNIX_EPOCH + Duration::from_secs(978307200) {
@@ -347,6 +390,7 @@ fn source_bare_handle(value: &str) -> Result<&str, CloudSyncOutboundFailure> {
 fn validate_attachment_parent_headers(
     message: &CloudMessage,
     source: &DecodedIdsAttachmentSource,
+    group: Option<&CloudCanonicalChatPayload>,
 ) -> Result<(), CloudSyncOutboundFailure> {
     validate_common_outbound_sizes(message)?;
     // Apply the unchanged plaintext validator to the headers with a local
@@ -357,6 +401,9 @@ fn validate_attachment_parent_headers(
     validate_cloud_message(&headers)?;
     if message.r#type != 1 || message.guid != source.message_guid {
         return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    if let Some(group) = group {
+        return validate_attachment_parent_group_route(message, source, group);
     }
     if message.destination_caller_id != source_bare_handle(&source.sender)? {
         return Err(CloudSyncOutboundFailure::BindingMismatch);
@@ -389,6 +436,64 @@ fn validate_attachment_parent_headers(
     // zero receipt values from a pre-send source. Journal admission binds
     // those headers, and protected replay/readback keeps their exact values.
     Ok(())
+}
+
+// `group` comes only from cached-only protected Chat decoding in the API.
+// GUID and opaque CloudKit chat_id are distinct identities. Never derive one
+// from the other, or accept caller participants as the retained Chat route.
+fn validate_attachment_parent_group_route(
+    message: &CloudMessage,
+    source: &DecodedIdsAttachmentSource,
+    group: &CloudCanonicalChatPayload,
+) -> Result<(), CloudSyncOutboundFailure> {
+    if group.service() != CloudCanonicalService::IMessage
+        || group.style() != CloudCanonicalChatStyle::Group
+        || group.guid() != format!("iMessage;+;{}", group.chat_identifier())
+        || source.sender_guid.as_deref() != Some(group.guid())
+        || message.msg_proto_4.as_ref().and_then(|v| v.0.group_id.as_deref()) != Some(group.guid())
+        || message.chat_id != group.group_id()
+    { return Err(CloudSyncOutboundFailure::BindingMismatch); }
+    let sender = group_bare_handle(&source.sender)?;
+    if message.destination_caller_id != sender {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
+    let mut members = group.participant_handles().iter()
+        .map(|v| group_member_identity(v)).collect::<Result<Vec<_>, _>>()?;
+    members.sort_unstable();
+    if members.is_empty() || members.contains(&sender)
+        || members.windows(2).any(|v| v[0] == v[1])
+    { return Err(CloudSyncOutboundFailure::BindingMismatch); }
+    members.push(sender);
+    members.sort_unstable();
+    let mut original = source.participants.iter()
+        .map(|v| group_member_identity(v)).collect::<Result<Vec<_>, _>>()?;
+    original.sort_unstable();
+    if original != members { return Err(CloudSyncOutboundFailure::BindingMismatch); }
+    Ok(())
+}
+
+fn group_bare_handle(value: &str) -> Result<&str, CloudSyncOutboundFailure> {
+    let bare = if value.get(..7).is_some_and(|v| v.eq_ignore_ascii_case("mailto:")) {
+        &value[7..]
+    } else if value.get(..4).is_some_and(|v| v.eq_ignore_ascii_case("tel:")) {
+        &value[4..]
+    } else { value };
+    validate_identifier(bare)?;
+    if bare.trim() != bare || bare.chars().any(char::is_control) || bare.contains(';') || bare.contains(':') {
+        return Err(CloudSyncOutboundFailure::MalformedMessage);
+    }
+    Ok(bare)
+}
+
+fn group_member_identity(value: &str) -> Result<&str, CloudSyncOutboundFailure> {
+    // Same opaque business-member form admitted by GroupSendRoute.matchesWire.
+    // Do not normalize UUID case or use it as a caller/sender handle.
+    if let Some(uuid) = value.strip_prefix("urn:biz:") {
+        if uuid.len() == 36 && [8, 13, 18, 23].iter().all(|i| uuid.as_bytes()[*i] == b'-')
+            && uuid::Uuid::parse_str(uuid).is_ok()
+        { return Ok(value); }
+    }
+    group_bare_handle(value)
 }
 
 pub(crate) fn open_staged_server_record_name(
@@ -1029,6 +1134,32 @@ pub(crate) mod attachment_parent_test_support {
     use super::*;
     use crate::cloud_sync_ids_attachment_source::{DecodedAttachment, DecodedPart};
 
+    pub(crate) fn group() -> CloudCanonicalChatPayload {
+        use crate::cloud_sync_canonical_dto::CloudCanonicalField;
+        CloudCanonicalChatPayload::new("iMessage;+;restored-chat".into(), "restored-chat".into(),
+            "opaque-CloudKit-chat-id".into(), "original-group-id".into(),
+            CloudCanonicalService::IMessage, CloudCanonicalChatStyle::Group,
+            vec!["mailto:peer@example.invalid".into(), "tel:+15555550100".into()],
+            CloudCanonicalField::Absent, CloudCanonicalField::Absent,
+            CloudCanonicalField::Value(9), CloudCanonicalField::Absent, CloudCanonicalField::Absent).unwrap()
+    }
+
+    pub(crate) fn group_source() -> DecodedIdsAttachmentSource {
+        let mut value = source();
+        value.sender_guid = Some(group().guid().to_owned());
+        value.participants.push("mailto:sender@example.invalid".into());
+        value.participants.push("tel:+15555550100".into());
+        value
+    }
+
+    pub(crate) fn group_headers() -> CloudMessage {
+        let mut value = headers();
+        value.chat_id = group().group_id().to_owned();
+        value.msg_proto_4 = Some(GZipWrapper(MessageProto4 { group_id: Some(group().guid().to_owned()),
+            ..Default::default() }));
+        value
+    }
+
     pub(crate) fn source() -> DecodedIdsAttachmentSource {
         let attachment = |guid: &str, part: u64, idx: u64| DecodedPart::Attachment(DecodedAttachment {
             guid: guid.to_owned(), part, idx: Some(idx), uti_type: "public.jpeg".to_owned(),
@@ -1070,6 +1201,89 @@ pub(crate) mod attachment_parent_test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_attachment_parent_retains_opaque_chat_identity_body_and_child_identity() {
+        use super::attachment_parent_test_support::{group, group_headers, group_source, source};
+        let route = group();
+        let original = group_source();
+        let name = deterministic_message_record_name(&original.message_guid, "container-user").unwrap();
+        let bytes = encode_outbound_attachment_parent_with_group(group_headers(), &name, &original, Some(&route)).unwrap();
+        let opened = decode_outbound_attachment_parent_with_group(&bytes, &original, Some(&route)).unwrap();
+        assert_eq!(opened.message().chat_id, "opaque-CloudKit-chat-id");
+        assert_eq!(opened.message().msg_proto_4.as_ref().unwrap().0.group_id.as_deref(), Some("iMessage;+;restored-chat"));
+        assert_eq!(opened.message().msg_proto.0.text.as_deref(), Some("A😀 B "));
+        assert_eq!(opened.encoded, bytes);
+        assert_eq!(verify_attachment_parent_readback(opened.message().clone(), &opened, &sha256_hex(&bytes), &original).unwrap(), sha256_hex(&bytes));
+        // NSDictionary key order is intentionally not a byte-level identity.
+        let again = encode_outbound_attachment_parent_with_group(group_headers(), &name, &original, Some(&route)).unwrap();
+        assert_eq!(decode_outbound_attachment_parent_with_group(&again, &original, Some(&route)).unwrap().server_record_name(), name);
+        let projection = project_parent_attributed_body(&source()).unwrap();
+        projection.validate_encoded_body(opened.message().msg_proto.0.attributed_body.as_deref().unwrap()).unwrap();
+        let links = |value: crate::cloud_sync_attachment_parent::ParentAttributedProjection|
+            value.links.into_iter().map(|v| (v.original_guid, v.apple_guid, v.local_guid,
+                v.canonical_guid, v.field_idx, v.start_utf16, v.length_utf16)).collect::<Vec<_>>();
+        assert_eq!(links(project_parent_attributed_body(&original).unwrap()), links(projection));
+        assert_eq!(name, deterministic_message_record_name(&source().message_guid, "container-user").unwrap());
+        let directory = tempfile::tempdir().unwrap();
+        let stage = stage_outbound_attachment_parent_with_group(directory.path().into(), "A".repeat(43),
+            "container-user".into(), group_headers(), &original, Some(&route)).unwrap();
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(directory.path().into(),
+            &stage.lease_reference, std::slice::from_ref(&stage.protected_payload_reference)).unwrap();
+        let protected = open_staged_outbound_attachment_parent_with_group(directory.path().into(), "A".repeat(43),
+            &stage.protected_payload_reference, &stage.payload_sha256, &original, Some(&route)).unwrap();
+        assert_eq!(protected.server_record_name(), name);
+        assert_eq!(verify_attachment_parent_readback(protected.message().clone(), &protected,
+            &stage.payload_sha256, &original).unwrap(), stage.payload_sha256);
+        assert!(open_staged_outbound_attachment_parent(directory.path().into(), "A".repeat(43),
+            &stage.protected_payload_reference, &stage.payload_sha256, &original).is_err());
+        // Neither source-only nor ordinary plaintext decoding can reopen this route.
+        assert!(decode_outbound_attachment_parent(&bytes, &original).is_err());
+        assert!(decode_outbound_envelope(&bytes).is_err());
+    }
+
+    #[test]
+    fn group_attachment_parent_rejects_guid_opaque_id_and_participant_substitution() {
+        use super::attachment_parent_test_support::{group, group_headers, group_source, headers, source};
+        let route = group();
+        let original = group_source();
+        for case in 0..9 {
+            let mut msg = group_headers();
+            let mut changed = group_source();
+            match case {
+                0 => msg.chat_id = route.guid().into(), // GUID is not the opaque ID.
+                1 => msg.msg_proto_4.as_mut().unwrap().0.group_id = Some(route.group_id().into()),
+                2 => changed.sender_guid = Some(route.group_id().into()),
+                3 => { changed.participants.pop(); },
+                4 => changed.participants.push(changed.participants[0].clone()),
+                5 => changed.participants[0] = "other@example.invalid".into(),
+                6 => changed.message_guid = "other-message".into(),
+                7 => msg.destination_caller_id = "other-sender@example.invalid".into(),
+                _ => changed.sender_guid = None,
+            }
+            assert!(encode_outbound_attachment_parent_with_group(msg, "record", &changed, Some(&route)).is_err(), "case {case}");
+        }
+        assert!(encode_outbound_attachment_parent_with_group(headers(), "record", &source(), Some(&route)).is_err());
+        let bytes = encode_outbound_attachment_parent_with_group(group_headers(), "record", &original, Some(&route)).unwrap();
+        let opened = decode_outbound_attachment_parent_with_group(&bytes, &original, Some(&route)).unwrap();
+        let mut tampered = opened.message().clone();
+        tampered.msg_proto.0.attributed_body = Some(vec![1, 2, 3]);
+        assert!(decode_outbound_attachment_parent_with_group(&encode_message_fields(tampered.clone(), "record").unwrap(), &original, Some(&route)).is_err());
+        assert!(verify_attachment_parent_readback(tampered, &opened, &sha256_hex(&bytes), &original).is_err());
+        assert!(encode_outbound_attachment_parent_with_group(opened.message().clone(), "record", &original, Some(&route)).is_err());
+        let mut changed = group_source();
+        changed.sender_guid = Some("iMessage;+;different-group".into());
+        assert!(verify_attachment_parent_readback(opened.message().clone(), &opened, &sha256_hex(&bytes), &changed).is_err());
+    }
+
+    #[test]
+    fn group_attachment_members_keep_existing_business_identity_without_sender_authority() {
+        let business = "urn:biz:AAAAAAAA-BBBB-4CCC-8DDD-000000000001";
+        assert_eq!(group_member_identity(business).unwrap(), business);
+        assert!(group_bare_handle(business).is_err());
+        assert!(group_member_identity("urn:biz:AAAAAAAABBBB4CCC8DDD000000000001").is_err());
+        assert!(group_member_identity("mailto:tel:peer@example.invalid").is_err());
+    }
 
     #[test]
     fn attachment_parent_roundtrip_is_source_bound_and_preserves_original_bytes() {

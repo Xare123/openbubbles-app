@@ -2002,6 +2002,142 @@ pub struct CloudSyncPreparedMessageCreateInput {
     /// Required only for source-bound attachment parents. Retain the exact
     /// committed source lease through prepare and ambiguous-write recovery.
     pub attachment_parent_context: Option<CloudSyncNativeSendReceiptContext>,
+    /// Ephemeral retained-Chat authority, required only for group attachment parents.
+    pub attachment_parent_group_proof: Option<CloudSyncAttachmentParentGroupProof>,
+}
+
+/// Cached-only decode result, not caller-authored route data or write authority.
+/// Reopen from the same pinned journal source after restart or five minutes.
+#[frb(opaque)]
+#[derive(Clone)]
+pub struct CloudSyncAttachmentParentGroupProof {
+    storage_directory: String,
+    auth: Arc<CloudSyncNativeAuthMetadata>,
+    generation: u64,
+    source: super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput,
+    request: crate::cloud_sync_transient_bridge::CloudTransientDecodeRequest,
+    route: crate::cloud_sync_canonical_dto::CloudCanonicalChatPayload,
+    expires_at: std::time::Instant,
+}
+
+impl std::fmt::Debug for CloudSyncAttachmentParentGroupProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncAttachmentParentGroupProof(redacted)")
+    }
+}
+
+/// No lookup, keychain sync, projection, lease mutation or write authority.
+/// The caller pins current generation/latest applied Chat in its existing
+/// adopted binding and retains that source. Release the existing writer pause
+/// before staging/preparing a Message; the proof does not own that pause.
+#[allow(clippy::too_many_arguments)]
+pub async fn cloud_sync_open_attachment_parent_group_proof(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    native_writer_pause_token: u64,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    generation: u64,
+    routing_metadata_digest: String,
+    source: super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput,
+) -> anyhow::Result<CloudSyncAttachmentParentGroupProof> {
+    use crate::cloud_sync_transient_bridge::{cloud_sync_decode_transient_record_cached_only,
+        CloudTransientDecodeOutcome};
+    if !is_cloud_sync_hex_digest(&routing_metadata_digest) {
+        return Err(anyhow!("cloud_sync_attachment_parent_group_proof_invalid"));
+    }
+    let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
+        .map_err(|_| anyhow!("cloud_sync_attachment_parent_group_proof_auth"))?;
+    let before = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await
+        .map_err(|_| anyhow!("cloud_sync_attachment_parent_group_proof_auth"))?;
+    if before.account_fingerprint != expected_account_fingerprint
+        || before.protected_store_identity != expected_protected_store_identity
+    { return Err(anyhow!("cloud_sync_attachment_parent_group_proof_scope")); }
+    let request = cloud_sync_attachment_group_decode_request(&storage_directory, &before, generation, &source)
+        .map_err(|_| anyhow!("cloud_sync_attachment_parent_group_proof_invalid"))?;
+    let mutation = match cloud_sync_decode_transient_record_cached_only(
+        cloud_messages_client, &permit, request.clone(),
+    ).await {
+        CloudTransientDecodeOutcome::Ready(value) => value,
+        _ => return Err(anyhow!("cloud_sync_attachment_parent_group_proof_unavailable")),
+    };
+    let route = cloud_sync_attachment_group_route(&mutation, generation, &routing_metadata_digest)
+        .map_err(|_| anyhow!("cloud_sync_attachment_parent_group_proof_mismatch"))?;
+    let after = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await
+        .map_err(|_| anyhow!("cloud_sync_attachment_parent_group_proof_auth"))?;
+    if !cloud_sync_auth_identity_remains_exact(&before, &after,
+        &expected_account_fingerprint, &expected_protected_store_identity)
+    { return Err(anyhow!("cloud_sync_attachment_parent_group_proof_scope")); }
+    let proof = CloudSyncAttachmentParentGroupProof {
+        storage_directory, auth: Arc::new(after), generation, source, request, route,
+        expires_at: std::time::Instant::now() + Duration::from_secs(300),
+    };
+    // Reopen the exact protected raw record after awaited decoding/auth checks.
+    cloud_sync_validate_attachment_group_proof(&proof.storage_directory, &proof.auth, &proof)
+        .map_err(|_| anyhow!("cloud_sync_attachment_parent_group_proof_mismatch"))?;
+    Ok(proof)
+}
+
+#[frb(ignore)]
+fn cloud_sync_attachment_group_decode_request(
+    storage: &str,
+    auth: &CloudSyncNativeAuthMetadata,
+    generation: u64,
+    source: &super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput,
+) -> Result<crate::cloud_sync_transient_bridge::CloudTransientDecodeRequest, CloudSyncOutboundSafeCode> {
+    use crate::cloud_sync_transient_bridge::{CloudTransientDecodeRequest, CloudTransientExpectedChangeKind};
+    CloudTransientDecodeRequest::new(PathBuf::from(storage), auth.account_fingerprint.clone(),
+        auth.protected_store_identity.clone(), "com.apple.messages.cloud".into(), "private".into(),
+        "chatManateeZone".into(), "messages".into(), 2, crate::cloud_sync_native_fetch::CloudNativeStream::Chats,
+        generation, CloudTransientExpectedChangeKind::Save, source.change_id_hash.clone(),
+        source.record_id_hash.clone(), Some(source.etag_hash.clone()), source.payload_sha256.clone(),
+        source.payload_length, source.server_modified_at_millis, source.protected_raw_envelope_reference.clone(), None)
+        .map_err(|_| CloudSyncOutboundSafeCode::BindingMismatch)
+}
+
+#[frb(ignore)]
+fn cloud_sync_attachment_group_route(
+    mutation: &crate::cloud_sync_canonical_dto::CloudCanonicalMutation,
+    generation: u64,
+    digest: &str,
+) -> Result<crate::cloud_sync_canonical_dto::CloudCanonicalChatPayload, CloudSyncOutboundSafeCode> {
+    use crate::cloud_sync_canonical_dto::{CloudCanonicalPayload, CloudCanonicalChatStyle,
+        CloudCanonicalService};
+    if generation == 0 || mutation.envelope().generation() != generation
+        || !is_cloud_sync_hex_digest(digest)
+        || mutation.snapshot().and_then(|v| v.group_metadata_digest()).map(|v| v.value()) != Some(digest)
+    { return Err(CloudSyncOutboundSafeCode::BindingMismatch); }
+    match mutation.payload() {
+        Some(CloudCanonicalPayload::Chat(chat))
+            if chat.style() == CloudCanonicalChatStyle::Group && chat.service() == CloudCanonicalService::IMessage => Ok((**chat).clone()),
+        _ => Err(CloudSyncOutboundSafeCode::BindingMismatch),
+    }
+}
+
+#[frb(ignore)]
+fn cloud_sync_validate_attachment_group_proof(
+    storage: &str,
+    auth: &CloudSyncNativeAuthMetadata,
+    proof: &CloudSyncAttachmentParentGroupProof,
+) -> Result<(), CloudSyncOutboundSafeCode> {
+    use crate::cloud_sync_native_fetch::{CloudNativeProtectionScope, CloudNativeStream,
+        cloud_sync_unprotect_raw_envelope};
+    if std::time::Instant::now() >= proof.expires_at || proof.storage_directory != storage
+        || !cloud_sync_auth_identity_remains_exact(&proof.auth, auth,
+            &auth.account_fingerprint, &auth.protected_store_identity)
+    { return Err(CloudSyncOutboundSafeCode::InvalidScope); }
+    let actual_store = crate::cloud_sync_protector::protected_store_identity(storage.to_owned())
+        .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
+    if actual_store != auth.protected_store_identity { return Err(CloudSyncOutboundSafeCode::InvalidScope); }
+    let scope = CloudNativeProtectionScope::new(auth.account_fingerprint.clone(), CloudNativeStream::Chats)
+        .map_err(|_| CloudSyncOutboundSafeCode::InvalidScope)?;
+    let envelope = cloud_sync_unprotect_raw_envelope(PathBuf::from(storage), &scope,
+        CloudNativeStream::Chats, proof.generation, &proof.source.protected_raw_envelope_reference)
+        .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(storage.to_owned())
+        .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
+    crate::cloud_sync_transient_bridge::bind_envelope(&proof.request, &envelope, &hasher)
+        .map_err(|_| CloudSyncOutboundSafeCode::BindingMismatch)
 }
 
 /// Historical bridge name retained for binding compatibility. The owner is
@@ -2027,6 +2163,7 @@ enum CloudSyncPreparedMessageCreateOwner {
         writer_binding: rustpush::cloud_messages::CloudMessagesWriterPreparationBinding<
             DefaultAnisetteProvider,
         >,
+        attachment_parent_group_proofs: Vec<CloudSyncAttachmentParentGroupProof>,
     },
     #[cfg(test)]
     Test {
@@ -2052,11 +2189,22 @@ impl CloudSyncPreparedMessageCreateOwner {
                 native_writer_permit,
                 cloud_messages_client,
                 writer_binding,
+                attachment_parent_group_proofs,
             } => {
                 cloud_messages_client
                     .validate_writer_preparation_binding(&writer_binding)
                     .await
                     .map_err(|_| CloudSyncOutboundSafeCode::InvalidScope)?;
+                // A delayed prepared handle cannot submit using an expired,
+                // removed or account/session-stale retained Chat proof.
+                if let Some(proof) = attachment_parent_group_proofs.first() {
+                    let auth = cloud_sync_capture_auth_snapshot(&cloud_messages_client,
+                        proof.storage_directory.clone()).await
+                        .map_err(|_| CloudSyncOutboundSafeCode::NativeAuthUnavailable)?;
+                    for bound in &attachment_parent_group_proofs {
+                        cloud_sync_validate_attachment_group_proof(&proof.storage_directory, &auth, bound)?;
+                    }
+                }
                 let outcomes = native_writer_permit
                     .run(prepared.consume_once())
                     .await
@@ -3063,6 +3211,8 @@ pub async fn cloud_sync_prepare_message_create(
         };
     let attachment_parent_inputs: Vec<_> = inputs.iter()
         .filter(|input| input.attachment_parent_context.is_some()).cloned().collect();
+    let attachment_parent_group_proofs = inputs.iter()
+        .filter_map(|input| input.attachment_parent_group_proof.clone()).collect();
     let mut messages = Vec::with_capacity(inputs.len());
     for input in inputs {
         let opened = match cloud_sync_open_message_create_bound(
@@ -3138,6 +3288,7 @@ pub async fn cloud_sync_prepare_message_create(
                             native_writer_permit,
                             cloud_messages_client: cloud_messages_client.clone(),
                             writer_binding,
+                            attachment_parent_group_proofs,
                         },
                     )),
                     storage_directory,
@@ -3332,6 +3483,7 @@ pub async fn cloud_sync_prepare_chat_create(
                             native_writer_permit,
                             cloud_messages_client: cloud_messages_client.clone(),
                             writer_binding,
+                            attachment_parent_group_proofs: vec![],
                         },
                     )),
                     storage_directory,
@@ -3354,6 +3506,7 @@ fn is_valid_cloud_sync_attachment_create_input(
     input: &CloudSyncPreparedMessageCreateInput,
 ) -> bool {
     input.attachment_parent_context.is_none()
+        && input.attachment_parent_group_proof.is_none()
         && is_cloud_sync_operation_id(&input.local_operation_id)
         && crate::cloud_sync_outbound_attachment::initial_attachment_create_operation_id(
             expected_account_fingerprint,
@@ -3384,6 +3537,7 @@ pub async fn cloud_sync_stage_outbound_attachment_parent(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     context: CloudSyncNativeSendReceiptContext,
     message_headers: CloudMessage,
+    attachment_parent_group_proof: Option<CloudSyncAttachmentParentGroupProof>,
 ) -> CloudSyncProtectedOutboundStageResult {
     let storage = context.storage_directory.clone();
     let auth = match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage.clone()).await {
@@ -3412,9 +3566,15 @@ pub async fn cloud_sync_stage_outbound_attachment_parent(
         Ok(source) => source,
         Err(code) => return cloud_sync_outbound_failure_result(code),
     };
-    match crate::cloud_sync_outbound::stage_outbound_attachment_parent(
+    if let Some(proof) = &attachment_parent_group_proof {
+        if let Err(code) = cloud_sync_validate_attachment_group_proof(&storage, &after, proof) {
+            return cloud_sync_outbound_failure_result(code);
+        }
+    }
+    match crate::cloud_sync_outbound::stage_outbound_attachment_parent_with_group(
         PathBuf::from(storage), after.account_fingerprint,
         binding.container_scoped_user_id().to_owned(), message_headers, &source,
+        attachment_parent_group_proof.as_ref().map(|v| &v.route),
     ) {
         Ok(stage) => CloudSyncProtectedOutboundStageResult {
             stage: Some(cloud_sync_bridge_stage(stage)), failure: None,
@@ -3483,6 +3643,9 @@ fn cloud_sync_open_message_create_bound(
 ) -> Result<CloudSyncOpenedMessageCreate, CloudSyncOutboundSafeCode> {
     use crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind;
     let storage = PathBuf::from(storage_directory);
+    if input.attachment_parent_context.is_none() && input.attachment_parent_group_proof.is_some() {
+        return Err(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
     if input.protected_payload_reference != input.protected_server_record_reference {
         return Err(CloudSyncOutboundSafeCode::BindingMismatch);
     }
@@ -3493,9 +3656,13 @@ fn cloud_sync_open_message_create_bound(
     let (opened, kind) = match &input.attachment_parent_context {
         Some(context) => {
             let source = cloud_sync_open_attachment_parent_source(storage_directory, auth, context)?;
-            let parent = crate::cloud_sync_outbound::open_staged_outbound_attachment_parent(
+            if let Some(proof) = &input.attachment_parent_group_proof {
+                cloud_sync_validate_attachment_group_proof(storage_directory, auth, proof)?;
+            }
+            let parent = crate::cloud_sync_outbound::open_staged_outbound_attachment_parent_with_group(
                 storage, auth.account_fingerprint.clone(), &input.protected_payload_reference,
                 &input.payload_sha256, &source,
+                input.attachment_parent_group_proof.as_ref().map(|v| &v.route),
             ).map_err(map_cloud_sync_outbound_failure)?;
             (CloudSyncOpenedMessageCreate::AttachmentParent { parent, source }, CloudCanonicalEntityKind::Message)
         }
@@ -3530,6 +3697,128 @@ fn cloud_sync_open_message_create_bound(
 mod cloud_sync_attachment_parent_create_tests {
     use super::*;
     use crate::cloud_sync_outbound::attachment_parent_test_support::{headers, source};
+
+    fn group_mutation(opaque_id: &str) -> crate::cloud_sync_canonical_dto::CloudCanonicalMutation {
+        use crate::cloud_sync_canonical_converter::{CloudCanonicalConversionContext,
+            CloudCanonicalConversionOutcome, CloudRawRecordPresence, convert_chat};
+        use crate::cloud_sync_canonical_dto::CloudCanonicalHash;
+        use rustpush::{cloud_messages::{CloudChat, CloudParticipant}, cloudkit_proto::{Record, record::{Field, field}}};
+        let hasher = crate::cloud_sync_semantic_identity::CloudSemanticIdentifierHasher::new([7; 32]).unwrap();
+        let hash = |c: &str| CloudCanonicalHash::new(c.repeat(43)).unwrap();
+        let context = CloudCanonicalConversionContext::new(&hasher, hash("a"), hash("b"), 7,
+            hash("c"), "chat-record", Some("etag"), None, None, "obcs2.fixture.protected");
+        let record = Record { record_field: ["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts"]
+            .into_iter().map(|name| Field { identifier: Some(field::Identifier { name: Some(name.into()) }),
+                value: Some(field::Value::default()), ..Default::default() }).collect(), ..Default::default() };
+        let presence = CloudRawRecordPresence::extract(&record).unwrap();
+        let chat = CloudChat { guid: "iMessage;+;restored-chat".into(), chat_identifier: "restored-chat".into(),
+            group_id: opaque_id.into(), original_group_id: "original-group-id".into(),
+            service_name: "iMessage".into(), style: 43,
+            participants: vec![CloudParticipant { uri: "mailto:peer@example.invalid".into() },
+                CloudParticipant { uri: "tel:+15555550100".into() }], ..Default::default() };
+        match convert_chat(&context, &presence, &chat) {
+            CloudCanonicalConversionOutcome::Ready(value) => *value,
+            _ => panic!("synthetic group conversion failed"),
+        }
+    }
+
+    fn group_proof_fixture(storage: &str) -> CloudSyncAttachmentParentGroupProof {
+        let auth = CloudSyncNativeAuthMetadata { account_fingerprint: "A".repeat(43),
+            native_session_id: "N".repeat(43),
+            protected_store_identity: crate::cloud_sync_protector::protected_store_identity(storage.into()).unwrap() };
+        let source = super::super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput {
+            change_id_hash: "C".repeat(43), record_id_hash: "R".repeat(43), etag_hash: "E".repeat(43),
+            payload_sha256: "a".repeat(64), payload_length: Some(20), server_modified_at_millis: None,
+            protected_raw_envelope_reference: format!("obcs2.ref.{}", "P".repeat(43)),
+        };
+        let request = cloud_sync_attachment_group_decode_request(storage, &auth, 7, &source).unwrap();
+        CloudSyncAttachmentParentGroupProof { storage_directory: storage.into(), auth: Arc::new(auth), generation: 7, source, request,
+            route: crate::cloud_sync_outbound::attachment_parent_test_support::group(),
+            expires_at: std::time::Instant::now() + Duration::from_secs(300) }
+    }
+
+    #[test]
+    fn group_parent_proof_selects_native_route_only_for_exact_generation_and_digest() {
+        let mutation = group_mutation("opaque-CloudKit-chat-id");
+        let digest = mutation.snapshot().unwrap().group_metadata_digest().unwrap().value();
+        let route = cloud_sync_attachment_group_route(&mutation, 7, digest).unwrap();
+        assert_eq!(route.group_id(), "opaque-CloudKit-chat-id");
+        assert_ne!(route.guid(), route.group_id());
+        assert!(cloud_sync_attachment_group_route(&mutation, 8, digest).is_err());
+        assert!(cloud_sync_attachment_group_route(&mutation, 0, digest).is_err());
+        assert!(cloud_sync_attachment_group_route(&mutation, 7, &"0".repeat(64)).is_err());
+        let different = group_mutation("different-opaque-id");
+        assert!(cloud_sync_attachment_group_route(&different, 7, digest).is_err());
+        // Feed the real converter result into the integrated parent encoder/open.
+        use crate::cloud_sync_outbound::{attachment_parent_test_support::{group_headers, group_source},
+            encode_outbound_attachment_parent_with_group, decode_outbound_attachment_parent_with_group};
+        let source = group_source();
+        let bytes = encode_outbound_attachment_parent_with_group(group_headers(), "record", &source, Some(&route)).unwrap();
+        assert!(decode_outbound_attachment_parent_with_group(&bytes, &source, Some(&route)).is_ok());
+        let other_digest = different.snapshot().unwrap().group_metadata_digest().unwrap().value();
+        let other_route = cloud_sync_attachment_group_route(&different, 7, other_digest).unwrap();
+        assert!(decode_outbound_attachment_parent_with_group(&bytes, &source, Some(&other_route)).is_err());
+    }
+
+    #[test]
+    fn group_parent_proof_expiry_scope_and_missing_protected_source_fail_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = directory.path().to_str().unwrap();
+        let mut proof = group_proof_fixture(storage);
+        // A structurally valid request and route are not enough. The raw
+        // protected source must still exist and authenticate on every use.
+        assert!(matches!(cloud_sync_validate_attachment_group_proof(storage, &proof.auth, &proof),
+            Err(CloudSyncOutboundSafeCode::ProtectedStorage)));
+        proof.expires_at = std::time::Instant::now();
+        assert!(matches!(cloud_sync_validate_attachment_group_proof(storage, &proof.auth, &proof),
+            Err(CloudSyncOutboundSafeCode::InvalidScope)));
+        proof.expires_at = std::time::Instant::now() + Duration::from_secs(300);
+        for field in 0..3 {
+            let mut auth = CloudSyncNativeAuthMetadata { account_fingerprint: proof.auth.account_fingerprint.clone(),
+                native_session_id: proof.auth.native_session_id.clone(), protected_store_identity: proof.auth.protected_store_identity.clone() };
+            match field { 0 => auth.account_fingerprint = "B".repeat(43),
+                1 => auth.native_session_id = "M".repeat(43), _ => auth.protected_store_identity = "T".repeat(43) }
+            assert!(matches!(cloud_sync_validate_attachment_group_proof(storage, &auth, &proof),
+                Err(CloudSyncOutboundSafeCode::InvalidScope)));
+        }
+        assert!(matches!(cloud_sync_validate_attachment_group_proof("alternate-storage", &proof.auth, &proof),
+            Err(CloudSyncOutboundSafeCode::InvalidScope)));
+        assert!(cloud_sync_attachment_group_decode_request(storage, &proof.auth, 0, &proof.source).is_err());
+        let mut malformed = proof.source.clone();
+        malformed.etag_hash.clear();
+        assert!(cloud_sync_attachment_group_decode_request(storage, &proof.auth, 7, &malformed).is_err());
+        assert_eq!(format!("{proof:?}"), "CloudSyncAttachmentParentGroupProof(redacted)");
+    }
+
+    #[test]
+    fn group_proof_is_not_authority_for_ordinary_chat_or_attachment_inputs() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = directory.path().to_str().unwrap();
+        let proof = group_proof_fixture(storage);
+        let mut input = CloudSyncPreparedMessageCreateInput {
+            local_operation_id: crate::cloud_sync_outbound_chat::initial_chat_create_operation_id(&proof.auth.account_fingerprint, &"L".repeat(43)).unwrap(),
+            logical_entity_key_hash: "L".repeat(43),
+            protected_lease_reference: format!("obcs2.lease.{}", "a".repeat(32)),
+            protected_payload_reference: format!("obcs2.ref.{}", "P".repeat(43)), payload_sha256: "a".repeat(64),
+            protected_server_record_reference: format!("obcs2.ref.{}", "P".repeat(43)), server_record_id_hash: "R".repeat(43),
+            apple_operation_uuid: "AAAAAAAA-BBBB-4CCC-8DDD-000000000001".into(),
+            attachment_parent_context: None, attachment_parent_group_proof: Some(proof.clone()),
+        };
+        let request = "11111111-2222-4ABC-8DEF-555555555555";
+        assert!(matches!(cloud_sync_open_message_create_bound(storage, &proof.auth, "container-user", &input),
+            Err(CloudSyncOutboundSafeCode::InvalidRequest)));
+        assert!(!is_valid_cloud_sync_chat_create_input(&proof.auth.account_fingerprint, request, &input));
+        input.attachment_parent_group_proof = None;
+        assert!(is_valid_cloud_sync_chat_create_input(&proof.auth.account_fingerprint, request, &input));
+        input.local_operation_id = crate::cloud_sync_outbound_attachment::initial_attachment_create_operation_id(
+            &proof.auth.account_fingerprint, &input.logical_entity_key_hash).unwrap();
+        assert!(is_valid_cloud_sync_attachment_create_input(&proof.auth.account_fingerprint, request, &input));
+        input.attachment_parent_group_proof = Some(proof.clone());
+        assert!(!is_valid_cloud_sync_attachment_create_input(&proof.auth.account_fingerprint, request, &input));
+        input.attachment_parent_group_proof = None;
+        assert!(matches!(cloud_sync_open_message_create_bound(storage, &proof.auth, "container-user", &input),
+            Err(CloudSyncOutboundSafeCode::ProtectedStorage)));
+    }
 
     #[test]
     fn protected_parent_create_requires_exact_context_and_both_committed_leases() {
@@ -3575,6 +3864,7 @@ mod cloud_sync_attachment_parent_create_tests {
             server_record_id_hash: stage.server_record_id_hash,
             apple_operation_uuid: "AAAAAAAA-BBBB-4CCC-8DDD-000000000001".to_owned(),
             attachment_parent_context: Some(context.clone()),
+            attachment_parent_group_proof: None,
         };
         assert!(cloud_sync_open_message_create_bound(&storage, &auth, "container-user", &input).is_err());
         crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
@@ -3825,6 +4115,7 @@ pub async fn cloud_sync_prepare_attachment_create(
                             native_writer_permit,
                             cloud_messages_client: cloud_messages_client.clone(),
                             writer_binding,
+                            attachment_parent_group_proofs: vec![],
                         },
                     )),
                     storage_directory,
@@ -4456,6 +4747,7 @@ fn is_valid_cloud_sync_chat_create_input(
     input: &CloudSyncPreparedMessageCreateInput,
 ) -> bool {
     input.attachment_parent_context.is_none()
+        && input.attachment_parent_group_proof.is_none()
         && is_cloud_sync_operation_id(&input.local_operation_id)
         && crate::cloud_sync_outbound_chat::initial_chat_create_operation_id(
             expected_account_fingerprint,
@@ -5125,6 +5417,7 @@ mod cloud_sync_outbound_reconcile_contract_tests {
             server_record_id_hash: "S".repeat(43),
             apple_operation_uuid: OPERATION_UUID.to_owned(),
             attachment_parent_context: None,
+            attachment_parent_group_proof: None,
         }
     }
 
