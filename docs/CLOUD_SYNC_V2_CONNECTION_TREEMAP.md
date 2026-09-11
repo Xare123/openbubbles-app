@@ -55,6 +55,8 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
+| Conditional-update predecessor | **TEST-PROVEN:** app `c092ef1a7` pins rustpush `90787d3`. Native `lookup_message_record_version` retains decoded CloudKit fields, opaque encrypted payloads and exact identity/ETag without a typed `CloudMessage` roundtrip. The old typed lookup delegates to it; current-container and cached-PCS checks remain. GCE dependency-only `34647348048` passed 305 tests and cleanup; app-native `34647652095` passed 533 tests and exact bridge regeneration. No update/save path is enabled. |
+| Edited-then-unsent readback | **TEST-PROVEN:** `5bb07dcdf` removes the reader's mutual-exclusion rule for edited/retracted part IDs. Both existing producers retain that history on unsend; the DTO and projection already support it. Timestamp/body/part validation remains. All 136 focused Dart tests passed, including real ObjectBox reopen and stale replay without resurrection. GCE `34648004825` passed 534 native tests and exact bridge regeneration; no Apple-device or APK proof yet. |
 | September 11 mutation candidate | **LIVE-PROVEN on Windows, IDS/local scope only:** `c02379430` with dependency `98cc67a` passed fresh edit-16 and unsend-18, each with positive IDS acknowledgment, retained native receipt, local reflection and a separate-process reconciliation without resending. Both parent messages passed CloudKit save/readback. Copied-DB inspection confirmed state 3, exact stored display and zero initial-send intents for each mutation; source DB unchanged. Existing-record CloudKit updates remain disabled, and independent recipient display is unverified. Old edit-08 stays unknown and must never be resent. |
 | Installed Android candidate | Signed `f860966d53b6019b46f1437312e67662724f08ce`, installed September 11 at 09:14:53Z and runtime-verified. Two reads reached the remote head with saves/deletes off and outbox `0 -> 0`. The final local sweep examined 3,587 blocking saves, applied zero, and completed partial at 09:47:41Z. Qualification-07 remains unsent after IDS 6005. Approved registration repair quiesced reads and preserved chats, hardware and CloudKit state; saved-account reuse returned phone-number validation failure. Await normal validation, not another reset. Alpha is untouched. |
 | Qualified source, not installed | Read-transition `90f98b7eb` passed 296 focused tests, targeted analysis, and GCE `34594546421`: 3,147 Dart tests plus 14 outbox and 3 evidence-output cases. Cleanup completed at 11:44:17Z; independent VM/runner inventories were empty. It includes replay repair `fd60a8a20` and background patch `0bb67d2c4`, which avoids repeating exhaustive retained-history sweeps on routine metadata wakes. No APK or Pixel runtime proof for these patches yet. |
@@ -809,6 +811,28 @@ tests passed within 533 app-native tests on `a42ecb74f`, GCE `34644303016`, with
 exact bridge regeneration and successful cleanup. Independent VM and runner
 inventories were empty afterward. This helper is not connected to a writer;
 it does not prove Apple mutation semantics, PCS authority or causal merge.
+
+The predecessor lookup now retains the fetched `Record` instead of rebuilding
+it from `CloudMessage`, whose fixed field list drops unrecognized fields.
+This preserves decoded CloudKit fields and embedded opaque bytes, not unknown
+outer protobuf tags already discarded by the transport decoder. Future saves
+must be field-limited merges so omitted server fields remain untouched. The
+native-only version result has redacted debug output and carries no write permit.
+Exact identity, type and nonempty ETag checks precede admission; missing ETags
+remain unresolved, never evidence of absence. Qualification is tracked above.
+
+Do not construct mutation summary info through `Message.toCloud()`: its typed
+roundtrip injects defaults and omits unknown plist entries. Patch the retained
+plist value tree and preserve existing history/body bytes instead. Source review
+found a concrete producer/consumer mismatch: legacy `rustpush_service.dart` and
+`cloud_sync_local_mutation_projection.dart` both retain edited parts/history
+when adding a retraction, while the reader rejected their overlap. `5bb07dcdf`
+removes that mutual-exclusion check, not timestamp/body/part validation. History
+and terminal state are retained together; the real ObjectBox regression keeps
+the message unsent after reopen and stale replay. This is current-app contract
+evidence, not a claim of independently captured Apple serialization. The old
+quarantine enum remains for persisted/bridge compatibility; do not reset stored
+records or tokens to force adoption of the repair.
 
 Dependency `fbf9b4c` passed native-only GCE qualification `34621760644`, pinned
 by app `4dc324995`: 297 tests, zero failures. Compile took 56s, tests 6.3s,

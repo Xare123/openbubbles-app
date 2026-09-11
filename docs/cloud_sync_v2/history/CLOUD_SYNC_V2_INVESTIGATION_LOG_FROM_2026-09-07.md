@@ -3004,3 +3004,49 @@ This is a chronological evidence log. It does not override the
   7.502 GiB. No live OpenBubbles process or new inspection scratch directory
   remained. Only verified disposable database copies used by the inspector were
   removed by its scoped cleanup; original data and all run evidence were retained.
+
+## 2026-09-11, preserve predecessors and reconcile edit/unsend history
+
+- Source review found typed `CloudMessage` lookup unsuitable as a lossless
+  conditional-update predecessor. Rustpush `90787d3`, pinned by app `c092ef1a7`,
+  adds native-only `lookup_message_record_version`. It preserves decoded record
+  fields, opaque encrypted values and metadata, validates full identity/type/ETag,
+  and redacts debug output. Existing typed lookup delegates to it. General
+  container and cached PCS are checked before the read, and the container is
+  revalidated afterward. No save, asset fetch, key creation or trust mutation.
+- GCE dependency-only `34647348048` passed 305 tests, including six new version
+  tests/contracts. Tests completed at 21:06:04Z in 6.30s; runner cleanup succeeded
+  at 21:07:53Z. The run used source-only T2D-32 with both writer flags off.
+  App-native compatibility `34647652095` passed 533 tests in 2.59s and exact
+  bridge regeneration, with cleanup completed at 21:14:59Z.
+- Astra child Ptolemy identified a real two-line encoding error: strikethrough
+  presence and value were read from italic. Parent reviewed, reran the four
+  regressions, and committed `e35c8382c`. The combined Windows/encoding cohort
+  passed 45 tests. Analysis of the existing message file reported 11 unchanged
+  warnings/info, including two unused imports; no clean-analysis claim. No
+  unrelated formatting or generated-file cleanup was included.
+- A second concrete mismatch appeared while tracing summary preservation.
+  Both legacy unsend and journaled local projection retain edit history/edited
+  part IDs while adding the retracted part. The canonical reader rejected that
+  overlap before validating history. `5bb07dcdf` removes only that exclusion:
+  history is not current visibility. Timestamp/body/part checks still run.
+  The old quarantine enum is retained for persisted data and bridge compatibility.
+- New native coverage expects the original and edited revisions plus retraction
+  to survive conversion; fractional timestamps remain deferred even when the
+  part is retracted. GCE app-native `34648004825` passed 534 tests in 2.51s
+  at 21:17:40Z and exact bridge regeneration. All 136 local
+  ObjectBox/projection tests passed, including the strengthened real-store case
+  with history and retraction in one page, database reopen, stale replay and an
+  unsent UI model. This proves the app contract, not independent Apple authoring
+  or recipient display. No existing-record CloudKit writer was enabled.
+- Ptolemy's advice was reviewed, the encoding patch integrated, and shutdown
+  verified with `not_found`. No dedicated worktree or per-agent log bundle was
+  created. The session/transcript was retained because supported deletion and
+  an exclusive artifact locator were unavailable. Protected/unrelated files,
+  device data, evidence and credentials remain untouched. C: free 47.54 GiB.
+- Final qualification cleanup completed at 21:19:27Z for `34648004825`.
+  Independent inventories then showed zero GCE instances and zero registered
+  GitHub runners. All three scoped runs succeeded. No APK or Windows runtime
+  was rebuilt or installed, and no Apple credentials or user content went to CI.
+  Final local generated output remained 2.39 GiB in `build` and 7.50 GiB in
+  `.dart_tool`, with about 47.55 GiB free. No manual artifact deletion occurred.
