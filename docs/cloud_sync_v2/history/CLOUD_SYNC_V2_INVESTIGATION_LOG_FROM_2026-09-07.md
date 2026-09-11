@@ -2449,3 +2449,24 @@ This is a chronological evidence log. It does not override the
   require a matching naming record upstream; serde declarations and token
   routes showed no differential. Existing native/Dart diagnostics must both be
   compiled in for the next live check. No account, caches or sharing changed.
+
+- Reviewed dependency `fbf9b4c` was pushed to the rustpush fork; app checkpoint
+  `4dc324995` pins it. Native-only GCE run `34621760644` is validating on T2D 60,
+  both writer flags off. No APK/signing/account operations requested. Status and
+  cleanup remain pending. The first push used a nonexistent remote name `fork`;
+  verified this submodule uses `origin = Xare123/rustpush`, then pushed normally.
+- Parent addressed the review's test flakiness nit: the randomly generated
+  rotated test key must actually have a different prefix. Both agents' reviewed
+  work is integrated or recorded; closed them and verified `not_found`. No
+  dedicated worktrees/logs/files to remove, and session provenance remains
+  protected without a supported deletion control. Free C: was approximately
+  49.9 GiB; no storage reclamation is attributed to this task.
+
+- GCE `34621760644` finished successfully. Exact app
+  `4dc3249959be32a5ed63c7f0348320b288a39ca4` pinned dependency `fbf9b4c`;
+  native compilation took 56.03s and all 297 tests passed in 6.30s, including
+  all ten new Apple-wire/conditional-save/legacy-compatibility cases. Cleanup
+  completed at 16:29:20Z; independent GitHub runner and GCE instance inventories
+  were empty. No ignored/filtered tests, APK, production account, signing or
+  writer activation. Updated the treemap with the durable mutation-to-readback
+  sequence; low-level protocol qualification is not end-to-end update proof.

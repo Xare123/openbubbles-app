@@ -783,9 +783,35 @@ but **not connected to V2 transport**. It binds the exact fetched record identit
 type and nonempty ETag, checks the supplied PCS zone and unchanged default key,
 and rejects custom record protection instead of silently replacing it. Legacy
 save bytes remain unchanged. Independent Apple wire fixtures and rejection tests
-are prepared for GCE qualification. The caller still needs durable mutation intent,
+passed GCE qualification. The caller still needs durable mutation intent,
 account/container/database authority and unknown-outcome readback reconciliation;
 an ETag conflict after a lost success response does not prove that nothing saved.
+
+Dependency `fbf9b4c` passed native-only GCE qualification `34621760644`, pinned
+by app `4dc324995`: 297 tests, zero failures. Compile took 56s, tests 6.3s,
+and the full run including cleanup took approximately 5m12s. Cleanup completed
+at 16:29:20Z; independent VM/runner inventories were empty. No APK, account
+access or writer activation; both writer flags were off.
+
+The next end-to-end path is:
+
+```text
+durable edit/unsend intent (mutation UUID distinct from target message GUID)
+  -> positive IDS confirmation for that exact mutation
+  -> reflected body/history/retractions and protected native source
+  -> fetch exact remote predecessor under unchanged writer authority
+  -> retain merge candidate + ETag + request identity before submission
+  -> one version-checked save -> exact readback -> confirmed
+     conflict/unknown -> readback/refetch, never blind recreate or overwrite
+```
+
+Reuse existing request/receipt boundaries; do not weaken the initial-send
+journal's rejection of already-edited messages. The ordinary edit/unsend route
+currently invokes its legacy upload before its explicit reflection call and
+can return while native still owns a background IDS send. That ordering is not
+proof of a live legacy bug (local broadcast can race it), but it cannot serve
+as the V2 durable mutation/positive-confirmation contract. Preserve unknown
+remote fields and previous attempts when deriving a new candidate.
 
 Do not enable update transport from structural inference alone. First capture
 one genuine Apple edit and one unsend read-only, proving the same record name,
