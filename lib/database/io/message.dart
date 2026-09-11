@@ -1053,8 +1053,8 @@ class Message {
         "__kIMTextBoldAttributeName": api.NSNumber(field0: run.attributes!.bold! ? 1 : 0).encode(),
         if (run.attributes?.italic != null)
         "__kIMTextItalicAttributeName": api.NSNumber(field0: run.attributes!.italic! ? 1 : 0).encode(),
-        if (run.attributes?.italic != null)
-        "__kIMTextStrikethroughAttributeName": api.NSNumber(field0: run.attributes!.italic! ? 1 : 0).encode(),
+        if (run.attributes?.strikethrough != null)
+        "__kIMTextStrikethroughAttributeName": api.NSNumber(field0: run.attributes!.strikethrough! ? 1 : 0).encode(),
         if (run.attributes?.underline != null)
         "__kIMTextUnderlineAttributeName": api.NSNumber(field0: run.attributes!.underline! ? 1 : 0).encode(),
       }))).toList()
