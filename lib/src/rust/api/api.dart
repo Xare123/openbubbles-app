@@ -5,6 +5,7 @@
 
 import '../frb_generated.dart';
 import '../lib.dart';
+import 'cloud_sync_chat_identity.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'api.freezed.dart';
@@ -316,6 +317,31 @@ Future<void> cloudSyncResumePasswordCloudkitWriters({required BigInt token}) =>
       token: token,
     );
 
+/// No lookup, keychain sync, projection, lease mutation or write authority.
+/// The caller pins current generation/latest applied Chat in its existing
+/// adopted binding and retains that source. Release the existing writer pause
+/// before staging/preparing a Message; the proof does not own that pause.
+Future<CloudSyncAttachmentParentGroupProof>
+cloudSyncOpenAttachmentParentGroupProof({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required BigInt generation,
+  required String routingMetadataDigest,
+  required CloudSyncChatIdentitySourceInput source,
+}) => RustLib.instance.api.crateApiApiCloudSyncOpenAttachmentParentGroupProof(
+  cloudMessagesClient: cloudMessagesClient,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  generation: generation,
+  routingMetadataDigest: routingMetadataDigest,
+  source: source,
+);
+
 /// Converts one transient outgoing iMessage into a protected, crash-recoverable
 /// outbox payload and stable server-record mapping. Message content and the raw
 /// server record name remain native-only.
@@ -390,6 +416,23 @@ Future<CloudSyncPreparedMessageCreateResult> cloudSyncPrepareChatCreate({
   requestUuid: requestUuid,
   requestTimeoutSeconds: requestTimeoutSeconds,
   inputs: inputs,
+);
+
+/// Stages an initial attachment parent from its exact committed IDS source.
+/// message_headers must have no attributed body and no nonempty text. This
+/// creates no upload/send authority; Dart retains the source lease and admits
+/// the Message only after its complete attachment dependency set is ready.
+Future<CloudSyncProtectedOutboundStageResult>
+cloudSyncStageOutboundAttachmentParent({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncNativeSendReceiptContext context,
+  required CloudMessage messageHeaders,
+  CloudSyncAttachmentParentGroupProof? attachmentParentGroupProof,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageOutboundAttachmentParent(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+  messageHeaders: messageHeaders,
+  attachmentParentGroupProof: attachmentParentGroupProof,
 );
 
 /// Prepares the original completed attachment record for the same single-use
@@ -2170,6 +2213,10 @@ abstract class ChannelInterestToken implements RustOpaqueInterface {}
 abstract class CircleClientSessionDefaultAnisetteProvider
     implements RustOpaqueInterface {}
 
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncAttachmentParentGroupProof>>
+abstract class CloudSyncAttachmentParentGroupProof
+    implements RustOpaqueInterface {}
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedAttachmentUploadHandle>>
 abstract class CloudSyncPreparedAttachmentUploadHandle
     implements RustOpaqueInterface {}
@@ -3650,6 +3697,13 @@ class CloudSyncPreparedMessageCreateInput {
   final String serverRecordIdHash;
   final String appleOperationUuid;
 
+  /// Required only for source-bound attachment parents. Retain the exact
+  /// committed source lease through prepare and ambiguous-write recovery.
+  final CloudSyncNativeSendReceiptContext? attachmentParentContext;
+
+  /// Ephemeral retained-Chat authority, required only for group attachment parents.
+  final CloudSyncAttachmentParentGroupProof? attachmentParentGroupProof;
+
   const CloudSyncPreparedMessageCreateInput({
     required this.localOperationId,
     required this.logicalEntityKeyHash,
@@ -3659,6 +3713,8 @@ class CloudSyncPreparedMessageCreateInput {
     required this.protectedServerRecordReference,
     required this.serverRecordIdHash,
     required this.appleOperationUuid,
+    this.attachmentParentContext,
+    this.attachmentParentGroupProof,
   });
 
   @override
@@ -3670,7 +3726,9 @@ class CloudSyncPreparedMessageCreateInput {
       payloadSha256.hashCode ^
       protectedServerRecordReference.hashCode ^
       serverRecordIdHash.hashCode ^
-      appleOperationUuid.hashCode;
+      appleOperationUuid.hashCode ^
+      attachmentParentContext.hashCode ^
+      attachmentParentGroupProof.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3685,7 +3743,9 @@ class CloudSyncPreparedMessageCreateInput {
           protectedServerRecordReference ==
               other.protectedServerRecordReference &&
           serverRecordIdHash == other.serverRecordIdHash &&
-          appleOperationUuid == other.appleOperationUuid;
+          appleOperationUuid == other.appleOperationUuid &&
+          attachmentParentContext == other.attachmentParentContext &&
+          attachmentParentGroupProof == other.attachmentParentGroupProof;
 }
 
 class CloudSyncPreparedMessageCreateResult {

@@ -4132,6 +4132,22 @@ pub async fn cloud_sync_prepare_attachment_create(
     }
 }
 
+/// Drops only an unconsumed prepared owner and its native writer permit.
+/// Idempotent: true means an owner was released; false means no owner remains
+/// in this handle. An already-taken consume owner is untouched, so false is
+/// NOT proof of quiescence or of the remote outcome. Dart must first await
+/// the settled native future, including timeout quiescence, before release.
+/// This performs no submission and changes no fence, file, or protected lease.
+/// Historical Message name also covers Chat and Attachment prepared handles.
+pub async fn cloud_sync_release_prepared_message_create(
+    handle: &CloudSyncPreparedMessageCreateHandle,
+) -> bool {
+    let mut prepared = handle.prepared.lock().await;
+    let released = prepared.is_some();
+    drop(prepared.take());
+    released
+}
+
 /// Historical message name: this record-agnostic consumer also consumes the
 /// opaque handle returned by Chat and Attachment prepare. No capability, permit, keystore,
 /// single-use, container revalidation, or receipt fence is bypassed.
@@ -4682,6 +4698,66 @@ mod cloud_sync_writer_mutation_capability_tests {
             Some(CloudSyncOutboundSafeCode::AlreadyConsumed)
         );
         assert_eq!(remote_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn release_after_storage_failure_drops_owner_without_submitting_or_changing_fence() {
+        let directory = tempfile::tempdir().unwrap();
+        let token = "a".repeat(64);
+        let binding = "d".repeat(64);
+        let fence_path = write_valid_fence(directory.path(), &token,
+            "account-fingerprint", "protected-store", &binding);
+        let original_fence = fs::read(&fence_path).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handle = test_handle(directory.path(), calls.clone(), None, &binding);
+        let failed = cloud_sync_consume_prepared_message_create_with_hasher(
+            &handle, token.clone(), |_| Err(()),
+        ).await;
+        assert_eq!(failed.failure, Some(CloudSyncOutboundSafeCode::ProtectedStorage));
+        assert!(handle.prepared.lock().await.is_some());
+        assert!(cloud_sync_release_prepared_message_create(&handle).await);
+        assert!(handle.prepared.lock().await.is_none());
+        assert!(!cloud_sync_release_prepared_message_create(&handle).await);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(fs::read(&fence_path).unwrap(), original_fence);
+        let rejected = consume_test_handle(&handle, token).await;
+        assert_eq!(rejected.failure, Some(CloudSyncOutboundSafeCode::AlreadyConsumed));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(fs::read(&fence_path).unwrap(), original_fence);
+    }
+
+    #[tokio::test]
+    async fn release_after_consumption_is_an_idempotent_noop() {
+        let directory = tempfile::tempdir().unwrap();
+        let token = "a".repeat(64);
+        let binding = "d".repeat(64);
+        let fence_path = write_valid_fence(directory.path(), &token,
+            "account-fingerprint", "protected-store", &binding);
+        let original_fence = fs::read(&fence_path).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handle = test_handle(directory.path(), calls.clone(), None, &binding);
+        assert_eq!(consume_test_handle(&handle, token).await.failure, None);
+        assert!(!cloud_sync_release_prepared_message_create(&handle).await);
+        assert!(!cloud_sync_release_prepared_message_create(&handle).await);
+        assert!(handle.prepared.lock().await.is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(fs::read(&fence_path).unwrap(), original_fence);
+    }
+
+    #[tokio::test]
+    async fn release_cannot_cancel_an_already_taken_consume_owner() {
+        let directory = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handle = test_handle(directory.path(), calls.clone(), None, &"d".repeat(64));
+        // Exercise the exact ownership-transfer boundary used by consume.
+        // Once taken, the owner no longer belongs to the releasable handle.
+        let owner = handle.prepared.lock().await.take().unwrap();
+        assert!(!cloud_sync_release_prepared_message_create(&handle).await);
+        assert!(!cloud_sync_release_prepared_message_create(&handle).await);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(owner.consume_once().await.is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(!cloud_sync_release_prepared_message_create(&handle).await);
     }
 }
 
