@@ -11,6 +11,26 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('attachment admission diagnostics retain reviewed codes without content', () {
+    final paths = [
+      'lib/services/rustpush/cloud_sync/cloud_sync_attachment_parent_coordinator.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_attachment_upload_journal.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_attachment_plan_coordinator.dart',
+    ];
+    final codes = paths.expand((path) => RegExp(
+      r"'(cloud_sync_attachment_[a-z_]+)'",
+    ).allMatches(File(path).readAsStringSync()).map((match) => match[1]!)).toSet();
+    expect(codes.length, greaterThanOrEqualTo(34));
+    for (final code in codes) {
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+      expect(cloudSyncV2SafeFailureCode(StateError('$code private body')),
+          'cloud_sync_unknown_failure');
+      expect(cloudSyncV2SafeFailureCode(StateError('${code}_unreviewed')),
+          'cloud_sync_unknown_failure');
+    }
+  });
   test('native outbound errors retain only fixed reviewed codes', () {
     for (final suffix in [
       'invalid_scope', 'invalid_request', 'unsupported_message',
