@@ -278,7 +278,20 @@ class FaceTimeActivity : Activity() {
     }
 
     fun endCall() {
-        if (callEnding) return
+        if (!beginEndingCall()) return
+        webView.evaluateJavascript(
+            """(() => { const buttons = Array.from(document.querySelectorAll("button")); const label = (element) => (element?.innerText || element?.textContent || element?.getAttribute?.("aria-label") || "").trim(); const button = document.getElementById("callcontrols-leave-button-session-banner") || buttons.find((item) => /^(leave|end call)$/i.test(label(item))); if (!button) return "missing"; button.click(); return "clicked"; })()"""
+        ) { result ->
+            FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.LEAVE, state = when (result) {
+                "\"clicked\"" -> "clicked"
+                "\"missing\"" -> "missing"
+                else -> "unknown"
+            })
+        }
+    }
+
+    private fun beginEndingCall(): Boolean {
+        if (callEnding || activeFaceTimeActivity !== this || isFinishing || isDestroyed) return false
         callEnding = true
         FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.LEAVE, state = "requested")
         joinRetryRunnable?.let(mainHandler::removeCallbacks)
@@ -286,7 +299,7 @@ class FaceTimeActivity : Activity() {
         binding.connectionStatus.visibility = View.VISIBLE
         binding.endCall.isEnabled = false
         val fallback = Runnable {
-            if (!isFinishing && !isDestroyed) {
+            if (activeFaceTimeActivity === this && !isFinishing && !isDestroyed) {
                 if (diagnosticsEnabled()) {
                     Log.w(diagnosticTag, "native end call fallback finishing activity")
                 }
@@ -296,20 +309,7 @@ class FaceTimeActivity : Activity() {
         }
         endFallbackRunnable = fallback
         mainHandler.postDelayed(fallback, 1500)
-        webView.evaluateJavascript(
-            """(() => { const buttons = Array.from(document.querySelectorAll("button")); const label = (element) => (element?.innerText || element?.textContent || element?.getAttribute?.("aria-label") || "").trim(); const button = document.getElementById("callcontrols-leave-button-session-banner") || buttons.find((item) => /^(leave|end call)$/i.test(label(item))); if (!button) return "missing"; button.click(); return "clicked"; })()"""
-        ) { result ->
-            FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.LEAVE, state = when (result) {
-                "\"clicked\"" -> "clicked"
-                "\"missing\"" -> "missing"
-                else -> "unknown"
-            })
-            if (diagnosticsEnabled()) {
-                Log.i(diagnosticTag, "native end call result=$result")
-            }
-            mainHandler.removeCallbacks(fallback)
-            mainHandler.postDelayed(fallback, 500)
-        }
+        return true
     }
 
     private fun hideControlsForPIP() {
@@ -719,9 +719,12 @@ class FaceTimeActivity : Activity() {
             cached = CachedWebview(this, name, desc, link, extras.getString("callUuid"))
         }
 
+        cached.leaveRequested = { beginEndingCall() }
         cached.endTask = {
-            FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.CLOSE_REASON, state = "web_leave")
-            finishAndRemoveTask()
+            if (activeFaceTimeActivity === this && !isFinishing && !isDestroyed) {
+                FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.CLOSE_REASON, state = "web_leave")
+                finishAndRemoveTask()
+            }
         }
         mirrorReady = cached.mirrorReady
         cached.mirrorReadyCall = {

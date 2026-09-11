@@ -30,6 +30,37 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String, 
     companion object {
         private const val diagnosticTag = "FaceTimeDiag"
 
+        // Apple's onLeave notifier does not establish an explicit user action.
+        // Only a Leave control requests local teardown; its later notifier
+        // confirms it. The Activity owns the bounded fallback if none arrives.
+        private val leaveButtonBridgeScript = """
+            (() => {
+                const key = "__openBubblesLeaveButtonBridge";
+                if (window[key]) return;
+                let requested = false;
+                let confirmed = false;
+                let disposed = false;
+                window[key] = {
+                    confirm: () => {
+                        if (disposed || !requested || confirmed) return;
+                        confirmed = true;
+                        Native.leave();
+                    },
+                    dispose: () => { disposed = true; }
+                };
+                window.addEventListener("pagehide", () => window[key].dispose(), { once: true });
+                document.addEventListener("click", (event) => {
+                    if (disposed || requested) return;
+                    const button = event.target?.closest?.("button");
+                    if (!button || button.disabled || button.getAttribute("aria-disabled") === "true") return;
+                    const label = (button.innerText || button.textContent || button.getAttribute("aria-label") || "").trim();
+                    if (button.id !== "callcontrols-leave-button-session-banner" && !/^(leave|end call)$/i.test(label)) return;
+                    requested = true;
+                    Native.leaveRequested();
+                }, true);
+            })();
+        """.trimIndent()
+
         /**
          * Return a JavaScript string literal for values supplied by the user.
          *
@@ -112,6 +143,8 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String, 
 
     var mirrorReady = false
     var mirrorReadyCall: (() -> Unit)? = null
+    var leaveRequested: (() -> Unit)? = null
+    private val endPolicy = FaceTimeEndPolicy()
     var endTask: () -> Unit = {
         webView.destroy()
         FaceTimeActivity.cachedWebview = null
@@ -121,6 +154,8 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String, 
     var deferredRequestsUpdated: () -> Unit = {}
 
     fun cancelCallbacks() {
+        endPolicy.dispose()
+        leaveRequested = null
         mediaProbe.close()
         mediaDocumentChanged = null
         callbackHandler.removeCallbacksAndMessages(null)
@@ -178,7 +213,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String, 
         string = string
             .replace(""""GenericToast\.Waiting": *"Waiting to be let in…",""".toRegex(), """"GenericToast.Waiting":"Connecting…",""")
             .replace(""""SessionBanner\.FaceTime": *"FaceTime Call",""".toRegex(), """"SessionBanner.FaceTime":"$desc",""")
-            .replace("this.onLeave.notifyListeners()", "Native.leave(), this.onLeave.notifyListeners()")
+            .replace("this.onLeave.notifyListeners()", "window.__openBubblesLeaveButtonBridge.confirm(), this.onLeave.notifyListeners()")
 
         if (name != null) {
             val javascriptName = javascriptStringLiteral(name)
@@ -197,7 +232,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String, 
             )
         }
 
-        return webRtcDiagnosticBootstrap + string
+        return leaveButtonBridgeScript + webRtcDiagnosticBootstrap + string
     }
 
     private val webRtcDiagnosticBootstrap = """
@@ -441,8 +476,15 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String, 
 
         webView.addJavascriptInterface(object {
             @JavascriptInterface
+            fun leaveRequested() {
+                callbackHandler.post {
+                    if (endPolicy.request()) this@CachedWebview.leaveRequested?.invoke()
+                }
+            }
+            @JavascriptInterface
             fun leave() {
                 callbackHandler.post {
+                    if (!endPolicy.confirm()) return@post
                     FaceTimeDiagnostics.logStage(applicationContext, FaceTimeDiagnosticStage.LEAVE, state = "web_callback")
                     endTask()
                 }
