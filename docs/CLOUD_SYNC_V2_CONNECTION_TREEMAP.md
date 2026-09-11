@@ -56,7 +56,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
 | Installed Android candidate | Code `e060bcb41` repairs retained-queue scheduling above persisted IDS-proof base `731988a3d` and positive-acknowledgment native base `35551340c`. Pre-proof rows retain version 0 and cannot initiate a new CloudKit save; original envelopes remain recoverable. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
-| Windows candidate | Current runtime is Dart-only overlay `1d9de8629` on the signed native `3ebcc81c9` bundle. Exact claimed image `qualification-20260910-attachment-04` resumed with no second IDS send. Latest 05:30:03Z September 11: native send confirmed, admitted 0, deferred 1. Prior `3ebcc81c9` passed 51 codec tests, 78 hashes, and load/launch checks. Image save/readback/restart remain unproven; it is not attachment-qualified. |
+| Windows candidate | Qualified Dart-only overlay `17818cd3d` preserves native source `62221f9c2` from run `34567152272`. Image 04 resumed without another IDS send: its exact Attachment operation is now confirmed with a cleared receipt lease and confirmation timestamp. At 06:42:35Z September 11 the pass stopped with `cloud_sync_unknown_failure`; no parent Message operation exists. These child markers are not full attachment write/readback/restart proof. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
 | Dependency | Writer fix `d201fb5` adds the exact attachment zone; `fdced92` changes only its test fixture. GCE `34567564253` passed 276 dependency tests, including the real attachment-warm regression. Earlier IDS-proof base `f2e8ea3` still requires explicit status 0 for every intended recipient. |
@@ -77,8 +77,8 @@ needs the approved conversation restored/created first. Direct-reaction work
 and attachment integration can proceed independently of that prerequisite.
 Current private request `qualification-20260910-attachment-04` is claimed and
 IDS-confirmed: do not change it or send it again. Prior claimed plaintext
-`qualification-20260910-03` is preserved. The runtime is in
-`../windows-cloudkit-dart-1d9de8629`; older runtimes and receipts remain
+`qualification-20260910-03` is preserved. The qualified native runtime is in
+`../windows-cloudkit-qualified-62221f9c2`; older runtimes and receipts remain
 rollback material.
 
 ### Current attachment-write boundary
@@ -105,8 +105,9 @@ committed original IDS source
 | Windows baseline | Historical source `0ff8e5595`, Windows run `34555641336`: 30 focused Dart tests, 51 actual Rust-DLL codec tests, ARM64 load and invalid-launch marker passed. Parent verified 78 bundle files. This baseline predates the attachment-request and durable-source-lookup repairs; it is retained rollback evidence, not the active runtime. |
 | Durable source lookup | Review found that `validateReadyForCreate` reloads a Message with an empty transient `attachments` list. The executor now selects its exact persisted `dbAttachments` relation instead, retaining exactly-one original/reflected GUID matching. Eight database-reopen regressions cover both aliases, ambiguity, unrelated rows and forbidden transient/global fallback. Exact source `3ebcc81c9` passed 3,042 Dart tests plus 14 outbox and 3 evidence-output cases in GCE `34557585998`; cleanup and independent empty VM/runner inventories verified. Live attachment proof remains open. |
 | Windows attachment input | Explicit request v4 adds synthetic `text-v1` and `png-v1` files only, no arbitrary user-file upload. Claim, original descriptor, protected source staging, positive IDS confirmation and the existing exact-intent production adapter remain required. Previous request-v1/v2/v3 bindings are unchanged. Interrupted IDS confirmation stays unconfirmed, not resendable. |
-| Live attachment failure | At 05:30:03Z September 11, claimed image 04 remained IDS-confirmed but deferred before plan adoption as `cloud_sync_attachment_preparation_auth_unavailable`. Source showed that the shared writer guard rejected the exact attachment zone. The native fix now passes regression tests; its new Windows runtime has not yet been imported or tested against Apple. No credential reset or second IDS send is indicated. |
-| Diagnostic repair | `1d9de8629` preserves fixed native failures through FRB; 32 targeted tests and the isolated Dart-overlay qualification passed. Native fix `62221f9` passed 493 app Rust tests in GCE `34567150925`; test-only successor `c206428a3` passed the 276-test dependency suite above. Windows build `34567152272` is still running. Active runtime remains `1d9`; image save/readback/restart is an open gate. |
+| Live attachment failure | Native `62221f9` passed preparation and byte upload on September 11. Read-only inspection after the 06:11:34Z failure found one exact IDS-confirmed message, one adopted upload and one matching pending Attachment create with attempt count zero. The `invalid_checkpoint` failure is before record save, not a rejected login or failed IDS send. Request and claim remain unchanged. |
+| Diagnostic repair | `1d9de8629` preserves fixed native failures through FRB. Native fix `62221f9` passed 493 app Rust tests in GCE `34567150925`, 276 dependency tests on test-only successor `c206428a3`, and Windows run `34567152272`. All GCE cleanup succeeded; independent VM/runner inventories were empty. |
+| Upload recovery roots | `readLiveProtectedOutboundLeaseReferences` included upload leases, but `readLiveProtectedReferences` omitted plan/result bytes. Five ObjectBox reopen cases failed before the 13-line repair `db27373d9`; 184 related tests passed afterward. Qualified overlay `17818cd3d` moved the exact retained child from pending to confirmed without the previous `invalid_checkpoint`. Parent admission remains under investigation; do not clear or regenerate the retained source. |
 
 Prepared-handle lifecycle correction: a failed native consume can retain its
 unconsumed owner and writer permit. Waiting for futures alone cannot release
@@ -359,8 +360,9 @@ exact attachment descriptor actually sent through IDS
   -> parent Message with the same attachment references
 ```
 
-- The Dart store now atomically admits completed Attachment-v1 uploads, but the
-  runtime byte-upload coordinator and parent-message connection are still absent.
+- The Dart store atomically admits completed Attachment-v1 uploads, and the
+  runtime byte-upload coordinator and parent-message connection are implemented.
+  Live byte upload has succeeded; child/parent record readback remains open.
   Native integration separates protected pre-upload preparation
   (`outboundAttachmentUpload`) from completed record-create material
   (`outboundAttachment`). Neither grants network permission or parent admission.
@@ -389,8 +391,8 @@ exact attachment descriptor actually sent through IDS
   item. V2 lookup must also use keystore `get_secret`, not `ensure_secret`, when
   unwrapping existing boundary material. Keep the DSID and entry under the same
   state lock; a missing key fails without generating either local or remote keys.
-- Reuse the outbox dependency mechanism, but extend admission and parent
-  encoding together. Current local-send encoding deliberately rejects media.
+- The attachment-specific local-send path extends outbox admission and parent
+  encoding together. The plaintext-only path still rejects media.
 - Record identity must be persisted before first upload and reused on retry.
   Legacy allocates a random attachment record ID; do not assume the proven
   Message GUID HMAC naming rule also applies to attachment records.
@@ -617,6 +619,14 @@ CloudKit readback or independent Apple-device display.
    unqualified operation disabled during development, not excluded from completion.
 
 ## Next falsification test
+
+Image 04 is already claimed and IDS-confirmed. The latest disposable-copy
+inspection verifies unchanged source and one matching confirmed child, but no
+parent operation. Identify the next failed predicate using existing receipts and
+bounded diagnostics, then resume that same intent. Do not send another image,
+weaken child readback, clear credentials, or treat a generic error as bad login.
+The prior `invalid_checkpoint` is resolved for this exact pass; a full parent
+save/readback/restart gate is not.
 
 The isolated Windows direct test and restart passed; do not repeat the claimed
 request. Source inventory, canonical read/write identity and parent UTF-16 body

@@ -1848,3 +1848,66 @@ This is a chronological evidence log. It does not override the
   `not_found`. Shared patches and necessary reports/transcripts were retained;
   there was no exclusive disposable worktree or supported session deletion.
   C: had about 58.8 GiB free; no user data or evidence was deleted.
+
+### September 11, live byte upload and missing recovery roots (IN REPAIR)
+
+- Windows `34567152272` succeeded on `62221f9c2`; Flutter build took 865.9 seconds.
+  Parent verified 78 manifest files, 51 actual native codec tests, retained vendor
+  ObjectBox hash, native load/unload, invalid-launch rejection and unchanged
+  protected profile files. No policy changes or account material went to CI.
+  Both GCE runs above finished cleanup; independent VM/runner inventories were empty.
+- Exact image 04 resumed once. At 06:11:34Z it stopped as `invalid_checkpoint`.
+  Disposable-copy inspection found a valid original source, positive IDS
+  confirmation, one canonical message, one adopted upload, and one matching
+  pending Attachment operation with attempt count zero. No parent operation or
+  child/parent readback proof existed. Request and claim were not modified.
+- Root cause: ObjectBox retained upload leases but omitted plan/result references
+  from the complete liveness snapshot. Native committed-receipt recovery requires
+  retained receipt entries to be a subset of that snapshot, and maps the
+  mismatch to `invalid_checkpoint`. This was not an Apple password rejection.
+- Five real ObjectBox reopen tests, covering every upload state, failed on the
+  missing plan reference before repair. App `db27373d9` adds both roots, row
+  validation and bounded accounting in 13 production lines. All 184 upload,
+  ObjectBox and protected-lease tests passed after repair. Readback is still open.
+- Isolated overlay source `17818cd3d` is exactly native-qualified `62221f9c2`
+  plus the two-file Dart/test repair. It preserves native inputs and generates
+  only a new kernel. Initial assembly used a 13-character source label; the
+  canonical 12-character launcher check rejected it before profile mutation.
+  The build label now derives from the pinned source; corrected assembly is
+  being qualified. Failed assembly and prior runtime remain evidence.
+- Astra FaceTime and Find My tasks were interrupted, not completed. Parent
+  recovered their persisted findings and resumed the same task IDs through
+  supported app controls. FaceTime is reviewing a missed close-on-notifier fix;
+  Find My is fixing stale People projection. Neither is live-verified. The
+  Find My read-only probe cannot use a writer build and does not cover Items;
+  Items currently invoke a writer-capable key-alignment path, so that API must
+  not be mislabeled as a read-only probe.
+
+### September 11, qualified overlay advances the retained child
+
+- Corrected canonical overlay `17818cd3d0b4-local-write` passed qualification
+  against unchanged native `62221f9c2`. The failed 13-character-label assembly
+  was not launched. Protected profile hashes and vendor binaries were preserved.
+- At 06:42:35Z the retained image 04 pass failed with `cloud_sync_unknown_failure`.
+  Offline inspection of a disposable database copy found one matching confirmed
+  Attachment operation, cleared receipt lease and a positive confirmation time.
+  Its generation and record binding match the adopted upload. No parent Message
+  operation exists. Attempt count zero alone cannot distinguish a prior remote
+  record lookup from a newly submitted save. Full attachment proof remains false.
+- Parent extended the offline inspector with exact-account/zone child diagnostics;
+  all five tests pass, including wrong-account/zone and unknown-query cases.
+  Original request, claim and database remain unchanged by inspection.
+- Find My Astra patch `c77b5def4` was reviewed and integrated as `5515d92c4` for
+  the next app candidate. Parent reran all 47 Flutter tests successfully. Only
+  same-person identity is reused across handle-less updates; fresh location and
+  explicit revocation replace stale state. Valid ungeocoded locations are labeled
+  available. Actual account coordinates and missing Items are still unproven.
+- FaceTime candidate `9cfd45dee` passed parent reruns of 64 JavaScript and 65
+  Kotlin tests, but is NOT integrated. Deeper native review showed all-inactive
+  participants after LeaveEvent are not authoritative termination under partial
+  snapshots/browser handoff. Parent rejected that automatic-ended addition and
+  requested its removal. Explicit Leave/native End repair remains a candidate;
+  the same Astra task is separately repairing the early-Join/timer ownership race.
+- Two existing Astra tasks remain assigned to required follow-up. No additional
+  agents, APK builds, account resets or evidence deletion occurred. C: had about
+  57 GiB free at parent review.
