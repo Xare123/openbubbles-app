@@ -84,7 +84,17 @@ void main() {
       expect(adapter, contains('runCloudSyncLocalSendRecoveryPass('));
       expect(adapter, contains('quiesce: transport.quiesceNativeOperations'));
       expect(adapter, contains('guard.reconcilePendingAttachmentUpload('));
-      expect(adapter, contains('coordinator.resumeExistingPlans('));
+      expect(adapter, contains('coordinator.ensureRetainedPlans('));
+      expect(adapter, contains('if (fresh) attemptedUploadId = plan.id'));
+      final pendingCheck = adapter.substring(
+          adapter.indexOf('canSchedulePendingUploadRecovery: () async'),
+          adapter.indexOf('canRefreshAfterRecovery: () async'));
+      expect(pendingCheck, contains('interlock.runExclusive('));
+      expect(pendingCheck, contains('kind: CloudKitOperationKind.v2ReadWrite'));
+      expect(pendingCheck, contains('guard.canSchedulePendingAttachmentUploadRecovery('));
+      expect(pendingCheck, contains('uploadId: uploadId, expectedEpoch: owner.epoch'));
+      expect(pendingCheck, contains('auth.sameIdentity(refreshedAuth)'));
+      expect(pendingCheck, contains('return allowed && sameOwnerContext()'));
       expect(adapter, contains('retainedAttachmentResume: resuming'));
       expect(adapter, contains('selection?.validate('));
       expect(adapter, contains('validateAccount: validateSelection'));

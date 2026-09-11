@@ -28,10 +28,26 @@ void main() {
         );
         expect(added['id'], '14:6652370228940045642');
         properties.remove(added);
-        // This predecessor predates both additions. Leaving property 15 in
-        // a model whose last property is 13 creates an invalid test database.
+        // This predecessor predates all three later additions: the readback
+        // marker (14), the IDS proof column (15), and the protected source
+        // binding (16). The historical schema ends at property 13, so none
+        // of the later columns may remain in the test database.
+        expect(
+          properties.singleWhere(
+            (row) => row['name'] == 'idsConfirmationVersion',
+          )['id'],
+          '15:7746544196685616233',
+        );
+        expect(
+          properties.singleWhere(
+            (row) => row['name'] == 'protectedSourceBinding',
+          )['id'],
+          '16:5377428623302990429',
+        );
         properties.removeWhere(
-          (row) => row['name'] == 'idsConfirmationVersion',
+          (row) =>
+              row['name'] == 'idsConfirmationVersion' ||
+              row['name'] == 'protectedSourceBinding',
         );
         entity['properties'] = properties;
         entity['lastPropertyId'] = '13:3888648459471300555';

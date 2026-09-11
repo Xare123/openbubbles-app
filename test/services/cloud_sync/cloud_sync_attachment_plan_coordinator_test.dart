@@ -543,6 +543,333 @@ void main() {
       }
     }
   });
+
+  test('retained origin stages missing plans after epoch recovery', () async {
+    final intent = seedConfirmedIntent();
+    final originalEpoch = authoritySnapshot.epoch;
+    final permit = authority.issuePermit(_writerScope,
+        expectedOwner: CloudKitWriterOwner.v2);
+    authority.markMutationUnknown(permit, now: _time(30));
+    authority.reconcileMutationFence(_writerScope,
+        owner: CloudKitWriterOwner.v2,
+        fencedEpoch: originalEpoch,
+        now: _time(31));
+    store.close();
+    store = await openStore(directory: directory.path);
+    provisionJournal();
+    auth = _auth(Object());
+    uploads = buildUploads();
+    expect(authoritySnapshot.epoch, originalEpoch + 2);
+    var stageCalls = 0;
+    CloudSyncAttachmentPlanCoordinator coordinator() => buildCoordinator(
+      readInventory: (_, __) async => [itemA()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    final first =
+        (await coordinator().ensureRetainedPlans(localSendIntentId: intent))
+            .single;
+    expect(first.state, CloudAttachmentUploadState.prepared);
+    expect(stageCalls, 1);
+    expect(staging.commits, hasLength(1));
+    expect(staging.rollbacks, isEmpty);
+    expect(store.box<CloudAttachmentUploadEntity>().get(first.id)!.writerEpoch,
+        originalEpoch);
+    final second =
+        (await coordinator().ensureRetainedPlans(localSendIntentId: intent))
+            .single;
+    expect(second.id, first.id);
+    expect(second.plan.leaseReference, first.plan.leaseReference);
+    expect(stageCalls, 1);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 1);
+  });
+
+  test('retained plans stage only the missing second inventory entry',
+      () async {
+    final intent = seedConfirmedIntent();
+    final originalEpoch = authoritySnapshot.epoch;
+    var stageCalls = 0;
+    final staged = <String>[];
+    var interruptB = true;
+    CloudSyncAttachmentPlanCoordinator coordinator() => buildCoordinator(
+      readInventory: (_, __) async => [itemA(), itemB()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        if (interruptB && item.logicalEntityKeyHash == _token('G')) {
+          throw StateError('cloud_sync_attachment_plan_stage_interrupted');
+        }
+        staged.add(item.logicalEntityKeyHash);
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    // The original inventory is [A, B] throughout: A stages and commits at
+    // E, then the run is interrupted before B is staged.
+    await expectLater(
+      coordinator().ensurePlans(localSendIntentId: intent),
+      throwsA(_stateFailure('cloud_sync_attachment_plan_stage_interrupted')),
+    );
+    expect(stageCalls, 2);
+    expect(staged, [_token('C')]);
+    expect(staging.commits, hasLength(1));
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 1);
+    final adoptedA = uploads.findForAttachment(
+      localSendIntentId: intent,
+      logicalEntityKeyHash: _token('C'),
+      sourceAttachmentKeys: {_token('C'), _token('G')},
+    )!;
+    interruptB = false;
+    final permit = authority.issuePermit(_writerScope,
+        expectedOwner: CloudKitWriterOwner.v2);
+    authority.markMutationUnknown(permit, now: _time(30));
+    authority.reconcileMutationFence(_writerScope,
+        owner: CloudKitWriterOwner.v2,
+        fencedEpoch: originalEpoch,
+        now: _time(31));
+    store.close();
+    store = await openStore(directory: directory.path);
+    provisionJournal();
+    auth = _auth(Object());
+    uploads = buildUploads();
+    expect(authoritySnapshot.epoch, originalEpoch + 2);
+    final second =
+        await coordinator().ensureRetainedPlans(localSendIntentId: intent);
+    expect(second, hasLength(2));
+    expect(second.first.id, adoptedA.id);
+    expect(second.first.plan.leaseReference, adoptedA.plan.leaseReference);
+    expect(second.first.plan.protectedEnvelopeReference,
+        adoptedA.plan.protectedEnvelopeReference);
+    expect(second.last.id, isNot(adoptedA.id));
+    expect(store.box<CloudAttachmentUploadEntity>().get(second.first.id)!.writerEpoch,
+        originalEpoch);
+    expect(store.box<CloudAttachmentUploadEntity>().get(second.last.id)!.writerEpoch,
+        originalEpoch);
+    expect(stageCalls, 3);
+    expect(staged, [_token('C'), _token('G')]);
+    expect(staging.commits, hasLength(3));
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 2);
+  });
+
+  test('retained plans reject unknown authority before any staging', () async {
+    final intent = seedConfirmedIntent();
+    var stageCalls = 0;
+    final coordinator = buildCoordinator(
+      readInventory: (_, __) async => [itemA()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    final permit = authority.issuePermit(_writerScope,
+        expectedOwner: CloudKitWriterOwner.v2);
+    authority.markMutationUnknown(permit, now: _time(30));
+    await expectLater(
+      coordinator.ensureRetainedPlans(localSendIntentId: intent),
+      throwsA(isA<CloudKitWriterAuthorityFailure>().having(
+        (failure) => failure.safeCode,
+        'safeCode',
+        'cloudkit_writer_authority_not_stable',
+      )),
+    );
+    expect(stageCalls, 0);
+    expect(staging.commits, isEmpty);
+    expect(staging.rollbacks, isEmpty);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 0);
+  });
+
+  test('retained plans reject a foreign account origin before any staging',
+      () async {
+    final intent = seedConfirmedIntent();
+    var stageCalls = 0;
+    final foreign = CloudSyncNativeAuthSnapshot.fromNative(
+      nativeSessionId: 'native-session',
+      accountFingerprint: _token('B'),
+      protectedStoreIdentity: 'obcs2.store.${_token('B')}',
+      cloudMessagesClient: Object(),
+    );
+    final coordinator = buildCoordinator(
+      readInventory: (_, __) async => [itemA()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+      readAuth: () async => foreign,
+    );
+    await expectLater(
+      coordinator.ensureRetainedPlans(localSendIntentId: intent),
+      throwsA(_stateFailure(
+          'cloud_sync_local_send_protected_source_changed')),
+    );
+    expect(stageCalls, 0);
+    expect(staging.commits, isEmpty);
+    expect(staging.rollbacks, isEmpty);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 0);
+  });
+
+  test('retained plans reject changed inventory before any new staging',
+      () async {
+    final intent = seedConfirmedIntent();
+    var stageCalls = 0;
+    final firstCoordinator = buildCoordinator(
+      readInventory: (_, __) async => [itemA()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    await firstCoordinator.ensureRetainedPlans(localSendIntentId: intent);
+    expect(stageCalls, 1);
+    final secondCoordinator = buildCoordinator(
+      readInventory: (_, __) async => [itemB()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    await expectLater(
+      secondCoordinator.ensureRetainedPlans(localSendIntentId: intent),
+      throwsA(_stateFailure(
+          'cloud_sync_attachment_upload_inventory_changed')),
+    );
+    expect(stageCalls, 1);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 1);
+  });
+
+  test('retained plans reject an extra stale row before any new staging',
+      () async {
+    final intent = seedConfirmedIntent();
+    var stageCalls = 0;
+    final fullCoordinator = buildCoordinator(
+      readInventory: (_, __) async => [itemA(), itemB()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    await fullCoordinator.ensureRetainedPlans(localSendIntentId: intent);
+    expect(stageCalls, 2);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 2);
+    final narrowedCoordinator = buildCoordinator(
+      readInventory: (_, __) async => [itemA()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    await expectLater(
+      narrowedCoordinator.ensureRetainedPlans(localSendIntentId: intent),
+      throwsA(_stateFailure(
+          'cloud_sync_attachment_upload_inventory_changed')),
+    );
+    expect(stageCalls, 2);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 2);
+  });
+
+  test('retained plans roll back an unadopted lease on auth drift', () async {
+    final intent = seedConfirmedIntent();
+    var stageCalls = 0;
+    var drifted = false;
+    final coordinator = buildCoordinator(
+      readInventory: (_, __) async => [itemA()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        drifted = true;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+      readAuth: () async => drifted ? _auth(Object()) : auth,
+    );
+    await expectLater(
+      coordinator.ensureRetainedPlans(localSendIntentId: intent),
+      throwsA(_stateFailure('cloud_sync_attachment_plan_auth_changed')),
+    );
+    expect(stageCalls, 1);
+    expect(staging.rollbacks, hasLength(1));
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 0);
+  });
+
+  test('retained plans never replace a started or unknown attempted row',
+      () async {
+    final intent = seedConfirmedIntent();
+    var stageCalls = 0;
+    final coordinator = buildCoordinator(
+      readInventory: (_, __) async => [itemA()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    final first =
+        (await coordinator.ensureRetainedPlans(localSendIntentId: intent))
+            .single;
+    expect(stageCalls, 1);
+    uploads.beginAttempt(
+      id: first.id,
+      attemptId: _attemptA,
+      now: _time(8),
+    );
+    final commitsAfterStage = staging.commits.length;
+    final started =
+        (await coordinator.ensureRetainedPlans(localSendIntentId: intent))
+            .single;
+    expect(started.id, first.id);
+    expect(started.state, CloudAttachmentUploadState.started);
+    expect(started.plan.leaseReference, first.plan.leaseReference);
+    uploads.markUnknown(
+      id: first.id,
+      attemptId: _attemptA,
+      now: _time(9),
+    );
+    final unknown =
+        (await coordinator.ensureRetainedPlans(localSendIntentId: intent))
+            .single;
+    expect(unknown.id, first.id);
+    expect(unknown.state, CloudAttachmentUploadState.unknown);
+    expect(unknown.plan.leaseReference, first.plan.leaseReference);
+    expect(stageCalls, 1);
+    expect(staging.commits.length, commitsAfterStage);
+    expect(staging.rollbacks, isEmpty);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 1);
+  });
+
+  test('retained plans reject out-of-bounds native inventory before staging',
+      () async {
+    final intent = seedConfirmedIntent();
+    var stageCalls = 0;
+    List<CloudSyncAttachmentPlanInventoryItem> oversized() => [
+      for (var i = 0; i < 65; i++)
+        CloudSyncAttachmentPlanInventoryItem(
+          originalAttachmentGuid: 'LOCAL-OVERSIZED-$i',
+          reflectedAttachmentGuid: '${_guidA}_oversized_$i',
+          logicalEntityKeyHash:
+              'QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ${i.toString().padLeft(3, '0')}',
+        ),
+    ];
+    var oversize = false;
+    final coordinator = buildCoordinator(
+      readInventory: (_, __) async =>
+          oversize ? oversized() : <CloudSyncAttachmentPlanInventoryItem>[],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    await expectLater(
+      coordinator.ensureRetainedPlans(localSendIntentId: intent),
+      throwsA(
+          _stateFailure('cloud_sync_attachment_plan_inventory_invalid')),
+    );
+    oversize = true;
+    await expectLater(
+      coordinator.ensureRetainedPlans(localSendIntentId: intent),
+      throwsA(
+          _stateFailure('cloud_sync_attachment_plan_inventory_invalid')),
+    );
+    expect(stageCalls, 0);
+    expect(staging.commits, isEmpty);
+    expect(staging.rollbacks, isEmpty);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 0);
+  });
 }
 
 final class _FakeStaging implements CloudSyncOutboundStagingTransport {

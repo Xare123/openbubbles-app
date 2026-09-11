@@ -97,7 +97,8 @@ committed original IDS source
 | Local qualification | Combined admission/journal/dependency/transport/composition suite: 278 passed. Timeout/reconciliation/transport subset: 42 passed after parent review. These overlap and do not establish live-account behavior. |
 | Timeout correction | Release tracked preparation before draining record saves. Otherwise a save timeout can quiesce the outer operation that is waiting on that save. A dedicated sequencing test covers this boundary. |
 | Group attachments | Native `d5b31d5b9`, GCE `34547723829`: 490 Rust tests passed; only generated-interface drift failed. Artifact `10179880441` was hash-verified and imported; VM/runner inventories empty. Exact restored group binding is pinned before staging and after awaits. Local transport passed 15 tests, admission 73; no live group-attachment proof. |
-| Recovery | Original epoch E survives E+1/E+2; retained first attempts require the complete original inventory and current authority. State-1 parent admission now works after reopen with exact child readback. Receipt-only recovery precedes record draining and verified clearance ends the old pass before another submission. Parent passed 868 tests across 24 suites. Still open: automatic wake after a newly ambiguous upload and old queued origins with no complete retained plan inventory. Never rewrite original epochs or blindly retry an ambiguous byte upload. |
+| Recovery | Original source, epoch and attempt IDs remain immutable. Under current stable authority, the coordinator reuses existing plans and stages only missing entries from the original native inventory. A newly ambiguous upload may schedule only its own receipt-first next pass after native quiescence, exact fence/attempt verification and unchanged identity. Parent's composed guard/consumer test proves the missing-receipt pass creates no outbox entry or second upload. Combined qualification: **936 tests passed across 28 suites**, including fixed-inventory interruption/reopen and historical upgrades. Full CI and live runtime remain unqualified. |
+| Full-suite checkpoint | Source `927977c69`, GCE `34553546240`: 2,951 Dart tests passed, three failed. Two old-schema migration fixtures are inconsistent with their property IDs; the constructor contract omitted the gated local IDS-source lease path. Repairs are under review. Cleanup and independent VM/runner inventories are verified empty. No APK or signing occurred. |
 | Live proof | No new attachment write, APK or Windows runtime has been qualified from this batch. The working Windows executable remains `6abbeede2`. |
 
 Prepared-handle lifecycle correction: a failed native consume can retain its
@@ -110,7 +111,7 @@ engine/transport cleanup passed the 125-test release/admission/adapter cohort,
 including 20 focused release cases for late preparation, both heartbeat losses,
 returned failure, thrown failure and consumed success. Release does not cancel
 an owner already taken by consume. The combined 868-test checkpoint passed;
-full exact-commit CI and live attachment write/recovery remain unqualified.
+the full-suite result above and live attachment write/recovery remain release gates.
 
 An ambiguous MMCS upload still cannot be blindly replayed. Original CloudKit
 UUIDs do not prove MMCS request idempotency, and chunk deduplication is not
@@ -572,19 +573,14 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Finish the attachment vertical path, not another independent validator.
-   The composer retains its actual IDS source; the upload journal retains its
-   original randomized plan, attempt and result; final-record admission exists.
-   Native upload, source inventory and body projection passed 475 Rust tests;
-   executor/guard/queue integration passed 195 targeted Dart cases. Connect the
-   original-plan coordinator, create/readback and protected-source parent
-   staging/prepare/readback without weakening the plaintext gate. Completed-upload recovery separates old source
-   evidence from current writer permission across E/E+1/E+2, but the old parent
-   intent still needs explicit reauthorization before its Message admission. Complete
-   evidence may resolve its exact fence; no receipt never authorizes reupload.
-   Unknown byte-upload isolation requires native quiescence before unrelated
-   writes resume. Also prove bounded source-staging coordination with long reads:
-   retaining an unsent message on lock contention is safe, not final send UX.
+1. Qualify the integrated attachment vertical path. Source retention, plan reuse,
+   byte execution, child save/readback and parent admission are connected.
+   Finish full-suite repairs and qualify automatic unknown-outcome recovery and
+   partial-plan recovery together, then run one exact-source live attachment
+   save/readback/restart test. Preserve the original source and attempt across
+   writer epochs; absent receipts never authorize blind reupload. Also prove
+   source staging remains usable during long reads, not merely lossless on
+   lock contention.
 2. Preserve qualified Windows direct request `qualification-20260910-03` and
    its proof. No additional direct send is needed merely to recheck that result.
    The exact restored-group route is implemented/tested, but no group with the

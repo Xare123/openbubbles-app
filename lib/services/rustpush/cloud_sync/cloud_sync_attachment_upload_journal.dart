@@ -491,10 +491,23 @@ final class CloudSyncAttachmentUploadJournal {
       required int localSendIntentId,
       required CloudSyncProtectedOutboundStageData plan,
       required DateTime now,
+      Set<String>? retainedSourceAttachmentKeys,
   }) => _store.runInTransaction(TxMode.write, () {
     _requireGeneration();
     _validateStage(plan);
-    final origin = _localSends.requireConfirmedAttachmentUploadOrigin(
+    if (retainedSourceAttachmentKeys != null) {
+      // Validate the complete native inventory against all existing rows in
+      // the same transaction. A stale/changed plan cannot disappear into a
+      // missing-entry decision and authorize randomized replacement.
+      findForAttachment(localSendIntentId: localSendIntentId,
+          logicalEntityKeyHash: plan.logicalEntityKeyHash,
+          sourceAttachmentKeys: retainedSourceAttachmentKeys);
+      _localSends.requireCurrentAttachmentWriteAuthority(_store);
+    }
+    final origin = retainedSourceAttachmentKeys != null
+        ? _localSends.requireRetainedAttachmentUploadOrigin(
+            transactionStore: _store, intentId: localSendIntentId, currentAuth: _auth)
+        : _localSends.requireConfirmedAttachmentUploadOrigin(
       transactionStore: _store,
       intentId: localSendIntentId,
       currentAuth: _auth,

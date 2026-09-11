@@ -2,9 +2,112 @@ import 'dart:async';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_recovery.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  for (final failure in [
+    StateError('cloud_sync_local_send_identity_changed'),
+    StateError('cloud_sync_local_send_owner_changed'),
+    const CloudKitWriterAuthorityFailure(
+      'cloudkit_writer_mutation_outcome_unknown',
+    ),
+  ]) {
+    test(
+      'exact pending proof schedules receipt-next after cleanup: $failure',
+      () async {
+        final order = <String>[];
+        final result = await runCloudSyncLocalSendRecoveryPass(
+          action: () async {
+            order.add('attempt');
+            throw failure;
+          },
+          quiesce: () async {
+            order.add('quiesce');
+          },
+          canRefreshAfterRecovery: () async =>
+              throw StateError('must_not_refresh'),
+          canSchedulePendingUploadRecovery: () async {
+            order.add('proof');
+            return true;
+          },
+        );
+        expect(order, ['attempt', 'quiesce', 'proof']);
+        expect(result.outboxBlocked, isTrue);
+        expect(result.admitted, 0);
+      },
+    );
+  }
+
+  test(
+    'unknown without exact pending proof retains original failure',
+    () async {
+      const failure = CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_mutation_outcome_unknown',
+      );
+      await expectLater(
+        runCloudSyncLocalSendRecoveryPass(
+          action: () async => throw failure,
+          quiesce: () async {},
+          canRefreshAfterRecovery: () async =>
+              throw StateError('must_not_refresh'),
+          canSchedulePendingUploadRecovery: () async => false,
+        ),
+        throwsA(same(failure)),
+      );
+    },
+  );
+
+  test(
+    'pending proof is never checked before native quiescence or after cleanup failure',
+    () async {
+      final started = Completer<void>();
+      final settled = Completer<void>();
+      var checked = false;
+      final failure = StateError('cleanup_failed');
+      final future = runCloudSyncLocalSendRecoveryPass(
+        action: () async =>
+            throw StateError('cloud_sync_local_send_owner_changed'),
+        quiesce: () async {
+          started.complete();
+          await settled.future;
+          throw failure;
+        },
+        canRefreshAfterRecovery: () async => true,
+        canSchedulePendingUploadRecovery: () async {
+          checked = true;
+          return true;
+        },
+      );
+      final assertion = expectLater(future, throwsA(same(failure)));
+      await started.future;
+      expect(checked, isFalse);
+      settled.complete();
+      await assertion;
+      expect(checked, isFalse);
+    },
+  );
+
+  test('unrelated errors cannot use a pending proof', () async {
+    for (final failure in [
+      StateError('cloud_sync_attachment_source_changed'),
+      const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_mutation_fence_release_failed',
+      ),
+    ]) {
+      await expectLater(
+        runCloudSyncLocalSendRecoveryPass(
+          action: () async => throw failure,
+          quiesce: () async {},
+          canRefreshAfterRecovery: () async => throw StateError('unexpected'),
+          canSchedulePendingUploadRecovery: () async =>
+              throw StateError('unexpected'),
+        ),
+        throwsA(same(failure)),
+      );
+    }
+  });
+
   for (final receipt in <bool?>[null, false, true]) {
     test(
       'receipt-only recovery before empty outbox, receipt=$receipt',

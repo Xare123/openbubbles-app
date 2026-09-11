@@ -33,11 +33,12 @@ void main() {
   });
 
   test(
-    'protected transport is constructed only by compile-gated canary adapters',
+    'protected transport is constructed only by reviewed gated compositions',
     () {
       final constructors = <String>[];
       const allowed =
           'lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
+      const localSource = 'lib/services/rustpush/rustpush_service.dart';
 
       for (final entity in Directory('lib').listSync(recursive: true)) {
         if (entity is! File || !entity.path.endsWith('.dart')) continue;
@@ -59,9 +60,9 @@ void main() {
           .toList(growable: false);
       expect(
         normalized,
-        [allowed],
+        unorderedEquals([allowed, localSource]),
         reason:
-            'only explicit compile-gated canary adapters may construct the protected transport',
+            'only reviewed canary adapters and gated local IDS source staging may construct the protected transport',
       );
 
       final adapter = File(allowed).readAsStringSync();
@@ -169,6 +170,219 @@ void main() {
     },
   );
 
+  test('runtime transport is restricted to gated local IDS source leases', () {
+    final service = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final capture = _section(
+      service,
+      'Future<_CloudSyncV2LocalSendContext?> _captureCloudSyncV2LocalSend(',
+      'Future<api.CloudSyncNativeSendReceiptContext> _prepareCloudSyncV2AttachmentSource(',
+    );
+    final prepare = _section(
+      service,
+      'Future<api.CloudSyncNativeSendReceiptContext> _prepareCloudSyncV2AttachmentSource(',
+      'Future<api.MessageInst> _restoreCloudSyncV2AttachmentWire(',
+    );
+    final send = _section(
+      service,
+      'Future<Message> _sendPreparedMessage(',
+      'var backgroundSendPending = false;',
+    );
+
+    // No automatic-upload opt-in is required for local source preservation.
+    // The only caller receives a nullable context from the separately gated
+    // V2 capture path; disabling it cannot instantiate this transport.
+    expect(
+      capture,
+      matches(
+        RegExp(
+          r'if \(!CloudKitWriterOwnership\.v2MutationsEnabled \|\|\s*'
+          r'!CloudSyncDevGate\.manualOutboundCanaryEnabled\)\s*\{\s*return null;',
+        ),
+      ),
+    );
+    for (final fence in [
+      '!_cloudSyncV2CanaryRuntimeAllowed',
+      '!ls.isUiThread',
+      'loggingOut',
+      'ss.settings.cloudSyncingEnabled.value',
+      'isSyncing.value != null',
+      'statePath.isEmpty',
+      '!objectBox.isClosed()',
+      'identical(objectBox, Database.store)',
+      'identical(currentState, state)',
+      'identical(client, state?.icloudServices?.cloudMessagesClient)',
+      'storagePath == statePath',
+      'auth == null || !stillCurrent()',
+      'authoritySnapshot.owner != CloudKitWriterOwner.v2',
+      'authFence: CloudSyncLocalSendAuthFence(',
+    ]) {
+      expect(capture, contains(fence));
+    }
+    expect(
+      send,
+      contains(
+        'var localCloudIntent = await pushService._captureCloudSyncV2LocalSend(',
+      ),
+    );
+    expect(
+      send,
+      matches(
+        RegExp(
+          r'attachmentReceiptContext = localCloudIntent\?\.identity\.isAttachment == true\s*'
+          r'\? await pushService\._prepareCloudSyncV2AttachmentSource\('
+          r'\s*localCloudIntent!, message: m, chat: chat, wire: msg,\s*\)\s*: null;',
+        ),
+      ),
+    );
+    expect(
+      send.indexOf('await pushService._saveCloudSyncV2LocalSend('),
+      lessThan(
+        send.indexOf('await pushService._prepareCloudSyncV2AttachmentSource('),
+      ),
+    );
+    expect(
+      RegExp(
+        r'_prepareCloudSyncV2AttachmentSource\(',
+      ).allMatches(service).length,
+      2,
+      reason: 'one reviewed caller plus the private declaration',
+    );
+    expect(
+      RegExp(r'NativeProtectedCloudSyncTransport\(').allMatches(service).length,
+      1,
+      reason: 'no additional runtime read/write compositions',
+    );
+
+    expect(
+      prepare,
+      contains('context.authFence.requireCurrentBinding(context.capturedAuth)'),
+    );
+    expect(
+      prepare.indexOf('context.authFence.requireCurrentBinding('),
+      lessThan(prepare.indexOf('NativeProtectedCloudSyncTransport(')),
+    );
+    expect(
+      prepare,
+      contains('!identical(client, context.capturedAuth.cloudMessagesClient)'),
+    );
+    expect(prepare, contains('guids == null || guids.isEmpty'));
+    expect(
+      prepare,
+      matches(
+        RegExp(
+          r'final transport = NativeProtectedCloudSyncTransport\(\s*'
+          r'cloudMessagesClient: client,\s*storageDirectory: original.storageDirectory,\s*'
+          r'protectedStoreIdentity: original.protectedStoreIdentity,\s*\);',
+        ),
+      ),
+      reason:
+          'local leases need neither remote writer authority nor a read-pause capability',
+    );
+    expect(prepare, contains('final exclusion = CloudKitOperationInterlock('));
+    expect(prepare, contains('CloudSyncLocalSendSourceStaging('));
+    expect(prepare, contains('exclusion: exclusion, transport: transport'));
+    expect(
+      RegExp(r'\btransport\b').allMatches(prepare).length,
+      3,
+      reason:
+          'transport stays local and is passed only to the lease-only helper',
+    );
+    expect(
+      prepare,
+      contains('expectedSourceSha256: context.identity.sourceSha256'),
+    );
+    expect(
+      prepare,
+      contains('current?.sourceSha256 == context.identity.sourceSha256'),
+    );
+    expect(prepare, contains('await api.cloudSyncStageIdsAttachmentSource('));
+    expect(
+      prepare,
+      contains('sourceBinding: api.CloudSyncNativeSendSourceBinding('),
+    );
+
+    final staging = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_local_send_source_staging.dart',
+    ).readAsStringSync();
+    expect(
+      staging,
+      contains('final CloudProtectedPageLeaseTransport _transport;'),
+    );
+    expect(
+      RegExp(
+        r'\b_transport\.(\w+)',
+      ).allMatches(staging).map((match) => match.group(1)).toSet(),
+      unorderedEquals([
+        'protectedPageLeaseRecoveryIdentity',
+        'runProtectedStoreExclusive',
+        'commitProtectedPageLease',
+        'rollbackProtectedPageLease',
+      ]),
+      reason: 'no remote fetch, byte upload, record save or outbox admission',
+    );
+    expect(staging, contains('kind: CloudKitOperationKind.v2ReadWrite'));
+    expect(
+      staging.indexOf('_exclusion.runExclusive('),
+      lessThan(staging.indexOf('_transport.runProtectedStoreExclusive(')),
+    );
+    expect(staging, contains('_authFence.requireCurrentBinding(_auth)'));
+    expect(staging, contains('if (!await validateWire())'));
+    final fresh = staging.substring(
+      staging.indexOf('final source = await stage();'),
+    );
+    expect(
+      fresh.indexOf('_journal.adoptProtectedSource('),
+      lessThan(fresh.indexOf('_transport.commitProtectedPageLease(')),
+    );
+    expect(fresh, contains('if (!adopted)'));
+    for (final source in [prepare, staging]) {
+      for (final forbidden in [
+        'CloudSyncEngine(',
+        'flushOutbox(',
+        'stageOutboundMessage(',
+        'stageOutboundAttachment(',
+        'runAuthorized(',
+        'consumeAttachmentUpload',
+        'cloudSyncConsume',
+        'sync_keychain(',
+        'get_container(',
+      ]) {
+        expect(source, isNot(contains(forbidden)));
+      }
+    }
+    final api = File('rust/src/api/api.rs').readAsStringSync();
+    final nativeStage = _section(
+      api,
+      'pub async fn cloud_sync_stage_ids_attachment_source(',
+      'pub struct CloudSyncAttachmentUploadPlanResult',
+    );
+    expect(nativeStage, contains('cloud_sync_capture_auth_snapshot('));
+    expect(
+      nativeStage.indexOf(
+        'cloud_sync_require_source_context_auth(&context, &auth)?',
+      ),
+      lessThan(nativeStage.indexOf('::stage_ids_attachment_source(')),
+    );
+    expect(
+      nativeStage,
+      contains(
+        'crate::cloud_sync_ids_attachment_source::stage_ids_attachment_source(',
+      ),
+    );
+    for (final forbidden in [
+      'upload_asset(',
+      'ZoneSaveOperation',
+      'get_container(',
+      'sync_keychain(',
+      'prepare_attachment_upload(',
+      '.send(',
+    ]) {
+      expect(nativeStage, isNot(contains(forbidden)));
+    }
+  });
+
   test('semantic transport cannot fall back to an unbound fetch', () {
     final transport = File(
       'lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart',
@@ -234,4 +448,12 @@ void main() {
     );
     expect(native, contains('.sync_chats_page_for_read_authentication('));
   });
+}
+
+String _section(String source, String startMarker, String endMarker) {
+  final start = source.indexOf(startMarker);
+  expect(start, greaterThanOrEqualTo(0), reason: startMarker);
+  final end = source.indexOf(endMarker, start);
+  expect(end, greaterThan(start), reason: endMarker);
+  return source.substring(start, end);
 }

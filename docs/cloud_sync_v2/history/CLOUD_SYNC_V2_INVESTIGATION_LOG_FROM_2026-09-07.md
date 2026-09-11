@@ -1609,3 +1609,56 @@ This is a chronological evidence log. It does not override the
   test evidence and sessions are retained for provenance and unfinished work;
   no supported session-deletion control is available and no dedicated worktree
   was proven disposable. No files deleted. C: remained approximately 62.4 GiB free.
+
+- Reviewed integration committed and pushed to the fork as `927977c693a9f644a5e2f0f5a2feb12711ff2019`.
+  Analysis of all 33 changed Dart source/test files passed after removing two
+  unused fixture declarations and normalizing string construction. Unrelated
+  generated/platform/native working-tree changes were preserved and not staged.
+- Dispatched exact-source `dart-only` GCE run `34553546240` on the existing
+  N2D-16/us-west1-c primary lane. Pre-dispatch checks showed zero VMs and zero
+  GitHub runners. Writer and automatic-upload flags are false; no APK/signing
+  or account data in this run. Pending full-suite and cleanup verification.
+
+### September 10, full-suite failures and composed upload recovery
+
+- GCE `34553546240` finished: 2,951 Dart tests passed, three failed. The two
+  historical local-send upgrade fixtures retained property 16 under declared
+  last-property IDs 13/14. The transport construction contract omitted the
+  reviewed local IDS-source lease composition in `rustpush_service.dart`.
+  This is not a green release. Fixture/contract repairs are under review.
+- Cleanup completed at 02:21:02Z September 11. Independent GCE instance and
+  GitHub runner listings were empty. The run took about 11.1 minutes including
+  cleanup, with no APK, signing, account credentials or live writes.
+- Parent connected exact pending-upload scheduling after quiescence. The
+  wrapper reacquires the V2 interlock, checks the same account/store/client,
+  and asks the same guard to validate its own attempted upload and E fence
+  against unknown E+1. This schedules a new receipt-first invocation only.
+- Parent added a real guard/consumer/recovery composition test: a lost response
+  invalidates the consumer's owner, cleanup precedes scheduling, and the next
+  empty-outbox pass performs one receipt lookup, no second upload and no
+  admission when the receipt is absent. The guard/adapter cohort passed 77
+  tests; eight changed-file analysis passed. The 14 PowerShell outbox-contract
+  cases and three evidence-output cases also passed without device operations.
+- The retained coordinator now stages missing inventory entries under a
+  current permit while preserving all existing plans. Parent requested a
+  stronger partial-plan fixture with fixed [A,B] inventory interrupted at E,
+  then resumed after reopen at E+2; expanding the native inventory between
+  invocations was not sufficient evidence for that case.
+- Post-compaction lifecycle check found 45 earlier child handles absent from
+  the active set. Dirac and Schrodinger remain assigned to the required CI
+  repairs. Sessions/evidence are retained; no supported session deletion is
+  available. C: had approximately 62.7 GiB free; nothing was deleted.
+- Final parent cohort passed **936 tests across 28 suites**, two workers,
+  54 seconds of test execution. This includes both historical upgrade repairs,
+  the gated lease-only construction contract, fixed [A,B] partial-plan recovery,
+  exact unknown-upload scheduling and receipt-first consumer composition.
+  Analysis found one redundant cast and four string-construction style notices
+  in the new fixtures; parent applied mechanical fixes for recheck.
+- Reviewed both workers' changes, retaining production auth and native receipt
+  checks. Closed Dirac and Schrodinger; both returned `not_found` on follow-up.
+  Shared source, necessary test evidence and sessions remain preserved; no
+  dedicated disposable worktree or supported session deletion was available.
+  No account write, call, APK build or installation occurred in this checkpoint.
+- Mechanical fixture cleanup recheck passed: 21 tests in the two touched suites
+  and no analyzer issues. All 12 changed Dart source/test files are now analyzed
+  clean. Diff checks passed; C: retained approximately 62.6 GiB free.

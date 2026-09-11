@@ -30,8 +30,27 @@ void main() {
       ),
       isTrue,
     );
+    // The true predecessor predates both later additions:
+    // idsConfirmationVersion (15) and protectedSourceBinding (16). The
+    // historical schema ends at property 14, so the last-property id
+    // stays 14 and neither later column may remain in the test database.
+    expect(
+      (intentModel['properties'] as List).singleWhere(
+        (property) =>
+            (property as Map)['name'] == 'idsConfirmationVersion',
+      )['id'],
+      '15:7746544196685616233',
+    );
+    expect(
+      (intentModel['properties'] as List).singleWhere(
+        (property) => (property as Map)['name'] == 'protectedSourceBinding',
+      )['id'],
+      '16:5377428623302990429',
+    );
     (intentModel['properties'] as List).removeWhere(
-      (property) => (property as Map)['name'] == 'idsConfirmationVersion',
+      (property) =>
+          (property as Map)['name'] == 'idsConfirmationVersion' ||
+          property['name'] == 'protectedSourceBinding',
     );
     intentModel['lastPropertyId'] = '14:6652370228940045642';
 

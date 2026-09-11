@@ -185,6 +185,21 @@ final class _ActiveCloudKitMutation {
   bool forcedUnknown = false;
 }
 
+/// Private, pass-local scheduling evidence, never a mutation capability.
+final class _CloudKitUnknownMutationSchedulingProof {
+  const _CloudKitUnknownMutationSchedulingProof({
+    required this.client,
+    required this.identity,
+    required this.permit,
+    required this.fenceEncoding,
+  });
+
+  final Object client;
+  final CloudSyncNativeAuthMetadata identity;
+  final CloudKitWriterPermit permit;
+  final String fenceEncoding;
+}
+
 /// Binds one remote mutation to the active native identity and a durable
 /// single-writer permit.
 ///
@@ -996,6 +1011,83 @@ final class CloudKitWriterMutationGuard
   }
 
   _ActiveCloudKitMutation? _activeMutation;
+  _CloudKitUnknownMutationSchedulingProof? _unknownMutationForScheduling;
+
+  /// After native quiescence, permits scheduling a NEXT receipt-only pass for
+  /// this guard's own attempted upload. Caller must retain the original pass
+  /// epoch and exact upload ID, and independently check its current store/owner
+  /// context. This does not clear a fence, verify a receipt, or admit a write.
+  /// A new guard cannot adopt another pass's proof, even at the same epoch.
+  Future<bool> canSchedulePendingAttachmentUploadRecovery({
+    required Object expectedClient,
+    required CloudSyncAttachmentUploadJournal uploads,
+    required int uploadId,
+    required int expectedEpoch,
+  }) async {
+    final proof = _unknownMutationForScheduling;
+    if (proof == null) return false;
+    try {
+      bool matches() {
+        CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);
+        if (_store.isClosed() ||
+            _activeMutation != null ||
+            !identical(proof, _unknownMutationForScheduling) ||
+            !identical(expectedClient, proof.client) ||
+            !identical(expectedClient, _readActiveClient()) ||
+            !uploads.isBoundTo(_store, uploads.scope) ||
+            uploadId <= 0 ||
+            proof.permit.owner != CloudKitWriterOwner.v2 ||
+            proof.permit.epoch != expectedEpoch) {
+          return false;
+        }
+        final fence = _PersistentCloudKitMutationFence(
+          privateStorageDirectory: _privateStorageDirectory,
+        ).readForReconciliation();
+        if (fence == null ||
+            fence.encoded != proof.fenceEncoding ||
+            fence.scope != proof.permit.scope ||
+            fence.owner != CloudKitWriterOwner.v2 ||
+            fence.epoch != expectedEpoch ||
+            fence.scope.accountFingerprint != proof.identity.accountFingerprint ||
+            fence.protectedStoreIdentity != proof.identity.protectedStoreIdentity ||
+            uploads.scope.accountFingerprint != fence.scope.accountFingerprint ||
+            uploads.scope.container != fence.scope.container ||
+            uploads.scope.database != fence.scope.database) {
+          return false;
+        }
+        final authority = _authority.read(fence.scope);
+        if (authority == null ||
+            authority.owner != CloudKitWriterOwner.v2 ||
+            authority.state != CloudKitWriterAuthorityState.mutationUnknown ||
+            authority.epoch != expectedEpoch + 1 ||
+            authority.targetOwner != CloudKitWriterOwner.none ||
+            authority.transitionIdHash != null) {
+          return false;
+        }
+        final upload = uploads.read(uploadId);
+        if (upload.state != CloudAttachmentUploadState.started &&
+            upload.state != CloudAttachmentUploadState.unknown) {
+          return false;
+        }
+        final source = uploads.readOriginalSource(uploadId);
+        return source.accountFingerprint == proof.identity.accountFingerprint &&
+            source.protectedStoreIdentity == proof.identity.protectedStoreIdentity &&
+            uploads.reconciliationBindingSha256(uploadId) ==
+                fence.reconciliationBindingSha256;
+      }
+
+      if (!matches()) return false;
+      // Lookup-only auth. Recheck all local evidence after this sole await.
+      final current = await _capture(expectedClient);
+      return current.accountFingerprint == proof.identity.accountFingerprint &&
+          current.protectedStoreIdentity == proof.identity.protectedStoreIdentity &&
+          current.nativeSessionId == proof.identity.nativeSessionId &&
+          matches();
+    } catch (_) {
+      // Missing/corrupt evidence or failed auth cannot manufacture a retry.
+      return false;
+    }
+  }
 
   @override
   Future<T> runAuthorized<T>({
@@ -1082,7 +1174,7 @@ final class CloudKitWriterMutationGuard
     final persistentFence = _PersistentCloudKitMutationFence(
       privateStorageDirectory: _privateStorageDirectory,
     );
-    persistentFence.arm(
+    final fenceEncoding = persistentFence.arm(
       permit,
       protectedStoreIdentity: before.protectedStoreIdentity,
       capabilityDigest: capabilityDigest,
@@ -1092,6 +1184,7 @@ final class CloudKitWriterMutationGuard
           reconciliationBindingSha256 ?? capabilityDigest,
     );
     final active = _ActiveCloudKitMutation(permit: permit);
+    _unknownMutationForScheduling = null;
     _activeMutation = active;
     try {
       late final T value;
@@ -1166,6 +1259,14 @@ final class CloudKitWriterMutationGuard
     } finally {
       if (identical(_activeMutation, active)) {
         _activeMutation = null;
+        if (active.forcedUnknown) {
+          _unknownMutationForScheduling = _CloudKitUnknownMutationSchedulingProof(
+            client: client,
+            identity: before,
+            permit: permit,
+            fenceEncoding: fenceEncoding,
+          );
+        }
       }
     }
   }
@@ -1240,7 +1341,7 @@ final class _PersistentCloudKitMutationFence {
     }
   }
 
-  void arm(
+  String arm(
     CloudKitWriterPermit permit, {
     required String protectedStoreIdentity,
     required String capabilityDigest,
@@ -1289,6 +1390,7 @@ final class _PersistentCloudKitMutationFence {
         'cloudkit_writer_mutation_fence_arm_failed',
       );
     }
+    return encoded;
   }
 
   void disarm(

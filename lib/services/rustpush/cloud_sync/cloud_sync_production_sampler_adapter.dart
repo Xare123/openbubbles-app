@@ -1210,6 +1210,7 @@ final class CloudSyncProductionLocalSendAdapter {
     // One retained source drives every child and the containing Message.
     // This runs under the same interlock and protected-store exclusion as
     // ordinary admission. Never scan the attachment table by a guessed GUID.
+    int? attemptedUploadId;
     Future<frb_api.CloudSyncNativeSendReceiptContext> prepareAttachmentParent(
       int intentId,
     ) async {
@@ -1252,7 +1253,7 @@ final class CloudSyncProductionLocalSendAdapter {
               startDateNanoseconds: dateNs, createdDateNanoseconds: dateNs),
           );
           final plans = resuming
-              ? await coordinator.resumeExistingPlans(localSendIntentId: intentId)
+              ? await coordinator.ensureRetainedPlans(localSendIntentId: intentId)
               : await coordinator.ensurePlans(localSendIntentId: intentId);
           attachmentInventories[intentId] = Set.unmodifiable(
               inventory.map((item) => item.logicalEntityKeyHash));
@@ -1273,16 +1274,21 @@ final class CloudSyncProductionLocalSendAdapter {
             final item = inventory.singleWhere((item) =>
                 item.logicalEntityKeyHash == plan.plan.logicalEntityKeyHash);
             final fresh = uploads.read(plan.id).state == CloudAttachmentUploadState.prepared;
-            final result = await executor.execute(CloudSyncAttachmentUploadExecutionInput(
+            final input = CloudSyncAttachmentUploadExecutionInput(
               uploadId: plan.id, originalAttachmentGuid: item.originalAttachmentGuid,
               sourcePath: fresh ? await sourcePath(item) : '',
               requestTimeoutSeconds: BigInt.from(120),
               retainedSourceAttachmentKeys: resuming ? attachmentInventories[intentId] : null,
-            ));
+            );
+            // Only this pass's first attempt can supply a pending-upload
+            // scheduling hint. The guard still proves its exact armed fence.
+            if (fresh) attemptedUploadId = plan.id;
+            final result = await executor.execute(input);
             switch (result.status) {
               case CloudAttachmentUploadExecutionStatus.completed:
               case CloudAttachmentUploadExecutionStatus.recoveredAndCompleted:
               case CloudAttachmentUploadExecutionStatus.alreadyCompleted:
+                attemptedUploadId = null;
                 break;
               default:
                 throw StateError('cloud_sync_attachment_parent_upload_unresolved');
@@ -1300,12 +1306,31 @@ final class CloudSyncProductionLocalSendAdapter {
     }
 
     var chatReadbackPending = false;
+    bool sameOwnerContext() => _stillCurrent() && !objectBox.isClosed() &&
+        identical(objectBox, Database.store) &&
+        identical(auth.cloudMessagesClient, _readActiveClient());
     return runCloudSyncLocalSendRecoveryPass(
       quiesce: transport.quiesceNativeOperations,
+      canSchedulePendingUploadRecovery: () async {
+        final uploadId = attemptedUploadId;
+        if (uploadId == null || !sameOwnerContext()) return false;
+        // The consumer released its interlock before the wrapper quiesced.
+        // Reacquire it for a lookup-only scheduling check, never a submission.
+        return interlock.runExclusive(
+          kind: CloudKitOperationKind.v2ReadWrite,
+          action: () async {
+            if (!sameOwnerContext()) return false;
+            final refreshedAuth = await authProvider.capture();
+            if (!sameOwnerContext() || !auth.sameIdentity(refreshedAuth)) return false;
+            final allowed = await guard.canSchedulePendingAttachmentUploadRecovery(
+              expectedClient: auth.cloudMessagesClient, uploads: uploads,
+              uploadId: uploadId, expectedEpoch: owner.epoch,
+            );
+            return allowed && sameOwnerContext();
+          },
+        );
+      },
       canRefreshAfterRecovery: () async {
-        bool sameOwnerContext() => _stillCurrent() && !objectBox.isClosed() &&
-            identical(objectBox, Database.store) &&
-            identical(auth.cloudMessagesClient, _readActiveClient());
         if (!sameOwnerContext()) return false;
         final refreshedAuth = await authProvider.capture();
         if (!sameOwnerContext() || !auth.sameIdentity(refreshedAuth)) return false;
