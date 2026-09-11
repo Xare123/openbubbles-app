@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:app_links/app_links.dart';
 import 'package:bluebubbles/services/rustpush/icloud_maintenance.dart';
+import 'package:bluebubbles/services/rustpush/face_time_outgoing_lifecycle.dart';
 import 'package:bluebubbles/services/rustpush/imessage_attachment_submission.dart';
 import 'package:bluebubbles/services/rustpush/imessage_initial_submission.dart';
 import 'package:bluebubbles/services/rustpush/imessage_reaction_payload.dart';
@@ -4901,14 +4902,28 @@ class RustPushService extends GetxService {
     await api.getFtLink(facetime: pushService.state!.ftClient, usage: "next");
   }
 
-  Timer? outgoingCallTimer;
-  Map<String, dynamic> outgoingCallMeta = {};
-  RxString? currentOutgoingCall;
+  final _outgoingCalls = FaceTimeOutgoingLifecycle<RxString>();
+  RxString? get currentOutgoingCall => _outgoingCalls.current?.state;
+
+  Future<void> endOutgoingFaceTime(String callUuid) async {
+    final call = _outgoingCalls.current;
+    if (call == null || call.id != callUuid) return;
+    await _outgoingCalls.complete(call, () async {
+      try {
+        await api.cancelFacetime(facetime: state!.ftClient, guid: call.id);
+      } catch (error, trace) {
+        Logger.warn("Failed to cancel FaceTime session", error: error, trace: trace);
+      }
+    });
+  }
+
   Future<void> placeOutgoingCall(String caller, List<String> targets) async {
     final outgoingguid = uuid.v4().toUpperCase();
     final desc = targets
         .map((p) => RustPushBBUtils.rustHandleToBB(p).displayName)
         .join(" & ");
+    final call = _outgoingCalls.begin(outgoingguid, outgoingguid.obs);
+    if (call == null) return; // An outgoing setup/ring already owns the invitation.
     late final String link;
 
     try {
@@ -4921,10 +4936,11 @@ class RustPushService extends GetxService {
               .replaceFirst("mailto:", "")
           : ss.settings.userName.value;
 
+      // A newer call may own setup after either preparation await.
+      if (!_outgoingCalls.isPending(call)) return;
       // Correlate an immediate join event and preload the WebView before the
       // network request, but do not show a ringing UI until Apple accepts the
       // session creation request.
-      currentOutgoingCall = outgoingguid.obs;
       mcs.invokeMethod("update-call-state", {
         "name": displayName,
         "desc": desc,
@@ -4933,13 +4949,13 @@ class RustPushService extends GetxService {
         "state": "ringing",
       });
 
-      outgoingCallMeta = {
+      call.metadata.addAll({
         'link': link,
         'callUuid': outgoingguid,
         'desc': desc,
         'name': displayName,
         'answer': true
-      };
+      });
 
       await api.createFacetime(
           facetime: pushService.state!.ftClient,
@@ -4949,13 +4965,13 @@ class RustPushService extends GetxService {
     } catch (error, trace) {
       Logger.error("FaceTime session creation failed",
           error: error, trace: trace);
-      mcs.invokeMethod("update-call-state", {
-        "callUuid": outgoingguid,
-        "state": "timeout",
+      await _outgoingCalls.complete(call, () async {
+        mcs.invokeMethod("update-call-state", {
+          "callUuid": outgoingguid,
+          "state": "timeout",
+        });
+        showSnackbar("FaceTime", faceTimeOutgoingStartFailureMessage(error));
       });
-      currentOutgoingCall = null;
-      outgoingCallMeta = {};
-      showSnackbar("FaceTime", faceTimeOutgoingStartFailureMessage(error));
       return;
     }
 
@@ -4965,8 +4981,8 @@ class RustPushService extends GetxService {
       Logger.error("Failed to rotate link", error: e, trace: s);
     });
 
-    outgoingCallTimer = Timer(const Duration(seconds: 30), () async {
-      currentOutgoingCall?.value = "timeout";
+    _outgoingCalls.armTimeout(call, () async {
+      call.state.value = "timeout";
 
       try {
         await api.cancelFacetime(
@@ -4981,8 +4997,6 @@ class RustPushService extends GetxService {
           "callUuid": outgoingguid,
           "state": "timeout",
         });
-        currentOutgoingCall = null;
-        outgoingCallMeta = {};
       }
     });
 
@@ -4994,10 +5008,9 @@ class RustPushService extends GetxService {
       poster = handle.getPoster();
     }
 
-    final callState = currentOutgoingCall;
-    if (callState != null && callState.value == outgoingguid) {
+    if (_outgoingCalls.isPending(call)) {
       showOutgoingFaceTimeOverlay(
-          callState, desc, caller, targets, icon, link, poster);
+          call.state, desc, caller, targets, icon, link, poster);
     }
   }
 
@@ -5715,26 +5728,24 @@ class RustPushService extends GetxService {
         if (facetime.ring) {
           ring = facetime.guid;
         }
-        if (facetime.guid == currentOutgoingCall?.value) {
-          currentOutgoingCall?.value = "accepted";
-          hideFaceTimeOverlay(facetime.guid);
-
-          outgoingCallTimer?.cancel();
-          chosenFTRoomGuid = facetime.guid;
-
-          try {
+        final outgoingCall = _outgoingCalls.current;
+        if (outgoingCall != null && facetime.guid == outgoingCall.id) {
+          await _outgoingCalls.complete(outgoingCall, () async {
+            outgoingCall.state.value = "accepted";
+            hideFaceTimeOverlay(facetime.guid);
+            chosenFTRoomGuid = facetime.guid;
+            final incomingAdmission = _incomingAdmission;
+            // Keep launch data attached to this call across asynchronous handoff.
             if (Platform.isAndroid) {
-              await mcs.invokeMethod("launch-facetime", outgoingCallMeta);
+              await mcs.invokeMethod("launch-facetime", outgoingCall.metadata);
             } else {
-              await launchUrl(Uri.parse(outgoingCallMeta['link']),
+              await launchUrl(Uri.parse(outgoingCall.metadata['link']),
                   mode: LaunchMode.externalApplication);
             }
-          } finally {
-            currentOutgoingCall = null;
-            outgoingCallMeta = {};
-          }
-
-          _incomingAdmission = null;
+            if (identical(_incomingAdmission, incomingAdmission)) {
+              _incomingAdmission = null;
+            }
+          });
         }
       } else if (facetime is api.FTMessage_AddMembers) {
         if (facetime.ring) {
@@ -5745,17 +5756,16 @@ class RustPushService extends GetxService {
       }
 
       if (facetime is api.FTMessage_Decline) {
-        if (currentOutgoingCall?.value == facetime.guid) {
-          currentOutgoingCall?.value = "declined";
-
-          outgoingCallTimer?.cancel();
-
-          // destroy webview
-          mcs.invokeMethod("update-call-state", {
-            "callUuid": facetime.guid,
-            "state": "timeout",
+        final outgoingCall = _outgoingCalls.current;
+        if (outgoingCall != null && outgoingCall.id == facetime.guid) {
+          await _outgoingCalls.complete(outgoingCall, () async {
+            outgoingCall.state.value = "declined";
+            // destroy only this call's webview
+            mcs.invokeMethod("update-call-state", {
+              "callUuid": facetime.guid,
+              "state": "timeout",
+            });
           });
-          currentOutgoingCall = null;
         }
       }
 

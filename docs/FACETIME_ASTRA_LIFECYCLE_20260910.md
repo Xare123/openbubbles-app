@@ -3,7 +3,7 @@ type: Investigation
 title: FaceTime explicit-leave lifecycle repair
 description: Isolated candidate restoring intent-scoped native teardown, with offline regression evidence and remaining Android live gates.
 tags: [facetime, android, lifecycle, regression]
-timestamp: 2026-09-10
+timestamp: 2026-09-11
 ---
 
 # Result
@@ -85,7 +85,7 @@ docs/FACETIME_ASTRA_LIFECYCLE_20260910.md
 After the corrective commit, the speculative FaceTime LeaveEvent additions are gone.
 No CloudKit, Find My, login, generated bridge, identity, dependency, or profile
 changes. No pushes, CI dispatches, new agents, native Cargo/full builds, or
-account/device access. No deletions. The only test build artifact is the ignored
+account/device access. No user-data deletions. The initial test build artifact was the ignored
 84,404-byte `build/facetime-host-tests/tests.jar`; dependencies are reused in place.
 C: free space at review was 57.08 GiB, above the size-audit threshold.
 
@@ -113,8 +113,9 @@ obsolete native-terminal positive tests were removed/replaced with a regression
 against speculative teardown. Exact initial-path list above is historical; the
 corrective Git diff records the removals.
 
-Parent must schedule Android Kotlin compilation and the existing FaceTime Flutter
-tests on its approved GCE/CI workflow before integration/device installation.
+Parent must schedule Android Kotlin compilation on its approved GCE/CI workflow
+before integration/device installation. The FaceTime Flutter suite subsequently
+passed locally in the timer follow-up described below.
 Do not dispatch from this worktree or bundle into the current Windows CloudKit run.
 
 ## Real-data limit and smallest remaining live gate
@@ -140,7 +141,7 @@ native LeaveEvent correlation and participant active/total counts, plus app comm
 and WebView version. No URLs, SDP, handles, credentials, media or account DBs.
 The parent coordinates collection; the leased Windows profile is irrelevant.
 
-## Independent timer defect for parent review, not patched here
+## Separate outgoing timer ownership repair, 2026-09-11
 
 In `placeOutgoingCall`, correlation is published before awaiting createFacetime,
 but the 30-second timer is installed afterward without checking that the same call
@@ -148,5 +149,62 @@ is still pending. An immediate JoinEvent can accept the call and cancel no timer
 creation then returns and arms a timer that cancels the accepted session. Its
 callback and asynchronous cleanup also mutate shared `currentOutgoingCall` and
 metadata without checking ownership, potentially clearing a subsequent call.
-Keep this as a separate identity-scoped Dart lifecycle repair with deterministic
-async tests. Its occurrence in the reported live call is not established.
+This is now repaired in a separate identity-scoped Dart commit. Its occurrence in
+the reported live call is still not established.
+
+The production-used `FaceTimeOutgoingLifecycle` owns one ticket per outgoing call:
+immutable ID, its reactive status object, launch metadata and timer. Installation
+requires a still-pending owner; terminal actions claim and cancel before awaiting;
+queued callbacks recheck ownership; finally releases only the identical ticket.
+Creation failure, JoinEvent, decline, timeout and explicit End use that seam.
+Existing accepted/declined/timeout strings, 30-second deadline, signaling calls
+and explicit manual retry remain. Late failure cannot mark an accepted call failed.
+Incoming admission cleanup after launch is also guarded against replacing a newer
+ticket. Duplicate pending setup is ignored rather than orphaning its invitation;
+a manual retry can start while terminal cleanup is in flight. No blind retries.
+
+The first two deterministic seam tests retained the old ordering and failed:
+early acceptance yielded cancellation count 1 instead of 0, and old finally
+changed the new current ticket to null. After repair, ten tests execute the same
+production-used seam with Completers and manually fired timers, including queued
+cancelled callbacks, failed launch/cancel cleanup, duplicate terminal events,
+duplicate setup, same-ID/different-object ownership and idempotent installation.
+This is local async regression evidence, not real-device signaling evidence.
+
+Exact paths changed by the timer commit, relative to this exclusive worktree:
+
+```text
+lib/services/rustpush/face_time_outgoing_lifecycle.dart
+lib/services/rustpush/rustpush_service.dart
+lib/helpers/ui/facetime_helpers.dart
+test/services/facetime/face_time_outgoing_lifecycle_test.dart
+test/services/facetime/face_time_outgoing_start_test.dart
+docs/FACETIME_ASTRA_LIFECYCLE_20260910.md
+```
+
+Final validation command (the existing Flutter installation was invoked through
+its cached flutter_tools snapshot, with no pub or test-asset build):
+
+```powershell
+flutter test --no-pub --no-test-assets --reporter expanded test/services/facetime/face_time_outgoing_start_test.dart test/services/facetime/face_time_incoming_admission_test.dart test/services/facetime/face_time_diagnostics_contract_test.dart test/services/facetime/face_time_log_export_test.dart test/services/facetime/face_time_outgoing_lifecycle_test.dart
+```
+
+Result: **41 passed**, including ten deterministic ownership tests and existing
+incoming-admission, outgoing-start, native-contract and synthetic-log export
+tests. Application sources compile through these targeted Flutter tests. The
+Android Activity itself and real WebView/account flows are not compiled/executed
+by them. Analyzer: zero errors, two preexisting unused-import warnings in the
+helper and 14 info diagnostics, exit 1. The newly unused logger import was removed;
+unrelated warnings were left intact. Scoped diff whitespace check passed.
+
+Only local package-resolution metadata was materialized in this worktree; its
+bluebubbles root points here. Dependencies remain in their existing locations;
+no dependency/cache trees were copied or downloaded. Generated test output is
+about 190 MiB, mostly Dart kernel/test cache. Native-assets manifest is 45 bytes
+with an empty asset map, not a native build. C: had 56.09 GiB free at verification.
+
+Cherry-pick order: initial `9cfd45dee`, mandatory review correction `4bd672cdc`,
+then the separate outgoing ownership commit. Never install the first commit alone.
+Live answer/media/end/repeat-call gates above are unchanged. Remote-hangup
+automatic close remains unresolved and is deliberately not inferred from a
+participant snapshot.

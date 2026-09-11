@@ -10,7 +10,6 @@ import 'package:bluebubbles/services/backend/java_dart_interop/method_channel_se
 import 'package:bluebubbles/services/backend/settings/settings_service.dart';
 import 'package:bluebubbles/services/backend_ui_interop/event_dispatcher.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
-import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:faker/faker.dart' hide Image, Color;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -278,15 +277,7 @@ Future<void> showOutgoingFaceTimeOverlay(RxString callState, String desc, String
                   if (!hasEnded)
                   phoneButton("End", Colors.red, ss.settings.skin.value == Skins.iOS ? CupertinoIcons.phone_down_fill : Icons.call_end, () async {
                       hideFaceTimeOverlay(callUuid, timeout: true);
-                      pushService.outgoingCallTimer?.cancel();
-                      try {
-                        await api.cancelFacetime(facetime: pushService.state!.ftClient, guid: callUuid);
-                      } catch (error, trace) {
-                        Logger.warn("Failed to cancel FaceTime session", error: error, trace: trace);
-                      } finally {
-                        pushService.currentOutgoingCall = null;
-                        pushService.outgoingCallMeta = {};
-                      }
+                      await pushService.endOutgoingFaceTime(callUuid);
                     },),
                 ],),
                 const SizedBox(height: 60,),

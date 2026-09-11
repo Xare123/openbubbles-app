@@ -25,7 +25,10 @@ void main() {
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
     final start = source.indexOf('Future<void> placeOutgoingCall(');
-    final end = source.indexOf('\n  // returns handle to show poster of', start);
+    final end = source.indexOf(
+      '\n  // returns handle to show poster of',
+      start,
+    );
     final method = source.substring(start, end);
 
     expect(method.indexOf('await api.createFacetime('), greaterThan(-1));
@@ -34,7 +37,7 @@ void main() {
       method.indexOf('await api.createFacetime('),
       lessThan(method.indexOf('showOutgoingFaceTimeOverlay(')),
     );
-    expect(method, contains('currentOutgoingCall = null;'));
+    expect(method, contains('await _outgoingCalls.complete(call, () async {'));
     expect(method, contains('faceTimeOutgoingStartFailureMessage(error)'));
   });
 
@@ -43,7 +46,7 @@ void main() {
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
     final timeoutStart = source.indexOf(
-      'outgoingCallTimer = Timer(const Duration(seconds: 30)',
+      '_outgoingCalls.armTimeout(call, () async {',
     );
     final timeoutFinish = source.indexOf('Uint8List? icon;', timeoutStart);
 
@@ -53,8 +56,16 @@ void main() {
     expect(timeoutBlock, contains('await api.cancelFacetime('));
     expect(timeoutBlock, contains('} catch (error, trace) {'));
     expect(timeoutBlock, contains('} finally {'));
-    expect(timeoutBlock, contains('currentOutgoingCall = null;'));
-    expect(timeoutBlock, contains('outgoingCallMeta = {};'));
+    expect(timeoutBlock, contains('call.state.value = "timeout";'));
+    expect(timeoutBlock, contains('"callUuid": outgoingguid'));
+    final lifecycle = File(
+      'lib/services/rustpush/face_time_outgoing_lifecycle.dart',
+    ).readAsStringSync();
+    expect(
+      lifecycle,
+      contains('if (identical(current, call)) _current = null;'),
+    );
+    expect(lifecycle, contains('unawaited(complete(call, action))'));
   });
 
   test('End releases local state even if remote cancellation fails', () {
@@ -62,19 +73,33 @@ void main() {
       'lib/helpers/ui/facetime_helpers.dart',
     ).readAsStringSync();
     final endStart = source.indexOf('phoneButton("End"');
-    final endFinish = source.indexOf(
-      'const SizedBox(height: 60,)',
-      endStart,
-    );
+    final endFinish = source.indexOf('const SizedBox(height: 60,)', endStart);
 
     expect(endStart, greaterThanOrEqualTo(0));
     expect(endFinish, greaterThan(endStart));
     final endBlock = source.substring(endStart, endFinish);
-    expect(endBlock, contains('await api.cancelFacetime('));
-    expect(endBlock, contains('} catch (error, trace) {'));
-    expect(endBlock, contains('} finally {'));
-    expect(endBlock, contains('pushService.currentOutgoingCall = null;'));
-    expect(endBlock, contains('pushService.outgoingCallMeta = {};'));
+    expect(
+      endBlock,
+      contains('await pushService.endOutgoingFaceTime(callUuid)'),
+    );
+    expect(endBlock, isNot(contains('outgoingCallTimer')));
+    final service = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final endMethod = service.substring(
+      service.indexOf('Future<void> endOutgoingFaceTime('),
+      service.indexOf('Future<void> placeOutgoingCall('),
+    );
+    expect(
+      endMethod,
+      contains('if (call == null || call.id != callUuid) return;'),
+    );
+    expect(
+      endMethod,
+      contains('await _outgoingCalls.complete(call, () async {'),
+    );
+    expect(endMethod, contains('await api.cancelFacetime('));
+    expect(endMethod, contains('} catch (error, trace) {'));
   });
 
   test('Call Again is an explicit manual retry after dismissing stale UI', () {
@@ -100,7 +125,10 @@ void main() {
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
     final start = source.indexOf('Future<void> placeOutgoingCall(');
-    final finish = source.indexOf('\n  // returns handle to show poster of', start);
+    final finish = source.indexOf(
+      '\n  // returns handle to show poster of',
+      start,
+    );
     final method = source.substring(start, finish);
     final catchStart = method.indexOf('} catch (error, trace) {');
     final catchFinish = method.indexOf(
@@ -111,10 +139,45 @@ void main() {
     expect(catchStart, greaterThanOrEqualTo(0));
     expect(catchFinish, greaterThan(catchStart));
     final catchBlock = method.substring(catchStart, catchFinish);
-    expect(catchBlock, contains('currentOutgoingCall = null;'));
-    expect(catchBlock, contains('outgoingCallMeta = {};'));
+    expect(
+      catchBlock,
+      contains('await _outgoingCalls.complete(call, () async {'),
+    );
     expect(catchBlock, contains('return;'));
     expect(catchBlock, isNot(contains('placeOutgoingCall(')));
     expect(catchBlock, isNot(contains('showOutgoingFaceTimeOverlay(')));
   });
+
+  test(
+    'production setup, JoinEvent and decline all use the tested identity seam',
+    () {
+      final source = File(
+        'lib/services/rustpush/rustpush_service.dart',
+      ).readAsStringSync();
+      final start = source.indexOf('Future<void> placeOutgoingCall(');
+      final finish = source.indexOf(
+        '// returns handle to show poster of',
+        start,
+      );
+      final setup = source.substring(start, finish);
+      expect(
+        setup.indexOf('_outgoingCalls.begin('),
+        lessThan(setup.indexOf('await api.getFtLink(')),
+      );
+      expect(
+        setup.indexOf('if (!_outgoingCalls.isPending(call)) return;'),
+        lessThan(setup.indexOf('await api.createFacetime(')),
+      );
+      expect(setup, contains('if (_outgoingCalls.isPending(call)) {'));
+      expect(
+        source,
+        contains('await _outgoingCalls.complete(outgoingCall, () async {'),
+      );
+      expect(source, contains('outgoingCall.state.value = "accepted";'));
+      expect(source, contains('outgoingCall.state.value = "declined";'));
+      expect(source, contains('"launch-facetime", outgoingCall.metadata'));
+      expect(source, isNot(contains('currentOutgoingCall = null;')));
+      expect(source, isNot(contains('outgoingCallMeta = {}')));
+    },
+  );
 }
