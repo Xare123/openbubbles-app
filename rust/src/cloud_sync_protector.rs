@@ -138,6 +138,7 @@ impl CloudSyncProtectionContext {
                     | "resetProof"
                     | "serverRecordId"
                     | "outboundMessage"
+                    | "outboundMessageUpdate"
                     | "outboundChat"
                     | "outboundAttachment"
                     | "outboundAttachmentUpload"

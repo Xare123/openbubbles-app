@@ -19,7 +19,9 @@ use crate::cloud_sync_native_fetch::{
 use crate::cloud_sync_outbound::CloudSyncOutboundFailure as Failure;
 
 const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
-const MAX_ENVELOPE_BYTES: usize = 12 * 1024 * 1024;
+// Envelope base64 plus the protector's outer base64 must fit its 18 MiB file
+// limit. Keep room for the authenticated context, cipher overhead and lease.
+const MAX_ENVELOPE_BYTES: usize = 9 * 1024 * 1024;
 const MAX_FIELDS: usize = 4096;
 
 // Content-free exact context. Hashes must come from the native-validated
