@@ -9,6 +9,7 @@ import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
 import 'package:bluebubbles/app/layouts/findmy/findmy_location_clipper.dart';
 import 'package:bluebubbles/app/layouts/findmy/findmy_pin_clipper.dart';
 import 'package:bluebubbles/app/layouts/findmy/findmy_refresh.dart';
+import 'package:bluebubbles/app/layouts/findmy/findmy_diagnostics.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dart';
 import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
@@ -141,6 +142,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   bool currentLocationRequestInFlight = false;
   final _peopleRefresh = FindMyPeopleRefreshState<api.Follow, FindMyFriend>([]);
   final _peopleSelection = FindMySelectionIntent();
+  final _findMyDiagnostics = FindMyDiagnostics();
   final _devicesRefresh = FindMyRefreshState<List<FindMyDevice>>([]);
   final _itemsRefresh = FindMyRefreshState<List<api.DartBeacon>>([]);
   Completer<void>? fmipRequest;
@@ -509,8 +511,12 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   }
 
   Future<bool> requestPeople({required bool refreshFriends, required bool force, bool selection = false, String? selectedFriend}) {
+    var diagnosticPhase = selection ? FindMyDiagnosticPhase.selected : FindMyDiagnosticPhase.cached;
     return _peopleRefresh.refreshAndPublish(fetch: () async {
       var isNew = fmfClient == null;
+      diagnosticPhase = selection ? FindMyDiagnosticPhase.selected
+          : isNew ? FindMyDiagnosticPhase.init
+          : refreshFriends ? FindMyDiagnosticPhase.refresh : FindMyDiagnosticPhase.cached;
       fmfClient ??= await api.makeFindMyFriends(
         path: pushService.statePath,
         config: pushService.state!.osConfig,
@@ -551,18 +557,20 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           });
     }, force: force, isActive: () => mounted, publish: publishPeople,
     onSuccess: (rows, projected) {
-      final selected = selectedFriend == null ? null : rows.firstWhereOrNull((row) => row.id == selectedFriend);
-      Logger.info(findMyPeopleSummary(
-        selection: selection,
-        roster: rows.length,
-        nativeLocations: rows.where((row) => row.lastLocation != null).length,
-        projectedLocations: projected.where((row) => hasFindMyLocation(row.latitude, row.longitude)).length,
-        locating: rows.where((row) => row.locateInProgress).length,
-        selectedPresent: selection && selectedFriend != null ? selected != null : null,
-        selectedHasLocation: selection && selectedFriend != null ? selected?.lastLocation != null : null,
-      ));
-    }, onFailure: (stage, error) {
-      Logger.info('Find My People source=${selection ? 'selection' : 'poll'} failed stage=$stage type=${error.runtimeType}');
+      _findMyDiagnostics.people<api.Follow, FindMyFriend>(
+        phase: diagnosticPhase, rows: rows, projected: projected,
+        hasNativeLocation: (row) => row.lastLocation != null,
+        hasProjectedLocation: (row) => hasFindMyLocation(row.latitude, row.longitude),
+        isLocating: (row) => row.locateInProgress,
+        isSelected: selection && selectedFriend != null ? (row) => row.id == selectedFriend : null,
+        emit: (message) => Logger.info(message),
+      );
+    }, onFailure: (stage, _) {
+      _findMyDiagnostics.failure(
+        phase: diagnosticPhase,
+        stage: stage == 'projection' ? FindMyDiagnosticStage.projection : FindMyDiagnosticStage.fetch,
+        emit: (message) => Logger.info(message),
+      );
     });
   }
 
@@ -675,9 +683,22 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
 
   Future<void> refreshItems({required bool force}) async {
     final updated = await _itemsRefresh.refresh(() async {
-      isInClique = await api.isInClique(keychain: pushService.state!.icloudServices!.keychain!);
-      if (!isInClique) throw StateError("Find My Items keychain unavailable");
-      return api.getBeaconItems(items: pushService.state!.icloudServices!.fmfd!);
+      try {
+        isInClique = await api.isInClique(keychain: pushService.state!.icloudServices!.keychain!);
+        if (!isInClique) throw StateError("Find My Items keychain unavailable");
+        final beacons = await api.getBeaconItems(items: pushService.state!.icloudServices!.fmfd!);
+        _findMyDiagnostics.items(
+          stage: FindMyItemsStage.beacons, outcome: FindMyItemsOutcome.succeeded,
+          beacons: () => beacons.length, emit: (message) => Logger.info(message),
+        );
+        return beacons;
+      } catch (_) {
+        _findMyDiagnostics.items(
+          stage: FindMyItemsStage.beacons, outcome: FindMyItemsOutcome.failed,
+          emit: (message) => Logger.info(message),
+        );
+        rethrow;
+      }
     }, force: force, maxAge: const Duration(minutes: 3));
     if (!mounted) return;
     publishDevicesAndItems();
@@ -842,6 +863,13 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         fetching = _devicesRefresh.error != null ? null : _devicesRefresh.lastSuccessAt == null;
         refreshing = _devicesRefresh.loading || _itemsRefresh.loading;
       });
+      _findMyDiagnostics.items(
+        stage: FindMyItemsStage.publish, outcome: FindMyItemsOutcome.succeeded,
+        beacons: () => cachedBeacons.length,
+        uiItems: () => this.devices.length - _devicesRefresh.value.length,
+        uiTotal: () => this.devices.length,
+        emit: (message) => Logger.info(message),
+      );
     
 
     // // Call the FindMy Friends refresh anyways so that new data comes through the socket
