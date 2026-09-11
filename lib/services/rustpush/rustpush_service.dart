@@ -9216,11 +9216,10 @@ class RustPushService extends GetxService {
       _cloudSyncV2SemanticPullInFlight = future;
       try {
         final result = await future;
-        return result.remoteDrained &&
-                result.projectionComplete &&
-                result.retainedSaveProjectionComplete
-            ? CloudSyncAndroidBackgroundOutcome.complete
-            : CloudSyncAndroidBackgroundOutcome.retry;
+        return CloudSyncAndroidBackgroundPolicy.classifyReadResult(
+          remoteDrained: result.remoteDrained,
+          report: result.lastReport,
+        );
       } finally {
         if (identical(_cloudSyncV2SemanticPullInFlight, future)) {
           _cloudSyncV2SemanticPullInFlight = null;
@@ -9391,6 +9390,9 @@ class RustPushService extends GetxService {
         sampler: adapter.sampler,
         reportWriter: reportWriter,
         maximumPasses: maximumPasses,
+        // A metadata wake must not redo a many-minute exhaustive repair of
+        // unchanged retained history. Explicit user catch-up keeps that sweep.
+        sweepRetainedAtHead: !allowAndroidBackgroundIsolate,
       );
       try {
         final result = await controller.drainConfirmedAndPersist(

@@ -77,6 +77,7 @@ final class CloudSyncSemanticDrainController {
     required CloudSyncManualSemanticPullSampler sampler,
     required CloudSyncSemanticPullReportFileWriter reportWriter,
     int maximumPasses = defaultMaximumPasses,
+    bool sweepRetainedAtHead = true,
   }) {
     return CloudSyncSemanticDrainController(
       persistReport: reportWriter.write,
@@ -85,6 +86,7 @@ final class CloudSyncSemanticDrainController {
       runCatchUp: () => sampler.runConfirmedCatchUpAndPersist(
         persistReport: reportWriter.write,
         maximumRemotePasses: maximumPasses,
+        sweepRetainedAtHead: sweepRetainedAtHead,
       ),
       cancelCatchUp: sampler.cancelActiveCatchUp,
     );

@@ -2156,3 +2156,58 @@ This is a chronological evidence log. It does not override the
   No location restoration is claimed. Worker closed and verified `not_found`;
   no dedicated worktree or disposable artifact was created. Transcript deletion
   remains unsupported, and required source/evidence stays retained.
+
+### September 11, no-progress sweep and bounded background metadata
+
+- Pixel final report `obcs2-semantic-1789120061809426` completed at
+  09:47:41.809426Z on installed `f860966d5`. The content-free preserved copy is
+  `build-evidence/pixel-f860966d5/semantic-projection-0947.json`. Chats retained
+  476 rows (395 out of scope, 81 tombstones), with no blocking save. Messages
+  examined 1,893 blocking saves in 60 batches/631,219 ms; Attachments examined
+  1,694 in 53 batches/632,899 ms. Neither zone applied a record. Their total
+  retained inventories were 7,820 and 1,813 respectively. Both remain degraded,
+  not lost or successfully restored. Saves/deletes stayed off, outbox `0 -> 0`.
+- A later metadata read began after the foreground sweep. Source review found
+  that the Android background path reused exhaustive head repair and required
+  full retained projection completion before marking a metadata wake complete.
+  This could repeatedly redo unchanged history without making forward progress.
+  The small patch makes only background metadata omit the exhaustive sweep.
+  Normal reads still fetch/project and perform bounded retained work; explicit
+  foreground catch-up keeps its full sweep. A safe empty-terminal three-zone
+  read may complete that wake while retaining and reporting unresolved history.
+  Unsafe reports, changed outboxes, authorization failures and nonterminal reads
+  still retry. No write, cursor reset, evidence deletion or relaxed identity gate.
+- Qualification: 129 tests passed across the manual sampler, semantic drain,
+  Android background policy/composition and production composition suites.
+  The added two-wake regression preserves the same retained rows, avoids the
+  exhaustive callback, and balances native pause/resume. Targeted analysis of
+  seven changed files found no issues. This is local Dart proof only, not an
+  installed repair, native qualification or a measured runtime speedup.
+
+### September 11, approved registration repair and sidecar review
+
+- Used the normal Canary Profile repair action once, with the user's existing
+  approval. The repair cooperatively quiesced CloudKit and reopened setup.
+  It intentionally resets rejected IDS registration through the supported
+  `reset_state(reset_hw: false, logout: false)` path. No manual credential,
+  cursor, database or hardware deletion occurred. ObjectBox, CloudKit, keychain
+  and existing iPhone relay identity remain; Alpha was not changed.
+- Reused the saved account once through ordinary setup. The UI returned
+  `Phone Number validation failed, please re-authenticate!` and cleared stale
+  cached SMS authentication through its existing handler. That handler rewrites
+  any 6005 while phone users exist, so the text does not prove which upstream
+  authentication stage failed. Normal phone-number validation is pending;
+  no email-only downgrade, new SIM activation, outbound qualification-07 send,
+  CloudKit upload or delivery is claimed. Do not loop reset or replay old tests.
+- Reviewed and accepted Carver's bounded IDS diagnosis, closed it and verified
+  `not_found`. No dedicated disposable worktree/logs existed; supported session
+  deletion is unavailable. Singer remains active on required Find My work.
+  Singer's upstream comparison found no proved regression in People models,
+  exact-ID joins, authentication headers or AirTag inventory requests. The
+  missing Items diagnostic stage is being added without changing auth, polling
+  or writer-permit behavior. No real-account location restoration is claimed.
+- Singer's earlier FaceTime remote-target guard is reviewed, with three parent
+  JS source-contract tests passing and seven native cases still uncompiled.
+  Both sidecar patches remain separate uncommitted work for the next reviewed
+  native qualification bundle. No new APK, cloud run or upstream PR was created.
+  C: has about 46.4 GiB free; no evidence or agent artifacts were deleted.

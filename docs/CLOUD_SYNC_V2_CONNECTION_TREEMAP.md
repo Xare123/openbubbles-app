@@ -55,7 +55,8 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| Installed Android candidate | Signed `f860966d53b6019b46f1437312e67662724f08ce`, installed in place September 11 at 09:14:53Z. Live reports verify that build. Two reads reached the remote head with saves/deletes off and outbox `0 -> 0`; retained local projection is still running. Normal composer qualification-07 is unsent: recipient validation reports IDS registration 6005. Repair only after read quiescence, preserving the draft, account and CloudKit state. Alpha package/version/install/update baseline remains unchanged. |
+| Installed Android candidate | Signed `f860966d53b6019b46f1437312e67662724f08ce`, installed September 11 at 09:14:53Z and runtime-verified. Two reads reached the remote head with saves/deletes off and outbox `0 -> 0`. The final local sweep examined 3,587 blocking saves, applied zero, and completed partial at 09:47:41Z. Qualification-07 remains unsent after IDS 6005. Approved registration repair quiesced reads and preserved chats, hardware and CloudKit state; saved-account reuse returned phone-number validation failure. Await normal validation, not another reset. Alpha is untouched. |
+| Next source patch | Routine Android metadata wakes omit the exhaustive retained-history sweep and may finish a safe terminal read while still reporting projection debt. Foreground/manual deep repair is unchanged. 129 focused Dart tests and targeted analysis pass; this patch is not installed or exact-source cloud-qualified yet. |
 | Windows candidate | Writer overlay `3984f810501b` preserves signed native `62221f9c2` and adds request-v5 standard reactions. Like-05 and remove-like-06 each passed positive IDS confirmation, one admission, exact persisted readback, then a separate-process zero-admission restart. Read-only overlay `f90226831` passed two cold three-zone reads, second fetch empty, outbox `6 -> 6`, saves/deletes off. Retained writer `46bc6f027` passed image-04 parent admission and no-op restart. All prior requests, claims and runtimes remain protected evidence. |
 | Current full qualification | GCE `34579830953` passed every selected build/test gate, APK/native verification, Android JVM tests, trusted signing and cleanup on `f860966d5`, including cold-start fix `b432b9e8a`. T2D 60; writer on, automatic uploads off. Signed artifact `10192048724` was downloaded and signature-verified before the in-place Pixel install. Prior `34576684370` also passed on `5e9a532be`. Neither APK includes the later Windows-only reaction harness. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
@@ -177,16 +178,16 @@ cloud budget is $200 through September 15; Apple credentials and message stores
 remain local. [Build runbook](WINDOWS_HOST_BUILD_ENVIRONMENT.md) contains setup
 and import boundaries; the investigation log retains failed-run evidence.
 
-Installed Canary remains the result of full signed GCE run `34444190598`, app source
+Historical installed Canary came from full signed GCE run `34444190598`, app source
 `3dc614c9eced02b49f130a2752ce531d9e6aec7a` (code `e060bcb41`): build,
 GitHub-hosted signing, and cleanup jobs all succeeded. The signature-verified
 APK was installed in place on Canary at 2026-09-09 23:43:18 Pacific; Alpha's
 package snapshot and Canary's UID/data directory/first-install time were
 preserved. Host preflight verifies artifact identity, not the running Dart
-build: `sourceCommitDeviceVerified` remains false. The manual write harness
-still needs its runtime-mode check resolved before a controlled remote save.
+build: that earlier observation left `sourceCommitDeviceVerified` false. The
+current signed `f860966d5` installation and runtime proof supersede this baseline.
 
-Latest live observation, 2026-09-10 05:43-05:50 Pacific: two user-triggered
+Earlier live observation, 2026-09-10 05:43-05:50 Pacific: two user-triggered
 plaintext sends received native confirmations which were journaled. The test
 conversation rendered the edited message and the subsequent unsend notice.
 This qualifies that local live-send/UI boundary only. No exact CloudKit
@@ -255,12 +256,12 @@ evidence paths. Causal edit/unsend writes remain a gap, not a passed gate.
 | Restored-group plaintext create | `SOURCE-IMPLEMENTED` and exact-source qualified | Perform one authorized live group test with pinned route/binding plus exact readback/restart proof. Provisional group creation remains closed. |
 | Write-send provenance | `SOURCE-IMPLEMENTED` | Native positive-acceptance tests pass. Qualify the additive persisted-proof upgrade and dispatch/reconciliation tests. Old deferred/ready intents cannot promote or enter fresh admission without new proof; old adopted pending entries are retained and skipped for new leases. Submission rechecks proof. Exact readback remains allowed and does not retroactively prove IDS acceptance. A fresh v2 native confirmation can requalify the exact unchanged old source without resending it. Automatic uploads remain off pending execution and live proof. |
 | Retained writer queue usability | `TEST-PROVEN` | One journal-bound, read-only classifier covers queue drain, queued Chat observation, and preflight. It exempts only pristine pending creates with proof version 0, exact protected envelope/mapping, current owner/generation, no lease, attempt, Apple UUID or receipt. All rows remain counted and fingerprinted; no upload, acknowledgement, deletion, or proof upgrade occurs. GCE passed the real consumer/admission/store regression with a fresh qualified send beside retained work and reopen without duplicate submission. Apple responses are synthetic in this test; live proof remains. Unknown/retried/leased/malformed rows still block. |
-| Direct reactions | `TEST-PROVEN` | Live Apple save/readback and independent-reader display remain. |
+| Direct reactions | `LIVE-PROVEN` for bounded Windows like-05/remove-like-06 | Positive IDS confirmation, one admission, exact persisted readback and separate-process zero-admission restarts passed. Ordinary Pixel composition and independent Apple-device display remain. |
 | Edits and unsends | `GAP` | Require distinct causal mutation and anti-resurrection contracts. |
 | Attachment writes | `LIVE-PROVEN` for bounded Windows image 04 admission/readback recovery | Source-bound upload, child readback, parent admission and no-op restart passed overlay `46bc6f027`. Independent recipient/second-client rendering, ordinary Pixel composer convergence, group attachment proof and exact-source Android qualification remain. Upload receipt alone is not record-save proof. |
 | Tombstones and deletion | Closed | Define exact ownership and recoverable semantics before enabling any local or remote delete. |
 | Token expiry | `TEST-PROVEN` | Live expired-token/restart proof remains. The exact-source path requires an authenticated protected reset proof, releases the semantic read boundary, reacquires the destructive-reset interlock and native pause, advances once, reconciles authority after process death, and replays once. |
-| Android background catch-up | `IN REPAIR` | The prior native `ready` handler resumed Kotlin without replying to the Dart call that startup awaited. Current repair acknowledges it, pins each engine until Dart replies, serializes dispatch/disposal on Main, and requests cooperative read cancellation after five minutes. All 89 Android JVM tests and 32 focused Dart tests pass; exact-source APK and Pixel lifecycle proof remain. |
+| Android background catch-up | `IN REPAIR` | The ready-handshake/lifecycle repair is qualified in installed `f860966d5`. Live evidence then exposed a no-progress exhaustive projection sweep. The next patch keeps routine metadata bounded, avoids retrying solely for retained projection debt, and preserves deep repair, scope/reset/cancellation gates and truthful partial reports. 129 focused tests pass; combined exact-source qualification and Pixel lifecycle proof remain. |
 | SMS, MMS, and RCS | Out of scope | Do not add them to this CloudKit V2 release path. |
 
 ## Safety gates

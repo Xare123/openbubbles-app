@@ -251,10 +251,14 @@ final class CloudSyncManualSemanticPullSampler {
   /// revalidates the captured account, checkpoints and settled outbox. Queued
   /// media may run between windows. A head proof is not a native permission.
   /// The sweep never constructs transport or calls CloudSyncEngine.synchronize.
+  /// Routine background wakes may omit that exhaustive repair. Their normal
+  /// read passes still apply fetched records and bounded retained work; the
+  /// persisted remote report continues to expose any unresolved local backlog.
   Future<CloudSyncConfirmedCatchUpResult> runConfirmedCatchUpAndPersist({
     required CloudSyncSemanticSessionReportPersist persistReport,
     int maximumRemotePasses = maximumConfirmedRemotePasses,
     int projectionBatchSize = retainedProjectionSweepBatchSize,
+    bool sweepRetainedAtHead = true,
   }) async {
     if (maximumRemotePasses < 1 ||
         maximumRemotePasses > maximumConfirmedRemotePasses) {
@@ -297,7 +301,7 @@ final class CloudSyncManualSemanticPullSampler {
             );
           }, cancellationToken: cancellationToken);
           _throwIfCancelled(cancellationToken);
-          final projection = proof == null
+          final projection = proof == null || !sweepRetainedAtHead
               ? null
               : await _sweepRetainedSavesAtHead(
                   proof: proof,

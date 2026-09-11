@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:crypto/crypto.dart';
 
+import 'cloud_sync_semantic_pull_report.dart';
+
 /// Wire outcomes understood by Android's bounded WorkManager adapter.
 ///
 /// These values intentionally carry no account, record, chat, or error data.
@@ -41,6 +43,20 @@ abstract final class CloudSyncAndroidBackgroundPolicy {
       value is String && _scopeHashPattern.hasMatch(value);
 
   static bool isSupportedWorkKind(Object? value) => value == metadataWorkKind;
+
+  /// Completes this metadata wake, not the user's entire history restoration.
+  /// A terminal, safe read with retained projection debt is not a transport
+  /// failure. Immediate retries cannot repair unchanged unsupported records.
+  /// Keep the debt in the report/store for later reads or explicit deep repair.
+  static CloudSyncAndroidBackgroundOutcome classifyReadResult({
+    required bool remoteDrained,
+    required CloudSyncSemanticPullReport report,
+  }) =>
+      remoteDrained &&
+          report.safeToContinueDrain &&
+          report.allZonesObservedEmptyTerminalRead
+      ? CloudSyncAndroidBackgroundOutcome.complete
+      : CloudSyncAndroidBackgroundOutcome.retry;
 
   /// Identity/gate replacement is terminal for this durable wake. Everything
   /// else is retried only within Android's bounded attempt budget.

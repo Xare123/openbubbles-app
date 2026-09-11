@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_android_background.dart';
+
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
@@ -12,6 +14,60 @@ import 'package:fake_async/fake_async.dart';
 import 'package:universal_io/io.dart';
 
 void main() {
+  test(
+    'background wake completion does not claim retained history is repaired',
+    () {
+      final partial = report(
+        terminalEmpty: true,
+        retainedUnprojected: 3587,
+        blockingRetainedSaves: 3587,
+        status: CloudSyncRunStatus.degraded,
+        failureCategory: CloudFailureCategory.dependency,
+        failureSafeCode: 'retained_projection_incomplete',
+      );
+      expect(partial.projectionComplete, isFalse);
+      expect(partial.retainedSaveProjectionComplete, isFalse);
+      expect(
+        CloudSyncAndroidBackgroundPolicy.classifyReadResult(
+          remoteDrained: true,
+          report: partial,
+        ),
+        CloudSyncAndroidBackgroundOutcome.complete,
+      );
+      expect(
+        CloudSyncAndroidBackgroundPolicy.classifyReadResult(
+          remoteDrained: false,
+          report: partial,
+        ),
+        CloudSyncAndroidBackgroundOutcome.retry,
+      );
+    },
+  );
+
+  test(
+    'background completion still requires a safe terminal three-zone read',
+    () {
+      for (final incomplete in [
+        report(),
+        report(terminalEmpty: true, status: CloudSyncRunStatus.degraded,
+          failureCategory: CloudFailureCategory.dependency),
+        report(terminalEmpty: true, outboxAfter: 1),
+        report(
+          terminalEmpty: true,
+          status: CloudSyncRunStatus.failed,
+          failureCategory: CloudFailureCategory.authorization,
+        ),
+      ]) {
+        expect(
+          CloudSyncAndroidBackgroundPolicy.classifyReadResult(
+            remoteDrained: true,
+            report: incomplete,
+          ),
+          CloudSyncAndroidBackgroundOutcome.retry,
+        );
+      }
+    },
+  );
   test(
     'background budget cancels admission but awaits protected quiescence',
     () {
@@ -688,6 +744,7 @@ CloudSyncSemanticPullReport report({
   bool terminalEmpty = false,
   int fetched = 0,
   int retainedUnprojected = 0,
+  int? blockingRetainedSaves,
   int outboxAfter = 0,
   CloudSyncRunStatus status = CloudSyncRunStatus.completed,
   CloudFailureCategory? failureCategory,
@@ -728,7 +785,11 @@ CloudSyncSemanticPullReport report({
           retried: retried,
           elapsedMilliseconds: 1,
           observedEmptyTerminalRead: terminalEmpty,
-          diagnosticCounts: const {'retained_backlog_summary_ready': 1},
+          diagnosticCounts: {
+            'retained_backlog_summary_ready': 1,
+            if (blockingRetainedSaves != null)
+              'retained_backlog_blocking_saves': blockingRetainedSaves,
+          },
           failureCategory: failureCategory,
           failureSafeCode: failureSafeCode,
         ),

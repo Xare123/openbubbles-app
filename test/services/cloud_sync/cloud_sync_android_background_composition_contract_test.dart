@@ -3,19 +3,22 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('Android registration is Canary-only and persists only a scope hash', () {
-    final source = File(
-      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/'
-      'rustpush/CloudSyncV2WorkRegistration.kt',
-    ).readAsStringSync();
+  test(
+    'Android registration is Canary-only and persists only a scope hash',
+    () {
+      final source = File(
+        'android/app/src/main/kotlin/com/bluebubbles/messaging/services/'
+        'rustpush/CloudSyncV2WorkRegistration.kt',
+      ).readAsStringSync();
 
-    expect(source, contains('com.bluebubbles.messaging.cloudkitcanary'));
-    expect(source, contains('scope_hash'));
-    expect(source, contains(r'^[a-f0-9]{64}$'));
-    expect(source, isNot(contains('accountFingerprint')));
-    expect(source, isNot(contains('messageGuid')));
-    expect(source, isNot(contains('chatGuid')));
-  });
+      expect(source, contains('com.bluebubbles.messaging.cloudkitcanary'));
+      expect(source, contains('scope_hash'));
+      expect(source, contains(r'^[a-f0-9]{64}$'));
+      expect(source, isNot(contains('accountFingerprint')));
+      expect(source, isNot(contains('messageGuid')));
+      expect(source, isNot(contains('chatGuid')));
+    },
+  );
 
   test('worker accepts one metadata wake and has a bounded retry budget', () {
     final worker = File(
@@ -42,19 +45,14 @@ void main() {
 
     expect(source, contains('suspendCancellableCoroutine<Unit>'));
     expect(source, contains('RESULT_ENGINE_READY_TIMEOUT_MILLIS'));
-    expect(
-      source,
-      contains('withTimeout(RESULT_ENGINE_READY_TIMEOUT_MILLIS)'),
-    );
+    expect(source, contains('withTimeout(RESULT_ENGINE_READY_TIMEOUT_MILLIS)'));
   });
 
   test('Dart wake revalidates scope and never queues outbound work', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
-    final start = source.indexOf(
-      'runCloudSyncV2AndroidBackgroundReadOnly',
-    );
+    final start = source.indexOf('runCloudSyncV2AndroidBackgroundReadOnly');
     final end = source.indexOf(
       '_runCloudSyncV2AutomaticSemanticCatchUp',
       start,
@@ -66,8 +64,29 @@ void main() {
     expect(wake, contains('_cloudSyncV2AndroidBackgroundScopeHash'));
     expect(wake, contains('cloud_sync_android_background_scope_mismatch'));
     expect(wake, contains('allowAndroidBackgroundIsolate: true'));
+    expect(
+      wake,
+      contains('CloudSyncAndroidBackgroundPolicy.classifyReadResult('),
+    );
+    expect(wake, isNot(contains('result.projectionComplete')));
     expect(wake, isNot(contains('_queueCloudSyncV2LocalSends(')));
     expect(wake, isNot(contains('runCloudSyncV2Outbound')));
+  });
+
+  test('only background metadata omits exhaustive retained repair', () {
+    final service = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final controller = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart',
+    ).readAsStringSync();
+    expect(
+      service,
+      contains('sweepRetainedAtHead: !allowAndroidBackgroundIsolate'),
+    );
+    expect(controller, contains('bool sweepRetainedAtHead = true'));
+    expect(controller, contains('sweepRetainedAtHead: sweepRetainedAtHead'));
+    expect(controller, contains('cancelCatchUp: sampler.cancelActiveCatchUp'));
   });
 
   test('headless dispatch waits for the complete service graph', () {
@@ -83,24 +102,23 @@ void main() {
     expect(startup, contains('_isolateServicesReady.complete()'));
   });
 
-  test('headless APNs completion may enqueue only the registered metadata wake',
-      () {
-    final source = File(
-      'lib/services/rustpush/rustpush_service.dart',
-    ).readAsStringSync();
-    final start = source.indexOf(
-      'Future<void> enqueueCloudSyncV2AndroidBackgroundReadHint',
-    );
-    final end = source.indexOf(
-      '_queueCloudSyncV2LocalSends',
-      start,
-    );
-    expect(start, greaterThanOrEqualTo(0));
-    expect(end, greaterThan(start));
-    final hint = source.substring(start, end);
+  test(
+    'headless APNs completion may enqueue only the registered metadata wake',
+    () {
+      final source = File(
+        'lib/services/rustpush/rustpush_service.dart',
+      ).readAsStringSync();
+      final start = source.indexOf(
+        'Future<void> enqueueCloudSyncV2AndroidBackgroundReadHint',
+      );
+      final end = source.indexOf('_queueCloudSyncV2LocalSends', start);
+      expect(start, greaterThanOrEqualTo(0));
+      expect(end, greaterThan(start));
+      final hint = source.substring(start, end);
 
-    expect(hint, contains('!ls.isUiThread && mcs.background'));
-    expect(hint, contains("'kind': 'METADATA'"));
-    expect(hint, isNot(contains('_queueCloudSyncV2LocalSends(')));
-  });
+      expect(hint, contains('!ls.isUiThread && mcs.background'));
+      expect(hint, contains("'kind': 'METADATA'"));
+      expect(hint, isNot(contains('_queueCloudSyncV2LocalSends(')));
+    },
+  );
 }

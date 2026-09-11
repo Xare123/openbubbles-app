@@ -761,6 +761,64 @@ void main() {
     },
   );
 
+  test(
+    'metadata catch-up preserves debt without an exhaustive head sweep',
+    () async {
+      final stores = <String, InMemoryCloudSyncStore>{
+        for (final zone in CloudSyncManualSemanticPullSampler.zones)
+          zone: InMemoryCloudSyncStore(),
+      };
+      final scope = _semanticScope('chatManateeZone');
+      await _seedRetainedSaves(stores[scope.zone]!, scope, count: 2);
+      final events = <String>[];
+      final pause = _RecordingNativeWriterPause(events: events);
+      var transportCalls = 0;
+      final reports = <CloudSyncSemanticPullReport>[];
+      final sampler = _catchUpSampler(
+        privateStorageDirectory: privateStorageDirectory,
+        stores: stores,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: pause,
+        onCreateRawTransport: (_) => transportCalls++,
+        onReprojectWindow: (_, __, ___, ____, _____, ______) async =>
+            throw StateError('background must not sweep all retained history'),
+      );
+
+      // A second metadata wake must remain bounded and must not convert debt
+      // into completion or remove it merely because the server is still empty.
+      for (var wake = 0; wake < 2; wake++) {
+        final result = await sampler.runConfirmedCatchUpAndPersist(
+          sweepRetainedAtHead: false,
+          persistReport: (report) async {
+            reports.add(report);
+            return 'metadata-report-$wake';
+          },
+        );
+        expect(result.remoteDrained, isTrue);
+        expect(result.projectionReport, isNull);
+        expect(result.retainedSaveProjectionComplete, isFalse);
+        expect(result.latestReport.hasRetainedSaveBacklog, isTrue);
+        expect(result.latestReport.safeToContinueDrain, isTrue);
+        expect(result.latestReportReference, 'metadata-report-$wake');
+        expect(
+          await stores[scope.zone]!.readRetainedUnprojectedInboxCount(scope),
+          2,
+        );
+        expect(sampler.isActive, isFalse);
+      }
+      expect(reports.length, 2);
+      expect(
+        reports.every(
+          (r) => r.mode == CloudSyncSemanticReportMode.readOnlyCloudKit,
+        ),
+        isTrue,
+      );
+      expect(transportCalls, 6);
+      expect(pause.pauseCalls, 2);
+      expect(pause.resumeCalls, 2);
+    },
+  );
+
   for (final chainLength in [2, 5]) {
     test(
       'local sweep resolves late parents with bounded rounds ($chainLength)',
