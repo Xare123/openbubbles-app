@@ -438,6 +438,9 @@ pub struct CloudSyncNativeSendReceipt {
     pub guid_hash: String,
     pub native_session_id: String,
     pub source_binding: Option<CloudSyncNativeSendSourceBinding>,
+    /// Actual native-validated mutation wire time, never receipt arrival time.
+    /// Historical receipts remain valid delivery evidence with unknown time.
+    pub prepared_sent_timestamp_ms: Option<u64>,
 }
 
 pub struct CloudSyncNativeSendReceiptPage {
@@ -457,9 +460,17 @@ fn cloud_sync_local_send_guid_hash(stable_guid: &str) -> String {
 fn persist_cloud_sync_native_send_receipt(
     context: CloudSyncNativeSendReceiptContext,
     stable_guid: &str,
+    prepared_sent_timestamp_ms: Option<u64>,
 ) -> anyhow::Result<CloudSyncNativeSendReceipt> {
     if cloud_sync_local_send_guid_hash(stable_guid) != context.guid_hash {
         return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
+    }
+    let mutation = context.source_binding.as_ref().is_some_and(|source|
+        source.kind == Some(CloudSyncNativeSendSourceKind::Mutation));
+    if mutation != prepared_sent_timestamp_ms.is_some()
+        || prepared_sent_timestamp_ms.is_some_and(|time| time == 0 || time > i64::MAX as u64)
+    {
+        return Err(anyhow!("cloud_sync_native_mutation_prepared_time_invalid"));
     }
     let receipt = crate::cloud_sync_native_fetch::cloud_sync_persist_ids_send_receipt(
         PathBuf::from(context.storage_directory),
@@ -469,6 +480,7 @@ fn persist_cloud_sync_native_send_receipt(
             protected_store_identity: context.protected_store_identity,
             native_session_id: context.native_session_id,
             source_binding: context.source_binding.map(Into::into),
+            prepared_sent_timestamp_ms,
         },
     )
     .map_err(|_| anyhow!("cloud_sync_native_send_receipt_persist_failed"))?;
@@ -477,6 +489,7 @@ fn persist_cloud_sync_native_send_receipt(
         guid_hash: receipt.guid_hash,
         native_session_id: receipt.native_session_id,
         source_binding: receipt.source_binding.map(Into::into),
+        prepared_sent_timestamp_ms: receipt.prepared_sent_timestamp_ms,
     })
 }
 
@@ -501,6 +514,7 @@ pub async fn cloud_sync_replay_native_send_receipts(
                 guid_hash: receipt.guid_hash,
                 native_session_id: receipt.native_session_id,
                 source_binding: receipt.source_binding.map(Into::into),
+                prepared_sent_timestamp_ms: receipt.prepared_sent_timestamp_ms,
             })
             .collect(),
         next_cursor: page.next_cursor,
@@ -522,6 +536,7 @@ pub fn cloud_sync_acknowledge_native_send_receipt(
             guid_hash: receipt.guid_hash,
             native_session_id: receipt.native_session_id,
             source_binding: receipt.source_binding.map(Into::into),
+            prepared_sent_timestamp_ms: receipt.prepared_sent_timestamp_ms,
         },
         &expected_account_fingerprint,
         &expected_protected_store_identity,
@@ -11272,17 +11287,22 @@ fn cloud_sync_validate_prepared_send_source(
     message: &MessageInst,
     start_ms: u64,
     finish_ms: u64,
-) -> Result<(), &'static str> {
+) -> Result<Option<u64>, &'static str> {
     match source {
         Some(CloudSyncBoundSendSource::Attachment(bytes, guids)) =>
             crate::cloud_sync_ids_attachment_source::validate_prepared_ids_attachment_source(
                 &bytes, message, &guids, start_ms, finish_ms,
-            ).map_err(|_| "cloud_sync_native_attachment_prepared_source_changed"),
-        Some(CloudSyncBoundSendSource::Mutation(bytes)) =>
+            ).map(|()| None).map_err(|_| "cloud_sync_native_attachment_prepared_source_changed"),
+        Some(CloudSyncBoundSendSource::Mutation(bytes)) => {
             crate::cloud_sync_ids_mutation_source::validate_prepared_mutation_source(
                 &bytes, message, start_ms, finish_ms,
-            ).map_err(|_| "cloud_sync_native_mutation_prepared_source_changed"),
-        None => Ok(()),
+            ).map_err(|_| "cloud_sync_native_mutation_prepared_source_changed")?;
+            if message.sent_timestamp == 0 || message.sent_timestamp > i64::MAX as u64 {
+                return Err("cloud_sync_native_mutation_prepared_time_invalid");
+            }
+            Ok(Some(message.sent_timestamp))
+        },
+        None => Ok(None),
     }
 }
 
@@ -11386,7 +11406,7 @@ fn cloud_sync_send_confirmation_fields(
     Option<String>,
 ) {
     cloud_sync_send_confirmation_fields_with_source(
-        result, native_receipt_context, stable_guid, confirm_participants, Ok(()),
+        result, native_receipt_context, stable_guid, confirm_participants, Ok(None),
     )
 }
 
@@ -11396,7 +11416,7 @@ fn cloud_sync_send_confirmation_fields_with_source(
     native_receipt_context: Option<CloudSyncNativeSendReceiptContext>,
     stable_guid: &str,
     confirm_participants: impl FnOnce() -> Result<(), PushError>,
-    source_validation: Result<(), &'static str>,
+    source_validation: Result<Option<u64>, &'static str>,
 ) -> (Option<String>, Option<CloudSyncNativeSendReceipt>, Option<String>) {
     // Legacy/untracked send semantics stay unchanged. Strict V2 receipts need
     // both job completion and positive acceptance, not APSError/TimedOut
@@ -11414,7 +11434,9 @@ fn cloud_sync_send_confirmation_fields_with_source(
             None, None, source_validation.err().map(str::to_owned),
         ),
         Ok(()) => match native_receipt_context {
-            Some(context) => match persist_cloud_sync_native_send_receipt(context, stable_guid) {
+            Some(context) => match persist_cloud_sync_native_send_receipt(
+                context, stable_guid, source_validation.expect("validated source"),
+            ) {
                 Ok(receipt) => (None, Some(receipt), None),
                 Err(error) => (None, None, Some(error.to_string())),
             },
@@ -11538,7 +11560,7 @@ async fn cloud_sync_windows_finish_mutation_send(
     confirm_participants: impl FnOnce() -> Result<(), PushError>,
     context: CloudSyncNativeSendReceiptContext,
     stable_guid: &str,
-    source_validation: Result<(), &'static str>,
+    source_validation: Result<Option<u64>, &'static str>,
     reauthenticate: impl std::future::Future<Output = anyhow::Result<CloudSyncNativeAuthMetadata>>,
 ) -> anyhow::Result<CloudSyncNativeSendReceipt> {
     cloud_sync_windows_finish_send_job(handle, confirm_participants).await?;
@@ -11567,10 +11589,11 @@ fn cloud_sync_windows_mutation_send_source(
 fn cloud_sync_windows_mutation_send_receipt(
     context: CloudSyncNativeSendReceiptContext,
     stable_guid: &str,
-    source_validation: Result<(), &'static str>,
+    source_validation: Result<Option<u64>, &'static str>,
 ) -> anyhow::Result<CloudSyncNativeSendReceipt> {
-    source_validation.map_err(|code| anyhow!(code))?;
-    persist_cloud_sync_native_send_receipt(context, stable_guid)
+    let time = source_validation.map_err(|code| anyhow!(code))?
+        .ok_or_else(|| anyhow!("cloud_sync_native_mutation_prepared_time_invalid"))?;
+    persist_cloud_sync_native_send_receipt(context, stable_guid, Some(time))
 }
 
 #[frb(ignore)]
@@ -11618,6 +11641,8 @@ mod cloud_sync_mutation_send_tests {
             ).await.unwrap();
             assert_eq!(replay.receipts.len(), 1);
             assert_eq!(replay.receipts[0].receipt_id, receipt.receipt_id);
+            assert_eq!(receipt.prepared_sent_timestamp_ms, Some(prepared.sent_timestamp));
+            assert_eq!(replay.receipts[0].prepared_sent_timestamp_ms, Some(prepared.sent_timestamp));
             assert_eq!(receipt.source_binding.unwrap().kind, Some(CloudSyncNativeSendSourceKind::Mutation));
             assert!(cloud_sync_open_mutation_source_bound(&context).is_ok());
         }
@@ -11669,7 +11694,7 @@ mod cloud_sync_mutation_send_tests {
             if failure == 3 { after.native_session_id = "other".to_owned(); }
             let validation = if failure == 4 {
                 Err("cloud_sync_native_mutation_prepared_source_changed")
-            } else { Ok(()) };
+            } else { Ok(Some(123)) };
             let result = cloud_sync_windows_finish_mutation_send(handle, || {
                 assert!(failure > 1, "failed job must not confirm");
                 if failure == 2 { Err(PushError::NoValidTargets) } else { Ok(()) }
@@ -11817,19 +11842,28 @@ mod cloud_sync_mutation_send_tests {
             prepared.prepare_send(&[message.sender.clone().unwrap()]);
             let finish = systemtime_to_millis(SystemTime::now());
             let validation = cloud_sync_validate_prepared_send_source(source, &prepared, start, finish);
-            assert!(validation.is_ok());
+            assert_eq!(validation, Ok(Some(prepared.sent_timestamp)));
             let (error, receipt, receipt_error) = cloud_sync_send_confirmation_fields_with_source(
                 Ok(()), Some(context.clone()), &message.id, || Ok(()), validation,
             );
             assert!(error.is_none() && receipt_error.is_none());
-            assert_eq!(receipt.unwrap().source_binding.unwrap().kind, Some(CloudSyncNativeSendSourceKind::Mutation));
+            let receipt = receipt.unwrap();
+            assert_eq!(receipt.prepared_sent_timestamp_ms, Some(prepared.sent_timestamp));
+            assert_eq!(receipt.source_binding.unwrap().kind, Some(CloudSyncNativeSendSourceKind::Mutation));
             let replay = cloud_sync_replay_native_send_receipts(
                 context.storage_directory.clone(), context.account_fingerprint.clone(),
                 context.protected_store_identity.clone(), None,
             ).await.unwrap();
             assert_eq!(replay.receipts.len(), 1);
             let receipt = replay.receipts.into_iter().next().unwrap();
+            assert_eq!(receipt.prepared_sent_timestamp_ms, Some(prepared.sent_timestamp));
             assert_eq!(receipt.source_binding.as_ref().unwrap().kind, Some(CloudSyncNativeSendSourceKind::Mutation));
+            let mut wrong_time = receipt.clone();
+            wrong_time.prepared_sent_timestamp_ms = Some(prepared.sent_timestamp + 1);
+            assert!(cloud_sync_acknowledge_native_send_receipt(
+                context.storage_directory.clone(), context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(), wrong_time,
+            ).is_err());
             let mut wrong = receipt.clone();
             wrong.source_binding.as_mut().unwrap().kind = None;
             assert!(cloud_sync_acknowledge_native_send_receipt(
@@ -11847,6 +11881,55 @@ mod cloud_sync_mutation_send_tests {
             assert!(replay.receipts.is_empty());
             // Ack releases the receipt, not the original mutation source.
             assert!(cloud_sync_open_mutation_source_bound(&context).is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn mutation_receipt_never_invents_a_time_or_uses_receipt_arrival() {
+        for unsend in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let message = fixture(unsend);
+            let mut context = context(directory.path(), &message);
+            context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
+                &context, &auth(&context), &"a".repeat(64), &message,
+            ).unwrap());
+            commit(&context);
+            let original = cloud_sync_open_mutation_source_bound(&context).unwrap();
+            for time in [0, i64::MAX as u64 + 1] {
+                let source = cloud_sync_send_source(Some(&context), &message).unwrap();
+                let mut prepared = message.clone();
+                prepared.prepare_send(&[message.sender.clone().unwrap()]);
+                prepared.sent_timestamp = time;
+                assert_eq!(cloud_sync_validate_prepared_send_source(source, &prepared, time, time),
+                    Err("cloud_sync_native_mutation_prepared_time_invalid"));
+            }
+            for time in [None, Some(0), Some(i64::MAX as u64 + 1)] {
+                let (error, receipt, receipt_error) = cloud_sync_send_confirmation_fields_with_source(
+                    Ok(()), Some(context.clone()), &message.id, || Ok(()), Ok(time),
+                );
+                assert!(error.is_none() && receipt.is_none());
+                assert_eq!(receipt_error.as_deref(), Some("cloud_sync_native_mutation_prepared_time_invalid"));
+            }
+            assert!(cloud_sync_replay_native_send_receipts(
+                context.storage_directory.clone(), context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(), None,
+            ).await.unwrap().receipts.is_empty());
+            // A fixed old time survives both delayed acceptance and cold replay.
+            let source = cloud_sync_send_source(Some(&context), &message).unwrap();
+            let mut prepared = message.clone();
+            prepared.prepare_send(&[message.sender.clone().unwrap()]);
+            prepared.sent_timestamp = 123;
+            let validation = cloud_sync_validate_prepared_send_source(source, &prepared, 120, 130);
+            let (_, receipt, error) = cloud_sync_send_confirmation_fields_with_source(
+                Ok(()), Some(context.clone()), &message.id, || Ok(()), validation,
+            );
+            assert!(error.is_none());
+            assert_eq!(receipt.unwrap().prepared_sent_timestamp_ms, Some(123));
+            assert_eq!(cloud_sync_replay_native_send_receipts(
+                context.storage_directory.clone(), context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(), None,
+            ).await.unwrap().receipts[0].prepared_sent_timestamp_ms, Some(123));
+            assert_eq!(cloud_sync_open_mutation_source_bound(&context).unwrap(), original);
         }
     }
 
@@ -11909,7 +11992,7 @@ mod cloud_sync_mutation_send_tests {
         assert!(error.is_none() && receipt.is_none());
         assert_eq!(receipt_error.as_deref(), Some("cloud_sync_native_mutation_prepared_source_changed"));
         let (error, receipt, _) = cloud_sync_send_confirmation_fields_with_source(
-            Ok(()), Some(context), &message.id, || Err(PushError::NoValidTargets), Ok(()),
+            Ok(()), Some(context), &message.id, || Err(PushError::NoValidTargets), Ok(Some(prepared.sent_timestamp)),
         );
         assert_eq!(error.as_deref(), Some("cloud_sync_native_send_failed"));
         assert!(receipt.is_none());
@@ -12131,13 +12214,14 @@ mod cloud_sync_windows_sender_tests {
         let end = systemtime_to_millis(SystemTime::now());
         let validation = crate::cloud_sync_ids_attachment_source::validate_prepared_ids_attachment_source(
             &source, &prepared, &guids, start, end,
-        ).map_err(|_| "cloud_sync_native_attachment_prepared_source_changed");
+        ).map(|()| None).map_err(|_| "cloud_sync_native_attachment_prepared_source_changed");
         let (error, receipt, receipt_error) = cloud_sync_send_confirmation_fields_with_source(
             Ok(()), Some(context.clone()), guid, || Ok(()), validation,
         );
         assert!(error.is_none() && receipt_error.is_none());
         let receipt = receipt.unwrap();
         assert_eq!(receipt.guid_hash, cloud_sync_local_send_guid_hash(guid));
+        assert_eq!(receipt.prepared_sent_timestamp_ms, None);
         assert_eq!(receipt.source_binding.as_ref().unwrap().payload_sha256, stage.payload_sha256);
         let replay = cloud_sync_replay_native_send_receipts(
             storage.clone(), context.account_fingerprint.clone(), context.protected_store_identity.clone(), None,

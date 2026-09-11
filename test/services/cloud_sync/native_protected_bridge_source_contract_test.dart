@@ -82,7 +82,28 @@ void main() {
         expect(gate == 'CloudSyncLocalSendSourceStaging' ? windowsRun : windowsGate,
             contains(gate));
       }
-      expect(RegExp(r'NativeProtectedCloudSyncTransport\(').allMatches(windows).length, 1);
+      final mutationStart = windowsRun.indexOf('Future<Map<String, Object?>> _runMutation(');
+      expect(mutationStart, greaterThan(0));
+      final initialSend = windowsRun.substring(0, mutationStart);
+      final mutationSend = windowsRun.substring(mutationStart);
+      final constructorPattern = RegExp(r'NativeProtectedCloudSyncTransport\(');
+      expect(constructorPattern.allMatches(initialSend).length, 1);
+      expect(constructorPattern.allMatches(mutationSend).length, 1);
+      expect(constructorPattern.allMatches(windows).length, 2);
+      expect(initialSend, contains('if (request.mutationType != null)'));
+      expect(initialSend, contains('return _runMutation('));
+      expect(initialSend.indexOf('return _runMutation('), lessThan(windowsTransport));
+      expect(mutationSend, contains('await CloudSyncLocalMutationSourceStaging('));
+      expect(mutationSend, contains('exclusion: interlock'));
+      expect(mutationSend, contains('transport: NativeProtectedCloudSyncTransport('));
+      expect(mutationSend, contains(').submitConfirmed('));
+      expect(mutationSend, contains('cloudSyncStageIdsMutationSource('));
+      expect(mutationSend, contains('cloudSyncRestoreIdsMutationSource('));
+      expect(mutationSend, contains('sendMutationConfirmed!(wire, context(source))'));
+      for (final forbidden in ['sendConfirmed(', 'CloudSyncLocalSendSourceStaging(',
+        'cloudSyncAcknowledgeNativeSendReceipt(', 'cloudSyncPrepareMessageCreate(']) {
+        expect(mutationSend, isNot(contains(forbidden)));
+      }
       expect(windowsRun, contains('await CloudSyncLocalSendSourceStaging('));
       expect(windowsRun, contains('exclusion: interlock'));
       expect(windowsRun, contains('cloudSyncStageIdsAttachmentSource('));

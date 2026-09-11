@@ -827,8 +827,8 @@ purpose-typed bridge staging/restore, exact pre-send and prepared-send checks,
 and a version-4 native positive-IDS receipt that preserves mutation ownership
 through replay and acknowledgement. Historical receipt versions 2/3 retain
 their original meanings; create consumers retain mutation receipts without
-acknowledging them. It is **not journal-adopted or connected to a CloudKit save**.
-Generated bridge import is complete; app journal integration and live proof remain required.
+acknowledging them. That native checkpoint predates the journal integration
+described below; neither checkpoint enables a CloudKit existing-record save.
 Text-with-flags edits and unsends are represented; unsupported replacement
 parts must remain explicit pending work, never flattened or counted complete.
 Next integration: protected source adoption/commit adapter and app receipt
@@ -880,8 +880,8 @@ commit failure can reuse the staged source after reopen; a claimed outcome
 cannot re-enter submission. Both live callbacks and cold native receipt replay
 route mutations to their own journal without create admission or receipt
 acknowledgement. This is not connected to ordinary edit/unsend capture or a
-remote save. Next: use the composed path in the Windows fast-loop mutation
-request, then integrate exact-source projection before enabling app capture.
+remote save. The Windows request now composes submission and confirmation;
+exact-source projection remains required before enabling app capture.
 
 GCE Dart-only `34629000411` passed 3,184 Dart tests plus 14 outbox and three
 evidence-output cases on `b701e36a7`, before this journal addition. Cleanup
@@ -924,14 +924,32 @@ bind one exact prior successful test send, direct plaintext part 0, and a fresh
 60-second qualification window. Reopening a claim can reconcile retained receipts
 only, never submit again. The composed local pipeline passes 39 journal tests,
 including timeout, wrong-purpose receipt, post-send auth change, and reopen.
-The 71-test local cohort covers request compatibility, exact target/payload,
+The 75-test local cohort covers request compatibility, exact target/payload,
 source-to-confirmation composition, unknown-result restart and branch separation.
 The request/target agent's patches were reviewed, refined and retained; agent
-shutdown was verified. Full combined Dart qualification and Windows runtime
-proof remain. No real edit/unsend sent, local body projected or CK update enabled.
+shutdown was verified. Combined source `89c06f4de9ce7f51dc78ff233d19cff8dfb0750a`
+failed GCE Dart-only run `34635968989`: 3,256 passed and one structural test
+still expected only one Windows protected-transport construction. The test now
+checks initial-send and mutation compositions separately, their shared entry
+gates, staging and branch isolation; all five focused bridge-contract tests pass.
+Cleanup completed at 19:07:49Z; independent VM/runner inventories are empty.
+Windows ARM64 fast-loop `34635971964` remains pending. No APK is requested
+despite the generic GCE job label. Full combined qualification and Windows runtime proof remain. No real
+edit/unsend sent, local body projected or CK update enabled.
 Before local reflection, qualify mutation time semantics: `new_msg` starts at
 timestamp zero and `prepare_send` changes it. Do not project time zero, or
 mistake receipt arrival time for the exact on-wire edit time.
+The inspected version-4 receipt had no prepared timestamp. The next native
+candidate retains the validated actual wire time in a protected version-5 mutation
+receipt and carries it through replay/ack. Both ordinary native confirmation and
+the Windows experiment use it only after exact prepared-source validation and
+positive participant acceptance. Existing v2/v3/v4 shapes and receipt IDs stay
+unchanged; a same-ID time change, upgrade or downgrade cannot overwrite evidence.
+The original staged source remains immutable. Storage and API regressions cover
+legacy decode, cold replay, invalid/missing times, wrong-time ack, failed acceptance
+and delayed receipt creation. Native build/bridge regeneration are still required.
+Dart receipt binding and a source-derived local projector remain next, without
+inventing a time for old receipts or changing ObjectBox schema merely to copy one.
 
 Retained-version inspection now has live **offline** evidence: the Windows
 profile contains 23,413 scoped record groups and zero multi-row groups, so

@@ -1530,6 +1530,7 @@ impl PlatformCloudNativeProtectedStore {
                 || existing.protected_store_identity != receipt.protected_store_identity
                 || existing.native_session_id != receipt.native_session_id
                 || existing.source_binding != receipt.source_binding
+                || existing.prepared_sent_timestamp_ms != receipt.prepared_sent_timestamp_ms
             {
                 return Err(CloudNativeStoreFailure::ContextMismatch);
             }
@@ -1682,6 +1683,7 @@ impl PlatformCloudNativeProtectedStore {
                 guid_hash: receipt.guid_hash,
                 native_session_id: receipt.native_session_id,
                 source_binding: receipt.source_binding,
+                prepared_sent_timestamp_ms: receipt.prepared_sent_timestamp_ms,
             });
         }
         Ok(CloudNativeIdsSendReceiptReplayPage {
@@ -1744,6 +1746,7 @@ impl PlatformCloudNativeProtectedStore {
             || receipt.guid_hash != expected.guid_hash
             || receipt.native_session_id != expected.native_session_id
             || receipt.source_binding != expected.source_binding
+            || receipt.prepared_sent_timestamp_ms != expected.prepared_sent_timestamp_ms
         {
             return Err(CloudNativeStoreFailure::ContextMismatch);
         }
@@ -1834,6 +1837,7 @@ pub(crate) struct CloudNativeIdsSendReceipt {
     pub(crate) protected_store_identity: String,
     pub(crate) native_session_id: String,
     pub(crate) source_binding: Option<CloudNativeIdsSendSourceBinding>,
+    pub(crate) prepared_sent_timestamp_ms: Option<u64>,
 }
 
 impl CloudNativeIdsSendReceipt {
@@ -1848,6 +1852,18 @@ impl CloudNativeIdsSendReceipt {
         if let Some(binding) = &self.source_binding {
             binding.validate()?;
         }
+        if let Some(timestamp_ms) = self.prepared_sent_timestamp_ms {
+            if timestamp_ms == 0 || timestamp_ms > i64::MAX as u64 {
+                return Err(CloudNativeStoreFailure::InvalidReference);
+            }
+            let is_mutation = matches!(
+                &self.source_binding,
+                Some(binding) if binding.kind == CloudNativeIdsSendSourceKind::Mutation
+            );
+            if !is_mutation {
+                return Err(CloudNativeStoreFailure::InvalidReference);
+            }
+        }
         Ok(())
     }
 
@@ -1856,7 +1872,12 @@ impl CloudNativeIdsSendReceipt {
         if let Some(binding) = &self.source_binding {
             // Attachment keeps the exact historical v3 object shape. Mutation
             // uses v4 with the same nested source fields plus an explicit
-            // discriminator.
+            // discriminator. A mutation prepared send carrying the actual
+            // prepared timestamp uses v5, which is v4 plus
+            // preparedSentTimestampMs. Old no-timestamp records encode
+            // unchanged as v2/v3/v4. The caller supplies the timestamp only
+            // after prepared source validation plus positive acceptance; this
+            // is not wire proof.
             match binding.kind {
                 CloudNativeIdsSendSourceKind::Attachment => Ok(serde_json::json!({
                     "version": 3,
@@ -1867,16 +1888,32 @@ impl CloudNativeIdsSendReceipt {
                     "sourceBinding": binding.receipt_value(),
                 })
                 .to_string()),
-                CloudNativeIdsSendSourceKind::Mutation => Ok(serde_json::json!({
-                    "version": 4,
-                    "guidHash": self.guid_hash,
-                    "accountFingerprint": self.account_fingerprint,
-                    "protectedStoreIdentity": self.protected_store_identity,
-                    "nativeSessionId": self.native_session_id,
-                    "sourceBinding": binding.receipt_value(),
-                    "sourceKind": "idsMutationSource",
-                })
-                .to_string()),
+                CloudNativeIdsSendSourceKind::Mutation => {
+                    if let Some(timestamp_ms) = self.prepared_sent_timestamp_ms {
+                        Ok(serde_json::json!({
+                            "version": 5,
+                            "guidHash": self.guid_hash,
+                            "accountFingerprint": self.account_fingerprint,
+                            "protectedStoreIdentity": self.protected_store_identity,
+                            "nativeSessionId": self.native_session_id,
+                            "sourceBinding": binding.receipt_value(),
+                            "sourceKind": "idsMutationSource",
+                            "preparedSentTimestampMs": timestamp_ms,
+                        })
+                        .to_string())
+                    } else {
+                        Ok(serde_json::json!({
+                            "version": 4,
+                            "guidHash": self.guid_hash,
+                            "accountFingerprint": self.account_fingerprint,
+                            "protectedStoreIdentity": self.protected_store_identity,
+                            "nativeSessionId": self.native_session_id,
+                            "sourceBinding": binding.receipt_value(),
+                            "sourceKind": "idsMutationSource",
+                        })
+                        .to_string())
+                    }
+                }
             }
         } else {
             Ok(serde_json::json!({
@@ -1901,7 +1938,11 @@ impl CloudNativeIdsSendReceipt {
         // but do not replay it as positive participant acceptance.
         match object.get("version").and_then(serde_json::Value::as_u64) {
             Some(2) => {
-                if object.len() != 5 || object.contains_key("sourceBinding") {
+                if object.len() != 5
+                    || object.contains_key("sourceBinding")
+                    || object.contains_key("sourceKind")
+                    || object.contains_key("preparedSentTimestampMs")
+                {
                     return Err(CloudNativeStoreFailure::InvalidReference);
                 }
                 let receipt = Self {
@@ -1926,12 +1967,16 @@ impl CloudNativeIdsSendReceipt {
                         .ok_or(CloudNativeStoreFailure::InvalidReference)?
                         .to_owned(),
                     source_binding: None,
+                    prepared_sent_timestamp_ms: None,
                 };
                 receipt.validate()?;
                 Ok(receipt)
             }
             Some(3) => {
-                if object.len() != 6 {
+                if object.len() != 6
+                    || object.contains_key("sourceKind")
+                    || object.contains_key("preparedSentTimestampMs")
+                {
                     return Err(CloudNativeStoreFailure::InvalidReference);
                 }
                 let binding_value = object
@@ -1962,12 +2007,13 @@ impl CloudNativeIdsSendReceipt {
                         .ok_or(CloudNativeStoreFailure::InvalidReference)?
                         .to_owned(),
                     source_binding: Some(source_binding),
+                    prepared_sent_timestamp_ms: None,
                 };
                 receipt.validate()?;
                 Ok(receipt)
             }
             Some(4) => {
-                if object.len() != 7 {
+                if object.len() != 7 || object.contains_key("preparedSentTimestampMs") {
                     return Err(CloudNativeStoreFailure::InvalidReference);
                 }
                 let kind_value = object
@@ -2005,6 +2051,58 @@ impl CloudNativeIdsSendReceipt {
                         .ok_or(CloudNativeStoreFailure::InvalidReference)?
                         .to_owned(),
                     source_binding: Some(source_binding),
+                    prepared_sent_timestamp_ms: None,
+                };
+                receipt.validate()?;
+                Ok(receipt)
+            }
+            Some(5) => {
+                if object.len() != 8 {
+                    return Err(CloudNativeStoreFailure::InvalidReference);
+                }
+                let kind_value = object
+                    .get("sourceKind")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+                if kind_value != "idsMutationSource" {
+                    return Err(CloudNativeStoreFailure::InvalidReference);
+                }
+                let timestamp_ms = object
+                    .get("preparedSentTimestampMs")
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+                if timestamp_ms == 0 || timestamp_ms > i64::MAX as u64 {
+                    return Err(CloudNativeStoreFailure::InvalidReference);
+                }
+                let binding_value = object
+                    .get("sourceBinding")
+                    .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+                let mut source_binding =
+                    CloudNativeIdsSendSourceBinding::from_receipt_value(binding_value)?;
+                source_binding.kind = CloudNativeIdsSendSourceKind::Mutation;
+                let receipt = Self {
+                    guid_hash: object
+                        .get("guidHash")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    account_fingerprint: object
+                        .get("accountFingerprint")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    protected_store_identity: object
+                        .get("protectedStoreIdentity")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    native_session_id: object
+                        .get("nativeSessionId")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    source_binding: Some(source_binding),
+                    prepared_sent_timestamp_ms: Some(timestamp_ms),
                 };
                 receipt.validate()?;
                 Ok(receipt)
@@ -2020,6 +2118,7 @@ pub(crate) struct CloudNativeIdsSendReceiptReplay {
     pub(crate) guid_hash: String,
     pub(crate) native_session_id: String,
     pub(crate) source_binding: Option<CloudNativeIdsSendSourceBinding>,
+    pub(crate) prepared_sent_timestamp_ms: Option<u64>,
 }
 
 pub(crate) struct CloudNativeIdsSendReceiptReplayPage {
@@ -2050,6 +2149,18 @@ impl CloudNativeIdsSendReceiptReplay {
         }
         if let Some(binding) = &self.source_binding {
             binding.validate()?;
+        }
+        if let Some(timestamp_ms) = self.prepared_sent_timestamp_ms {
+            if timestamp_ms == 0 || timestamp_ms > i64::MAX as u64 {
+                return Err(CloudNativeStoreFailure::InvalidReference);
+            }
+            let is_mutation = matches!(
+                &self.source_binding,
+                Some(binding) if binding.kind == CloudNativeIdsSendSourceKind::Mutation
+            );
+            if !is_mutation {
+                return Err(CloudNativeStoreFailure::InvalidReference);
+            }
         }
         Ok(())
     }
@@ -4475,6 +4586,7 @@ pub(crate) fn cloud_sync_persist_ids_send_receipt(
         guid_hash: receipt.guid_hash,
         native_session_id: receipt.native_session_id,
         source_binding: receipt.source_binding,
+        prepared_sent_timestamp_ms: receipt.prepared_sent_timestamp_ms,
     })
 }
 
@@ -6290,6 +6402,7 @@ mod tests {
             .expect("protected store identity"),
             native_session_id: native_session_id.to_string().repeat(43),
             source_binding: None,
+            prepared_sent_timestamp_ms: None,
         }
     }
 
@@ -6350,6 +6463,7 @@ mod tests {
             receipt_id, guid_hash: receipt.guid_hash.clone(),
             native_session_id: receipt.native_session_id.clone(),
             source_binding: None,
+            prepared_sent_timestamp_ms: None,
         };
         assert!(store.acknowledge_ids_send_receipt(
             &replay, &receipt.account_fingerprint, &receipt.protected_store_identity,
@@ -6370,6 +6484,7 @@ mod tests {
             guid_hash: receipt.guid_hash.clone(),
             native_session_id: receipt.native_session_id.clone(),
             source_binding: None,
+            prepared_sent_timestamp_ms: None,
         };
 
         assert!(store
@@ -6420,6 +6535,7 @@ mod tests {
             guid_hash: receipt.guid_hash.clone(),
             native_session_id: receipt.native_session_id.clone(),
             source_binding: None,
+            prepared_sent_timestamp_ms: None,
         };
 
         store
@@ -6593,6 +6709,7 @@ mod tests {
             protected_store_identity: receipt.protected_store_identity.clone(),
             native_session_id: receipt.native_session_id.clone(),
             source_binding: Some(other_binding),
+            prepared_sent_timestamp_ms: None,
         };
         assert_eq!(
             store.persist_ids_send_receipt(&substituted),
@@ -6637,6 +6754,7 @@ mod tests {
             guid_hash: receipt.guid_hash.clone(),
             native_session_id: receipt.native_session_id.clone(),
             source_binding: None,
+            prepared_sent_timestamp_ms: None,
         };
         assert_eq!(
             store.acknowledge_ids_send_receipt(
@@ -6663,6 +6781,7 @@ mod tests {
             guid_hash: receipt.guid_hash.clone(),
             native_session_id: receipt.native_session_id.clone(),
             source_binding: receipt.source_binding.clone(),
+            prepared_sent_timestamp_ms: None,
         };
         store
             .acknowledge_ids_send_receipt(
@@ -6928,6 +7047,7 @@ mod tests {
             protected_store_identity: receipt.protected_store_identity.clone(),
             native_session_id: receipt.native_session_id.clone(),
             source_binding: Some(ids_send_source_binding_fixture()),
+            prepared_sent_timestamp_ms: None,
         };
         assert_eq!(
             store.persist_ids_send_receipt(&cross_kind),
@@ -6945,6 +7065,7 @@ mod tests {
             protected_store_identity: receipt.protected_store_identity.clone(),
             native_session_id: receipt.native_session_id.clone(),
             source_binding: Some(other_binding),
+            prepared_sent_timestamp_ms: None,
         };
         assert_eq!(
             store.persist_ids_send_receipt(&substituted),
@@ -7002,6 +7123,7 @@ mod tests {
             guid_hash: receipt.guid_hash.clone(),
             native_session_id: receipt.native_session_id.clone(),
             source_binding: Some(ids_send_source_binding_fixture()),
+            prepared_sent_timestamp_ms: None,
         };
         assert_eq!(
             store.acknowledge_ids_send_receipt(
@@ -7028,6 +7150,7 @@ mod tests {
             guid_hash: receipt.guid_hash.clone(),
             native_session_id: receipt.native_session_id.clone(),
             source_binding: receipt.source_binding.clone(),
+            prepared_sent_timestamp_ms: None,
         };
         store
             .acknowledge_ids_send_receipt(
@@ -7045,6 +7168,379 @@ mod tests {
             .expect("replay after ack")
             .receipts
             .is_empty());
+    }
+
+    #[test]
+    fn ids_send_mutation_receipt_v5_timestamped_roundtrip() {
+        // v5: mutation plus the actual prepared timestamp encodes as version
+        // 5 with preparedSentTimestampMs alongside the v4 fields.
+        let directory = tempdir().expect("temp directory");
+        let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        receipt.source_binding = Some(ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        ));
+        receipt.prepared_sent_timestamp_ms = Some(1_753_000_000_123);
+        let encoded = receipt.encode().expect("encode v5");
+        let value: serde_json::Value = serde_json::from_str(&encoded).expect("parse v5");
+        assert_eq!(
+            ids_send_object_keys(&value),
+            vec![
+                "accountFingerprint".to_owned(),
+                "guidHash".to_owned(),
+                "nativeSessionId".to_owned(),
+                "preparedSentTimestampMs".to_owned(),
+                "protectedStoreIdentity".to_owned(),
+                "sourceBinding".to_owned(),
+                "sourceKind".to_owned(),
+                "version".to_owned(),
+            ]
+        );
+        assert_eq!(
+            value.get("version").and_then(serde_json::Value::as_u64),
+            Some(5)
+        );
+        assert_eq!(
+            value.get("sourceKind").and_then(serde_json::Value::as_str),
+            Some("idsMutationSource")
+        );
+        assert_eq!(
+            value
+                .get("preparedSentTimestampMs")
+                .and_then(serde_json::Value::as_u64),
+            Some(1_753_000_000_123)
+        );
+        let decoded = CloudNativeIdsSendReceipt::decode(&encoded).expect("decode v5");
+        assert_eq!(
+            decoded.prepared_sent_timestamp_ms,
+            Some(1_753_000_000_123)
+        );
+        assert_eq!(
+            decoded.source_binding.as_ref().map(|binding| binding.kind),
+            Some(CloudNativeIdsSendSourceKind::Mutation)
+        );
+        assert_eq!(decoded.encode().expect("re-encode v5"), encoded);
+        for timestamp_ms in [1u64, i64::MAX as u64] {
+            let mut bounded = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+            bounded.source_binding = Some(ids_send_source_binding_fixture_with_kind(
+                CloudNativeIdsSendSourceKind::Mutation,
+            ));
+            bounded.prepared_sent_timestamp_ms = Some(timestamp_ms);
+            let roundtrip =
+                CloudNativeIdsSendReceipt::decode(&bounded.encode().expect("encode bound"))
+                    .expect("decode bound");
+            assert_eq!(roundtrip.prepared_sent_timestamp_ms, Some(timestamp_ms));
+        }
+    }
+
+    #[test]
+    fn ids_send_receipt_legacy_no_timestamp_shapes_unchanged() {
+        // Old no-timestamp records encode unchanged as v2/v3/v4 and decode
+        // with None.
+        let directory = tempdir().expect("temp directory");
+        let bare = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        assert_eq!(bare.prepared_sent_timestamp_ms, None);
+        let bare_value: serde_json::Value =
+            serde_json::from_str(&bare.encode().expect("encode v2")).expect("parse v2");
+        assert_eq!(
+            bare_value.get("version").and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert!(bare_value.get("preparedSentTimestampMs").is_none());
+        assert_eq!(
+            CloudNativeIdsSendReceipt::decode(&bare.encode().expect("encode v2"))
+                .expect("decode v2")
+                .prepared_sent_timestamp_ms,
+            None
+        );
+        let mut attachment = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        attachment.source_binding = Some(ids_send_source_binding_fixture());
+        let attachment_value: serde_json::Value =
+            serde_json::from_str(&attachment.encode().expect("encode v3")).expect("parse v3");
+        assert_eq!(
+            attachment_value
+                .get("version")
+                .and_then(serde_json::Value::as_u64),
+            Some(3)
+        );
+        assert!(attachment_value.get("preparedSentTimestampMs").is_none());
+        assert_eq!(
+            CloudNativeIdsSendReceipt::decode(&attachment.encode().expect("encode v3"))
+                .expect("decode v3")
+                .prepared_sent_timestamp_ms,
+            None
+        );
+        let mut mutation = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        mutation.source_binding = Some(ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        ));
+        let mutation_value: serde_json::Value =
+            serde_json::from_str(&mutation.encode().expect("encode v4")).expect("parse v4");
+        assert_eq!(
+            mutation_value.get("version").and_then(serde_json::Value::as_u64),
+            Some(4)
+        );
+        assert!(mutation_value.get("preparedSentTimestampMs").is_none());
+        assert_eq!(
+            CloudNativeIdsSendReceipt::decode(&mutation.encode().expect("encode v4"))
+                .expect("decode v4")
+                .prepared_sent_timestamp_ms,
+            None
+        );
+    }
+
+    #[test]
+    fn ids_send_receipt_v5_rejects_malformed_missing_wrong_purpose_time() {
+        let directory = tempdir().expect("temp directory");
+        let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        receipt.source_binding = Some(ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        ));
+        receipt.prepared_sent_timestamp_ms = Some(42);
+        let valid = receipt.encode().expect("valid v5 encodes");
+        let valid_value: serde_json::Value =
+            serde_json::from_str(&valid).expect("valid v5 parses");
+        let mut missing = valid_value.clone();
+        missing
+            .as_object_mut()
+            .expect("v5 object")
+            .remove("preparedSentTimestampMs");
+        assert!(CloudNativeIdsSendReceipt::decode(&missing.to_string()).is_err());
+        for bad in [
+            serde_json::json!(0),
+            serde_json::json!(i64::MAX as u64 + 1),
+            serde_json::json!(u64::MAX),
+        ] {
+            let mut wrong_time = valid_value.clone();
+            wrong_time["preparedSentTimestampMs"] = bad;
+            assert!(CloudNativeIdsSendReceipt::decode(&wrong_time.to_string()).is_err());
+        }
+        for bad in [
+            serde_json::json!(1.5),
+            serde_json::json!("42"),
+            serde_json::json!(true),
+            serde_json::Value::Null,
+            serde_json::json!(-1),
+        ] {
+            let mut wrong_type = valid_value.clone();
+            wrong_type["preparedSentTimestampMs"] = bad;
+            assert!(CloudNativeIdsSendReceipt::decode(&wrong_type.to_string()).is_err());
+        }
+        for purpose in [
+            serde_json::json!("idsAttachmentSource"),
+            serde_json::json!("checkpointToken"),
+            serde_json::json!(""),
+            serde_json::json!("mutation"),
+            serde_json::json!(1),
+            serde_json::Value::Null,
+        ] {
+            let mut wrong_purpose = valid_value.clone();
+            wrong_purpose["sourceKind"] = purpose;
+            assert!(CloudNativeIdsSendReceipt::decode(&wrong_purpose.to_string()).is_err());
+        }
+        // The timestamp field is never silently accepted on old schemas.
+        let mut v4_with_time = valid_value.clone();
+        v4_with_time["version"] = serde_json::json!(4);
+        assert!(CloudNativeIdsSendReceipt::decode(&v4_with_time.to_string()).is_err());
+        let mut v3_with_time = valid_value.clone();
+        v3_with_time["version"] = serde_json::json!(3);
+        assert!(CloudNativeIdsSendReceipt::decode(&v3_with_time.to_string()).is_err());
+        let mut v2_with_time = valid_value.clone();
+        v2_with_time["version"] = serde_json::json!(2);
+        assert!(CloudNativeIdsSendReceipt::decode(&v2_with_time.to_string()).is_err());
+        let mut bare = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        bare.prepared_sent_timestamp_ms = Some(7);
+        assert!(bare.encode().is_err());
+        let mut attachment = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        attachment.source_binding = Some(ids_send_source_binding_fixture());
+        attachment.prepared_sent_timestamp_ms = Some(7);
+        assert!(attachment.encode().is_err());
+        let mut zero = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        zero.source_binding = Some(ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        ));
+        zero.prepared_sent_timestamp_ms = Some(0);
+        assert!(zero.encode().is_err());
+        let mut overflow = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        overflow.source_binding = Some(ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        ));
+        overflow.prepared_sent_timestamp_ms = Some(i64::MAX as u64 + 1);
+        assert!(overflow.encode().is_err());
+    }
+
+    #[test]
+    fn ids_send_receipt_v5_changed_time_persist_and_ack_rejected() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        receipt.source_binding = Some(ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        ));
+        receipt.prepared_sent_timestamp_ms = Some(100);
+        let receipt_id = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist v5");
+        // Same receipt ID with a changed timestamp must fail and preserve
+        // the old bytes; the ID identity is unchanged on purpose.
+        let mut changed = CloudNativeIdsSendReceipt {
+            guid_hash: receipt.guid_hash.clone(),
+            account_fingerprint: receipt.account_fingerprint.clone(),
+            protected_store_identity: receipt.protected_store_identity.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+            source_binding: receipt.source_binding.clone(),
+            prepared_sent_timestamp_ms: Some(101),
+        };
+        assert_eq!(
+            store.persist_ids_send_receipt(&changed),
+            Err(CloudNativeStoreFailure::ContextMismatch)
+        );
+        // A Some -> None downgrade on the same ID must also fail.
+        changed.prepared_sent_timestamp_ms = None;
+        assert_eq!(
+            store.persist_ids_send_receipt(&changed),
+            Err(CloudNativeStoreFailure::ContextMismatch)
+        );
+        let replayed = store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("replay after changed-time attempts")
+            .receipts;
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0].prepared_sent_timestamp_ms, Some(100));
+        let wrong_time = CloudNativeIdsSendReceiptReplay {
+            receipt_id: receipt_id.clone(),
+            guid_hash: receipt.guid_hash.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+            source_binding: receipt.source_binding.clone(),
+            prepared_sent_timestamp_ms: Some(101),
+        };
+        assert_eq!(
+            store.acknowledge_ids_send_receipt(
+                &wrong_time,
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+            ),
+            Err(CloudNativeStoreFailure::ContextMismatch)
+        );
+        assert_eq!(
+            store
+                .replay_ids_send_receipts(
+                    &receipt.account_fingerprint,
+                    &receipt.protected_store_identity,
+                    None,
+                )
+                .expect("receipt preserved after wrong-time ack")
+                .receipts
+                .len(),
+            1
+        );
+        let expected = CloudNativeIdsSendReceiptReplay {
+            receipt_id,
+            guid_hash: receipt.guid_hash.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+            source_binding: receipt.source_binding.clone(),
+            prepared_sent_timestamp_ms: Some(100),
+        };
+        store
+            .acknowledge_ids_send_receipt(
+                &expected,
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+            )
+            .expect("ack with matching timestamp");
+        assert!(store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("replay after ack")
+            .receipts
+            .is_empty());
+    }
+
+    #[test]
+    fn ids_send_receipt_v4_none_then_some_upgrade_rejected() {
+        // A legacy v4 no-timestamp receipt persisted first must not be
+        // rewritten by a same-ID timestamped replacement: the attempt fails
+        // and the persisted ciphertext bytes are unchanged.
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let mut legacy = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        legacy.source_binding = Some(ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        ));
+        assert_eq!(legacy.prepared_sent_timestamp_ms, None);
+        let receipt_id = store
+            .persist_ids_send_receipt(&legacy)
+            .expect("persist legacy v4");
+        let path = store
+            .ids_send_receipt_path(&receipt_id)
+            .expect("legacy receipt path");
+        let old_bytes = fs::read(&path).expect("read legacy ciphertext");
+        // Same origin tuple (hence same receipt ID) with a timestamp must
+        // not upgrade the stored record.
+        let upgraded = CloudNativeIdsSendReceipt {
+            guid_hash: legacy.guid_hash.clone(),
+            account_fingerprint: legacy.account_fingerprint.clone(),
+            protected_store_identity: legacy.protected_store_identity.clone(),
+            native_session_id: legacy.native_session_id.clone(),
+            source_binding: legacy.source_binding.clone(),
+            prepared_sent_timestamp_ms: Some(101),
+        };
+        assert_eq!(
+            store.persist_ids_send_receipt(&upgraded),
+            Err(CloudNativeStoreFailure::ContextMismatch)
+        );
+        assert_eq!(
+            fs::read(&path).expect("read ciphertext after rejected upgrade"),
+            old_bytes
+        );
+        // Cold replay through a fresh handle still shows the legacy record
+        // with no timestamp.
+        let cold = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let page = cold
+            .replay_ids_send_receipts(
+                &legacy.account_fingerprint,
+                &legacy.protected_store_identity,
+                None,
+            )
+            .expect("cold replay legacy v4");
+        assert_eq!(page.receipts.len(), 1);
+        assert_eq!(page.receipts[0].receipt_id, receipt_id);
+        assert_eq!(page.receipts[0].prepared_sent_timestamp_ms, None);
+        assert_eq!(page.receipts[0].source_binding, legacy.source_binding);
+    }
+
+    #[test]
+    fn ids_send_receipt_v5_encrypted_persisted_cold_replay() {
+        // A v5 receipt persisted encrypted must cold-replay with its
+        // timestamp through a fresh store handle over the same directory.
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        receipt.source_binding = Some(ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        ));
+        receipt.prepared_sent_timestamp_ms = Some(9_999);
+        let receipt_id = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist v5");
+        let cold = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let page = cold
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("cold replay v5");
+        assert_eq!(page.receipts.len(), 1);
+        assert_eq!(page.receipts[0].receipt_id, receipt_id);
+        assert_eq!(page.receipts[0].prepared_sent_timestamp_ms, Some(9_999));
+        assert_eq!(page.receipts[0].source_binding, receipt.source_binding);
     }
 
     #[test]
@@ -7120,6 +7616,7 @@ mod tests {
                 protected_store_identity: target.protected_store_identity.clone(),
                 native_session_id: target.native_session_id.clone(),
                 source_binding: None,
+                prepared_sent_timestamp_ms: None,
             };
             store
                 .persist_ids_send_receipt(&retained)
