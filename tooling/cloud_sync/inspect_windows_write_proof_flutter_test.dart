@@ -45,7 +45,8 @@ void main() {
       final claimBytes = claimFile.existsSync()
           ? await claimFile.readAsString()
           : null;
-      final parentClaimFile = request.reactionType == null
+      final parentClaimFile =
+          request.reactionType == null && request.mutationType == null
           ? null
           : File(
               '${profile.path}/cloud-sync-v2/windows-write-${request.existingChatFromRequestId}.json',

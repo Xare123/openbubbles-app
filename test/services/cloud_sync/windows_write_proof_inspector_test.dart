@@ -61,6 +61,164 @@ void main() {
       throwsStateError,
     );
   });
+  for (final kind in ['edit', 'unsend']) {
+    test(
+      'mutation $kind inspects persisted display without claiming remote proof',
+      () async {
+        final mutation = CloudSyncWindowsWriteRequest.fromJson({
+          'version': 6,
+          'id': 'proof-mutation-$kind',
+          'allowSend': true,
+          'recipient': request.recipient,
+          'sender': request.sender,
+          'text': kind == 'edit' ? 'changed synthetic text' : '',
+          'mutationType': kind,
+          'mutationPart': 0,
+          'existingChatFromRequestId': request.id,
+        });
+        String digest(List<Object?> values) =>
+            sha256.convert(utf8.encode(jsonEncode(values))).toString();
+        const mutationGuid = 'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE';
+        final mutationHash = digest([
+          'cloud-sync-local-send-guid-v1',
+          mutationGuid,
+        ]);
+        final targetHash = digest(['cloud-sync-local-send-guid-v1', guid]);
+        final chat = Chat(
+          guid: 'iMessage;-;${request.recipient}',
+          chatIdentifier: request.recipient,
+          usingHandle: 'mailto:${request.sender}',
+          style: 45,
+        );
+        store.box<Chat>().put(chat);
+        final message = Message(
+          guid: guid,
+          text: request.text,
+          isFromMe: true,
+          dateCreated: DateTime.utc(2026, 9, 11),
+          dateEdited: DateTime.utc(2026, 9, 11, 0, 0, 4),
+          attributedBody: [AttributedBody.raw(request.text)],
+          messageSummaryInfo: [MessageSummaryInfo.empty()],
+        )..chat.target = chat;
+        if (kind == 'edit') {
+          message.text = mutation.text;
+          message.attributedBody = [AttributedBody.raw(mutation.text)];
+          message.messageSummaryInfo.single.editedParts.add(0);
+          message.messageSummaryInfo.single.editedContent['0'] = [
+            EditedContent(
+              text: Content(values: [AttributedBody.raw(request.text)]),
+              date: 1789084800000,
+            ),
+            EditedContent(
+              text: Content(values: [AttributedBody.raw(mutation.text)]),
+              date: 1789084804000,
+            ),
+          ];
+        } else {
+          message.messageSummaryInfo.single.retractedParts.add(0);
+        }
+        store.box<Message>().put(message);
+        final source = CloudSyncLocalMutationSourceBinding(
+          accountFingerprint: claim['account'] as String,
+          protectedStoreIdentity: 'obcs2.store.${'S' * 43}',
+          mutationGuidHash: mutationHash,
+          targetGuidHash: targetHash,
+          targetPart: 0,
+          sourceSha256: 'a' * 64,
+          protectedReference: 'obcs2.ref.${'R' * 43}',
+          leaseReference: 'obcs2.lease.${'b' * 32}',
+          payloadSha256: 'c' * 64,
+          payloadLength: 123,
+        );
+        final row = CloudSyncLocalMutationIntentEntity(
+          intentKey: digest([
+            'cloud-sync-local-mutation-intent-v1',
+            claim['account'],
+            mutationHash,
+          ]),
+          accountFingerprint: claim['account'] as String,
+          writerEpoch: 1,
+          localMessageId: message.id!,
+          localChatId: chat.id!,
+          mutationGuidHash: mutationHash,
+          targetGuidHash: targetHash,
+          targetPart: 0,
+          kind: kind == 'edit' ? 0 : 1,
+          sourceSha256: source.sourceSha256,
+          targetSnapshotSha256: 'd' * 64,
+          protectedSourceBinding: source.encode(),
+          state: 3,
+          submissionAuthBindingSha256: 'e' * 64,
+          idsReceiptBindingSha256: 'f' * 64,
+          reflectedSnapshotSha256: '0' * 64,
+          createdAtMs: 1,
+          updatedAtMs: 2,
+        );
+        store.box<CloudSyncLocalMutationIntentEntity>().put(row);
+        final mutationClaim = <String, dynamic>{
+          'version': 2,
+          'purpose': 'mutation',
+          'account': claim['account'],
+          'guid': mutationGuid,
+          'binding': mutation.binding,
+          'local_message_id': message.id,
+          'target_guid_hash': targetHash,
+          'source_sha256': source.sourceSha256,
+        };
+        Map<String, Object?> inspect() => inspectWindowsWriteProof(
+          store,
+          mutation,
+          mutationClaim,
+          parentClaim: claim,
+        );
+        store.close();
+        store = await openStore(directory: directory.path);
+        final report = inspect();
+        expect(report['target_matches_claim_and_route'], isTrue);
+        expect(report['stored_display_matches_request'], isTrue);
+        expect(report['local_reflection_marker_present'], isTrue);
+        // Deliberately constructed markers, never real native receipt proof.
+        expect(report['persisted_readback_proven'], isFalse);
+        expect(report['initial_send_intents_for_mutation'], 0);
+        for (final secret in [
+          guid,
+          mutationGuid,
+          request.text,
+          request.sender,
+          request.recipient,
+          source.encode(),
+          claim['account'] as String,
+        ]) {
+          expect(jsonEncode(report), isNot(contains(secret)));
+        }
+        expect(
+          inspectWindowsWriteProof(
+            store,
+            mutation,
+            mutationClaim,
+            parentClaim: {...claim, 'guid': mutationGuid},
+          )['target_matches_claim_and_route'],
+          isFalse,
+        );
+        expect(
+          () => inspectWindowsWriteProof(store, mutation, {
+            ...mutationClaim,
+            'target_guid_hash': '0' * 64,
+          }, parentClaim: claim),
+          throwsStateError,
+        );
+        final changed = store.box<Message>().get(message.id!)!;
+        changed.dateEdited = null;
+        store.box<Message>().put(changed);
+        expect(inspect()['stored_display_matches_request'], isFalse);
+        row.state = 2;
+        row.reflectedSnapshotSha256 = null;
+        store.box<CloudSyncLocalMutationIntentEntity>().put(row);
+        expect(inspect()['local_reflection_marker_present'], isFalse);
+        expect(inspect()['persisted_readback_proven'], isFalse);
+      },
+    );
+  }
   test(
     'forged matching markers and save flags cannot replace production binding proof',
     () {

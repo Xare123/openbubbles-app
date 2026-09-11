@@ -22,6 +22,9 @@ Map<String, Object?> inspectWindowsWriteProof(
       'persisted_readback_proven': false,
     };
   }
+  if (request.mutationType != null) {
+    return _inspectMutation(store, request, claim, parentClaim);
+  }
   if (claim['version'] != 1 ||
       claim['binding'] != request.binding ||
       claim['account'] is! String ||
@@ -234,6 +237,135 @@ Map<String, Object?> inspectWindowsWriteProof(
         settled,
   };
 });
+
+// Stored-row diagnostics only. The real runtime separately reopens the source
+// and verifies the protected receipt. A marker in this copied DB is no substitute
+// for that, nor evidence of a CloudKit update or another device's display.
+Map<String, Object?> _inspectMutation(
+  Store store,
+  CloudSyncWindowsWriteRequest request,
+  Map<String, dynamic> claim,
+  Map<String, dynamic>? parentClaim,
+) {
+  if (claim['version'] != 2 ||
+      claim['purpose'] != 'mutation' ||
+      claim['binding'] != request.binding ||
+      claim['account'] is! String ||
+      claim['guid'] is! String ||
+      claim['local_message_id'] is! int ||
+      claim['target_guid_hash'] is! String ||
+      claim['source_sha256'] is! String) {
+    throw StateError('windows_mutation_proof_claim_mismatch');
+  }
+  String guidHash(String guid) => sha256
+      .convert(utf8.encode(jsonEncode(['cloud-sync-local-send-guid-v1', guid])))
+      .toString();
+  final mutationHash = guidHash(claim['guid'] as String);
+  final query =
+      store
+          .box<CloudSyncLocalMutationIntentEntity>()
+          .query(
+            CloudSyncLocalMutationIntentEntity_.accountFingerprint
+                .equals(claim['account'] as String)
+                .and(
+                  CloudSyncLocalMutationIntentEntity_.mutationGuidHash.equals(
+                    mutationHash,
+                  ),
+                ),
+          )
+          .build()
+        ..limit = 2;
+  final List<CloudSyncLocalMutationIntentEntity> rows;
+  try {
+    rows = query.find();
+  } finally {
+    query.close();
+  }
+  if (rows.length != 1) {
+    return {
+      'version': 1,
+      'state': rows.isEmpty ? 'claim_without_intent' : 'ambiguous_intent',
+      'proof_scope': 'db_only_mutation_diagnostics',
+      'persisted_readback_proven': false,
+    };
+  }
+  final row = rows.single;
+  validateCloudSyncMutationRow(row);
+  if (row.localMessageId != claim['local_message_id'] ||
+      row.targetGuidHash != claim['target_guid_hash'] ||
+      row.sourceSha256 != claim['source_sha256'] ||
+      row.targetPart != request.mutationPart ||
+      row.kind != (request.mutationType == 'edit' ? 0 : 1)) {
+    throw StateError('windows_mutation_proof_claim_mismatch');
+  }
+  final target = store.box<Message>().get(row.localMessageId);
+  final chat = target?.chat.target;
+  final targetMatches =
+      parentClaim?['version'] == 1 &&
+      parentClaim?['account'] == claim['account'] &&
+      parentClaim?['guid'] is String &&
+      target?.guid == parentClaim?['guid'] &&
+      guidHash(parentClaim!['guid'] as String) == row.targetGuidHash &&
+      target?.chat.targetId == row.localChatId &&
+      target?.isFromMe == true &&
+      target?.dateDeleted == null &&
+      target?.dateScheduled == null &&
+      target?.verificationFailed == false &&
+      chat?.guid == 'iMessage;-;${request.recipient}' &&
+      chat?.chatIdentifier == request.recipient &&
+      chat?.usingHandle == 'mailto:${request.sender}';
+  final summary = target?.messageSummaryInfo.length == 1
+      ? target!.messageSummaryInfo.single
+      : null;
+  final history = summary?.editedContent['0'];
+  final lastBody = history?.isNotEmpty == true ? history!.last.text : null;
+  final displayMatches =
+      targetMatches &&
+      target!.dateEdited != null &&
+      (request.mutationType == 'edit'
+          ? target.text == request.text &&
+                target.attributedBody.length == 1 &&
+                target.attributedBody.single.string == request.text &&
+                summary?.retractedParts.isEmpty == true &&
+                summary?.editedParts.contains(0) == true &&
+                lastBody?.values.length == 1 &&
+                lastBody!.values.single.string == request.text
+          : summary?.retractedParts.where((part) => part == 0).length == 1);
+  final initial = store
+      .box<CloudSyncLocalSendIntentEntity>()
+      .query(
+        CloudSyncLocalSendIntentEntity_.accountFingerprint
+            .equals(claim['account'] as String)
+            .and(
+              CloudSyncLocalSendIntentEntity_.messageGuidHash.equals(
+                mutationHash,
+              ),
+            ),
+      )
+      .build();
+  final int initialCount;
+  try {
+    initialCount = initial.count();
+  } finally {
+    initial.close();
+  }
+  return {
+    'version': 1,
+    'state': 'inspected',
+    'proof_scope': 'db_only_mutation_diagnostics',
+    'request_kind': 'mutation-v6',
+    'mutation_kind': request.mutationType,
+    'intent_state': row.state,
+    'source_binding_structurally_valid': true,
+    'positive_ids_receipt_marker_present': row.idsReceiptBindingSha256 != null,
+    'local_reflection_marker_present': row.reflectedSnapshotSha256 != null,
+    'target_matches_claim_and_route': targetMatches,
+    'stored_display_matches_request': displayMatches,
+    'initial_send_intents_for_mutation': initialCount,
+    'outbox_count': store.box<CloudOutboxOperationEntity>().count(),
+    'persisted_readback_proven': false,
+  };
+}
 
 /// Ingestion evidence is separate from upload receipts and local projection.
 /// Compare before/after a real read-only pull; this never contacts Apple.

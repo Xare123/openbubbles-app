@@ -2839,3 +2839,38 @@ This is a chronological evidence log. It does not override the
   approximately 49.2 GiB. Existing app profiles, rollback binaries, requests,
   claims, unrelated edits and evidence remain intact. Full Dart and exact-source
   Windows qualification are next; no production completion is claimed.
+
+## 2026-09-11, full Dart qualification and Windows mutation preflight
+
+- Exact application source `d54e2238b49681cc80e51887c706463c1a76d362`
+  passed GCE `34639474394`: **3,278 Dart tests**, 14 semantic-outbox contract
+  cases and three evidence-output cases. This was the Dart-only lane despite
+  the generic APK job label. No APK, signing or Apple account operation ran.
+  Cleanup succeeded; independent GCE and GitHub inventories returned zero
+  instances and zero registered runners.
+- Matching Windows ARM64 build `34639474581` is compiling the exact source.
+  A clean detached checkout `windows-cloudkit-qualified-d54e2238b` and an
+  exact-source import script are prepared. The import has not run. It verifies
+  provenance, archive and individual file hashes, the 51 packaged native-codec
+  cases, native load and invalid-launch smoke. It preserves the current private
+  profile, previous build receipt and all existing runtimes, including the
+  reaction-05/06 claims. Vendor ObjectBox bytes are never re-signed.
+- Extended the existing copied-database inspector for request-v6. It reports
+  exact target/route, stored edit text or retraction, journal markers and any
+  incorrectly created initial-send intent. Its scope is explicitly DB-only;
+  it never promotes marker presence into native acceptance or CloudKit-update
+  proof. Eight inspector tests pass, including restart, wrong target/source,
+  missing display time and confirmed-but-unreflected rows. The initial test
+  compile exposed fixture misuse of `Content` and the empty-summary factory;
+  those were corrected. Targeted analysis and exact-file whitespace checks pass.
+- Ran the inspector against a temporary copy of the existing private Windows
+  database. Reaction-06 still has exact-source validation, one canonical
+  message, matching target and persisted readback, with the confirmed receipt
+  released. Database/request/claim hashes were unchanged; the temporary copy
+  was removed by the inspector's exact generated-file cleanup. No Apple call.
+- Prepared, but did not execute, a bounded live experiment for the approved
+  test recipient: fresh synthetic parent, one edit or unsend, then a
+  receipt-only separate-process restart. It refuses existing experiment
+  claims, archives private requests, preserves checkpoint evidence, and keeps
+  CloudKit existing-record updates disabled. The Windows import and exact-source
+  smoke must pass first. C: has approximately 48.9 GiB free; no agents are active.
