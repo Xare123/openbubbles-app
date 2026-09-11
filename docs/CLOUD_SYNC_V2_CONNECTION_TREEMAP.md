@@ -818,12 +818,28 @@ Mutation source checkpoint `c65584196` adds a native-only exact-intent codec
 from the target GUID/part and preserves the sender, ordered route, text runs,
 formatting and indexes. Reconstruction uses retained intent, not mutable chat
 state; prepared validation permits only `MessageInst::prepare_send` changes.
-It is **not yet staged, journal-adopted, receipt-bound or connected to a save**.
+Native protected staging is now implemented in
+`rust/src/cloud_sync_ids_mutation_stage.rs`: one immutable source/hash wrapper,
+its own `idsMutationSource` purpose, bounded descriptor, and exact committed
+lease validation before reopen. It is **not journal-adopted, receipt-bound or
+connected to a save**. Native qualification of this integration is pending.
 Text-with-flags edits and unsends are represented; unsupported replacement
 parts must remain explicit pending work, never flattened or counted complete.
-Next integration: a separate protected source purpose and durable mutation
-journal, then positive native confirmation and exact predecessor/readback.
-Initial-create admission remains unchanged. Native qualification is pending.
+Next integration: durable mutation journal, positive native confirmation,
+then exact predecessor/readback. Initial-create admission remains unchanged.
+The codec-only checkpoint passed GitHub `34624049558`; expanded codec and
+protected-stage tests still need exact-source qualification.
+
+Journal integration decision: keep mutation intent separate from the existing
+initial-create journal, whose immutable source must remain unedited. Reuse its
+transaction/receipt lifecycle, not its create-origin validator. Bind operation
+UUID, target GUID/part, target snapshot and protected source independently.
+Stage and durably adopt the original mutation before IDS submission; positive
+native confirmation and exact receipt replay precede local reflection and
+CloudKit admission. Remote-record availability gates the later CloudKit update,
+not ordinary IDS edit/unsend support. A missing remote predecessor never permits
+recreating a previously known message. Receipt recovery and all protected-byte
+liveness roots must include the new journal together, not in later patches.
 
 Retained-version inspection now has live **offline** evidence: the Windows
 profile contains 23,413 scoped record groups and zero multi-row groups, so

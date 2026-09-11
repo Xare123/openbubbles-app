@@ -2,6 +2,10 @@
 //! This codec is native-only. Its output contains message content and must be
 //! protected before persistence. It neither stages data nor grants permission
 //! to send/save. The durable journal and positive IDS receipt remain required.
+//! Source bytes and UUID spellings stay verbatim: the Apple record-name HMAC
+//! keys over exact strings, so this codec never normalizes case or format.
+//! Empty-text edits and send_delivered are bound as-is, never recomputed;
+//! this codec is a source binder, not the wire authorizer.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use crate::cloud_sync_outbound::CloudSyncOutboundFailure as Failure;
@@ -168,6 +172,9 @@ pub(crate) fn validate_mutation_source(bytes: &[u8], message: &MessageInst) -> R
 /// Mirror only MessageInst::prepare_send's three documented mutations. Body,
 /// target GUID, target part, operation UUID, sender and route remain exact.
 /// A match is NOT positive IDS confirmation or proof of a CloudKit update.
+///
+/// send_started_ms/send_finished_ms must come from the native caller clocked
+/// around prepare_send; this codec does not observe the send itself.
 pub(crate) fn validate_prepared_mutation_source(
     bytes: &[u8],
     message: &MessageInst,
@@ -183,6 +190,8 @@ pub(crate) fn validate_prepared_mutation_source(
     }
     expected.sent_timestamp = actual.sent_timestamp;
     if expected.sender_guid.is_none() {
+        // Only a freshly generated sender_guid carries prepare_send's v4
+        // invariant; a pre-existing value is opaque and stays exact.
         let generated = actual
             .sender_guid
             .as_ref()
@@ -317,6 +326,10 @@ fn validate_handle(value: &str) -> Result<(), Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustpush::{
+        Attachment, AttachmentType, CertifiedContext, MessageType, NormalMessage, PartExtension,
+        TextEffect,
+    };
 
     fn original(unsend: bool) -> MessageInst {
         let target = "5BC3779B-7898-4A15-A768-2EA04D3ABAA0".to_owned();
@@ -391,25 +404,30 @@ mod tests {
                     conversation
                         .participants
                         .push(message.sender.clone().unwrap());
-                    conversation.sender_guid = Some("existing-exact-group".to_owned());
+                    // Real v4 fixture: pre-existing sender_guid stays opaque.
+                    conversation.sender_guid =
+                        Some("f47ac10b-58cc-4372-a567-0e02b2c3d479".to_owned());
                 }
                 let bytes = encode_mutation_source(&message).unwrap();
                 message.prepare_send(&[message.sender.clone().unwrap()]);
                 let timestamp = message.sent_timestamp;
-                assert!(
-                    validate_prepared_mutation_source(&bytes, &message, timestamp, timestamp)
-                        .is_ok()
+                assert_eq!(
+                    validate_prepared_mutation_source(&bytes, &message, timestamp, timestamp),
+                    Ok(())
                 );
-                assert!(validate_mutation_source(&bytes, &message).is_err());
-                assert!(validate_prepared_mutation_source(
-                    &bytes,
-                    &message,
-                    timestamp + 1,
-                    timestamp
-                )
-                .is_err());
-                assert!(
-                    validate_prepared_mutation_source(&bytes, &message, 0, timestamp - 1).is_err()
+                assert_eq!(
+                    validate_mutation_source(&bytes, &message).unwrap_err(),
+                    Failure::BindingMismatch
+                );
+                assert_eq!(
+                    validate_prepared_mutation_source(&bytes, &message, timestamp + 1, timestamp)
+                        .unwrap_err(),
+                    Failure::BindingMismatch
+                );
+                assert_eq!(
+                    validate_prepared_mutation_source(&bytes, &message, 0, timestamp - 1)
+                        .unwrap_err(),
+                    Failure::BindingMismatch
                 );
             }
         }
@@ -455,14 +473,16 @@ mod tests {
                 9 => changed.conversation.as_mut().unwrap().after_guid = Some("changed".to_owned()),
                 _ => unreachable!(),
             }
-            assert!(
-                validate_mutation_source(&encoded, &changed).is_err(),
+            assert_eq!(
+                validate_mutation_source(&encoded, &changed).unwrap_err(),
+                Failure::BindingMismatch,
                 "mutation {mutation}"
             );
             changed.prepare_send(&[changed.sender.clone().unwrap()]);
             let time = changed.sent_timestamp;
-            assert!(
-                validate_prepared_mutation_source(&encoded, &changed, time, time).is_err(),
+            assert_eq!(
+                validate_prepared_mutation_source(&encoded, &changed, time, time).unwrap_err(),
+                Failure::BindingMismatch,
                 "prepared {mutation}"
             );
         }
@@ -472,61 +492,189 @@ mod tests {
     fn replay_cannot_be_confused_with_initial_send_or_same_guid_mutation() {
         let mut message = original(true);
         message.message = Message::Read;
-        assert!(encode_mutation_source(&message).is_err());
+        assert_eq!(
+            encode_mutation_source(&message).unwrap_err(),
+            Failure::UnsupportedMessage
+        );
+        let mut create = original(true);
+        create.message = Message::Message(NormalMessage::new(
+            "hello".to_owned(),
+            MessageType::IMessage,
+        ));
+        assert_eq!(
+            encode_mutation_source(&create).unwrap_err(),
+            Failure::UnsupportedMessage
+        );
         let mut message = original(true);
         if let Message::Unsend(change) = &mut message.message {
             change.tuuid = message.id.to_lowercase();
         }
-        assert!(encode_mutation_source(&message).is_err());
+        assert_eq!(
+            encode_mutation_source(&message).unwrap_err(),
+            Failure::BindingMismatch
+        );
         message.id = uuid::Uuid::nil().to_string();
-        assert!(encode_mutation_source(&message).is_err());
+        assert_eq!(
+            encode_mutation_source(&message).unwrap_err(),
+            Failure::BindingMismatch
+        );
     }
 
     #[test]
     fn malformed_noncanonical_and_unknown_source_data_are_rejected() {
+        // OpenedMutationSource has no Debug by design, so assert on
+        // .err().unwrap() here instead of .unwrap_err().
+        assert_eq!(
+            open_mutation_source(&[]).err().unwrap(),
+            Failure::MalformedMessage
+        );
         let bytes = encode_mutation_source(&original(false)).unwrap();
         let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        for field in ["version", "domain", "extra"] {
+        let mut changed = value.clone();
+        changed["version"] = serde_json::json!(99);
+        assert_eq!(
+            open_mutation_source(&serde_json::to_vec(&changed).unwrap())
+                .err()
+                .unwrap(),
+            Failure::UnsupportedMessage
+        );
+        for field in ["domain", "extra"] {
             let mut changed = value.clone();
             changed[field] = serde_json::json!(99);
-            assert!(open_mutation_source(&serde_json::to_vec(&changed).unwrap()).is_err());
+            assert_eq!(
+                open_mutation_source(&serde_json::to_vec(&changed).unwrap())
+                    .err()
+                    .unwrap(),
+                Failure::MalformedMessage
+            );
         }
         value["change"]["parts"][0]["extra"] = serde_json::json!(true);
-        assert!(open_mutation_source(&serde_json::to_vec(&value).unwrap()).is_err());
+        assert_eq!(
+            open_mutation_source(&serde_json::to_vec(&value).unwrap())
+                .err()
+                .unwrap(),
+            Failure::MalformedMessage
+        );
         let mut padded = bytes.clone();
         padded.push(b' ');
-        assert!(open_mutation_source(&padded).is_err());
-        assert!(open_mutation_source(&bytes[..bytes.len() - 1]).is_err());
-        assert!(open_mutation_source(&vec![b'x'; MAX_BYTES + 1]).is_err());
+        // Trailing whitespace still parses, so this fails the canonical
+        // re-encode comparison instead of deserialization.
+        assert_eq!(
+            open_mutation_source(&padded).err().unwrap(),
+            Failure::BindingMismatch
+        );
+        assert_eq!(
+            open_mutation_source(&bytes[..bytes.len() - 1])
+                .err()
+                .unwrap(),
+            Failure::MalformedMessage
+        );
+        assert_eq!(
+            open_mutation_source(&vec![b'x'; MAX_BYTES + 1])
+                .err()
+                .unwrap(),
+            Failure::OversizedMessage
+        );
     }
 
     #[test]
     fn unsupported_or_oversized_edits_never_flatten_into_plaintext() {
-        for bad in 0..5 {
+        for bad in 0..10 {
             let mut message = original(false);
-            match bad {
-                0 => message.verification_failed = true,
-                1 => message.target = Some(Vec::new()),
+            let expected = match bad {
+                0 => {
+                    message.verification_failed = true;
+                    Failure::UnsupportedMessage
+                }
+                1 => {
+                    message.target = Some(Vec::new());
+                    Failure::UnsupportedMessage
+                }
                 2 => {
+                    message.certified_context = Some(CertifiedContext {
+                        version: 1,
+                        receipt: vec![],
+                        sender: String::new(),
+                        target: String::new(),
+                        uuid: vec![],
+                        token: vec![],
+                    });
+                    Failure::UnsupportedMessage
+                }
+                3 => {
                     if let Message::Edit(edit) = &mut message.message {
                         edit.new_parts.0.clear();
                     }
+                    Failure::MalformedMessage
                 }
-                3 => {
+                4 => {
+                    if let Message::Edit(edit) = &mut message.message {
+                        edit.new_parts.0[0].ext = Some(PartExtension::Sticker {
+                            msg_width: 0.0,
+                            rotation: 0.0,
+                            sai: 0,
+                            scale: 0.0,
+                            update: None,
+                            sli: 0,
+                            normalized_x: 0.0,
+                            normalized_y: 0.0,
+                            version: 0,
+                            hash: String::new(),
+                            safi: 0,
+                            effect_type: 0,
+                            sticker_id: String::new(),
+                        });
+                    }
+                    Failure::UnsupportedMessage
+                }
+                5 => {
                     if let Message::Edit(edit) = &mut message.message {
                         edit.new_parts.0[0].part =
                             MessagePart::Mention("person".to_owned(), "id".to_owned());
                     }
+                    Failure::UnsupportedMessage
                 }
-                4 => {
+                6 => {
+                    if let Message::Edit(edit) = &mut message.message {
+                        edit.new_parts.0[0].part = MessagePart::Text(
+                            "effect".to_owned(),
+                            TextFormat::Effect(TextEffect::Big),
+                        );
+                    }
+                    Failure::UnsupportedMessage
+                }
+                7 => {
+                    if let Message::Edit(edit) = &mut message.message {
+                        edit.new_parts.0[0].part = MessagePart::Object("object".to_owned());
+                    }
+                    Failure::UnsupportedMessage
+                }
+                8 => {
+                    if let Message::Edit(edit) = &mut message.message {
+                        edit.new_parts.0[0].part = MessagePart::Attachment(Attachment {
+                            a_type: AttachmentType::Inline(vec![1, 2, 3]),
+                            part: 0,
+                            uti_type: "public.data".to_owned(),
+                            mime: "application/octet-stream".to_owned(),
+                            name: "file".to_owned(),
+                            iris: false,
+                        });
+                    }
+                    Failure::UnsupportedMessage
+                }
+                _ => {
                     if let Message::Edit(edit) = &mut message.message {
                         edit.new_parts.0[0].part =
                             MessagePart::Text("a".repeat(MAX_TEXT_BYTES + 1), Default::default());
                     }
+                    Failure::OversizedMessage
                 }
-                _ => unreachable!(),
-            }
-            assert!(encode_mutation_source(&message).is_err());
+            };
+            assert_eq!(
+                encode_mutation_source(&message).unwrap_err(),
+                expected,
+                "bad {bad}"
+            );
         }
     }
 }

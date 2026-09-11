@@ -2516,3 +2516,40 @@ This is a chronological evidence log. It does not override the
   session-deletion tool is available. C: free space is approximately 48.6 GiB;
   no cleanup credit is claimed. One bounded Muse worker now owns mutation-source
   protected staging; a second provides the journal integration map without edits.
+- Maxwell's codec-test changes were reviewed; parent caught use of `unwrap_err`
+  on a deliberately non-Debug private type and a wrong canonical-JSON error
+  expectation. Both were corrected, error branches checked against source and
+  the single file formatted. Runtime qualification of the expanded tests is
+  pending. Agent closed and shutdown verified; source preserved.
+- Kant's map confirmed the initial-create identity validator must not be
+  weakened for edits/unsends. Accepted a distinct mutation-intent journal and
+  the existing positive-receipt lifecycle; rejected making remote `ckRecordId`
+  availability a prerequisite for ordinary IDS mutation. It gates CloudKit
+  admission later. Source binding, receipt replay and protected-byte liveness
+  need to land together. This is an integration decision, not implemented schema.
+  Agent closed after review; no dedicated files were created.
+- GCE Dart-only `34625386547` on reviewed source `4f7674c1f` successfully
+  provisioned `n2d-standard-16` in `us-west1-c`, with both writer flags off.
+  No quota/settings changes were needed; qualification and cleanup are pending.
+  The UI's generic build-job label does not mean an APK is requested in dart-only.
+- Native protected mutation staging now has a reviewed implementation. Hilbert
+  delivered a partial wrapper; parent completed the purpose and native wrappers,
+  strict reference/lease validation and four protected-store test scenarios.
+  Tests cover edit/unsend reopen after exact idempotent commit, uncommitted
+  rejection, account/source/digest/length/reference/lease/request drift,
+  cross-purpose substitution, and malformed descriptors without storage writes.
+  The one-MiB wrapper ceiling matches existing receipt limits. No FRB, ObjectBox,
+  network call or save activation changed. Exact native qualification is pending.
+- Hilbert's first relative patch landed at the inherited task working directory
+  instead of the assigned worktree. Parent verified its 7,242-byte stray source
+  was identical to the retained project copy except terminal newline, closed the
+  agent, verified `not_found`, then removed only that exact duplicate file.
+  The integrated source and original session provenance remain retained. The
+  routing issue was sent to the designated Muse repair task. No broader folder,
+  session, transcript or evidence deletion occurred.
+- GitHub `34624049558` completed successfully on exact codec source `c65584196`.
+  Bridge reproduction, native compile, app/dependency tests, Anisette provider
+  tests and protector harness all passed. This does not qualify later staging
+  integration or an Android build. ADB wireless discovery reconnected the Pixel;
+  Astra now owns a bounded read-only FaceTime evidence capture, with no calls,
+  installs, log resets or account changes permitted.
