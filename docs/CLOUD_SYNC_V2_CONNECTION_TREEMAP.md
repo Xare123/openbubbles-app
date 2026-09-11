@@ -821,13 +821,13 @@ state; prepared validation permits only `MessageInst::prepare_send` changes.
 Native protected staging is now implemented in
 `rust/src/cloud_sync_ids_mutation_stage.rs`: one immutable source/hash wrapper,
 its own `idsMutationSource` purpose, bounded descriptor, and exact committed
-lease validation before reopen. The current unqualified integration adds
+lease validation before reopen. The native-test-proven integration adds
 purpose-typed bridge staging/restore, exact pre-send and prepared-send checks,
 and a version-4 native positive-IDS receipt that preserves mutation ownership
 through replay and acknowledgement. Historical receipt versions 2/3 retain
 their original meanings; create consumers retain mutation receipts without
 acknowledging them. It is **not journal-adopted or connected to a CloudKit save**.
-Bridge generation and exact-source native qualification remain required.
+Generated bridge import is complete; app journal integration and live proof remain required.
 Text-with-flags edits and unsends are represented; unsupported replacement
 parts must remain explicit pending work, never flattened or counted complete.
 Next integration: durable mutation journal and app confirmation/reflection,
@@ -835,8 +835,17 @@ then exact predecessor/readback. Initial-create admission remains unchanged.
 The codec-only checkpoint passed GitHub `34624049558`; expanded codec and
 protected staging passed exact-source GCE `34625938024` on `3d95920ff`:
 503 Rust tests and bridge reproduction succeeded. The subsequent API/send and
-version-4 receipt integration remains unqualified until its own generated
-bridge and native tests complete.
+version-4 receipt integration `ab7f640c5` passed native compilation and 513 Rust
+tests in GCE `34627823377` (`us-west1-c`, app-Rust-only, both writer flags off).
+Only the expected generated-binding drift gate failed. Artifact `10274958197`
+was SHA-256 verified and its exact seven generated files imported; five have
+logical changes. Unrelated dirty generated files were preserved. The 39 focused
+Dart tests now pass, including mutation/attachment bindings and FaceTime export
+and diagnostics contracts. This is not a full Dart suite or native/app runtime test.
+Cleanup succeeded at 17:38:18Z; independent VM/runner inventories were empty.
+The new bridge requires its matching native library. Do not apply this Dart
+binding as an overlay onto retained Windows native `62221f9c2`, bypass the FRB
+content-hash check, or infer that the current installed APK contains this API.
 
 Journal integration decision: keep mutation intent separate from the existing
 initial-create journal, whose immutable source must remain unedited. Reuse its

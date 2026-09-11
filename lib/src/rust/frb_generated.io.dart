@@ -1588,6 +1588,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_box_autoadd_cloud_sync_native_send_source_binding(dynamic raw);
 
   @protected
+  CloudSyncNativeSendSourceKind
+  dco_decode_box_autoadd_cloud_sync_native_send_source_kind(dynamic raw);
+
+  @protected
   CloudSyncOutboundFailureClass
   dco_decode_box_autoadd_cloud_sync_outbound_failure_class(dynamic raw);
 
@@ -2100,6 +2104,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncNativeSendSourceBinding
   dco_decode_cloud_sync_native_send_source_binding(dynamic raw);
+
+  @protected
+  CloudSyncNativeSendSourceKind dco_decode_cloud_sync_native_send_source_kind(
+    dynamic raw,
+  );
 
   @protected
   CloudSyncOutboundConsumeResult dco_decode_cloud_sync_outbound_consume_result(
@@ -3069,6 +3078,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncNativeSendSourceBinding?
   dco_decode_opt_box_autoadd_cloud_sync_native_send_source_binding(dynamic raw);
+
+  @protected
+  CloudSyncNativeSendSourceKind?
+  dco_decode_opt_box_autoadd_cloud_sync_native_send_source_kind(dynamic raw);
 
   @protected
   CloudSyncOutboundFailureClass?
@@ -5244,6 +5257,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncNativeSendSourceKind
+  sse_decode_box_autoadd_cloud_sync_native_send_source_kind(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncOutboundFailureClass
   sse_decode_box_autoadd_cloud_sync_outbound_failure_class(
     SseDeserializer deserializer,
@@ -5914,6 +5933,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncNativeSendSourceBinding
   sse_decode_cloud_sync_native_send_source_binding(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncNativeSendSourceKind sse_decode_cloud_sync_native_send_source_kind(
     SseDeserializer deserializer,
   );
 
@@ -7037,6 +7061,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncNativeSendSourceBinding?
   sse_decode_opt_box_autoadd_cloud_sync_native_send_source_binding(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncNativeSendSourceKind?
+  sse_decode_opt_box_autoadd_cloud_sync_native_send_source_kind(
     SseDeserializer deserializer,
   );
 
@@ -9621,6 +9651,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_native_send_source_kind(
+    CloudSyncNativeSendSourceKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_outbound_failure_class(
     CloudSyncOutboundFailureClass self,
     SseSerializer serializer,
@@ -10419,6 +10455,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_native_send_source_binding(
     CloudSyncNativeSendSourceBinding self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_native_send_source_kind(
+    CloudSyncNativeSendSourceKind self,
     SseSerializer serializer,
   );
 
@@ -11754,6 +11796,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_cloud_sync_native_send_source_binding(
     CloudSyncNativeSendSourceBinding? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_native_send_source_kind(
+    CloudSyncNativeSendSourceKind? self,
     SseSerializer serializer,
   );
 

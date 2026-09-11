@@ -2611,3 +2611,37 @@ This is a chronological evidence log. It does not override the
   Astra worker now owns the layout task after the export fix: video-first
   iOS-style controls, safe insets and no overlap, while preserving signaling
   and explicit-user teardown semantics. It is not integrated or tested yet.
+- Native API/receipt commit `ab7f640c5` was pushed to the fork and submitted
+  once as GCE `34627823377`: app-Rust-only, N2D-16 in `us-west1-c`, writer and
+  automatic-upload flags off. The previous runs were terminal and the VM
+  inventory was empty before dispatch. The source was validated before the
+  later local FaceTime commit. No APK or account operation was requested.
+- Astra's viewer candidate was reviewed and committed separately as `509aa1d34`.
+  Parent removed a duplicate caller header through review and retained Apple's
+  Leave control. Measured status/WebView/dock regions replace overlay offsets;
+  signaling and explicit-user end authority are unchanged. Parent verification:
+  70 Kotlin tests, nine Dart source contracts, 63 JS/source regressions passed.
+  One source-test regex initially counted equality as assignment and was fixed.
+  Android Activity compilation and actual rendering remain unverified.
+- The native-only FaceTime export fix remains separate and uncommitted pending
+  generated-binding import. Its Flutter test failed to load on the missing new
+  CloudKit enum/field, not an export assertion. No repeated tests or temporary
+  hand-edits of generated bindings were used. Astra was closed after review;
+  shutdown was verified. Shared source and provenance are retained, and no
+  supported session-deletion control is available. C: retained about 49 GiB free.
+- GCE `34627823377` on `ab7f640c5`: native compile and **513 Rust tests passed**;
+  only the generated-binding drift gate failed. Artifact `10274958197` ZIP
+  SHA-256 `15ebf3465035a83a1b19b8bad98192387b8095a0075400d9ceda583f4a501912`
+  was verified before exact-list extraction/import. All seven destination paths
+  were clean before import and matched source hashes afterward; five changed
+  logically. Existing dirty Freezed/platform/generated edits were not overwritten.
+  Binding guards passed. The focused Dart rerun passed 39 tests, including the
+  eight export cases previously blocked by the missing generated source-purpose field.
+  Cleanup completed at 17:38:18Z; independent VM/runner inventories were empty.
+- Muse Lorentz's read-only mutation-journal map was reviewed. Reuse transaction
+  and receipt lifecycle patterns, not the create-origin validator or attachment-only
+  readback predicate. Native intent capture, separate durable mutation identity,
+  both protected-reference roots, positive-receipt replay and local reflection
+  must be integrated coherently before enabling capture. Remote conditional saves
+  still require an actual Apple before/after transition. No account data was read
+  and no files changed by the agent; it was closed and shutdown verified.

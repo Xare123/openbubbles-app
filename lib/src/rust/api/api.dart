@@ -189,6 +189,31 @@ Future<CloudSyncNativeSendSourceBinding> cloudSyncStageIdsAttachmentSource({
   attachmentGuids: attachmentGuids,
 );
 
+/// Stage an edit/unsend's exact original IDS request. The caller must adopt the
+/// binding in its distinct mutation journal and commit its lease before send.
+/// Neither a staged source nor a restored request authorizes resubmission.
+Future<CloudSyncNativeSendSourceBinding> cloudSyncStageIdsMutationSource({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncNativeSendReceiptContext context,
+  required String localSourceSha256,
+  required MessageInst message,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageIdsMutationSource(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+  localSourceSha256: localSourceSha256,
+  message: message,
+);
+
+/// Reopen the original committed request for validation, never reconstruct an
+/// edit from the current displayed body. Unknown IDS outcomes stay unknown.
+Future<MessageInst> cloudSyncRestoreIdsMutationSource({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required CloudSyncNativeSendReceiptContext context,
+}) => RustLib.instance.api.crateApiApiCloudSyncRestoreIdsMutationSource(
+  cloudMessagesClient: cloudMessagesClient,
+  context: context,
+);
+
 /// Stage one original upload plan from the exact retained IDS source. The
 /// caller holds the V2 writer interlock and protected-store exclusion, proves
 /// the local intent has a positive IDS receipt, then adopts/commits this plan
@@ -3492,9 +3517,10 @@ class CloudSyncNativeSendReceiptPage {
           nextCursor == other.nextCursor;
 }
 
-/// Content-free ownership of an already-staged IDS attachment source. This
+/// Content-free ownership of an already-staged IDS source. This
 /// identifies protected local data, never delivery or CloudKit write authority.
 class CloudSyncNativeSendSourceBinding {
+  final CloudSyncNativeSendSourceKind? kind;
   final String sourceSha256;
   final String protectedReference;
   final String leaseReference;
@@ -3502,6 +3528,7 @@ class CloudSyncNativeSendSourceBinding {
   final BigInt payloadLength;
 
   const CloudSyncNativeSendSourceBinding({
+    this.kind,
     required this.sourceSha256,
     required this.protectedReference,
     required this.leaseReference,
@@ -3511,6 +3538,7 @@ class CloudSyncNativeSendSourceBinding {
 
   @override
   int get hashCode =>
+      kind.hashCode ^
       sourceSha256.hashCode ^
       protectedReference.hashCode ^
       leaseReference.hashCode ^
@@ -3522,12 +3550,17 @@ class CloudSyncNativeSendSourceBinding {
       identical(this, other) ||
       other is CloudSyncNativeSendSourceBinding &&
           runtimeType == other.runtimeType &&
+          kind == other.kind &&
           sourceSha256 == other.sourceSha256 &&
           protectedReference == other.protectedReference &&
           leaseReference == other.leaseReference &&
           payloadSha256 == other.payloadSha256 &&
           payloadLength == other.payloadLength;
 }
+
+/// A source purpose is not a permission to send or write a CloudKit record.
+/// An unset kind in attachment call sites remains attachment-only, never mutation.
+enum CloudSyncNativeSendSourceKind { attachment, mutation }
 
 class CloudSyncOutboundConsumeResult {
   final List<CloudSyncOutboundSaveOutcome> outcomes;
