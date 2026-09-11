@@ -8,6 +8,59 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('write preflight does not renew a warm session', () async {
+    var ensured = 0;
+    final ready = await cloudSyncV2WindowsPrepareWriteAuthentication(
+      ensure: () async { ensured++; },
+      recover: (_) async => throw StateError('recovery must not run'),
+    );
+    expect(ready, isTrue);
+    expect(ensured, 1);
+  });
+
+  test('handled read-auth renewal stops the original write invocation', () async {
+    final missing = StateError('cloud_sync_native_auth_refresh_session_missing');
+    var recoveries = 0;
+    final ready = await cloudSyncV2WindowsPrepareWriteAuthentication(
+      ensure: () async => throw missing,
+      recover: (error) async {
+        expect(error, same(missing));
+        recoveries++;
+        return true;
+      },
+    );
+    expect(ready, isFalse);
+    expect(recoveries, 1);
+  });
+
+  test('unhandled preflight failure and failed renewal retain their exact error', () async {
+    final original = StateError('cloud_sync_native_auth_refresh_transport_failed');
+    await expectLater(cloudSyncV2WindowsPrepareWriteAuthentication(
+      ensure: () async => throw original,
+      recover: (_) async => false,
+    ), throwsA(same(original)));
+    final renewal = StateError('cloud_sync_native_auth_credentials_rejected');
+    await expectLater(cloudSyncV2WindowsPrepareWriteAuthentication(
+      ensure: () async => throw original,
+      recover: (_) async => throw renewal,
+    ), throwsA(same(renewal)));
+  });
+
+  test('write preflight recovery cannot catch or replay a send failure', () {
+    final source = File('lib/cloud_sync_v2_windows_harness.dart').readAsStringSync();
+    final start = source.indexOf('Future<void> _runLocalWrite()');
+    final write = source.substring(start, source.indexOf('Future<bool> _prepareSmsTwoFactor()', start));
+    final preflight = write.indexOf('cloudSyncV2WindowsPrepareWriteAuthentication(');
+    final construct = write.indexOf('final result = await CloudSyncWindowsLocalWrite(');
+    expect(preflight, greaterThan(0));
+    expect(preflight, lessThan(construct));
+    expect(write.substring(preflight, construct), matches(r'\)\)\s*\{\s*return;\s*\}'));
+    expect(write.substring(0, preflight), contains('cloud_sync_windows_write_disabled'));
+    expect(write.substring(construct), isNot(contains('_handleMissingReadAuthentication')));
+    expect(write.substring(construct), isNot(contains('_runLocalWrite(')));
+    expect(write.substring(construct), contains('cloudSyncWindowsWriteFailureDiagnostic(error, stack)'));
+  });
+
   test('native bootstrap failures are distinct from account failures', () {
     for (final error in <Object>[
       ArgumentError("Failed to load dynamic library 'rust_lib_bluebubbles.dll': "

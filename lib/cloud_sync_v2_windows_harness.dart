@@ -161,6 +161,21 @@ bool cloudSyncV2WindowsHarnessShouldStartFreshReadAuthentication({
     safeCode == 'cloud_sync_native_auth_refresh_session_missing' &&
     !alreadyAttempted;
 
+/// Run before constructing a write. Recovery owns any authenticated resume;
+/// false means this invocation must stop. Never wrap sending in this catch.
+Future<bool> cloudSyncV2WindowsPrepareWriteAuthentication({
+  required Future<void> Function() ensure,
+  required Future<bool> Function(Object) recover,
+}) async {
+  try {
+    await ensure();
+    return true;
+  } catch (error) {
+    if (await recover(error)) return false;
+    rethrow;
+  }
+}
+
 String cloudSyncV2WindowsProjectionChatTitle({
   required String? displayName,
   required String? chatIdentifier,
@@ -1134,6 +1149,30 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
     setState(() { _busy = true; _status = 'Running the explicit Windows write request...'; });
     rustlib.ArcImClient? senderClient;
     try {
+      if (!fs.cloudSyncV2WindowsDevProfileActive ||
+          !CloudSyncDevGate.manualOutboundCanaryEnabled ||
+          const String.fromEnvironment('OPENBUBBLES_CLOUDKIT_WRITER_OWNER') != 'v2') {
+        throw StateError('cloud_sync_windows_write_disabled');
+      }
+      if (!await cloudSyncV2WindowsPrepareWriteAuthentication(
+        ensure: () async {
+          final client = _activeClient;
+          if (client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+            throw StateError('cloud_sync_windows_write_client_missing');
+          }
+          await _setRuntimeStage('windows-write-read-authentication', state: 'running');
+          await FrbCloudSyncNativeAuthBinding().ensureReadAuthentication(
+            cloudMessagesClient: client,
+            privateStorageDirectory: fs.appDocDir.path,
+          );
+        },
+        // Existing single-attempt login resumes the requested operation with
+        // a new bound client, or waits for SMS. This invocation has not created
+        // a claim or started a write; retained claims still use reconciliation.
+        recover: _handleMissingReadAuthentication,
+      )) {
+        return;
+      }
       final result = await CloudSyncWindowsLocalWrite(
         readClient: () => _activeClient,
         reportStage: (stage) => _setRuntimeStage(stage, state: 'running'),

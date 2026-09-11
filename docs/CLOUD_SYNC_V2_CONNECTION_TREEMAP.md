@@ -55,10 +55,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| September 11 mutation candidate | **TEST-PROVEN, live proof pending:** `c02379430` opts only the Windows mutation experiment into positive acknowledgments with zero automatic retries. Dependency `98cc67a` passed 299 tests in `34642902143`; 26 local Dart tests and targeted analysis passed. App-native `34642902097` passed 524 tests and exact bridge regeneration; its cleanup is pending. Windows bundle `34642902373` is building. This repairs the deterministic `no_response=true` mismatch exposed by edit-08 on `d54e2238b`, not proof that Apple accepts the opt-in. Parent-07 passed send/readback; edit-08 remains claimed state 1 without receipt/reflection and must never be resent. Existing-record updates remain disabled. |
+| September 11 mutation candidate | **LIVE-PROVEN on Windows, IDS/local scope only:** `c02379430` with dependency `98cc67a` passed fresh edit-16 and unsend-18, each with positive IDS acknowledgment, retained native receipt, local reflection and a separate-process reconciliation without resending. Both parent messages passed CloudKit save/readback. Copied-DB inspection confirmed state 3, exact stored display and zero initial-send intents for each mutation; source DB unchanged. Existing-record CloudKit updates remain disabled, and independent recipient display is unverified. Old edit-08 stays unknown and must never be resent. |
 | Installed Android candidate | Signed `f860966d53b6019b46f1437312e67662724f08ce`, installed September 11 at 09:14:53Z and runtime-verified. Two reads reached the remote head with saves/deletes off and outbox `0 -> 0`. The final local sweep examined 3,587 blocking saves, applied zero, and completed partial at 09:47:41Z. Qualification-07 remains unsent after IDS 6005. Approved registration repair quiesced reads and preserved chats, hardware and CloudKit state; saved-account reuse returned phone-number validation failure. Await normal validation, not another reset. Alpha is untouched. |
 | Qualified source, not installed | Read-transition `90f98b7eb` passed 296 focused tests, targeted analysis, and GCE `34594546421`: 3,147 Dart tests plus 14 outbox and 3 evidence-output cases. Cleanup completed at 11:44:17Z; independent VM/runner inventories were empty. It includes replay repair `fd60a8a20` and background patch `0bb67d2c4`, which avoids repeating exhaustive retained-history sweeps on routine metadata wakes. No APK or Pixel runtime proof for these patches yet. |
-| Windows candidate | Imported `d54e2238b` from `34639474581`: 38 focused tests, 51 packaged-DLL codec cases, 78 verified bundle files, native load and isolated invalid-launch smoke passed. Profile hashes stayed unchanged during import. Reaction-06 no-op restart and fresh plaintext parent-07 save/readback passed. Edit-08 remains unconfirmed, not a successful edit. Earlier image/reaction runtimes, requests, claims and checkpoints remain protected evidence. |
+| Windows candidate | Imported `c02379430` from `34642902373`: 39 focused tests, 51 packaged-DLL codec cases, 78 verified bundle files, native load and isolated invalid-launch smoke passed. Protected profile hashes stayed unchanged during import. Dependency run `34642902143` passed 299 tests; app-native `34642902097` passed 524 tests and exact bridge regeneration. All cleanup completed. A read-only pass renewed the missing auth cache before live writes; no reset or new code was needed. The follow-up preflight repair is test-proven only, not in this imported runtime. |
 | Current full qualification | GCE `34579830953` passed every selected build/test gate, APK/native verification, Android JVM tests, trusted signing and cleanup on `f860966d5`, including cold-start fix `b432b9e8a`. T2D 60; writer on, automatic uploads off. Signed artifact `10192048724` was downloaded and signature-verified before the in-place Pixel install. Prior `34576684370` also passed on `5e9a532be`. Neither APK includes the later Windows-only reaction harness. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
@@ -69,10 +69,14 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 Next technical gate: prove safe conditional existing-record writes. Read-transition candidate
 `90f98b7eb` passed GCE Dart-only qualification `34594546421`.
-Immediate blocking subgate: qualify and import exact `c02379430`, then use a
-fresh parent and mutation IDs to prove positive IDS acknowledgment, exact-time
-local reflection and receipt-only restart. Do not reuse claimed edit-08. The
-native acknowledgment flag is experimental, not independent recipient proof.
+The prior blocking IDS/local subgate passed on exact `c02379430` at 20:46:57Z
+(edit-16) and 20:47:56Z (unsend-18). Next connect the exact confirmed mutation
+source to a durable, version-checked update candidate. Preserve unknown outer
+fields and nested protobuf/plist data; retain the original ETag and candidate
+before submission. Qualify conflict/unknown-outcome readback and restart without
+resending IDS. Do not enable arbitrary existing-record writes from a successful
+local reflection or synthetic roundtrip alone. Independent Apple-device and
+Android end-to-end proof remain separate.
 Preview repair `269620126` and reviewed Find My lane isolation `ee9729ec3`
 passed GCE Dart-only `34597175527`, exact source
 `ee9729ec32fc132b386e4cbd42e608424968dbec`: 3,167 Dart tests plus 14 outbox
@@ -103,12 +107,16 @@ including exact adopted-group selection after database reopen). This does not cr
 groups or bypass the existing protected semantic dependency. Live group proof
 needs the approved conversation restored/created first. Direct-reaction work
 and attachment integration can proceed independently of that prerequisite.
-Current private request `qualification-20260911-edit-08` is claimed but has no
-positive IDS receipt. Do not resend it or treat successful dispatch as acceptance.
-Parent `qualification-20260911-edit-parent-07` has exact readback proof; its
-freshness window has expired, so a future experiment needs a new parent and IDs.
-Prior plaintext-03, attachment-04 and reaction-05/06 requests and claims remain
-preserved. Current qualified native runtime: `../windows-cloudkit-qualified-d54e2238b`.
+Current private request `qualification-20260911-unsend-18` completed receipt-only
+restart. Edit-16 and unsend-18 both have persisted local state 3; their parents
+15/17 have exact CloudKit readback proof. Old edit-08 remains claimed without a
+receipt and must never be resent. Parent-11 failed before claim during auth
+preflight and remains unclaimed. Prior plaintext, attachment, reaction and all
+mutation evidence remain preserved. Qualified runtime:
+`../windows-cloudkit-qualified-c02379430`. The read-only renewal guard incorrectly
+required byte-identical `hw_info.plist`: `setup_push` reencrypts the retained
+identity and saves APS state on connection. This is not an account-reset signal;
+future guards must compare stable identity/configuration, not randomized ciphertext.
 Older runtimes and receipts remain rollback material.
 
 ### Current attachment-write boundary
@@ -796,8 +804,10 @@ an ETag conflict after a lost success response does not prove that nothing saved
 
 The native-only `cloud_sync_message_proto_patch` candidate patches decompressed
 msgProto fields 3/4/7 while preserving all other wire spans verbatim. It rejects
-ambiguous mutable fields and malformed/over-budget input. Nine synthetic tests
-are awaiting cloud qualification. This helper is not connected to a writer;
+ambiguous mutable fields and malformed/over-budget input. All nine synthetic
+tests passed within 533 app-native tests on `a42ecb74f`, GCE `34644303016`, with
+exact bridge regeneration and successful cleanup. Independent VM and runner
+inventories were empty afterward. This helper is not connected to a writer;
 it does not prove Apple mutation semantics, PCS authority or causal merge.
 
 Dependency `fbf9b4c` passed native-only GCE qualification `34621760644`, pinned

@@ -2950,3 +2950,57 @@ This is a chronological evidence log. It does not override the
   524 tests at 20:20:24Z, compilation and exact generated-bridge comparison.
   Its test compile took 1m56s, tests 2.27s; its cleanup remains in progress.
   Windows compilation is still running. No new live mutation has been sent.
+
+## 2026-09-11, Windows edit and unsend receipts/reflection proven
+
+- Exact `c02379430` Windows run `34642902373` passed 39 focused Dart tests,
+  51 packaged-native codec tests and smoke. Artifact `10281157306` outer SHA-256
+  `9b4db4536d119730cb77843edd1f9a1becaad4342d488f7cfbc55013770070b9` and inner
+  `0a0dd40d0f1e3ab66f2b3a8ef03c6a2aa3e9ca2dcf00a0c015d0c6baf90e0d16`
+  were verified. Local import at 20:37:41Z verified 78 files, retained the prior
+  runtime, passed native load and invalid-launch checks, and preserved protected
+  profile hashes. No account data went to CI or signing-policy change occurred.
+- Parent-11 stopped before claim at 20:38:12Z with
+  `cloud_sync_native_auth_refresh_session_missing`. A bounded read-only launch
+  of the same binary renewed the cache and finished at 20:44:47Z: fetched 0,
+  applied 0, retained 6,654 and repaired one chat-order cache row. No new SMS was
+  required. This does not establish the missing session's cause or full projection.
+- The one-off preservation guard failed because it hashed all of `hw_info.plist`.
+  Source review showed `setup_push` saves APS state and reencrypts the restored
+  identity on connection. The guard's in-memory hashes were not retained, so it
+  cannot retrospectively prove every file byte. Request-11 still matches its
+  archive and is unclaimed; old write-claim timestamps remain unchanged. No
+  reset or replacement hardware path ran. Preserve this guard failure as evidence.
+- Fresh parent-15 passed IDS send and CloudKit save/readback. Edit-16 then passed
+  positive IDS confirmation, native receipt retention, local reflection and a
+  separate-process no-send reconciliation, completed at 20:46:57Z. Fresh parent-17
+  and unsend-18 passed the same sequence at 20:47:56Z. Each experiment used only
+  the approved test recipient. Existing-record cloud updates stayed off.
+- Read-only inspection of disposable database copies independently found state 3,
+  structurally valid source, receipt/reflection markers, exact target/route and
+  stored display matches for both mutations. Neither created an initial-send
+  intent under its mutation GUID. Original database/request/claim hashes stayed
+  unchanged; two scoped inspector tests passed. Outbox row count was 11, not
+  evidence of 11 pending writes. No independent recipient display is claimed.
+- Raw MessageProto patch helper `a42ecb74f` passed all nine new cases within
+  533 app-native tests in GCE `34644303016`; compile 2m07s, tests 2.60s, exact
+  bridge regeneration and cleanup passed. Dependency/app runs `34642902143`
+  and `34642902097` also cleaned up successfully. Independent inventories:
+  zero GCE instances and zero registered runners. No APK was built.
+- Follow-up Windows harness preflight calls the existing single-attempt read
+  authentication recovery before constructing a writer. Recovery stops the
+  original invocation; write failures never enter that catch. All 41 focused
+  tests passed after correcting the test shell's missing ObjectBox DLL PATH.
+  This patch is not in the live-qualified runtime and is not runtime-qualified.
+- Astra child Anscombe's default-off, content-free FaceTime setup markers were
+  reviewed and committed separately as `1ab2e7941`; parent reran all 36 focused
+  tests successfully. No call-policy or timeout change and no live-call proof.
+  Child shutdown was verified with `not_found`. No dedicated worktree or log
+  bundle was created; transcript retained because supported session deletion
+  and an exclusive transcript locator were unavailable. No shared session data
+  or unrelated working-tree changes were removed.
+- Final targeted analysis found no issues; the exact final 41-test rerun passed.
+  End check: C: free 47.62 GiB, active checkout build 2.391 GiB and `.dart_tool`
+  7.502 GiB. No live OpenBubbles process or new inspection scratch directory
+  remained. Only verified disposable database copies used by the inspector were
+  removed by its scoped cleanup; original data and all run evidence were retained.
