@@ -132,6 +132,60 @@ void main() {
       ]) {
         expect(encoded, isNot(contains(privateValue)));
       }
+      final reactionRequest = CloudSyncWindowsWriteRequest.fromJson({
+        'version': 5,
+        'id': 'proof-reaction',
+        'allowSend': true,
+        'recipient': request.recipient,
+        'sender': request.sender,
+        'text': '',
+        'reactionType': 'like',
+        'reactionPart': 0,
+        'existingChatFromRequestId': 'proof-parent',
+      });
+      const parentGuid = 'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE';
+      message.associatedMessageGuid = parentGuid;
+      message.associatedMessagePart = 0;
+      message.associatedMessageType = 'like';
+      store.box<Message>().put(message);
+      final parentClaim = <String, dynamic>{
+        'version': 1,
+        'account': claim['account'],
+        'guid': parentGuid,
+      };
+      final reaction = inspectWindowsWriteProof(store, reactionRequest, {
+        ...claim,
+        'binding': reactionRequest.binding,
+      }, parentClaim: parentClaim);
+      expect(reaction['reaction_target_matches_request'], isTrue);
+      expect(reaction['readback_marker_matches_admission'], isTrue);
+      expect(reaction['persisted_readback_proven'], isFalse);
+      for (final wrongParent in <Map<String, dynamic>?>[
+        null,
+        {...parentClaim, 'version': 2},
+        {...parentClaim, 'account': 'B' * 43},
+        {...parentClaim, 'guid': guid},
+      ]) {
+        final invalid = inspectWindowsWriteProof(store, reactionRequest, {
+          ...claim,
+          'binding': reactionRequest.binding,
+        }, parentClaim: wrongParent);
+        expect(invalid['reaction_target_matches_request'], isFalse);
+        expect(invalid['persisted_readback_proven'], isFalse);
+      }
+      message.associatedMessagePart = null;
+      store.box<Message>().put(message);
+      expect(
+        inspectWindowsWriteProof(store, reactionRequest, {
+          ...claim,
+          'binding': reactionRequest.binding,
+        }, parentClaim: parentClaim)['reaction_target_matches_request'],
+        isFalse,
+      );
+      expect(jsonEncode(reaction), isNot(contains(parentGuid)));
+      message.associatedMessageGuid = null;
+      message.associatedMessageType = null;
+      store.box<Message>().put(message);
       // Reuse the forged baseline rows: a parent receipt is no child proof.
       final attachmentRequest = CloudSyncWindowsWriteRequest.fromJson({
         'version': 4,

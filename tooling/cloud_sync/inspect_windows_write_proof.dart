@@ -12,8 +12,9 @@ import 'package:crypto/crypto.dart';
 Map<String, Object?> inspectWindowsWriteProof(
   Store store,
   CloudSyncWindowsWriteRequest request,
-  Map<String, dynamic>? claim,
-) => store.runInTransaction(TxMode.read, () {
+  Map<String, dynamic>? claim, {
+  Map<String, dynamic>? parentClaim,
+}) => store.runInTransaction(TxMode.read, () {
   if (claim == null) {
     return {
       'version': 1,
@@ -158,6 +159,42 @@ Map<String, Object?> inspectWindowsWriteProof(
       'parent_save_attempt_count': operation?.attemptCount,
       ...readWrittenRecordIngestionDiagnostic(store, operation),
       'persisted_readback_proven': false,
+    };
+  }
+  if (request.reactionType != null) {
+    final targetMatches =
+        parentClaim != null &&
+        parentClaim['version'] == 1 &&
+        parentClaim['account'] == claim['account'] &&
+        parentClaim['guid'] is String &&
+        message?.associatedMessageGuid == parentClaim['guid'] &&
+        message?.associatedMessagePart == request.reactionPart &&
+        message?.associatedMessageType == request.reactionType &&
+        message?.associatedMessageEmoji == null &&
+        message?.isFromMe == true &&
+        message?.dateDeleted == null &&
+        message?.dateEdited == null;
+    final positiveIds =
+        intent.idsConfirmationVersion == cloudSyncIdsConfirmationVersion;
+    return {
+      'version': 1,
+      'state': 'inspected',
+      'request_kind': 'reaction-v5',
+      'proof_scope': 'persisted_exact_readback_not_fresh_Apple_request',
+      'positive_ids_confirmation': positiveIds,
+      'exact_source_validated': exactSource,
+      'validation_failure': validationFailure,
+      'single_canonical_message': matchingMessages == 1,
+      'reaction_target_matches_request': targetMatches,
+      'readback_marker_matches_admission': readbackMarker,
+      'confirmed_receipt_released': settled,
+      'persisted_readback_proven':
+          positiveIds &&
+          exactSource &&
+          matchingMessages == 1 &&
+          targetMatches &&
+          readbackMarker &&
+          settled,
     };
   }
   final bodyMatches =

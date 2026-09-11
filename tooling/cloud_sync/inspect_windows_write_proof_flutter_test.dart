@@ -9,6 +9,10 @@ import 'inspect_windows_write_proof.dart';
 
 // Invoke only after the Windows harness has exited. Opens a disposable copy,
 // never the retained database. No account initialization or native network API.
+// Inspect writer proofs with the same compile gates as the producing runtime:
+// --dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2
+// --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true
+// Otherwise parent-authority validation correctly rejects the build owner.
 void main() {
   test(
     'inspect the exact retained Windows test request without changing its store',
@@ -41,6 +45,14 @@ void main() {
       final claimBytes = claimFile.existsSync()
           ? await claimFile.readAsString()
           : null;
+      final parentClaimFile = request.reactionType == null
+          ? null
+          : File(
+              '${profile.path}/cloud-sync-v2/windows-write-${request.existingChatFromRequestId}.json',
+            );
+      final parentClaimBytes = parentClaimFile == null
+          ? null
+          : await parentClaimFile.readAsString();
       final before = await sha256.bind(source.openRead()).first;
       final scratchRoot = Directory(
         r'C:\Codex\OpenBubblesReview\scratch',
@@ -58,6 +70,9 @@ void main() {
           claimBytes == null
               ? null
               : jsonDecode(claimBytes) as Map<String, dynamic>,
+          parentClaim: parentClaimBytes == null
+              ? null
+              : jsonDecode(parentClaimBytes) as Map<String, dynamic>,
         );
         store.close();
         store = null;
@@ -72,6 +87,12 @@ void main() {
               : null,
           claimBytes == null ? null : sha256.convert(utf8.encode(claimBytes)),
         );
+        if (parentClaimFile != null) {
+          expect(
+            sha256.convert(await parentClaimFile.readAsBytes()),
+            sha256.convert(utf8.encode(parentClaimBytes!)),
+          );
+        }
         // Only booleans, finite states and counters. No text, handles or raw IDs.
         // ignore: avoid_print
         print(
