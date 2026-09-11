@@ -120,6 +120,29 @@ Map<String, Object?> inspectWindowsWriteProof(
   } finally {
     duplicates.close();
   }
+  if (request.attachmentFixture != null) {
+    // DB-only diagnostics cannot establish attachment child readback proof.
+    return {
+      'version': 1,
+      'state': 'inspected',
+      'proof_scope': 'db_only_attachment_diagnostics',
+      'request_kind': 'attachment-v4',
+      'intent_state': intent.state,
+      'exact_source_validated': exactSource,
+      'validation_failure': validationFailure,
+      'positive_ids_confirmation':
+          intent.idsConfirmationVersion == cloudSyncIdsConfirmationVersion,
+      'single_canonical_message': matchingMessages == 1,
+      'persisted_attachment_count': message?.dbAttachments.length,
+      ...readAttachmentUploadDiagnostic(
+        store,
+        intentId: intent.id,
+        accountFingerprint: claim['account'] as String,
+      ),
+      'parent_operation_present': operation != null,
+      'persisted_readback_proven': false,
+    };
+  }
   final bodyMatches =
       message != null &&
       message.text == request.text &&
@@ -166,3 +189,43 @@ Map<String, Object?> inspectWindowsWriteProof(
         settled,
   };
 });
+
+/// Query failure is unknown, never evidence of zero upload rows.
+Map<String, Object?> readAttachmentUploadDiagnostic(
+  Store store, {
+  required int intentId,
+  required String accountFingerprint,
+}) {
+  try {
+    final query = store
+        .box<CloudAttachmentUploadEntity>()
+        .query(
+          CloudAttachmentUploadEntity_.localSendIntentId
+              .equals(intentId)
+              .and(
+                CloudAttachmentUploadEntity_.accountFingerprint.equals(
+                  accountFingerprint,
+                ),
+              ),
+        )
+        .build();
+    try {
+      final rows = query.find();
+      return {
+        'attachment_upload_row_count': rows.length,
+        'attachment_upload_states': rows.map((row) => row.state).toList()
+          ..sort(),
+        'attachment_upload_failure': null,
+      };
+    } finally {
+      query.close();
+    }
+  } catch (_) {
+    return {
+      'attachment_upload_row_count': null,
+      'attachment_upload_states': null,
+      'attachment_upload_failure':
+          'cloud_sync_windows_proof_upload_query_failed',
+    };
+  }
+}

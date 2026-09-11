@@ -132,6 +132,107 @@ void main() {
       ]) {
         expect(encoded, isNot(contains(privateValue)));
       }
+      // Reuse the forged baseline rows: a parent receipt is no child proof.
+      final attachmentRequest = CloudSyncWindowsWriteRequest.fromJson({
+        'version': 4,
+        'id': 'proof-attachment',
+        'allowSend': true,
+        'recipient': request.recipient,
+        'sender': request.sender,
+        'text': '',
+        'attachmentFixture': 'png-v1',
+      });
+      final attachment = Attachment(guid: '${guid}_0');
+      store.box<Attachment>().put(attachment);
+      message
+        ..text = ''
+        ..attributedBody = []
+        ..hasAttachments = true;
+      message.dbAttachments.add(attachment);
+      store.box<Message>().put(message);
+      final diagnostic = inspectWindowsWriteProof(store, attachmentRequest, {
+        ...claim,
+        'binding': attachmentRequest.binding,
+      });
+      expect(diagnostic, {
+        'version': 1,
+        'state': 'inspected',
+        'proof_scope': 'db_only_attachment_diagnostics',
+        'request_kind': 'attachment-v4',
+        'intent_state': 2,
+        'exact_source_validated': report['exact_source_validated'],
+        'validation_failure': report['validation_failure'],
+        'positive_ids_confirmation': true,
+        'single_canonical_message': true,
+        'persisted_attachment_count': 1,
+        'attachment_upload_row_count': 0,
+        'attachment_upload_states': <int>[],
+        'attachment_upload_failure': null,
+        'parent_operation_present': true,
+        'persisted_readback_proven': false,
+      });
     },
   );
+  test('upload diagnostics filter exact account and intent', () {
+    final account = claim['account'] as String;
+    for (final (key, ownerAccount, ownerIntent, state) in [
+      ('one', account, 7, 3),
+      ('two', account, 7, 2),
+      ('other-intent', account, 8, 0),
+      ('other-account', 'B' * 43, 7, 1),
+    ]) {
+      store.box<CloudAttachmentUploadEntity>().put(
+        CloudAttachmentUploadEntity(
+          uploadKey: key,
+          accountFingerprint: ownerAccount,
+          writerEpoch: 1,
+          checkpointGeneration: 1,
+          localSendIntentId: ownerIntent,
+          messageGuidHash: 'a' * 64,
+          sourceSha256: 'b' * 64,
+          protectedStoreIdentity: 'synthetic-store',
+          attachmentKeyHash: 'C' * 43,
+          serverRecordIdHash: 'D' * 43,
+          planReference: 'synthetic-plan',
+          planLeaseReference: 'synthetic-lease',
+          planPayloadSha256: 'c' * 64,
+          state: state,
+          createdAtMs: 1,
+          updatedAtMs: 2,
+        ),
+      );
+    }
+    expect(
+      readAttachmentUploadDiagnostic(
+        store,
+        intentId: 7,
+        accountFingerprint: account,
+      ),
+      {
+        'attachment_upload_row_count': 2,
+        'attachment_upload_states': [2, 3],
+        'attachment_upload_failure': null,
+      },
+    );
+  });
+  test('upload query failure reports nulls instead of zero rows', () async {
+    store.close();
+    try {
+      expect(
+        readAttachmentUploadDiagnostic(
+          store,
+          intentId: 7,
+          accountFingerprint: claim['account'] as String,
+        ),
+        {
+          'attachment_upload_row_count': null,
+          'attachment_upload_states': null,
+          'attachment_upload_failure':
+              'cloud_sync_windows_proof_upload_query_failed',
+        },
+      );
+    } finally {
+      store = await openStore(directory: directory.path);
+    }
+  });
 }
