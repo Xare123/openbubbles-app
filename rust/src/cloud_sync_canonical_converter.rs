@@ -1577,14 +1577,10 @@ fn decode_message_summary(
     let mut retracted_parts = summary.rp;
     retracted_parts.sort_unstable();
     retracted_parts.dedup();
-    if retracted_parts
-        .iter()
-        .any(|part| declared_edit_parts.contains(part))
-    {
-        return Err(CloudCanonicalConversionOutcome::Quarantined(
-            CloudCanonicalQuarantineReason::ConflictingEditAndRetraction,
-        ));
-    }
+    // Edit history and current retraction state are not mutually exclusive.
+    // Both the legacy and journaled local unsend paths retain the earlier
+    // edits. Preserve that history while projection keeps the part unsent.
+    // Every retained edit still passes timestamp/body/part validation below.
 
     struct PreparedEdit {
         bodies: Vec<CloudCanonicalAttributedBody>,
@@ -4350,7 +4346,7 @@ mod tests {
     }
 
     #[test]
-    fn unproven_edit_time_and_edit_retraction_conflict_do_not_apply() {
+    fn unproven_edit_time_does_not_apply_even_when_part_is_retracted() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         assert_eq!(
             validated_edit_timestamp(0.0),
@@ -4371,32 +4367,65 @@ mod tests {
             }],
         );
         let mut message = normal_message(Some("base"));
-        message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&fractional));
-        assert_eq!(
-            convert_message(
-                &context(&hasher, "server-message-fractional-time", None),
-                &message_presence(),
-                &message,
-            ),
-            CloudCanonicalConversionOutcome::Deferred(
-                CloudCanonicalDeferredReason::UnprovenEditTimestamp
-            )
-        );
+        for retracted in [false, true] {
+            fractional.rp = if retracted { vec![0] } else { vec![] };
+            message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&fractional));
+            assert_eq!(
+                convert_message(
+                    &context(&hasher, "server-message-fractional-time", None),
+                    &message_presence(),
+                    &message,
+                ),
+                CloudCanonicalConversionOutcome::Deferred(
+                    CloudCanonicalDeferredReason::UnprovenEditTimestamp
+                )
+            );
+        }
+    }
 
-        let mut conflicting = fractional;
-        conflicting.ec.get_mut("0").expect("edit")[0].d = 1_720_000_000_100.0;
-        conflicting.rp = vec![0];
-        message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&conflicting));
-        assert_eq!(
-            convert_message(
-                &context(&hasher, "server-message-conflict", None),
-                &message_presence(),
-                &message,
-            ),
-            CloudCanonicalConversionOutcome::Quarantined(
-                CloudCanonicalQuarantineReason::ConflictingEditAndRetraction
-            )
+    #[test]
+    fn retracted_edited_part_retains_history_and_terminal_state() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut summary = MessageSummaryInfo {
+            ep: vec![0],
+            rp: vec![0],
+            ..Default::default()
+        };
+        summary.ec.insert(
+            "0".to_owned(),
+            vec![
+                WireMessageEdit {
+                    t: plain_encoded_attributed_body("original"),
+                    d: 1_720_000_000_100.0,
+                    bcg: None,
+                },
+                WireMessageEdit {
+                    t: plain_encoded_attributed_body("edited"),
+                    d: 1_720_000_000_200.0,
+                    bcg: None,
+                },
+            ],
         );
+        summary
+            .otr
+            .insert("0".to_owned(), MessageEditRange { lo: 0, le: 8 });
+        let mut message = normal_message(Some("edited"));
+        message.msg_proto.0.attributed_body = Some(plain_encoded_attributed_body("edited"));
+        message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
+        let outcome = convert_message(
+            &context(&hasher, "server-message-edited-then-unsent", None),
+            &message_presence(),
+            &message,
+        );
+        let payload = message_payload(&outcome);
+        assert_eq!(payload.retracted_parts(), &[0]);
+        assert_eq!(payload.edit_count(), 2);
+        assert_eq!(payload.edits()[0].part(), 0);
+        assert_eq!(payload.edits()[1].revision(), 1);
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            unreachable!("payload helper proved ready")
+        };
+        assert_eq!(mutation.snapshot().unwrap().edit_parts().len(), 2);
     }
 
     #[test]

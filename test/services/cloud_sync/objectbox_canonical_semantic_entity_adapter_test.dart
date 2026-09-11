@@ -7620,7 +7620,7 @@ void main() {
       expect(onlyHistory(message).last.text!.values.single.string, currentText);
     });
 
-    test('retracting a previously edited part stays unsent on replay', () {
+    test('retraction with retained edit history stays unsent after reopen and replay', () async {
       var adapter = gateAdapter();
       seedGateChat();
       adapter.applyEntity(
@@ -7631,6 +7631,10 @@ void main() {
       );
       seedGateMessage();
       CloudMessageEntityPayload retractPage() => gatePage(
+            edits: [
+              gateRev(originalText, 0, firstEditAt),
+              gateRev(currentText, 1, secondEditAt),
+            ],
             retractedPartsState: CloudSemanticFieldState.value,
             retractedParts: const [0],
           );
@@ -7642,8 +7646,10 @@ void main() {
       );
       var message = onlyMessage();
       expect(message.messageSummaryInfo.single.retractedParts, [0]);
+      expect(message.messageSummaryInfo.single.editedParts, [0]);
       expect(onlyHistory(message), hasLength(2));
       expect(message.buildMessageParts().single.isUnsent, isTrue);
+      await reopenGate();
       adapter = gateAdapter();
       adapter.applyEntity(
         scope: scope,
