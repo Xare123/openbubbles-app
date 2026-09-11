@@ -281,6 +281,65 @@ void main() {
       );
     },
   );
+  test('v5 binds reaction type, explicit nullable part and the exact previous test request', () {
+    final input = {...request(), 'version': 5, 'text': '', 'reactionType': 'like',
+      'reactionPart': 0, 'existingChatFromRequestId': 'previous-1'};
+    final req = CloudSyncWindowsWriteRequest.fromJson(input);
+    for (final changed in [
+      {'reactionType': '-like'}, {'reactionPart': null}, {'existingChatFromRequestId': 'previous-2'},
+      {'recipient': '+15555550101'}, {'refreshSenderAuthentication': true},
+    ]) {
+      expect(CloudSyncWindowsWriteRequest.fromJson({...input, ...changed}).binding, isNot(req.binding));
+    }
+    for (final changed in [
+      {'version': 2}, {'version': 4}, {'reactionType': 'emoji'}, {'reactionType': 7},
+      {'reactionPart': 1}, {'reactionPart': -1}, {'reactionPart': true},
+      {'reactionPart': 4294967296}, {'text': 'not a reaction'}, {'attachmentFixture': 'png-v1'},
+      {'existingChatFromRequestId': null}, {'existingChatFromRequestId': '../private'},
+      {'existingChatFromRequestId': 'qualification-1'}, {'allowSend': false},
+    ]) {
+      expect(() => CloudSyncWindowsWriteRequest.fromJson({...input, ...changed}), throwsStateError);
+    }
+    expect(() => CloudSyncWindowsWriteRequest.fromJson({...input}..remove('reactionPart')), throwsStateError);
+  });
+  test('v5 reuses production tapback payload and exact journal identity for twelve standard operations', () {
+    const ownGuid = '00000000-0000-4000-8000-000000000001';
+    const parentGuid = '00000000-0000-4000-8000-000000000002';
+    final handle = Handle(address: '+15555550100', service: 'iMessage');
+    final chat = Chat(guid: 'iMessage;-;+15555550100', chatIdentifier: '+15555550100',
+      style: 45, usingHandle: 'mailto:sender@example.com', participants: [handle]);
+    chat.handles.add(handle);
+    final parent = Message(guid: parentGuid, text: 'Fixture');
+    final hashes = <String>{};
+    for (final base in ['love', 'like', 'dislike', 'laugh', 'emphasize', 'question']) {
+      for (final type in [base, '-$base']) {
+        for (final part in <int?>[0, null]) {
+          final req = CloudSyncWindowsWriteRequest.fromJson({...request(), 'version': 5, 'text': '',
+            'reactionType': type, 'reactionPart': part, 'existingChatFromRequestId': 'previous-1'});
+          final payload = cloudSyncWindowsReactionPayload(req, parent);
+          final wire = api.MessageInst(id: ownGuid, sender: chat.usingHandle,
+            conversation: api.ConversationData(senderGuid: chat.guid,
+              participants: ['tel:+15555550100', chat.usingHandle!]),
+            message: payload, sentTimestamp: DateTime.utc(2026, 9).millisecondsSinceEpoch,
+            sendDelivered: false, verificationFailed: false);
+          final row = Message(guid: 'temp-WinWrite', text: '', isFromMe: true,
+            dateCreated: DateTime.utc(2026, 9), attributedBody: [],
+            associatedMessageGuid: parentGuid, associatedMessageType: type, associatedMessagePart: part);
+          row.chat.target = chat;
+          final source = CloudSyncLocalSendIdentity.captureReactionWire(row, chat, wire);
+          expect(source, isNotNull, reason: '$type/$part');
+          expect(hashes.add(source!.sourceSha256), isTrue);
+          row.associatedMessagePart = part == null ? 0 : null;
+          expect(CloudSyncLocalSendIdentity.captureReactionWire(row, chat, wire), isNull);
+        }
+      }
+    }
+    expect(hashes, hasLength(24));
+    final source = File('lib/cloud_sync_v2_windows_local_write.dart').readAsStringSync();
+    expect(source, contains('journal.readConfirmedParentDependency(objectBox, scope, parent)'));
+    expect(source.indexOf('await fence.run(requireReactionParent'), lessThan(source.indexOf('await claim.create')));
+    expect(source.lastIndexOf('final fresh = requireReactionParent()'), lessThan(source.indexOf('await sendConfirmed(wire)')));
+  });
   group('existing conversation and pre-send cursor selection', () {
     late Directory directory;
     late Store store;
@@ -293,6 +352,46 @@ void main() {
     tearDown(() async {
       store.close();
       await directory.delete(recursive: true);
+    });
+    test('reaction selector requires exact claimed plaintext parent and canonical direct route', () {
+      const guid = '00000000-0000-4000-8000-000000000001';
+      final handle = Handle(address: '+15555550100', service: 'iMessage',
+          uniqueAddressAndService: '+15555550100/iMessage');
+      store.box<Handle>().put(handle);
+      final chat = Chat(guid: 'iMessage;-;+15555550100', chatIdentifier: '+15555550100',
+        style: 45, usingHandle: 'mailto:sender@example.com', participants: [handle]);
+      chat.handles.add(handle);
+      store.box<Chat>().put(chat);
+      final parent = Message(guid: guid, text: 'Fixture', isFromMe: true,
+        attributedBody: [AttributedBody.raw('Fixture')]);
+      parent.chat.target = chat;
+      store.box<Message>().put(parent);
+      final intent = CloudSyncLocalSendIntentEntity(intentKey: 'fixture', accountFingerprint: 'account',
+        writerEpoch: 1, localMessageId: parent.id!, messageGuidHash: sha256.convert(utf8.encode(
+          jsonEncode(['cloud-sync-local-send-guid-v1', guid]))).toString(), sourceSha256: 'source',
+        state: 2, admittedOperationId: 'operation', createdAtMs: 1, updatedAtMs: 2);
+      store.box<CloudSyncLocalSendIntentEntity>().put(intent);
+      final claim = <String, dynamic>{'version': 1, 'guid': guid, 'account': 'account', 'binding': 'binding'};
+      final req = CloudSyncWindowsWriteRequest.fromJson({...request(), 'version': 5, 'text': '',
+        'existingChatFromRequestId': 'previous-1', 'reactionType': 'like', 'reactionPart': 0});
+      expect(cloudSyncWindowsReactionParent(store, claim, req, 'account').id, parent.id);
+      for (final mutate in <void Function()>[
+        () => parent.dateEdited = DateTime.utc(2026),
+        () => parent.dateDeleted = DateTime.utc(2026),
+        () => parent.associatedMessageGuid = 'another-parent',
+        () => parent.hasAttachments = true,
+        () => parent.text = 'changed',
+      ]) {
+        mutate(); store.box<Message>().put(parent);
+        expect(() => cloudSyncWindowsReactionParent(store, claim, req, 'account'), throwsStateError);
+        parent.dateEdited = null; parent.dateDeleted = null; parent.associatedMessageGuid = null;
+        parent.hasAttachments = false; parent.text = 'Fixture'; store.box<Message>().put(parent);
+      }
+      chat.chatIdentifier = 'different'; store.box<Chat>().put(chat);
+      expect(() => cloudSyncWindowsReactionParent(store, claim, req, 'account'), throwsStateError);
+      chat.chatIdentifier = '+15555550100'; store.box<Chat>().put(chat);
+      intent.state = 0; store.box<CloudSyncLocalSendIntentEntity>().put(intent);
+      expect(() => cloudSyncWindowsReactionParent(store, claim, req, 'account'), throwsStateError);
     });
     for (final fixtureId in ['text-v1', 'png-v1']) {
       test(

@@ -13,7 +13,8 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_models.dart'
-    show CloudSyncSafeCodeFailure;
+    show CloudSyncSafeCodeFailure, CloudSyncScope, CloudSyncPersistenceLane;
+import 'services/rustpush/imessage_reaction_payload.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_group_send_route.dart';
 import 'cloud_sync_v2_windows_write_checkpoint.dart';
 import 'cloud_sync_v2_windows_attachment_fixture.dart';
@@ -58,7 +59,7 @@ Map<String, Object?> cloudSyncWindowsWriteFailureDiagnostic(
   final code = cloudSyncWindowsWriteFailureCode(error);
   final candidate = switch (error) {
     CloudSyncSafeCodeFailure() => error.safeCode,
-    StateError() => error.message is String ? error.message as String : null,
+    StateError() => error.message,
     AnyhowException() => error.message,
     _ => null,
   };
@@ -120,6 +121,10 @@ final class CloudSyncWindowsWriteRequest {
       restoredGroupGuid = json['restoredGroupGuid'] as String?,
       sender = json['sender'] as String,
       text = json['text'] as String,
+      reactionType = json['version'] == 5 && json['reactionType'] is String
+          ? json['reactionType'] as String : null,
+      reactionPart = json['reactionPart'] == null ? null
+          : json['reactionPart'] is int ? json['reactionPart'] as int : -1,
       attachmentFixture =
           json['version'] == 4 && json['attachmentFixture'] is String
           ? CloudSyncWindowsAttachmentFixture.fromId(
@@ -143,7 +148,17 @@ final class CloudSyncWindowsWriteRequest {
               recipients.length <= 31
         : restoredGroupGuid == null &&
               !json.containsKey('recipients') &&
-              (json['version'] == 4
+              (json['version'] == 5
+                  ? reactionType != null &&
+                        const {'love', 'like', 'dislike', 'laugh', 'emphasize', 'question',
+                          '-love', '-like', '-dislike', '-laugh', '-emphasize', '-question'}
+                            .contains(reactionType) &&
+                        json.containsKey('reactionPart') &&
+                        (reactionPart == null || reactionPart == 0) &&
+                        existingChatFromRequestId != null &&
+                        RegExp(r'^[a-z0-9-]{1,64}$').hasMatch(existingChatFromRequestId!) &&
+                        existingChatFromRequestId != id
+                  : json['version'] == 4
                   ? attachmentFixture != null &&
                         (existingChatFromRequestId == null ||
                             (RegExp(
@@ -159,6 +174,8 @@ final class CloudSyncWindowsWriteRequest {
                         ).hasMatch(existingChatFromRequestId!) &&
                         existingChatFromRequestId != id);
     if (!validVersion ||
+        (json['version'] != 5 &&
+            (json.containsKey('reactionType') || json.containsKey('reactionPart'))) ||
         (json['version'] != 4 && json.containsKey('attachmentFixture')) ||
         (json.containsKey('refreshSenderAuthentication') &&
             json['refreshSenderAuthentication'] is! bool) ||
@@ -167,7 +184,8 @@ final class CloudSyncWindowsWriteRequest {
         recipients.toSet().length != recipients.length ||
         !recipients.every(RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch) ||
         !RegExp(r'^[^\s:@]+@[^\s:@]+\.[^\s:@]+$').hasMatch(sender) ||
-        (attachmentFixture == null ? text.trim().isEmpty : text.isNotEmpty) ||
+        (attachmentFixture == null && reactionType == null
+            ? text.trim().isEmpty : text.isNotEmpty) ||
         text.length > 512) {
       throw StateError('cloud_sync_windows_write_request_invalid');
     }
@@ -183,6 +201,8 @@ final class CloudSyncWindowsWriteRequest {
       (throw StateError('cloud_sync_windows_write_group_requires_member_set'));
   final String sender;
   final String text;
+  final String? reactionType;
+  final int? reactionPart;
   final CloudSyncWindowsAttachmentFixture? attachmentFixture;
 
   /// Explicit operator repair before any new intent or send. Never implicit
@@ -193,7 +213,11 @@ final class CloudSyncWindowsWriteRequest {
       .convert(
         utf8.encode(
           jsonEncode(
-            attachmentFixture != null
+            reactionType != null
+                ? ['windows-local-write-v5', id, recipient, sender,
+                    existingChatFromRequestId, reactionType, reactionPart,
+                    if (refreshSenderAuthentication) 'refresh-sender-auth-v1']
+                : attachmentFixture != null
                 ? [
                     'windows-local-write-v4',
                     id,
@@ -358,6 +382,51 @@ Chat cloudSyncWindowsExistingWriteChat(
   } finally {
     query.close();
   }
+}
+
+/// Select a single plaintext parent from the explicitly named test claim.
+/// This is route/shape selection only; the caller must revalidate the actual
+/// journal readback dependency before claiming and immediately before sending.
+Message cloudSyncWindowsReactionParent(
+  Store store, Map<String, dynamic> claim, CloudSyncWindowsWriteRequest request,
+  String accountFingerprint,
+) {
+  if (request.reactionType == null) {
+    throw StateError('cloud_sync_windows_reaction_request_required');
+  }
+  final chat = cloudSyncWindowsExistingWriteChat(store, claim, request, accountFingerprint);
+  final query = store.box<Message>().query(Message_.guid.equals(claim['guid'] as String)).build()
+    ..limit = 2;
+  try {
+    final rows = query.find();
+    final parent = rows.length == 1 ? rows.single : null;
+    if (parent == null || parent.chat.targetId != chat.id ||
+        chat.guid != 'iMessage;-;${request.recipient}' || chat.chatIdentifier != request.recipient ||
+        parent.isFromMe != true || parent.dateDeleted != null || parent.dateEdited != null ||
+        parent.associatedMessageGuid != null || parent.associatedMessageType != null ||
+        parent.hasAttachments || parent.dbAttachments.isNotEmpty ||
+        parent.text?.trim().isNotEmpty != true || parent.attributedBody.length != 1 ||
+        parent.attributedBody.single.string != parent.text) {
+      throw StateError('cloud_sync_windows_reaction_parent_invalid');
+    }
+    return parent;
+  } finally { query.close(); }
+}
+
+api.Message cloudSyncWindowsReactionPayload(CloudSyncWindowsWriteRequest request, Message parent) {
+  final type = request.reactionType;
+  if (type == null || parent.guid == null || parent.text == null) {
+    throw StateError('cloud_sync_windows_reaction_parent_invalid');
+  }
+  final base = type.startsWith('-') ? type.substring(1) : type;
+  final reaction = switch (base) {
+    'love' => const api.Reaction.heart(), 'like' => const api.Reaction.like(),
+    'dislike' => const api.Reaction.dislike(), 'laugh' => const api.Reaction.laugh(),
+    'emphasize' => const api.Reaction.emphasize(), 'question' => const api.Reaction.question(),
+    _ => throw StateError('cloud_sync_windows_reaction_request_required'),
+  };
+  return buildIMessageReactionPayload(parentGuid: parent.guid!, parentPart: request.reactionPart,
+    parentText: parent.text!, reaction: reaction, enable: !type.startsWith('-'));
 }
 
 /// Small Windows composition of the ordinary journal and writer, not another
@@ -555,6 +624,19 @@ final class CloudSyncWindowsLocalWrite {
           request,
         );
       }
+      Message requireReactionParent() {
+        final parent = cloudSyncWindowsReactionParent(
+          objectBox, previousClaim!, request, auth.accountFingerprint);
+        final scope = CloudSyncScope(accountFingerprint: auth.accountFingerprint,
+          container: 'com.apple.messages.cloud', database: 'private',
+          zone: 'messageManateeZone', persistenceLane: CloudSyncPersistenceLane.semantic);
+        if (journal.readConfirmedParentDependency(objectBox, scope, parent) == null) {
+          throw StateError('cloud_sync_windows_reaction_parent_readback_required');
+        }
+        return parent;
+      }
+      final reactionParent = request.reactionType == null ? null
+          : await fence.run(requireReactionParent, accountFingerprint: auth.accountFingerprint);
       // Preserve both layers of the pre-send checkpoint. An ObjectBox backup
       // alone becomes unreplayable when normal GC retires its native reference.
       await fence.run(
@@ -603,7 +685,9 @@ final class CloudSyncWindowsLocalWrite {
           afterGuid: previousClaim?['guid'] as String?,
         ),
         sender: 'mailto:${request.sender}',
-        message: api.Message.message(
+        message: reactionParent != null
+            ? cloudSyncWindowsReactionPayload(request, reactionParent)
+            : api.Message.message(
           api.NormalMessage(
             service: const api.MessageType.iMessage(),
             voice: false,
@@ -692,7 +776,18 @@ final class CloudSyncWindowsLocalWrite {
             objectBox.box<Chat>().put(chat);
           }
           wire.conversation!.senderGuid = chat.guid;
-          message = fixture != null
+          if (reactionParent != null) {
+            final fresh = requireReactionParent();
+            if (fresh.guid != reactionParent.guid || fresh.text != reactionParent.text) {
+              throw StateError('cloud_sync_windows_reaction_parent_changed');
+            }
+          }
+          message = reactionParent != null
+              ? Message(guid: 'temp-WinWrite', text: '', isFromMe: true,
+                  dateCreated: DateTime.now().toUtc(), hasAttachments: false,
+                  attributedBody: [], associatedMessageGuid: reactionParent.guid,
+                  associatedMessagePart: request.reactionPart, associatedMessageType: request.reactionType)
+              : fixture != null
               ? cloudSyncWindowsAttachmentSubmission(
                   fixture: fixture,
                   wire: wire,
@@ -708,7 +803,9 @@ final class CloudSyncWindowsLocalWrite {
                 );
           message.chat.target = chat;
           source =
-              (fixture == null
+              (reactionParent != null
+                  ? CloudSyncLocalSendIdentity.captureReactionWire(message, chat, wire)
+                  : fixture == null
                   ? CloudSyncLocalSendIdentity.captureWire(message, chat, wire)
                   : CloudSyncLocalSendIdentity.captureAttachment(
                       message,
@@ -794,6 +891,14 @@ final class CloudSyncWindowsLocalWrite {
       }
       await reportStage('windows-write-awaiting-native-send');
       await fence.run<void>(() {});
+      if (reactionParent != null) {
+        await fence.run(() {
+          final fresh = requireReactionParent();
+          if (fresh.guid != reactionParent.guid || fresh.text != reactionParent.text) {
+            throw StateError('cloud_sync_windows_reaction_parent_changed');
+          }
+        }, accountFingerprint: auth.accountFingerprint);
+      }
       await sendConfirmed(wire); // No retry or abandoned timeout.
       await fence.run(
         () => journal.recordNativeSendConfirmation(

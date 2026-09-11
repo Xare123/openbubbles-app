@@ -182,6 +182,9 @@ Map<String, Object?> inspectWindowsWriteProof(
     'validation_failure': validationFailure,
     'single_canonical_message': matchingMessages == 1,
     'legible_test_body_matches': bodyMatches,
+    'canonical_direct_chat': !request.isGroup &&
+        message?.chat.target?.guid == 'iMessage;-;${request.recipient}' &&
+        message?.chat.target?.chatIdentifier == request.recipient,
     'readback_marker_matches_admission': readbackMarker,
     'confirmed_receipt_released': settled,
     'save_attempt_count': operation?.attemptCount,
