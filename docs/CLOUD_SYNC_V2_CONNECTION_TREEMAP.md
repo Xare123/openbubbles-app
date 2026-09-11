@@ -55,10 +55,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| September 11 mutation candidate | Windows request-v6 supports a first edit or unsend of a fresh, explicitly named, confirmed test parent. Exact source `d54e2238b` passed 3,278 Dart tests plus 14 outbox and three evidence-output cases in GCE `34639474394`; cleanup and empty VM/runner inventories were verified. Native `6b59bf451` passed 524 Rust tests; verified timestamped-receipt bindings are imported. Matching Windows build `34639474581` is compiling. The predecessor Windows bundle lacks the new receipt ABI and must not be combined with these bindings. No live mutation, CloudKit existing-record update or Pixel proof is claimed. |
+| September 11 mutation candidate | **IN REPAIR:** exact `d54e2238b` passed 3,278 Dart tests and Windows build `34639474581`, then the real edit-08 experiment failed positive confirmation. Upstream edits/unsends deliberately set `no_response=true`; the new strict receipt gate therefore cannot pass. Parent-07 passed send and exact CloudKit readback. Edit-08 is claimed state 1 with no receipt/reflection and must never be resent. A Windows-only acknowledgment-request experiment with zero automatic retries is being qualified; ordinary send semantics remain unchanged. Existing-record CloudKit updates remain disabled. |
 | Installed Android candidate | Signed `f860966d53b6019b46f1437312e67662724f08ce`, installed September 11 at 09:14:53Z and runtime-verified. Two reads reached the remote head with saves/deletes off and outbox `0 -> 0`. The final local sweep examined 3,587 blocking saves, applied zero, and completed partial at 09:47:41Z. Qualification-07 remains unsent after IDS 6005. Approved registration repair quiesced reads and preserved chats, hardware and CloudKit state; saved-account reuse returned phone-number validation failure. Await normal validation, not another reset. Alpha is untouched. |
 | Qualified source, not installed | Read-transition `90f98b7eb` passed 296 focused tests, targeted analysis, and GCE `34594546421`: 3,147 Dart tests plus 14 outbox and 3 evidence-output cases. Cleanup completed at 11:44:17Z; independent VM/runner inventories were empty. It includes replay repair `fd60a8a20` and background patch `0bb67d2c4`, which avoids repeating exhaustive retained-history sweeps on routine metadata wakes. No APK or Pixel runtime proof for these patches yet. |
-| Windows candidate | Writer overlay `3984f810501b` preserves signed native `62221f9c2` and adds request-v5 standard reactions. Like-05 and remove-like-06 each passed positive IDS confirmation, one admission, exact persisted readback, then a separate-process zero-admission restart. Read-only overlay `f90226831` passed two cold three-zone reads, second fetch empty, outbox `6 -> 6`, saves/deletes off. Retained writer `46bc6f027` passed image-04 parent admission and no-op restart. All prior requests, claims and runtimes remain protected evidence. |
+| Windows candidate | Imported `d54e2238b` from `34639474581`: 38 focused tests, 51 packaged-DLL codec cases, 78 verified bundle files, native load and isolated invalid-launch smoke passed. Profile hashes stayed unchanged during import. Reaction-06 no-op restart and fresh plaintext parent-07 save/readback passed. Edit-08 remains unconfirmed, not a successful edit. Earlier image/reaction runtimes, requests, claims and checkpoints remain protected evidence. |
 | Current full qualification | GCE `34579830953` passed every selected build/test gate, APK/native verification, Android JVM tests, trusted signing and cleanup on `f860966d5`, including cold-start fix `b432b9e8a`. T2D 60; writer on, automatic uploads off. Signed artifact `10192048724` was downloaded and signature-verified before the in-place Pixel install. Prior `34576684370` also passed on `5e9a532be`. Neither APK includes the later Windows-only reaction harness. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
@@ -99,11 +99,13 @@ including exact adopted-group selection after database reopen). This does not cr
 groups or bypass the existing protected semantic dependency. Live group proof
 needs the approved conversation restored/created first. Direct-reaction work
 and attachment integration can proceed independently of that prerequisite.
-Current private request `qualification-20260911-reaction-06` is claimed and
-IDS-confirmed: do not change it or send it again. Prior plaintext-03,
-attachment-04 and reaction-05 requests and claims are preserved. The qualified native runtime is in
-`../windows-cloudkit-qualified-62221f9c2`; older runtimes and receipts remain
-rollback material.
+Current private request `qualification-20260911-edit-08` is claimed but has no
+positive IDS receipt. Do not resend it or treat successful dispatch as acceptance.
+Parent `qualification-20260911-edit-parent-07` has exact readback proof; its
+freshness window has expired, so a future experiment needs a new parent and IDs.
+Prior plaintext-03, attachment-04 and reaction-05/06 requests and claims remain
+preserved. Current qualified native runtime: `../windows-cloudkit-qualified-d54e2238b`.
+Older runtimes and receipts remain rollback material.
 
 ### Current attachment-write boundary
 

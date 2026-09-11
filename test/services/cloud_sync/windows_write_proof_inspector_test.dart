@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:bluebubbles/cloud_sync_v2_windows_local_write.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_source_binding.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../../../tooling/cloud_sync/inspect_windows_write_proof.dart';
 

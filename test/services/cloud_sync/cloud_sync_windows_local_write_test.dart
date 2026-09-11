@@ -23,6 +23,14 @@ final class _SafeFailure implements CloudSyncSafeCodeFailure {
 }
 
 void main() {
+  test('missing positive native acknowledgment is explicit and remains unconfirmed', () {
+    const code = 'cloud_sync_windows_sender_unconfirmed';
+    expect(cloudSyncWindowsWriteFailureCode(AnyhowException(code)), code);
+    final diagnostic = cloudSyncWindowsWriteFailureDiagnostic(
+      AnyhowException(code), StackTrace.empty);
+    expect(diagnostic['code'], code);
+    expect(diagnostic['unreviewed_code_sha256'], isNull);
+  });
   test('write attribution retains only reviewed frames and fixed-shape code hash', () {
     const missing = 'cloud_sync_new_unreviewed_predicate';
     final report = cloudSyncWindowsWriteFailureDiagnostic(

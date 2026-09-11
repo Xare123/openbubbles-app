@@ -11539,7 +11539,7 @@ pub async fn cloud_sync_windows_send_mutation_confirmed(
     cloud_sync_require_source_context_auth(&context, &auth)?;
     let source = cloud_sync_windows_mutation_send_source(&context, &msg)?;
     let started = systemtime_to_millis(SystemTime::now());
-    let result = state.send(&mut msg).await
+    let result = state.send_mutation_requesting_acknowledgment(&mut msg).await
         .map_err(|error| cloud_sync_send_start_error(error, true))?;
     let finished = systemtime_to_millis(SystemTime::now());
     let validation = cloud_sync_validate_prepared_send_source(Some(source), &msg, started, finished);

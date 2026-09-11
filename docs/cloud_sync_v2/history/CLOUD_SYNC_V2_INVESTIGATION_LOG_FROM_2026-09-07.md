@@ -2874,3 +2874,46 @@ This is a chronological evidence log. It does not override the
   claims, archives private requests, preserves checkpoint evidence, and keeps
   CloudKit existing-record updates disabled. The Windows import and exact-source
   smoke must pass first. C: has approximately 48.9 GiB free; no agents are active.
+
+## 2026-09-11, live mutation exposed the no-response confirmation mismatch
+
+- Windows `34639474581` completed in 23m16s on exact `d54e2238b`: 38 focused
+  tests, 51 packaged-native codec tests and smoke passed. Artifact `10280247398`
+  outer SHA-256 `02f812af098bc28211c215237f67e7eca8de39b0bf88da5291046d11e8e4d053`
+  was verified against GitHub. Seven exact outer entries and 78 inner files
+  were verified; inner bundle SHA-256
+  `4571234e9359e3f5a252b4f1e44e1a1d8db914175c9a83d0a080b26758b6acc7`.
+  Local import qualified at 19:58:13Z, native load/unload and invalid-launch
+  marker passed, zero dummy-profile files appeared, and protected profile
+  hashes stayed unchanged. Five engineering binaries were signed; vendor
+  ObjectBox bytes and local security policy stayed unchanged.
+- Reaction-06 reopened at 19:58:52Z with zero admissions, zero deferrals and no
+  blocked/readback-pending outbox work. The next synthetic plaintext parent-07
+  received positive IDS confirmation, one admission and exact CloudKit readback.
+- Edit-08 failed at 19:59:47Z with native fixed error
+  `cloud_sync_windows_sender_unconfirmed` (mapped from diagnostic SHA-256
+  `a2f98e38ed986249f6a456949bad6ce2d7113c48b28648aeb8dd19c2b568fa1a`).
+  Copied-database inspection found one claimed mutation (state 1), structurally
+  valid source, exact target/route, no receipt marker, no reflection, zero
+  initial-send intents for the mutation and outbox count nine. The original
+  database was unchanged by inspection. No restart/resend or unsend test ran.
+- Root cause is a protocol-mode mismatch, not another login regression:
+  `Message::get_nr` returns `Some(true)` for Edit and Unsend, and IDS constructs
+  `SendConfirmation` with `supports_confirmation=false` in that mode.
+  `require_confirmed` must then reject it regardless of successful dispatch.
+  Delivery itself remains unknown. The [upstream implementation at f35c4ee](https://github.com/OpenBubbles/rustpush/blob/f35c4ee062b3c3eae54dc96b89b90ee99f5e1d0c/src/imessage/messages.rs)
+  uses the same no-response convention. GitHub lookup supplied no proof that
+  opting into acknowledgments is accepted for this command; live proof remains.
+- The candidate adds an explicitly named opt-in mutation transport that clears
+  only the no-response flag, checks command 118 and excludes queued, scheduled,
+  relay, missing-body and overriding-extra shapes. It uses zero retries while
+  ordinary sending retains its existing five-retry limit and no-response flags.
+  Only the Windows mutation experiment calls it. Positive status zero for every
+  intended recipient is still mandatory; no synthetic receipt or weaker 5008
+  acceptance is added. Also added the observed fixed error to safe diagnostics.
+- Inspector formatting cleanup accidentally removed its two new imports after
+  initial qualification. The real copied-DB invocation caught this before any
+  data access; imports were restored. Nine combined unit/real-inspector cases
+  then passed, followed by 26 inspector/Windows-request tests. Native source
+  parsing passed without compilation. New native compilation and tests remain
+  required before another live experiment; no completed production gate is claimed.
