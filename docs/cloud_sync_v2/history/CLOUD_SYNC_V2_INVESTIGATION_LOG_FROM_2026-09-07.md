@@ -2424,3 +2424,28 @@ This is a chronological evidence log. It does not override the
   user reported that limit lifted, resumed its same bounded follow-up rather
   than creating another agent. Prior source and unresolved runtime evidence
   remain preserved; no deletion was performed. C: had over 46 GiB free.
+
+- Probe run `34620660937` succeeded on app `8f540c2e4`, 16:12:38Z to
+  16:13:05Z. Both Windows matrix jobs were skipped. Apple macOS 15.7.9 build
+  24G830 loaded CloudKitDaemon UUID `002449BA-60D0-341F-933F-D5582A63F116`.
+  Request ETag emitted field 4; semantics field 6 mapped 1 failIfOutdated,
+  2 failIfExists, 3 override through both conversion methods. Zone/record PCS
+  tags emitted 7/8. Every synthetic wire case round-tripped. The 34-value enum
+  scan is bounded, not an exhaustive enum proof. No Apple account/server used.
+- Retained complete JSON under
+  `build-evidence/apple-save-wire-probe-34620660937/apple-save-wire-probe.json`,
+  SHA-256 `e05fdca3ee4378bb566a0cfaed20a1032d501007ccaa812380a0db7bd823facf`.
+  The protocol fixtures copy independently observed Apple bytes, not bytes
+  produced by rustpush. Added missing request ETag to the private proto and
+  a disconnected conditional-save builder; unchanged legacy constructors
+  continue emitting failIfExists/override with absent request ETag.
+- Parent and Epicurus reviewed the low-level builder. Accepted its account
+  provenance and unknown-outcome integration cautions. Added explicit rejection
+  of custom protection, missing PCS keys or changed default key before a merge,
+  plus matching-key/tag-separation tests. No live writer invokes the new helper.
+  Native compile/unit validation remains pending, not production qualification.
+- Find My follow-up reported 12/12 source-contract checks against upstream,
+  not parser execution or live account proof. No new fix: owned AirTags also
+  require a matching naming record upstream; serde declarations and token
+  routes showed no differential. Existing native/Dart diagnostics must both be
+  compiled in for the next live check. No account, caches or sharing changed.

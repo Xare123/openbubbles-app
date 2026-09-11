@@ -758,22 +758,34 @@ does not set a predecessor record ETag; it is not evidence of V2-safe causal
 conflict handling. V2 transport currently remains initial-create-only.
 
 Verified protocol lead: the [Apple daemon request header](https://github.com/JaviSoto/iOS10-Runtime-Headers/blob/1501f5e689fda4644df0adbffc50c0f737c4ab96/PrivateFrameworks/CloudKitDaemon.framework/CKDPRecordSaveRequest.h)
-has a request-level `etag`, distinct from the nested Record's `etag`. Our
-vendored request proto omits that property; fields 4/5 are undefined. Neither
-this historical header nor the public save policy establishes its wire number,
-the private `saveSemantics` enum values, or which tag the current server honors.
-Do not guess a missing field number or treat a PCS protection tag as a version
-tag. A scoped filename search in retained build/device evidence found no
-Apple-generated save request. Our own generated requests cannot prove Apple's
-numbering. Retain this explicit gap for a real capture or verified serializer.
+has a request-level `etag`, distinct from the nested Record's `etag`. The
+header alone did not establish wire numbers. That gap is now resolved by
+[Apple's actual serializer/decoder](https://github.com/Xare123/openbubbles-app/actions/runs/34620660937)
+on macOS 15.7.9 (24G830), not by our own generated request:
 
-Next acquisition: `tooling/cloud_sync/apple_save_wire_probe.m` loads the local
+| Observed property | Wire representation |
+| --- | --- |
+| Request `etag` | string field 4 |
+| `saveSemantics` | varint field 6: `1 = failIfOutdated`, `2 = failIfExists`, `3 = override` |
+| Zone / record PCS tags | string fields 7 / 8; neither is the version precondition |
+
+`tooling/cloud_sync/apple_save_wire_probe.m` loaded the local
 Apple serializer on an isolated macOS runner with synthetic values only. The
 opt-in `apple_wire_probe` input on Windows validation skips both Windows build
-jobs. It needs no Apple credentials or user profile, sends no CloudKit operation,
-and records OS/image identity, single-property wire bytes and decoder round trips.
-Runtime availability is not yet established. Bounded enum observations are not
-an exhaustive enum definition or evidence of server conflict behavior.
+jobs. Run `34620660937` compiled, serialized and round-tripped each property in
+27 seconds, with no Apple credentials, user profile or CloudKit operation.
+Image UUID: `002449BA-60D0-341F-933F-D5582A63F116`. Full synthetic report SHA-256:
+`e05fdca3ee4378bb566a0cfaed20a1032d501007ccaa812380a0db7bd823facf`.
+Bounded enum observations are not an exhaustive enum definition or server proof.
+
+The separate `SaveRecordOperation::try_update_if_unchanged` builder is added
+but **not connected to V2 transport**. It binds the exact fetched record identity,
+type and nonempty ETag, checks the supplied PCS zone and unchanged default key,
+and rejects custom record protection instead of silently replacing it. Legacy
+save bytes remain unchanged. Independent Apple wire fixtures and rejection tests
+are prepared for GCE qualification. The caller still needs durable mutation intent,
+account/container/database authority and unknown-outcome readback reconciliation;
+an ETag conflict after a lost success response does not prove that nothing saved.
 
 Do not enable update transport from structural inference alone. First capture
 one genuine Apple edit and one unsend read-only, proving the same record name,
