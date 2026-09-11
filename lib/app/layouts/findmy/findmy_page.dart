@@ -532,17 +532,18 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       return projectFindMyPeople(
           following,
           handles: (e) => e.invitationAcceptedHandles,
-          lastGood: (e) => _peopleRefresh.value.firstWhereOrNull((person) => person.id == e.id),
+          lastKnownHandle: (e) => _peopleRefresh.value.firstWhereOrNull((person) => person.id == e.id)?.handle?.address,
           project: (e, address) {
+            final visibleLocation = findMyVisibleLocation(e.lastLocation, optedNotToShare: e.optedNotToShare);
             return FindMyFriend(
-              latitude: e.lastLocation?.latitude,
-              longitude: e.lastLocation?.longitude,
-              longAddress: e.lastLocation?.address?.formattedAddressLines?.join("\n"), 
-              shortAddress: e.lastLocation?.address != null ? "${e.lastLocation?.address?.locality}, ${e.lastLocation?.address?.stateCode ?? e.lastLocation?.address?.countryCode}" : null,
+              latitude: visibleLocation?.latitude,
+              longitude: visibleLocation?.longitude,
+              longAddress: visibleLocation?.address?.formattedAddressLines?.join("\n"),
+              shortAddress: visibleLocation?.address != null ? "${visibleLocation?.address?.locality}, ${visibleLocation?.address?.stateCode ?? visibleLocation?.address?.countryCode}" : null,
               title: null, 
               subtitle: null, 
               handle: Handle.findOne(addressAndService: Tuple2(address, "iMessage")) ?? Handle(address: address),
-              lastUpdated: e.lastLocation?.timestamp != null ? DateTime.fromMillisecondsSinceEpoch(e.lastLocation!.timestamp) : null,
+              lastUpdated: visibleLocation?.timestamp != null ? DateTime.fromMillisecondsSinceEpoch(visibleLocation!.timestamp) : null,
               status: null, 
               locatingInProgress: e.locateInProgress,
               id: e.id,
@@ -1181,7 +1182,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                             )
                           ],
                         )
-                          : Text(ss.settings.redactedMode.value ? "Location" : (item.address?.label ?? item.address?.mapItemFullAddress ?? "No location found")),
+                          : Text(ss.settings.redactedMode.value ? "Location" : findMyLocationLabel(latitude: item.location?.latitude, longitude: item.location?.longitude, address: item.address?.label ?? item.address?.mapItemFullAddress)),
                         trailing: item.location?.latitude != null && item.location?.longitude != null ? ButtonTheme(
                           minWidth: 1,
                           child: TextButton(
@@ -1276,7 +1277,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                           .map((item) {
                             var tile = ListTile(
                                 title: Text(ss.settings.redactedMode.value ? "Device" : (item.name ?? "Unknown Device")),
-                                subtitle: Text(ss.settings.redactedMode.value ? "Location" : (item.address?.label ?? item.address?.mapItemFullAddress ?? "No location found")),
+                                subtitle: Text(ss.settings.redactedMode.value ? "Location" : findMyLocationLabel(latitude: item.location?.latitude, longitude: item.location?.longitude, address: item.address?.label ?? item.address?.mapItemFullAddress)),
                                 trailing: deviceActions(item),
                                 onTap: item.location?.latitude != null && item.location?.longitude != null
                                     ? () async {
@@ -1395,7 +1396,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                         key: ValueKey(item.handle?.uniqueAddressAndService),
                         leading: ContactAvatarWidget(handle: item.handle),
                         title: Text(item.handle?.displayName ?? item.title ?? "Unknown Friend"),
-                        subtitle: Text(ss.settings.redactedMode.value ? "Location" : ("${item.shortAddress ?? "No location found"}${item.lastUpdated == null || item.status == LocationStatus.live ? "" : "\nLast updated ${buildDate(item.lastUpdated)}"}")),
+                        subtitle: Text(ss.settings.redactedMode.value ? "Location" : ("${findMyLocationLabel(latitude: item.latitude, longitude: item.longitude, address: item.shortAddress)}${item.lastUpdated == null || item.status == LocationStatus.live ? "" : "\nLast updated ${buildDate(item.lastUpdated)}"}")),
                         trailing: item.latitude != null && item.longitude != null ? Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -1493,7 +1494,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                                 mouseCursor: MouseCursor.defer,
                                 leading: ContactAvatarWidget(handle: item.handle),
                                 title: Text(item.handle?.displayName ?? item.title ?? "Unknown Friend"),
-                                subtitle: Text(ss.settings.redactedMode.value ? "Location" : (item.longAddress ?? "No location found")),
+                                subtitle: Text(ss.settings.redactedMode.value ? "Location" : findMyLocationLabel(latitude: item.latitude, longitude: item.longitude, address: item.longAddress)),
                                 onTap: () async {
                                   if (item.id != null) await selectPerson(item.id!);
                                 },

@@ -181,7 +181,7 @@ void main() {
   );
 
   test(
-    'empty handles retain known person, skip unknown, and preserve valid rows',
+    'empty handles retain known identity, skip unknown, and project fresh rows',
     () {
       final records = [
         (id: 'known', handles: <String>[]),
@@ -192,10 +192,10 @@ void main() {
       final result = projectFindMyPeople(
         records,
         handles: (record) => record.handles,
-        lastGood: (record) => record.id == 'known' ? 'last-good-person' : null,
+        lastKnownHandle: (record) => record.id == 'known' ? 'known-handle' : null,
         project: (record, address) => '${record.id}:$address',
       );
-      expect(result, ['last-good-person', 'valid:synthetic-handle']);
+      expect(result, ['known:known-handle', 'valid:synthetic-handle']);
     },
   );
 }

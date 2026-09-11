@@ -143,22 +143,40 @@ List<T> projectFindMyPeople<R, T>(
   Iterable<R> records, {
   required Iterable<String> Function(R) handles,
   required T Function(R, String) project,
-  required T? Function(R) lastGood,
+  required String? Function(R) lastKnownHandle,
 }) {
   final result = <T>[];
   for (final record in records) {
-    final address = findMyAcceptedHandle(handles(record));
-    final person = address == null
-        ? lastGood(record)
-        : project(record, address);
-    if (person != null) result.add(person);
+    // Reuse identity only. Reusing the entire old projection discards a fresh
+    // location (or an explicit missing location) when a response omits handles.
+    final address = findMyAcceptedHandle(handles(record)) ??
+        findMyAcceptedHandle([lastKnownHandle(record) ?? '']);
+    if (address != null) result.add(project(record, address));
   }
   return result;
 }
 
 String? findMyAcceptedHandle(Iterable<String> handles) {
   for (final handle in handles) {
-    if (handle.trim().isNotEmpty) return handle;
+    if (handle.trim().isNotEmpty) return handle.trim();
   }
   return null;
+}
+
+/// A positive location must never override an explicit server revocation.
+/// Unknown sharing status alone does not imply revocation.
+T? findMyVisibleLocation<T>(T? location, {required bool? optedNotToShare}) =>
+    optedNotToShare == true ? null : location;
+
+/// An absent reverse-geocoded address is not an absent location. Never use
+/// address availability to infer coordinates or sharing permission.
+String findMyLocationLabel({
+  required double? latitude,
+  required double? longitude,
+  String? address,
+}) {
+  if (!hasFindMyLocation(latitude, longitude)) return 'No location found';
+  return address?.trim().isNotEmpty == true
+      ? address!.trim()
+      : 'Location available';
 }
