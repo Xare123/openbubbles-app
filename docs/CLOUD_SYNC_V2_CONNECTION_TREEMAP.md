@@ -56,7 +56,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
 | Installed Android candidate | Signed `f860966d53b6019b46f1437312e67662724f08ce`, installed September 11 at 09:14:53Z and runtime-verified. Two reads reached the remote head with saves/deletes off and outbox `0 -> 0`. The final local sweep examined 3,587 blocking saves, applied zero, and completed partial at 09:47:41Z. Qualification-07 remains unsent after IDS 6005. Approved registration repair quiesced reads and preserved chats, hardware and CloudKit state; saved-account reuse returned phone-number validation failure. Await normal validation, not another reset. Alpha is untouched. |
-| Next source patch | `0bb67d2c4`: routine Android metadata wakes omit the exhaustive retained-history sweep and may finish a safe terminal read while still reporting projection debt. Foreground/manual deep repair is unchanged. 129 focused tests, targeted analysis and full GCE Dart run `34588214811` passed; cleanup completed at 10:28:27Z. No APK or installation for this patch yet. The current read-side edit/retraction replay repair is under focused qualification. |
+| Qualified source, not installed | Replay repair `fd60a8a20` passed 278 focused tests, targeted analysis and full GCE Dart run `34591532159`; cleanup completed at 11:06:53Z and independent inventories were empty. It includes background patch `0bb67d2c4`, separately qualified by `34588214811`, which keeps routine metadata wakes from repeating exhaustive retained-history sweeps. Foreground/manual deep repair is unchanged. Neither patch has an APK or Pixel runtime proof yet. |
 | Windows candidate | Writer overlay `3984f810501b` preserves signed native `62221f9c2` and adds request-v5 standard reactions. Like-05 and remove-like-06 each passed positive IDS confirmation, one admission, exact persisted readback, then a separate-process zero-admission restart. Read-only overlay `f90226831` passed two cold three-zone reads, second fetch empty, outbox `6 -> 6`, saves/deletes off. Retained writer `46bc6f027` passed image-04 parent admission and no-op restart. All prior requests, claims and runtimes remain protected evidence. |
 | Current full qualification | GCE `34579830953` passed every selected build/test gate, APK/native verification, Android JVM tests, trusted signing and cleanup on `f860966d5`, including cold-start fix `b432b9e8a`. T2D 60; writer on, automatic uploads off. Signed artifact `10192048724` was downloaded and signature-verified before the in-place Pixel install. Prior `34576684370` also passed on `5e9a532be`. Neither APK includes the later Windows-only reaction harness. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
@@ -66,7 +66,15 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
-Next gate: exercise the combined signed Android source and independently verify
+Next technical gate: prove a legitimate changed-body edit/unsend through the
+whole merge and ObjectBox transaction, not only the adapter. Two local draft
+`DESIRED:` merge-boundary tests in `cloud_inbox_applier_test.dart` reproduce
+quarantine-before-projection; they are intentionally uncommitted and are not
+part of the qualified checkpoint. Their memory transaction is not real-store
+proof. Preserve them for the causal-transition repair, not an APK release.
+
+Next device gate: finish normal Canary authentication, then exercise the
+combined signed Android source and independently verify
 written content on the recipient/second-client side. Runtime parent admission,
 separate-process no-op write restart and two cold read-only launches now pass.
 The same client has not ingested the written Message; absence of a self-echo

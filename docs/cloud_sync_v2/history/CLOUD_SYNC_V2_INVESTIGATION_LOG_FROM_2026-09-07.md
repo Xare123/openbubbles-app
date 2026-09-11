@@ -2271,3 +2271,23 @@ This is a chronological evidence log. It does not override the
   verified. No child remains active or owns a disposable worktree/log. Supported
   session deletion remains unavailable. C: has about 46.5 GiB free; no user,
   credential, device evidence, transcript or rollback artifact was removed.
+
+- Replay repair checkpoint `fd60a8a204e5d1cd452d1ee06e096a7ad48ca034`
+  passed targeted analysis and was pushed only to the fork. GCE Dart-only
+  `34591532159` started at 10:55:15Z, T2D 60, existing bounded runner lifecycle,
+  all writer flags off. The full Dart job passed and cleanup completed at
+  11:06:53Z, total elapsed about 11 minutes 38 seconds. Independent inventories
+  then showed zero VMs and zero registered runners. Signing was skipped as
+  intended. This run did not build or install an APK.
+- Lorentz's initial merge fixtures omitted the actual payload summary fields.
+  Parent rejected that coverage claim and required realistic edit/retraction
+  DTOs. The corrected two desired-behavior tests still reproduce
+  `applied` expected versus `quarantined` actual before the adapter. They remain
+  uncommitted drafts in `cloud_inbox_applier_test.dart`; the qualified source
+  does not contain those failing tests. This is a memory-store merge-boundary
+  counterexample, not native decoding or real ObjectBox end-to-end proof.
+  Reviewed draft work is retained, agent closed and shutdown verified.
+- Read-only wireless status confirmed Pixel `192.168.68.51:39749` connected:
+  `setup_finished=false`, `auth_ready=false`, semantic pull inactive, no active
+  coordinator, empty outbox, legacy sync off. No launch, reset, new sign-in,
+  semantic start, outbound send or install was invoked.
