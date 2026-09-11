@@ -32,6 +32,7 @@ $sources = @(
     Join-Path $production 'FaceTimePermissionPolicy.kt'
     Join-Path $production 'FaceTimeDiagnosticLog.kt'
     Join-Path $production 'FaceTimeEndPolicy.kt'
+    Join-Path $production 'FaceTimeViewerLayout.kt'
 )
 $testNames = @(
     'FaceTimeMediaProbeTest'
@@ -42,6 +43,7 @@ $testNames = @(
     'FaceTimeDiagnosticsTest'
     'FaceTimeDiagnosticLogTest'
     'FaceTimeEndPolicyTest'
+    'FaceTimeViewerLayoutTest'
 )
 $sources += $testNames | ForEach-Object { Join-Path $testSource ($_ + '.kt') }
 $output = Join-Path $repo 'build/facetime-host-tests'

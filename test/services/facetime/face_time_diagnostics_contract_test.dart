@@ -33,8 +33,13 @@ void main() {
     expect(position, contains('inPictureInPicture: Boolean = isInPictureInPictureMode'));
     expect(position, contains('FaceTimeControlPolicy.shouldShowNativeEndControl(inPictureInPicture)'));
     expect(position, contains('inPictureInPicture = inPictureInPicture'));
-    expect(position, contains('bottomMargin = reserved'));
-    expect(RegExp(r'binding\.nativeCallControls\.visibility\s*=').allMatches(activity), hasLength(1));
+    expect(position, contains('FaceTimeViewerLayout.padding('));
+    expect(position, contains('WindowInsetsCompat.Type.ime()'));
+    expect(position, contains('binding.connectionStatus.visibility == View.VISIBLE'));
+    final layout = File('android/app/src/main/res/layout/activity_face_time.xml').readAsStringSync();
+    expect(layout, contains('android:id="@+id/viewerSurface"'));
+    expect(layout, contains('android:layout_weight="1"'));
+    expect(RegExp(r'binding\.nativeCallControls\.visibility\s*=(?!=)').allMatches(activity), hasLength(1));
     expect(activity.substring(showStart, probeStart), contains('positionNativeEndControl()'));
     final pipStart = activity.indexOf('override fun onPictureInPictureModeChanged(');
     final pipEnd = activity.indexOf('private fun decline()', pipStart);

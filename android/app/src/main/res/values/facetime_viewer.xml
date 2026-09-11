@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="facetime_viewer_canvas">#000000</color>
+    <color name="facetime_viewer_primary">#FFFFFF</color>
+    <color name="facetime_viewer_secondary">#AEAEB2</color>
+    <color name="facetime_viewer_dock">#D92C2C2E</color>
+    <color name="facetime_viewer_end">#FF3B30</color>
+    <string name="facetime_viewer_joining">Joining FaceTime…</string>
+    <string name="facetime_viewer_end">End</string>
+    <string name="facetime_viewer_end_description">End FaceTime call</string>
+</resources>

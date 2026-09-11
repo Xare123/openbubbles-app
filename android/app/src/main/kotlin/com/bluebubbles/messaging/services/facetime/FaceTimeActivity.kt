@@ -21,17 +21,12 @@ import android.os.Looper
 import android.util.Log
 import android.util.Rational
 import android.view.View
-import android.view.ViewGroup.MarginLayoutParams
-import android.view.Gravity
-import android.view.WindowInsets
 import android.view.WindowManager
 import android.webkit.PermissionRequest
 import android.webkit.WebView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.marginTop
-import androidx.core.view.updateLayoutParams
 import com.bluebubbles.messaging.Constants
 import com.bluebubbles.messaging.R
 import com.bluebubbles.messaging.databinding.ActivityFaceTimeBinding
@@ -41,7 +36,6 @@ import com.bluebubbles.messaging.services.rustpush.APNClient
 import com.bluebubbles.messaging.services.rustpush.APNService
 import com.bluebubbles.messaging.utils.getStreamMinVolumeCompat
 import com.google.android.material.math.MathUtils
-import kotlin.math.roundToInt
 
 class FaceTimeActivity : Activity() {
     companion object {
@@ -116,34 +110,19 @@ class FaceTimeActivity : Activity() {
         // PiP retains its existing RemoteAction End without an in-video native footer.
         binding.nativeCallControls.visibility = if (binding.mainFrame.visibility == View.VISIBLE &&
             FaceTimeControlPolicy.shouldShowNativeEndControl(inPictureInPicture)) View.VISIBLE else View.GONE
-        val layoutParams = binding.nativeCallControls.layoutParams as? android.widget.FrameLayout.LayoutParams
-            ?: return
-        val density = resources.displayMetrics.density
-        val gap = (12 * density).roundToInt()
+        binding.callHeader.visibility = if (binding.nativeCallControls.visibility == View.VISIBLE &&
+            binding.connectionStatus.visibility == View.VISIBLE) View.VISIBLE else View.GONE
         val insets = windowInsets?.getInsets(
             WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
         )
-        val bottomInset = insets?.bottom ?: 0
-        when (FaceTimeControlPolicy.nativeEndPlacement()) {
-            FaceTimeNativeEndPlacement.BOTTOM_LEFT -> {
-                layoutParams.gravity = Gravity.BOTTOM or Gravity.START
-                layoutParams.topMargin = 0
-                layoutParams.bottomMargin = bottomInset + gap
-            }
-        }
-        layoutParams.marginStart = (20 * density).roundToInt() + maxOf(insets?.left ?: 0, insets?.right ?: 0)
-        layoutParams.marginEnd = 0
-        binding.nativeCallControls.layoutParams = layoutParams
-        binding.nativeCallControls.elevation = (12 * density)
-        // Reserve actual measured control height (including scaled text) outside the WebView.
-        // This remains disjoint even if Apple's controls move or probing never returns.
-        val reserved = FaceTimeControlPolicy.reservedBottomPixels(
-            maxOf(binding.nativeCallControls.measuredHeight, (80 * density).roundToInt()), gap, bottomInset,
+        val padding = FaceTimeViewerLayout.padding(
+            insets?.left ?: 0, insets?.top ?: 0, insets?.right ?: 0, insets?.bottom ?: 0,
+            windowInsets?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0,
             inPictureInPicture = inPictureInPicture,
         )
-        binding.mainFrame.updateLayoutParams<MarginLayoutParams> {
-            bottomMargin = reserved
-        }
+        binding.root.setPadding(padding.left, padding.top, padding.right, padding.bottom)
+        // XML measures header and dock as wrap_content siblings of the weighted WebView.
+        // No overlay offsets, text-height estimates or Apple DOM geometry are needed.
     }
 
     private fun showCallUi(
@@ -152,8 +131,8 @@ class FaceTimeActivity : Activity() {
     ) {
         binding.mainFrame.visibility = View.VISIBLE
         binding.splashLayout.visibility = View.GONE
-        positionNativeEndControl()
         binding.connectionStatus.visibility = if (joined) View.GONE else View.VISIBLE
+        positionNativeEndControl()
         if (!joined) {
             binding.connectionStatus.text = pendingMessage
                 ?: FaceTimeConnectionStatusPolicy.pendingMessage(
@@ -297,6 +276,7 @@ class FaceTimeActivity : Activity() {
         joinRetryRunnable?.let(mainHandler::removeCallbacks)
         binding.connectionStatus.text = "Ending FaceTime..."
         binding.connectionStatus.visibility = View.VISIBLE
+        positionNativeEndControl()
         binding.endCall.isEnabled = false
         val fallback = Runnable {
             if (activeFaceTimeActivity === this && !isFinishing && !isDestroyed) {
@@ -471,7 +451,7 @@ class FaceTimeActivity : Activity() {
         super.onCreate(savedInstanceState)
         binding = ActivityFaceTimeBinding.inflate(layoutInflater)
         FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.LIFECYCLE, state = "created")
-        binding.nativeCallControls.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+        binding.root.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
             if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) positionNativeEndControl()
         }
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
@@ -485,6 +465,11 @@ class FaceTimeActivity : Activity() {
         window.navigationBarColor = Color.TRANSPARENT
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowCompat.getInsetsController(window, binding.root).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
 
         // show when locked

@@ -208,3 +208,26 @@ then the separate outgoing ownership commit. Never install the first commit alon
 Live answer/media/end/repeat-call gates above are unchanged. Remote-hangup
 automatic close remains unresolved and is deliberately not inferred from a
 participant snapshot.
+
+## September 11 viewer layout follow-up
+
+This later candidate is in `cloudkit-decoder-diagnostic`, not the exclusive
+historical worktree above. It changes presentation only. A measured vertical
+layout separates the wrapping native status, weighted WebView and bottom End
+dock. System-bar, cutout and keyboard insets belong to the root; PiP releases
+the native controls and padding. No estimated footer offsets remain in the
+Activity. The black canvas, system type, charcoal dock and red 56dp-minimum End
+button follow the requested iOS style, with pressed and disabled feedback.
+
+Parent rejected a duplicate native caller-name header. Apple's name, self-preview,
+participant count and Leave control remain unchanged. The native End is a separate
+fallback, not a replacement for all Apple controls. Signaling, admission, permissions,
+explicit-user exit authority and the existing teardown fallback are unchanged.
+
+Parent verification: 70 cached Kotlin/JUnit tests, nine Dart source-contract tests
+and 63 production-script/source regressions passed. The source-contract assignment
+counter initially also matched `==`; a negative lookahead now counts assignments
+only. Astra additionally compiled the four new/changed XML resources. These checks
+do not compile the Activity or prove real portrait, landscape, large-font or PiP
+rendering. Android compilation and actual rendering remain release gates. No call,
+APK installation or account action was performed for this layout change.
