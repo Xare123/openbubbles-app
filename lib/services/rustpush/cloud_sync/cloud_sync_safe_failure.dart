@@ -211,6 +211,7 @@ abstract final class CloudSyncV2CanonicalProjectionSafeFailureCodes {
     'canonical_message_chat_route_invalid',
     'canonical_message_chat_unavailable',
     'canonical_message_created_at_conflict',
+    'canonical_message_edit_history_conflict',
     'canonical_message_extension_decode_required',
     'canonical_message_reply_parent_unavailable',
     'canonical_message_sender_conflict',

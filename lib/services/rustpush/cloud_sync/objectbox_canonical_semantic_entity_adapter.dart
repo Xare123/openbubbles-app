@@ -1477,6 +1477,11 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       }
     }
 
+    // Merge metadata can retain a newer edit while this payload still contains
+    // an older body. Keep the displayed body and its history on the same
+    // snapshot; rebuilding a multipart body from individual edits is unsafe.
+    final replaceEditContent =
+        message == null || _incomingEditContentMayReplace(message, payload);
     message ??= Message(guid: guid, dateCreated: payload.createdAt);
     message.chat.target = chat;
     message.dateCreated ??= payload.createdAt;
@@ -1493,11 +1498,13 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       incoming: payload.subject,
       existing: message.subject,
     );
-    message.text = _applyNullableStringField(
-      state: payload.bodyState,
-      incoming: payload.body,
-      existing: message.text,
-    );
+    if (replaceEditContent) {
+      message.text = _applyNullableStringField(
+        state: payload.bodyState,
+        incoming: payload.body,
+        existing: message.text,
+      );
+    }
     message.balloonBundleId = _applyNullableStringField(
       state: payload.balloonBundleIdState,
       incoming: payload.balloonBundleId,
@@ -1514,7 +1521,9 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       message.hasApplePayloadData = false;
     }
 
-    switch (payload.attributedBodiesState) {
+    switch (replaceEditContent
+        ? payload.attributedBodiesState
+        : CloudSemanticFieldState.absent) {
       case CloudSemanticFieldState.absent:
         break;
       case CloudSemanticFieldState.value:
@@ -1576,7 +1585,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       message.threadOriginatorPart = payload.replyParentPart;
     }
 
-    _applyMessageSummary(message, payload);
+    _applyMessageSummary(message, payload, replaceEdits: replaceEditContent);
     _messages.put(message);
     if (updateCloudSyncChatLatestMessageDate(chat, message.dateCreated!)) {
       _chats.put(chat, mode: PutMode.update);
@@ -3246,10 +3255,82 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       })
       .toList(growable: false);
 
-  void _applyMessageSummary(
+  bool _incomingEditContentMayReplace(
     Message message,
     CloudMessageEntityPayload payload,
   ) {
+    if (message.messageSummaryInfo.isEmpty) return true;
+    final current = message.messageSummaryInfo.first;
+    final retracted = {...current.retractedParts, ...payload.retractedParts};
+    final existing = <String>{};
+    final incoming = <String>{};
+    for (final entry in current.editedContent.entries) {
+      if (retracted.contains(int.tryParse(entry.key))) continue;
+      for (final edit in entry.value) {
+        existing.add(_editIdentity(entry.key, edit));
+      }
+    }
+    if (existing.isEmpty) return true;
+    for (final edit in payload.edits) {
+      if (retracted.contains(edit.part)) continue;
+      incoming.add(
+        _editIdentity(
+          edit.part.toString(),
+          EditedContent(
+            text: Content(values: _attributedBodies(edit.bodies)),
+            date: edit.modifiedAt.millisecondsSinceEpoch.toDouble(),
+          ),
+        ),
+      );
+    }
+    // Native revision numbers are page-local sorted indexes, not a causal
+    // clock. Compare complete decoded histories instead, independent of order
+    // and duplicates introduced by legacy or live-message import.
+    if (incoming.containsAll(existing)) return true;
+    if (existing.containsAll(incoming)) return false;
+    throw CloudSyncFailure(
+      category: CloudFailureCategory.conflict,
+      safeCode: 'canonical_message_edit_history_conflict',
+    );
+  }
+
+  String _editIdentity(String part, EditedContent edit) {
+    final date = edit.date;
+    const appleEpochMillis = 978307200000;
+    const maximumMillis = 253402300799999;
+    if (date == null ||
+        !date.isFinite ||
+        date <= 0 ||
+        date > maximumMillis ||
+        edit.text?.values.isNotEmpty != true) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_message_edit_history_conflict',
+      );
+    }
+    // Same two non-overlapping encodings as validated_edit_timestamp in the
+    // native converter. Legacy import preserves Apple seconds; V2/live edits
+    // store Unix milliseconds. Normalize only for comparison, not a migration.
+    final int millis;
+    if (date >= appleEpochMillis && date == date.floorToDouble()) {
+      millis = date.toInt();
+    } else if (date <= (maximumMillis - appleEpochMillis) / 1000) {
+      millis = appleEpochMillis + (date * 1000).floor();
+    } else {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_message_edit_history_conflict',
+      );
+    }
+    // Transient comparison only. Never persist or log this plaintext key.
+    return jsonEncode([part, millis, edit.text!.toJson()]);
+  }
+
+  void _applyMessageSummary(
+    Message message,
+    CloudMessageEntityPayload payload, {
+    required bool replaceEdits,
+  }) {
     if (payload.editsState == CloudSemanticFieldState.absent &&
         payload.retractedPartsState == CloudSemanticFieldState.absent) {
       return;
@@ -3257,14 +3338,16 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     final current = message.messageSummaryInfo.isEmpty
         ? MessageSummaryInfo.empty()
         : message.messageSummaryInfo.first;
-    if (payload.editsState == CloudSemanticFieldState.explicitClear) {
-      current.editedContent = {};
-      current.editedParts = [];
-      current.originalTextRange = {};
-    } else if (payload.editsState == CloudSemanticFieldState.value) {
+    // Empty/clear summaries do not revoke known edits, just as they cannot
+    // revoke undo-send. Retain history for retracted parts as protected state.
+    if (replaceEdits && payload.editsState == CloudSemanticFieldState.value) {
       final grouped = <String, List<EditedContent>>{};
-      final ranges = <String, List<int>>{};
+      final ranges = Map<String, List<int>>.of(current.originalTextRange);
       for (final edit in payload.edits) {
+        if (current.retractedParts.contains(edit.part) ||
+            payload.retractedParts.contains(edit.part)) {
+          continue;
+        }
         final key = edit.part.toString();
         grouped
             .putIfAbsent(key, () => [])
@@ -3281,14 +3364,19 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
           ];
         }
       }
-      current.editedContent = grouped;
-      current.editedParts = grouped.keys.map(int.parse).toList()..sort();
+      current.editedContent = {...current.editedContent, ...grouped};
+      current.editedParts = current.editedContent.keys.map(int.parse).toList()
+        ..sort();
       current.originalTextRange = ranges;
     }
-    if (payload.retractedPartsState == CloudSemanticFieldState.explicitClear) {
-      current.retractedParts = [];
-    } else if (payload.retractedPartsState == CloudSemanticFieldState.value) {
-      current.retractedParts = payload.retractedParts.toSet().toList()..sort();
+    // Undo-send is irreversible for this exact canonical message. An older
+    // snapshot (including a partial nonempty list) must not revive a part that
+    // was already retracted. Clear/absent markers carry no un-retract authority.
+    if (payload.retractedPartsState == CloudSemanticFieldState.value) {
+      current.retractedParts = {
+        ...current.retractedParts,
+        ...payload.retractedParts,
+      }.toList()..sort();
     }
     message.messageSummaryInfo = [current];
   }

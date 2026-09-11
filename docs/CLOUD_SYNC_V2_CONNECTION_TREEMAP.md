@@ -56,12 +56,12 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
 | Installed Android candidate | Signed `f860966d53b6019b46f1437312e67662724f08ce`, installed September 11 at 09:14:53Z and runtime-verified. Two reads reached the remote head with saves/deletes off and outbox `0 -> 0`. The final local sweep examined 3,587 blocking saves, applied zero, and completed partial at 09:47:41Z. Qualification-07 remains unsent after IDS 6005. Approved registration repair quiesced reads and preserved chats, hardware and CloudKit state; saved-account reuse returned phone-number validation failure. Await normal validation, not another reset. Alpha is untouched. |
-| Next source patch | Routine Android metadata wakes omit the exhaustive retained-history sweep and may finish a safe terminal read while still reporting projection debt. Foreground/manual deep repair is unchanged. 129 focused Dart tests and targeted analysis pass; this patch is not installed or exact-source cloud-qualified yet. |
+| Next source patch | `0bb67d2c4`: routine Android metadata wakes omit the exhaustive retained-history sweep and may finish a safe terminal read while still reporting projection debt. Foreground/manual deep repair is unchanged. 129 focused tests, targeted analysis and full GCE Dart run `34588214811` passed; cleanup completed at 10:28:27Z. No APK or installation for this patch yet. The current read-side edit/retraction replay repair is under focused qualification. |
 | Windows candidate | Writer overlay `3984f810501b` preserves signed native `62221f9c2` and adds request-v5 standard reactions. Like-05 and remove-like-06 each passed positive IDS confirmation, one admission, exact persisted readback, then a separate-process zero-admission restart. Read-only overlay `f90226831` passed two cold three-zone reads, second fetch empty, outbox `6 -> 6`, saves/deletes off. Retained writer `46bc6f027` passed image-04 parent admission and no-op restart. All prior requests, claims and runtimes remain protected evidence. |
 | Current full qualification | GCE `34579830953` passed every selected build/test gate, APK/native verification, Android JVM tests, trusted signing and cleanup on `f860966d5`, including cold-start fix `b432b9e8a`. T2D 60; writer on, automatic uploads off. Signed artifact `10192048724` was downloaded and signature-verified before the in-place Pixel install. Prior `34576684370` also passed on `5e9a532be`. Neither APK includes the later Windows-only reaction harness. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
-| Dependency | Writer fix `d201fb5` adds the exact attachment zone; `fdced92` changes only its test fixture. GCE `34567564253` passed 276 dependency tests, including the real attachment-warm regression. Earlier IDS-proof base `f2e8ea3` still requires explicit status 0 for every intended recipient. |
+| Dependency | App `2fd0da2a3` pins `aff6379`, including the reviewed FaceTime remote-target guard and default-off bounded Find My diagnostics. GCE `34589003289` passed 287 dependency tests; cleanup completed at 10:32:58Z. No sidecar runtime success is claimed and no APK includes them yet. Writer fix `d201fb5` adds the exact attachment zone; IDS-proof base `f2e8ea3` still requires status 0 for every intended recipient. |
 | Prior-source qualification | GCE run `34437410835` fully succeeded for exact source `75440cafc`: full Dart suite, 373 app Rust tests, 253 rustpush tests, 34 protector tests, bridge drift checks, APK/native-library verification, Android JVM tests, trusted signing, and cleanup. This APK lacks the new positive-acknowledgment repair and is not a write-qualified release candidate. Older `fc132e5f8` also has the headless ready-handshake deadlock. |
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
@@ -257,7 +257,7 @@ evidence paths. Causal edit/unsend writes remain a gap, not a passed gate.
 | Write-send provenance | `SOURCE-IMPLEMENTED` | Native positive-acceptance tests pass. Qualify the additive persisted-proof upgrade and dispatch/reconciliation tests. Old deferred/ready intents cannot promote or enter fresh admission without new proof; old adopted pending entries are retained and skipped for new leases. Submission rechecks proof. Exact readback remains allowed and does not retroactively prove IDS acceptance. A fresh v2 native confirmation can requalify the exact unchanged old source without resending it. Automatic uploads remain off pending execution and live proof. |
 | Retained writer queue usability | `TEST-PROVEN` | One journal-bound, read-only classifier covers queue drain, queued Chat observation, and preflight. It exempts only pristine pending creates with proof version 0, exact protected envelope/mapping, current owner/generation, no lease, attempt, Apple UUID or receipt. All rows remain counted and fingerprinted; no upload, acknowledgement, deletion, or proof upgrade occurs. GCE passed the real consumer/admission/store regression with a fresh qualified send beside retained work and reopen without duplicate submission. Apple responses are synthetic in this test; live proof remains. Unknown/retried/leased/malformed rows still block. |
 | Direct reactions | `LIVE-PROVEN` for bounded Windows like-05/remove-like-06 | Positive IDS confirmation, one admission, exact persisted readback and separate-process zero-admission restarts passed. Ordinary Pixel composition and independent Apple-device display remain. |
-| Edits and unsends | `GAP` | Require distinct causal mutation and anti-resurrection contracts. |
+| Edits and unsends | `IN REPAIR` on read; write `GAP` | Monotonic retractions and coupled body/history selection passed 120 adapter tests; the four-suite run passed 278 tests. The earlier merge layer still fingerprints mutable text as immutable and can quarantine a genuine edit before projection. See the edit evidence gate. Outbound causal updates, stale-tag reconciliation and independent-device proof remain separate gaps. |
 | Attachment writes | `LIVE-PROVEN` for bounded Windows image 04 admission/readback recovery | Source-bound upload, child readback, parent admission and no-op restart passed overlay `46bc6f027`. Independent recipient/second-client rendering, ordinary Pixel composer convergence, group attachment proof and exact-source Android qualification remain. Upload receipt alone is not record-save proof. |
 | Tombstones and deletion | Closed | Define exact ownership and recoverable semantics before enabling any local or remote delete. |
 | Token expiry | `TEST-PROVEN` | Live expired-token/restart proof remains. The exact-source path requires an authenticated protected reset proof, releases the semantic read boundary, reacquires the destructive-reset interlock and native pause, advances once, reconciles authority after process death, and replays once. |
@@ -701,8 +701,27 @@ fallback because the journal source digest binds the original Chat row and UUID.
 
 Apple carries edit history and retracted parts inside the existing message's
 `msgProto.messageSummaryInfo` blob (`ec`, `ep`, `otr`, and `rp`). The read path
-already validates part-key consistency, monotonic edit revisions, and the rule
+already validates part-key consistency, page-local edit ordering, and the rule
 that present-but-empty collections are absent rather than an explicit clear.
+Native revision numbers are sorted indexes regenerated for each payload, not
+cross-record causal clocks. Local projection must keep the displayed body and
+edit history on one compatible snapshot. A complete newer history may replace
+both; an older subset cannot replace either; incompatible histories remain
+retained with a content-free conflict. Retractions are an irreversible union
+for the exact owned message. Do not synthesize multipart bodies from histories:
+the renderer takes current text from the attributed body, not its edit list.
+
+**Earlier read gate still open:** `cloud_sync_canonical_converter.rs` includes
+subject/text/attributed bytes in `immutable_content_digest`. `_applyUpsert` in
+`cloud_inbox_applier.dart` quarantines a changed digest before calling the
+canonical adapter. Consequently, adapter replay tests do not prove that a
+new genuine edit reaches the UI. The next test must use the complete
+decode/merge/transaction path with different original and edited fingerprints.
+Do not simply omit that digest, disable conflict checking, or rewrite existing
+snapshot metadata. Admit any content-changing transition only with exact
+identity and causal edit/retraction proof, while preserving existing snapshots
+and retaining ambiguous records. Outbound ETag handling is a separate gate.
+
 The legacy `Message.toCloud` already serializes these fields, and generic
 `CloudMessagesClient.save_records` is called by `save_messages` for message
 updates. Reuse that encoding. Its `SaveRecordOperation::try_new(update=true)`

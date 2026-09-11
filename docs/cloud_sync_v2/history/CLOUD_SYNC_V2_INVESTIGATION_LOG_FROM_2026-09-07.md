@@ -2211,3 +2211,63 @@ This is a chronological evidence log. It does not override the
   Both sidecar patches remain separate uncommitted work for the next reviewed
   native qualification bundle. No new APK, cloud run or upstream PR was created.
   C: has about 46.4 GiB free; no evidence or agent artifacts were deleted.
+
+### September 11, background checkpoint and source-only qualification
+
+- Parent CloudKit checkpoint `0bb67d2c4` was committed and pushed only to the
+  fork's trusted feature branch. GCE Dart-only run `34588214811` was dispatched
+  at 10:14:15Z against its full exact SHA, using one T2D 60 runner in us-west1-b,
+  existing 75-minute lifetime and cleanup jobs. No APK, native build, signing,
+  automatic upload, Apple credentials or live account test is selected. The
+  pre-dispatch inventories contained zero VMs and zero registered runners.
+  Result and post-run cleanup remain pending, not assumed successful.
+- Singer completed the bounded Items extension. Parent reviewed the code and
+  independently passed all 15 diagnostic tests and the three FaceTime source
+  contracts. Native tests remain uncompiled. Accepted patches are retained
+  uncommitted, separate from `0bb67d2c4`; no location/call runtime fix is claimed.
+  Singer was closed after review and verified `not_found`; no required child
+  agent remains active. Its unique source and necessary evidence are preserved,
+  not disposable cache. Session deletion remains unsupported.
+
+### September 11, cloud qualification completed and read replay repair
+
+- GCE Dart-only run `34588214811` passed on exact source `0bb67d2c4`.
+  The Dart suite and 14 semantic-outbox plus 3 evidence-output cases passed;
+  cleanup completed at 10:28:27Z. No APK, native compilation, signing or live
+  account access was performed. Total elapsed time was about 14 minutes.
+- Reviewed and committed sidecars: dependency `dd5fbee` guards FaceTime against
+  self-only/empty remote targets, and `aff6379` adds default-off bounded People,
+  FMIP and Items diagnostics. App integration `2fd0da2a3` pins the dependency
+  and includes Dart diagnostic handling. GCE rustpush-only `34589003289` passed
+  all 287 native tests, including the new guard and diagnostics. Cleanup ended
+  at 10:32:58Z; independent inventories at 10:33Z showed zero VMs and zero
+  runners. No call/location success, combined APK or installation is claimed.
+- Curie's test-only audit reproduced stale retraction loss after ObjectBox
+  reopen. Parent expanded it: explicit clear, smaller nonempty list and a list
+  with another part each discarded known retractions before repair. The parent
+  made retractions an irreversible union. All 112 then-current adapter tests
+  passed; targeted analysis found no issues.
+- The follow-up test reproduced stale edit rollback after reopening ObjectBox:
+  a two-revision current message became the original text when an older
+  one-revision snapshot replayed. Native revision indexes are page-local, and
+  Message.buildMessageParts does not derive current body text from history.
+  The parent repair compares complete decoded histories, keeps body/history
+  together, preserves older-subset state and defers incompatible snapshots.
+  Legacy Apple seconds are normalized only for comparison, using the native
+  converter's existing epoch rules. Parent reviewed the agent tests and added
+  real two-part body cases, out-of-order/duplicate legacy history and a stale
+  edited replay after retraction. The final four-suite run passed 278 tests
+  (120 adapter, plus inbox, ObjectBox gateway and safe-failure coverage). The
+  initial aggregate run caught a missing diagnostic allowlist entry; the fixed
+  content-free code now survives both the safe-failure and diagnostic paths.
+- Full-flow review found a separate earlier gate: the native Message converter
+  fingerprints current subject/text/attributed bytes as immutable; inbox merge
+  quarantines a changed fingerprint before reaching the adapter. This remains
+  a read-edit gap, not solved by the projection tests. A causal exception must
+  prove stable identity and compatible edit/retraction evidence and preserve
+  old protected snapshots; do not disable digest checks or rewrite metadata.
+  Outbound causal edit/unsend transport remains closed.
+- Curie's reviewed source was preserved, the agent was closed and `not_found`
+  verified. No child remains active or owns a disposable worktree/log. Supported
+  session deletion remains unavailable. C: has about 46.5 GiB free; no user,
+  credential, device evidence, transcript or rollback artifact was removed.

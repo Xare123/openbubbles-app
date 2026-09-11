@@ -6721,6 +6721,789 @@ void main() {
     );
     expect(store.box<Chat>().get(id)!.displayName, isNull);
   });
+
+  test('stale absent page cannot resurrect a projected retracted part', () {
+    const chatIdentifier = 'iMessage;-;unsend-anti-resurrection-chat';
+    final chatId = store.box<Chat>().put(
+      Chat(guid: 'chat-guid', chatIdentifier: chatIdentifier, style: 45),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'chat-guid',
+      chatIdentifier: chatIdentifier,
+      chatId: chatId,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    CloudMessageEntityPayload messagePayload({
+      CloudSemanticFieldState retractedPartsState =
+          CloudSemanticFieldState.absent,
+      Iterable<int> retractedParts = const [],
+    }) =>
+        CloudMessageEntityPayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatAliasKeyHash: _testChatAliasHash(chatIdentifier),
+          chatIdentifier: chatIdentifier,
+          body: 'Hello',
+          senderHandle: 'mailto:sender@example.com',
+          createdAt: testEpoch,
+          service: CloudSemanticService.iMessage,
+          attributedBodiesState: CloudSemanticFieldState.value,
+          attributedBodies: [
+            CloudSemanticAttributedBody(
+              text: 'Hello',
+              runs: [
+                CloudSemanticTextRun(
+                  startUtf16: 0,
+                  lengthUtf16: 5,
+                  messagePart: 0,
+                  attachmentCanonicalGuid: null,
+                  attachmentLogicalKeyHash: null,
+                  mentionHandle: null,
+                  audioTranscript: null,
+                  textEffect: null,
+                  bold: null,
+                  italic: null,
+                  strikethrough: null,
+                  underline: null,
+                ),
+              ],
+            ),
+          ],
+          knownFlags: _messageFlags(fromMe: false),
+          retractedPartsState: retractedPartsState,
+          retractedParts: retractedParts,
+        );
+
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: messagePayload(
+          retractedPartsState: CloudSemanticFieldState.value,
+          retractedParts: const [0],
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    expect(
+      store.box<Message>().getAll().single.messageSummaryInfo.single.retractedParts,
+      [0],
+    );
+
+    // A stale original/edit page carries no retraction state and must keep it.
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+    );
+    adapter.applyEntity(
+      scope: scope,
+      generation: generation,
+      payload: messagePayload(),
+      snapshot: _snapshot(CloudEntityKind.message, messageHash),
+    );
+
+    final message = store.box<Message>().getAll().single;
+    expect(message.messageSummaryInfo.single.retractedParts, [0]);
+    final parts = message.buildMessageParts();
+    expect(parts, hasLength(1));
+    expect(parts.single.part, 0);
+    expect(parts.single.isUnsent, isTrue);
+  });
+
+  for (final replay in [
+    (name: 'clear', state: CloudSemanticFieldState.explicitClear,
+      parts: <int>[], expected: [0, 2]),
+    (name: 'partial value', state: CloudSemanticFieldState.value,
+      parts: [2], expected: [0, 2]),
+    (name: 'additional value', state: CloudSemanticFieldState.value,
+      parts: [1], expected: [0, 1, 2]),
+    (name: 'duplicate reordered value', state: CloudSemanticFieldState.value,
+      parts: [2, 0, 2], expected: [0, 2]),
+  ]) {
+  test('stale retraction ${replay.name} cannot resurrect a projected part after reopen', () async {
+    const chatIdentifier = 'iMessage;-;unsend-clear-guard-chat';
+    final chatId = store.box<Chat>().put(
+      Chat(guid: 'chat-guid', chatIdentifier: chatIdentifier, style: 45),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'chat-guid',
+      chatIdentifier: chatIdentifier,
+      chatId: chatId,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    CloudMessageEntityPayload messagePayload({
+      CloudSemanticFieldState retractedPartsState =
+          CloudSemanticFieldState.absent,
+      Iterable<int> retractedParts = const [],
+    }) =>
+        CloudMessageEntityPayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatAliasKeyHash: _testChatAliasHash(chatIdentifier),
+          chatIdentifier: chatIdentifier,
+          body: 'Hello',
+          senderHandle: 'mailto:sender@example.com',
+          createdAt: testEpoch,
+          service: CloudSemanticService.iMessage,
+          knownFlags: _messageFlags(fromMe: false),
+          retractedPartsState: retractedPartsState,
+          retractedParts: retractedParts,
+        );
+
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: messagePayload(
+          retractedPartsState: CloudSemanticFieldState.value,
+          retractedParts: const [0, 2],
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+
+    store.close();
+    store = await openStore(directory: directory.path);
+    final reopenedAdapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    // The native converter collapses empty rp to absent, but an older nonempty
+    // snapshot is a real value. Neither may revoke an already observed unsend.
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+    );
+    reopenedAdapter.applyEntity(
+      scope: scope,
+      generation: generation,
+      payload: messagePayload(
+        retractedPartsState: replay.state,
+        retractedParts: replay.parts,
+      ),
+      snapshot: _snapshot(CloudEntityKind.message, messageHash),
+    );
+
+    final message = store.box<Message>().getAll().single;
+    expect(message.messageSummaryInfo.single.retractedParts, replay.expected);
+    expect(
+      message.buildMessageParts().singleWhere((part) => part.part == 0).isUnsent,
+      isTrue,
+    );
+  });
+  }
+
+  test('duplicate edit payload and database reopen keep projected history', () async {
+    const chatIdentifier = 'iMessage;-;edit-replay-reopen-chat';
+    final chatId = store.box<Chat>().put(
+      Chat(guid: 'chat-guid', chatIdentifier: chatIdentifier, style: 45),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'chat-guid',
+      chatIdentifier: chatIdentifier,
+      chatId: chatId,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    const originalText = 'Original message';
+    const currentText = 'Current edit';
+    CloudSemanticAttributedBody attributedBody(String text) =>
+        CloudSemanticAttributedBody(
+          text: text,
+          runs: [
+            CloudSemanticTextRun(
+              startUtf16: 0,
+              lengthUtf16: text.length,
+              messagePart: 0,
+              attachmentCanonicalGuid: null,
+              attachmentLogicalKeyHash: null,
+              mentionHandle: null,
+              audioTranscript: null,
+              textEffect: null,
+              bold: null,
+              italic: null,
+              strikethrough: null,
+              underline: null,
+            ),
+          ],
+        );
+    final payload = CloudMessageEntityPayload(
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+      chatAliasKeyHash: _testChatAliasHash(chatIdentifier),
+      chatIdentifier: chatIdentifier,
+      body: currentText,
+      senderHandle: 'mailto:sender@example.com',
+      createdAt: testEpoch,
+      service: CloudSemanticService.iMessage,
+      attributedBodiesState: CloudSemanticFieldState.value,
+      attributedBodies: [attributedBody(currentText)],
+      knownFlags: _messageFlags(fromMe: false),
+      editsState: CloudSemanticFieldState.value,
+      edits: [
+        CloudSemanticMessageEdit(
+          part: 0,
+          revision: 0,
+          bodies: [attributedBody(originalText)],
+          modifiedAt: testEpoch,
+          originalRangeLocation: 0,
+          originalRangeLength: originalText.length,
+        ),
+        CloudSemanticMessageEdit(
+          part: 0,
+          revision: 1,
+          bodies: [attributedBody(currentText)],
+          modifiedAt: testEpoch.add(const Duration(minutes: 1)),
+          originalRangeLocation: 0,
+          originalRangeLength: originalText.length,
+        ),
+      ],
+    );
+
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: payload,
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+    );
+    // Duplicate redelivery of the same revisions must be idempotent.
+    adapter.applyEntity(
+      scope: scope,
+      generation: generation,
+      payload: payload,
+      snapshot: _snapshot(CloudEntityKind.message, messageHash),
+    );
+    final beforeReopen = store.box<Message>().getAll().single;
+    expect(beforeReopen.messageSummaryInfo.single.editedParts, [0]);
+    expect(
+      beforeReopen.messageSummaryInfo.single.editedContent['0'],
+      hasLength(2),
+    );
+    expect(beforeReopen.buildMessageParts().single.text, currentText);
+
+    store.close();
+    store = await openStore(directory: directory.path);
+
+    final message = store.box<Message>().getAll().single;
+    expect(message.text, currentText);
+    expect(message.messageSummaryInfo.single.editedParts, [0]);
+    final history = message.messageSummaryInfo.single.editedContent['0']!;
+    expect(history, hasLength(2));
+    expect(history.first.text!.values.single.string, originalText);
+    expect(history.last.text!.values.single.string, currentText);
+    expect(message.buildMessageParts().single.text, currentText);
+  });
+
+  test('stale one-revision edit replay cannot roll back projected text after reopen', () async {
+    const chatIdentifier = 'iMessage;-;stale-edit-replay-chat';
+    final chatId = store.box<Chat>().put(
+      Chat(guid: 'chat-guid', chatIdentifier: chatIdentifier, style: 45),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'chat-guid',
+      chatIdentifier: chatIdentifier,
+      chatId: chatId,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    const originalText = 'Original message';
+    const currentText = 'Current edit';
+    CloudSemanticAttributedBody attributedBody(String text) =>
+        CloudSemanticAttributedBody(
+          text: text,
+          runs: [
+            CloudSemanticTextRun(
+              startUtf16: 0,
+              lengthUtf16: text.length,
+              messagePart: 0,
+              attachmentCanonicalGuid: null,
+              attachmentLogicalKeyHash: null,
+              mentionHandle: null,
+              audioTranscript: null,
+              textEffect: null,
+              bold: null,
+              italic: null,
+              strikethrough: null,
+              underline: null,
+            ),
+          ],
+        );
+    CloudSemanticMessageEdit revision(String text, int revision, DateTime at) =>
+        CloudSemanticMessageEdit(
+          part: 0,
+          revision: revision,
+          bodies: [attributedBody(text)],
+          modifiedAt: at,
+          originalRangeLocation: 0,
+          originalRangeLength: originalText.length,
+        );
+    CloudMessageEntityPayload editPayload(String body, List<CloudSemanticMessageEdit> edits) =>
+        CloudMessageEntityPayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatAliasKeyHash: _testChatAliasHash(chatIdentifier),
+          chatIdentifier: chatIdentifier,
+          body: body,
+          senderHandle: 'mailto:sender@example.com',
+          createdAt: testEpoch,
+          service: CloudSemanticService.iMessage,
+          attributedBodiesState: CloudSemanticFieldState.value,
+          attributedBodies: [attributedBody(body)],
+          knownFlags: _messageFlags(fromMe: false),
+          editsState: CloudSemanticFieldState.value,
+          edits: edits,
+        );
+
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: editPayload(currentText, [
+          revision(originalText, 0, testEpoch),
+          revision(currentText, 1, testEpoch.add(const Duration(minutes: 1))),
+        ]),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+
+    store.close();
+    store = await openStore(directory: directory.path);
+    final reopenedAdapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    // An older valid snapshot carries fewer revisions and the original text.
+    // Replaying it after reopen must not roll back the projected current text.
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+    );
+    reopenedAdapter.applyEntity(
+      scope: scope,
+      generation: generation,
+      payload: editPayload(originalText, [revision(originalText, 0, testEpoch)]),
+      snapshot: _snapshot(CloudEntityKind.message, messageHash),
+    );
+
+    final message = store.box<Message>().getAll().single;
+    expect(message.text, currentText);
+    expect(message.messageSummaryInfo.single.editedParts, [0]);
+    final history = message.messageSummaryInfo.single.editedContent['0']!;
+    expect(history, hasLength(2));
+    expect(history.last.text!.values.single.string, currentText);
+    expect(message.buildMessageParts().single.text, currentText);
+  });
+
+  group('edit history merge gate', () {
+    const originalText = 'Original message';
+    const currentText = 'Current edit';
+    const newerText = 'Newest edit';
+    const divergentText = 'Divergent edit';
+    const chatIdentifier = 'iMessage;-;edit-merge-gate-chat';
+    final firstEditAt = testEpoch;
+    final secondEditAt = testEpoch.add(const Duration(minutes: 1));
+    final thirdEditAt = testEpoch.add(const Duration(minutes: 2));
+
+    CloudSemanticTextRun gateRun(String text, {int start = 0, int part = 0}) =>
+            CloudSemanticTextRun(
+              startUtf16: start,
+              lengthUtf16: text.length,
+              messagePart: part,
+              attachmentCanonicalGuid: null,
+              attachmentLogicalKeyHash: null,
+              mentionHandle: null,
+              audioTranscript: null,
+              textEffect: null,
+              bold: null,
+              italic: null,
+              strikethrough: null,
+              underline: null,
+            );
+    CloudSemanticAttributedBody gateBody(String text, {int part = 0}) =>
+        CloudSemanticAttributedBody(text: text, runs: [gateRun(text, part: part)]);
+    CloudSemanticMessageEdit gateRev(String text, int revision, DateTime at,
+        {int part = 0}) =>
+        CloudSemanticMessageEdit(
+          part: part,
+          revision: revision,
+          bodies: [gateBody(text, part: part)],
+          modifiedAt: at,
+          originalRangeLocation: 0,
+          originalRangeLength: originalText.length,
+        );
+    CloudMessageEntityPayload gatePage({
+      String body = currentText,
+      List<CloudSemanticMessageEdit> edits = const [],
+      CloudSemanticFieldState? editsState,
+      CloudSemanticFieldState bodiesState = CloudSemanticFieldState.value,
+      List<CloudSemanticAttributedBody>? bodies,
+      CloudSemanticFieldState retractedPartsState =
+          CloudSemanticFieldState.absent,
+      Iterable<int> retractedParts = const [],
+    }) =>
+        CloudMessageEntityPayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatAliasKeyHash: _testChatAliasHash(chatIdentifier),
+          chatIdentifier: chatIdentifier,
+          body: body,
+          senderHandle: 'mailto:sender@example.com',
+          createdAt: testEpoch,
+          service: CloudSemanticService.iMessage,
+          attributedBodiesState: bodiesState,
+          attributedBodies:
+              bodiesState == CloudSemanticFieldState.value ? bodies ?? [gateBody(body)] : const [],
+          knownFlags: _messageFlags(fromMe: false),
+          editsState:
+              editsState ?? (edits.isEmpty ? CloudSemanticFieldState.absent : CloudSemanticFieldState.value),
+          edits: edits,
+          retractedPartsState: retractedPartsState,
+          retractedParts: retractedParts,
+        );
+    ObjectBoxCanonicalSemanticEntityAdapter gateAdapter() => _newAdapter(
+          store: store,
+          activeScopeProvider: () => activeScope,
+          resolver: resolver,
+          semanticApplyEnabled: true,
+          allowMessageUpserts: true,
+        );
+    void seedGateChat() {
+      final chatId = store.box<Chat>().put(
+        Chat(guid: 'chat-guid', chatIdentifier: chatIdentifier, style: 45),
+      );
+      _seedChatOwnershipAndAlias(
+        store,
+        scope: scope,
+        generation: generation,
+        logicalEntityKeyHash: chatHash,
+        canonicalGuid: 'chat-guid',
+        chatIdentifier: chatIdentifier,
+        chatId: chatId,
+      );
+    }
+    void seedGateMessage() => _seedExactOwnershipProof(
+          store,
+          scope: scope,
+          generation: generation,
+          kind: CloudEntityKind.message,
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+        );
+    Future<void> reopenGate() async {
+      store.close();
+      store = await openStore(directory: directory.path);
+    }
+    CloudMessageEntityPayload fullPage() => gatePage(edits: [
+          gateRev(originalText, 0, firstEditAt),
+          gateRev(currentText, 1, secondEditAt),
+        ]);
+    Message onlyMessage() => store.box<Message>().getAll().single;
+    List<EditedContent> onlyHistory(Message message) =>
+        message.messageSummaryInfo.single.editedContent['0']!;
+
+    test('absent and explicitClear edit states preserve newer text and history', () async {
+      var adapter = gateAdapter();
+      seedGateChat();
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: fullPage(),
+          snapshot: _snapshot(CloudEntityKind.message, messageHash),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+      await reopenGate();
+      adapter = gateAdapter();
+      seedGateMessage();
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: gatePage(body: originalText),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      );
+      var message = onlyMessage();
+      expect(message.text, currentText);
+      expect(message.attributedBody.single.string, currentText);
+      expect(onlyHistory(message), hasLength(2));
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: gatePage(
+          body: originalText,
+          editsState: CloudSemanticFieldState.explicitClear,
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      );
+      message = onlyMessage();
+      expect(message.text, currentText);
+      expect(message.attributedBody.single.string, currentText);
+      expect(onlyHistory(message), hasLength(2));
+      expect(onlyHistory(message).last.text!.values.single.string, currentText);
+    });
+
+    test('newer full history replaces text and history', () {
+      final adapter = gateAdapter();
+      seedGateChat();
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: fullPage(),
+          snapshot: _snapshot(CloudEntityKind.message, messageHash),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+      seedGateMessage();
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: gatePage(body: newerText, edits: [
+          gateRev(originalText, 0, firstEditAt),
+          gateRev(currentText, 1, secondEditAt),
+          gateRev(newerText, 2, thirdEditAt),
+        ]),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      );
+      final message = onlyMessage();
+      expect(message.text, newerText);
+      expect(onlyHistory(message), hasLength(3));
+      expect(onlyHistory(message).last.text!.values.single.string, newerText);
+      expect(message.buildMessageParts().single.text, newerText);
+    });
+
+    test('incomparable histories throw and preserve the stored row', () {
+      final adapter = gateAdapter();
+      seedGateChat();
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: fullPage(),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      );
+      seedGateMessage();
+      expect(
+        () => adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: gatePage(body: divergentText, edits: [
+            gateRev(originalText, 0, firstEditAt),
+            gateRev(divergentText, 1, secondEditAt),
+          ]),
+          snapshot: _snapshot(CloudEntityKind.message, messageHash),
+        ),
+        throwsA(
+          predicate<CloudSyncFailure>(
+            (failure) =>
+                failure.safeCode == 'canonical_message_edit_history_conflict',
+          ),
+        ),
+      );
+      final message = onlyMessage();
+      expect(store.box<Message>().count(), 1);
+      expect(message.text, currentText);
+      expect(onlyHistory(message), hasLength(2));
+      expect(onlyHistory(message).last.text!.values.single.string, currentText);
+    });
+
+    test('legacy Apple-second stored dates match incoming Unix-millisecond history', () {
+      final adapter = gateAdapter();
+      seedGateChat();
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: fullPage(),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      );
+      const appleEpochMillis = 978307200000;
+      final stored = onlyMessage();
+      for (final edit in onlyHistory(stored)) {
+        edit.date = (edit.date! - appleEpochMillis) / 1000.0;
+      }
+      final storedHistory = onlyHistory(stored);
+      stored.messageSummaryInfo.single.editedContent['0'] = [
+        storedHistory.last, storedHistory.first, storedHistory.last,
+      ];
+      store.box<Message>().put(stored);
+      expect(
+        onlyMessage().messageSummaryInfo.single.editedContent['0']!.first.date,
+        lessThan(1000000000.0),
+      );
+      seedGateMessage();
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: fullPage(),
+          snapshot: _snapshot(CloudEntityKind.message, messageHash),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+      final message = onlyMessage();
+      expect(message.text, currentText);
+      expect(onlyHistory(message), hasLength(2));
+      expect(onlyHistory(message).first.text!.values.single.string, originalText);
+      expect(onlyHistory(message).last.text!.values.single.string, currentText);
+    });
+
+    test('retracting a previously edited part stays unsent on replay', () {
+      var adapter = gateAdapter();
+      seedGateChat();
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: fullPage(),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      );
+      seedGateMessage();
+      CloudMessageEntityPayload retractPage() => gatePage(
+            retractedPartsState: CloudSemanticFieldState.value,
+            retractedParts: const [0],
+          );
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: retractPage(),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      );
+      var message = onlyMessage();
+      expect(message.messageSummaryInfo.single.retractedParts, [0]);
+      expect(onlyHistory(message), hasLength(2));
+      expect(message.buildMessageParts().single.isUnsent, isTrue);
+      adapter = gateAdapter();
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: gatePage(body: originalText, edits: [
+          gateRev(originalText, 0, firstEditAt),
+        ]),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      );
+      message = onlyMessage();
+      expect(message.messageSummaryInfo.single.retractedParts, [0]);
+      expect(onlyHistory(message), hasLength(2));
+      expect(onlyHistory(message).last.text!.values.single.string, currentText);
+      expect(message.buildMessageParts().single.isUnsent, isTrue);
+    });
+
+    for (final includesOtherPart in [false, true]) {
+      test('multipart forward edit requires the other known history: $includesOtherPart', () async {
+        const right = 'Right edit';
+        CloudMessageEntityPayload multipartPage(String left, {required bool full}) {
+          final text = '$left $right';
+          return gatePage(
+            body: text,
+            bodies: [CloudSemanticAttributedBody(text: text, runs: [
+              gateRun(left),
+              gateRun(right, start: left.length + 1, part: 1),
+            ])],
+            edits: [
+              gateRev(originalText, 0, firstEditAt),
+              gateRev(currentText, 1, secondEditAt),
+              if (left == newerText) gateRev(newerText, 2, thirdEditAt),
+              if (full) gateRev(right, 0, secondEditAt, part: 1),
+            ],
+          );
+        }
+        seedGateChat();
+        gateAdapter().applyEntity(
+          scope: scope, generation: generation,
+          payload: multipartPage(currentText, full: true),
+          snapshot: _snapshot(CloudEntityKind.message, messageHash),
+        );
+        await reopenGate();
+        seedGateMessage();
+        final adapter = gateAdapter();
+        void applyNext() => adapter.applyEntity(
+          scope: scope, generation: generation,
+          payload: multipartPage(newerText, full: includesOtherPart),
+          snapshot: _snapshot(CloudEntityKind.message, messageHash),
+        );
+        if (includesOtherPart) {
+          applyNext();
+        } else {
+          expect(applyNext, throwsA(predicate<CloudSyncFailure>((failure) =>
+            failure.safeCode == 'canonical_message_edit_history_conflict')));
+        }
+        final message = onlyMessage();
+        final expectedLeft = includesOtherPart ? newerText : currentText;
+        expect(message.text, '$expectedLeft $right');
+        expect(message.messageSummaryInfo.single.editedParts, [0, 1]);
+        expect(message.buildMessageParts().map((part) => part.text), [expectedLeft, right]);
+        expect(message.messageSummaryInfo.single.editedContent['1'], hasLength(1));
+      });
+    }
+  });
 }
 
 ObjectBoxCanonicalSemanticEntityAdapter _newAdapter({
