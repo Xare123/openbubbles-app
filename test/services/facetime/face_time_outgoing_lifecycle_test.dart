@@ -34,6 +34,98 @@ class Harness {
 }
 
 void main() {
+  test('diagnostics distinguish stalled setup, rejection and armed ringing', () async {
+    final records = <String>[];
+    final calls = FaceTimeOutgoingLifecycle<String>(
+      schedule: (_, action) => ManualTimer(action),
+      diagnostic: (attempt, event, phase) =>
+          records.add('$attempt:${event.name}:${phase.name}'),
+    );
+    final call = calls.begin('private-id', 'private-state')!;
+    call.metadata['link'] = 'private-link';
+    final created = Completer<void>();
+    final start = () async {
+      calls.observe(call, FaceTimeOutgoingPhase.link_before);
+      calls.observe(call, FaceTimeOutgoingPhase.link_after);
+      calls.observe(call, FaceTimeOutgoingPhase.handles_before);
+      calls.observe(call, FaceTimeOutgoingPhase.handles_after);
+      calls.observe(call, FaceTimeOutgoingPhase.create_before);
+      await created.future;
+      calls.observe(call, FaceTimeOutgoingPhase.create_after);
+      calls.armTimeout(call, () async {});
+    }();
+    for (var i = 0; i < 100; i++) {
+      expect(calls.begin('retry', 'ringing'), isNull);
+    }
+    expect(records.last, '1:rejected:create_before');
+    expect(records.where((line) => line.contains(':rejected:')), hasLength(1));
+    expect(calls.isPending(call), isTrue);
+    created.complete();
+    await start;
+    expect(records, [
+      '1:started:started',
+      '1:link_before:link_before',
+      '1:link_after:link_after',
+      '1:handles_before:handles_before',
+      '1:handles_after:handles_after',
+      '1:create_before:create_before',
+      '1:rejected:create_before',
+      '1:create_after:create_after',
+      '1:timer_before:timer_before',
+      '1:timer_armed:timer_armed',
+    ]);
+    expect(records.join(), isNot(contains('private')));
+    await calls.complete(call, () async {});
+  });
+
+  test('late creation and old cleanup retain their own diagnostic ticket', () async {
+    final records = <String>[];
+    final calls = FaceTimeOutgoingLifecycle<String>(
+      diagnostic: (attempt, event, phase) =>
+          records.add('$attempt:${event.name}:${phase.name}'),
+    );
+    final old = calls.begin('same-id', 'ringing')!;
+    final cleanup = Completer<void>();
+    final ending = calls.complete(old, () => cleanup.future);
+    expect(records.last, '1:terminal_cleanup:terminal_cleanup');
+    final next = calls.begin('same-id', 'ringing')!;
+    calls.observe(old, FaceTimeOutgoingPhase.create_after);
+    expect(records.last, '1:create_after:terminal_cleanup');
+    expect(calls.armTimeout(old, () async {}), isFalse);
+    expect(records.last, '1:timer_skipped:terminal_cleanup');
+    cleanup.complete();
+    await ending;
+    expect(records.last, '1:terminal_released:terminal_released');
+    expect(records, contains('2:started:started'));
+    expect(calls.current, same(next));
+    expect(calls.isPending(next), isTrue);
+  });
+
+  test('throwing diagnostic sink cannot affect timer, rejection or cleanup', () async {
+    final timers = <ManualTimer>[];
+    final calls = FaceTimeOutgoingLifecycle<String>(
+      schedule: (_, action) {
+        final timer = ManualTimer(action);
+        timers.add(timer);
+        return timer;
+      },
+      diagnostic: (_, __, ___) => throw StateError('private-error'),
+    );
+    final call = calls.begin('a', 'ringing')!;
+    var timeouts = 0;
+    expect(calls.armTimeout(call, () async { timeouts++; }), isTrue);
+    expect(calls.begin('b', 'ringing'), isNull);
+    timers.single.fire();
+    await Future<void>.value();
+    expect(timeouts, 1);
+    expect(calls.current, isNull);
+    final next = calls.begin('c', 'ringing')!;
+    await expectLater(calls.complete(next, () async {
+      throw StateError('original failure');
+    }), throwsStateError);
+    expect(calls.current, isNull);
+  });
+
   test(
     'early JoinEvent before create completes cannot arm an accepted-call timeout',
     () async {

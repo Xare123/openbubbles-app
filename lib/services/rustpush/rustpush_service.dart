@@ -174,6 +174,33 @@ bool shouldAnswerIncomingFaceTimeAdmission(
         FaceTimeIncomingAdmissionResult? admission) =>
     admission?.isApproved == true;
 
+String? faceTimeOutgoingSetupDiagnostic(
+  int attempt,
+  FaceTimeOutgoingPhase event,
+  FaceTimeOutgoingPhase phase, {
+  required bool developerEnabled,
+  required bool diagnosticsEnabled,
+}) {
+  if (!developerEnabled || !diagnosticsEnabled ||
+      attempt < 1 || attempt > 0x7fffffff) return null;
+  return 'facetime_setup attempt=$attempt event=${event.name} phase=${phase.name}';
+}
+
+void traceFaceTimeOutgoingSetup(
+  int attempt,
+  FaceTimeOutgoingPhase event,
+  FaceTimeOutgoingPhase phase,
+) {
+  try {
+    final line = faceTimeOutgoingSetupDiagnostic(attempt, event, phase,
+        developerEnabled: ss.settings.developerEnabled.value,
+        diagnosticsEnabled: ss.settings.faceTimeDiagnosticsEnabled.value);
+    if (line != null) Logger.info(line);
+  } catch (_) {
+    // Existing capped Dart log only; no channel payload, raw error or new sink.
+  }
+}
+
 String faceTimeOutgoingStartFailureMessage(Object error) {
   final detail = error.toString();
   if (detail.contains('(6005)')) {
@@ -4937,7 +4964,9 @@ class RustPushService extends GetxService {
     await api.getFtLink(facetime: pushService.state!.ftClient, usage: "next");
   }
 
-  final _outgoingCalls = FaceTimeOutgoingLifecycle<RxString>();
+  final _outgoingCalls = FaceTimeOutgoingLifecycle<RxString>(
+    diagnostic: traceFaceTimeOutgoingSetup,
+  );
   RxString? get currentOutgoingCall => _outgoingCalls.current?.state;
 
   Future<void> endOutgoingFaceTime(String callUuid) async {
@@ -4962,14 +4991,21 @@ class RustPushService extends GetxService {
     late final String link;
 
     try {
+      _outgoingCalls.observe(call, FaceTimeOutgoingPhase.link_before);
       link = await api.getFtLink(
           facetime: pushService.state!.ftClient, usage: "next");
-      final displayName = ss.settings.userName.value == "You"
-          ? (await api.getHandles(state: pushService.state!.client))
-              .first
-              .replaceFirst("tel:", "")
-              .replaceFirst("mailto:", "")
-          : ss.settings.userName.value;
+      _outgoingCalls.observe(call, FaceTimeOutgoingPhase.link_after);
+      final String displayName;
+      if (ss.settings.userName.value == "You") {
+        _outgoingCalls.observe(call, FaceTimeOutgoingPhase.handles_before);
+        final handles = await api.getHandles(state: pushService.state!.client);
+        _outgoingCalls.observe(call, FaceTimeOutgoingPhase.handles_after);
+        displayName = handles.first
+            .replaceFirst("tel:", "")
+            .replaceFirst("mailto:", "");
+      } else {
+        displayName = ss.settings.userName.value;
+      }
 
       // A newer call may own setup after either preparation await.
       if (!_outgoingCalls.isPending(call)) return;
@@ -4992,11 +5028,13 @@ class RustPushService extends GetxService {
         'answer': true
       });
 
+      _outgoingCalls.observe(call, FaceTimeOutgoingPhase.create_before);
       await api.createFacetime(
           facetime: pushService.state!.ftClient,
           uuid: outgoingguid,
           handle: caller,
           participants: targets);
+      _outgoingCalls.observe(call, FaceTimeOutgoingPhase.create_after);
     } catch (error, trace) {
       Logger.error("FaceTime session creation failed",
           error: error, trace: trace);

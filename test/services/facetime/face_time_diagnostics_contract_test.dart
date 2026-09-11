@@ -1,8 +1,76 @@
 import 'dart:io';
 
+import 'package:bluebubbles/services/rustpush/face_time_outgoing_lifecycle.dart';
+import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('setup diagnostics require both gates and format only bounded typed fields', () {
+    for (final developer in [false, true]) {
+      for (final enabled in [false, true]) {
+        final line = faceTimeOutgoingSetupDiagnostic(1,
+            FaceTimeOutgoingPhase.rejected, FaceTimeOutgoingPhase.link_before,
+            developerEnabled: developer, diagnosticsEnabled: enabled);
+        expect(line, developer && enabled
+            ? 'facetime_setup attempt=1 event=rejected phase=link_before'
+            : isNull);
+      }
+    }
+    for (final event in FaceTimeOutgoingPhase.values) {
+      for (final phase in FaceTimeOutgoingPhase.values) {
+        final line = faceTimeOutgoingSetupDiagnostic(0x7fffffff, event, phase,
+            developerEnabled: true, diagnosticsEnabled: true)!;
+        expect(line.length, lessThan(160));
+        expect(line, matches(r'^facetime_setup attempt=[0-9]+ event=[a-z_]+ phase=[a-z_]+$'));
+      }
+    }
+    for (final invalid in [-1, 0, 0x80000000]) {
+      expect(faceTimeOutgoingSetupDiagnostic(invalid,
+          FaceTimeOutgoingPhase.started, FaceTimeOutgoingPhase.started,
+          developerEnabled: true, diagnosticsEnabled: true), isNull);
+    }
+  });
+
+  test('setup sender uses existing gated Dart logger without private fields', () {
+    final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final sender = source.substring(source.indexOf('void traceFaceTimeOutgoingSetup('),
+        source.indexOf('String faceTimeOutgoingStartFailureMessage('));
+    expect(sender, contains('ss.settings.developerEnabled.value'));
+    expect(sender, contains('ss.settings.faceTimeDiagnosticsEnabled.value'));
+    expect(sender, contains('if (line != null) Logger.info(line);'));
+    expect(sender, contains('catch (_)'));
+    for (final forbidden in ['error:', 'trace:', '.metadata', '.id', 'callUuid',
+      '.handle', 'invokeMethod', 'api.', 'File(', 'Timer(', 'await ']) {
+      expect(sender, isNot(contains(forbidden)));
+    }
+    expect(source, contains('diagnostic: traceFaceTimeOutgoingSetup,'));
+  });
+
+  test('setup observations bracket actual awaits including optional handles', () {
+    final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final start = source.indexOf('Future<void> placeOutgoingCall(');
+    final setup = source.substring(start, source.indexOf('// returns handle to show poster of', start));
+    for (final entry in {'link': 'getFtLink', 'handles': 'getHandles', 'create': 'createFacetime'}.entries) {
+      final before = setup.indexOf('FaceTimeOutgoingPhase.${entry.key}_before');
+      final request = setup.indexOf('await api.${entry.value}(');
+      final after = setup.indexOf('FaceTimeOutgoingPhase.${entry.key}_after');
+      expect(before, greaterThanOrEqualTo(0));
+      expect(before, lessThan(request));
+      expect(request, lessThan(after));
+      expect(RegExp('await api\\.${entry.value}\\(').allMatches(setup), hasLength(1));
+    }
+    final optional = setup.substring(setup.indexOf('if (ss.settings.userName.value == "You")'),
+        setup.indexOf('// A newer call'));
+    expect(optional.indexOf('FaceTimeOutgoingPhase.handles_before'), lessThan(optional.indexOf('} else {')));
+    expect(optional.indexOf('FaceTimeOutgoingPhase.handles_after'), lessThan(optional.indexOf('} else {')));
+    expect(setup, isNot(contains('await _outgoingCalls.observe')));
+    final lifecycle = File('lib/services/rustpush/face_time_outgoing_lifecycle.dart').readAsStringSync();
+    expect(lifecycle.indexOf('observe(call, FaceTimeOutgoingPhase.timer_before)'),
+        lessThan(lifecycle.indexOf('call._timer = _schedule(')));
+    expect(lifecycle.indexOf('observe(call, FaceTimeOutgoingPhase.timer_armed)'),
+        greaterThan(lifecycle.indexOf('call._timer = _schedule(')));
+  });
+
   test('remote leave diagnostics observe refresh without controlling it', () {
     final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
     final dispatch = source.substring(

@@ -320,3 +320,19 @@ dirty files were not edited; existing targeted build/test outputs were reused.
 End-of-task read-only storage check: C: free 49.38 GiB; existing worktree `build`
 2.205 GiB and `.dart_tool` 7.502 GiB (whole-tree totals, not this patch's growth).
 The targeted Kotlin test jar is 99,065 bytes. No cleanup or deletion was performed.
+
+## September 11 bounded outgoing lifecycle recheck at 439ebff7e
+
+No service stall reproduced; initial 18 tests passed. No timeout or calling-policy change.
+Approved follow-up adds `facetime_setup` markers to the existing capped Dart logger, not native logs.
+Both developer mode and the existing default-off FaceTime diagnostics toggle gate emission.
+Fields are a service-local ticket ordinal, fixed event and phase labels; no call IDs or private content.
+Events bracket link lookup, optional handles lookup, creation and timer arm, plus rejection and terminal cleanup/release.
+At most 13 events per ticket; repeated rejections coalesce to the first. Late results retain terminal phase.
+Ordinals reset with the service and wrap after 2147483647; they cannot correlate native UUIDs or separate runs.
+Next check: enable before starting, retain only `facetime_setup` lines from the ordinary app log (INFO required).
+For the same ordinal, distinguish unmatched preparation/creation `before`, `timer_armed`, and `terminal_cleanup` without `terminal_released`.
+`rejected` identifies the blocking ticket's phase; an accepted retry gets a new ordinal even while old cleanup awaits.
+Do not share the whole ordinary log: unrelated entries may contain private data. Filtering/rotation/crash can lose markers.
+Validation: 36 focused Dart tests passed via supplied Flutter SDK with `--no-pub --no-test-assets` (lifecycle, outgoing-start, diagnostics-contract).
+These are seam/formatter/source checks, not runtime delivery or media proof. No device, native build, dependency, CI or Git-write operations.
