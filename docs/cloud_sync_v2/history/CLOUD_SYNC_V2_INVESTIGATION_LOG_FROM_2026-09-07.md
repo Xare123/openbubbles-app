@@ -1911,3 +1911,72 @@ This is a chronological evidence log. It does not override the
 - Two existing Astra tasks remain assigned to required follow-up. No additional
   agents, APK builds, account resets or evidence deletion occurred. C: had about
   57 GiB free at parent review.
+
+### September 11, shared result receipt and successful Windows attachment pass
+
+- Fixed-code allowlist `468a72e4f` added 34 reviewed attachment diagnostics.
+  The qualified `d3e0a6c60` pass still failed as unknown. It was not evidence
+  that the allowlist repaired the underlying write.
+- Content-free source attribution `c2022aa38` passed 41 targeted tests and ran
+  as qualified overlay `05e603992`. At 07:28:49Z its trace identified
+  `cloud_protected_page_lease_lifecycle.dart:124`: `protected_outbound_lease_missing`.
+  No password, server response, handle, message or unrestricted stack was logged.
+- The completed upload and final Attachment operation share the result lease.
+  Exact no-save readback clears the outbox lease marker, then native
+  acknowledgment removes its receipt. The upload row correctly retains its
+  immutable history, but the global recovery scan incorrectly treated that
+  historical result lease as still adopted. Parent admission stopped on restart.
+- App `436c61bbb` reuses the existing exact child-readback predicate to omit
+  only a proven released result receipt from adoption recovery. Plan/result
+  bytes remain in protected-reference liveness; the original upload row is not
+  cleared or regenerated. A production-store release/reopen test reproduced
+  the bug. After repair, 276 tests passed across upload, parent dependency,
+  epoch, executor, protected lease lifecycle/maintenance, ObjectBox and safe
+  diagnostics. Twenty altered/incomplete proof cases still require the lease.
+- Qualified overlay `46bc6f027185-local-write` uses unchanged signed native
+  `62221f9c2`. At 07:42:09Z image 04 finished with admitted=1, deferred=0,
+  outbox_blocked=false. At 07:44:53Z a new process finished with admitted=0,
+  deferred=0 and no blocked work. Original request and claim hashes match
+  before/after; no new IDS request or synthetic image was created.
+- Offline inspection after admission found state-2 intent, one canonical
+  message/attachment, one adopted upload, a confirmed child operation and a parent operation.
+  The old inspector's `forRetainedQueueInspection` has no retained attachment
+  proof callback, so exact-source validation reports
+  `cloud_sync_attachment_parent_readback_required` and its deliberately
+  conservative v4 proof flag remains false. Do not weaken that inspector or
+  interpret its limitation as failed runtime admission. Independent fresh
+  read/recipient rendering and full Android qualification remain open.
+- Evidence: `build-evidence/windows-dart-overlay-05e603992` and
+  `build-evidence/windows-dart-overlay-46bc6f027` contain pinned manifests,
+  qualification, exact terminal traces and tests. Prior runtimes were verified
+  and moved to named rollback folders with manifests, not deleted.
+
+### September 11, reviewed sidecar integration and retained limits
+
+- FaceTime `2c259fe0b` integrates explicit Leave/native End ownership after
+  removing the rejected all-inactive-participant teardown. `509690a4b` fixes
+  early-Join timer and stale asynchronous cleanup ownership. Parent reruns:
+  63 JS/source tests, 64 Kotlin tests and 41 Flutter tests passed. Android
+  Activity compilation, real bidirectional calling and remote hangup remain
+  unproven. Native partial participant snapshots are not terminal-call evidence.
+- The Find My agent corrected its unsupported interpretation of
+  `optedNotToShare`. Upstream directly projects native lastLocation; parent
+  integrated the reviewed correction as `3bc595905` and reran 81 tests.
+  Same-ID handle fallback and fresh location projection remain. This patch is
+  not installed and cannot repair the probe's upstream native null location.
+- Read-only Windows `06c3ca5cf75a` at 07:13:37Z returned Devices=0 and People=1,
+  no native location; selection and Items were not tested. User subsequently
+  clarified the Pixel does not have the original app installed. A working
+  original-Pixel comparison is therefore UNVERIFIED. Do not infer revoked
+  sharing, missing AirTags, or wrong credentials from these counts.
+- A separate native Find My shape-logging proposal is retained, not integrated:
+  its DEBUG output is unobservable in the current Android WARN-only and
+  logger-disabled probe lanes. No logging-policy change or hidden service
+  initialization is justified by that proposal alone.
+- Completed older attachment/manual-selection agents and FaceTime were
+  reviewed and closed through supported controls. Required evidence, shared
+  source, unintegrated proposals and rollback artifacts remain. Session
+  deletion is not supported; no shared Codex database/transcript was edited.
+  Scoped storage audit: build-evidence 2.67 GiB, retained writer runtimes
+  0.93 GiB and writer Dart cache 0.97 GiB at measurement; C: later 49.26 GiB
+  free. Only the inspector's verified disposable database copy was removed.

@@ -4,7 +4,7 @@ title: Cloud Sync V2 Current Connection Treemap
 description: Current source of truth for CloudKit V2 architecture, safety boundaries, qualification state, and next gates.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-10
+timestamp: 2026-09-11
 ---
 
 # Cloud Sync V2 current connection treemap
@@ -56,7 +56,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
 | Installed Android candidate | Code `e060bcb41` repairs retained-queue scheduling above persisted IDS-proof base `731988a3d` and positive-acknowledgment native base `35551340c`. Pre-proof rows retain version 0 and cannot initiate a new CloudKit save; original envelopes remain recoverable. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
-| Windows candidate | Qualified Dart-only overlay `17818cd3d` preserves native source `62221f9c2` from run `34567152272`. Image 04 resumed without another IDS send: its exact Attachment operation is now confirmed with a cleared receipt lease and confirmation timestamp. At 06:42:35Z September 11 the pass stopped with `cloud_sync_unknown_failure`; no parent Message operation exists. These child markers are not full attachment write/readback/restart proof. |
+| Windows candidate | Qualified Dart-only overlay `46bc6f027` preserves native `62221f9c2` from run `34567152272`. At 07:42:09Z September 11, retained image 04 completed: one parent admitted, zero deferred, outbox clear. A separate-process restart at 07:44:53Z completed with zero new admissions and no deferred/blocked work. Request and original IDS claim remained unchanged. The older offline inspector lacks the attachment-proof callback and cannot certify v4 exact-source/readback; independent Apple-device visibility is still untested. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
 | Dependency | Writer fix `d201fb5` adds the exact attachment zone; `fdced92` changes only its test fixture. GCE `34567564253` passed 276 dependency tests, including the real attachment-warm regression. Earlier IDS-proof base `f2e8ea3` still requires explicit status 0 for every intended recipient. |
@@ -64,8 +64,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
-Windows next gate: diagnose and resume the exact claimed image intent without
-resending IDS, then prove child and parent readback and restart. Restored groups,
+Windows next gate: qualify the combined source and independently verify the
+written attachment on the read/recipient side. Runtime parent admission and a
+separate-process no-op restart now pass; the offline v4 proof inspector needs
+the real retained-child proof reader, not a relaxed success flag. Restored groups,
 reactions and independent Apple-device visibility remain separate requirements.
 The September 10 offline Windows inventory found **zero** chats with exactly
 the two approved test recipients. Do not select another personal group. The
@@ -107,7 +109,13 @@ committed original IDS source
 | Windows attachment input | Explicit request v4 adds synthetic `text-v1` and `png-v1` files only, no arbitrary user-file upload. Claim, original descriptor, protected source staging, positive IDS confirmation and the existing exact-intent production adapter remain required. Previous request-v1/v2/v3 bindings are unchanged. Interrupted IDS confirmation stays unconfirmed, not resendable. |
 | Live attachment failure | Native `62221f9` passed preparation and byte upload on September 11. Read-only inspection after the 06:11:34Z failure found one exact IDS-confirmed message, one adopted upload and one matching pending Attachment create with attempt count zero. The `invalid_checkpoint` failure is before record save, not a rejected login or failed IDS send. Request and claim remain unchanged. |
 | Diagnostic repair | `1d9de8629` preserves fixed native failures through FRB. Native fix `62221f9` passed 493 app Rust tests in GCE `34567150925`, 276 dependency tests on test-only successor `c206428a3`, and Windows run `34567152272`. All GCE cleanup succeeded; independent VM/runner inventories were empty. |
-| Upload recovery roots | `readLiveProtectedOutboundLeaseReferences` included upload leases, but `readLiveProtectedReferences` omitted plan/result bytes. Five ObjectBox reopen cases failed before the 13-line repair `db27373d9`; 184 related tests passed afterward. Qualified overlay `17818cd3d` moved the exact retained child from pending to confirmed without the previous `invalid_checkpoint`. Parent admission remains under investigation; do not clear or regenerate the retained source. |
+| Upload recovery roots | `readLiveProtectedOutboundLeaseReferences` included upload leases, but `readLiveProtectedReferences` omitted plan/result bytes. Five ObjectBox reopen cases failed before the 13-line repair `db27373d9`; 184 related tests passed afterward. Qualified overlay `17818cd3d` moved the exact retained child from pending to confirmed without the previous `invalid_checkpoint`. The remaining parent-admission receipt failure was repaired below; do not clear or regenerate the retained source. |
+| Released result receipt | App `436c61bbb`: the upload result lease is also the final-save receipt. Verified child readback clears the outbox adoption marker and acknowledges that native receipt. Recovery incorrectly demanded it again from the immutable upload row. Recovery now reuses the exact child-readback predicate before excluding only that retired receipt; original plan, payload/result references and upload history remain live. The restart regression failed before repair; 276 targeted tests passed afterward, including 20 incomplete/mismatched proof cases. Overlay `46bc6f027` passed real parent admission and a separate-process no-op restart. Missing or mismatched receipts still fail closed. |
+
+Protected bytes and receipt-adoption markers are different liveness sets.
+Readback releases the shared result receipt, not the encrypted result payload.
+Do not delete upload history, suppress all missing leases, or infer release from
+a generic terminal state. See the current investigation log for exact traces.
 
 Prepared-handle lifecycle correction: a failed native consume can retain its
 unconsumed owner and writer permit. Waiting for futures alone cannot release
@@ -584,15 +592,14 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Qualify the integrated attachment vertical path. Source retention, plan reuse,
-   byte execution, child save/readback and parent admission are connected.
-   Full Dart qualification passed on `0ff8e5595`. Extend the Windows request
-   input to exercise an attachment through the same production path, then
-   run one exact-source live attachment
-   save/readback/restart test. Preserve the original source and attempt across
-   writer epochs; absent receipts never authorize blind reupload. Also prove
-   source staging remains usable during long reads, not merely lossless on
-   lock contention.
+1. Qualify the combined attachment source on Android and independently verify
+   the written attachment through fresh reading and recipient rendering.
+   Windows overlay `46bc6f027` completed exact image 04 parent admission and a
+   separate-process restart with no new admission or blocked work. Repair the
+   offline inspector by supplying the real retained-child proof reader, not by
+   weakening validation. Preserve the original source and attempt across writer
+   epochs; absent receipts never authorize blind reupload. Also prove source
+   staging remains usable during long reads, not merely lossless on contention.
 2. Preserve qualified Windows direct request `qualification-20260910-03` and
    its proof. No additional direct send is needed merely to recheck that result.
    The exact restored-group route is implemented/tested, but no group with the
@@ -620,22 +627,21 @@ CloudKit readback or independent Apple-device display.
 
 ## Next falsification test
 
-Image 04 is already claimed and IDS-confirmed. The latest disposable-copy
-inspection verifies unchanged source and one matching confirmed child, but no
-parent operation. Identify the next failed predicate using existing receipts and
-bounded diagnostics, then resume that same intent. Do not send another image,
-weaken child readback, clear credentials, or treat a generic error as bad login.
-The prior `invalid_checkpoint` is resolved for this exact pass; a full parent
-save/readback/restart gate is not.
+Image 04 is already claimed and IDS-confirmed. Windows parent admission and
+separate-process restart now pass. Disposable-copy inspection verifies one
+matching confirmed child and a parent operation, but its v4 source/readback
+proof is incomplete because it lacks the retained-child proof callback. Use
+production proof validation to close that inspection gap, then verify a fresh
+read and independent rendering. Do not send another image, weaken child
+readback, clear credentials, or treat a generic error as bad login.
 
 The isolated Windows direct test and restart passed; do not repeat the claimed
 request. Source inventory, canonical read/write identity and parent UTF-16 body
 passed GCE `34541849568`; executor adversarial tests and the real persistent
-guard passed locally. Next qualify the connected source-bound parent envelope
-and original-plan coordinator, then exercise the actual runtime path from one positive
-IDS receipt through byte upload, final Attachment save/readback, parent Message
-save/readback and restart without duplication. Independent Apple-device display
-remains a separate acceptance check; component tests cannot replace it.
+guard passed locally. Windows attachment admission and restart are evidence
+for overlay `46bc6f027`, not for the older installed Pixel candidate. Qualify
+the combined Android source before a batched device session. Independent
+Apple-device display remains separate; component tests cannot replace it.
 When the approved group is present, falsify exact selection, acceptance by every
 intended target, group encoding, readback and restart without resending. Preserve
 the direct claim. The inspector must distinguish readable text, positive IDS
