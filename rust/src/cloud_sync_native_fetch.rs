@@ -1694,13 +1694,15 @@ impl PlatformCloudNativeProtectedStore {
         })
     }
 
-    fn acknowledge_ids_send_receipt(
+    // Requires an existing exact receipt. Unlike acknowledgement, absence is
+    // a failure: an already-consumed or invented receipt cannot prove a write.
+    // The caller owns operation_guard for the entire verification/use step.
+    fn verified_ids_send_receipt_path(
         &self,
         expected: &CloudNativeIdsSendReceiptReplay,
         expected_account_fingerprint: &str,
         expected_protected_store_identity: &str,
-    ) -> Result<(), CloudNativeStoreFailure> {
-        let _guard = Self::operation_guard()?;
+    ) -> Result<PathBuf, CloudNativeStoreFailure> {
         expected.validate()?;
         if !is_bare_digest(expected_account_fingerprint)
             || !is_protected_store_identity(expected_protected_store_identity)
@@ -1708,9 +1710,6 @@ impl PlatformCloudNativeProtectedStore {
             return Err(CloudNativeStoreFailure::InvalidReference);
         }
         let path = self.ids_send_receipt_path(&expected.receipt_id)?;
-        if !path.exists() {
-            return Ok(());
-        }
         let actual_store_identity = cloud_sync_protector::protected_store_identity(
             self.storage_directory.to_string_lossy().into_owned(),
         )
@@ -1752,6 +1751,42 @@ impl PlatformCloudNativeProtectedStore {
         {
             return Err(CloudNativeStoreFailure::ContextMismatch);
         }
+        Ok(path)
+    }
+
+    fn verify_ids_send_receipt(
+        &self,
+        expected: &CloudNativeIdsSendReceiptReplay,
+        expected_account_fingerprint: &str,
+        expected_protected_store_identity: &str,
+    ) -> Result<(), CloudNativeStoreFailure> {
+        let _guard = Self::operation_guard()?;
+        self.verified_ids_send_receipt_path(
+            expected, expected_account_fingerprint, expected_protected_store_identity,
+        ).map(|_| ())
+    }
+
+    fn acknowledge_ids_send_receipt(
+        &self,
+        expected: &CloudNativeIdsSendReceiptReplay,
+        expected_account_fingerprint: &str,
+        expected_protected_store_identity: &str,
+    ) -> Result<(), CloudNativeStoreFailure> {
+        let _guard = Self::operation_guard()?;
+        expected.validate()?;
+        if !is_bare_digest(expected_account_fingerprint)
+            || !is_protected_store_identity(expected_protected_store_identity)
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        // Preserve idempotent cleanup, but never reuse this missing-file rule
+        // for verification of write authority.
+        if !self.ids_send_receipt_path(&expected.receipt_id)?.exists() {
+            return Ok(());
+        }
+        let path = self.verified_ids_send_receipt_path(
+            expected, expected_account_fingerprint, expected_protected_store_identity,
+        )?;
         fs::remove_file(&path).map_err(|_| CloudNativeStoreFailure::Io)?;
         Self::sync_directory(&self.ids_send_receipt_directory()?)
     }
@@ -4621,6 +4656,21 @@ pub(crate) fn cloud_sync_replay_ids_send_receipts(
             expected_account_fingerprint,
             expected_protected_store_identity,
             after_receipt_id,
+        )
+        .map_err(map_store_failure)
+}
+
+/// Read one exact retained positive IDS receipt without consuming it. A caller
+/// supplied replay descriptor is not proof until its encrypted file matches.
+pub(crate) fn cloud_sync_verify_ids_send_receipt(
+    storage_directory: PathBuf,
+    expected: &CloudNativeIdsSendReceiptReplay,
+    expected_account_fingerprint: &str,
+    expected_protected_store_identity: &str,
+) -> Result<(), CloudNativeFetchFailure> {
+    PlatformCloudNativeProtectedStore::new(storage_directory)
+        .verify_ids_send_receipt(
+            expected, expected_account_fingerprint, expected_protected_store_identity,
         )
         .map_err(map_store_failure)
 }

@@ -811,6 +811,47 @@ fn cloud_sync_open_mutation_source_bound(
     Ok(envelope)
 }
 
+/// Opens the exact source and positive receipt for conditional-update
+/// preparation, without consuming either. The current authentication is
+/// checked separately from the historical send session so cold recovery does
+/// not require a new IDS send. The caller still owns the writer/journal fence,
+/// must revalidate auth after awaits and must prove the remote predecessor.
+/// No network or CloudKit save authority is created here.
+#[frb(ignore)]
+#[allow(dead_code)]
+fn cloud_sync_open_confirmed_mutation_source_bound(
+    context: &CloudSyncNativeSendReceiptContext,
+    current_auth: &CloudSyncNativeAuthMetadata,
+    receipt: &CloudSyncNativeSendReceipt,
+) -> anyhow::Result<(crate::cloud_sync_ids_mutation_source::OpenedMutationSource, u64)> {
+    cloud_sync_require_source_context_auth(context, current_auth)?;
+    let envelope = cloud_sync_open_mutation_source_bound(context)?;
+    let source_binding: crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceBinding =
+        context.source_binding.clone()
+            .ok_or_else(|| anyhow!("cloud_sync_native_mutation_source_unavailable"))?.into();
+    let expected = crate::cloud_sync_native_fetch::CloudNativeIdsSendReceiptReplay {
+        receipt_id: receipt.receipt_id.clone(),
+        guid_hash: receipt.guid_hash.clone(),
+        native_session_id: receipt.native_session_id.clone(),
+        source_binding: receipt.source_binding.clone().map(Into::into),
+        prepared_sent_timestamp_ms: receipt.prepared_sent_timestamp_ms,
+    };
+    if expected.guid_hash != context.guid_hash
+        || expected.source_binding.as_ref() != Some(&source_binding)
+    {
+        return Err(anyhow!("cloud_sync_native_mutation_receipt_changed"));
+    }
+    crate::cloud_sync_native_fetch::cloud_sync_verify_ids_send_receipt(
+        PathBuf::from(&context.storage_directory), &expected,
+        &context.account_fingerprint, &context.protected_store_identity,
+    ).map_err(|_| anyhow!("cloud_sync_native_mutation_receipt_unavailable"))?;
+    let time = expected.prepared_sent_timestamp_ms
+        .ok_or_else(|| anyhow!("cloud_sync_native_mutation_receipt_time_unavailable"))?;
+    let source = crate::cloud_sync_ids_mutation_source::open_mutation_source(&envelope)
+        .map_err(|_| anyhow!("cloud_sync_native_mutation_source_invalid"))?;
+    Ok((source, time))
+}
+
 /// Protected byte-upload preparation only. This is not an uploaded asset,
 /// final-record envelope, IDS confirmation, or permission to send anything.
 #[derive(Debug)]
@@ -11613,6 +11654,158 @@ async fn cloud_sync_windows_finish_send_job(
 #[cfg(test)]
 mod cloud_sync_mutation_send_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn confirmed_mutation_opens_original_source_after_cold_session_without_consuming_receipt() {
+        for unsend in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let message = fixture(unsend);
+            let mut context = context(directory.path(), &message);
+            context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
+                &context, &auth(&context), &"a".repeat(64), &message,
+            ).unwrap());
+            let time = 1_789_000_000_123;
+            let receipt = persist_cloud_sync_native_send_receipt(
+                context.clone(), &message.id, Some(time),
+            ).unwrap();
+            // A receipt cannot substitute for the durable source lease.
+            assert!(cloud_sync_open_confirmed_mutation_source_bound(
+                &context, &auth(&context), &receipt,
+            ).is_err());
+            commit(&context);
+            let original = cloud_sync_open_mutation_source_bound(&context).unwrap();
+            context.native_session_id = "C".repeat(43);
+            assert_ne!(context.native_session_id, receipt.native_session_id);
+            for _ in 0..2 {
+                let (source, prepared_time) = cloud_sync_open_confirmed_mutation_source_bound(
+                    &context, &auth(&context), &receipt,
+                ).unwrap();
+                assert_eq!(prepared_time, time);
+                assert_eq!(source.mutation_guid(), message.id);
+                assert_eq!(crate::cloud_sync_ids_mutation_source::encode_mutation_source(
+                    &source.message().unwrap(),
+                ).unwrap(), original);
+            }
+            let retained = cloud_sync_replay_native_send_receipts(
+                context.storage_directory.clone(), context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(), None,
+            ).await.unwrap();
+            assert_eq!(retained.receipts.len(), 1);
+            assert_eq!(retained.receipts[0].receipt_id, receipt.receipt_id);
+            assert_eq!(retained.receipts[0].prepared_sent_timestamp_ms, Some(time));
+            assert_eq!(cloud_sync_open_mutation_source_bound(&context).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn confirmed_mutation_rejects_swapped_receipt_source_and_current_authority() {
+        let directory = tempfile::tempdir().unwrap();
+        let message = fixture(false);
+        let mut context = context(directory.path(), &message);
+        context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
+            &context, &auth(&context), &"a".repeat(64), &message,
+        ).unwrap());
+        commit(&context);
+        let receipt = persist_cloud_sync_native_send_receipt(
+            context.clone(), &message.id, Some(1_789_000_000_123),
+        ).unwrap();
+        for field in 0..11 {
+            let mut changed = receipt.clone();
+            match field {
+                0 => changed.guid_hash = "b".repeat(64),
+                1 => changed.native_session_id = "B".repeat(43),
+                2 => changed.source_binding = None,
+                3 => changed.source_binding.as_mut().unwrap().kind = None,
+                4 => changed.source_binding.as_mut().unwrap().source_sha256 = "b".repeat(64),
+                5 => changed.source_binding.as_mut().unwrap().payload_sha256 = "b".repeat(64),
+                6 => changed.source_binding.as_mut().unwrap().payload_length += 1,
+                7 => changed.source_binding.as_mut().unwrap().protected_reference =
+                    format!("obcs2.ref.{}", "B".repeat(43)),
+                8 => changed.source_binding.as_mut().unwrap().lease_reference =
+                    format!("obcs2.lease.{}", "b".repeat(32)),
+                9 => changed.prepared_sent_timestamp_ms = Some(1_789_000_000_124),
+                _ => changed.prepared_sent_timestamp_ms = None,
+            }
+            assert!(cloud_sync_open_confirmed_mutation_source_bound(
+                &context, &auth(&context), &changed,
+            ).is_err(), "receipt field {field}");
+        }
+        for field in 0..3 {
+            let mut wrong_auth = auth(&context);
+            match field {
+                0 => wrong_auth.account_fingerprint = "B".repeat(43),
+                1 => wrong_auth.protected_store_identity = format!("obcs2.store.{}", "B".repeat(43)),
+                _ => wrong_auth.native_session_id = "B".repeat(43),
+            }
+            assert!(cloud_sync_open_confirmed_mutation_source_bound(
+                &context, &wrong_auth, &receipt,
+            ).is_err());
+        }
+        // Even mutually matching current metadata cannot borrow another store
+        // or account for the retained source/receipt.
+        for field in 0..2 {
+            let mut changed = context.clone();
+            if field == 0 { changed.account_fingerprint = "B".repeat(43); }
+            else { changed.protected_store_identity = format!("obcs2.store.{}", "B".repeat(43)); }
+            assert!(cloud_sync_open_confirmed_mutation_source_bound(
+                &changed, &auth(&changed), &receipt,
+            ).is_err());
+        }
+        assert!(cloud_sync_open_confirmed_mutation_source_bound(
+            &context, &auth(&context), &receipt,
+        ).is_ok());
+        cloud_sync_acknowledge_native_send_receipt(
+            context.storage_directory.clone(), context.account_fingerprint.clone(),
+            context.protected_store_identity.clone(), receipt.clone(),
+        ).unwrap();
+        // Absence stays an error for verification, while cleanup stays idempotent.
+        assert!(cloud_sync_open_confirmed_mutation_source_bound(
+            &context, &auth(&context), &receipt,
+        ).is_err());
+        cloud_sync_acknowledge_native_send_receipt(
+            context.storage_directory.clone(), context.account_fingerprint.clone(),
+            context.protected_store_identity.clone(), receipt,
+        ).unwrap();
+    }
+
+    #[tokio::test]
+    async fn confirmed_mutation_retains_legacy_receipt_without_inventing_wire_time() {
+        let directory = tempfile::tempdir().unwrap();
+        let message = fixture(true);
+        let mut context = context(directory.path(), &message);
+        context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
+            &context, &auth(&context), &"a".repeat(64), &message,
+        ).unwrap());
+        commit(&context);
+        let old = crate::cloud_sync_native_fetch::cloud_sync_persist_ids_send_receipt(
+            directory.path().to_path_buf(),
+            crate::cloud_sync_native_fetch::CloudNativeIdsSendReceipt {
+                guid_hash: context.guid_hash.clone(),
+                account_fingerprint: context.account_fingerprint.clone(),
+                protected_store_identity: context.protected_store_identity.clone(),
+                native_session_id: context.native_session_id.clone(),
+                source_binding: context.source_binding.clone().map(Into::into),
+                prepared_sent_timestamp_ms: None,
+            },
+        ).unwrap();
+        let receipt = CloudSyncNativeSendReceipt {
+            receipt_id: old.receipt_id.clone(), guid_hash: old.guid_hash,
+            native_session_id: old.native_session_id,
+            source_binding: old.source_binding.map(Into::into),
+            prepared_sent_timestamp_ms: None,
+        };
+        let failure = cloud_sync_open_confirmed_mutation_source_bound(
+            &context, &auth(&context), &receipt,
+        ).err().unwrap();
+        assert_eq!(failure.to_string(), "cloud_sync_native_mutation_receipt_time_unavailable");
+        let retained = cloud_sync_replay_native_send_receipts(
+            context.storage_directory.clone(), context.account_fingerprint.clone(),
+            context.protected_store_identity.clone(), None,
+        ).await.unwrap();
+        assert_eq!(retained.receipts.len(), 1);
+        assert_eq!(retained.receipts[0].receipt_id, old.receipt_id);
+        assert_eq!(retained.receipts[0].prepared_sent_timestamp_ms, None);
+    }
 
     #[tokio::test]
     async fn windows_mutation_completion_retains_real_receipt_without_remote_save() {
