@@ -291,6 +291,10 @@ $buildLog = Join-Path $output 'flutter-build.log'
 $testLog = Join-Path $output 'contract-tests.log'
 $dartTestLog = Join-Path $output 'dart-windows-tests.log'
 $nativeCodecTestLog = Join-Path $output 'native-codec-tests.log'
+# Current source adds three attachment-header cases to the original 48:
+# 50 mock-capable tests plus the one native-only legacy encoder comparison.
+# Keep the full-file native gate exact, including the newly integrated path.
+$expectedNativeCodecTests = 51
 Push-Location $source
 try {
     foreach ($name in $buildEnvironment.Keys) {
@@ -406,8 +410,8 @@ try {
             $hiddenProperty = $_.PSObject.Properties['hidden']
             return $null -eq $hiddenProperty -or -not [bool]$hiddenProperty.Value
         })
-        if ($nativeTestDone.Count -ne 48) {
-            throw "Expected 48 native codec tests, observed $($nativeTestDone.Count)."
+        if ($nativeTestDone.Count -ne $expectedNativeCodecTests) {
+            throw "Expected $expectedNativeCodecTests native codec tests, observed $($nativeTestDone.Count)."
         }
         if (@($nativeTestDone | Where-Object { $_.result -ne 'success' -or $_.skipped }).Count -ne 0) {
             throw 'Native codec results include a skipped or unsuccessful test.'
@@ -546,7 +550,7 @@ $provenance = [ordered]@{
             result = 'passed'
             native_library = 'bundle/rust_lib_bluebubbles.dll'
             test_file = 'test/services/cloud_sync/cloud_sync_local_send_encoder_test.dart'
-            expected_test_count = 48
+            expected_test_count = $expectedNativeCodecTests
             full_file_run = $true
         }
         invalid_launch_diagnostic = [ordered]@{
@@ -587,7 +591,7 @@ $hashPath = "$archive.sha256"
     bundle_sha256 = $archiveHash
     provenance = $manifestPath
     pe_files = $peFiles.Count
-    native_codec_smoke = '48_tests_passed_against_packaged_rust_dll'
+    native_codec_smoke = "${expectedNativeCodecTests}_tests_passed_against_packaged_rust_dll"
     invalid_launch_marker_seen = $smokeMarkerSeen
     live_cloudkit_tested = $false
 } | ConvertTo-Json -Depth 5
