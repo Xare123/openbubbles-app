@@ -18407,8 +18407,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return CloudSyncNativeSendReceipt(
       receiptId: dco_decode_String(arr[0]),
       guidHash: dco_decode_String(arr[1]),
@@ -18417,6 +18417,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           dco_decode_opt_box_autoadd_cloud_sync_native_send_source_binding(
             arr[3],
           ),
+      preparedSentTimestampMs: dco_decode_opt_box_autoadd_u_64(arr[4]),
     );
   }
 
@@ -28439,11 +28440,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_decode_opt_box_autoadd_cloud_sync_native_send_source_binding(
           deserializer,
         );
+    var var_preparedSentTimestampMs = sse_decode_opt_box_autoadd_u_64(
+      deserializer,
+    );
     return CloudSyncNativeSendReceipt(
       receiptId: var_receiptId,
       guidHash: var_guidHash,
       nativeSessionId: var_nativeSessionId,
       sourceBinding: var_sourceBinding,
+      preparedSentTimestampMs: var_preparedSentTimestampMs,
     );
   }
 
@@ -40378,6 +40383,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       self.sourceBinding,
       serializer,
     );
+    sse_encode_opt_box_autoadd_u_64(self.preparedSentTimestampMs, serializer);
   }
 
   @protected

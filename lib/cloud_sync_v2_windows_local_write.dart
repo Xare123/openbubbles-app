@@ -1242,8 +1242,8 @@ final class CloudSyncWindowsLocalWrite {
     };
   }
 
-  /// IDS qualification only. No initial-create admission, CK update, receipt
-  /// acknowledgement or local body projection belongs in this branch.
+  /// IDS and receipt-bound local reflection qualification only. No initial
+  /// create admission, CK update or receipt acknowledgement belongs here.
   Future<Map<String, Object?>> _runMutation({
     required CloudSyncWindowsWriteRequest request,
     required File claim,
@@ -1258,6 +1258,19 @@ final class CloudSyncWindowsLocalWrite {
     required CloudSyncLocalMutationJournal journal,
   }) async {
     final replay = claim.existsSync();
+    api.CloudSyncNativeSendReceipt? acceptedReceipt;
+    final staging = CloudSyncLocalMutationSourceStaging(
+      journal: journal,
+      authFence: fence,
+      capturedAuth: auth,
+      stillCurrent: current,
+      exclusion: interlock,
+      transport: NativeProtectedCloudSyncTransport(
+        cloudMessagesClient: client,
+        storageDirectory: fs.appDocDir.path,
+        protectedStoreIdentity: auth.protectedStoreIdentity,
+      ),
+    );
     late Map<String, dynamic> saved;
     if (replay) {
       saved = jsonDecode(await claim.readAsString()) as Map<String, dynamic>;
@@ -1378,18 +1391,7 @@ final class CloudSyncWindowsLocalWrite {
               ),
       );
       await reportStage('windows-mutation-preparing-protected-source');
-      await CloudSyncLocalMutationSourceStaging(
-        journal: journal,
-        authFence: fence,
-        capturedAuth: auth,
-        stillCurrent: current,
-        exclusion: interlock,
-        transport: NativeProtectedCloudSyncTransport(
-          cloudMessagesClient: client,
-          storageDirectory: fs.appDocDir.path,
-          protectedStoreIdentity: auth.protectedStoreIdentity,
-        ),
-      ).submitConfirmed(
+      await staging.submitConfirmed(
         localMessageId: parent.id!,
         identity: identity,
         stage: () async {
@@ -1420,7 +1422,11 @@ final class CloudSyncWindowsLocalWrite {
           context: context(source),
         ),
         validateBeforeSend: selectParent,
-        send: (wire, source) => sendMutationConfirmed!(wire, context(source)),
+        send: (wire, source) async {
+          final receipt = await sendMutationConfirmed!(wire, context(source));
+          acceptedReceipt = receipt;
+          return receipt;
+        },
       );
     }
     final guidHash = sha256
@@ -1466,8 +1472,9 @@ final class CloudSyncWindowsLocalWrite {
     }
 
     var intent = await fence.run(readIntent);
-    if (replay && intent.state == 1) {
-      final replayBinding = CloudSyncNativeReceiptReplayBinding(
+    CloudSyncNativeReceiptReplayBinding? replayBinding;
+    if (replay && intent.state >= 1) {
+      final binding = CloudSyncNativeReceiptReplayBinding(
         expectedAuth: auth,
         expectedState: this,
         expectedStore: store,
@@ -1479,10 +1486,11 @@ final class CloudSyncWindowsLocalWrite {
         readStoragePath: () => fs.appDocDir.path,
         runtimeCurrent: current,
       );
+      replayBinding = binding;
       String? after;
       final cursors = <String>{};
       do {
-        await fence.run<void>(replayBinding.requireCurrent);
+        await fence.run<void>(binding.requireCurrent);
         final page = await api.cloudSyncReplayNativeSendReceipts(
           storageDirectory: fs.appDocDir.path,
           expectedAccountFingerprint: auth.accountFingerprint,
@@ -1499,9 +1507,13 @@ final class CloudSyncWindowsLocalWrite {
               capturedAuth: auth,
               stillCurrent: current,
               now: DateTime.now().toUtc(),
-              replayBinding: replayBinding,
+              replayBinding: binding,
             ),
           );
+          if (acceptedReceipt != null && acceptedReceipt != receipt) {
+            throw StateError('cloud_sync_windows_mutation_receipt_changed');
+          }
+          acceptedReceipt = receipt;
         }
         after = page.nextCursor;
         if (after != null && !cursors.add(after)) {
@@ -1515,6 +1527,37 @@ final class CloudSyncWindowsLocalWrite {
     if (intent.state < 2) {
       throw StateError('cloud_sync_windows_mutation_send_unconfirmed_no_retry');
     }
+    final receipt = acceptedReceipt;
+    if (receipt == null) {
+      throw StateError('cloud_sync_windows_mutation_retained_receipt_missing');
+    }
+    final source = validateCloudSyncMutationRow(intent);
+    await reportStage('windows-mutation-reflecting-confirmed-source');
+    await staging.reflectConfirmed(
+      intentId: intent.id,
+      source: source,
+      receipt: receipt,
+      replayBinding: replayBinding,
+      restore: (originalSource) => api.cloudSyncRestoreIdsMutationSource(
+        cloudMessagesClient: client,
+        context: api.CloudSyncNativeSendReceiptContext(
+          storageDirectory: fs.appDocDir.path,
+          guidHash: originalSource.mutationGuidHash,
+          accountFingerprint: auth.accountFingerprint,
+          protectedStoreIdentity: auth.protectedStoreIdentity,
+          nativeSessionId: auth.nativeSessionId,
+          sourceBinding: api.CloudSyncNativeSendSourceBinding(
+            kind: api.CloudSyncNativeSendSourceKind.mutation,
+            sourceSha256: originalSource.sourceSha256,
+            protectedReference: originalSource.protectedReference,
+            leaseReference: originalSource.leaseReference,
+            payloadSha256: originalSource.payloadSha256,
+            payloadLength: BigInt.from(originalSource.payloadLength),
+          ),
+        ),
+      ),
+    );
+    intent = await fence.run(readIntent);
     return {
       'native_send_confirmed': true,
       'mutation_receipt_retained': true,

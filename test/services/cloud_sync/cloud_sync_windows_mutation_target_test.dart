@@ -320,12 +320,15 @@ void main() {
     );
     expect(mutation, contains('CloudSyncNativeReceiptReplayBinding('));
     expect(mutation, contains("'cloudkit_update_enabled': false"));
+    expect(mutation, contains('await staging.reflectConfirmed('));
+    expect(mutation, contains('final receipt = acceptedReceipt;'));
+    expect(mutation, contains('restore: (originalSource) => api.cloudSyncRestoreIdsMutationSource('));
     for (final forbidden in [
       'await sendConfirmed(',
       'runExactIntent(',
       'recordNativeSendConfirmation(',
       'cloudSyncAcknowledgeNativeSendReceipt(',
-      'reflectConfirmed(',
+      'journal.reflectConfirmed(',
     ]) {
       expect(mutation, isNot(contains(forbidden)), reason: forbidden);
     }

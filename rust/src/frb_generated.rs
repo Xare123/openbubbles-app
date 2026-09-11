@@ -21501,11 +21501,13 @@ impl SseDecode for crate::api::api::CloudSyncNativeSendReceipt {
         let mut var_nativeSessionId = <String>::sse_decode(deserializer);
         let mut var_sourceBinding =
             <Option<crate::api::api::CloudSyncNativeSendSourceBinding>>::sse_decode(deserializer);
+        let mut var_preparedSentTimestampMs = <Option<u64>>::sse_decode(deserializer);
         return crate::api::api::CloudSyncNativeSendReceipt {
             receipt_id: var_receiptId,
             guid_hash: var_guidHash,
             native_session_id: var_nativeSessionId,
             source_binding: var_sourceBinding,
+            prepared_sent_timestamp_ms: var_preparedSentTimestampMs,
         };
     }
 }
@@ -31038,6 +31040,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncNativeSendRecei
             self.guid_hash.into_into_dart().into_dart(),
             self.native_session_id.into_into_dart().into_dart(),
             self.source_binding.into_into_dart().into_dart(),
+            self.prepared_sent_timestamp_ms.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -38398,6 +38401,7 @@ impl SseEncode for crate::api::api::CloudSyncNativeSendReceipt {
             self.source_binding,
             serializer,
         );
+        <Option<u64>>::sse_encode(self.prepared_sent_timestamp_ms, serializer);
     }
 }
 

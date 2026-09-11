@@ -55,7 +55,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| September 11 mutation candidate | Windows request-v6 supports a first edit or unsend of a fresh, explicitly named, confirmed test parent. The dedicated IDS path retains original source and positive acceptance receipts; restart reconciles rather than resends. Native `db5c1508c` passed 517 Rust tests; generated bridge import `954413261` uses hash `1030619495`. Combined local Dart checks pass 75 tests with clean targeted analysis. A matching Windows binary and full combined Dart qualification are next. No live mutation send, CloudKit existing-record update or local reflection is claimed. |
+| September 11 mutation candidate | Windows request-v6 supports a first edit or unsend of a fresh, explicitly named, confirmed test parent. Native `6b59bf451` passed 524 Rust tests in GCE `34637298156`; verified receipt bindings are imported. Source-derived reflection, exact-time receipt binding and restart checks pass 245 combined Dart tests plus eight projection cases. Windows `34635971964` passed on predecessor `89c06f4de`, not the new timestamp ABI. Full Dart and matching Windows qualification remain. No live mutation, CloudKit existing-record update or Pixel proof is claimed. |
 | Installed Android candidate | Signed `f860966d53b6019b46f1437312e67662724f08ce`, installed September 11 at 09:14:53Z and runtime-verified. Two reads reached the remote head with saves/deletes off and outbox `0 -> 0`. The final local sweep examined 3,587 blocking saves, applied zero, and completed partial at 09:47:41Z. Qualification-07 remains unsent after IDS 6005. Approved registration repair quiesced reads and preserved chats, hardware and CloudKit state; saved-account reuse returned phone-number validation failure. Await normal validation, not another reset. Alpha is untouched. |
 | Qualified source, not installed | Read-transition `90f98b7eb` passed 296 focused tests, targeted analysis, and GCE `34594546421`: 3,147 Dart tests plus 14 outbox and 3 evidence-output cases. Cleanup completed at 11:44:17Z; independent VM/runner inventories were empty. It includes replay repair `fd60a8a20` and background patch `0bb67d2c4`, which avoids repeating exhaustive retained-history sweeps on routine metadata wakes. No APK or Pixel runtime proof for these patches yet. |
 | Windows candidate | Writer overlay `3984f810501b` preserves signed native `62221f9c2` and adds request-v5 standard reactions. Like-05 and remove-like-06 each passed positive IDS confirmation, one admission, exact persisted readback, then a separate-process zero-admission restart. Read-only overlay `f90226831` passed two cold three-zone reads, second fetch empty, outbox `6 -> 6`, saves/deletes off. Retained writer `46bc6f027` passed image-04 parent admission and no-op restart. All prior requests, claims and runtimes remain protected evidence. |
@@ -933,7 +933,10 @@ still expected only one Windows protected-transport construction. The test now
 checks initial-send and mutation compositions separately, their shared entry
 gates, staging and branch isolation; all five focused bridge-contract tests pass.
 Cleanup completed at 19:07:49Z; independent VM/runner inventories are empty.
-Windows ARM64 fast-loop `34635971964` remains pending. No APK is requested
+Windows ARM64 fast-loop `34635971964` passed on `89c06f4de`: 38 focused Dart
+tests, 51 packaged-DLL codec cases, ARM64 load and invalid-launch smoke. Artifact
+`10277893755` remains cloud-retained rather than downloading an already superseded
+native candidate. It lacks the prepared-time field. No APK is requested
 despite the generic GCE job label. Full combined qualification and Windows runtime proof remain. No real
 edit/unsend sent, local body projected or CK update enabled.
 Before local reflection, qualify mutation time semantics: `new_msg` starts at
@@ -945,11 +948,24 @@ receipt and carries it through replay/ack. Both ordinary native confirmation and
 the Windows experiment use it only after exact prepared-source validation and
 positive participant acceptance. Existing v2/v3/v4 shapes and receipt IDs stay
 unchanged; a same-ID time change, upgrade or downgrade cannot overwrite evidence.
-The original staged source remains immutable. Storage and API regressions cover
-legacy decode, cold replay, invalid/missing times, wrong-time ack, failed acceptance
-and delayed receipt creation. Native build/bridge regeneration are still required.
-Dart receipt binding and a source-derived local projector remain next, without
-inventing a time for old receipts or changing ObjectBox schema merely to copy one.
+The original staged source remains immutable. Native `6b59bf451` passed 524
+Rust tests and bridge compilation in GCE `34637298156`. Only expected binding
+drift failed. Artifact `10279009262` was checksum-verified, exact seven-file
+allowlist reviewed and imported. Cleanup passed; independent VM and runner
+inventories were empty. The three changed generated files now carry the optional
+prepared time. Do not pair these bindings with the predecessor Windows DLL.
+Dart receipt v2 proof binds this exact time; legacy no-time v1 proof stays
+unchanged and cannot authorize reflection. Time alteration/removal/upgrade,
+cold replay and unsupported-time retention passed the 87-test combined cohort.
+Source-derived reflection is now composed under protected-store and auth
+exclusions, with an atomic target-snapshot check and no CloudKit save. A cold
+launch rereads the exact native receipt and committed original, never prepares
+or sends another mutation. The combined journal/staging/initial-send/Windows
+cohort passes 245 tests; eight additional pure projection cases cover empty
+summaries, exact UUIDs, Unicode formatting, second edits, legacy timestamp
+comparison, independent history copies and anti-resurrection. Targeted analysis
+is clean. Full Dart, matching Windows build, live edit/unsend and genuine Apple
+before/after record evidence remain next. No schema change duplicates time.
 
 Retained-version inspection now has live **offline** evidence: the Windows
 profile contains 23,413 scoped record groups and zero multi-row groups, so

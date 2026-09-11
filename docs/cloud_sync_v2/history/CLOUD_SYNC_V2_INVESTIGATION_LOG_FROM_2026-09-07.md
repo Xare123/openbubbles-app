@@ -2789,3 +2789,53 @@ This is a chronological evidence log. It does not override the
   necessary; no dedicated worktree exists and supported session deletion is
   unavailable. No user files, profiles, credentials, device evidence or logs
   were removed. C: free approximately 49.3 GiB. No Pixel operations this pass.
+
+## 2026-09-11, exact mutation time and source-derived local reflection
+
+- Native `6b59bf45107cb0ce6298222634b0e6ac7ef7838b`, GCE `34637298156`:
+  generated bridge compilation and **524 Rust tests passed**. Only the expected
+  generated-file drift gate failed. Artifact `10279009262`, SHA-256
+  `d50bd8543397234c46561eb53d715f00e9acfe7ff81e87ed6b39476a15325d99`,
+  was verified before extraction against an exact seven-file allowlist. The
+  three changed files carry optional `preparedSentTimestampMs`; all seven local
+  generated files compare equal to the artifact. Cleanup succeeded and both
+  independently queried GCE and GitHub runner inventories were empty.
+- Windows `34635971964` succeeded on earlier source `89c06f4de`: 38 focused
+  Dart tests, 51 actual packaged-DLL codec cases, ARM64 load and invalid-launch
+  smoke. Artifact `10277893755` is retained in GitHub, not downloaded or
+  installed. It does not have the newer receipt serialization; no Dart-only
+  overlay may combine the new receipt API with that predecessor DLL.
+- Dart journal receipt proof v2 binds the prepared time exactly. Historical
+  no-time receipts retain byte-identical v1 proof and acceptance evidence, but
+  cannot authorize reflection. Changed-time, removed-time and added-time
+  receipts fail after reopen without rewriting the stored proof or source.
+- Parent connected source restoration, receipt proof and pure local projection
+  under the existing protected-store and authentication exclusions. Snapshot
+  comparison and message/journal writes share an ObjectBox transaction. Failed
+  or delayed reflection preserves newer text, the protected source and receipt.
+  Unsend retains original bytes and marks only part zero retracted. It creates
+  no initial-send intent or CloudKit outbox entry and acknowledges no receipt.
+- Windows request-v6 now reflects only its own confirmed source. Restarts read
+  the original protected receipt even after local reflection, with the existing
+  replay fence. Missing receipts or unprojectable time stay explicit failures;
+  no path resubmits a claimed mutation. Remote update remains disabled.
+- Local qualification: **245 tests passed** in the combined ten-suite cohort;
+  **eight pure projection tests passed** for exact target/source, fresh empty
+  summaries, multiple flagged UTF-16 runs, second edits, preserved history,
+  legacy Apple-time comparison and no resurrection. The first new timestamp
+  test compared UTC and local DateTime objects; comparing the same UTC instant
+  correctly preserves the ObjectBox invariant. The first wider run exposed one
+  old source-contract prohibition of all reflection, now narrowed to permit
+  only the staged, receipt-bound path while prohibiting initial-create writes.
+- Agent Kant's committed receipt contribution and partial projection draft were
+  reviewed. Parent corrected the draft's missing wire-to-target comparison,
+  fresh-summary rejection, redundant original-row parameter, prior-history
+  comparison and timestamp heuristic. No agent-authored projection test file
+  was delivered; parent implemented and ran the eight tests. Agent close
+  succeeded and the subsequent control lookup returned `not_found`. No dedicated
+  worktree or child process was reported. Session provenance is retained because
+  supported session deletion is unavailable; no shared database was edited.
+- No Apple account operation, Pixel install or reset was performed. C: free
+  approximately 49.2 GiB. Existing app profiles, rollback binaries, requests,
+  claims, unrelated edits and evidence remain intact. Full Dart and exact-source
+  Windows qualification are next; no production completion is claimed.

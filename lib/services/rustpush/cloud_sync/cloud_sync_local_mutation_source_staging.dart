@@ -30,6 +30,47 @@ final class CloudSyncLocalMutationSourceStaging {
   final CloudKitOperationExclusion _exclusion;
   final CloudProtectedPageLeaseTransport _transport;
 
+  /// Recover display values from the retained source and acceptance receipt.
+  /// This never prepares/sends a new mutation, acknowledges receipts, or
+  /// touches CloudKit. Both native source reads and the atomic local commit
+  /// remain inside the original protected-store and authentication exclusions.
+  Future<void> reflectConfirmed({
+    required int intentId,
+    required CloudSyncLocalMutationSourceBinding source,
+    required api.CloudSyncNativeSendReceipt receipt,
+    required Future<api.MessageInst> Function(
+      CloudSyncLocalMutationSourceBinding,
+    )
+    restore,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
+  }) async {
+    if (_transport.protectedPageLeaseRecoveryIdentity !=
+            _auth.protectedStoreIdentity ||
+        source.accountFingerprint != _auth.accountFingerprint ||
+        source.protectedStoreIdentity != _auth.protectedStoreIdentity) {
+      throw StateError('cloud_sync_local_mutation_protected_source_changed');
+    }
+    await _exclusion.runExclusive(
+      kind: CloudKitOperationKind.v2ReadWrite,
+      action: () => _transport.runProtectedStoreExclusive(() async {
+        _authFence.requireCurrentBinding(_auth);
+        final original = await restore(source);
+        await _authFence.run(
+          () => _journal.reflectSourceConfirmed(
+            intentId: intentId,
+            committedSource: source,
+            original: original,
+            receipt: receipt,
+            currentAuth: _auth,
+            stillCurrent: _stillCurrent,
+            replayBinding: replayBinding,
+            now: DateTime.now().toUtc(),
+          ),
+        );
+      }),
+    );
+  }
+
   /// One positive-acceptance submission composed with its durable journal.
   /// No timeout, retry, CK update or receipt acknowledgement occurs here.
   /// In particular, a successful send followed by a fence/storage failure is

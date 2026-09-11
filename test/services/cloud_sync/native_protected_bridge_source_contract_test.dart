@@ -93,13 +93,16 @@ void main() {
       expect(initialSend, contains('if (request.mutationType != null)'));
       expect(initialSend, contains('return _runMutation('));
       expect(initialSend.indexOf('return _runMutation('), lessThan(windowsTransport));
-      expect(mutationSend, contains('await CloudSyncLocalMutationSourceStaging('));
+      expect(mutationSend, contains('final staging = CloudSyncLocalMutationSourceStaging('));
       expect(mutationSend, contains('exclusion: interlock'));
       expect(mutationSend, contains('transport: NativeProtectedCloudSyncTransport('));
-      expect(mutationSend, contains(').submitConfirmed('));
+      expect(mutationSend, contains('await staging.submitConfirmed('));
       expect(mutationSend, contains('cloudSyncStageIdsMutationSource('));
       expect(mutationSend, contains('cloudSyncRestoreIdsMutationSource('));
       expect(mutationSend, contains('sendMutationConfirmed!(wire, context(source))'));
+      expect(mutationSend, contains('await staging.reflectConfirmed('));
+      expect(mutationSend, contains('if (replay && intent.state >= 1)'));
+      expect(mutationSend, contains('cloud_sync_windows_mutation_retained_receipt_missing'));
       for (final forbidden in ['sendConfirmed(', 'CloudSyncLocalSendSourceStaging(',
         'cloudSyncAcknowledgeNativeSendReceipt(', 'cloudSyncPrepareMessageCreate(']) {
         expect(mutationSend, isNot(contains(forbidden)));

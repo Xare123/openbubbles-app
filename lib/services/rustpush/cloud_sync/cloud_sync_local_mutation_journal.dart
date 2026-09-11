@@ -5,6 +5,7 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_local_mutation_identity.dart';
+import 'cloud_sync_local_mutation_projection.dart';
 import 'cloud_sync_local_mutation_source_binding.dart';
 import 'cloud_sync_local_send_journal.dart'
     show CloudSyncNativeReceiptReplayBinding;
@@ -267,6 +268,31 @@ final class CloudSyncLocalMutationJournal {
     final row = _read(intentId);
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, capturedAuth, stillCurrent);
+    final proof = _receiptProof(
+      row,
+      source,
+      receipt,
+      capturedAuth,
+      replayBinding,
+    );
+    if (row.idsReceiptBindingSha256 != null) {
+      if (row.idsReceiptBindingSha256 != proof) _fail('receipt_changed');
+      return;
+    }
+    row
+      ..idsReceiptBindingSha256 = proof
+      ..state = 2
+      ..updatedAtMs = _advanceTime(row, now);
+    _rows.put(row);
+  });
+
+  String _receiptProof(
+    CloudSyncLocalMutationIntentEntity row,
+    CloudSyncLocalMutationSourceBinding source,
+    api.CloudSyncNativeSendReceipt receipt,
+    CloudSyncNativeAuthSnapshot capturedAuth,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
+  ) {
     if (replayBinding == null) {
       if (receipt.nativeSessionId != capturedAuth.nativeSessionId) {
         _fail('receipt_session_changed');
@@ -294,23 +320,81 @@ final class CloudSyncLocalMutationJournal {
         native.payloadLength != BigInt.from(source.payloadLength)) {
       _fail('receipt_changed');
     }
-    final proof = _digest([
-      'cloud-sync-mutation-ids-receipt-v1',
+    final preparedTime = receipt.preparedSentTimestampMs;
+    if (preparedTime != null &&
+        (preparedTime <= BigInt.zero ||
+            preparedTime > BigInt.parse('9223372036854775807'))) {
+      _fail('receipt_time_invalid');
+    }
+    // Historical receipts keep the old proof unchanged. They prove acceptance,
+    // but cannot supply a time for local reflection. Never upgrade them in place.
+    return _digest([
+      preparedTime == null
+          ? 'cloud-sync-mutation-ids-receipt-v1'
+          : 'cloud-sync-mutation-ids-receipt-v2',
       source.accountFingerprint,
       source.protectedStoreIdentity,
       receipt.receiptId,
       receipt.nativeSessionId,
       source.encode(),
+      if (preparedTime != null) preparedTime.toString(),
     ]);
-    if (row.idsReceiptBindingSha256 != null) {
-      if (row.idsReceiptBindingSha256 != proof) _fail('receipt_changed');
-      return;
+  }
+
+  /// Project only a reopened committed source and the exact accepted receipt.
+  /// Neither callback time nor a new wire is authority to alter the target.
+  void reflectSourceConfirmed({
+    required int intentId,
+    required CloudSyncLocalMutationSourceBinding committedSource,
+    required api.MessageInst original,
+    required api.CloudSyncNativeSendReceipt receipt,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+    required DateTime now,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _requireOwner();
+    final row = _read(intentId);
+    if (row.protectedSourceBinding != committedSource.encode()) {
+      _fail('source_changed');
     }
-    row
-      ..idsReceiptBindingSha256 = proof
-      ..state = 2
-      ..updatedAtMs = _advanceTime(row, now);
-    _rows.put(row);
+    final identity = CloudSyncLocalMutationIdentity.captureWire(
+      original,
+      expectedSourceSha256: committedSource.sourceSha256,
+    );
+    if (identity == null || identity.kind.index != row.kind) {
+      _fail('source_changed');
+    }
+    committedSource.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+      mutationGuidHash: identity.guidHash,
+      targetGuidHash: identity.targetGuidHash,
+      targetPart: identity.targetPart,
+      sourceSha256: identity.sourceSha256,
+    );
+    reflectConfirmed(
+      intentId: intentId,
+      receipt: receipt,
+      currentAuth: currentAuth,
+      stillCurrent: stillCurrent,
+      now: now,
+      replayBinding: replayBinding,
+      project: (target, preparedTime) {
+        _requireRoute(target, identity);
+        final projection = CloudSyncLocalMutationProjection.projectFirst(
+          target: target,
+          wire: original,
+          source: committedSource,
+          preparedSentTimestampMs: preparedTime,
+        );
+        return target
+          ..text = projection.text
+          ..attributedBody = projection.attributedBody
+          ..messageSummaryInfo = projection.messageSummaryInfo
+          ..dateEdited = projection.dateEdited;
+      },
+    );
   });
 
   /// The caller prepares the exact protected mutation outside this transaction.
@@ -319,17 +403,30 @@ final class CloudSyncLocalMutationJournal {
   /// Duplicate replay after state 3 does not call the projector again.
   void reflectConfirmed({
     required int intentId,
+    required api.CloudSyncNativeSendReceipt receipt,
     required CloudSyncNativeAuthSnapshot currentAuth,
     required bool Function() stillCurrent,
-    required Message Function(Message target) project,
+    required Message Function(Message target, int preparedSentTimestampMs)
+    project,
     required DateTime now,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) => _store.runInTransaction(TxMode.write, () {
     _requireOwner();
     final row = _read(intentId);
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, currentAuth, stillCurrent);
+    if (row.state < 2) _fail('ids_unconfirmed');
+    if (_receiptProof(row, source, receipt, currentAuth, replayBinding) !=
+        row.idsReceiptBindingSha256) {
+      _fail('receipt_changed');
+    }
+    final preparedTime = receipt.preparedSentTimestampMs;
+    // Dart DateTime has a tighter range than native u64/i64. Keep an accepted
+    // but unprojectable receipt, instead of substituting now or the source's 0.
+    if (preparedTime == null || preparedTime > BigInt.from(8640000000000000)) {
+      _fail('receipt_time_unavailable');
+    }
     if (row.state == 3) return;
-    if (row.state != 2) _fail('ids_unconfirmed');
     final target = _target(
       row.localMessageId,
       row.targetGuidHash,
@@ -337,7 +434,7 @@ final class CloudSyncLocalMutationJournal {
     );
     if (_snapshot(target) != row.targetSnapshotSha256) _fail('target_changed');
     final route = _digest(_routingData(target));
-    final updated = project(target);
+    final updated = project(target, preparedTime.toInt());
     if (updated.id != row.localMessageId ||
         updated.chat.targetId != row.localChatId ||
         updated.guid == null ||

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
@@ -15,6 +16,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownersh
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:crypto/crypto.dart';
 
 void main() {
   late Directory directory;
@@ -739,10 +741,12 @@ void main() {
       var calls = 0;
       void reflect() => journal.reflectConfirmed(
         intentId: id,
+        receipt: _receipt(identity, source),
         currentAuth: _auth(),
         stillCurrent: () => true,
         now: _time(5),
-        project: (message) {
+        project: (message, preparedTime) {
+          expect(preparedTime, _time(4).millisecondsSinceEpoch);
           calls++;
           message
             ..text = 'replacement'
@@ -761,6 +765,333 @@ void main() {
     },
   );
 
+  for (final originalTime in <int?>[null, 1789146004000]) {
+    test('receipt time $originalTime stays immutable across reopen', () async {
+      final id = adopt();
+      claim(id);
+      final receipt = _receipt(identity, source, preparedTime: originalTime);
+      confirm(id, receipt: receipt);
+      final proof = row(id).idsReceiptBindingSha256;
+      if (originalTime == null) {
+        // Legacy v4 native receipt keeps its v1 Dart proof byte-for-byte.
+        expect(
+          proof,
+          sha256
+              .convert(
+                utf8.encode(
+                  jsonEncode([
+                    'cloud-sync-mutation-ids-receipt-v1',
+                    source.accountFingerprint,
+                    source.protectedStoreIdentity,
+                    receipt.receiptId,
+                    receipt.nativeSessionId,
+                    source.encode(),
+                  ]),
+                ),
+              )
+              .toString(),
+        );
+      }
+      await reopen();
+      confirm(id, receipt: receipt);
+      for (final changedTime in <int?>[null, 1789146004000, 1789146004001]) {
+        if (changedTime == originalTime) continue;
+        final changed = _receipt(identity, source, preparedTime: changedTime);
+        expect(
+          () => confirm(id, receipt: changed),
+          throwsA(_failure('receipt_changed')),
+        );
+        expect(
+          () => journal.reflectConfirmed(
+            intentId: id,
+            receipt: changed,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+            project: (_, _) => throw StateError('must not project'),
+            now: _time(100),
+          ),
+          throwsA(_failure('receipt_changed')),
+        );
+        expect(row(id).idsReceiptBindingSha256, proof);
+        expect(row(id).state, 2);
+        expect(store.box<Message>().get(target.id!)!.text, 'original');
+      }
+    });
+  }
+
+  for (final invalidTime in [-1, 0]) {
+    test('invalid prepared time $invalidTime cannot promote receipt', () {
+      final id = adopt();
+      claim(id);
+      expect(
+        () => confirm(
+          id,
+          receipt: _receipt(identity, source, preparedTime: invalidTime),
+        ),
+        throwsA(_failure('receipt_time_invalid')),
+      );
+      expect(row(id).state, 1);
+      expect(row(id).idsReceiptBindingSha256, isNull);
+    });
+  }
+
+  for (final unavailableTime in <int?>[null, 8640000000000001]) {
+    test(
+      'unprojectable time $unavailableTime stays retained without fallback',
+      () async {
+        final id = adopt();
+        claim(id);
+        final receipt = _receipt(
+          identity,
+          source,
+          preparedTime: unavailableTime,
+        );
+        confirm(id, receipt: receipt);
+        final proof = row(id).idsReceiptBindingSha256;
+        await reopen();
+        expect(
+          () => journal.reflectConfirmed(
+            intentId: id,
+            receipt: receipt,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+            project: (_, _) => throw StateError('must not project'),
+            now: _time(100),
+          ),
+          throwsA(_failure('receipt_time_unavailable')),
+        );
+        expect(row(id).state, 2);
+        expect(row(id).idsReceiptBindingSha256, proof);
+        expect(store.box<Message>().get(target.id!)!.text, 'original');
+        expect(
+          (await gc().readLiveProtectedReferences(
+            maximumCount: 100,
+          )).references,
+          contains(source.protectedReference),
+        );
+      },
+    );
+  }
+
+  test(
+    'cold reflection validates the original receipt under the new auth fence',
+    () async {
+      final id = adopt();
+      claim(id);
+      final receipt = _receipt(identity, source);
+      confirm(id, receipt: receipt);
+      await reopen();
+      final auth = _auth(session: 'new-session');
+      final state = Object();
+      var current = true;
+      final replay = CloudSyncNativeReceiptReplayBinding(
+        expectedAuth: auth,
+        expectedState: state,
+        expectedStore: store,
+        expectedClient: auth.cloudMessagesClient,
+        expectedStoragePath: directory.path,
+        readState: () => state,
+        readStore: () => store,
+        readClient: () => auth.cloudMessagesClient,
+        readStoragePath: () => directory.path,
+        runtimeCurrent: () => current,
+      );
+      var calls = 0;
+      void reflect({CloudSyncNativeReceiptReplayBinding? binding}) =>
+          journal.reflectConfirmed(
+            intentId: id,
+            receipt: receipt,
+            currentAuth: auth,
+            stillCurrent: () => true,
+            replayBinding: binding,
+            now: _time(100),
+            project: (message, preparedTime) {
+              calls++;
+              expect(preparedTime, _time(4).millisecondsSinceEpoch);
+              return message
+                ..text = 'replacement'
+                ..dateEdited = DateTime.fromMillisecondsSinceEpoch(
+                  preparedTime,
+                  isUtc: true,
+                );
+            },
+          );
+      expect(() => reflect(), throwsA(_failure('receipt_session_changed')));
+      current = false;
+      expect(() => reflect(binding: replay), throwsStateError);
+      expect(calls, 0);
+      expect(row(id).state, 2);
+      current = true;
+      reflect(binding: replay);
+      expect(calls, 1);
+      expect(row(id).state, 3);
+      // ObjectBox reloads DateTime in local time; the exact instant survives.
+      expect(
+        store.box<Message>().get(target.id!)!.dateEdited?.toUtc(),
+        _time(4),
+      );
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  Future<void> reflectSource(
+    int id, {
+    api.CloudSyncNativeSendReceipt? receipt,
+    Future<api.MessageInst> Function()? restore,
+  }) =>
+      CloudSyncLocalMutationSourceStaging(
+        journal: journal,
+        authFence: CloudSyncLocalSendAuthFence(
+          expected: stagingAuth,
+          capture: () async => capturedNow,
+          stillCurrent: () => current,
+        ),
+        capturedAuth: stagingAuth,
+        stillCurrent: () => current,
+        exclusion: exclusion,
+        transport: transport,
+      ).reflectConfirmed(
+        intentId: id,
+        source: source,
+        receipt: receipt ?? _receipt(identity, source),
+        restore: (originalSource) async {
+          expect(exclusion.held && transport.held, isTrue);
+          expect(originalSource.encode(), source.encode());
+          return restore == null ? _wire() : await restore();
+        },
+      );
+
+  test(
+    'source-derived edit is atomically reflected and idempotent after reopen',
+    () async {
+      final id = await submit(() async => _receipt(identity, source));
+      await reflectSource(id);
+      final edited = store.box<Message>().get(target.id!)!;
+      expect(edited.text, 'replacement');
+      expect(edited.attributedBody.single.string, 'replacement');
+      expect(edited.dateEdited?.toUtc(), _time(4));
+      final history = edited.messageSummaryInfo.single.editedContent['0']!;
+      expect(history.map((entry) => entry.text!.values.single.string), [
+        'original',
+        'replacement',
+      ]);
+      expect(history.map((entry) => entry.date), [
+        _time(1).millisecondsSinceEpoch.toDouble(),
+        _time(4).millisecondsSinceEpoch.toDouble(),
+      ]);
+      final proof = row(id).reflectedSnapshotSha256;
+      await reopen();
+      await reflectSource(id);
+      expect(row(id).state, 3);
+      expect(row(id).reflectedSnapshotSha256, proof);
+      expect(
+        store
+            .box<Message>()
+            .get(target.id!)!
+            .messageSummaryInfo
+            .single
+            .editedContent['0']!
+            .length,
+        2,
+      );
+      expect(transport.commits.length, 1);
+      expect(transport.acknowledgements, 0);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+    },
+  );
+
+  for (final fault in [
+    'different-source',
+    'changed-target',
+    'changed-auth',
+    'missing-receipt-time',
+  ]) {
+    test(
+      'source reflection rejects $fault and preserves confirmed recovery',
+      () async {
+        final receipt = _receipt(
+          identity,
+          source,
+          preparedTime: fault == 'missing-receipt-time'
+              ? null
+              : _time(4).millisecondsSinceEpoch,
+        );
+        final id = await submit(() async => receipt);
+        final before = row(id).idsReceiptBindingSha256;
+        await expectLater(
+          reflectSource(
+            id,
+            receipt: receipt,
+            restore: () async {
+              if (fault == 'changed-target') {
+                final newer = store.box<Message>().get(target.id!)!
+                  ..text = 'newer';
+                store.box<Message>().put(newer);
+              }
+              if (fault == 'changed-auth') {
+                capturedNow = _auth(session: 'replacement');
+              }
+              return _wire()
+                ..sentTimestamp = fault == 'different-source' ? 12 : 0;
+            },
+          ),
+          throwsStateError,
+        );
+        expect(row(id).state, 2);
+        expect(row(id).idsReceiptBindingSha256, before);
+        expect(
+          store.box<Message>().get(target.id!)!.text,
+          fault == 'changed-target' ? 'newer' : 'original',
+        );
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(transport.acknowledgements, 0);
+        expect(exclusion.held || transport.held, isFalse);
+        capturedNow = stagingAuth;
+        await reopen();
+        expect(
+          (await gc().readLiveProtectedReferences(
+            maximumCount: 100,
+          )).references,
+          contains(source.protectedReference),
+        );
+      },
+    );
+  }
+
+  test(
+    'source-derived unsend retains text but marks exact part retracted',
+    () async {
+      final wire = _wire()
+        ..message = const api.Message.unsend(
+          api.UnsendMessage(tuuid: _target, editPart: 0),
+        );
+      identity = CloudSyncLocalMutationIdentity.captureWire(wire)!;
+      source = _source(identity);
+      final id = adopt();
+      claim(id);
+      confirm(id);
+      await reflectSource(id, restore: () async => wire);
+      await reopen();
+      final retracted = store.box<Message>().get(target.id!)!;
+      expect(retracted.text, 'original');
+      expect(retracted.messageSummaryInfo.single.retractedParts, [0]);
+      expect(retracted.dateEdited?.toUtc(), _time(4));
+      expect(row(id).state, 3);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      await reflectSource(id, restore: () async => wire);
+      expect(
+        store
+            .box<Message>()
+            .get(target.id!)!
+            .messageSummaryInfo
+            .single
+            .retractedParts,
+        [0],
+      );
+    },
+  );
+
   test('failed reflection rolls back row and message together', () {
     final id = adopt();
     claim(id);
@@ -768,10 +1099,11 @@ void main() {
     expect(
       () => journal.reflectConfirmed(
         intentId: id,
+        receipt: _receipt(identity, source),
         currentAuth: _auth(),
         stillCurrent: () => true,
         now: _time(5),
-        project: (message) {
+        project: (message, _) {
           message.text = 'must roll back';
           store.box<Message>().put(message);
           throw StateError('synthetic projection failure');
@@ -792,10 +1124,11 @@ void main() {
       expect(
         () => journal.reflectConfirmed(
           intentId: id,
+          receipt: _receipt(identity, source),
           currentAuth: _auth(),
           stillCurrent: () => true,
           now: _time(5),
-          project: (message) {
+          project: (message, _) {
             final chat = message.chat.target!;
             chat.usingHandle = 'mailto:other@example.invalid';
             store.box<Chat>().put(chat);
@@ -816,10 +1149,11 @@ void main() {
       expect(
         () => journal.reflectConfirmed(
           intentId: id,
+          receipt: _receipt(identity, source),
           currentAuth: _auth(),
           stillCurrent: () => true,
           now: _time(5),
-          project: (message) {
+          project: (message, _) {
             authority.markMutationUnknown(permit, now: _time(5));
             return message..text = 'replacement';
           },
@@ -841,10 +1175,11 @@ void main() {
     expect(
       () => journal.reflectConfirmed(
         intentId: id,
+        receipt: _receipt(identity, source),
         currentAuth: _auth(),
         stillCurrent: () => true,
         now: _time(5),
-        project: (_) => throw StateError('must not run'),
+        project: (_, _) => throw StateError('must not run'),
       ),
       throwsA(_failure('target_changed')),
     );
@@ -862,10 +1197,11 @@ void main() {
         if (stage == 3) {
           journal.reflectConfirmed(
             intentId: id,
+            receipt: _receipt(identity, source),
             currentAuth: _auth(),
             stillCurrent: () => true,
             now: _time(5),
-            project: (message) => message..text = 'replacement',
+            project: (message, _) => message..text = 'replacement',
           );
         }
         await reopen();
@@ -973,10 +1309,14 @@ api.CloudSyncNativeSendReceipt _receipt(
       api.CloudSyncNativeSendSourceKind.mutation,
   String session = 'native-session',
   String receiptMarker = 'A',
+  int? preparedTime = 1789146004000,
 }) => api.CloudSyncNativeSendReceipt(
   receiptId: 'obcs2.ids.${receiptMarker * 43}',
   guidHash: identity.guidHash,
   nativeSessionId: session,
+  preparedSentTimestampMs: preparedTime == null
+      ? null
+      : BigInt.from(preparedTime),
   sourceBinding: api.CloudSyncNativeSendSourceBinding(
     kind: kind,
     sourceSha256: source.sourceSha256,

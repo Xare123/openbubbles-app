@@ -3447,11 +3447,16 @@ class CloudSyncNativeSendReceipt {
   final String nativeSessionId;
   final CloudSyncNativeSendSourceBinding? sourceBinding;
 
+  /// Actual native-validated mutation wire time, never receipt arrival time.
+  /// Historical receipts remain valid delivery evidence with unknown time.
+  final BigInt? preparedSentTimestampMs;
+
   const CloudSyncNativeSendReceipt({
     required this.receiptId,
     required this.guidHash,
     required this.nativeSessionId,
     this.sourceBinding,
+    this.preparedSentTimestampMs,
   });
 
   @override
@@ -3459,7 +3464,8 @@ class CloudSyncNativeSendReceipt {
       receiptId.hashCode ^
       guidHash.hashCode ^
       nativeSessionId.hashCode ^
-      sourceBinding.hashCode;
+      sourceBinding.hashCode ^
+      preparedSentTimestampMs.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3469,7 +3475,8 @@ class CloudSyncNativeSendReceipt {
           receiptId == other.receiptId &&
           guidHash == other.guidHash &&
           nativeSessionId == other.nativeSessionId &&
-          sourceBinding == other.sourceBinding;
+          sourceBinding == other.sourceBinding &&
+          preparedSentTimestampMs == other.preparedSentTimestampMs;
 }
 
 /// Content-free context for making one successful native SendJob completion
