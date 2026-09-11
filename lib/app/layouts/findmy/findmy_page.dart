@@ -534,7 +534,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           handles: (e) => e.invitationAcceptedHandles,
           lastKnownHandle: (e) => _peopleRefresh.value.firstWhereOrNull((person) => person.id == e.id)?.handle?.address,
           project: (e, address) {
-            final visibleLocation = findMyVisibleLocation(e.lastLocation, optedNotToShare: e.optedNotToShare);
+            final visibleLocation = e.lastLocation;
             return FindMyFriend(
               latitude: visibleLocation?.latitude,
               longitude: visibleLocation?.longitude,

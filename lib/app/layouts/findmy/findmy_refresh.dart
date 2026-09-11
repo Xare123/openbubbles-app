@@ -163,11 +163,6 @@ String? findMyAcceptedHandle(Iterable<String> handles) {
   return null;
 }
 
-/// A positive location must never override an explicit server revocation.
-/// Unknown sharing status alone does not imply revocation.
-T? findMyVisibleLocation<T>(T? location, {required bool? optedNotToShare}) =>
-    optedNotToShare == true ? null : location;
-
 /// An absent reverse-geocoded address is not an absent location. Never use
 /// address availability to infer coordinates or sharing permission.
 String findMyLocationLabel({

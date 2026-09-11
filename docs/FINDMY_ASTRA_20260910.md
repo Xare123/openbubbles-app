@@ -19,10 +19,11 @@ This is not proof that the wife's location or missing items now work end-to-end.
   This discarded fresh coordinates and could retain old coordinates after an
   explicit missing-location response. Now only the handle for that same native
   person ID is reused; every returned record is freshly projected.
-- Explicit native `optedNotToShare == true` now removes projected coordinates,
-  addresses, and timestamp even if the native view still carries an old location.
-  Unknown sharing status does not imply revocation. No permissions are inferred
-  from missing coordinates or changed remotely.
+- Correction (2026-09-11): the earlier flag-derived location suppression was
+  unsupported. `optedNotToShare` has no established directional permission
+  meaning in the inspected source. Upstream displays native `lastLocation`
+  directly. The review patch restores that behavior; explicit native null still
+  clears the prior projected location. No remote sharing permission is changed.
 - People and accessory rows with valid coordinates but no geocoded address
   incorrectly said `No location found`. They now say `Location available`.
   Absent/invalid coordinates still say `No location found`, even with an old address.
@@ -43,6 +44,11 @@ history confirms the original probe scaffold was rejected and replaced with
 actual native callbacks; it still explicitly excludes Items.
 
 ## Validation
+
+Historical results below predate the flag-suppression correction. The earlier
+synthetic 'revocation' cases did not establish Apple field semantics and are
+replaced in the separate review patch. Passing mocks never proved consent or
+end-to-end behavior.
 
 - 32 passing tests: `findmy_projection_regression_test.dart` (9 new cases),
   `findmy_refresh_test.dart`, `findmy_people_refresh_test.dart`.
@@ -76,7 +82,7 @@ native end-to-end success, or rendered live UI proof.
    A decode failure requires a follow-up redacted key/type shape from that exact
    failed response before changing serde parsing. Do not dump raw responses.
 5. A successful read still needs actual UI verification with this Dart patch:
-   known handle-less rows update, revocation clears the map marker, valid
+   known handle-less rows update, native null clears the map marker, valid
    ungeocoded rows show location availability. Unknown new identities remain
    skipped as before; this patch does not invent a handle or restore absent data.
 6. Items require a separately reviewed truly read-only adapter or an explicitly
