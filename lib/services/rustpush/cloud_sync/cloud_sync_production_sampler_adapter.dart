@@ -1,6 +1,7 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
@@ -8,6 +9,7 @@ import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart' as ident
 import 'package:bluebubbles/src/rust/frb_generated.dart' as frb_generated;
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 import 'package:bluebubbles/database/database.dart';
+import 'package:bluebubbles/database/models.dart' show Attachment;
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
@@ -18,8 +20,14 @@ import 'cloud_protected_page_lease_lifecycle.dart';
 import 'cloud_sync_engine.dart';
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_local_send_consumer.dart';
+import 'cloud_sync_local_send_recovery.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
+import 'cloud_sync_attachment_plan_coordinator.dart';
+import 'cloud_sync_attachment_parent_coordinator.dart';
+import 'cloud_sync_attachment_upload_executor.dart';
+import 'cloud_sync_attachment_upload_adapters.dart';
+import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_local_send_selection.dart';
 import 'cloud_sync_manual_outbound_canary.dart';
 import 'cloud_sync_manual_semantic_pull_sampler.dart';
@@ -34,6 +42,7 @@ import 'cloud_sync_protector.dart';
 import 'cloud_sync_reset_coordinator.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 import 'cloud_sync_outbound_admission.dart';
+import 'cloud_sync_outbound_group_binding.dart';
 import 'cloud_sync_outbound_chat_admission.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
 import 'cloud_sync_outbound_staging.dart';
@@ -688,7 +697,6 @@ final class CloudSyncProductionLocalSendAdapter {
   final bool Function() _stillCurrent;
   Future<CloudSyncLocalSendConsumerResult>? _running;
   CloudSyncNativeAuthSnapshot? _boundAuth;
-  int? _boundWriterEpoch;
   CloudSyncLocalSendExactSelection? _exactSelection;
 
   Future<CloudSyncLocalSendConsumerResult> runOnce() {
@@ -786,12 +794,28 @@ final class CloudSyncProductionLocalSendAdapter {
       // migrate a user's legacy account or quarantine legacy writes itself.
       throw StateError('cloud_sync_local_send_owner_required');
     }
-    if (_boundWriterEpoch != null && _boundWriterEpoch != owner.epoch) {
-      throw StateError('cloud_sync_local_send_owner_changed');
-    }
-    _boundWriterEpoch ??= owner.epoch;
+    // Authority is pinned to this bounded pass, not the adapter lifetime.
+    // Reconciliation may advance the epoch. The old pass still fails its
+    // fence and quiesces in finally; a later invocation builds fresh journals,
+    // transport and fences below. Retained origins keep their original epoch.
+    // Never update an in-flight pass's owner or relax its identity checks.
+    late final CloudSyncAttachmentUploadJournal uploads;
+    final attachmentInventories = <int, Set<String>>{};
     final journal = CloudSyncLocalSendJournal(
       store: objectBox, authority: authority, authoritySnapshot: owner,
+      attachmentParentReadback: (intentId, retainedProof) {
+        if (retainedProof != null) {
+          uploads.requireParentReadbackProof(
+              localSendIntentId: intentId, proof: retainedProof);
+          return retainedProof;
+        }
+        final keys = attachmentInventories[intentId];
+        if (keys == null) {
+          throw StateError('cloud_sync_attachment_parent_inventory_required');
+        }
+        return uploads.captureParentReadbackProof(
+            localSendIntentId: intentId, sourceAttachmentKeys: keys);
+      },
     );
     final attachmentScope = CloudSyncScope(
       accountFingerprint: auth.accountFingerprint,
@@ -813,7 +837,7 @@ final class CloudSyncProductionLocalSendAdapter {
         authority.read(writerScope)?.epoch != owner.epoch) {
       throw StateError('cloud_sync_local_send_identity_changed');
     }
-    final uploads = CloudSyncAttachmentUploadJournal(
+    uploads = CloudSyncAttachmentUploadJournal(
       store: objectBox, localSends: journal, scope: attachmentScope,
       checkpointGeneration: attachmentCheckpoint.generation, currentAuth: auth,
     );
@@ -847,16 +871,38 @@ final class CloudSyncProductionLocalSendAdapter {
           authority.read(writerScope)?.epoch == owner.epoch,
     );
     final bindings = FrbNativeProtectedCloudSyncBindings();
+    final attachmentPlans = FrbCloudSyncAttachmentPlanSource(
+        storageDirectory: _privateStorageDirectory);
+    late final Future<frb_api.CloudSyncAttachmentParentGroupProof?> Function(
+        CloudSyncScope, String) readParentGroupProof;
+    frb_api.CloudSyncNativeSendReceiptContext? readParentContext(
+      CloudSyncScope target, String operationId,
+    ) {
+      fence.requireCurrentBinding(auth);
+      if (target != scope) {
+        throw StateError('cloud_sync_local_send_scope_invalid');
+      }
+      final source = journal.readAdoptedAttachmentSource(
+          operationId: operationId, currentAuth: auth);
+      return source == null ? null : attachmentPlans.receiptContext(source, auth);
+    }
     final guard = CloudKitWriterMutationGuard(
       store: objectBox, readActiveClient: _readActiveClient,
       privateStorageDirectory: _privateStorageDirectory,
       reconciliationBinding: bindings,
+      readAttachmentParentContext: (operation) =>
+          readParentContext(operation.scope, operation.operationId),
+      readAttachmentParentGroupProof: (operation) =>
+          readParentGroupProof(operation.scope, operation.operationId),
     );
     final transport = NativeProtectedCloudSyncTransport(
       cloudMessagesClient: auth.cloudMessagesClient,
       storageDirectory: _privateStorageDirectory,
       protectedStoreIdentity: auth.protectedStoreIdentity,
       bindings: bindings, writerMutationGuard: guard,
+      readAttachmentParentContext: readParentContext,
+      readAttachmentParentGroupProof: (target, operationId) =>
+          readParentGroupProof(target, operationId),
       readCheckpointGeneration: (scope) async =>
           (await durable.readCheckpoint(scope)).generation,
       retainConfirmedReceiptsForReplay: true,
@@ -880,6 +926,7 @@ final class CloudSyncProductionLocalSendAdapter {
           now: DateTime.now().toUtc(), onlyIntentId: selection?.intentId);
         selection?.validate(
           store: objectBox, journal: journal, durable: durable, scope: scope,
+          uploadJournal: uploads,
         );
       }, accountFingerprint: scope.accountFingerprint);
     }
@@ -894,6 +941,60 @@ final class CloudSyncProductionLocalSendAdapter {
           .warmReadAuthenticationUnderWriterPause(
             cloudMessagesClient: auth.cloudMessagesClient, pauseToken: token),
     );
+    Future<(frb_api.CloudSyncAttachmentParentGroupProof, String)?> openParentGroup(
+      CloudSyncRestoredGroupChatProof? Function() capture,
+    ) async {
+      fence.requireCurrentBinding(auth);
+      final pinned = capture();
+      if (pinned == null) return null; // Direct parents need no group pause.
+      void validatePinned() {
+        fence.requireCurrentBinding(auth);
+        final current = capture();
+        if (current == null || current.binding != pinned.binding ||
+            current.generation != pinned.generation ||
+            current.routingMetadataDigest != pinned.routingMetadataDigest ||
+            current.source != pinned.source) {
+          throw StateError('cloud_sync_attachment_parent_group_changed');
+        }
+      }
+      final proof = await identitySession.run((token) async {
+        validatePinned();
+        final client = auth.cloudMessagesClient;
+        if (client is! frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+          throw StateError('cloud_sync_native_auth_client_type_invalid');
+        }
+        final proof = await frb_api.cloudSyncOpenAttachmentParentGroupProof(
+          cloudMessagesClient: client, nativeWriterPauseToken: token,
+          storageDirectory: _privateStorageDirectory,
+          expectedAccountFingerprint: auth.accountFingerprint,
+          expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+          generation: BigInt.from(pinned.generation),
+          routingMetadataDigest: pinned.routingMetadataDigest,
+          source: pinned.source,
+        );
+        validatePinned();
+        return proof;
+      });
+      validatePinned(); // Also cover changes while releasing the read pause.
+      return (proof, pinned.binding);
+    }
+    readParentGroupProof = (target, operationId) async {
+      if (target != scope) {
+        throw StateError('cloud_sync_local_send_scope_invalid');
+      }
+      final result = await openParentGroup(() {
+        final dependency = journal.readAdoptedAttachmentChatDependency(
+            operationId: operationId, currentAuth: auth);
+        if (dependency == null) return null;
+        final decoded = jsonDecode(dependency);
+        if (decoded is List && decoded.isNotEmpty && decoded[0] == 1) {
+          return null;
+        }
+        return requireCloudSyncAdoptedGroupChatProof(
+            store: objectBox, messageScope: scope, binding: dependency);
+      });
+      return result?.$1;
+    };
     Future<void> recoverProtectedStore() async {
       await validateSelection();
       await lifecycle.ensureRecoveredBeforeWrite();
@@ -988,7 +1089,17 @@ final class CloudSyncProductionLocalSendAdapter {
 
     Future<bool> drainExisting() async {
       await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
-      await recoverProtectedStore();
+      if (!await recoverCloudSyncLocalSendUploadFence(
+        recoverProtectedStore: recoverProtectedStore,
+        reconcileUpload: () => transport.runProtectedStoreExclusive(() =>
+            guard.reconcilePendingAttachmentUpload(
+              expectedClient: auth.cloudMessagesClient,
+              uploads: uploads,
+              onlyIntentId: selection?.intentId,
+            )),
+      )) {
+        return false;
+      }
       final settled = await drainCloudSyncCreateQueues(
         scopes: [chatScope, attachmentScope, scope],
         isRetiredUnsubmittedChatCreate: (operation) async =>
@@ -1026,9 +1137,9 @@ final class CloudSyncProductionLocalSendAdapter {
                 receipt: receipt, retainProtectedLeaseReference: true, now: now),
           reconcile: (op) async {
             if (selection != null) await validateSelection();
-            return guard.reconcileUnknownOutcome(
+            return transport.runProtectedStoreExclusive(() => guard.reconcileUnknownOutcome(
               owner: CloudKitWriterOwner.v2,
-              expectedClient: auth.cloudMessagesClient, operation: op);
+              expectedClient: auth.cloudMessagesClient, operation: op));
           },
           quiesce: transport.quiesceNativeOperations,
         );
@@ -1077,6 +1188,7 @@ final class CloudSyncProductionLocalSendAdapter {
         if (selection != null) {
           final source = selection.validate(
             store: objectBox, journal: journal, durable: durable, scope: scope,
+            uploadJournal: uploads,
           );
           if (source.state == 3) {
             journal.promoteIdsConfirmedDeferred(
@@ -1095,16 +1207,134 @@ final class CloudSyncProductionLocalSendAdapter {
       return true;
     }
 
+    // One retained source drives every child and the containing Message.
+    // This runs under the same interlock and protected-store exclusion as
+    // ordinary admission. Never scan the attachment table by a guessed GUID.
+    Future<frb_api.CloudSyncNativeSendReceiptContext> prepareAttachmentParent(
+      int intentId,
+    ) async {
+      final retained = await prepareCloudSyncAttachmentParent(
+        staging: transport,
+        prepareChildren: () async {
+          await recoverProtectedStore();
+          final source = await fence.run(() => journal.readForAdmission(intentId),
+              accountFingerprint: scope.accountFingerprint);
+          final resuming = source.writerEpoch != owner.epoch;
+          final retained = CloudSyncLocalSendSourceBinding.decode(
+              source.protectedSourceBinding ??
+                  (throw StateError('cloud_sync_local_send_protected_source_missing')));
+          final inventory = <CloudSyncAttachmentPlanInventoryItem>[];
+          Future<String> sourcePath(CloudSyncAttachmentPlanInventoryItem item) =>
+              fence.run(() {
+                final message = journal.validateReadyForCreate(objectBox, scope, source,
+                    retainedAttachmentResume: resuming);
+                final matches = message.attachments.whereType<Attachment>().where((a) =>
+                    a.guid == item.originalAttachmentGuid ||
+                    a.guid == item.reflectedAttachmentGuid).toList(growable: false);
+                if (matches.length != 1) {
+                  throw StateError('cloud_sync_attachment_plan_source_unavailable');
+                }
+                return matches.single.path;
+              }, accountFingerprint: scope.accountFingerprint);
+          Future<CloudSyncNativeAuthSnapshot?> liveAuth() => fence.run(() => auth,
+              accountFingerprint: scope.accountFingerprint);
+          final dateNs = (source.createdAtUtc.millisecondsSinceEpoch - 978307200000) * 1000000;
+          final coordinator = CloudSyncAttachmentPlanCoordinator(
+            store: objectBox, localSends: journal, uploads: uploads,
+            readLiveAuth: liveAuth, staging: transport,
+            readInventory: (original, current) async {
+              final found = await attachmentPlans.inspect(original, current);
+              inventory..clear()..addAll(found);
+              return found;
+            },
+            stagePlan: (item, original, current) async => attachmentPlans.stage(
+              item, original, current, sourcePath: await sourcePath(item),
+              startDateNanoseconds: dateNs, createdDateNanoseconds: dateNs),
+          );
+          final plans = resuming
+              ? await coordinator.resumeExistingPlans(localSendIntentId: intentId)
+              : await coordinator.ensurePlans(localSendIntentId: intentId);
+          attachmentInventories[intentId] = Set.unmodifiable(
+              inventory.map((item) => item.logicalEntityKeyHash));
+          final client = auth.cloudMessagesClient;
+          if (client is! frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+            throw StateError('cloud_sync_attachment_plan_client_invalid');
+          }
+          final executor = CloudSyncAttachmentUploadExecutor(
+            uploads: uploads, readLiveAuth: liveAuth,
+            mutationGate: GuardedCloudSyncAttachmentUploadMutationGate(guard),
+            bridge: FrbCloudSyncAttachmentUploadBridge(
+              cloudMessagesClient: client, storageDirectory: _privateStorageDirectory),
+            staging: transport,
+            completedAdmitter: ObjectBoxCloudSyncCompletedUploadAdmitter(durable),
+            privateStorageDirectory: _privateStorageDirectory,
+          );
+          for (final plan in plans) {
+            final item = inventory.singleWhere((item) =>
+                item.logicalEntityKeyHash == plan.plan.logicalEntityKeyHash);
+            final fresh = uploads.read(plan.id).state == CloudAttachmentUploadState.prepared;
+            final result = await executor.execute(CloudSyncAttachmentUploadExecutionInput(
+              uploadId: plan.id, originalAttachmentGuid: item.originalAttachmentGuid,
+              sourcePath: fresh ? await sourcePath(item) : '',
+              requestTimeoutSeconds: BigInt.from(120),
+              retainedSourceAttachmentKeys: resuming ? attachmentInventories[intentId] : null,
+            ));
+            switch (result.status) {
+              case CloudAttachmentUploadExecutionStatus.completed:
+              case CloudAttachmentUploadExecutionStatus.recoveredAndCompleted:
+              case CloudAttachmentUploadExecutionStatus.alreadyCompleted:
+                break;
+              default:
+                throw StateError('cloud_sync_attachment_parent_upload_unresolved');
+            }
+          }
+          return retained;
+        },
+        drainChildren: drainExisting,
+        requireChildReadback: () => fence.run(() {
+          uploads.captureParentReadbackProof(localSendIntentId: intentId,
+              sourceAttachmentKeys: attachmentInventories[intentId]!);
+        }, accountFingerprint: scope.accountFingerprint),
+      );
+      return attachmentPlans.receiptContext(retained, auth);
+    }
+
     var chatReadbackPending = false;
-    try {
+    return runCloudSyncLocalSendRecoveryPass(
+      quiesce: transport.quiesceNativeOperations,
+      canRefreshAfterRecovery: () async {
+        bool sameOwnerContext() => _stillCurrent() && !objectBox.isClosed() &&
+            identical(objectBox, Database.store) &&
+            identical(auth.cloudMessagesClient, _readActiveClient());
+        if (!sameOwnerContext()) return false;
+        final refreshedAuth = await authProvider.capture();
+        if (!sameOwnerContext() || !auth.sameIdentity(refreshedAuth)) return false;
+        final refreshedOwner = authority.read(writerScope);
+        if (refreshedOwner == null ||
+            refreshedOwner.owner != CloudKitWriterOwner.v2 ||
+            refreshedOwner.state != CloudKitWriterAuthorityState.stable ||
+            refreshedOwner.targetOwner != CloudKitWriterOwner.none ||
+            refreshedOwner.transitionIdHash != null ||
+            refreshedOwner.epoch <= owner.epoch) {
+          return false;
+        }
+        guard.requireClear();
+        return true;
+      },
+      action: () async {
       final consumer = CloudSyncLocalSendConsumer(
         scope: scope, journal: journal, authFence: fence, exclusion: interlock,
         admit: (id) async {
           final source = await fence.run(() => journal.readForAdmission(id),
               accountFingerprint: scope.accountFingerprint);
           final localChat = source.message?.chat.target;
+          final resuming = source.admittedOperationId == null &&
+              source.protectedSourceBinding != null && source.writerEpoch != owner.epoch;
           if (source.admittedOperationId == null && localChat != null &&
               !localChat.guid.startsWith('iMessage;')) {
+            if (resuming) {
+              throw StateError('cloud_sync_local_send_chat_readback_pending');
+            }
             await chatAdmission.admitChat(chatScope, chatId: localChat.id!,
                 createdAt: source.createdAtUtc, authFence: fence,
                 localSendSource: source,
@@ -1120,8 +1350,22 @@ final class CloudSyncProductionLocalSendAdapter {
             // before Message admission's existing ownership proof can pass.
             throw StateError('cloud_sync_local_send_chat_readback_pending');
           }
+          final context = source.admittedOperationId == null &&
+                  source.protectedSourceBinding != null
+              ? await prepareAttachmentParent(id) : null;
+          final group = context == null ? null : await openParentGroup(() {
+            final message = journal.validateReadyForCreate(objectBox, scope, source,
+                retainedAttachmentResume: resuming);
+            if (message.chat.target?.style != 43) return null;
+            return requireCloudSyncRestoredGroupChatProof(
+                store: objectBox, messageScope: scope, message: message);
+          });
           return admission.admitLocalSend(scope,
-              intentId: id, journal: journal, authFence: fence);
+              intentId: id, journal: journal, authFence: fence,
+              attachmentParentContext: context,
+              attachmentParentGroupProof: group?.$1,
+              attachmentParentChatBinding: group?.$2,
+              retainedAttachmentResume: resuming);
         },
         drainExisting: drainExisting,
       );
@@ -1138,9 +1382,8 @@ final class CloudSyncProductionLocalSendAdapter {
         deferredReasons: result.deferredReasons,
         existingHistoryDiagnostics: existingHistoryDiagnostics.snapshot(),
       );
-    } finally {
-      await transport.quiesceNativeOperations();
-    }
+      },
+    );
   }
 }
 

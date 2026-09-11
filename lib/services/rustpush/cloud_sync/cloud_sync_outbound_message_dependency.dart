@@ -88,11 +88,35 @@ void requireCloudSyncAdoptedLocalSendDependencies({
   required String? binding,
   int? expectedChatId,
   CloudSyncConfirmedLocalParentReader? readConfirmedLocalParent,
+  void Function(String proof)? requireAttachmentReadback,
 }) {
   Never reject() => throw CloudSyncFailure(
     category: CloudFailureCategory.dependency,
     safeCode: 'cloud_sync_local_send_parent_not_ready',
   );
+  // Attachment parents wrap the unchanged Chat dependency and the complete
+  // source-derived child proof. Never accept a wrapper without its journal.
+  // This is not recursive: a nested wrapper remains invalid below.
+  if (binding != null && binding.length <= 65536) {
+    dynamic wrapper;
+    try { wrapper = jsonDecode(binding); } on FormatException { wrapper = null; }
+    if (wrapper is List && wrapper.isNotEmpty && wrapper[0] == 4) {
+      if (wrapper.length != 3 || wrapper[1] is! String ||
+          wrapper[2] is! String || requireAttachmentReadback == null) {
+        reject();
+      }
+      final chat = wrapper[1] as String;
+      if (chat.length > 2048) reject();
+      dynamic decodedChat;
+      try { decodedChat = jsonDecode(chat); } on FormatException { reject(); }
+      if (decodedChat is! List || decodedChat.isEmpty ||
+          (decodedChat[0] != 1 && decodedChat[0] != 3)) {
+        reject();
+      }
+      requireAttachmentReadback(wrapper[2] as String);
+      binding = chat;
+    }
+  }
   void validateChatBinding() {
     dynamic chatDecoded;
     try {

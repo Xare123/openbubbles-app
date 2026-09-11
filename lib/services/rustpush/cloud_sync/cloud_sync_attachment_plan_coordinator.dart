@@ -112,6 +112,18 @@ final class CloudSyncAttachmentPlanCoordinator {
   /// commit failure retains the lease for retry and never deletes it here.
   Future<List<CloudAttachmentUploadSnapshot>> ensurePlans({
     required int localSendIntentId,
+  }) => _ensurePlans(localSendIntentId: localSendIntentId, existingOnly: false);
+
+  /// Resume the original inventory after authority recovery. This path cannot
+  /// stage a missing randomized plan. Its source comes from an actual retained
+  /// upload, while the caller separately requires current mutation authority.
+  Future<List<CloudAttachmentUploadSnapshot>> resumeExistingPlans({
+    required int localSendIntentId,
+  }) => _ensurePlans(localSendIntentId: localSendIntentId, existingOnly: true);
+
+  Future<List<CloudAttachmentUploadSnapshot>> _ensurePlans({
+    required int localSendIntentId,
+    required bool existingOnly,
   }) async {
     if (localSendIntentId <= 0) {
       throw StateError('cloud_sync_attachment_plan_input_invalid');
@@ -120,13 +132,27 @@ final class CloudSyncAttachmentPlanCoordinator {
       throw StateError('cloud_sync_attachment_plan_busy');
     }
     try {
+      int? retainedUploadId;
+      if (existingOnly) {
+        final query = _store.box<CloudAttachmentUploadEntity>().query(
+          CloudAttachmentUploadEntity_.localSendIntentId.equals(localSendIntentId),
+        ).build();
+        try {
+          retainedUploadId = query.findFirst()?.id;
+        } finally {
+          query.close();
+        }
+        if (retainedUploadId == null) {
+          throw StateError('cloud_sync_attachment_plan_inventory_incomplete');
+        }
+      }
       var auth = await _liveAuth();
-      final pinned = _requireOrigin(localSendIntentId, auth);
+      final pinned = _requireOrigin(localSendIntentId, auth, retainedUploadId);
       final inventory = List<CloudSyncAttachmentPlanInventoryItem>.unmodifiable(
         await _readInventory(pinned.source, auth),
       );
       _validateInventory(inventory);
-      auth = await _revalidate(localSendIntentId, auth, pinned);
+      auth = await _revalidate(localSendIntentId, auth, pinned, retainedUploadId);
       final keys = <String>{
         for (final item in inventory) item.logicalEntityKeyHash,
       };
@@ -142,6 +168,9 @@ final class CloudSyncAttachmentPlanCoordinator {
         );
         if (found != null) existing[item.logicalEntityKeyHash] = found;
       }
+      if (existingOnly && existing.length != inventory.length) {
+        throw StateError('cloud_sync_attachment_plan_inventory_incomplete');
+      }
       // Retry commits for retained prepared plans before staging anything
       // new. All other states are preserved untouched.
       for (final item in inventory) {
@@ -152,19 +181,19 @@ final class CloudSyncAttachmentPlanCoordinator {
             snapshot.plan.leaseReference,
             snapshot.plan.protectedEnvelopeReference,
           );
-          auth = await _revalidate(localSendIntentId, auth, pinned);
+          auth = await _revalidate(localSendIntentId, auth, pinned, retainedUploadId);
         }
       }
       for (final item in inventory) {
         if (existing.containsKey(item.logicalEntityKeyHash)) continue;
-        auth = await _revalidate(localSendIntentId, auth, pinned);
+        auth = await _revalidate(localSendIntentId, auth, pinned, retainedUploadId);
         final staged = await _stagePlan(item, pinned.source, auth);
         if (staged.logicalEntityKeyHash != item.logicalEntityKeyHash) {
           await _rollbackBestEffort(staged);
           throw StateError('cloud_sync_attachment_plan_stage_invalid');
         }
         try {
-          auth = await _revalidate(localSendIntentId, auth, pinned);
+          auth = await _revalidate(localSendIntentId, auth, pinned, retainedUploadId);
         } on Object {
           await _rollbackBestEffort(staged);
           rethrow;
@@ -182,7 +211,7 @@ final class CloudSyncAttachmentPlanCoordinator {
           adopted.plan.leaseReference,
           adopted.plan.protectedEnvelopeReference,
         );
-        auth = await _revalidate(localSendIntentId, auth, pinned);
+        auth = await _revalidate(localSendIntentId, auth, pinned, retainedUploadId);
         existing[item.logicalEntityKeyHash] = adopted;
       }
       return List<CloudAttachmentUploadSnapshot>.unmodifiable([
@@ -213,12 +242,16 @@ final class CloudSyncAttachmentPlanCoordinator {
   }
 
   ({int writerEpoch, String code, CloudSyncLocalSendSourceBinding source})
-  _requireOrigin(int intentId, CloudSyncNativeAuthSnapshot auth) {
-    final origin = _localSends.requireConfirmedAttachmentUploadOrigin(
-      transactionStore: _store,
-      intentId: intentId,
-      currentAuth: auth,
-    );
+  _requireOrigin(int intentId, CloudSyncNativeAuthSnapshot auth, [int? retainedUploadId]) {
+    if (retainedUploadId != null &&
+        _uploads.read(retainedUploadId).localSendIntentId != intentId) {
+      throw StateError('cloud_sync_attachment_plan_origin_changed');
+    }
+    final origin = retainedUploadId == null
+        ? _localSends.requireConfirmedAttachmentUploadOrigin(
+            transactionStore: _store, intentId: intentId, currentAuth: auth)
+        : _localSends.readConfirmedOriginForExistingUpload(
+            transactionStore: _store, uploadId: retainedUploadId, currentAuth: auth);
     return (
       writerEpoch: origin.writerEpoch,
       code: origin.source.encode(),
@@ -230,17 +263,13 @@ final class CloudSyncAttachmentPlanCoordinator {
     int intentId,
     CloudSyncNativeAuthSnapshot before,
     ({int writerEpoch, String code, CloudSyncLocalSendSourceBinding source})
-    pinned,
+    pinned, [int? retainedUploadId]
   ) async {
     final live = await _liveAuth();
     if (!before.sameIdentity(live)) {
       throw StateError('cloud_sync_attachment_plan_auth_changed');
     }
-    final origin = _localSends.requireConfirmedAttachmentUploadOrigin(
-      transactionStore: _store,
-      intentId: intentId,
-      currentAuth: live,
-    );
+    final origin = _requireOrigin(intentId, live, retainedUploadId);
     if (origin.writerEpoch != pinned.writerEpoch ||
         origin.source.encode() != pinned.code) {
       throw StateError('cloud_sync_attachment_plan_origin_changed');

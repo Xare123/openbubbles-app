@@ -412,6 +412,100 @@ void main() {
     expect(store.box<CloudAttachmentUploadEntity>().count(), 0);
   });
 
+  test('retained resume reuses complete original plans without staging', () async {
+    final intent = seedConfirmedIntent();
+    var stageCalls = 0;
+    final coordinator = buildCoordinator(
+      readInventory: (_, __) async => [itemA()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    final original = await coordinator.ensurePlans(localSendIntentId: intent);
+    final resumed = await coordinator.resumeExistingPlans(localSendIntentId: intent);
+    expect(resumed.single.id, original.single.id);
+    expect(resumed.single.plan.protectedEnvelopeReference,
+        original.single.plan.protectedEnvelopeReference);
+    expect(stageCalls, 1);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 1);
+  });
+
+  test('retained plans survive E to unknown to reconciled owner and reopen', () async {
+    final intent = seedConfirmedIntent();
+    var stageCalls = 0;
+    CloudSyncAttachmentPlanCoordinator coordinator() => buildCoordinator(
+      readInventory: (_, __) async => [itemA()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    final original = (await coordinator().ensurePlans(localSendIntentId: intent)).single;
+    final originalEpoch = authoritySnapshot.epoch;
+    final permit = authority.issuePermit(_writerScope, expectedOwner: CloudKitWriterOwner.v2);
+    authority.markMutationUnknown(permit, now: _time(30));
+    authority.reconcileMutationFence(_writerScope,
+        owner: CloudKitWriterOwner.v2, fencedEpoch: originalEpoch, now: _time(31));
+    store.close();
+    store = await openStore(directory: directory.path);
+    provisionJournal();
+    auth = _auth(Object());
+    uploads = buildUploads();
+    expect(authoritySnapshot.epoch, originalEpoch + 2);
+    final resumed = (await coordinator().resumeExistingPlans(localSendIntentId: intent)).single;
+    expect(resumed.id, original.id);
+    expect(resumed.plan.protectedEnvelopeReference, original.plan.protectedEnvelopeReference);
+    expect(store.box<CloudAttachmentUploadEntity>().get(resumed.id)!.writerEpoch,
+        originalEpoch);
+    expect(stageCalls, 1);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 1);
+  });
+
+  test('retained resume cannot stage an absent original inventory', () async {
+    final intent = seedConfirmedIntent();
+    var stageCalls = 0;
+    final coordinator = buildCoordinator(
+      readInventory: (_, __) async => [itemA()],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    await expectLater(coordinator.resumeExistingPlans(localSendIntentId: intent),
+        throwsA(_stateFailure('cloud_sync_attachment_plan_inventory_incomplete')));
+    expect(stageCalls, 0);
+    expect(staging.commits, isEmpty);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 0);
+  });
+
+  test('retained resume rejects partial inventory before lease commits', () async {
+    final intent = seedConfirmedIntent();
+    var expanded = false;
+    var stageCalls = 0;
+    final coordinator = buildCoordinator(
+      readInventory: (_, __) async => [itemA(), if (expanded)
+        CloudSyncAttachmentPlanInventoryItem(
+          originalAttachmentGuid: 'LOCAL-B',
+          reflectedAttachmentGuid: '${_guidA}_2',
+          logicalEntityKeyHash: _token('B'),
+        ),
+      ],
+      stagePlan: (item, _, __) async {
+        stageCalls++;
+        return stageFor(item.logicalEntityKeyHash);
+      },
+    );
+    await coordinator.ensurePlans(localSendIntentId: intent);
+    final commits = staging.commits.length;
+    expanded = true;
+    await expectLater(coordinator.resumeExistingPlans(localSendIntentId: intent),
+        throwsA(_stateFailure('cloud_sync_attachment_plan_inventory_incomplete')));
+    expect(stageCalls, 1);
+    expect(staging.commits.length, commits);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 1);
+  });
+
   test('mutating returned snapshots cannot affect later runs', () async {
     final intent = seedConfirmedIntent();
     final coordinator = buildCoordinator(

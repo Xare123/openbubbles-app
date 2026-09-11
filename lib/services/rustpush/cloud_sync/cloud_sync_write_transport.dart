@@ -182,8 +182,30 @@ class CloudSyncPreparedSubmission {
   }
 }
 
-/// Write-only capability used after protected preflight succeeds.
+/// Optional explicit release for a prepared-but-unconsumed native submission.
 ///
+/// Implemented by transports whose prepare allocates a native owner that
+/// outlives the Dart object while holding the writer permit. The engine
+/// calls this in a finally once a prepared submission exists, covering
+/// engine rejection, lease loss, consume failure, timeout, cancellation,
+/// and success. Taken-ness is decided natively per call, never inferred
+/// from a returned consume result: a failure result can leave the owner
+/// untaken.
+///
+/// Returns true when this call dropped the owner and false when no owner
+/// existed (all-preconfirmed input) or native reports the owner already
+/// taken. Foreign or non-native submissions fail closed. A release
+/// failure closes native admission and throws a safe diagnostic instead
+/// of failing silently, so no new calls proceed under a retained lock.
+/// Call only after the original consume future has settled (including native
+/// quiescence after a timeout). False is not evidence of in-flight settlement.
+abstract interface class CloudSyncPreparedSubmissionReleaser {
+  Future<bool> releasePreparedSubmission(
+    CloudSyncPreparedSubmission preparedSubmission,
+  );
+}
+
+/// Write-only capability used after protected preflight succeeds.
 /// Callers must complete [prepareSubmission] before making the durable
 /// outbox submission marker. A prepared object is then consumed exactly once.
 abstract interface class CloudSyncWriteTransport {

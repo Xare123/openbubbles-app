@@ -95,6 +95,41 @@ void main() {
     );
   });
 
+  test('attachment wrapper requires the child proof as well as the original Chat', () {
+    final proof = jsonEncode([1, 'synthetic-child-readback']);
+    final binding = jsonEncode([4, f.chatBinding, proof]);
+    var verified = 0;
+    void validate(String candidate, {void Function(String)? reader}) =>
+        requireCloudSyncAdoptedLocalSendDependencies(
+          store: f.db, messageScope: f.messageScope, binding: candidate,
+          expectedChatId: f.chat.id, requireAttachmentReadback: reader);
+    expect(() => validate(binding), _blocked);
+    validate(binding, reader: (captured) {
+      expect(captured, proof);
+      verified++;
+    });
+    expect(verified, 1);
+    expect(() => validate(binding, reader: (_) {
+      throw StateError('changed-child');
+    }), throwsStateError);
+    expect(() => validate(jsonEncode([4, '[]', proof]), reader: (_) {}), _blocked);
+    expect(() => validate(jsonEncode([4, binding, proof]), reader: (_) {}), _blocked);
+    expect(() => validate(jsonEncode([4, f.capture(), proof]), reader: (_) {}), _blocked);
+  });
+
+  test('attachment wrapper retains Chat generation checks after restart', () async {
+    final binding = jsonEncode([4, f.chatBinding, 'synthetic-proof']);
+    await f.reopen();
+    void validate() => requireCloudSyncAdoptedLocalSendDependencies(
+      store: f.db, messageScope: f.messageScope, binding: binding,
+      expectedChatId: f.chat.id, requireAttachmentReadback: (_) {});
+    expect(validate, returnsNormally);
+    final rows = f.db.box<CloudSyncCheckpointEntity>().getAll();
+    for (final row in rows) { row.generation++; }
+    f.db.box<CloudSyncCheckpointEntity>().putMany(rows);
+    expect(validate, _blocked);
+  });
+
   test('missing parent Message is not restored-parent proof', () {
     final binding = f.capture();
     f.db.box<Message>().remove(f.parent.id!);

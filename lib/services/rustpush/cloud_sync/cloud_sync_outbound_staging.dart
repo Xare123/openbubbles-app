@@ -45,3 +45,20 @@ abstract interface class CloudSyncOutboundChatStagingTransport
     required frb_api.CloudChat chat,
   });
 }
+
+/// Attachment-parent staging is an explicit capability; implementing the
+/// existing Message transport alone cannot admit an attachment-parent
+/// message. This covers only the parent message envelope staged under the
+/// exact source receipt context supplied by the journal owner. It is
+/// separate from final Attachment record saves.
+abstract interface class CloudSyncOutboundAttachmentParentStagingTransport
+    implements CloudSyncOutboundStagingTransport {
+  Future<CloudSyncProtectedOutboundStageData> stageOutboundAttachmentParent(
+    CloudSyncScope scope, {
+    required frb_api.CloudMessage messageHeaders,
+    required frb_api.CloudSyncNativeSendReceiptContext context,
+    // Optional ephemeral retained-Chat authority for group parents. Null
+    // preserves the direct-parent path exactly.
+    frb_api.CloudSyncAttachmentParentGroupProof? groupProof,
+  });
+}

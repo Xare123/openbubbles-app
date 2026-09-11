@@ -9,6 +9,7 @@ import 'cloud_sync_models.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_record_maps.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
+import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart';
 
 /// Captures the exact protected group-chat dependency for a local text send.
 ///
@@ -32,16 +33,127 @@ void requireCloudSyncAdoptedGroupChatDependency({
   required String? binding,
   int? expectedChatId,
 }) {
-  Never reject() => throw CloudSyncFailure(
-    category: CloudFailureCategory.dependency,
-    safeCode: 'cloud_sync_local_send_chat_not_ready',
-  );
-  if (binding == null || binding.length > 1536) reject();
+  final parsed = _parseAdoptedGroupChatBinding(binding, expectedChatId);
+  if (_requireRestoredGroupChatById(
+        store: store,
+        messageScope: messageScope,
+        chatId: parsed.chatId,
+        serverRecordIdHash: parsed.serverRecordIdHash,
+      ) !=
+      binding) {
+    _rejectGroupChatNotReady();
+  }
+}
+
+/// Immutable capture of the validated restored group-chat proof.
+///
+/// Bundles the existing opaque binding with the pinned generation,
+/// routing digest, and native decode source the group-parent proof API
+/// requires.
+final class CloudSyncRestoredGroupChatProof {
+  const CloudSyncRestoredGroupChatProof({
+    required this.binding,
+    required this.generation,
+    required this.routingMetadataDigest,
+    required this.source,
+  });
+
+  /// Existing opaque group-chat dependency binding, unchanged.
+  final String binding;
+
+  /// Pinned checkpoint generation of the validated proof.
+  final int generation;
+
+  /// Pinned group-routing digest of the validated proof.
+  final String routingMetadataDigest;
+
+  /// Pinned native decode source of the validated proof.
+  final CloudSyncChatIdentitySourceInput source;
+}
+
+/// Captures the pinned inputs for a native group-parent proof.
+///
+/// Runs the same validated latest-applied Chat proof as
+/// requireCloudSyncRestoredGroupChat inside one synchronous Store read
+/// transaction (no awaits, no network) and additionally pins the
+/// generation, routing digest, and exact latest-row decode source.
+/// Throws the same cloud_sync_local_send_chat_not_ready failure when
+/// the proof is absent or lacks a pinnable source row.
+CloudSyncRestoredGroupChatProof requireCloudSyncRestoredGroupChatProof({
+  required Store store,
+  required CloudSyncScope messageScope,
+  required Message message,
+}) => store.runInTransaction(
+  TxMode.read,
+  () {
+    final captured = _captureRestoredGroupChat(
+      store: store,
+      messageScope: messageScope,
+      chatId: message.chat.targetId,
+    );
+    return _proofFromLatest(
+      binding: captured.binding,
+      generation: captured.generation,
+      routingMetadataDigest: captured.routingMetadataDigest,
+      latest: captured.latest,
+    );
+  },
+);
+
+/// Opens the pinned inputs for an already-adopted group message.
+///
+/// Parses and revalidates the existing v3 binding exactly as
+/// requireCloudSyncAdoptedGroupChatDependency, then captures the pinned
+/// source through the binding's own chatId and serverRecordIdHash inside
+/// one synchronous Store read transaction (no awaits, no network). Never
+/// reads the mutable Message, so a deleted or edited row cannot move the
+/// retained proof. The journal's v4 wrapper is unwrapped by parent/runtime.
+/// Throws the same cloud_sync_local_send_chat_not_ready failure when the
+/// binding is foreign or the pinned row has moved.
+CloudSyncRestoredGroupChatProof requireCloudSyncAdoptedGroupChatProof({
+  required Store store,
+  required CloudSyncScope messageScope,
+  required String? binding,
+  int? expectedChatId,
+}) => store.runInTransaction(
+  TxMode.read,
+  () {
+    final parsed = _parseAdoptedGroupChatBinding(binding, expectedChatId);
+    final captured = _captureRestoredGroupChat(
+      store: store,
+      messageScope: messageScope,
+      chatId: parsed.chatId,
+      serverRecordIdHash: parsed.serverRecordIdHash,
+    );
+    if (captured.binding != binding) {
+      _rejectGroupChatNotReady();
+    }
+    return _proofFromLatest(
+      binding: captured.binding,
+      generation: captured.generation,
+      routingMetadataDigest: captured.routingMetadataDigest,
+      latest: captured.latest,
+    );
+  },
+);
+
+Never _rejectGroupChatNotReady() => throw CloudSyncFailure(
+  category: CloudFailureCategory.dependency,
+  safeCode: 'cloud_sync_local_send_chat_not_ready',
+);
+
+/// Shared parse for persisted v3 group bindings. Mirrors the checks in
+/// requireCloudSyncAdoptedGroupChatDependency without duplicating them.
+({int chatId, String serverRecordIdHash}) _parseAdoptedGroupChatBinding(
+  String? binding,
+  int? expectedChatId,
+) {
+  if (binding == null || binding.length > 1536) _rejectGroupChatNotReady();
   final dynamic decoded;
   try {
     decoded = jsonDecode(binding);
   } on FormatException {
-    reject();
+    _rejectGroupChatNotReady();
   }
   if (decoded is! List ||
       decoded.length != 11 ||
@@ -57,20 +169,68 @@ void requireCloudSyncAdoptedGroupChatDependency({
       !_indexedDigest.hasMatch(decoded[8] as String) ||
       !_indexedDigest.hasMatch(decoded[9] as String) ||
       !_contentDigest.hasMatch(decoded[10] as String)) {
-    reject();
+    _rejectGroupChatNotReady();
   }
-  if (_requireRestoredGroupChatById(
-        store: store,
-        messageScope: messageScope,
-        chatId: decoded[3] as int,
-        serverRecordIdHash: decoded[7] as String,
-      ) !=
-      binding) {
-    reject();
+  return (
+    chatId: decoded[3] as int,
+    serverRecordIdHash: decoded[7] as String,
+  );
+}
+
+/// Builds the immutable proof from an already-validated latest row.
+CloudSyncRestoredGroupChatProof _proofFromLatest({
+  required String binding,
+  required int generation,
+  required String routingMetadataDigest,
+  required CloudInboxChangeEntity latest,
+}) {
+  final etagHash = latest.etagHash;
+  final payloadSha256 = latest.payloadSha256;
+  final protectedRef = latest.encryptedPayloadRef;
+  if (etagHash == null || payloadSha256 == null || protectedRef == null) {
+    _rejectGroupChatNotReady();
   }
+  return CloudSyncRestoredGroupChatProof(
+    binding: binding,
+    generation: generation,
+    routingMetadataDigest: routingMetadataDigest,
+    source: CloudSyncChatIdentitySourceInput(
+      changeIdHash: latest.changeIdHash,
+      recordIdHash: latest.serverRecordIdHash,
+      etagHash: etagHash,
+      payloadSha256: payloadSha256,
+      // Inbox rows store no payload length; the native input stays None.
+      payloadLength: null,
+      serverModifiedAtMillis: latest.serverModifiedAtMs <= 0
+          ? null
+          : latest.serverModifiedAtMs,
+      protectedRawEnvelopeReference: protectedRef,
+    ),
+  );
 }
 
 String _requireRestoredGroupChatById({
+  required Store store,
+  required CloudSyncScope messageScope,
+  required int chatId,
+  String? serverRecordIdHash,
+}) => _captureRestoredGroupChat(
+  store: store,
+  messageScope: messageScope,
+  chatId: chatId,
+  serverRecordIdHash: serverRecordIdHash,
+).binding;
+
+/// Shared validated latest-applied Chat proof. Returns the existing opaque
+/// binding alongside the pinned generation, routing digest, and exact
+/// latest inbox row so richer callers pin the same proof without
+/// revalidating or scanning unrelated rows.
+({
+  String binding,
+  int generation,
+  String routingMetadataDigest,
+  CloudInboxChangeEntity latest,
+}) _captureRestoredGroupChat({
   required Store store,
   required CloudSyncScope messageScope,
   required int chatId,
@@ -229,25 +389,27 @@ String _requireRestoredGroupChatById({
           ))
           .build()
         ..limit = 1;
+  final CloudInboxChangeEntity latest;
   try {
-    final latest = latestQuery.findFirst();
-    if (latest == null ||
-        latest.accountFingerprint != scope.accountFingerprint ||
-        latest.zone != scope.zone ||
-        latest.status != CloudInboxStatus.applied.index ||
-        latest.isTombstone ||
-        latest.changeType != CloudChangeType.save.name ||
-        latest.etagHash != mapping.etagHash ||
-        latest.encryptedServerRecordId != mapping.encryptedServerRecordId ||
-        latest.encryptedPayloadRef != mapping.encryptedRawRecordRef ||
+    final row = latestQuery.findFirst();
+    if (row == null ||
+        row.accountFingerprint != scope.accountFingerprint ||
+        row.zone != scope.zone ||
+        row.status != CloudInboxStatus.applied.index ||
+        row.isTombstone ||
+        row.changeType != CloudChangeType.save.name ||
+        row.etagHash != mapping.etagHash ||
+        row.encryptedServerRecordId != mapping.encryptedServerRecordId ||
+        row.encryptedPayloadRef != mapping.encryptedRawRecordRef ||
         (mapping.serverRecordIdHash == canonicalMapping.serverRecordIdHash &&
-            latest.etagHash != snapshot.etagHash)) {
+            row.etagHash != snapshot.etagHash)) {
       reject();
     }
+    latest = row;
   } finally {
     latestQuery.close();
   }
-  return jsonEncode([
+  final binding = jsonEncode([
     3,
     scopeKey,
     generation,
@@ -260,6 +422,12 @@ String _requireRestoredGroupChatById({
     groupAlias!.aliasKeyHash,
     snapshot.groupMetadataDigest,
   ]);
+  return (
+    binding: binding,
+    generation: generation,
+    routingMetadataDigest: snapshot.groupMetadataDigest!,
+    latest: latest,
+  );
 }
 
 CloudSemanticChatAliasEntity? _chatAlias({

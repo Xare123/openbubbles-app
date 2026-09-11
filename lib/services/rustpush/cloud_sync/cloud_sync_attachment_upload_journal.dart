@@ -88,6 +88,55 @@ final class CloudSyncAttachmentUploadJournal {
 
   CloudSyncScope get scope => _scope;
 
+  /// Pending evidence only: the byte guard disarms before result recording,
+  /// so uploaded/adopted history cannot own a pending byte fence. Include
+  /// corrupt pending states and prepared rows with attempts to fail closed.
+  /// Cap unresolved work, not lifetime history; reject overflow, never truncate.
+  List<int> readAttemptedForReconciliation({int? onlyIntentId}) =>
+      _store.runInTransaction(TxMode.read, () {
+        if (onlyIntentId != null && onlyIntentId <= 0) {
+          throw StateError('cloud_sync_attachment_upload_binding_changed');
+        }
+        _requireGeneration();
+        var condition = CloudAttachmentUploadEntity_.accountFingerprint
+            .equals(_scope.accountFingerprint)
+            .and(CloudAttachmentUploadEntity_.protectedStoreIdentity
+                .equals(_auth.protectedStoreIdentity))
+            .and(CloudAttachmentUploadEntity_.checkpointGeneration
+                .equals(_generation))
+            .and(CloudAttachmentUploadEntity_.state
+                .notEquals(CloudAttachmentUploadState.uploaded.index))
+            .and(CloudAttachmentUploadEntity_.state
+                .notEquals(CloudAttachmentUploadState.adopted.index))
+            .and(CloudAttachmentUploadEntity_.state
+                .notEquals(CloudAttachmentUploadState.prepared.index)
+                .or(CloudAttachmentUploadEntity_.attemptId.notNull()));
+        if (onlyIntentId != null) {
+          condition = condition.and(CloudAttachmentUploadEntity_.localSendIntentId
+              .equals(onlyIntentId));
+        }
+        final query = _uploads.query(condition).build()..limit = 65;
+        try {
+          final candidates = query.find();
+          if (candidates.length > 64) {
+            throw StateError('cloud_sync_attachment_upload_recovery_bound_exceeded');
+          }
+          final keys = <String>{};
+          final ids = <int>[];
+          for (final candidate in candidates) {
+            final row = _readBound(candidate.id);
+            if (!keys.add(row.uploadKey)) {
+              throw StateError('cloud_sync_attachment_upload_inventory_changed');
+            }
+            reconciliationBindingSha256(row.id);
+            ids.add(row.id);
+          }
+          return List<int>.unmodifiable(ids);
+        } finally {
+          query.close();
+        }
+      });
+
   /// Immutable source evidence for an existing upload, never new-send authority.
   CloudSyncLocalSendSourceBinding readOriginalSource(int id) =>
       _store.runInTransaction(TxMode.read, () {
@@ -136,10 +185,312 @@ final class CloudSyncAttachmentUploadJournal {
     _requireFinalOperation(row, operation.operationId);
   }
 
-  CloudAttachmentUploadSnapshot adoptPlan({
+  /// Content-free, versioned parent proof that every source-derived attachment
+  /// child for one local send reached exact remote readback, not merely a
+  /// completed byte upload or a generic confirmed outbox state.
+  ///
+  /// Opens its own read transaction, so it is safe to call with no ambient
+  /// transaction (for example directly under the parent fence) or nested
+  /// inside the caller's existing Store transaction; nested reads are
+  /// supported like the existing journal methods. The initial key inventory
+  /// comes from the native source in the parent; this method requires it
+  /// to be the exact complete set (1..64 unique token-format keys) and requires every retained plan for
+  /// [localSendIntentId] to match it with no missing, extra, or duplicate
+  /// keys. Every child must be adopted, its deterministic final-save outbox
+  /// operation must match its original result, and that operation must be in
+  /// the readback-acknowledged state: confirmed with its protected lease
+  /// released and the full release-candidate identity intact (Apple
+  /// request/operation UUID pair, confirmation marker, no active lease).
+  /// That durable state is produced only by the transport's exact no-save
+  /// replay verification followed by the receipt release
+  /// (verifyConfirmedAttachmentCreateNoSave then releaseConfirmedReplayReceipt
+  /// clearing the retained receipt). It is authoritative under the
+  /// retain-for-replay contract: a receipt committed with immediate lease
+  /// clearing and no readback is durably identical, so parent-gated
+  /// attachment scopes must retain confirmed receipts for replay.
+  ///
+  /// Returns the immutable proof as a versioned JSON string carrying only
+  /// IDs and digests (scope key, generation, intent ID, source lineage
+  /// hashes, the retained source-derived key list, per-child
+  /// key/result/operation digests, and a proof digest). No message text,
+  /// path, GUID, or credential enters the proof. The retained key list lets
+  /// [requireParentReadbackProof] recompute and compare the exact proof
+  /// later, including across restart, without awaiting a fresh native
+  /// inventory.
+  String captureParentReadbackProof({
     required int localSendIntentId,
-    required CloudSyncProtectedOutboundStageData plan,
-    required DateTime now,
+    required Iterable<String> sourceAttachmentKeys,
+  }) =>
+      _store.runInTransaction(
+        TxMode.read,
+        () => _captureParentReadbackProofLocked(
+          localSendIntentId: localSendIntentId,
+          sourceAttachmentKeys: sourceAttachmentKeys,
+        ),
+      );
+
+  /// Capture implementation; the caller holds a Store transaction (the
+  /// public wrapper's read transaction or an outer caller transaction).
+  String _captureParentReadbackProofLocked({
+    required int localSendIntentId,
+    required Iterable<String> sourceAttachmentKeys,
+  }) {
+    final inventory = _requireParentProofInventory(sourceAttachmentKeys);
+    if (localSendIntentId <= 0) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    _requireGeneration();
+    _localSends.requireCurrentAttachmentWriteAuthority(_store);
+    final query = _uploads
+        .query(
+          CloudAttachmentUploadEntity_.localSendIntentId.equals(
+            localSendIntentId,
+          ),
+        )
+        .build();
+    try {
+      final retained = query.find();
+      if (retained.isEmpty) {
+        throw StateError('cloud_sync_attachment_upload_inventory_changed');
+      }
+      final seen = <String>{};
+      CloudAttachmentUploadEntity? lineage;
+      for (final candidate in retained) {
+        final row = _readBound(candidate.id);
+        if (row.localSendIntentId != localSendIntentId ||
+            !inventory.contains(row.attachmentKeyHash) ||
+            !seen.add(row.attachmentKeyHash)) {
+          throw StateError('cloud_sync_attachment_upload_inventory_changed');
+        }
+        if (lineage == null) {
+          lineage = row;
+        } else if (lineage.messageGuidHash != row.messageGuidHash ||
+            lineage.sourceSha256 != row.sourceSha256 ||
+            lineage.protectedStoreIdentity != row.protectedStoreIdentity ||
+            lineage.writerEpoch != row.writerEpoch) {
+          throw StateError('cloud_sync_attachment_upload_binding_changed');
+        }
+      }
+      if (seen.length != inventory.length) {
+        throw StateError('cloud_sync_attachment_upload_inventory_changed');
+      }
+      final ordered = retained.map((candidate) => _readBound(candidate.id)).toList()
+        ..sort((a, b) => a.attachmentKeyHash.compareTo(b.attachmentKeyHash));
+      final children = <List<Object>>[];
+      for (final row in ordered) {
+        if (row.state != CloudAttachmentUploadState.adopted.index ||
+            row.admittedOperationId == null) {
+          throw StateError('cloud_sync_attachment_upload_result_missing');
+        }
+        final acknowledged = _requireReadbackAcknowledgedFinalOperation(row);
+        children.add(<Object>[
+          row.id,
+          row.attachmentKeyHash,
+          row.serverRecordIdHash,
+          row.resultPayloadSha256!,
+          acknowledged.operationId,
+        ]);
+      }
+      final origin = lineage!;
+      final body = <Object>[
+        1,
+        _scope.storageKey,
+        _generation,
+        localSendIntentId,
+        origin.messageGuidHash,
+        origin.sourceSha256,
+        origin.protectedStoreIdentity,
+        origin.writerEpoch,
+        inventory,
+        children,
+      ];
+      final digest = sha256.convert(utf8.encode(jsonEncode(body))).toString();
+      return jsonEncode(<Object>[...body, digest]);
+    } finally {
+      query.close();
+    }
+  }
+
+  /// Revalidates a proof previously captured by [captureParentReadbackProof].
+  ///
+  /// Opens its own read transaction like the capture path, so the same
+  /// nesting rules apply. Parses the bounded proof, requires its intent ID
+  /// to match [localSendIntentId], then recomputes the exact proof from the
+  /// persisted source and children using the key list retained inside the
+  /// proof and compares byte-for-byte. Any parse failure, inventory drift,
+  /// later row tamper, or readback regression throws.
+  void requireParentReadbackProof({
+    required int localSendIntentId,
+    required String proof,
+  }) =>
+      _store.runInTransaction(
+        TxMode.read,
+        () => _requireParentReadbackProofLocked(
+          localSendIntentId: localSendIntentId,
+          proof: proof,
+        ),
+      );
+
+  /// Revalidation implementation; the caller holds a Store transaction and
+  /// the recompute shares that same read snapshot.
+  void _requireParentReadbackProofLocked({
+    required int localSendIntentId,
+    required String proof,
+  }) {
+    final keys = _parseParentProofKeys(proof, localSendIntentId);
+    final recomputed = _captureParentReadbackProofLocked(
+      localSendIntentId: localSendIntentId,
+      sourceAttachmentKeys: keys,
+    );
+    if (recomputed != proof) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
+  }
+
+  List<String> _requireParentProofInventory(Iterable<String> keys) {
+    final list = keys.toList(growable: false);
+    if (list.isEmpty ||
+        list.length > 64 ||
+        list.any((key) => !_token.hasMatch(key)) ||
+        list.toSet().length != list.length) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    return <String>[...list]..sort();
+  }
+
+  List<String> _parseParentProofKeys(String proof, int localSendIntentId) {
+    if (localSendIntentId <= 0 || proof.isEmpty || proof.length > 65536) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final dynamic decoded;
+    try {
+      decoded = jsonDecode(proof);
+    } on FormatException {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    if (decoded is! List || decoded.length != 11) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    bool digest(String? value) => value != null && _digest.hasMatch(value);
+    bool token(String? value) => value != null && _token.hasMatch(value);
+    if (decoded[0] is! int ||
+        decoded[0] as int != 1 ||
+        decoded[1] is! String ||
+        (decoded[1] as String).isEmpty ||
+        decoded[2] is! int ||
+        (decoded[2] as int) <= 0 ||
+        decoded[3] is! int ||
+        (decoded[3] as int) != localSendIntentId ||
+        decoded[4] is! String ||
+        !digest(decoded[4] as String) ||
+        decoded[5] is! String ||
+        !digest(decoded[5] as String) ||
+        decoded[6] is! String ||
+        !_storeIdentity.hasMatch(decoded[6] as String) ||
+        decoded[7] is! int ||
+        (decoded[7] as int) <= 0 ||
+        decoded[8] is! List ||
+        decoded[10] is! String ||
+        !digest(decoded[10] as String)) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final rawKeys = decoded[8] as List;
+    if (rawKeys.isEmpty ||
+        rawKeys.length > 64 ||
+        rawKeys.any((key) => key is! String || !token(key)) ||
+        rawKeys.toSet().length != rawKeys.length) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    final keys = rawKeys.cast<String>();
+    final rawChildren = decoded[9];
+    if (rawChildren is! List || rawChildren.length != keys.length) {
+      throw StateError('cloud_sync_attachment_upload_binding_changed');
+    }
+    for (var index = 0; index < keys.length; index++) {
+      final child = rawChildren[index];
+      if (child is! List ||
+          child.length != 5 ||
+          child[0] is! int ||
+          (child[0] as int) <= 0 ||
+          child[1] is! String ||
+          (child[1] as String) != keys[index] ||
+          child[2] is! String ||
+          !token(child[2] as String) ||
+          child[3] is! String ||
+          !digest(child[3] as String) ||
+          child[4] is! String ||
+          !_operationId.hasMatch(child[4] as String)) {
+        throw StateError('cloud_sync_attachment_upload_binding_changed');
+      }
+    }
+    return <String>[...keys]..sort();
+  }
+
+  /// Requires the deterministic final-save outbox operation for an adopted
+  /// upload to match its original result and to sit in the
+  /// readback-acknowledged state. Identity drift throws the adoption failure;
+  /// any final state short of released-after-readback (pending, leased,
+  /// confirmed with the receipt lease still retained, unknown outcome, or a
+  /// missing release-candidate identity) throws the readback failure.
+  CloudOutboxOperationEntity _requireReadbackAcknowledgedFinalOperation(
+    CloudAttachmentUploadEntity upload,
+  ) {
+    if (upload.admittedOperationId !=
+        CloudOperationIdentity.forInitialCreate(
+          scope: _scope,
+          logicalEntityKeyHash: upload.attachmentKeyHash,
+          payloadVersion: 1,
+        )) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
+    final query = _store
+        .box<CloudOutboxOperationEntity>()
+        .query(
+          CloudOutboxOperationEntity_.operationId.equals(
+            upload.admittedOperationId!,
+          ),
+        )
+        .build();
+    final CloudOutboxOperationEntity? row;
+    try {
+      row = query.findUnique();
+    } finally {
+      query.close();
+    }
+    if (row == null ||
+        row.action != CloudOutboxAction.save.index ||
+        row.payloadVersion != 1 ||
+        row.accountFingerprint != _scope.accountFingerprint ||
+        row.zone != _scope.zone ||
+        row.scopeKey != cloudSyncPersistentScopeKey(_scope) ||
+        row.checkpointGeneration != _generation ||
+        row.logicalEntityKeyHash != upload.attachmentKeyHash ||
+        row.serverRecordIdHash != upload.serverRecordIdHash ||
+        row.encryptedPayloadRef != upload.resultReference ||
+        row.payloadSha256 != upload.resultPayloadSha256) {
+      throw StateError('cloud_sync_attachment_upload_adoption_changed');
+    }
+    if (row.state != CloudOutboxStatus.confirmed.index ||
+        row.protectedLeaseReference != null ||
+        row.confirmedAtMs <= 0 ||
+        row.leaseIdHash != null ||
+        row.leaseExpiresAtMs != 0 ||
+        row.nextEligibleAtMs != 0 ||
+        row.lastErrorCategory != null ||
+        row.appleRequestUuid == null ||
+        row.appleOperationUuid == null ||
+        !_appleUuid.hasMatch(row.appleRequestUuid!) ||
+        !_appleUuid.hasMatch(row.appleOperationUuid!) ||
+        row.appleRequestUuid == row.appleOperationUuid) {
+      throw StateError('cloud_sync_attachment_upload_readback_not_ready');
+    }
+    return row;
+  }
+
+  CloudAttachmentUploadSnapshot adoptPlan({
+      required int localSendIntentId,
+      required CloudSyncProtectedOutboundStageData plan,
+      required DateTime now,
   }) => _store.runInTransaction(TxMode.write, () {
     _requireGeneration();
     _validateStage(plan);
@@ -200,6 +551,94 @@ final class CloudSyncAttachmentUploadJournal {
     _uploads.put(row);
     return CloudAttachmentUploadSnapshot._(row);
   });
+
+  /// First byte attempt on an exact retained prepared upload after writer
+  /// recovery. The complete original inventory must be presented and match;
+  /// nothing is staged here. The retained source plus a current-epoch write
+  /// permit in this same transaction authorize the attempt. Unknown,
+  /// started, uploaded, and adopted rows keep their existing refusals, and
+  /// the strict [beginAttempt] is unchanged.
+  CloudAttachmentUploadSnapshot beginRetainedAttempt({
+    required int id,
+    required String attemptId,
+    required Iterable<String> sourceAttachmentKeys,
+    required DateTime now,
+  }) => _store.runInTransaction(TxMode.write, () {
+    if (!_uuid.hasMatch(attemptId)) {
+      throw StateError('cloud_sync_attachment_upload_attempt_invalid');
+    }
+    final row = _readBound(id);
+    if (row.state != CloudAttachmentUploadState.prepared.index) {
+      throw StateError('cloud_sync_attachment_upload_already_attempted');
+    }
+    _requireCompleteRetainedInventory(
+      row.localSendIntentId,
+      sourceAttachmentKeys,
+    );
+    final origin = _localSends.requireRetainedAttachmentUploadOrigin(
+      transactionStore: _store,
+      intentId: row.localSendIntentId,
+      currentAuth: _auth,
+    );
+    if (origin.writerEpoch != row.writerEpoch) {
+      throw StateError('cloud_sync_attachment_upload_origin_changed');
+    }
+    _localSends.requireCurrentAttachmentWriteAuthority(_store);
+    row
+      ..state = CloudAttachmentUploadState.started.index
+      ..attemptId = attemptId
+      ..updatedAtMs = now.millisecondsSinceEpoch;
+    _uploads.put(row);
+    return CloudAttachmentUploadSnapshot._(row);
+  });
+
+  /// Complete-inventory gate over retained rows: every retained plan for the
+  /// intent must match the presented inventory with no missing, extra, or
+  /// duplicate keys and shared lineage. Returns the rows ordered by key.
+  /// Mirrors the capture inventory checks without adoption or outbox state.
+  List<CloudAttachmentUploadEntity> _requireCompleteRetainedInventory(
+    int intentId,
+    Iterable<String> sourceAttachmentKeys,
+  ) {
+    final inventory = _requireParentProofInventory(sourceAttachmentKeys);
+    final query = _uploads
+        .query(
+          CloudAttachmentUploadEntity_.localSendIntentId.equals(intentId),
+        )
+        .build();
+    try {
+      final retained = query.find();
+      if (retained.isEmpty) {
+        throw StateError('cloud_sync_attachment_upload_inventory_changed');
+      }
+      final seen = <String>{};
+      CloudAttachmentUploadEntity? lineage;
+      for (final candidate in retained) {
+        final row = _readBound(candidate.id);
+        if (row.localSendIntentId != intentId ||
+            !inventory.contains(row.attachmentKeyHash) ||
+            !seen.add(row.attachmentKeyHash)) {
+          throw StateError('cloud_sync_attachment_upload_inventory_changed');
+        }
+        if (lineage == null) {
+          lineage = row;
+        } else if (lineage.messageGuidHash != row.messageGuidHash ||
+            lineage.sourceSha256 != row.sourceSha256 ||
+            lineage.protectedStoreIdentity != row.protectedStoreIdentity ||
+            lineage.writerEpoch != row.writerEpoch) {
+          throw StateError('cloud_sync_attachment_upload_binding_changed');
+        }
+      }
+      if (seen.length != inventory.length) {
+        throw StateError('cloud_sync_attachment_upload_inventory_changed');
+      }
+      final ordered = retained.map((candidate) => _readBound(candidate.id)).toList()
+        ..sort((a, b) => a.attachmentKeyHash.compareTo(b.attachmentKeyHash));
+      return ordered;
+    } finally {
+      query.close();
+    }
+  }
 
   CloudAttachmentUploadSnapshot read(int id) => _store.runInTransaction(
     TxMode.read,
@@ -580,6 +1019,10 @@ void validateCloudAttachmentUploadRow(CloudAttachmentUploadEntity row) {
 final _token = RegExp(r'^[A-Za-z0-9_-]{43}$');
 final _digest = RegExp(r'^[a-f0-9]{64}$');
 final _operationId = RegExp(r'^op1:[a-f0-9]{64}$');
+final _storeIdentity = RegExp(r'^obcs2\.store\.[A-Za-z0-9_-]{43}$');
+final _appleUuid = RegExp(
+  r'^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$',
+);
 final _uuid = RegExp(
   r'^[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$',
 );

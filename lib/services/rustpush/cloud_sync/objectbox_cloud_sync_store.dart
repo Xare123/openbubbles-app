@@ -646,6 +646,16 @@ class ObjectBoxCloudSyncStore
       if (!current.sameDurableSnapshotAs(expectedOperation)) {
         throw _storageFailure('confirmed_outbound_receipt_snapshot_changed');
       }
+      if (_requiresAttachmentReadbackLocked(current.operationId)) {
+        if (!recordVerifiedLocalSendReadback) {
+          throw _storageFailure('attachment_readback_required');
+        }
+        final uploads = _attachmentUploadJournal;
+        if (uploads == null) {
+          throw _storageFailure('attachment_upload_journal_required');
+        }
+        uploads.requireAdoptedOperation(current);
+      }
       if (recordVerifiedLocalSendReadback) {
         final journal = _localSendJournal;
         if (journal == null) {
@@ -1940,10 +1950,12 @@ class ObjectBoxCloudSyncStore
     CloudSyncScope scope, {
     CloudSyncLocalSendAdmissionSource? localSendSource,
     CloudSyncLocalSendJournal? localSendJournal,
+    bool retainedAttachmentResume = false,
   }) => _store.runInTransaction(TxMode.read, () {
     final journal = _localSendJournal;
     if (journal != null && localSendSource != null) {
-      journal.validateReadyForCreate(_store, scope, localSendSource);
+      journal.validateReadyForCreate(_store, scope, localSendSource,
+          retainedAttachmentResume: retainedAttachmentResume);
       _requireMessagesCloudAccountProjectionReadyLocked(
         scope,
         allowRetainedForFreshCreate: true,
@@ -1962,6 +1974,7 @@ class ObjectBoxCloudSyncStore
           _store,
           scope,
           localSendSource,
+          retainedAttachmentResume: retainedAttachmentResume,
         ),
         readConfirmedLocalParent: (parent) => localSendJournal.readConfirmedParentDependency(
           _store, scope, parent,
@@ -1978,25 +1991,46 @@ class ObjectBoxCloudSyncStore
     required CloudRecordMapEntry recordMapping,
     required CloudSyncLocalSendJournal journal,
     required CloudSyncLocalSendAdmissionSource source,
+    String? attachmentParentChatBinding,
+    bool retainedAttachmentResume = false,
   }) => _admitProtectedOutboundCreate(
     draft,
     recordMapping,
-    onAdopt: (operation) =>
-        journal.adoptInOutboxTransaction(_store, source, operation),
+    onAdopt: (operation) {
+      // The identical-existing-envelope path also reaches this callback.
+      // Revalidate the pinned group before adopting either a new or retained
+      // mapping, in the same write transaction as current writer authority.
+      if (attachmentParentChatBinding != null) {
+        journal.requireFreshAttachmentGroupDependency(
+            draft.scope, source, attachmentParentChatBinding,
+            retainedAttachmentResume: retainedAttachmentResume);
+      }
+      journal.adoptInOutboxTransaction(_store, source, operation,
+          retainedAttachmentResume: retainedAttachmentResume);
+    },
     localSendSource: source,
-    validateFreshDependency: () => requireCloudSyncLocalSendDependencies(
-      store: _store,
-      messageScope: draft.scope,
-      message: journal.validateReadyForCreate(
-        _store,
-        draft.scope,
-        source,
-        adopting: true,
-      ),
-      readConfirmedLocalParent: (parent) => journal.readConfirmedParentDependency(
-        _store, draft.scope, parent,
-      ),
-    ),
+    retainedAttachmentResume: retainedAttachmentResume,
+    validateFreshDependency: () {
+      if (attachmentParentChatBinding != null) {
+        journal.requireFreshAttachmentGroupDependency(
+            draft.scope, source, attachmentParentChatBinding,
+            retainedAttachmentResume: retainedAttachmentResume);
+      }
+      requireCloudSyncLocalSendDependencies(
+        store: _store,
+        messageScope: draft.scope,
+        message: journal.validateReadyForCreate(
+          _store,
+          draft.scope,
+          source,
+          adopting: true,
+          retainedAttachmentResume: retainedAttachmentResume,
+        ),
+        readConfirmedLocalParent: (parent) => journal.readConfirmedParentDependency(
+          _store, draft.scope, parent,
+        ),
+      );
+    },
   );
 
   /// Atomic handoff of a completed byte upload, its original record mapping,
@@ -2050,6 +2084,7 @@ class ObjectBoxCloudSyncStore
     CloudSyncLocalSendAdmissionSource? chatLocalSendSource,
     CloudSyncChatIdentityEvidence? chatIdentityEvidence,
     bool isAttachmentCreate = false,
+    bool retainedAttachmentResume = false,
   }) {
     final isChatCreate = chatOrigin != null;
     if (draft.action != CloudOutboxAction.save ||
@@ -2188,6 +2223,7 @@ class ObjectBoxCloudSyncStore
           draft.scope,
           localSendSource,
           adopting: true,
+          retainedAttachmentResume: retainedAttachmentResume,
         );
         _requireMessagesCloudAccountProjectionReadyLocked(
           draft.scope,
@@ -2694,6 +2730,15 @@ class ObjectBoxCloudSyncStore
         final entity = entities[transition.operationId]!;
         switch (transition.type) {
           case CloudOutboxTransitionType.confirmed:
+            // For journal-owned attachments, confirmed+released is the durable
+            // exact-readback marker. A transition cannot create that same
+            // state through immediate release, even though no receipt is
+            // involved on this path. Retention keeps the row releasable only
+            // through the verified readback path.
+            if (!transition.retainProtectedLeaseReference &&
+                _requiresAttachmentReadbackLocked(entity.operationId)) {
+              throw _storageFailure('attachment_receipt_retention_required');
+            }
             entity
               ..state = _outboxStatusToInt(CloudOutboxStatus.confirmed)
               ..confirmedAtMs = nowMs
@@ -2860,6 +2905,14 @@ class ObjectBoxCloudSyncStore
       if (_actionFromInt(entity.action) != CloudOutboxAction.save) {
         throw _storageFailure('outbox_receipt_action_unsupported');
       }
+      // For journal-owned attachments, confirmed+released is the durable
+      // exact-readback marker. A save acknowledgement cannot create that same
+      // state through the generic immediate-release path, even on a store
+      // opened without the optional upload journal.
+      if (!retainProtectedLeaseReference &&
+          _requiresAttachmentReadbackLocked(entity.operationId)) {
+        throw _storageFailure('attachment_receipt_retention_required');
+      }
       if (entity.logicalEntityKeyHash != receipt.logicalEntityKeyHash) {
         throw _storageFailure('outbox_receipt_logical_key_mismatch');
       }
@@ -2955,6 +3008,17 @@ class ObjectBoxCloudSyncStore
       }
       return resumed;
     });
+  }
+
+  bool _requiresAttachmentReadbackLocked(String operationId) {
+    final query = _store.box<CloudAttachmentUploadEntity>().query(
+      CloudAttachmentUploadEntity_.admittedOperationId.equals(operationId)
+    ).build()..limit = 1;
+    try {
+      return query.findFirst() != null;
+    } finally {
+      query.close();
+    }
   }
 
   @override
@@ -4112,6 +4176,8 @@ class ObjectBoxCloudSyncStore
       store: _store,
       messageScope: scope,
       binding: source.admittedChatBinding,
+      requireAttachmentReadback: (proof) =>
+          journal.requireAttachmentParentReadback(source, proof),
       readConfirmedLocalParent: (parent) => journal.readConfirmedParentDependency(
         _store, scope, parent,
       ),

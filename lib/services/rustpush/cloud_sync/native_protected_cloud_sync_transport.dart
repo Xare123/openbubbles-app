@@ -435,6 +435,60 @@ abstract interface class NativeProtectedCloudSyncAttachmentWriteBindings
   });
 }
 
+/// Explicit opt-in: existing Message-, Chat-, and Attachment-only bindings do
+/// not acquire attachment-parent staging authority.
+///
+/// Covers only the parent message envelope staged under the exact source
+/// receipt context supplied by the journal owner (no blob upload, no retry
+/// admission, no final Attachment record save).
+abstract interface class NativeProtectedCloudSyncAttachmentParentWriteBindings
+    implements NativeProtectedCloudSyncWriteBindings {
+  Future<frb_api.CloudSyncProtectedOutboundStageResult>
+  stageOutboundAttachmentParent({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required frb_api.CloudMessage messageHeaders,
+    required frb_api.CloudSyncNativeSendReceiptContext context,
+    required frb_api.CloudSyncAttachmentParentGroupProof? groupProof,
+  });
+}
+
+/// Narrow opt-in for releasing a prepared-but-unconsumed native owner.
+/// Existing Message-, Chat-, Attachment-, and parent-only bindings do not
+/// acquire release authority, so their mocks keep compiling unchanged.
+abstract interface class NativeProtectedPreparedReleaseBindings {
+  /// Drops only the unconsumed prepared owner for [handle]. Idempotent:
+  /// an already-consumed or already-released handle reports false and an
+  /// actively-taken consume is never disturbed.
+  Future<bool> releasePreparedMessageCreate({
+    required frb_api.CloudSyncPreparedMessageCreateHandle handle,
+  });
+}
+
+/// Synchronous journal lookup for the exact source receipt context of one
+/// message-zone operation. Supplied by the production journal owner, which
+/// reads the original adopted journal. A null return means the operation is
+/// not an attachment parent and its native inputs stay context-free.
+typedef CloudSyncAttachmentParentContextReader =
+    frb_api.CloudSyncNativeSendReceiptContext? Function(
+      CloudSyncScope scope,
+      String operationId,
+    );
+
+/// Async journal lookup opening the ephemeral retained-Chat authority for
+/// one group attachment parent. The journal reopens it from its pinned
+/// source (never a transport cache) on every call; expiry and restart
+/// reopen are the journal's job. Invoked only under the protected-store
+/// exclusion, only for messageManateeZone, and only when the synchronous
+/// context reader already returned a context for the same operation.
+typedef CloudSyncAttachmentParentGroupProofReader =
+    Future<frb_api.CloudSyncAttachmentParentGroupProof?> Function(
+      CloudSyncScope scope,
+      String operationId,
+    );
+
 enum _CreatePreflightDisposition { absent, alreadyPresent }
 
 final class _NativeCloudSyncPreparedSubmission
@@ -479,6 +533,15 @@ final class _NativeCloudSyncPreparedSubmission
   final String? handleBindingSha256;
   final List<String> remoteOperationIds;
   final List<CloudOutboxCreateReceipt> preconfirmedReceipts;
+
+  /// Per-submission memoized release. Lives and dies with this object, so
+  /// no transport-wide handle registry can pin owners past their use.
+  /// Taken-ness is decided natively per call, never inferred in Dart from
+  /// a returned result: a failure result may leave the owner untaken.
+  Future<bool>? _releaseFuture;
+
+  Future<bool> releaseOnce(Future<bool> Function() release) =>
+      _releaseFuture ??= release();
 }
 
 final class _NativeConfirmedReplayProof
@@ -508,7 +571,9 @@ final class NativeProtectedCloudSyncTransport
         CloudSyncTransport,
         CloudProtectedPageLeaseTransport,
         CloudSyncOutboundChatStagingTransport,
+        CloudSyncOutboundAttachmentParentStagingTransport,
         CloudSyncWriteTransport,
+        CloudSyncPreparedSubmissionReleaser,
         CloudSyncWriteReceiptFinalizer,
         CloudSyncConfirmedReceiptRetentionPolicy,
         CloudSyncNativeOperationQuiescence,
@@ -524,6 +589,8 @@ final class NativeProtectedCloudSyncTransport
     this._refreshAuthentication,
     this._refreshPcsAccess,
     this._retainConfirmedReceiptsForReplay = false,
+    this.readAttachmentParentContext,
+    this.readAttachmentParentGroupProof,
   }) : _storageDirectory = storageDirectory,
        _protectedStoreIdentity = protectedStoreIdentity,
        _nativeWriterPauseToken = nativeWriterPauseToken,
@@ -554,9 +621,21 @@ final class NativeProtectedCloudSyncTransport
   final Future<bool> Function(CloudSyncScope scope)? _refreshAuthentication;
   final Future<bool> Function(CloudSyncScope scope)? _refreshPcsAccess;
   final bool _retainConfirmedReceiptsForReplay;
+  /// Journal-owned lookup for the exact source receipt context of an
+  /// attachment-parent message. Invoked only for messageManateeZone
+  /// operations, only under the protected-store exclusion, and only with
+  /// the exact submission scope. Null means non-parent: native inputs stay
+  /// context-free and existing no-callback paths are unchanged.
+  final CloudSyncAttachmentParentContextReader? readAttachmentParentContext;
+  /// Journal-owned opener for the ephemeral group-parent proof. Per-pass
+  /// authority: resolved on every prepare and every readback, never cached.
+  /// Null means direct parent: native inputs stay proof-free.
+  final CloudSyncAttachmentParentGroupProofReader?
+  readAttachmentParentGroupProof;
   final Set<Future<void>> _activeNativeOperations = {};
   Future<void>? _nativeQuiescence;
   bool _nativeAdmissionClosed = false;
+  bool _preparedReleaseFailed = false;
   bool _mutationAdmissionPoisoned = false;
 
   @override
@@ -606,9 +685,14 @@ final class NativeProtectedCloudSyncTransport
   }
 
   @override
-  Future<void> quiesceNativeOperations() {
+  Future<void> quiesceNativeOperations() async {
     _nativeAdmissionClosed = true;
-    return _nativeQuiescence ??= _waitForNativeQuiescence();
+    await (_nativeQuiescence ??= _waitForNativeQuiescence());
+    // A settled future is not proof that its retained native owner was
+    // released. Preserve cleanup failure even after quiescence was memoized.
+    if (_preparedReleaseFailed) {
+      throw _localStorage('cloud_sync_prepared_release_failed');
+    }
   }
 
   @override
@@ -642,6 +726,95 @@ final class NativeProtectedCloudSyncTransport
     return bindings as NativeProtectedCloudSyncAttachmentWriteBindings;
   }
 
+  NativeProtectedCloudSyncAttachmentParentWriteBindings
+  _requireAttachmentParentWriteBindings() {
+    final bindings = _bindings;
+    if (bindings is! NativeProtectedCloudSyncAttachmentParentWriteBindings) {
+      throw _readOnlyFailure();
+    }
+    return bindings as NativeProtectedCloudSyncAttachmentParentWriteBindings;
+  }
+
+  NativeProtectedPreparedReleaseBindings _requireReleaseBindings() {
+    final bindings = _bindings;
+    if (bindings is! NativeProtectedPreparedReleaseBindings) {
+      throw _readOnlyFailure();
+    }
+    return bindings as NativeProtectedPreparedReleaseBindings;
+  }
+
+  /// Drops the native owner of a prepared-but-unconsumed submission.
+  ///
+  /// Foreign or non-native submissions fail closed. A null handle (the
+  /// all-preconfirmed path allocated no owner) reports false with no
+  /// native call. Every other submission invokes the idempotent native
+  /// release exactly once per object (concurrent releases share the
+  /// memoized future): native itself reports false for an already-taken
+  /// consume owner. Taken-ness is never inferred from a returned consume
+  /// result, because a failure result can leave the owner untaken. A
+  /// failed release closes native admission, poisons the mutation fence,
+  /// and throws a safe diagnostic: no new calls may proceed under a
+  /// retained lock.
+  @override
+  Future<bool> releasePreparedSubmission(
+    CloudSyncPreparedSubmission preparedSubmission,
+  ) {
+    // Exact-handle cleanup grants no mutation authority. It must remain
+    // possible after the caller loses its interlock fence or admission closes.
+    // The caller still joins native settlement before releasing this owner.
+    if (preparedSubmission is! _NativeCloudSyncPreparedSubmission) {
+      throw ArgumentError('cloud_sync_native_prepared_submission_required');
+    }
+    if (preparedSubmission.handle == null) {
+      return Future<bool>.value(false);
+    }
+    return preparedSubmission.releaseOnce(
+      () => _releasePreparedHandle(preparedSubmission.handle!),
+    );
+  }
+
+  Future<bool> _releasePreparedHandle(
+    frb_api.CloudSyncPreparedMessageCreateHandle handle,
+  ) => _runPreparedReleaseOperation(
+    () => _requireReleaseBindings().releasePreparedMessageCreate(handle: handle),
+  );
+
+  /// Dedicated exact-handle cleanup under the protected-store gate.
+  ///
+  /// Unlike [_runProtectedStoreOperation] this stays available after
+  /// admission close (quiesce), because timeout and cancellation cleanup
+  /// must release abandoned owners. It is still serialized on the store
+  /// identity gate and tracked in [_activeNativeOperations] so quiesce
+  /// covers the cleanup itself. General operations must never use this;
+  /// it does not reopen admission.
+  Future<T> _runPreparedReleaseOperation<T>(
+    FutureOr<T> Function() operation,
+  ) {
+    final cleanup = () async {
+      try {
+        return await _protectedStoreOperationGate.run(
+          _protectedStoreIdentity,
+          operation,
+        );
+      } catch (_) {
+        // Publish the failure before the tracked future completes; quiescence
+        // must not race a later continuation that discovers a retained owner.
+        _preparedReleaseFailed = true;
+        _nativeAdmissionClosed = true;
+        markActiveMutationUnknown();
+        throw _localStorage('cloud_sync_prepared_release_failed');
+      }
+    }();
+    late final Future<void> completion;
+    completion = cleanup
+        .then<void>((_) {}, onError: (Object _, StackTrace __) {})
+        .whenComplete(() {
+          _activeNativeOperations.remove(completion);
+        });
+    _activeNativeOperations.add(completion);
+    return cleanup;
+  }
+
   void _requireV2WriterInterlock() {
     CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);
   }
@@ -672,6 +845,56 @@ final class NativeProtectedCloudSyncTransport
         message: message,
       ),
     );
+    return _toMessageSizedOutboundStageData(result);
+  }
+
+  /// Stages one attachment-parent message envelope under the exact source
+  /// receipt context supplied by the journal owner. The context is the
+  /// authority: no body or GUID sniffing infers parenthood. Result
+  /// validation is the existing message-size validation; plaintext and
+  /// reaction behavior are unchanged.
+  @override
+  Future<CloudSyncProtectedOutboundStageData> stageOutboundAttachmentParent(
+    CloudSyncScope scope, {
+    required frb_api.CloudMessage messageHeaders,
+    required frb_api.CloudSyncNativeSendReceiptContext context,
+    frb_api.CloudSyncAttachmentParentGroupProof? groupProof,
+  }) async {
+    _requireV2WriterInterlock();
+    _validateOutboundMessageScope(scope);
+    _validateAttachmentParentContext(scope, context);
+    final result = await _runProtectedStoreOperation(
+      () => _requireAttachmentParentWriteBindings()
+          .stageOutboundAttachmentParent(
+            cloudMessagesClient: _cloudMessagesClient,
+            storageDirectory: _storageDirectory,
+            expectedAccountFingerprint: scope.accountFingerprint,
+            expectedProtectedStoreIdentity: _protectedStoreIdentity,
+            messageHeaders: messageHeaders,
+            context: context,
+            groupProof: groupProof,
+          ),
+    );
+    return _toMessageSizedOutboundStageData(result);
+  }
+
+  /// Rejects a parent context that does not belong to this transport and
+  /// scope before any native call. Pure field comparison: the journal owns
+  /// admission, this gate only proves the context matches.
+  void _validateAttachmentParentContext(
+    CloudSyncScope scope,
+    frb_api.CloudSyncNativeSendReceiptContext context,
+  ) {
+    if (context.storageDirectory != _storageDirectory ||
+        context.accountFingerprint != scope.accountFingerprint ||
+        context.protectedStoreIdentity != _protectedStoreIdentity) {
+      throw _localStorage('cloud_sync_outbound_parent_context_invalid');
+    }
+  }
+
+  CloudSyncProtectedOutboundStageData _toMessageSizedOutboundStageData(
+    frb_api.CloudSyncProtectedOutboundStageResult result,
+  ) {
     if ((result.stage == null) == (result.failure == null)) {
       throw _localStorage('cloud_sync_outbound_stage_envelope_invalid');
     }
@@ -794,14 +1017,6 @@ final class NativeProtectedCloudSyncTransport
     submissionIdentity.validateOperationIds(
       operations.map((operation) => operation.operationId),
     );
-    final inputs = operations
-        .map(
-          (operation) => _preparedCreateInput(
-            operation,
-            submissionIdentity: submissionIdentity,
-          ),
-        )
-        .toList(growable: false);
     final bindings = _requireWriteBindings();
     final reconcile = isChat
         ? _requireChatWriteBindings().reconcileChatCreate
@@ -813,7 +1028,38 @@ final class NativeProtectedCloudSyncTransport
         : isAttachment
         ? _requireAttachmentWriteBindings().prepareAttachmentCreate
         : bindings.prepareMessageCreate;
-    final preparation = await _runProtectedStoreOperation(() async {
+    return _runProtectedStoreOperation(() async {
+      // Parent contexts resolve here, under the protected-store exclusion,
+      // so the journal read and the native reconcile/prepare pair share one
+      // admission window. Only messageManateeZone operations consult the
+      // callback; Chat and Attachment inputs never carry a parent context.
+      // Without a callback every input builds exactly as before.
+      // Parent attachment authority resolves here, under the protected-store
+      // exclusion and before any native writer permit is acquired. The sync
+      // context is captured first; the async group-proof opener runs only
+      // when a context exists, and the context is reread after the await
+      // with an exact-equality demand, so a journal ownership change across
+      // the await fails closed instead of pairing a proof with a new source.
+      final inputs = <frb_api.CloudSyncPreparedMessageCreateInput>[];
+      for (final operation in operations) {
+        final parentContext = _readParentContextForPrepare(
+          scope,
+          operation.operationId,
+        );
+        inputs.add(
+          _preparedCreateInput(
+            operation,
+            submissionIdentity: submissionIdentity,
+            attachmentParentContext: parentContext,
+            attachmentParentGroupProof:
+                await _readParentGroupProofForPrepare(
+                  scope,
+                  operation.operationId,
+                  parentContext,
+                ),
+          ),
+        );
+      }
       final remoteInputs = <frb_api.CloudSyncPreparedMessageCreateInput>[];
       final preconfirmedReceipts = <CloudOutboxCreateReceipt>[];
       for (final input in inputs) {
@@ -848,39 +1094,58 @@ final class NativeProtectedCloudSyncTransport
               requestTimeout: const Duration(seconds: 45),
               inputs: remoteInputs,
             );
-      return (
-        result: result,
-        remoteOperationIds: remoteInputs
-            .map((input) => input.localOperationId)
-            .toList(growable: false),
-        preconfirmedReceipts: preconfirmedReceipts,
-      );
+      if (_nativeAdmissionClosed) {
+        // Admission closed while this preparation was in flight (engine
+        // timeout/cancellation followed by quiescence, or a prior release
+        // failure). The caller has abandoned or cannot use this
+        // preparation: drop any allocated owner inside this same tracked
+        // operation so quiescence covers the cleanup, then fail closed.
+        // A late handle is never handed out for nobody to consume.
+        final abandonedHandle = result?.handle;
+        if (abandonedHandle != null) {
+          await _releasePreparedHandle(abandonedHandle);
+        }
+        throw _localStorage('protected_store_operation_admission_closed');
+      }
+      if (result != null &&
+          ((result.handle == null) == (result.failure == null) ||
+              (result.handleBindingSha256 == null) != (result.handle == null) ||
+              (result.handleBindingSha256 != null &&
+                  !_contentDigestPattern.hasMatch(
+                    result.handleBindingSha256!,
+                  )))) {
+        // Validation and construction share the tracked preparation boundary:
+        // no rejected handle may outlive quiescence or depend on engine cleanup.
+        final abandonedHandle = result.handle;
+        if (abandonedHandle != null) {
+          await _releasePreparedHandle(abandonedHandle);
+        }
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'cloud_sync_outbound_prepare_envelope_invalid',
+        );
+      }
+      if (result?.failure case final failure?) {
+        throw _mapOutboundFailure(failure);
+      }
+      try {
+        return _NativeCloudSyncPreparedSubmission(
+          scope: scope,
+          identity: submissionIdentity,
+          operations: operations,
+          handle: result?.handle,
+          handleBindingSha256: result?.handleBindingSha256,
+          remoteOperationIds: remoteInputs.map((input) => input.localOperationId),
+          preconfirmedReceipts: preconfirmedReceipts,
+        );
+      } catch (_) {
+        final abandonedHandle = result?.handle;
+        if (abandonedHandle != null) {
+          await _releasePreparedHandle(abandonedHandle);
+        }
+        rethrow;
+      }
     });
-    final result = preparation.result;
-    if (result != null &&
-        ((result.handle == null) == (result.failure == null) ||
-            (result.handleBindingSha256 == null) != (result.handle == null) ||
-            (result.handleBindingSha256 != null &&
-                !_contentDigestPattern.hasMatch(
-                  result.handleBindingSha256!,
-                )))) {
-      throw CloudSyncFailure(
-        category: CloudFailureCategory.localStorage,
-        safeCode: 'cloud_sync_outbound_prepare_envelope_invalid',
-      );
-    }
-    if (result?.failure case final failure?) {
-      throw _mapOutboundFailure(failure);
-    }
-    return _NativeCloudSyncPreparedSubmission(
-      scope: scope,
-      identity: submissionIdentity,
-      operations: operations,
-      handle: result?.handle,
-      handleBindingSha256: result?.handleBindingSha256,
-      remoteOperationIds: preparation.remoteOperationIds,
-      preconfirmedReceipts: preparation.preconfirmedReceipts,
-    );
   }
 
   @override
@@ -1091,6 +1356,8 @@ final class NativeProtectedCloudSyncTransport
   frb_api.CloudSyncPreparedMessageCreateInput _preparedCreateInput(
     CloudSyncProtectedWriteOperation operation, {
     required CloudOutboxSubmissionIdentity submissionIdentity,
+    frb_api.CloudSyncNativeSendReceiptContext? attachmentParentContext,
+    frb_api.CloudSyncAttachmentParentGroupProof? attachmentParentGroupProof,
   }) => frb_api.CloudSyncPreparedMessageCreateInput(
     localOperationId: operation.operationId,
     logicalEntityKeyHash: operation.logicalEntityKeyHash,
@@ -1101,7 +1368,64 @@ final class NativeProtectedCloudSyncTransport
     serverRecordIdHash: operation.serverRecordIdHash,
     appleOperationUuid:
         submissionIdentity.operationUuids[operation.operationId]!,
+    attachmentParentContext: attachmentParentContext,
+    attachmentParentGroupProof: attachmentParentGroupProof,
   );
+
+  /// Journal-owned parent context for one message-zone prepare/reconcile
+  /// input. Executes only under the protected-store exclusion (all callers
+  /// run inside [_runProtectedStoreOperation]) and only for
+  /// messageManateeZone; Chat and Attachment zones never invoke the
+  /// callback and never leak a context into their native inputs. A null
+  /// journal answer means non-parent and preserves the context-free input.
+  /// A mismatched context fails closed before any native call; a missing
+  /// context for a true parent is rejected natively downstream.
+  frb_api.CloudSyncNativeSendReceiptContext? _readParentContextForPrepare(
+    CloudSyncScope scope,
+    String operationId,
+  ) {
+    final reader = readAttachmentParentContext;
+    if (scope.zone != 'messageManateeZone' || reader == null) {
+      return null;
+    }
+    final context = reader(scope, operationId);
+    if (context == null) {
+      return null;
+    }
+    _validateAttachmentParentContext(scope, context);
+    return context;
+  }
+
+  /// Opens the ephemeral group-parent proof for one message-zone operation.
+  /// The sync [contextBefore] must already be captured; a null context
+  /// means direct parent and the opener is never consulted, so a proof can
+  /// never ride without its source context. After the await the sync
+  /// context is reread and must compare exactly equal: a journal ownership
+  /// or auth change across the await fails closed before any native call.
+  /// The proof itself is opaque and never cached; every prepare and every
+  /// readback reopens it through the journal.
+  Future<frb_api.CloudSyncAttachmentParentGroupProof?>
+  _readParentGroupProofForPrepare(
+    CloudSyncScope scope,
+    String operationId,
+    frb_api.CloudSyncNativeSendReceiptContext? contextBefore,
+  ) async {
+    final reader = readAttachmentParentGroupProof;
+    if (scope.zone != 'messageManateeZone' ||
+        reader == null ||
+        contextBefore == null) {
+      return null;
+    }
+    final proof = await reader(scope, operationId);
+    if (proof == null) {
+      return null;
+    }
+    final contextAfter = _readParentContextForPrepare(scope, operationId);
+    if (contextAfter != contextBefore) {
+      throw _localStorage('cloud_sync_outbound_parent_context_changed');
+    }
+    return proof;
+  }
 
   _CreatePreflightDisposition _classifyCreatePreflight(
     frb_api.CloudSyncOutboundReconcileResult result, {
@@ -2241,23 +2565,41 @@ final class NativeProtectedCloudSyncTransport
     }
 
     final result = await _runProtectedStoreOperation(
-      () => reconcile(
-        cloudMessagesClient: _cloudMessagesClient,
-        storageDirectory: _storageDirectory,
-        expectedAccountFingerprint: scope.accountFingerprint,
-        expectedProtectedStoreIdentity: _protectedStoreIdentity,
-        requestUuid: requestUuid,
-        input: frb_api.CloudSyncPreparedMessageCreateInput(
-          localOperationId: operation.operationId,
-          logicalEntityKeyHash: operation.logicalEntityKeyHash,
-          protectedLeaseReference: leaseReference,
-          protectedPayloadReference: payloadReference,
-          payloadSha256: payloadSha256,
-          protectedServerRecordReference: payloadReference,
-          serverRecordIdHash: serverRecordIdHash,
-          appleOperationUuid: operationUuid,
-        ),
-      ),
+      () async {
+        // Post-restart readback (verify/reconcile) builds its own input
+        // rather than reusing the prepare preflight one. Parent authority
+        // resolves here, inside the protected-store exclusion, with the
+        // same capture-await-reread discipline as prepare: only
+        // messageManateeZone operations receive a context or proof.
+        final parentContext = _readParentContextForPrepare(
+          scope,
+          operation.operationId,
+        );
+        return reconcile(
+          cloudMessagesClient: _cloudMessagesClient,
+          storageDirectory: _storageDirectory,
+          expectedAccountFingerprint: scope.accountFingerprint,
+          expectedProtectedStoreIdentity: _protectedStoreIdentity,
+          requestUuid: requestUuid,
+          input: frb_api.CloudSyncPreparedMessageCreateInput(
+            localOperationId: operation.operationId,
+            logicalEntityKeyHash: operation.logicalEntityKeyHash,
+            protectedLeaseReference: leaseReference,
+            protectedPayloadReference: payloadReference,
+            payloadSha256: payloadSha256,
+            protectedServerRecordReference: payloadReference,
+            serverRecordIdHash: serverRecordIdHash,
+            appleOperationUuid: operationUuid,
+            attachmentParentContext: parentContext,
+            attachmentParentGroupProof:
+                await _readParentGroupProofForPrepare(
+                  scope,
+                  operation.operationId,
+                  parentContext,
+                ),
+          ),
+        );
+      },
     );
     final disposition = _requireOutboundReconcileDisposition(
       result,
@@ -2344,7 +2686,9 @@ final class FrbNativeProtectedCloudSyncBindings
         NativeProtectedCloudSyncWriteBindings,
         CloudKitWriterChatReconciliationBinding,
         NativeProtectedCloudSyncChatWriteBindings,
+        NativeProtectedCloudSyncAttachmentParentWriteBindings,
         NativeProtectedCloudSyncAttachmentWriteBindings,
+        NativeProtectedPreparedReleaseBindings,
         CloudKitWriterUploadReconciliationBinding,
         CloudKitWriterAttachmentReconciliationBinding {
   FrbNativeProtectedCloudSyncBindings({RustLibApi? api})
@@ -2446,6 +2790,35 @@ final class FrbNativeProtectedCloudSyncBindings
     requestTimeoutSeconds: BigInt.from(requestTimeout.inSeconds),
     inputs: inputs,
   );
+
+  @override
+  Future<frb_api.CloudSyncProtectedOutboundStageResult>
+  stageOutboundAttachmentParent({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required frb_api.CloudMessage messageHeaders,
+    required frb_api.CloudSyncNativeSendReceiptContext context,
+    required frb_api.CloudSyncAttachmentParentGroupProof? groupProof,
+  }) {
+    // The native parent stage takes only the client, the exact source
+    // receipt context, the headers, and the optional ephemeral group proof.
+    // Account/store/directory binding is enforced locally by
+    // [_validateAttachmentParentContext] before this point, so the extra
+    // seam parameters are intentionally not forwarded.
+    return _api.crateApiApiCloudSyncStageOutboundAttachmentParent(
+      cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+      messageHeaders: messageHeaders,
+      context: context,
+      attachmentParentGroupProof: groupProof,
+    );
+  }
+
+  @override
+  Future<bool> releasePreparedMessageCreate({
+    required frb_api.CloudSyncPreparedMessageCreateHandle handle,
+  }) => _api.crateApiApiCloudSyncReleasePreparedMessageCreate(handle: handle);
 
   @override
   Future<frb_api.CloudSyncOutboundReconcileResult> reconcileChatCreate({

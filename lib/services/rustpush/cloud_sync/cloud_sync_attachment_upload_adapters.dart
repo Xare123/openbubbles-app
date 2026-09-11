@@ -93,7 +93,7 @@ final class FrbCloudSyncAttachmentPlanSource {
     CloudSyncLocalSendSourceBinding source,
     CloudSyncNativeAuthSnapshot auth,
   ) async {
-    final context = _context(source, auth);
+    final context = receiptContext(source, auth);
     final entries = await api.cloudSyncInspectAttachmentSources(
       cloudMessagesClient: _client(auth),
       context: context,
@@ -117,7 +117,7 @@ final class FrbCloudSyncAttachmentPlanSource {
     required int startDateNanoseconds,
     required int createdDateNanoseconds,
   }) async {
-    final context = _context(source, auth);
+    final context = receiptContext(source, auth);
     if (sourcePath.isEmpty) {
       throw StateError('cloud_sync_attachment_plan_source_unavailable');
     }
@@ -151,7 +151,9 @@ final class FrbCloudSyncAttachmentPlanSource {
     return client;
   }
 
-  api.CloudSyncNativeSendReceiptContext _context(
+  /// Same exact context for inventory, upload plans and the containing Message.
+  /// Native callers still capture live auth and reopen the committed source.
+  api.CloudSyncNativeSendReceiptContext receiptContext(
     CloudSyncLocalSendSourceBinding source,
     CloudSyncNativeAuthSnapshot auth,
   ) {

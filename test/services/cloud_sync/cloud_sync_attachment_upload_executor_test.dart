@@ -141,12 +141,13 @@ void main() {
     }
   });
 
-  CloudSyncAttachmentUploadExecutionInput _input(int uploadId) =>
+  CloudSyncAttachmentUploadExecutionInput _input(int uploadId, {Set<String>? retainedKeys}) =>
       CloudSyncAttachmentUploadExecutionInput(
         uploadId: uploadId,
         originalAttachmentGuid: 'LOCAL-ATTACHMENT-A',
         sourcePath: '/tmp/attachment-source.bin',
         requestTimeoutSeconds: BigInt.from(30),
+        retainedSourceAttachmentKeys: retainedKeys,
       );
 
   CloudSyncAttachmentUploadExecutor _executorWithReader(
@@ -174,6 +175,42 @@ void main() {
         now: _time(6),
       )
       .id;
+  test('retained first attempt uses original plan after authority recovery and reopen', () async {
+    final id = _seedPrepared();
+    final original = uploads.read(id);
+    final originalEpoch = authority.read(_writerScope)!.epoch;
+    final permit = authority.issuePermit(_writerScope, expectedOwner: CloudKitWriterOwner.v2);
+    authority.markMutationUnknown(permit, now: _time(30));
+    authority.reconcileMutationFence(_writerScope,
+        owner: CloudKitWriterOwner.v2, fencedEpoch: originalEpoch, now: _time(31));
+    store.close();
+    store = await openStore(directory: directory.path);
+    provisionJournal();
+    auth = _auth(Object());
+    buildExecutor();
+    final result = await executor.execute(_input(id,
+        retainedKeys: {original.plan.logicalEntityKeyHash}));
+    expect(result.status, CloudAttachmentUploadExecutionStatus.completed);
+    expect(bridge.prepareCalls, 1);
+    expect(bridge.consumeCalls, 1);
+    expect(uploads.read(id).plan.protectedEnvelopeReference,
+        original.plan.protectedEnvelopeReference);
+    expect(store.box<CloudAttachmentUploadEntity>().get(id)!.writerEpoch, originalEpoch);
+    expect(store.box<CloudAttachmentUploadEntity>().count(), 1);
+  });
+
+  test('retained inventory cannot authorize an ambiguous byte retry', () async {
+    final id = _seedPrepared();
+    uploads.beginAttempt(id: id, attemptId: _attemptA, now: _time(7));
+    bridge.recoverReturnsNull = true;
+    final result = await executor.execute(_input(id,
+        retainedKeys: {uploads.read(id).plan.logicalEntityKeyHash}));
+    expect(result.status, CloudAttachmentUploadExecutionStatus.awaitingReceipt);
+    expect(bridge.prepareCalls, 0);
+    expect(bridge.consumeCalls, 0);
+    expect(uploads.read(id).attemptId, _attemptA);
+  });
+
   test(
     'fresh prepared upload completes in journal order exactly once',
     () async {

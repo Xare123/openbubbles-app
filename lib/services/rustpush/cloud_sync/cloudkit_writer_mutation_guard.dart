@@ -201,6 +201,8 @@ final class CloudKitWriterMutationGuard
     required String privateStorageDirectory,
     CloudSyncNativeAuthBinding? nativeAuthBinding,
     CloudKitWriterReconciliationBinding? reconciliationBinding,
+    this.readAttachmentParentContext,
+    this.readAttachmentParentGroupProof,
     DateTime Function()? clock,
   }) : _store = store,
        _readActiveClient = readActiveClient,
@@ -226,6 +228,8 @@ final class CloudKitWriterMutationGuard
     required CloudKitWriterOwnershipDecision buildDecision,
     CloudSyncNativeAuthBinding? nativeAuthBinding,
     CloudKitWriterReconciliationBinding? reconciliationBinding,
+    this.readAttachmentParentContext,
+    this.readAttachmentParentGroupProof,
     DateTime Function()? clock,
   }) : _store = store,
        _readActiveClient = readActiveClient,
@@ -252,6 +256,14 @@ final class CloudKitWriterMutationGuard
   final String _privateStorageDirectory;
   final CloudSyncNativeAuthBinding _nativeAuthBinding;
   final CloudKitWriterReconciliationBinding? _reconciliationBinding;
+  /// Resolves only the original journal source for a Message create. The
+  /// production caller holds the protected-store exclusion through readback.
+  final frb_api.CloudSyncNativeSendReceiptContext? Function(
+    CloudOutboxOperation operation,
+  )? readAttachmentParentContext;
+  final Future<frb_api.CloudSyncAttachmentParentGroupProof?> Function(
+    CloudOutboxOperation operation,
+  )? readAttachmentParentGroupProof;
   final ObjectBoxCloudKitWriterAuthority _authority;
   final DateTime Function() _clock;
 
@@ -297,6 +309,70 @@ final class CloudKitWriterMutationGuard
     required Object expectedClient,
     required CloudSyncAttachmentUploadJournal uploads,
     required int uploadId,
+  }) => _reconcileAttachmentUpload(
+    expectedClient: expectedClient, uploads: uploads, uploadId: uploadId,
+  );
+
+  /// Receipt-only entry before outbox draining. Null means no matching byte
+  /// fence, false means the matched receipt remains absent, true means exact
+  /// verification cleared that fence. No staging, upload or outbox admission.
+  /// Caller holds the interlock and tracked protected-store exclusion.
+  Future<bool?> reconcilePendingAttachmentUpload({
+    required Object expectedClient,
+    required CloudSyncAttachmentUploadJournal uploads,
+    int? onlyIntentId,
+  }) async {
+    CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);
+    if (!uploads.isBoundTo(_store, uploads.scope) ||
+        _activeMutation != null ||
+        !identical(expectedClient, _readActiveClient()) ||
+        (onlyIntentId != null && onlyIntentId <= 0)) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_upload_recovery_owner_mismatch',
+      );
+    }
+    final fence = _PersistentCloudKitMutationFence(
+      privateStorageDirectory: _privateStorageDirectory,
+    ).readForReconciliation();
+    if (fence == null) return null;
+
+    int? findMatch() {
+      int? matched;
+      final bindings = <String>{};
+      for (final id in uploads.readAttemptedForReconciliation(
+          onlyIntentId: onlyIntentId)) {
+        final binding = uploads.reconciliationBindingSha256(id);
+        if (!bindings.add(binding)) {
+          throw const CloudKitWriterAuthorityFailure(
+            'cloudkit_upload_recovery_identity_changed',
+          );
+        }
+        if (binding == fence.reconciliationBindingSha256) matched = id;
+      }
+      return matched;
+    }
+
+    final matched = findMatch();
+    if (matched == null) return null;
+    return _reconcileAttachmentUpload(
+      expectedClient: expectedClient, uploads: uploads, uploadId: matched,
+      expectedFenceEncoding: fence.encoded,
+      requireDiscovery: () {
+        if (findMatch() != matched) {
+          throw const CloudKitWriterAuthorityFailure(
+            'cloudkit_upload_recovery_identity_changed',
+          );
+        }
+      },
+    );
+  }
+
+  Future<bool> _reconcileAttachmentUpload({
+    required Object expectedClient,
+    required CloudSyncAttachmentUploadJournal uploads,
+    required int uploadId,
+    String? expectedFenceEncoding,
+    void Function()? requireDiscovery,
   }) async {
     CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);
     if (!uploads.isBoundTo(_store, uploads.scope) ||
@@ -323,6 +399,7 @@ final class CloudKitWriterMutationGuard
           'cloudkit_upload_recovery_identity_changed',
         );
       }
+      requireDiscovery?.call();
     }
 
     requireIdentity(identity);
@@ -333,6 +410,12 @@ final class CloudKitWriterMutationGuard
       privateStorageDirectory: _privateStorageDirectory,
     );
     final initialFence = persistentFence.readForReconciliation();
+    if (expectedFenceEncoding != null &&
+        initialFence?.encoded != expectedFenceEncoding) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_upload_recovery_fence_changed',
+      );
+    }
     void requireFence(_CloudKitMutationFenceRecord? fence) {
       final authority = _authority.read(scope);
       if (fence == null) {
@@ -528,6 +611,43 @@ final class CloudKitWriterMutationGuard
         ? (binding as CloudKitWriterAttachmentReconciliationBinding)
               .reconcileAttachmentCreate
         : binding.reconcileMessageCreate;
+    final parentContext = isChat || isAttachment
+        ? null
+        : readAttachmentParentContext?.call(operation);
+    final groupProof = isChat || isAttachment
+        ? null
+        : await readAttachmentParentGroupProof?.call(operation);
+    if ((!isChat && !isAttachment &&
+            parentContext != readAttachmentParentContext?.call(operation)) ||
+        (groupProof != null && parentContext == null)) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_reconciliation_parent_context_mismatch',
+      );
+    }
+    // Opening a retained group proof may await. Recheck account and mutation
+    // authority before using it, without clearing the unknown-outcome fence.
+    if (groupProof != null) {
+      await requireReconciliationAllowed(
+        owner: owner, expectedClient: expectedClient, operation: operation);
+      final afterProof = await _capture(expectedClient);
+      if (!identical(expectedClient, _readActiveClient()) ||
+          afterProof.accountFingerprint != identity.accountFingerprint ||
+          afterProof.nativeSessionId != identity.nativeSessionId ||
+          afterProof.protectedStoreIdentity != identity.protectedStoreIdentity) {
+        throw const CloudKitWriterAuthorityFailure(
+          'cloudkit_writer_reconciliation_identity_mismatch',
+        );
+      }
+    }
+    if (parentContext != null &&
+        (parentContext.storageDirectory != _privateStorageDirectory ||
+            parentContext.accountFingerprint != identity.accountFingerprint ||
+            parentContext.protectedStoreIdentity != identity.protectedStoreIdentity ||
+            parentContext.nativeSessionId != identity.nativeSessionId)) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_reconciliation_parent_context_mismatch',
+      );
+    }
     final result = await reconcile(
       cloudMessagesClient: expectedClient,
       storageDirectory: _privateStorageDirectory,
@@ -543,6 +663,8 @@ final class CloudKitWriterMutationGuard
         protectedServerRecordReference: operation.encryptedPayloadReference!,
         serverRecordIdHash: operation.serverRecordIdHash!,
         appleOperationUuid: operation.appleOperationUuid!,
+        attachmentParentContext: parentContext,
+        attachmentParentGroupProof: groupProof,
       ),
     );
     CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);

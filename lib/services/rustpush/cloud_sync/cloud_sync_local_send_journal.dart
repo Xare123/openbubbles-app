@@ -13,6 +13,7 @@ import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
+import 'cloud_sync_outbound_group_binding.dart';
 import 'cloud_sync_group_send_route.dart';
 import 'cloud_sync_reaction_send_identity.dart';
 import 'cloud_sync_local_send_source_binding.dart';
@@ -679,9 +680,11 @@ final class CloudSyncLocalSendJournal {
     required Store store,
     required ObjectBoxCloudKitWriterAuthority authority,
     required CloudKitWriterAuthoritySnapshot authoritySnapshot,
+    String Function(int intentId, String? retainedProof)? attachmentParentReadback,
   }) : _store = store,
        _authority = authority,
        _binding = authoritySnapshot,
+       _attachmentParentReadback = attachmentParentReadback,
        _intents = store.box<CloudSyncLocalSendIntentEntity>(),
        _messages = store.box<Message>() {
     if (!authority.isBoundToStore(store)) {
@@ -694,6 +697,9 @@ final class CloudSyncLocalSendJournal {
   final CloudKitWriterAuthoritySnapshot _binding;
   final Box<CloudSyncLocalSendIntentEntity> _intents;
   final Box<Message> _messages;
+  // Synchronous inside the caller's Store transaction. Null proof captures
+  // the native inventory; nonnull proof must be revalidated, never replaced.
+  final String Function(int intentId, String? retainedProof)? _attachmentParentReadback;
 
   bool isBoundToStore(Store store) => identical(store, _store);
 
@@ -1281,6 +1287,92 @@ final class CloudSyncLocalSendJournal {
     return readProtectedSource(intentId: intent.id, currentAuth: currentAuth);
   });
 
+  /// Resolve the retained source for an already-adopted Message operation.
+  /// The outbox validates its complete adoption binding before dispatch; the
+  /// native open also binds this source's GUID to the exact protected Message.
+  CloudSyncLocalSendSourceBinding? readAdoptedAttachmentSource({
+    required String operationId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    final intent = _adoptedIntentForOperation(operationId);
+    if (intent == null) return null;
+    // Retained-epoch evidence read: decode the already-validated row instead
+    // of re-entering the current-epoch source reader.
+    return _retainedProtectedSource(intent, currentAuth);
+  });
+
+  /// Resolve the original adopted Chat dependency for an already-admitted
+  /// Message operation, for group native reopening under the unknown fence.
+  /// Reads only the durable admitted binding, never the mutable Message, so
+  /// a locally deleted Message does not remove the adopted dependency.
+  /// Returns the unwrapped v4 Chat string (v1 direct / v3 group). A missing
+  /// intent, or an adopted intent without an attachment source (ordinary
+  /// plaintext/reaction sends), returns null; a malformed wrapper throws.
+  String? readAdoptedAttachmentChatDependency({
+    required String operationId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    final intent = _adoptedIntentForOperation(operationId);
+    if (intent == null) return null;
+    // Ordinary plaintext/reaction adoptions carry no attachment source. The
+    // runtime consults this reader for every Message operation, so they
+    // return null instead of throwing on their non-v4 binding.
+    final encodedSource = intent.protectedSourceBinding;
+    if (encodedSource == null) return null;
+    final origin = CloudSyncLocalSendSourceBinding.decode(encodedSource);
+    origin.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+    );
+    final encoded = intent.admittedChatBinding;
+    dynamic wrapper;
+    try {
+      wrapper = jsonDecode(encoded ?? 'null');
+    } on FormatException {
+      throw StateError('cloud_sync_local_send_adoption_changed');
+    }
+    if (wrapper is! List ||
+        wrapper.length != 3 ||
+        wrapper[0] != 4 ||
+        wrapper[1] is! String ||
+        wrapper[2] is! String) {
+      throw StateError('cloud_sync_local_send_adoption_changed');
+    }
+    dynamic chat;
+    try {
+      chat = jsonDecode(wrapper[1] as String);
+    } on FormatException {
+      throw StateError('cloud_sync_local_send_adoption_changed');
+    }
+    if (chat is! List ||
+        chat.isEmpty ||
+        ((chat[0] != 1 || chat.length != 9) &&
+            (chat[0] != 3 || chat.length != 11))) {
+      throw StateError('cloud_sync_local_send_adoption_changed');
+    }
+    return wrapper[1] as String;
+  });
+
+  /// Shared exact lookup for already-adopted Message operations. Verifies the
+  /// current bound owner, then reads the retained row (which may predate the
+  /// binding epoch), and still binds the exact operation ID and adopted
+  /// state. No fresh-write authority: callers add only read-scoped checks.
+  CloudSyncLocalSendIntentEntity? _adoptedIntentForOperation(
+    String operationId,
+  ) {
+    _verifyLocalOwnership();
+    final found = _readUnique(_intents.query(
+      CloudSyncLocalSendIntentEntity_.admittedOperationId.equals(operationId)));
+    if (found == null) return null;
+    final intent = _readRetainedIntent(found.id);
+    if (intent.state != 2 || intent.admittedOperationId != operationId) {
+      throw StateError('cloud_sync_local_send_adopted_operation_missing');
+    }
+    return intent;
+  }
+
   /// Called inside the upload journal's transaction, with the same Store.
   /// A pending send or a protected source alone is never upload authority.
   ({int writerEpoch, CloudSyncLocalSendSourceBinding source})
@@ -1303,6 +1395,34 @@ final class CloudSyncLocalSendJournal {
       intentId: intentId,
       currentAuth: currentAuth,
     );
+    if (source == null) {
+      throw StateError('cloud_sync_local_send_protected_source_missing');
+    }
+    return (writerEpoch: intent.writerEpoch, source: source);
+  }
+
+  /// Retained-epoch counterpart of [requireConfirmedAttachmentUploadOrigin]
+  /// for resume paths (recovery drains, retained first attempts). Identical
+  /// checks except the row may predate the binding epoch; the binding itself
+  /// still tracks the live owner via the caller's ownership checks. Fresh
+  /// preparation keeps using the strict version.
+  ({int writerEpoch, CloudSyncLocalSendSourceBinding source})
+  requireRetainedAttachmentUploadOrigin({
+    required Store transactionStore,
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) {
+    if (!identical(transactionStore, _store)) {
+      throw StateError('cloud_sync_local_send_adoption_store_mismatch');
+    }
+    _verifyLocalOwnership();
+    final intent = _readRetainedIntent(intentId);
+    if (intent.state != 1 && intent.state != 2) {
+      throw StateError('cloud_sync_local_send_not_ready');
+    }
+    _requireIdsConfirmation(intent);
+    if (intent.state == 1) _validatedMessage(intent);
+    final source = _retainedProtectedSource(intent, currentAuth);
     if (source == null) {
       throw StateError('cloud_sync_local_send_protected_source_missing');
     }
@@ -1800,6 +1920,13 @@ final class CloudSyncLocalSendJournal {
                     .and(
                       CloudSyncLocalSendIntentEntity_.writerEpoch.equals(
                         _binding.epoch,
+                      ).or(
+                        CloudSyncLocalSendIntentEntity_.writerEpoch
+                            .greaterThan(0)
+                            .and(CloudSyncLocalSendIntentEntity_.writerEpoch
+                                .lessThan(_binding.epoch))
+                            .and(CloudSyncLocalSendIntentEntity_
+                                .protectedSourceBinding.notNull()),
                       ),
                     )
                     .and(CloudSyncLocalSendIntentEntity_.state.equals(1))
@@ -1826,7 +1953,7 @@ final class CloudSyncLocalSendJournal {
   CloudSyncLocalSendAdmissionSource readForAdmission(int intentId) =>
       _store.runInTransaction(TxMode.read, () {
         _verifyLocalOwnership();
-        final intent = _readBoundIntent(intentId);
+        final intent = _readEvidenceIntent(intentId);
         if (intent.state != 1 && intent.state != 2) {
           throw StateError('cloud_sync_local_send_not_ready');
         }
@@ -1922,7 +2049,7 @@ final class CloudSyncLocalSendJournal {
     required String expectedSourceSha256,
   }) {
     _verifyLocalOwnership();
-    final intent = _readBoundIntent(intentId);
+    final intent = _readEvidenceIntent(intentId);
     if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(expectedSourceSha256) ||
         intent.sourceSha256 != expectedSourceSha256 ||
         (intent.state != 1 && intent.state != 2 && intent.state != 3)) {
@@ -1940,7 +2067,7 @@ final class CloudSyncLocalSendJournal {
         if (!now.isUtc || now.millisecondsSinceEpoch <= 0) {
           throw StateError('cloud_sync_local_send_time_invalid');
         }
-        final intent = _readBoundIntent(intentId);
+        final intent = _readEvidenceIntent(intentId);
         if (intent.state != 1) {
           throw StateError('cloud_sync_local_send_not_ready');
         }
@@ -1959,7 +2086,16 @@ final class CloudSyncLocalSendJournal {
     CloudSyncScope scope,
     CloudSyncLocalSendAdmissionSource expected, {
     bool adopting = false,
+    bool retainedAttachmentResume = false,
   }) => _store.runInTransaction(TxMode.read, () {
+    if (retainedAttachmentResume) {
+      return _readRetainedAttachmentResume(
+        transactionStore,
+        scope,
+        expected,
+        adopting: adopting,
+      ).message;
+    }
     _requireCreateAuthority(transactionStore, scope);
     final intent = _readBoundIntent(expected.intentId);
     if (intent.state != 1 || !expected._matches(intent)) {
@@ -1980,11 +2116,22 @@ final class CloudSyncLocalSendJournal {
     CloudSyncLocalSendAdmissionSource expected,
   ) => _store.runInTransaction(TxMode.read, () {
     _verifyLocalOwnership();
-    final intent = _readBoundIntent(expected.intentId);
+    final intent = _readRetainedIntent(expected.intentId);
     if (!expected._matches(intent)) {
       throw StateError('cloud_sync_local_send_adoption_changed');
     }
     _requireIdsConfirmation(intent);
+    if (intent.protectedSourceBinding != null) {
+      dynamic dependency;
+      try {
+        dependency = jsonDecode(intent.admittedChatBinding ?? 'null');
+      } on FormatException { dependency = null; }
+      if (dependency is! List || dependency.length != 3 ||
+          dependency[0] != 4 || dependency[2] is! String) {
+        throw StateError('cloud_sync_attachment_parent_readback_required');
+      }
+      requireAttachmentParentReadback(expected, dependency[2] as String);
+    }
   });
 
   static void _requireIdsConfirmation(CloudSyncLocalSendIntentEntity intent) {
@@ -2212,13 +2359,28 @@ final class CloudSyncLocalSendJournal {
   void adoptInOutboxTransaction(
     Store transactionStore,
     CloudSyncLocalSendAdmissionSource expected,
-    CloudOutboxOperation operation,
-  ) {
+    CloudOutboxOperation operation, {
+    bool retainedAttachmentResume = false,
+  }) {
     if (!identical(transactionStore, _store)) {
       throw StateError('cloud_sync_local_send_adoption_store_mismatch');
     }
     _verifyLocalOwnership();
-    final intent = _readBoundIntent(expected.intentId);
+    final CloudSyncLocalSendIntentEntity intent;
+    final Message message;
+    if (retainedAttachmentResume) {
+      final resume = _readRetainedAttachmentResume(
+        transactionStore,
+        operation.scope,
+        expected,
+        adopting: true,
+      );
+      intent = resume.intent;
+      message = resume.message;
+    } else {
+      intent = _readBoundIntent(expected.intentId);
+      message = _validatedMessage(intent);
+    }
     if (!expected._matches(intent) ||
         intent.state != 1 ||
         operation.scope.accountFingerprint != intent.accountFingerprint ||
@@ -2240,13 +2402,24 @@ final class CloudSyncLocalSendJournal {
       throw StateError('cloud_sync_local_send_adoption_changed');
     }
     _requireIdsConfirmation(intent);
-    final chatBinding = requireCloudSyncLocalSendDependencies(
+    var chatBinding = requireCloudSyncLocalSendDependencies(
       store: _store,
       messageScope: operation.scope,
-      message: _validatedMessage(intent),
+      message: message,
       readConfirmedLocalParent: (parent) =>
           readConfirmedParentDependency(_store, operation.scope, parent),
     );
+    if (intent.protectedSourceBinding != null) {
+      final reader = _attachmentParentReadback;
+      if (reader == null) {
+        throw StateError('cloud_sync_attachment_parent_readback_required');
+      }
+      final proof = reader(intent.id, null);
+      if (proof.isEmpty || proof.length > 60000) {
+        throw StateError('cloud_sync_attachment_parent_readback_invalid');
+      }
+      chatBinding = jsonEncode([4, chatBinding, proof]);
+    }
     intent
       ..state = 2
       ..admittedOperationId = operation.operationId
@@ -2256,6 +2429,17 @@ final class CloudSyncLocalSendJournal {
         chatBinding: chatBinding,
         protectedSourceBinding: intent.protectedSourceBinding,
       );
+    if (retainedAttachmentResume) {
+      // Retained evidence is not itself current permission: recheck the
+      // stable writer permit immediately before persisting the adoption.
+      final permit = _authority.issuePermit(
+        _binding.scope,
+        expectedOwner: CloudKitWriterOwner.v2,
+      );
+      if (permit.epoch != _binding.epoch) {
+        throw StateError('cloud_sync_local_send_owner_changed');
+      }
+    }
     _intents.put(intent);
   }
 
@@ -2268,7 +2452,7 @@ final class CloudSyncLocalSendJournal {
       throw StateError('cloud_sync_local_send_adoption_store_mismatch');
     }
     _verifyLocalOwnership();
-    final intent = _readBoundIntent(expected.intentId);
+    final intent = _readRetainedIntent(expected.intentId);
     if (!expected._matches(intent) ||
         intent.state != 2 ||
         operation == null ||
@@ -2291,6 +2475,59 @@ final class CloudSyncLocalSendJournal {
     }
   });
 
+  /// Called for v4 dependency validation at dispatch and later recovery. The
+  /// wrapper is already covered by the immutable operation binding. Recheck
+  /// the journal identity before consulting the exact child-readback proof.
+  void requireAttachmentParentReadback(
+    CloudSyncLocalSendAdmissionSource expected,
+    String proof,
+  ) {
+    _verifyLocalOwnership();
+    final intent = _readRetainedIntent(expected.intentId);
+    final reader = _attachmentParentReadback;
+    if (!expected._matches(intent) || intent.protectedSourceBinding == null ||
+        reader == null || reader(intent.id, proof) != proof) {
+      throw StateError('cloud_sync_attachment_parent_readback_required');
+    }
+  }
+
+  /// Fresh group-dependency pin for attachment parents, called before stage
+  /// and before adoption after awaits. Revalidates the state-1 source, then
+  /// requires an attachment source on a group message, and requires the
+  /// currently restored group binding to equal the expected nonnull v3
+  /// binding, so a changed Chat fails closed. Synchronous read transaction
+  /// on the bound store; no store accessor is exposed.
+  void requireFreshAttachmentGroupDependency(
+    CloudSyncScope scope,
+    CloudSyncLocalSendAdmissionSource source,
+    String? expectedBinding, {
+    bool retainedAttachmentResume = false,
+  }) => _store.runInTransaction(TxMode.read, () {
+    final message = validateReadyForCreate(
+      _store,
+      scope,
+      source,
+      retainedAttachmentResume: retainedAttachmentResume,
+    );
+    if (source.protectedSourceBinding == null) {
+      throw StateError('cloud_sync_local_send_protected_source_missing');
+    }
+    if (expectedBinding == null) {
+      throw StateError('cloud_sync_local_send_adoption_changed');
+    }
+    if (message.chat.target?.style != 43) {
+      throw StateError('cloud_sync_local_send_adoption_changed');
+    }
+    final current = requireCloudSyncRestoredGroupChat(
+      store: _store,
+      messageScope: scope,
+      message: message,
+    );
+    if (current != expectedBinding) {
+      throw StateError('cloud_sync_local_send_adoption_changed');
+    }
+  });
+
   /// Called only from the exact-readback callback inside the Store's receipt
   /// release transaction. Save confirmation and generic cleanup never call
   /// this. The immutable binding remains independently revalidated on use.
@@ -2307,7 +2544,10 @@ final class CloudSyncLocalSendJournal {
         operation.leaseExpiresAt != null) {
       throw StateError('cloud_sync_local_send_readback_not_ready');
     }
-    final intent = _readBoundIntent(source.intentId);
+    // Retained-epoch marker write on the already-verified release path: the
+    // adopted row may predate the binding epoch after writer recovery. The
+    // strict receipt conditions above are unchanged.
+    final intent = _readRetainedIntent(source.intentId);
     intent.confirmedReadbackBindingSha256 = intent.admittedBindingSha256;
     _intents.put(intent);
   }
@@ -2335,7 +2575,7 @@ final class CloudSyncLocalSendJournal {
     if (found == null || found.confirmedReadbackBindingSha256 == null) {
       return null;
     }
-    final intent = _readBoundIntent(found.id);
+    final intent = _readRetainedIntent(found.id);
     final row = _readUnique(
       _store.box<CloudOutboxOperationEntity>().query(
         CloudOutboxOperationEntity_.operationId.equals(
@@ -2434,6 +2674,126 @@ final class CloudSyncLocalSendJournal {
       throw StateError('cloud_sync_local_send_intent_changed');
     }
     return intent;
+  }
+
+  /// Row-scoped retained read for already-adopted evidence. Identical to
+  /// [_readBoundIntent] except the epoch gate: the row must be from a
+  /// positive, non-future epoch relative to this binding instead of exactly
+  /// this binding's epoch. Callers keep their existing [_verifyLocalOwnership]
+  /// (or create-authority) checks, so the binding itself still tracks the
+  /// live owner; only the retained row may predate it. Fresh IDs, sources,
+  /// preparation, and admission keep using [_readBoundIntent].
+  CloudSyncLocalSendIntentEntity _readRetainedIntent(int intentId) {
+    final intent = intentId > 0 ? _intents.get(intentId) : null;
+    if (intent == null ||
+        intent.accountFingerprint != _binding.scope.accountFingerprint ||
+        intent.writerEpoch <= 0 ||
+        intent.writerEpoch > _binding.epoch ||
+        intent.state < 0 ||
+        intent.state > 3 ||
+        !_hasConsistentAdoption(intent) ||
+        intent.intentKey !=
+            CloudSyncLocalSendIdentity._digest([
+              'cloud-sync-local-send-intent-v1',
+              intent.accountFingerprint,
+              intent.messageGuidHash,
+            ])) {
+      throw StateError('cloud_sync_local_send_intent_changed');
+    }
+    return intent;
+  }
+
+  /// Decode the protected source from an already-validated retained row
+  /// without re-entering the current-epoch source reader. Returns null when
+  /// the row carries no source; otherwise the origin must match the current
+  /// auth exactly.
+  CloudSyncLocalSendSourceBinding? _retainedProtectedSource(
+    CloudSyncLocalSendIntentEntity intent,
+    CloudSyncNativeAuthSnapshot currentAuth,
+  ) {
+    final encoded = intent.protectedSourceBinding;
+    if (encoded == null) return null;
+    final retained = CloudSyncLocalSendSourceBinding.decode(encoded);
+    retained.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+    );
+    return retained;
+  }
+
+  /// Evidence-row chooser for existing read names. Current-epoch rows take
+  /// the strict reader unchanged. Older rows take the retained reader and,
+  /// for state 1, additionally require a protected attachment source plus
+  /// current IDS confirmation; older rows in any other non-adopted state
+  /// refuse. Fresh plaintext flows keep the strict branch automatically.
+  CloudSyncLocalSendIntentEntity _readEvidenceIntent(int intentId) {
+    final peek = intentId > 0 ? _intents.get(intentId) : null;
+    if (peek == null ||
+        peek.writerEpoch <= 0 ||
+        peek.writerEpoch >= _binding.epoch) {
+      return _readBoundIntent(intentId);
+    }
+    final retained = _readRetainedIntent(intentId);
+    if (retained.state == 1) {
+      if (retained.protectedSourceBinding == null) {
+        throw StateError('cloud_sync_local_send_protected_source_missing');
+      }
+      _requireIdsConfirmation(retained);
+    } else if (retained.state != 2) {
+      throw StateError('cloud_sync_local_send_intent_changed');
+    }
+    return retained;
+  }
+
+  /// Retained-attachment resume validation backing the opt-in resume flag on
+  /// admission-shaped reads. Requires the exact store and message-zone
+  /// scope, the live owner, a positive non-future row epoch, state 1, an
+  /// exactly matching source, current IDS confirmation, a protected
+  /// attachment source, and the live message identity, plus a current
+  /// stable V2 permit. Fresh paths keep their existing strict validation.
+  ({CloudSyncLocalSendIntentEntity intent, Message message})
+  _readRetainedAttachmentResume(
+    Store transactionStore,
+    CloudSyncScope scope,
+    CloudSyncLocalSendAdmissionSource expected, {
+    bool adopting = false,
+  }) {
+    if (!identical(transactionStore, _store)) {
+      throw StateError('cloud_sync_local_send_adoption_store_mismatch');
+    }
+    if (scope.accountFingerprint != _binding.scope.accountFingerprint ||
+        scope.container != _binding.scope.container ||
+        scope.database != _binding.scope.database ||
+        scope.zone != 'messageManateeZone' ||
+        scope.streamKind != CloudSyncStreamKind.messages ||
+        scope.schemaVersion != cloudSyncSchemaVersion ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semantic) {
+      throw StateError('cloud_sync_local_send_scope_invalid');
+    }
+    _verifyLocalOwnership();
+    final intent = _readRetainedIntent(expected.intentId);
+    if (!expected._matches(intent) || intent.state != 1) {
+      throw StateError(
+        adopting
+            ? 'cloud_sync_local_send_adoption_changed'
+            : 'cloud_sync_local_send_not_ready',
+      );
+    }
+    _requireIdsConfirmation(intent);
+    if (intent.protectedSourceBinding == null) {
+      throw StateError('cloud_sync_local_send_protected_source_missing');
+    }
+    final message = _validatedMessage(intent);
+    final permit = _authority.issuePermit(
+      _binding.scope,
+      expectedOwner: CloudKitWriterOwner.v2,
+    );
+    if (permit.epoch != _binding.epoch) {
+      throw StateError('cloud_sync_local_send_owner_changed');
+    }
+    return (intent: intent, message: message);
   }
 
   static bool _hasConsistentAdoption(CloudSyncLocalSendIntentEntity intent) {
@@ -2636,6 +2996,8 @@ final class CloudSyncLocalSendJournal {
       messageScope: scope,
       binding: intent.admittedChatBinding,
       expectedChatId: message.chat.targetId,
+      requireAttachmentReadback: (proof) => requireAttachmentParentReadback(
+        CloudSyncLocalSendAdmissionSource._(intent, null), proof),
       readConfirmedLocalParent: (parent) =>
           readConfirmedParentDependency(_store, scope, parent),
     );

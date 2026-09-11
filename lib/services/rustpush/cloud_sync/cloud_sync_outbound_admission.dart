@@ -4,6 +4,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 
 import 'cloud_sync_local_send_journal.dart';
+import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_local_send_encoder.dart';
 import 'cloud_sync_group_send_route.dart';
 import 'cloud_sync_models.dart';
@@ -56,6 +57,10 @@ final class CloudSyncOutboundAdmissionCoordinator {
     required CloudSyncLocalSendJournal journal,
     required CloudSyncLocalSendAuthFence authFence,
     frb_api.CloudMessage Function(Message)? encodeMessage,
+    frb_api.CloudSyncNativeSendReceiptContext? attachmentParentContext,
+    frb_api.CloudSyncAttachmentParentGroupProof? attachmentParentGroupProof,
+    String? attachmentParentChatBinding,
+    bool retainedAttachmentResume = false,
   }) => _transport.runOutboundAdmissionExclusive(() async {
     if (scope.container != 'com.apple.messages.cloud' ||
         scope.database != 'private' ||
@@ -69,18 +74,29 @@ final class CloudSyncOutboundAdmissionCoordinator {
       if (source.accountFingerprint != scope.accountFingerprint) {
         throw StateError('cloud_sync_local_send_identity_changed');
       }
+      if (retainedAttachmentResume &&
+          (source.protectedSourceBinding == null || attachmentParentContext == null)) {
+        throw StateError('cloud_sync_local_send_protected_source_missing');
+      }
       if (source.admittedOperationId == null) {
         _store.requireFreshOutboundProjectionReady(
           scope,
           localSendSource: source,
           localSendJournal: journal,
+          retainedAttachmentResume: retainedAttachmentResume,
         );
       }
       final local = source.message;
+      final protectedSource = attachmentParentContext == null
+          ? null
+          : _requireAttachmentSource(source, attachmentParentContext);
       // Encoding is synchronous with source revalidation. Native staging may
       // await, so the persisted source is checked again inside adoption.
       final candidate = local == null
           ? null
+          : protectedSource != null
+          ? encodeCloudSyncLocalSendAttachmentHeaders(
+              local, source: protectedSource)
           : (encodeMessage ?? _encodeLocalMessage)(local);
       final chat = local?.chat.target;
       final groupRoute = chat == null
@@ -116,17 +132,40 @@ final class CloudSyncOutboundAdmissionCoordinator {
     if (candidate == null) {
       throw StateError('cloud_sync_local_send_not_ready');
     }
+    void validateParentGroup() {
+      if (attachmentParentGroupProof == null) {
+        if (attachmentParentChatBinding != null) {
+          throw StateError('cloud_sync_attachment_parent_group_proof_required');
+        }
+        return;
+      }
+      if (attachmentParentContext == null) {
+        throw StateError('cloud_sync_attachment_parent_group_proof_required');
+      }
+      journal.requireFreshAttachmentGroupDependency(
+          scope, source, attachmentParentChatBinding,
+          retainedAttachmentResume: retainedAttachmentResume);
+    }
+    await authFence.run(validateParentGroup,
+        accountFingerprint: scope.accountFingerprint);
     return _stageAndAdmit(
       scope,
       message: candidate,
+      attachmentParentContext: attachmentParentContext,
+      attachmentParentGroupProof: attachmentParentGroupProof,
       createdAt: source.createdAtUtc,
       adopt: (draft, mapping) => authFence.run(
-        () => _store.admitProtectedLocalSendCreate(
-          draft: draft,
-          recordMapping: mapping,
-          journal: journal,
-          source: source,
-        ),
+        () {
+          validateParentGroup();
+          return _store.admitProtectedLocalSendCreate(
+            draft: draft,
+            recordMapping: mapping,
+            journal: journal,
+            source: source,
+            attachmentParentChatBinding: attachmentParentChatBinding,
+            retainedAttachmentResume: retainedAttachmentResume,
+          );
+        },
         accountFingerprint: scope.accountFingerprint,
       ),
     );
@@ -139,20 +178,56 @@ final class CloudSyncOutboundAdmissionCoordinator {
             : encodeCloudSyncLocalSendPlainText(message)
       : encodeCloudSyncLocalSendReaction(message);
 
+  static CloudSyncLocalSendSourceBinding _requireAttachmentSource(
+    CloudSyncLocalSendAdmissionSource source,
+    frb_api.CloudSyncNativeSendReceiptContext context,
+  ) {
+    final encoded = source.protectedSourceBinding;
+    final native = context.sourceBinding;
+    if (encoded == null || native == null) {
+      throw StateError('cloud_sync_local_send_protected_source_missing');
+    }
+    final retained = CloudSyncLocalSendSourceBinding.decode(encoded);
+    retained.requireOrigin(
+      accountFingerprint: context.accountFingerprint,
+      protectedStoreIdentity: context.protectedStoreIdentity,
+      messageGuidHash: context.guidHash,
+      sourceSha256: native.sourceSha256,
+    );
+    if (source.accountFingerprint != context.accountFingerprint ||
+        retained.protectedReference != native.protectedReference ||
+        retained.leaseReference != native.leaseReference ||
+        retained.payloadSha256 != native.payloadSha256 ||
+        BigInt.from(retained.payloadLength) != native.payloadLength) {
+      throw StateError('cloud_sync_local_send_receipt_source_changed');
+    }
+    return retained;
+  }
+
   Future<CloudOutboxOperation> _stageAndAdmit(
     CloudSyncScope scope, {
     required frb_api.CloudMessage message,
     required DateTime createdAt,
+    frb_api.CloudSyncNativeSendReceiptContext? attachmentParentContext,
+    frb_api.CloudSyncAttachmentParentGroupProof? attachmentParentGroupProof,
     required Future<CloudOutboxOperation> Function(
       CloudOutboxDraft,
       CloudRecordMapEntry,
     )
     adopt,
   }) async {
-    final stage = await _transport.stageOutboundMessage(
-      scope,
-      message: message,
-    );
+    final transport = _transport;
+    final CloudSyncProtectedOutboundStageData stage;
+    if (attachmentParentContext != null) {
+      if (transport is! CloudSyncOutboundAttachmentParentStagingTransport) {
+        throw StateError('cloud_sync_attachment_parent_transport_required');
+      }
+      stage = await transport.stageOutboundAttachmentParent(
+        scope, messageHeaders: message, context: attachmentParentContext,
+        groupProof: attachmentParentGroupProof);
+    } else {
+      stage = await transport.stageOutboundMessage(scope, message: message);
+    }
     final draft = CloudOutboxDraft(
       scope: scope,
       logicalEntityKeyHash: stage.logicalEntityKeyHash,

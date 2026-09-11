@@ -12,11 +12,13 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_inte
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
+import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'cloud_sync_test_helpers.dart';
 import 'cloud_sync_restored_chat_test_fixture.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart';
 
 final class _ConsumerExclusion implements CloudKitOperationExclusion {
   @override
@@ -31,6 +33,11 @@ final class _ConsumerExclusion implements CloudKitOperationExclusion {
 }
 
 void main() {
+  setUpAll(() {
+    RustLib.initMock(api: _AttachmentParentBridge());
+  });
+  tearDownAll(RustLib.dispose);
+
   late Directory directory;
   late Store objectBox;
   late ObjectBoxCloudSyncStore store;
@@ -1961,6 +1968,13 @@ void main() {
           intent()
             ..protectedSourceBinding = sourceBinding(ref: 'P', lease: 'a'),
         );
+        // This test isolates immutable source/adoption binding, not child
+        // receipt verification (covered by the real upload-journal suite).
+        journal = CloudSyncLocalSendJournal(
+          store: objectBox, authority: authority,
+          authoritySnapshot: authority.read(writerScope)!,
+          attachmentParentReadback: (_, proof) => proof ?? 'synthetic-proof',
+        );
         transport.stages.add(_stage('a', 'P', 'L', 'S'));
         final operation = await admit();
         expect(intent().state, 2);
@@ -2065,6 +2079,648 @@ void main() {
         expect(encodes, 1);
       },
     );
+
+    group('attachment parent admission', () {
+      const attachmentGuid = '44444444-4444-4444-8444-444444444444';
+
+      Future<CloudSyncLocalSendSourceBinding> prepareAttachmentParent() async {
+        // Synthetic parent proof only for this bounded seam test. Real
+        // per-child readback proof is separately covered in
+        // attachment_parent_dependency_test.dart.
+        journal = CloudSyncLocalSendJournal(
+          store: objectBox,
+          authority: authority,
+          authoritySnapshot: authority.read(writerScope)!,
+          attachmentParentReadback: (_, proof) => proof ?? 'synthetic-proof',
+        );
+        final chat = local.chat.target!;
+        final attachment = Attachment(
+          guid: 'LOCAL-ATTACHMENT-A',
+          metadata: const {
+            'rustpush': '<attachment><id>A</id></attachment>',
+          },
+        );
+        objectBox.box<Attachment>().put(attachment);
+        final pending = Message(
+          guid: 'temp-attachment-parent',
+          stagingGuid: attachmentGuid,
+          text: ' ',
+          dateCreated: testEpoch,
+          isFromMe: true,
+          hasAttachments: true,
+          attributedBody: [
+            AttributedBody(
+              string: ' ',
+              runs: [
+                Run(
+                  range: const [0, 1],
+                  attributes: Attributes(
+                    attachmentGuid: attachment.guid,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+        pending.chat.target = chat;
+        pending.dbAttachments.add(attachment);
+        final identity = CloudSyncLocalSendIdentity.captureAttachment(
+          pending,
+          chat,
+          attachmentGuid,
+        )!;
+        journal.saveSubmission(
+          identity: identity,
+          newlyGeneratedGuid: true,
+          persistMessage: () => objectBox.box<Message>().put(pending),
+          now: testEpoch,
+        );
+        final source = CloudSyncLocalSendSourceBinding(
+          accountFingerprint: testAccountFingerprintA,
+          protectedStoreIdentity:
+              'obcs2.store.$testAccountFingerprintA',
+          messageGuidHash: identity.guidHash,
+          sourceSha256: identity.sourceSha256,
+          protectedReference: testProtectedReference('P'),
+          leaseReference: testProtectedLeaseReference('a'),
+          payloadSha256: testSha256('d'),
+          payloadLength: 512,
+        );
+        journal.adoptProtectedSource(
+          identity: identity,
+          source: source,
+          capturedAuth: currentAuth,
+          stillCurrent: () => true,
+          now: testEpoch,
+        );
+        attachment.guid = '${attachmentGuid}_0';
+        objectBox.box<Attachment>().put(attachment);
+        pending
+          ..guid = attachmentGuid
+          ..stagingGuid = null
+          ..text = ' '
+          ..attributedBody = [
+            AttributedBody(
+              string: ' ',
+              runs: [
+                Run(
+                  range: const [0, 1],
+                  attributes: Attributes(
+                    attachmentGuid: attachment.guid,
+                  ),
+                ),
+              ],
+            ),
+          ];
+        objectBox.box<Message>().put(pending);
+        final confirmed = journal.recordNativeSendConfirmation(
+          stableGuid: attachmentGuid,
+          succeeded: true,
+          capturedAuth: currentAuth,
+          stillCurrent: () => true,
+          now: testEpoch,
+          protectedSource: source,
+        )!;
+        journal.promoteIdsConfirmedDeferred(
+          intentId: confirmed,
+          currentAuth: currentAuth,
+          now: testEpoch,
+        );
+        intentId = confirmed;
+        local = pending;
+        return source;
+      }
+
+      frb_api.CloudSyncNativeSendReceiptContext parentContext(
+        CloudSyncLocalSendSourceBinding source,
+        String guidHash,
+      ) =>
+          frb_api.CloudSyncNativeSendReceiptContext(
+            storageDirectory: 'private-storage',
+            guidHash: guidHash,
+            accountFingerprint: testAccountFingerprintA,
+            protectedStoreIdentity:
+                'obcs2.store.$testAccountFingerprintA',
+            nativeSessionId: 'synthetic-session',
+            sourceBinding: frb_api.CloudSyncNativeSendSourceBinding(
+              sourceSha256: source.sourceSha256,
+              protectedReference: source.protectedReference,
+              leaseReference: source.leaseReference,
+              payloadSha256: source.payloadSha256,
+              payloadLength: BigInt.from(source.payloadLength),
+            ),
+          );
+
+      Future<CloudOutboxOperation> admitParent(
+        frb_api.CloudSyncNativeSendReceiptContext context,
+      ) =>
+          coordinator.admitLocalSend(
+            scope,
+            intentId: intentId,
+            journal: journal,
+            authFence: authFence,
+            attachmentParentContext: context,
+          );
+
+      test(
+        'attachment parent crosses journal, explicit stage, and adoption',
+        () async {
+          final source = await prepareAttachmentParent();
+          final context = parentContext(source, intent().messageGuidHash);
+          final stage = _stage('a', 'P', 'L', 'S');
+          transport.parentStages.add(stage);
+          transport.onCommit = () {
+            expect(intent().state, 2);
+            expect(intent().admittedOperationId, isNotNull);
+            expect(objectBox.box<CloudOutboxOperationEntity>().count(), 1);
+            expect(recordMapCountForZone(objectBox, scope.zone), 1);
+          };
+          final operation = await admitParent(context);
+          expect(transport.parentStageCalls, 1);
+          expect(transport.messageStageCalls, 0);
+          expect(
+            timeline,
+            ['recover', 'stage-parent', 'commit:${stage.leaseReference}'],
+          );
+          expect(transport.parentHeaders, hasLength(1));
+          expect(identical(transport.parentContexts.single, context), isTrue);
+          final headers = transport.parentHeaders.single;
+          expect(headers.guid, attachmentGuid);
+          final proto =
+              frb_api.decodeMessageproto(wrapped: headers.msgProto);
+          expect(proto.text, isNull);
+          expect(proto.attributedBody, isNull);
+          expect(proto.payloadData, isNull);
+          expect(operation.protectedLeaseReference, stage.leaseReference);
+          expect(
+            operation.encryptedPayloadReference,
+            stage.protectedEnvelopeReference,
+          );
+          final binding =
+              jsonDecode(intent().admittedChatBinding!) as List;
+          expect(binding[0], 4);
+          expect(binding[2], 'synthetic-proof');
+          expect(intent().state, 2);
+          final replay = await admitParent(context);
+          expect(replay.operationId, operation.operationId);
+          expect(transport.parentStageCalls, 1);
+          expect(transport.committed, [stage.leaseReference]);
+        },
+      );
+
+      test('missing protected context fails before staging', () async {
+        await prepareAttachmentParent();
+        final context = frb_api.CloudSyncNativeSendReceiptContext(
+          storageDirectory: 'private-storage',
+          guidHash: intent().messageGuidHash,
+          accountFingerprint: testAccountFingerprintA,
+          protectedStoreIdentity:
+              'obcs2.store.$testAccountFingerprintA',
+          nativeSessionId: 'synthetic-session',
+        );
+        transport.parentStages.add(_stage('a', 'P', 'L', 'S'));
+        await expectLater(
+          admitParent(context),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'code',
+              'cloud_sync_local_send_protected_source_missing',
+            ),
+          ),
+        );
+        expect(timeline, ['recover']);
+        expect(transport.parentStageCalls, 0);
+        expect(transport.messageStageCalls, 0);
+        expect(transport.committed, isEmpty);
+        expect(transport.rolledBack, isEmpty);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(intent().state, 1);
+        expect(intent().admittedOperationId, isNull);
+      });
+
+      test('retained resume cannot fall back to plaintext without native source context', () async {
+        await prepareAttachmentParent();
+        await expectLater(
+          coordinator.admitLocalSend(scope,
+              intentId: intentId, journal: journal, authFence: authFence,
+              retainedAttachmentResume: true),
+          throwsA(isA<StateError>().having((error) => error.message, 'code',
+              'cloud_sync_local_send_protected_source_missing')),
+        );
+        expect(transport.parentStageCalls, 0);
+        expect(transport.messageStageCalls, 0);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(intent().state, 1);
+      });
+
+      test('substituted context fails before staging', () async {
+        final source = await prepareAttachmentParent();
+        final context = frb_api.CloudSyncNativeSendReceiptContext(
+          storageDirectory: 'private-storage',
+          guidHash: intent().messageGuidHash,
+          accountFingerprint: testAccountFingerprintA,
+          protectedStoreIdentity:
+              'obcs2.store.$testAccountFingerprintA',
+          nativeSessionId: 'synthetic-session',
+          sourceBinding: frb_api.CloudSyncNativeSendSourceBinding(
+            sourceSha256: source.sourceSha256,
+            protectedReference: source.protectedReference,
+            leaseReference: testProtectedLeaseReference('b'),
+            payloadSha256: source.payloadSha256,
+            payloadLength: BigInt.from(source.payloadLength),
+          ),
+        );
+        transport.parentStages.add(_stage('a', 'P', 'L', 'S'));
+        await expectLater(
+          admitParent(context),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'code',
+              'cloud_sync_local_send_receipt_source_changed',
+            ),
+          ),
+        );
+        expect(timeline, ['recover']);
+        expect(transport.parentStageCalls, 0);
+        expect(transport.messageStageCalls, 0);
+        expect(transport.committed, isEmpty);
+        expect(transport.rolledBack, isEmpty);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(intent().state, 1);
+        expect(intent().admittedOperationId, isNull);
+      });
+
+      test(
+        'parent readback failure rolls back the explicit stage',
+        () async {
+          final source = await prepareAttachmentParent();
+          journal = CloudSyncLocalSendJournal(
+            store: objectBox,
+            authority: authority,
+            authoritySnapshot: authority.read(writerScope)!,
+            attachmentParentReadback: (_, __) => throw StateError(
+              'cloud_sync_attachment_parent_readback_required',
+            ),
+          );
+          final context = parentContext(source, intent().messageGuidHash);
+          final stage = _stage('a', 'P', 'L', 'S');
+          transport.parentStages.add(stage);
+          await expectLater(admitParent(context), throwsStateError);
+          expect(transport.parentStageCalls, 1);
+          expect(transport.messageStageCalls, 0);
+          expect(transport.rolledBack, [stage.leaseReference]);
+          expect(transport.committed, isEmpty);
+          expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+          expect(intent().state, 1);
+          expect(intent().admittedOperationId, isNull);
+        },
+      );
+
+      test(
+        'attachment source drift during staging rolls back',
+        () async {
+          final source = await prepareAttachmentParent();
+          final context = parentContext(source, intent().messageGuidHash);
+          final stage = _stage('a', 'P', 'L', 'S');
+          final entered = Completer<void>();
+          final release = Completer<void>();
+          transport
+            ..parentStages.add(stage)
+            ..stageEntered = entered
+            ..releaseStage = release;
+          final pending = admitParent(context);
+          final rejected = expectLater(pending, throwsA(isA<StateError>()));
+          await entered.future;
+          final box = objectBox.box<Attachment>();
+          final stored = box.getAll().singleWhere(
+            (row) => row.guid == '${attachmentGuid}_0',
+          );
+          stored.metadata = const {
+            'rustpush': '<changed/>',
+          };
+          box.put(stored);
+          release.complete();
+          await rejected;
+          expect(transport.parentStageCalls, 1);
+          expect(transport.committed, isEmpty);
+          expect(transport.rolledBack, [stage.leaseReference]);
+          expect(intent().state, 1);
+          expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+        },
+      );
+    });
+
+    group('group attachment parent admission', () {
+      const groupAttachmentGuid = '55555555-5555-4555-8555-555555555555';
+
+      Future<
+        ({
+          CloudSyncLocalSendSourceBinding source,
+          String chatBinding,
+          frb_api.CloudSyncNativeSendReceiptContext context,
+        })
+      >
+      prepareGroupAttachmentParent() async {
+        // Synthetic parent proof only for this bounded seam test. Real
+        // per-child readback proof is separately covered in
+        // attachment_parent_dependency_test.dart.
+        journal = CloudSyncLocalSendJournal(
+          store: objectBox,
+          authority: authority,
+          authoritySnapshot: authority.read(writerScope)!,
+          attachmentParentReadback: (_, proof) => proof ?? 'synthetic-proof',
+        );
+        final first = Handle(
+          address: 'group-a@example.com',
+          service: 'iMessage',
+          uniqueAddressAndService: 'group-a@example.com/iMessage',
+        );
+        final second = Handle(
+          address: '+15555550102',
+          service: 'iMessage',
+          uniqueAddressAndService: '+15555550102/iMessage',
+        );
+        objectBox.box<Handle>().putMany([first, second]);
+        final groupChat =
+            Chat(
+                guid: 'iMessage;+;restored-group',
+                chatIdentifier: 'restored-group',
+                usingHandle: 'mailto:sender@example.com',
+                style: 43,
+              )
+              ..cloudGuid = 'opaque-apple-group-id'
+              ..groupVersion = 9
+              ..handles.addAll([first, second]);
+        objectBox.box<Chat>().put(groupChat);
+        final attachment = Attachment(
+          guid: 'LOCAL-ATTACHMENT-G',
+          metadata: const {
+            'rustpush': '<attachment><id>G</id></attachment>',
+          },
+        );
+        objectBox.box<Attachment>().put(attachment);
+        final pending = Message(
+          guid: 'temp-group-attachment-parent',
+          stagingGuid: groupAttachmentGuid,
+          text: ' ',
+          dateCreated: testEpoch,
+          isFromMe: true,
+          hasAttachments: true,
+          attributedBody: [
+            AttributedBody(
+              string: ' ',
+              runs: [
+                Run(
+                  range: const [0, 1],
+                  attributes: Attributes(
+                    attachmentGuid: attachment.guid,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+        pending.chat.target = groupChat;
+        pending.dbAttachments.add(attachment);
+        final identity = CloudSyncLocalSendIdentity.captureAttachment(
+          pending,
+          groupChat,
+          groupAttachmentGuid,
+        )!;
+        journal.saveSubmission(
+          identity: identity,
+          newlyGeneratedGuid: true,
+          persistMessage: () => objectBox.box<Message>().put(pending),
+          now: testEpoch,
+        );
+        final source = CloudSyncLocalSendSourceBinding(
+          accountFingerprint: testAccountFingerprintA,
+          protectedStoreIdentity: 'obcs2.store.$testAccountFingerprintA',
+          messageGuidHash: identity.guidHash,
+          sourceSha256: identity.sourceSha256,
+          protectedReference: testProtectedReference('P'),
+          leaseReference: testProtectedLeaseReference('a'),
+          payloadSha256: testSha256('d'),
+          payloadLength: 512,
+        );
+        journal.adoptProtectedSource(
+          identity: identity,
+          source: source,
+          capturedAuth: currentAuth,
+          stillCurrent: () => true,
+          now: testEpoch,
+        );
+        attachment.guid = '${groupAttachmentGuid}_0';
+        objectBox.box<Attachment>().put(attachment);
+        pending
+          ..guid = groupAttachmentGuid
+          ..stagingGuid = null
+          ..text = ' '
+          ..attributedBody = [
+            AttributedBody(
+              string: ' ',
+              runs: [
+                Run(
+                  range: const [0, 1],
+                  attributes: Attributes(
+                    attachmentGuid: attachment.guid,
+                  ),
+                ),
+              ],
+            ),
+          ];
+        objectBox.box<Message>().put(pending);
+        final confirmed = journal.recordNativeSendConfirmation(
+          stableGuid: groupAttachmentGuid,
+          succeeded: true,
+          capturedAuth: currentAuth,
+          stillCurrent: () => true,
+          now: testEpoch,
+          protectedSource: source,
+        )!;
+        journal.promoteIdsConfirmedDeferred(
+          intentId: confirmed,
+          currentAuth: currentAuth,
+          now: testEpoch,
+        );
+        intentId = confirmed;
+        local = pending;
+        final chatScope = siblingScope('chatManateeZone');
+        final appliedSource = objectBox
+            .box<CloudInboxChangeEntity>()
+            .getAll()
+            .singleWhere((row) => row.zone == chatScope.zone);
+        for (final alias
+            in objectBox.box<CloudSemanticChatAliasEntity>().getAll().where(
+                  (row) => row.zone == chatScope.zone,
+                )) {
+          objectBox.box<CloudSemanticChatAliasEntity>().remove(alias.id);
+        }
+        for (final snapshot
+            in objectBox.box<CloudSemanticSnapshotEntity>().getAll().where(
+                  (row) => row.zone == chatScope.zone,
+                )) {
+          objectBox.box<CloudSemanticSnapshotEntity>().remove(snapshot.id);
+        }
+        for (final mapping
+            in objectBox.box<CloudRecordMapEntity>().getAll().where(
+                  (row) => row.zone == chatScope.zone,
+                )) {
+          objectBox.box<CloudRecordMapEntity>().remove(mapping.id);
+        }
+        await seedSyntheticRestoredChatProof(
+          objectBox: objectBox,
+          store: store,
+          chatScope: chatScope,
+          chat: groupChat,
+          appliedSource: appliedSource,
+          now: testEpoch,
+        );
+        final chatBinding = requireCloudSyncRestoredGroupChat(
+          store: objectBox,
+          messageScope: scope,
+          message: pending,
+        );
+        final context = frb_api.CloudSyncNativeSendReceiptContext(
+          storageDirectory: 'private-storage',
+          guidHash: intent().messageGuidHash,
+          accountFingerprint: testAccountFingerprintA,
+          protectedStoreIdentity: 'obcs2.store.$testAccountFingerprintA',
+          nativeSessionId: 'synthetic-session',
+          sourceBinding: frb_api.CloudSyncNativeSendSourceBinding(
+            sourceSha256: source.sourceSha256,
+            protectedReference: source.protectedReference,
+            leaseReference: source.leaseReference,
+            payloadSha256: source.payloadSha256,
+            payloadLength: BigInt.from(source.payloadLength),
+          ),
+        );
+        return (source: source, chatBinding: chatBinding, context: context);
+      }
+
+      Future<CloudOutboxOperation> admitGroupParent(
+        frb_api.CloudSyncNativeSendReceiptContext context,
+        String chatBinding,
+        frb_api.CloudSyncAttachmentParentGroupProof proof,
+      ) =>
+          coordinator.admitLocalSend(
+            scope,
+            intentId: intentId,
+            journal: journal,
+            authFence: authFence,
+            attachmentParentContext: context,
+            attachmentParentGroupProof: proof,
+            attachmentParentChatBinding: chatBinding,
+          );
+
+      test(
+        'group attachment parent pins the exact v3 binding inside v4',
+        () async {
+          final prepared = await prepareGroupAttachmentParent();
+          const proof = _FakeGroupProof();
+          final stage = _stage('a', 'P', 'L', 'S');
+          transport.parentStages.add(stage);
+          transport.onCommit = () {
+            expect(intent().state, 2);
+            expect(intent().admittedOperationId, isNotNull);
+            expect(objectBox.box<CloudOutboxOperationEntity>().count(), 1);
+            expect(recordMapCountForZone(objectBox, scope.zone), 1);
+          };
+          final operation = await admitGroupParent(
+            prepared.context,
+            prepared.chatBinding,
+            proof,
+          );
+          expect(transport.parentStageCalls, 1);
+          expect(transport.messageStageCalls, 0);
+          expect(
+            timeline,
+            ['recover', 'stage-parent', 'commit:${stage.leaseReference}'],
+          );
+          expect(transport.parentGroupProofs, hasLength(1));
+          expect(
+            identical(transport.parentGroupProofs.single, proof),
+            isTrue,
+          );
+          expect(
+            identical(transport.parentContexts.single, prepared.context),
+            isTrue,
+          );
+          final headers = transport.parentHeaders.single;
+          expect(headers.guid, groupAttachmentGuid);
+          final proto =
+              frb_api.decodeMessageproto(wrapped: headers.msgProto);
+          expect(proto.text, isNull);
+          expect(proto.attributedBody, isNull);
+          expect(proto.payloadData, isNull);
+          expect(operation.protectedLeaseReference, stage.leaseReference);
+          expect(
+            operation.encryptedPayloadReference,
+            stage.protectedEnvelopeReference,
+          );
+          final wrapper =
+              jsonDecode(intent().admittedChatBinding!) as List;
+          expect(wrapper[0], 4);
+          expect(wrapper[1], prepared.chatBinding);
+          expect(wrapper[2], 'synthetic-proof');
+          expect(jsonDecode(prepared.chatBinding)[0], 3);
+          final replay = await admitGroupParent(
+            prepared.context,
+            prepared.chatBinding,
+            proof,
+          );
+          expect(replay.operationId, operation.operationId);
+          expect(transport.parentStageCalls, 1);
+          expect(transport.committed, [stage.leaseReference]);
+        },
+      );
+
+      test(
+        'group latest-row mutation during staging rejects and rolls back',
+        () async {
+          final prepared = await prepareGroupAttachmentParent();
+          const proof = _FakeGroupProof();
+          final stage = _stage('a', 'P', 'L', 'S');
+          final entered = Completer<void>();
+          final release = Completer<void>();
+          transport
+            ..parentStages.add(stage)
+            ..stageEntered = entered
+            ..releaseStage = release;
+          final pending = admitGroupParent(
+            prepared.context,
+            prepared.chatBinding,
+            proof,
+          );
+          final rejected = expectLater(
+            pending,
+            throwsA(isA<CloudSyncFailure>()),
+          );
+          await entered.future;
+          final chatScope = siblingScope('chatManateeZone');
+          final latest = objectBox
+              .box<CloudInboxChangeEntity>()
+              .getAll()
+              .singleWhere((row) => row.zone == chatScope.zone);
+          objectBox.box<CloudInboxChangeEntity>().put(
+            latest
+              ..status = CloudInboxStatus.applied.index
+              ..isTombstone = true
+              ..changeType = CloudChangeType.delete.name,
+          );
+          release.complete();
+          await rejected;
+          expect(transport.parentStageCalls, 1);
+          expect(transport.committed, isEmpty);
+          expect(transport.rolledBack, [stage.leaseReference]);
+          expect(intent().state, 1);
+          expect(intent().admittedOperationId, isNull);
+          expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+        },
+      );
+    });
   });
 }
 
@@ -2202,11 +2858,32 @@ final class _FakeCloudMessage implements frb_api.CloudMessage {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-final class _StagingTransport implements CloudSyncOutboundStagingTransport {
+/// Fake opaque native group proof. The transport receives it opaquely like
+/// the real native proof; Dart never inspects it.
+final class _FakeGroupProof
+    implements frb_api.CloudSyncAttachmentParentGroupProof {
+  const _FakeGroupProof();
+
+  @override
+  void dispose() {}
+
+  @override
+  // No native resource backs this fake; it is always already released.
+  bool get isDisposed => true;
+}
+
+final class _StagingTransport
+    implements CloudSyncOutboundAttachmentParentStagingTransport {
   _StagingTransport(this.timeline);
 
   final List<String> timeline;
   final List<CloudSyncProtectedOutboundStageData> stages = [];
+  final List<CloudSyncProtectedOutboundStageData> parentStages = [];
+  final List<frb_api.CloudMessage> parentHeaders = [];
+  final List<frb_api.CloudSyncNativeSendReceiptContext> parentContexts = [];
+  final List<frb_api.CloudSyncAttachmentParentGroupProof?> parentGroupProofs = [];
+  int messageStageCalls = 0;
+  int parentStageCalls = 0;
   final List<String> committed = [];
   final List<String> rolledBack = [];
   Object? commitFailure;
@@ -2235,10 +2912,30 @@ final class _StagingTransport implements CloudSyncOutboundStagingTransport {
     CloudSyncScope scope, {
     required frb_api.CloudMessage message,
   }) async {
+    messageStageCalls++;
     timeline.add('stage');
     stageEntered?.complete();
     await releaseStage?.future;
     return stages.removeAt(0);
+  }
+
+  @override
+  Future<CloudSyncProtectedOutboundStageData> stageOutboundAttachmentParent(
+    CloudSyncScope scope, {
+    required frb_api.CloudMessage messageHeaders,
+    required frb_api.CloudSyncNativeSendReceiptContext context,
+    frb_api.CloudSyncAttachmentParentGroupProof? groupProof,
+  }) async {
+    parentStageCalls++;
+    timeline.add('stage-parent');
+    stageEntered?.complete();
+    await releaseStage?.future;
+    parentHeaders.add(messageHeaders);
+    parentContexts.add(context);
+    parentGroupProofs.add(groupProof);
+    return parentStages.isNotEmpty
+        ? parentStages.removeAt(0)
+        : stages.removeAt(0);
   }
 
   @override
@@ -2277,4 +2974,80 @@ final class _Protector implements CloudSyncProtector {
     required CloudSyncProtectedValueKind kind,
     required String ciphertext,
   }) async => ciphertext.substring('protected:'.length);
+}
+
+// Real Dart header composition, mocked only at the FFI boundary so the
+// attachment-parent admission test exercises genuine header encoding without
+// actual Rust or a local account.
+final class _AttachmentParentBridge implements RustLibApi {
+  @override
+  frb_api.SystemTime crateApiApiUtmNow() => _AttachmentParentTime();
+  @override
+  frb_api.GZipWrapperMessageProto crateApiApiEncodeMessageproto({
+    required frb_api.MessageProto messageproto,
+  }) =>
+      _AttachmentParentProto(messageproto);
+  @override
+  frb_api.MessageProto crateApiApiDecodeMessageproto({
+    required frb_api.GZipWrapperMessageProto wrapped,
+  }) =>
+      (wrapped as _AttachmentParentProto).value;
+  @override
+  frb_api.GZipWrapperMessageProto3 crateApiApiEncodeMessageproto3({
+    required frb_api.MessageProto3 messageproto3,
+  }) =>
+      _AttachmentParentProto3();
+  @override
+  frb_api.GZipWrapperMessageProto4 crateApiApiEncodeMessageproto4({
+    required frb_api.MessageProto4 messageproto4,
+  }) =>
+      _AttachmentParentProto4(messageproto4);
+  @override
+  frb_api.MessageProto4 crateApiApiDecodeMessageproto4({
+    required frb_api.GZipWrapperMessageProto4 wrapped,
+  }) =>
+      (wrapped as _AttachmentParentProto4).value;
+  @override
+  frb_api.MessageFlags crateApiApiMessageFlagsFromBitsTruncate({
+    required int val,
+  }) =>
+      _AttachmentParentFlags(val);
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _AttachmentParentTime implements frb_api.SystemTime {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _AttachmentParentProto
+    implements frb_api.GZipWrapperMessageProto {
+  _AttachmentParentProto(this.value);
+  final frb_api.MessageProto value;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _AttachmentParentProto3
+    implements frb_api.GZipWrapperMessageProto3 {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _AttachmentParentProto4
+    implements frb_api.GZipWrapperMessageProto4 {
+  _AttachmentParentProto4(this.value);
+  final frb_api.MessageProto4 value;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _AttachmentParentFlags implements frb_api.MessageFlags {
+  _AttachmentParentFlags(this.value);
+  final int value;
+  @override
+  int bits() => value;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

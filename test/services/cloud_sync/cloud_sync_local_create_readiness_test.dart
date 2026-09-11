@@ -4,9 +4,12 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_upload_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_consumer.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_selection.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
@@ -1821,6 +1824,395 @@ void main() {
       }
     },
   );
+const _attachGuidA = '33333333-3333-4333-8333-333333333333';
+const _attachGuidB = '44444444-4444-4433-8444-444444444444';
+const _attachAttemptA = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+
+  group('exact selection attachment admission', () {
+    late Directory directory;
+    late Store objectBox;
+    late ObjectBoxCloudSyncStore durable;
+    late CloudSyncLocalSendJournal journal;
+    late CloudSyncNativeAuthSnapshot auth;
+    late CloudSyncAttachmentUploadJournal uploads;
+
+    CloudSyncScope attachMessageScope() => CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: 'messageManateeZone',
+      streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: 2,
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+
+    CloudSyncScope attachUploadScope() => CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: 'attachmentManateeZone',
+      streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: 2,
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+
+    void attachBindJournal() {
+      final authority = ObjectBoxCloudKitWriterAuthority.forTest(
+        store: objectBox,
+        buildDecision: CloudKitWriterOwnership.resolve('v2'),
+      );
+      final writerScope =
+          CloudKitWriterScope(accountFingerprint: testAccountFingerprintA);
+      if (authority.read(writerScope) == null) {
+        final disabled = authority.initializeDisabled(writerScope, now: testEpoch);
+        authority.provisionInitialOwner(
+          writerScope,
+          owner: CloudKitWriterOwner.v2,
+          expectedEpoch: disabled.epoch,
+          evidence: const CloudKitWriterTransitionEvidence.forTest(
+            operationsQuiesced: true,
+            activeIdentityRevalidated: true,
+            legacyMutationQueues: LegacyMutationQueueDisposition.empty,
+          ),
+          now: testEpoch,
+        );
+      }
+      journal = CloudSyncLocalSendJournal(
+        store: objectBox,
+        authority: authority,
+        authoritySnapshot: authority.read(writerScope)!,
+      );
+    }
+
+    void attachSeedCheckpoints() {
+      final box = objectBox.box<CloudSyncCheckpointEntity>();
+      for (final zone in const [
+        'chatManateeZone',
+        'messageManateeZone',
+        'attachmentManateeZone',
+      ]) {
+        final scope = CloudSyncScope(
+          accountFingerprint: testAccountFingerprintA,
+          container: 'com.apple.messages.cloud',
+          database: 'private',
+          zone: zone,
+          streamKind: CloudSyncStreamKind.messages,
+          schemaVersion: 2,
+          persistenceLane: CloudSyncPersistenceLane.semantic,
+        );
+        box.put(
+          CloudSyncCheckpointEntity(
+            checkpointKey: cloudSyncPersistentScopeKey(scope),
+            accountFingerprint: testAccountFingerprintA,
+            container: scope.container,
+            database: scope.database,
+            zone: zone,
+            streamKind: 'messages',
+            schemaVersion: 2,
+            persistenceLane: 'semantic',
+            generation: 1,
+            lastSuccessfulAtMs: testEpoch.millisecondsSinceEpoch,
+            updatedAtMs: testEpoch.millisecondsSinceEpoch,
+          ),
+        );
+      }
+    }
+
+    int attachSeedIntent({
+      required String stableGuid,
+      required String attachmentGuid,
+    }) {
+      final attachment = Attachment(
+        guid: attachmentGuid,
+        metadata: const {'rustpush': '<attachment><id>A</id></attachment>'},
+      );
+      objectBox.box<Attachment>().put(attachment);
+      final chat = objectBox.box<Chat>().getAll().single;
+      final message = Message(
+        guid: 'local-$stableGuid',
+        text: ' ',
+        dateCreated: testEpoch,
+        isFromMe: true,
+        hasAttachments: true,
+        attributedBody: [
+          AttributedBody(
+            string: ' ',
+            runs: [
+              Run(range: const [0, 1], attributes: Attributes(attachmentGuid: attachmentGuid)),
+            ],
+          ),
+        ],
+        stagingGuid: stableGuid,
+      );
+      message.chat.target = chat;
+      message.dbAttachments.add(attachment);
+      final identity =
+          CloudSyncLocalSendIdentity.captureAttachment(message, chat, stableGuid)!;
+      journal.saveSubmission(
+        identity: identity,
+        newlyGeneratedGuid: true,
+        persistMessage: () => objectBox.box<Message>().put(message),
+        now: testEpoch.add(const Duration(seconds: 2)),
+      );
+      final source = CloudSyncLocalSendSourceBinding(
+        accountFingerprint: testAccountFingerprintA,
+        protectedStoreIdentity: 'obcs2.store.$testAccountFingerprintA',
+        messageGuidHash: identity.guidHash,
+        sourceSha256: identity.sourceSha256,
+        protectedReference: testProtectedReference('A'),
+        leaseReference: testProtectedLeaseReference('a'),
+        payloadSha256: testSha256('b'),
+        payloadLength: 512,
+      );
+      journal.adoptProtectedSource(
+        identity: identity,
+        source: source,
+        capturedAuth: auth,
+        stillCurrent: () => true,
+        now: testEpoch.add(const Duration(seconds: 3)),
+      );
+      attachment.guid = '${stableGuid}_0';
+      objectBox.box<Attachment>().put(attachment);
+      message
+        ..guid = stableGuid
+        ..stagingGuid = null
+        ..text = ' '
+        ..attributedBody = [
+          AttributedBody(
+            string: ' ',
+            runs: [
+              Run(range: const [0, 1], attributes: Attributes(messagePart: 0, attachmentGuid: attachment.guid)),
+            ],
+          ),
+        ];
+      objectBox.box<Message>().put(message);
+      final intentId = journal.recordNativeSendConfirmation(
+        stableGuid: stableGuid,
+        succeeded: true,
+        capturedAuth: auth,
+        stillCurrent: () => true,
+        now: testEpoch.add(const Duration(seconds: 4)),
+        protectedSource: source,
+      )!;
+      journal.promoteIdsConfirmedDeferred(
+        intentId: intentId,
+        currentAuth: auth,
+        now: testEpoch.add(const Duration(seconds: 5)),
+      );
+      return intentId;
+    }
+
+    CloudSyncProtectedOutboundStageData attachStage({
+      required String key,
+      required String record,
+      required String payload,
+      required String reference,
+      required String lease,
+    }) => CloudSyncProtectedOutboundStageData(
+      logicalEntityKeyHash: List.filled(43, key).join(),
+      protectedEnvelopeReference: testProtectedReference(reference),
+      payloadSha256: testSha256(payload),
+      serverRecordIdHash: List.filled(43, record).join(),
+      leaseReference: testProtectedLeaseReference(lease),
+    );
+
+    void attachAdoptAndAdmit(int intentId, {
+      required String key,
+      required String record,
+    }) {
+      final prepared = uploads.adoptPlan(
+        localSendIntentId: intentId,
+        plan: attachStage(key: key, record: record, payload: 'c', reference: 'E', lease: 'd'),
+        now: testEpoch.add(const Duration(seconds: 6)),
+      );
+      uploads.beginAttempt(
+        id: prepared.id,
+        attemptId: _attachAttemptA,
+        now: testEpoch.add(const Duration(seconds: 7)),
+      );
+      final uploaded = uploads.recordUploaded(
+        id: prepared.id,
+        attemptId: _attachAttemptA,
+        result: attachStage(key: key, record: record, payload: 'e', reference: 'F', lease: '1'),
+        now: testEpoch.add(const Duration(seconds: 8)),
+      );
+      durable.admitCompletedAttachmentUpload(
+        scope: attachUploadScope(),
+        uploads: uploads,
+        uploadId: uploaded.id,
+        createdAt: testEpoch.add(const Duration(seconds: 9)),
+      );
+    }
+
+    CloudSyncLocalSendExactSelection attachSelectionFor(int intentId) {
+      final intent =
+          objectBox.box<CloudSyncLocalSendIntentEntity>().get(intentId)!;
+      return CloudSyncLocalSendExactSelection(
+        intentId: intentId,
+        expectedRecipient: 'person@example.com',
+        expectedSourceSha256: intent.sourceSha256,
+      );
+    }
+
+    void attachValidate(CloudSyncLocalSendExactSelection selection,
+        {bool withJournal = true}) =>
+        selection.validate(
+          store: objectBox,
+          journal: journal,
+          durable: durable,
+          scope: attachMessageScope(),
+          uploadJournal: withJournal ? uploads : null,
+        );
+
+    Matcher attachStateError(String message) => isA<StateError>()
+        .having((error) => error.message, 'message', message);
+
+    setUp(() async {
+      directory = await Directory.systemTemp.createTemp(
+        'openbubbles-exact-selection-attachment-',
+      );
+      objectBox = await openStore(directory: directory.path);
+      attachBindJournal();
+      final handle = Handle(
+        address: 'person@example.com',
+        service: 'iMessage',
+        uniqueAddressAndService: 'person@example.com/iMessage',
+      );
+      objectBox.box<Handle>().put(handle);
+      final chat = Chat(
+        guid: 'iMessage;-;person@example.com',
+        chatIdentifier: 'person@example.com',
+        usingHandle: 'me@example.com',
+        isRpSms: false,
+        style: 45,
+        participants: [handle],
+      );
+      chat.handles.add(handle);
+      objectBox.box<Handle>().putMany(chat.handles.toList());
+      objectBox.box<Chat>().put(chat);
+      auth = CloudSyncNativeAuthSnapshot.fromNative(
+        nativeSessionId: 'synthetic-session',
+        accountFingerprint: testAccountFingerprintA,
+        protectedStoreIdentity: 'obcs2.store.$testAccountFingerprintA',
+        cloudMessagesClient: Object(),
+      );
+      attachSeedCheckpoints();
+      uploads = CloudSyncAttachmentUploadJournal(
+        store: objectBox,
+        localSends: journal,
+        scope: attachUploadScope(),
+        checkpointGeneration: 1,
+        currentAuth: auth,
+      );
+      durable = ObjectBoxCloudSyncStore(
+        store: objectBox,
+        protector: _Protector(),
+        clock: () => testEpoch,
+        localSendJournal: journal,
+        attachmentUploadJournal: uploads,
+      );
+    });
+
+    tearDown(() async {
+      if (!objectBox.isClosed()) objectBox.close();
+      if (directory.existsSync()) directory.deleteSync(recursive: true);
+    });
+
+    test('admits only the attachment operation owned by the selected intent',
+        () {
+      final intentA = attachSeedIntent(
+        stableGuid: _attachGuidA,
+        attachmentGuid: 'LOCAL-ATTACH-A',
+      );
+      attachAdoptAndAdmit(intentA, key: 'C', record: 'D');
+      final selection = attachSelectionFor(intentA);
+      attachValidate(selection);
+      attachValidate(selection);
+      expect(
+        objectBox.box<CloudOutboxOperationEntity>().getAll().length,
+        1,
+      );
+    });
+
+    test('rejects an attachment operation owned by another intent', () {
+      final intentA = attachSeedIntent(
+        stableGuid: _attachGuidA,
+        attachmentGuid: 'LOCAL-ATTACH-A',
+      );
+      final intentB = attachSeedIntent(
+        stableGuid: _attachGuidB,
+        attachmentGuid: 'LOCAL-ATTACH-B',
+      );
+      attachAdoptAndAdmit(intentB, key: 'G', record: 'H');
+      expect(
+        () => attachValidate(attachSelectionFor(intentA)),
+        throwsA(attachStateError('cloud_sync_local_send_unrelated_outbox')),
+      );
+    });
+
+    test('rejects a tampered child binding', () {
+      final intentA = attachSeedIntent(
+        stableGuid: _attachGuidA,
+        attachmentGuid: 'LOCAL-ATTACH-A',
+      );
+      attachAdoptAndAdmit(intentA, key: 'C', record: 'D');
+      attachValidate(attachSelectionFor(intentA));
+      final row =
+          objectBox.box<CloudOutboxOperationEntity>().getAll().single;
+      row.payloadSha256 = testSha256('f');
+      objectBox.box<CloudOutboxOperationEntity>().put(row);
+      expect(
+        () => attachValidate(attachSelectionFor(intentA)),
+        throwsA(attachStateError('cloud_sync_attachment_upload_adoption_changed')),
+      );
+    });
+
+    test('rejects an attachment row with no adopted upload', () {
+      final intentA = attachSeedIntent(
+        stableGuid: _attachGuidA,
+        attachmentGuid: 'LOCAL-ATTACH-A',
+      );
+      final scope = attachUploadScope();
+      objectBox.box<CloudOutboxOperationEntity>().put(
+        CloudOutboxOperationEntity(
+          operationId: CloudOperationIdentity.forInitialCreate(
+            scope: scope,
+            logicalEntityKeyHash: List.filled(43, 'C').join(),
+            payloadVersion: 1,
+          ),
+          scopeKey: cloudSyncPersistentScopeKey(scope),
+          accountFingerprint: testAccountFingerprintA,
+          zone: 'attachmentManateeZone',
+          logicalEntityKeyHash: List.filled(43, 'C').join(),
+          action: CloudOutboxAction.save.index,
+          checkpointGeneration: 1,
+          mutationRevision: 1,
+          encryptedPayloadRef: testProtectedReference('F'),
+          payloadSha256: testSha256('e'),
+          protectedLeaseReference: testProtectedLeaseReference('1'),
+          serverRecordIdHash: List.filled(43, 'D').join(),
+          createdAtMs: testEpoch.millisecondsSinceEpoch,
+          updatedAtMs: testEpoch.millisecondsSinceEpoch,
+        ),
+      );
+      expect(
+        () => attachValidate(attachSelectionFor(intentA)),
+        throwsA(attachStateError('cloud_sync_local_send_unrelated_outbox')),
+      );
+    });
+
+    test('rejects attachment rows when no upload journal is supplied', () {
+      final intentA = attachSeedIntent(
+        stableGuid: _attachGuidA,
+        attachmentGuid: 'LOCAL-ATTACH-A',
+      );
+      attachAdoptAndAdmit(intentA, key: 'C', record: 'D');
+      expect(
+        () => attachValidate(attachSelectionFor(intentA), withJournal: false),
+        throwsA(attachStateError('cloud_sync_local_send_unrelated_outbox')),
+      );
+    });
+  });
 }
 
 enum _Terminal { applied, retained }

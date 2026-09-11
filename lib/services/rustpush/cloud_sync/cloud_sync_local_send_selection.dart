@@ -6,6 +6,8 @@ import 'package:crypto/crypto.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
+import 'cloud_sync_attachment_upload_journal.dart';
+import 'cloud_sync_persistent_keys.dart';
 import 'objectbox_cloud_sync_store.dart';
 import 'objectbox_cloud_sync_preflight.dart';
 
@@ -42,6 +44,7 @@ final class CloudSyncLocalSendExactSelection {
   String? _chatOperationId;
   String? _chatOperationBinding;
   String? _messageOperationBinding;
+  final Map<String, String> _attachmentOperationBindings = {};
   final Map<String, String> _inertAuditRows = {};
 
   /// Only initial settled history or journal-proven held creates may be
@@ -76,6 +79,14 @@ final class CloudSyncLocalSendExactSelection {
     required CloudSyncLocalSendJournal journal,
     required ObjectBoxCloudSyncStore durable,
     required CloudSyncScope scope,
+    // Optional per-pass upload journal proving attachment-zone ownership.
+    // The selection is created before any per-pass journal exists and is
+    // retained across passes, so the journal arrives here with current
+    // per-pass authority instead of being captured at construction. Absent
+    // means every attachment row is rejected; the Attachment zone is never
+    // broadly admitted. Pinned attachment bindings live on the selection and
+    // therefore persist across passes.
+    CloudSyncAttachmentUploadJournal? uploadJournal,
   }) => store.runInTransaction(TxMode.read, () {
     if ((_boundStore != null && !identical(_boundStore, store)) ||
         !journal.isBoundToStore(store)) {
@@ -202,6 +213,22 @@ final class CloudSyncLocalSendExactSelection {
           throw StateError('cloud_sync_local_send_selection_changed');
         }
         selectedChat = row;
+      } else if (row.zone == 'attachmentManateeZone') {
+        // Attachment rows are never broadly admitted. Only an attachment
+        // operation adopted from this exact selected original source passes,
+        // proven through the per-pass upload journal below. Without a
+        // journal every attachment row is unrelated work.
+        final uploads = uploadJournal;
+        if (uploads == null) {
+          throw StateError('cloud_sync_local_send_unrelated_outbox');
+        }
+        _validateSelectedAttachmentRow(
+          store,
+          row,
+          scope: scope,
+          source: source,
+          uploads: uploads,
+        );
       } else {
         throw StateError('cloud_sync_local_send_unrelated_outbox');
       }
@@ -214,7 +241,10 @@ final class CloudSyncLocalSendExactSelection {
               (row) => row.operationId == source.admittedOperationId,
             )) ||
         (_chatOperationId != null &&
-            !rows.any((row) => row.operationId == _chatOperationId))) {
+            !rows.any((row) => row.operationId == _chatOperationId)) ||
+        _attachmentOperationBindings.keys.any(
+          (id) => !rows.any((row) => row.operationId == id),
+        )) {
       throw StateError('cloud_sync_local_send_selection_changed');
     }
     _boundStore ??= store;
@@ -233,6 +263,98 @@ final class CloudSyncLocalSendExactSelection {
     }
     return source;
   });
+
+  // Admits one attachment-zone row only when the upload journal proves it
+  // is the adopted final-save operation of an upload owned by this exact
+  // selected intent. Ownership is the upload owner-intent linkage
+  // (upload localSendIntentId equal to the selected intent id); integrity
+  // is requireAdoptedOperation over the exact result bindings. No GUID
+  // or body inference is consulted: a row without an adopted upload, an
+  // upload owned by another intent, or a tampered child binding fails.
+  void _validateSelectedAttachmentRow(
+    Store store,
+    CloudOutboxOperationEntity row, {
+    required CloudSyncScope scope,
+    required CloudSyncLocalSendAdmissionSource source,
+    required CloudSyncAttachmentUploadJournal uploads,
+  }) {
+    // The expected attachment scope is derived from the validated message
+    // scope, never trusted from the row or the journal. The persistent key
+    // covers account, container, database, zone, stream, schema, and lane,
+    // with explicit zone and account checks for a precise failure code.
+    final attachmentScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: 'attachmentManateeZone',
+      streamKind: scope.streamKind,
+      schemaVersion: scope.schemaVersion,
+      persistenceLane: scope.persistenceLane,
+    );
+    if (!uploads.isBoundTo(store, attachmentScope)) {
+      throw StateError('cloud_sync_local_send_unrelated_outbox');
+    }
+    if (row.accountFingerprint != source.accountFingerprint ||
+        row.accountFingerprint != attachmentScope.accountFingerprint ||
+        row.zone != 'attachmentManateeZone' ||
+        row.scopeKey != cloudSyncPersistentScopeKey(attachmentScope)) {
+      throw StateError('cloud_sync_local_send_unrelated_outbox');
+    }
+    final query = store
+        .box<CloudAttachmentUploadEntity>()
+        .query(
+          CloudAttachmentUploadEntity_.admittedOperationId.equals(
+            row.operationId,
+          ),
+        )
+        .build();
+    final CloudAttachmentUploadEntity? upload;
+    try {
+      upload = query.findUnique();
+    } finally {
+      query.close();
+    }
+    if (upload == null || upload.localSendIntentId != source.intentId) {
+      throw StateError('cloud_sync_local_send_unrelated_outbox');
+    }
+    uploads.requireAdoptedOperation(
+      _attachmentDomainOperation(row, attachmentScope),
+    );
+    final binding = _outboxBinding(row);
+    final pinned = _attachmentOperationBindings[row.operationId];
+    if (pinned != null && pinned != binding) {
+      throw StateError('cloud_sync_local_send_selection_changed');
+    }
+    _attachmentOperationBindings[row.operationId] = binding;
+  }
+
+  static CloudOutboxOperation _attachmentDomainOperation(
+    CloudOutboxOperationEntity row,
+    CloudSyncScope scope,
+  ) => CloudOutboxOperation(
+    scope: scope,
+    operationId: row.operationId,
+    logicalEntityKeyHash: row.logicalEntityKeyHash,
+    action: CloudOutboxAction.values[row.action],
+    payloadVersion: row.payloadVersion,
+    mutationRevision: row.mutationRevision,
+    checkpointGeneration: row.checkpointGeneration,
+    dependencyOperationIds:
+        (jsonDecode(row.dependencyOperationIdsJson) as List)
+            .whereType<String>(),
+    createdAt: DateTime.fromMillisecondsSinceEpoch(
+      row.createdAtMs,
+      isUtc: true,
+    ),
+    encryptedPayloadReference: row.encryptedPayloadRef,
+    payloadSha256: row.payloadSha256,
+    serverRecordIdHash: row.serverRecordIdHash,
+    protectedLeaseReference: row.protectedLeaseReference,
+    appleRequestUuid: row.appleRequestUuid,
+    appleOperationUuid: row.appleOperationUuid,
+    status: CloudOutboxStatus.values[row.state],
+    attemptCount: row.attemptCount,
+  );
 
   static String _outboxBinding(CloudOutboxOperationEntity row) => _digest([
     row.operationId, row.scopeKey, row.accountFingerprint, row.zone,

@@ -78,129 +78,49 @@ Current private request `qualification-20260910-03` is claimed: do not change
 it or send it again. The runtime is in `../windows-cloudkit-qualified-6abbeede2`;
 the older runtime and receipt remain rollback material.
 
-Source `955d8acad` adds exact-group qualification and the native attachment
-envelope core, not a functioning attachment uploader. GCE run `34505595606`
-passed all 389 native tests on T2D-32 (`app-rust-only`), including nine
-attachment-codec cases. Cleanup passed; independent inventories showed zero
-VMs and runner registrations. No APK or replacement Windows runtime was requested.
+### Current attachment-write boundary
 
-Source `11de45796` with rustpush `f041db67` passed isolated GCE runs
-`34508598558` (397 app Rust tests) and `34508602298` (265 rustpush tests).
-Both cleanup jobs passed; independent inventories returned zero VMs/runners.
-These prove randomized upload-plan recovery and validation components, not an
-end-to-end attachment send. Source `da428b635` then passed GCE `34517138488`:
-414 app-native tests, bridge reproducibility, and cleanup. Independent inventories
-returned zero instances/runners. Source staging, prepared-message validation and
-source-bound receipt recovery are qualified components. The current source now
-wires composer stage/adopt/commit and exact protected retry reconstruction.
-GCE `34521476151` compiled source `4164ea771` and passed 418 app-native tests.
-Its only failure was the expected bridge-drift gate; artifact `10170133961`
-was reviewed and imported. All 475 cases in the twelve targeted Dart suites
-passed against that bridge. Analyzer found zero errors and four pre-existing
-brace-style infos. Both cloud instance and runner inventories were empty after
-cleanup. Combined source `42647ee3a` passed GCE `34523305646`, including
-native tests and bridge reproducibility. Cleanup passed and both inventories
-returned zero. The actual CloudKit attachment uploader remains integration work.
+```text
+committed original IDS source
+  -> source-derived attachment inventory
+  -> retained upload plans (one original randomized plan per child)
+  -> durable byte-upload result
+  -> Attachment record save and exact readback
+  -> parent Message admission, save and exact readback
+```
 
-Current upload integration separates three states of evidence:
-`original IDS source -> durable byte-upload attempt/result -> final record-save
-outbox -> exact attachment readback -> parent message dependency`. A new
-content-free upload journal adds entity 34 and preserves every prior
-entity/property/index definition. Source `78a872dda` passed 419 app-native tests
-and bridge reproducibility in GCE `34526397409`; dependency `975015f` passed
-269 tests in `34526397036`. Both cleanup jobs passed, with zero VM/runner inventory.
-Parent then reproduced and fixed a real journal handoff bug: production IDs
-are `op1:<digest>`, not bare hashes. The journal now requires the exact Attachment
-initial-create identity; 221 targeted Dart cases passed. A shared Dart/Rust
-identity vector and record prepare/readback routes are added in the next
-candidate, along with version-2 protected plans retaining original HTTP/operation
-UUIDs. Version-1 plans stay readable but cannot invent new upload authority.
-Source `d8136c9b9` compiled and passed 428 app-native tests in GCE `34529635517`.
-Its expected bridge-drift failure produced artifact `10173280244`; all seven
-generated files were manifest/hash-verified and imported. No runtime was built.
-Both cleanup jobs passed and independent inventories were empty. Afterward,
-parent found the actual canonical-GUID constructor in `rustpush_service.dart`:
-initial reflection uses the explicit indexed-part index, or the current rendered
-attachment count, not MMCS `part`. The corrected source projects that same
-algorithm and rejects duplicate/missing final body references. This later
-correction, immutable-source integration and Dart routing await qualification.
-Source `04a0d6384` connects the pinned IDS envelope, reflected metadata
-and private immutable file to the native upload-plan staging API. It revalidates
-the same live account/store/container after preparation; the original randomized
-plan must be adopted before upload. Attachment record prepare, consume and exact
-unknown-outcome readback now route through Attachment-specific bindings in Dart
-and its mutation guard. GCE `34532764241` passed all 441 app-native cases. The
-expected bridge drift produced artifact `10174428804`; all seven files were
-manifest/hash-verified and imported. The earlier N2D attempt `34532630728` hit
-zone capacity exhaustion before compilation. Both cleanup jobs passed; independent
-inventories returned zero instances and runner registrations.
-The later local candidate atomically admits a completed upload, record mapping
-and Attachment-v1 outbox save, then revalidates its upload journal at dispatch.
-All 340 cases in eight targeted Dart suites passed against the imported bindings;
-the three changed journal/store/test files analyze cleanly. A store without the
-exact attachment-upload journal cannot lease these saves. Runtime injection of
-that journal and the byte-upload consumer still require integration.
-The next native candidate implements byte-upload prepare/consume/recover under
-the existing mutation fence, with an immutable verified file and original plan.
-A native exclusive claim precedes upload; encrypted completion is durable before
-Dart return and can reconstruct a lost result without another Apple request.
-Parent review corrected Unix rename overwrite, directory-symlink traversal and
-unbounded-read races in the worker receipt store. Run `34537334179` reached native compilation and found two
-optional failure-class mappings and an auto-opaque FRB result getter that tried
-to clone the single-use owner. The next candidate maps optional failures and
-makes the result non-opaque without making the owner cloneable. It also adds
-native completion inspection that creates no replacement envelope/lease, needed
-when Dart already retained the result. Source `0ef0b3099` compiled in isolated
-GCE run `34538305947` and passed all 457 Rust library tests. The sole failing
-gate was generated bridge drift. Artifact `10176572039` contained exactly the
-seven expected bridge files, which were hash-verified before and after import.
-All 386 cases in the eight combined Dart suites passed against those bindings,
-including late completion across writer recovery and exact fence discharge.
-An Astra read-only review found no concrete correctness bugs in that bounded
-recovery change. Cleanup passed; independent inventories showed zero VMs and
-runner registrations. These are component checks, not live attachment-send proof.
-The resume input now matches the persisted journal fields,
-which do not include the discarded transient envelope length.
-The ordinary runtime injects the attachment journal and drains Chat,
-Attachment, then Message queues with exact readback between queues. The upload
-executor and real guard/store adapters passed 195 combined targeted Dart tests.
-Review repairs cover auth drift around staging/consume/commit, original-plan
-pinning, unadopted-lease cleanup and unknown marking inside the persistent guard.
-Source `ef1d45cf2` passed all 475 Rust tests in GCE `34541849568`. This includes
-the native source inventory, UTF-16 body projection and canonical attachment
-identity repair: upload/final-save/readback now use the same owned `(message,
-part)` key as ingestion. Existing differently keyed plans remain retained,
-not silently relabeled. Only generated bridge drift failed; artifact
-`10177858701` supplied the seven reviewed/hash-verified bindings. Cleanup and
-independent VM/runner inventories passed. These are component checks, not a
-working end-to-end attachment writer. Original-plan coordination and source-bound
-header encoding passed 57 combined Dart cases (including existing plaintext and
-reaction regressions). The native plan adapter and coordinator passed 10 cases
-through the generated API mock, with clean targeted analysis. Native protected
-parent staging/prepare/readback now has a reviewed candidate and nine synthetic
-tests pending GCE execution. It rebuilds only from the retained IDS source,
-uses the existing bounded decoder for comparison, and retains the original
-envelope bytes for readback. Actual runtime composition remains incomplete.
-Native restored-group parent
-routing still needs its own verified chat binding, not an inferred direct route.
-Completed upload fence recovery is implemented and tested. The epoch counterexample is
-now explicit: write ambiguity advances
-the writer from E to E+1, then E+2 after reconciliation, while the upload journal
-previously required its original source epoch to equal the current permit epoch.
-Recovery must validate retained original evidence separately from fresh write
-authority; do not rewrite the old epoch or infer another upload from no receipt.
-Metadata is derived from
-the pinned body's projection, never a caller-supplied GUID guess. Neither
-upload success nor a missing record proves
-parent-message synchronization.
+| Boundary | Evidence / next gate |
+| --- | --- |
+| Canonical identity | Native upload, final record and readback use the same owned `(message, part)` key as ingestion. Do not rekey older retained plans. |
+| Native direct parent | Source `787869904`, GCE `34544585837`: **484 Rust tests passed**. Included in later native qualification below. |
+| App integration | Candidate connects plan reuse, upload execution, ordered record drain and parent admission. A versioned journal proof requires every source-derived child to pass readback. Save acknowledgments and generic receipt cleanup cannot stand in for readback. |
+| Local qualification | Combined admission/journal/dependency/transport/composition suite: 278 passed. Timeout/reconciliation/transport subset: 42 passed after parent review. These overlap and do not establish live-account behavior. |
+| Timeout correction | Release tracked preparation before draining record saves. Otherwise a save timeout can quiesce the outer operation that is waiting on that save. A dedicated sequencing test covers this boundary. |
+| Group attachments | Native `d5b31d5b9`, GCE `34547723829`: 490 Rust tests passed; only generated-interface drift failed. Artifact `10179880441` was hash-verified and imported; VM/runner inventories empty. Exact restored group binding is pinned before staging and after awaits. Local transport passed 15 tests, admission 73; no live group-attachment proof. |
+| Recovery | Original epoch E survives E+1/E+2; retained first attempts require the complete original inventory and current authority. State-1 parent admission now works after reopen with exact child readback. Receipt-only recovery precedes record draining and verified clearance ends the old pass before another submission. Parent passed 868 tests across 24 suites. Still open: automatic wake after a newly ambiguous upload and old queued origins with no complete retained plan inventory. Never rewrite original epochs or blindly retry an ambiguous byte upload. |
+| Live proof | No new attachment write, APK or Windows runtime has been qualified from this batch. The working Windows executable remains `6abbeede2`. |
 
-The current MMCS implementation does not demonstrate safe replay of an ambiguous
-byte upload: original CloudKit request UUIDs do not carry through to MMCS request
-UUIDs, and chunk deduplication is not a completed-asset recovery contract. Retain
-unknown attempts; neither missing final records nor the same preparation grants
-automatic replay. Protected local completed receipts cover lost Dart responses,
-not network outcomes for which no valid receipt was received.
-The known-good local executable is still the qualified `6abbeede2` bundle.
+Prepared-handle lifecycle correction: a failed native consume can retain its
+unconsumed owner and writer permit. Waiting for futures alone cannot release
+that permit. Native `590cf25bb` adds idempotent owner release without changing
+files, fences or protected leases. GCE `34548927310` passed **493 Rust tests**;
+only generated bridge drift failed. Artifact `10180257648` was hash-verified
+and imported; VM and runner inventories were empty after cleanup. Dart
+engine/transport cleanup passed the 125-test release/admission/adapter cohort,
+including 20 focused release cases for late preparation, both heartbeat losses,
+returned failure, thrown failure and consumed success. Release does not cancel
+an owner already taken by consume. The combined 868-test checkpoint passed;
+full exact-commit CI and live attachment write/recovery remain unqualified.
+
+An ambiguous MMCS upload still cannot be blindly replayed. Original CloudKit
+UUIDs do not prove MMCS request idempotency, and chunk deduplication is not
+asset-completion recovery. Retain unknown attempts. Durable native completed
+receipts recover lost Dart responses, not network outcomes without a receipt.
+
+Detailed prior source SHAs, bridge artifacts, test counts and failed-run evidence
+are retained in the [current investigation log](cloud_sync_v2/history/CLOUD_SYNC_V2_INVESTIGATION_LOG_FROM_2026-09-07.md).
+GCE cleanup for `34544585837` succeeded; independent inventories showed no
+instances or runner registrations. Apple credentials and stores remain local.
 
 The first September 10 attempt failed on retained IDS credentials before send.
 Explicit request-bound sender authentication from the same retained GSA session

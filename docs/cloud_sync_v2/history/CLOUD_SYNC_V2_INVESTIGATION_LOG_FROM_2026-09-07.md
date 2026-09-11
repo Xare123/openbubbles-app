@@ -1459,3 +1459,153 @@ This is a chronological evidence log. It does not override the
 - Native plan adapter plus coordinator passed 10 targeted Dart cases, with no
   analyzer issues. These use a generated-API mock, not an Apple account.
 - No APK install, live write, credentials upload or Alpha changes in this batch.
+
+## 2026-09-10, native parent qualification and composed writer review
+
+- Exact source `787869904153e0a2da96c2da0cf476a4442b05a6`, GCE
+  `34544585837`: 484 Rust tests passed. The only failing step was generated
+  bridge drift. Artifact `10178805496` supplied the seven expected files;
+  every source/destination hash matched after import. No APK was built.
+  Cleanup succeeded, with zero instances and runner registrations independently
+  verified. Generated files are local pending the next reviewed commit.
+- Parent reran the composed admission, journal, dependency, native transport and
+  production adapter/composition suites: 278 passed. Subsequent timeout,
+  mutation-guard and transport subset: 42 passed. Counts overlap.
+- App integration now prepares original plans, uploads children, drains Chat,
+  Attachment and Message records in order, and requires a persisted complete
+  child-readback proof before admitting the containing Message. Existing
+  plaintext, reaction and group-text routes keep their own validators.
+- Parent review identified an actual retention-state alias: immediate receipt
+  release after a save could resemble exact readback. Commit, transition and
+  generic-clear paths now reject that state for journal-owned Attachment creates.
+  Real ObjectBox negative tests exercise those paths.
+- The unknown-outcome guard constructed a separate Message input and omitted
+  its attachment source context. It now receives the same original journal
+  source as prepare/readback; account/store/session/directory drift keeps the
+  mutation fence armed. Chat and Attachment records do not consult this reader.
+- Composition review found a timeout self-wait: record draining inside tracked
+  preparation could quiesce the outer operation waiting on that drain. A small
+  coordinator now ends preparation before draining, then validates child
+  readback. The regression test explicitly waits for preparation quiescence.
+- Restored-group parent proof and epoch-resume composition remain open work.
+  A failed test compilation overlapped an unfinished worker edit, not a native
+  failure; testing resumed only after the source compiled again.
+- The treemap's repeated build chronology was condensed to current boundaries;
+  earlier evidence in this history file remains intact. No live writes, APK
+  installation, Alpha mutation, policy bypass or credential transfer occurred.
+
+## 2026-09-10, FaceTime trace sufficiency tooling
+
+- Added an offline, Windows-compatible reader for the existing content-free
+  native FaceTime trace format. It reports complete lifecycle capture separately
+  from increasing inbound media bytes on the same peer after admission.
+- Parent review corrected the initial classifier: a completely captured failed
+  call does not require successful media. Pre-admission counters cannot prove
+  later media progression. Parent-run analyzer plus existing probe/bootstrap
+  suites passed 51 tests. The reviewed worker was closed and shutdown verified.
+- Retained pre-probe evidence cannot establish the missing current lifecycle.
+  The Windows qualified harness opens FaceTime externally, not in the Android
+  WebView. Next diagnosis needs a new native trace from the probe-enabled build;
+  this tool is not a FaceTime fix. No calls, installs or policy changes occurred.
+
+## 2026-09-10, retained group-parent integration
+
+- Reviewed and pushed native candidate `d5b31d5b991343470c45790081ecdbda8973e1a2`.
+  GCE `34547723829` runs app-Rust-only on N2D8 in us-west1-c. Previous run was
+  terminal and the instance inventory empty before dispatch. No signing,
+  APK build, account credentials or message data are part of this run.
+- The native group proof comes from cached protected Chat decoding under the
+  existing read pause. It preserves the distinction between group GUID and
+  opaque Chat ID and revalidates exact source/auth/expiry before submission.
+- Dart opens that proof per operation, releases the read pause before staging,
+  and recaptures its source after awaits. Unknown-outcome reconciliation uses
+  the original adopted dependency, not a mutable Message. Integration remains
+  unqualified until generated bindings and combined tests are complete.
+- Parent independently passed 63 exact-selection/readiness tests and a
+  257-test store/admission batch before this group wiring. Counts overlap
+  prior suites and do not establish live write behavior.
+- Review caught a regression in the new dependency reader: ordinary adopted
+  plaintext/reaction rows have no attachment wrapper and must return null,
+  while source-bearing rows must validate the current protected store.
+  The worker is correcting this before qualification.
+
+### Native prepared-owner release and attachment recovery, September 10 evening
+
+- Group source `d5b31d5b9` passed 490 Rust tests in GCE `34547723829`.
+  Native release source `590cf25bb` then passed 493 in `34548927310`.
+  Both workflows failed only the generated bridge consistency gate, not
+  native tests. The latter used the existing N2D-16 selector and finished
+  including cleanup in about 10.4 minutes. Neither built an APK.
+- Imported artifact `10180257648` into the seven explicit generated paths,
+  after checking current files matched the previous imported artifact.
+  All destination hashes matched the new artifact. The generated change
+  exposes idempotent release of an unconsumed native prepared owner.
+- Independent post-run inventories showed no GCE VMs or GitHub runners.
+  No account data, credentials or signing material was uploaded.
+- Parent qualification of admission, parent transport and retained-epoch
+  tests passed 98 cases with one remaining receipt-marker fixture failure:
+  `cloud_sync_local_send_adopted_mapping_changed` during leasing. This is
+  not evidence of successful end-to-end retained-parent receipt release.
+- Two reviewers confirmed the state-1 recovery gap: provenance uses the
+  original writer epoch, while current mutation authority advances after
+  reconciliation. Plan a scoped resume retaining every original plan and
+  refusing missing inventory or ambiguous byte-upload retries. Removed
+  adapter-lifetime epoch rejection; per-pass identity/epoch fencing and
+  native quiescence remain. Composed recovery qualification is still open.
+
+- Subsequent frozen qualification passed **100 tests** across plan coordinator,
+  upload executor, retained-epoch, parent-dependency and upload-journal suites.
+  The marker fixture now seeds the exact persisted mapping as well as its
+  operation header. The resume path retains the original epoch/plan across
+  restart, and a started/unknown attempt still cannot prepare or consume again.
+- Added `resumeExistingPlans` with complete native-derived inventory validation
+  before any plan-lease commit. Missing or partial inventory cannot enter the
+  existing missing-plan staging loop. The executor opts into one retained first
+  attempt only when supplied that complete inventory; ordinary attempts stay
+  strict. Parent's four-file targeted Dart analysis passed.
+- Lifecycle review rejected a Dart inference that a returned consume result
+  proves its owner was taken. Native ProtectedStorage failures can return
+  without taking it. Always ask the idempotent native release after settlement.
+  Also require blocked-release/late-prepare quiescence coverage and release
+  when post-prepare lease renewal fails. These are not yet qualified.
+- FaceTime reviewer found no additional evidence-backed offline source repair.
+  The control layout fix already exists, and 51 analyzer/bootstrap/probe tests
+  passed. A full probe-enabled device call trace remains necessary to identify
+  the media disconnect. No call was made; reviewer closed and shutdown verified.
+
+### September 10, recovery composition after native qualification
+
+- Parent fixed the missing retained-group flag and connected the ready chooser
+  to old protected attachment origins only. Original epochs stay immutable;
+  ordinary old plaintext and future-epoch origins remain rejected. The current
+  owner and complete child readback are independently checked at adoption.
+- Parent ran the release/admission/adapter cohort: 125 passed, including all
+  20 native-transport/engine release cases. The journal/coordinator/executor/
+  engine cohort passed 292 actual tests; one additional requested test path did
+  not exist, so that invocation exited nonzero. Seven-file analysis was clean.
+- Receipt-only recovery now precedes record queue admission, including an empty
+  outbox. Verified clearance ends the old pass; a new pass requires completed
+  native cleanup and an independent unchanged-account/store check under a newer
+  stable V2 owner. Nine standalone orchestration tests passed. Runtime and
+  selection tests also passed; combined qualification is pending.
+- Parent review rejected counting all historical uploaded/adopted rows against
+  the 64-attempt discovery bound. Only unresolved attempts may consume this cap.
+  The guard owner is correcting this with a settled-history regression.
+- The composed epoch cohort found two missing canonical Chat fixtures and an
+  obsolete empty-ready expectation. These are being repaired without relaxing
+  production dependency checks. No APK, account write or cloud run in this pass.
+
+- Final parent cohort: **868 passed across 24 suites**, two local test workers,
+  about 40 seconds of test execution. This includes the corrected 20-case epoch
+  suite and exact guard recovery with 65 settled historical uploads plus one
+  pending attempt. Readback/discovery never stages a replacement or admits an
+  outbox operation. One redundant promoted-string cast was subsequently removed.
+- Remaining full-flow gaps are explicit: a newly ambiguous byte upload needs
+  its own exact-fence scheduling handoff into receipt-only recovery; older ready
+  origins without complete retained plan inventory still defer. Stable E+2
+  rollover alone does not solve these. Independent Apple display, supported
+  edit/undo writes, read backlog closure and native FaceTime media remain open.
+- Reviewed Jason and Gibbs contributions and closed both workers. Shared source,
+  test evidence and sessions are retained for provenance and unfinished work;
+  no supported session-deletion control is available and no dedicated worktree
+  was proven disposable. No files deleted. C: remained approximately 62.4 GiB free.

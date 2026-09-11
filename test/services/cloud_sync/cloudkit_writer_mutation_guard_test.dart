@@ -61,12 +61,16 @@ void main() {
     CloudKitWriterOwner owner = CloudKitWriterOwner.legacy,
     Object? Function()? reader,
     CloudKitWriterReconciliationBinding? reconciler,
+    frb_api.CloudSyncNativeSendReceiptContext? Function(CloudOutboxOperation)? parentContext,
+    Future<frb_api.CloudSyncAttachmentParentGroupProof?> Function(CloudOutboxOperation)? groupProof,
   }) => CloudKitWriterMutationGuard.forTest(
     store: store,
     readActiveClient: reader ?? () => activeClient,
     privateStorageDirectory: directory.path,
     nativeAuthBinding: binding,
     reconciliationBinding: reconciler ?? binding,
+    readAttachmentParentContext: parentContext,
+    readAttachmentParentGroupProof: groupProof,
     buildDecision: decision(owner),
   );
 
@@ -406,6 +410,109 @@ void main() {
     },
   );
 
+  frb_api.CloudSyncNativeSendReceiptContext parentContext({String? mismatch}) =>
+      frb_api.CloudSyncNativeSendReceiptContext(
+        storageDirectory: mismatch == 'directory' ? 'different' : directory.path,
+        accountFingerprint: mismatch == 'account' ? _digestB : _metadataA.accountFingerprint,
+        protectedStoreIdentity: mismatch == 'store' ? 'obcs2.store.$_digestB' : _metadataA.protectedStoreIdentity,
+        nativeSessionId: mismatch == 'session' ? _digestB : _metadataA.nativeSessionId,
+        guidHash: _sha('c'),
+        sourceBinding: frb_api.CloudSyncNativeSendSourceBinding(
+          protectedReference: 'obcs2.ref.${_hash('S')}',
+          leaseReference: 'obcs2.lease.${'a' * 32}',
+          payloadSha256: _sha('d'), payloadLength: BigInt.from(512),
+          sourceSha256: _sha('e'),
+        ),
+      );
+
+  test('unknown parent readback carries the original journal context', () async {
+    provision(CloudKitWriterOwner.v2);
+    final operation = _unknownOutcomeOperation();
+    await armUnknownV2Fence(operation);
+    final context = parentContext();
+    binding.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+      protectedProofReference: operation.encryptedPayloadReference,
+    );
+    final resolution = await runV2(() => guard(
+      owner: CloudKitWriterOwner.v2,
+      parentContext: (exact) {
+        expect(exact.operationId, operation.operationId);
+        return context;
+      },
+    ).reconcileUnknownOutcome(owner: CloudKitWriterOwner.v2,
+      expectedClient: activeClient, operation: operation));
+    expect(resolution.disposition, CloudUnknownOutcomeDisposition.notApplied);
+    expect(binding.lastInput?.attachmentParentContext, same(context));
+    expect(_persistentFence(directory).existsSync(), isFalse);
+  });
+
+  test('unknown group parent carries fresh proof with original context', () async {
+    provision(CloudKitWriterOwner.v2);
+    final operation = _unknownOutcomeOperation();
+    await armUnknownV2Fence(operation);
+    final proof = _GroupProof();
+    var opened = 0;
+    binding.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+      protectedProofReference: operation.encryptedPayloadReference,
+    );
+    final result = await runV2(() => guard(
+      owner: CloudKitWriterOwner.v2,
+      parentContext: (_) => parentContext(),
+      groupProof: (exact) async {
+        expect(exact.operationId, operation.operationId);
+        opened++;
+        return proof;
+      },
+    ).reconcileUnknownOutcome(owner: CloudKitWriterOwner.v2,
+      expectedClient: activeClient, operation: operation));
+    expect(result.disposition, CloudUnknownOutcomeDisposition.notApplied);
+    expect(opened, 1);
+    expect(binding.lastInput?.attachmentParentGroupProof, same(proof));
+    expect(_persistentFence(directory).existsSync(), isFalse);
+  });
+
+  for (final drift in ['source', 'client', 'missing_context']) {
+    test('group proof $drift change cannot release unknown fence', () async {
+      provision(CloudKitWriterOwner.v2);
+      final operation = _unknownOutcomeOperation();
+      await armUnknownV2Fence(operation);
+      final originalClient = activeClient;
+      var changed = false;
+      await expectLater(runV2(() => guard(
+        owner: CloudKitWriterOwner.v2,
+        parentContext: (_) => drift == 'missing_context' ? null :
+            parentContext(mismatch: changed && drift == 'source' ? 'store' : null),
+        groupProof: (_) async {
+          changed = true;
+          if (drift == 'client') activeClient = Object();
+          return _GroupProof();
+        },
+      ).reconcileUnknownOutcome(owner: CloudKitWriterOwner.v2,
+        expectedClient: originalClient, operation: operation)),
+        throwsA(isA<CloudKitWriterAuthorityFailure>()));
+      expect(binding.reconcileCalls, 0);
+      expect(_persistentFence(directory).existsSync(), isTrue);
+    });
+  }
+
+  for (final mismatch in ['directory', 'account', 'store', 'session']) {
+    test('unknown parent $mismatch drift cannot release the fence', () async {
+      provision(CloudKitWriterOwner.v2);
+      final operation = _unknownOutcomeOperation();
+      await armUnknownV2Fence(operation);
+      await expectLater(runV2(() => guard(
+        owner: CloudKitWriterOwner.v2,
+        parentContext: (_) => parentContext(mismatch: mismatch),
+      ).reconcileUnknownOutcome(owner: CloudKitWriterOwner.v2,
+        expectedClient: activeClient, operation: operation)),
+        throwsA(_failure('cloudkit_writer_reconciliation_parent_context_mismatch')));
+      expect(binding.reconcileCalls, 0);
+      expect(_persistentFence(directory).existsSync(), isTrue);
+    });
+  }
+
   test(
     'Chat cannot fall back to a Message-only reconciliation binding',
     () async {
@@ -447,6 +554,8 @@ void main() {
             guard(
               owner: CloudKitWriterOwner.v2,
               reconciler: attachmentBinding,
+              parentContext: (_) => throw StateError('Attachment cannot read parent context'),
+              groupProof: (_) => throw StateError('Attachment cannot read group proof'),
             ).reconcileUnknownOutcome(
               owner: CloudKitWriterOwner.v2,
               expectedClient: activeClient,
@@ -755,6 +864,7 @@ final class _FakeAuthBinding
   int warmCalls = 0;
   int pausedWarmCalls = 0;
   int reconcileCalls = 0;
+  frb_api.CloudSyncPreparedMessageCreateInput? lastInput;
   void Function(int call)? afterCapture;
   CloudSyncNativeAuthMetadata Function(int call)? metadataForCall;
   frb_api.CloudSyncOutboundReconcileResult reconcileResult =
@@ -804,8 +914,14 @@ final class _FakeAuthBinding
     required frb_api.CloudSyncPreparedMessageCreateInput input,
   }) async {
     reconcileCalls++;
+    lastInput = input;
     return reconcileResult;
   }
+}
+
+class _GroupProof implements frb_api.CloudSyncAttachmentParentGroupProof {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 final class _ChatReconciliationBinding

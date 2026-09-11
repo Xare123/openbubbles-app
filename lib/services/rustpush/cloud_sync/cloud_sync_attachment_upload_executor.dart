@@ -73,12 +73,17 @@ final class CloudSyncAttachmentUploadExecutionInput {
     required this.originalAttachmentGuid,
     required this.sourcePath,
     required this.requestTimeoutSeconds,
+    this.retainedSourceAttachmentKeys,
   });
 
   final int uploadId;
   final String originalAttachmentGuid;
   final String sourcePath;
   final BigInt requestTimeoutSeconds;
+  /// Complete native-derived inventory for a retained first attempt after
+  /// authority recovery. Null preserves the ordinary current-epoch path.
+  /// Started/unknown uploads never use this to authorize another attempt.
+  final Set<String>? retainedSourceAttachmentKeys;
 }
 
 /// Single-use native preparation. The handle owner is noncloneable: exactly
@@ -298,11 +303,13 @@ final class CloudSyncAttachmentUploadExecutor {
       throw StateError('cloud_sync_attachment_upload_executor_busy');
     }
     try {
+      final retainedKeys = input.retainedSourceAttachmentKeys == null
+          ? null : Set<String>.unmodifiable(input.retainedSourceAttachmentKeys!);
       final auth = await _liveAuth();
       final snapshot = _uploads.read(input.uploadId);
       switch (snapshot.state) {
         case CloudAttachmentUploadState.prepared:
-          return await _uploadFresh(input, auth);
+          return await _uploadFresh(input, auth, retainedKeys);
         case CloudAttachmentUploadState.started:
         case CloudAttachmentUploadState.unknown:
           return await _recoverExact(input.uploadId, auth);
@@ -327,6 +334,7 @@ final class CloudSyncAttachmentUploadExecutor {
   Future<CloudAttachmentUploadExecution> _uploadFresh(
     CloudSyncAttachmentUploadExecutionInput input,
     CloudSyncNativeAuthSnapshot auth,
+    Set<String>? retainedKeys,
   ) async {
     // Fresh-path-only input limits: recovery never requires these. The
     // native timeout is explicitly bounded to 1..300 seconds.
@@ -368,11 +376,14 @@ final class CloudSyncAttachmentUploadExecutor {
       );
       // Durable attempt BEFORE the single native consume. The original
       // native attempt id binds journal, fence, and receipt together.
-      _uploads.beginAttempt(
-        id: input.uploadId,
-        attemptId: prepared.uploadAttemptId,
-        now: _clock(),
-      );
+      if (retainedKeys == null) {
+        _uploads.beginAttempt(
+          id: input.uploadId, attemptId: prepared.uploadAttemptId, now: _clock());
+      } else {
+        _uploads.beginRetainedAttempt(
+          id: input.uploadId, attemptId: prepared.uploadAttemptId,
+          sourceAttachmentKeys: retainedKeys, now: _clock());
+      }
       final fenceBinding = _uploads.reconciliationBindingSha256(input.uploadId);
       late final frb_api.CloudSyncAttachmentUploadConsumeResult consumed;
       try {

@@ -2158,15 +2158,27 @@ class CloudSyncEngine {
         );
         CloudSyncPreparedSubmission? preparedSubmission;
         List<CloudSyncProtectedWriteOperation>? protectedOperations;
+        Future<void> releaseAbandonedPreflight() async {
+          final abandoned = preparedSubmission;
+          preparedSubmission = null;
+          if (abandoned != null &&
+              _writeTransport is CloudSyncPreparedSubmissionReleaser) {
+            await (_writeTransport as CloudSyncPreparedSubmissionReleaser)
+                .releasePreparedSubmission(abandoned);
+          }
+        }
         try {
-          preparedSubmission = await _withWriteLeaseHeartbeats(
+          await _withWriteLeaseHeartbeats(
             leaseId: leaseId,
             operations: leased,
             action: () async {
               protectedOperations = List.unmodifiable(
                 await _protectedWriteOperationsFor(ready),
               );
-              return _withWriteOperationTimeout(
+              // Capture ownership before either heartbeat wrapper performs
+              // its post-action renewal. A renewal failure must not discard
+              // a successfully prepared native owner.
+              preparedSubmission = await _withWriteOperationTimeout(
                 operationName: 'write_preflight',
                 action: () => _writeTransport!.prepareSubmission(
                   scope,
@@ -2177,6 +2189,7 @@ class CloudSyncEngine {
             },
           );
         } on CloudSyncFailure catch (error) {
+          await releaseAbandonedPreflight();
           if (_isCoordinatorLeaseFailure(error) ||
               _isOutboxLeaseFailure(error)) {
             rethrow;
@@ -2187,6 +2200,7 @@ class CloudSyncEngine {
             counters = _countOutboxTransition(counters, transition);
           }
         } catch (_) {
+          await releaseAbandonedPreflight();
           for (final operation in ready) {
             final transition = _retryOrQuarantineTransition(
               operation,
@@ -2200,62 +2214,92 @@ class CloudSyncEngine {
         if (preparedSubmission == null) {
           ready = const [];
         } else {
-          await _verifyWriterPermit();
-          await _renewOutboxLeaseOrThrow(leaseId: leaseId, operations: leased);
-          // Persist the ambiguity boundary only after native authentication,
-          // PCS lookup, protected payload compilation, and request creation
-          // have completed without sending a remote mutation.
-          ready = await _store.markOutboxSubmissionStarted(
-            scope,
-            leaseId: leaseId,
-            submissionIdentity: submissionIdentity,
-            now: _clock(),
-          );
-          final persistedIdentity = CloudOutboxSubmissionIdentity(
-            requestUuid: ready.first.appleRequestUuid!,
-            operationUuids: {
-              for (final operation in ready)
-                operation.operationId: operation.appleOperationUuid!,
-            },
-          );
+          final CloudSyncPreparedSubmission prepared = preparedSubmission!;
+          Object? releaseError;
+          // Preserve a body failure already recorded as outcomes. Native
+          // transport cleanup failures also remain observable at quiescence;
+          // a settled operation alone must not certify owner cleanup.
+          var bodyFailed = false;
           try {
-            final result = await _withWriteLeaseHeartbeats(
+            await _verifyWriterPermit();
+            await _renewOutboxLeaseOrThrow(leaseId: leaseId, operations: leased);
+            // Persist the ambiguity boundary only after native authentication,
+            // PCS lookup, protected payload compilation, and request creation
+            // have completed without sending a remote mutation.
+            ready = await _store.markOutboxSubmissionStarted(
+              scope,
               leaseId: leaseId,
-              operations: leased,
-              action: () => _withWriteOperationTimeout(
-                operationName: 'push',
-                action: () async {
-                  await _verifyWriterPermit();
-                  return _writeTransport!.consumePreparedSubmission(
-                    scope,
-                    preparedSubmission: preparedSubmission!,
-                    persistedIdentity: persistedIdentity,
-                    protectedOperations: protectedOperations!,
-                    operations: ready,
-                  );
-                },
-              ),
+              submissionIdentity: submissionIdentity,
+              now: _clock(),
             );
-            await _verifyWriterPermitAfterRemote();
-            outcomes = _requireExactPushOutcomes(ready, result);
-          } on CloudSyncFailure catch (error) {
-            if (_isCoordinatorLeaseFailure(error) ||
-                _isOutboxLeaseFailure(error)) {
-              rethrow;
-            }
-            for (final operation in ready) {
-              outcomes[operation.operationId] = _outcomeForThrownFailure(
-                operation.operationId,
+            final persistedIdentity = CloudOutboxSubmissionIdentity(
+              requestUuid: ready.first.appleRequestUuid!,
+              operationUuids: {
+                for (final operation in ready)
+                  operation.operationId: operation.appleOperationUuid!,
+              },
+            );
+            try {
+              final result = await _withWriteLeaseHeartbeats(
+                leaseId: leaseId,
+                operations: leased,
+                action: () => _withWriteOperationTimeout(
+                  operationName: 'push',
+                  action: () async {
+                    await _verifyWriterPermit();
+                    return _writeTransport!.consumePreparedSubmission(
+                      scope,
+                      preparedSubmission: prepared,
+                      persistedIdentity: persistedIdentity,
+                      protectedOperations: protectedOperations!,
+                      operations: ready,
+                    );
+                  },
+                ),
               );
+              await _verifyWriterPermitAfterRemote();
+              outcomes = _requireExactPushOutcomes(ready, result);
+            } on CloudSyncFailure catch (error) {
+              if (_isCoordinatorLeaseFailure(error) ||
+                  _isOutboxLeaseFailure(error)) {
+                rethrow;
+              }
+              bodyFailed = true;
+              for (final operation in ready) {
+                outcomes[operation.operationId] = _outcomeForThrownFailure(
+                  operation.operationId,
+                );
+              }
+            } catch (_) {
+              bodyFailed = true;
+              for (final operation in ready) {
+                outcomes[operation.operationId] = CloudPushOutcome(
+                  operationId: operation.operationId,
+                  disposition: CloudPushDisposition.unknownOutcome,
+                  failureCategory: CloudFailureCategory.unknown,
+                );
+              }
             }
-          } catch (_) {
-            for (final operation in ready) {
-              outcomes[operation.operationId] = CloudPushOutcome(
-                operationId: operation.operationId,
-                disposition: CloudPushDisposition.unknownOutcome,
-                failureCategory: CloudFailureCategory.unknown,
-              );
+          } finally {
+            // Exactly one owner exists for this submission. Release it on every
+            // exit without masking the body outcome: a release failure surfaces
+            // only when the body itself succeeded, while the transport has
+            // already closed native admission either way.
+            // Written as a guarded cast: the store/write-transport capability
+            // import cycle defeats promotion on a plain type check here.
+            final releaser = _writeTransport is CloudSyncPreparedSubmissionReleaser
+                ? _writeTransport as CloudSyncPreparedSubmissionReleaser
+                : null;
+            if (releaser != null) {
+              try {
+                await releaser.releasePreparedSubmission(prepared);
+              } catch (error) {
+                releaseError = error;
+              }
             }
+          }
+          if (releaseError != null && !bodyFailed) {
+            throw releaseError;
           }
         }
       }

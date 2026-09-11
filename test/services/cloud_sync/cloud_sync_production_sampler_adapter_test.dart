@@ -76,6 +76,16 @@ void main() {
         ),
       );
       expect(adapter, contains('owner.owner != CloudKitWriterOwner.v2'));
+      // Composition guard only: behavior across epochs is covered by the
+      // real ObjectBox retained-upload tests, not by these source assertions.
+      expect(adapter, isNot(contains('_boundWriterEpoch')));
+      expect(adapter, contains('authoritySnapshot: owner'));
+      expect(adapter, contains('authority.read(writerScope)?.epoch == owner.epoch'));
+      expect(adapter, contains('runCloudSyncLocalSendRecoveryPass('));
+      expect(adapter, contains('quiesce: transport.quiesceNativeOperations'));
+      expect(adapter, contains('guard.reconcilePendingAttachmentUpload('));
+      expect(adapter, contains('coordinator.resumeExistingPlans('));
+      expect(adapter, contains('retainedAttachmentResume: resuming'));
       expect(adapter, contains('selection?.validate('));
       expect(adapter, contains('validateAccount: validateSelection'));
       expect(
