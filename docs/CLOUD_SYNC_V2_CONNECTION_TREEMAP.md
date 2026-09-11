@@ -66,9 +66,14 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
-Next technical gate: prove safe conditional existing-record writes and finish
-combined qualification of the conversation-preview repair. Read-transition candidate
+Next technical gate: prove safe conditional existing-record writes. Read-transition candidate
 `90f98b7eb` passed GCE Dart-only qualification `34594546421`.
+Preview repair `269620126` and reviewed Find My lane isolation `ee9729ec3`
+passed GCE Dart-only `34597175527`, exact source
+`ee9729ec32fc132b386e4cbd42e608424968dbec`: 3,167 Dart tests plus 14 outbox
+and 3 evidence-output cases. The test step took 4m30s; cleanup completed at
+12:18:21Z and independent VM/runner inventories were empty. Both writer flags
+were off; no APK, signing, or native compilation was requested.
 The real inbox merge and ObjectBox test now applies an edit, rejects an
 unproved changed body, preserves current text on an older replay and applies
 an unsend after reopen. The four focused suites pass 296 tests. Full-suite GCE
@@ -761,6 +766,14 @@ Do not guess a missing field number or treat a PCS protection tag as a version
 tag. A scoped filename search in retained build/device evidence found no
 Apple-generated save request. Our own generated requests cannot prove Apple's
 numbering. Retain this explicit gap for a real capture or verified serializer.
+
+Next acquisition: `tooling/cloud_sync/apple_save_wire_probe.m` loads the local
+Apple serializer on an isolated macOS runner with synthetic values only. The
+opt-in `apple_wire_probe` input on Windows validation skips both Windows build
+jobs. It needs no Apple credentials or user profile, sends no CloudKit operation,
+and records OS/image identity, single-property wire bytes and decoder round trips.
+Runtime availability is not yet established. Bounded enum observations are not
+an exhaustive enum definition or evidence of server conflict behavior.
 
 Do not enable update transport from structural inference alone. First capture
 one genuine Apple edit and one unsend read-only, proving the same record name,

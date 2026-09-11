@@ -2,6 +2,11 @@ name: Windows validation
 
 on:
   workflow_dispatch:
+    inputs:
+      apple_wire_probe:
+        description: Run only the synthetic Apple save serializer probe (no account or app build)
+        type: boolean
+        default: false
   push:
   pull_request:
 
@@ -9,11 +14,43 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-build-${{ github.ref }}
+  group: windows-build-${{ github.ref }}-${{ inputs.apple_wire_probe || false }}
   cancel-in-progress: true
 
 jobs:
+  apple-wire-probe:
+    name: Synthetic Apple save serializer (no account)
+    if: github.event_name == 'workflow_dispatch' && inputs.apple_wire_probe == true
+    runs-on: macos-15
+    timeout-minutes: 8
+    steps:
+      - name: Check out probe only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tooling/cloud_sync/apple_save_wire_probe.m
+          sparse-checkout-cone-mode: false
+      - name: Compile synthetic probe
+        run: >-
+          xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation
+          tooling/cloud_sync/apple_save_wire_probe.m
+          -o "$RUNNER_TEMP/apple-save-wire-probe"
+      - name: Observe local serializer and decoder
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/apple-save-wire-probe" | tee "$RUNNER_TEMP/apple-save-wire-probe.json"
+      - name: Retain synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-save-wire-probe-${{ github.sha }}
+          path: ${{ runner.temp }}/apple-save-wire-probe.json
+          if-no-files-found: warn
+          retention-days: 14
+
   windows:
+    if: github.event_name != 'workflow_dispatch' || inputs.apple_wire_probe != true
     name: Windows ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.experimental }}

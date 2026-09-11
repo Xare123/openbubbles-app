@@ -2386,3 +2386,41 @@ This is a chronological evidence log. It does not override the
   Agent reported 82 focused and 23 diagnostics-enabled tests passed, including
   a 100-poll stalled-Items case. This prevents cross-section refresh starvation,
   not a missing native People location. No live Find My call was made.
+
+- Preview checkpoint `269620126` and separate reviewed Find My checkpoint
+  `ee9729ec3` were pushed only to the fork. Parent independently passed the
+  31-test refresh/People/scheduling subset. Helper/new test analysis is clean;
+  UI analysis retains the pre-existing immutable-widget warning and two
+  withOpacity deprecation notices, not new errors. Both patches are batched in
+  GCE Dart-only `34597175527`, dispatched at 12:05:36Z with exact source
+  `ee9729ec32fc132b386e4cbd42e608424968dbec`, T2D 60, both writer flags off.
+  Run result and cleanup remain pending; no APK/native build is requested.
+- All three agents used in this checkpoint were reviewed and closed with
+  shutdown verified. No dedicated disposable worktree/log was created. Source,
+  unresolved runtime findings and session provenance are retained; supported
+  session deletion is unavailable. No protected source/device data or rollback
+  evidence was removed. C: remained above 46 GiB free at integration.
+
+### September 11: isolated Apple save serializer acquisition
+
+- GCE `34597175527` passed on exact app `ee9729ec3`: 3,167 Dart tests,
+  14 semantic-outbox cases and 3 evidence-output cases. Tests ran from
+  12:12:08Z to 12:16:38Z. Cleanup completed at 12:18:21Z; independent GCE
+  instance and GitHub runner inventories were empty. No native build or APK.
+- Epicurus completed a bounded primary-source check and confirmed that neither
+  missing request ETag numbering nor enum meanings are proved by headers.
+  Accepted the serializer/decoder acquisition recommendation, not guessed
+  fields or enums. Closed and verified not_found after review. No dedicated
+  files/worktree/logs existed; session provenance is retained because supported
+  session deletion is unavailable.
+- Added a synthetic-only Objective-C serializer probe and an opt-in macOS job
+  in the already registered Windows workflow. Normal push/PR builds are
+  unchanged; probe dispatch skips them and uses a separate concurrency group.
+  No account, message data, profile, credentials, CloudKit operation or security
+  setting is provided. Local YAML and diff checks passed; actual macOS class
+  availability and compilation remain pending. Enum probing is bounded and
+  explicitly not proof of server semantics.
+- Find My agent resume hit the account usage limit without new work. After the
+  user reported that limit lifted, resumed its same bounded follow-up rather
+  than creating another agent. Prior source and unresolved runtime evidence
+  remain preserved; no deletion was performed. C: had over 46 GiB free.
