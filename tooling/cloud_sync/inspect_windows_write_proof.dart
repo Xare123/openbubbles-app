@@ -120,6 +120,18 @@ Map<String, Object?> inspectWindowsWriteProof(
   } finally {
     duplicates.close();
   }
+  final readbackMarker =
+      intent.state == 2 &&
+      intent.confirmedReadbackBindingSha256 != null &&
+      intent.confirmedReadbackBindingSha256 == intent.admittedBindingSha256;
+  final settled =
+      operation != null &&
+      operation.state == 2 &&
+      operation.confirmedAtMs > 0 &&
+      operation.serverRecordIdHash != null &&
+      operation.protectedLeaseReference == null &&
+      operation.leaseIdHash == null &&
+      operation.leaseExpiresAtMs == 0;
   if (request.attachmentFixture != null) {
     // DB-only diagnostics cannot establish attachment child readback proof.
     return {
@@ -140,6 +152,10 @@ Map<String, Object?> inspectWindowsWriteProof(
         accountFingerprint: claim['account'] as String,
       ),
       'parent_operation_present': operation != null,
+      'parent_operation_state': operation?.state,
+      'parent_readback_marker_matches_admission': readbackMarker,
+      'parent_confirmed_receipt_released': settled,
+      'parent_save_attempt_count': operation?.attemptCount,
       'persisted_readback_proven': false,
     };
   }
@@ -155,18 +171,6 @@ Map<String, Object?> inspectWindowsWriteProof(
       message.attributedBody.single.string == request.text;
   final positiveIds =
       intent.idsConfirmationVersion == cloudSyncIdsConfirmationVersion;
-  final readbackMarker =
-      intent.state == 2 &&
-      intent.confirmedReadbackBindingSha256 != null &&
-      intent.confirmedReadbackBindingSha256 == intent.admittedBindingSha256;
-  final settled =
-      operation != null &&
-      operation.state == 2 &&
-      operation.confirmedAtMs > 0 &&
-      operation.serverRecordIdHash != null &&
-      operation.protectedLeaseReference == null &&
-      operation.leaseIdHash == null &&
-      operation.leaseExpiresAtMs == 0;
   return {
     'version': 1,
     'state': 'inspected',

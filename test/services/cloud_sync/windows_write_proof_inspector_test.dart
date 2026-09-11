@@ -170,8 +170,32 @@ void main() {
         'attachment_child_operations': <Object>[],
         'attachment_upload_failure': null,
         'parent_operation_present': true,
+        'parent_operation_state': 2,
+        'parent_readback_marker_matches_admission': true,
+        'parent_confirmed_receipt_released': true,
+        'parent_save_attempt_count': 0,
         'persisted_readback_proven': false,
       });
+      final pending = store.box<CloudOutboxOperationEntity>().getAll().single;
+      pending.state = 0;
+      store.box<CloudOutboxOperationEntity>().put(pending);
+      final pendingReport = inspectWindowsWriteProof(store, attachmentRequest, {
+        ...claim,
+        'binding': attachmentRequest.binding,
+      });
+      expect(pendingReport['parent_operation_state'], 0);
+      expect(pendingReport['parent_confirmed_receipt_released'], isFalse);
+      expect(pendingReport['persisted_readback_proven'], isFalse);
+      store.box<CloudOutboxOperationEntity>().removeAll();
+      final absentReport = inspectWindowsWriteProof(store, attachmentRequest, {
+        ...claim,
+        'binding': attachmentRequest.binding,
+      });
+      expect(absentReport['parent_operation_present'], isFalse);
+      expect(absentReport['parent_operation_state'], isNull);
+      expect(absentReport['parent_confirmed_receipt_released'], isFalse);
+      expect(absentReport['parent_save_attempt_count'], isNull);
+      expect(absentReport['persisted_readback_proven'], isFalse);
     },
   );
   test('upload diagnostics filter exact account and intent', () {

@@ -1953,6 +1953,21 @@ This is a chronological evidence log. It does not override the
 
 ### September 11, reviewed sidecar integration and retained limits
 
+- Full Android qualification `34576684370` was dispatched at 07:55:40Z on
+  exact source `5e9a532be4eead18f7b6c760bfddf03daf1ae2c9`, T2D 60,
+  Canary writer enabled, automatic uploads disabled for bounded qualification.
+  It uses the unchanged ephemeral pilot and GitHub-hosted signing path. No
+  Apple credentials or personal profile files were sent to CI. Dispatch is
+  not test or build success; check the run and cleanup before release.
+- Follow-up disposable-copy inspection found the image-04 parent in state 2,
+  its readback marker equal to its admission binding, and its confirmed
+  receipt released. Both parent and child report save-attempt count 0 (a
+  stored counter, not proof that no server save occurred). Source, request
+  and claim stayed unchanged. Five inspector tests include forged markers,
+  pending and missing parent operations. The v4 overall proof remains false
+  until exact source/child revalidation is wired; no success flag was relaxed.
+  Evidence: `windows-dart-overlay-46bc6f027/image-04-parent-inspection.log`.
+
 - FaceTime `2c259fe0b` integrates explicit Leave/native End ownership after
   removing the rejected all-inactive-participant teardown. `509690a4b` fixes
   early-Join timer and stale asynchronous cleanup ownership. Parent reruns:
