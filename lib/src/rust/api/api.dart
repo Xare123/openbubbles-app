@@ -455,6 +455,19 @@ Future<CloudSyncPreparedMessageCreateResult> cloudSyncPrepareAttachmentCreate({
   inputs: inputs,
 );
 
+/// Drops only an unconsumed prepared owner and its native writer permit.
+/// Idempotent: true means an owner was released; false means no owner remains
+/// in this handle. An already-taken consume owner is untouched, so false is
+/// NOT proof of quiescence or of the remote outcome. Dart must first await
+/// the settled native future, including timeout quiescence, before release.
+/// This performs no submission and changes no fence, file, or protected lease.
+/// Historical Message name also covers Chat and Attachment prepared handles.
+Future<bool> cloudSyncReleasePreparedMessageCreate({
+  required CloudSyncPreparedMessageCreateHandle handle,
+}) => RustLib.instance.api.crateApiApiCloudSyncReleasePreparedMessageCreate(
+  handle: handle,
+);
+
 /// Historical message name: this record-agnostic consumer also consumes the
 /// opaque handle returned by Chat and Attachment prepare. No capability, permit, keystore,
 /// single-use, container revalidation, or receipt fence is bypassed.
