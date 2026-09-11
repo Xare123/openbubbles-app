@@ -304,6 +304,7 @@ enum CloudNativeProtectionPurpose {
     ResetProof,
     ServerRecordId,
     OutboundMessage,
+    OutboundMessageUpdate,
     OutboundChat,
     OutboundAttachment,
     OutboundAttachmentUpload,
@@ -320,6 +321,7 @@ impl CloudNativeProtectionPurpose {
             Self::ResetProof => "resetProof",
             Self::ServerRecordId => "serverRecordId",
             Self::OutboundMessage => "outboundMessage",
+            Self::OutboundMessageUpdate => "outboundMessageUpdate",
             Self::OutboundChat => "outboundChat",
             Self::OutboundAttachment => "outboundAttachment",
             Self::OutboundAttachmentUpload => "outboundAttachmentUpload",
@@ -4418,6 +4420,24 @@ pub(crate) fn cloud_sync_stage_protected_outbound_envelope(
         CloudNativeStream::Messages,
         CloudNativeProtectionPurpose::OutboundMessage,
     )
+}
+
+pub(crate) fn cloud_sync_stage_protected_message_update(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    envelope: String,
+) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
+    stage_protected_outbound_value(storage_directory, account_fingerprint, envelope,
+        CloudNativeStream::Messages, CloudNativeProtectionPurpose::OutboundMessageUpdate)
+}
+
+pub(crate) fn cloud_sync_open_protected_message_update(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+) -> Result<String, CloudNativeFetchFailure> {
+    cloud_sync_open_protected_outbound_value(storage_directory, account_fingerprint, protected_reference,
+        CloudNativeStream::Messages, CloudNativeProtectionPurpose::OutboundMessageUpdate)
 }
 
 pub(crate) fn cloud_sync_stage_protected_outbound_chat_envelope(
