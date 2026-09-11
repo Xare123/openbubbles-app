@@ -4,6 +4,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shado
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/lib.dart' as native;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -36,6 +38,8 @@ void main() {
   tearDownAll(RustLib.dispose);
   setUp(() {
     bridge.calls = 0;
+    bridge.inventoryFailure = null;
+    bridge.stageFailure = null;
   });
 
   test(
@@ -100,10 +104,84 @@ void main() {
       expect(bridge.calls, 0);
     },
   );
+
+  test(
+    'native stage errors expose exact reviewed codes without retry',
+    () async {
+      final entry = (await adapter.inspect(source, auth())).single;
+      const cases = {
+        'attachment source preparation unavailable':
+            'cloud_sync_attachment_preparation_unavailable',
+        'attachment source unavailable or does not match original IDS bytes':
+            'cloud_sync_attachment_source_mismatch',
+        'attachment upload source invalid':
+            'cloud_sync_attachment_source_invalid',
+        'cloud_sync_attachment_preparation_auth_unavailable':
+            'cloud_sync_attachment_preparation_auth_unavailable',
+        'cloud_sync_native_attachment_source_unavailable':
+            'cloud_sync_native_attachment_source_unavailable',
+        'private-server-response':
+            'cloud_sync_attachment_plan_native_stage_failed',
+        'cloud_sync_attachment_preparation_auth_unavailable secret':
+            'cloud_sync_attachment_plan_native_stage_failed',
+        'attachment source preparation unavailable\nprivate-token':
+            'cloud_sync_attachment_plan_native_stage_failed',
+      };
+      for (final item in cases.entries) {
+        bridge.stageFailure = AnyhowException(item.key);
+        final before = bridge.calls;
+        await expectLater(
+          adapter.stage(
+            entry,
+            source,
+            auth(),
+            sourcePath: 'synthetic-file',
+            startDateNanoseconds: 123,
+            createdDateNanoseconds: 456,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              cloudSyncV2SafeFailureCode,
+              'safe code',
+              item.value,
+            ),
+          ),
+        );
+        expect(bridge.calls, before + 1);
+      }
+    },
+  );
+
+  test(
+    'inventory failure identifies boundary without raw native text',
+    () async {
+      bridge.inventoryFailure = AnyhowException('private-path secret');
+      await expectLater(
+        adapter.inspect(source, auth()),
+        throwsA(
+          isA<StateError>().having(
+            cloudSyncV2SafeFailureCode,
+            'safe code',
+            'cloud_sync_attachment_plan_inventory_failed',
+          ),
+        ),
+      );
+      expect(bridge.calls, 1);
+    },
+  );
+
+  test('non-native exception remains unchanged', () async {
+    final failure = StateError('synthetic-local-failure');
+    bridge.inventoryFailure = failure;
+    await expectLater(adapter.inspect(source, auth()), throwsA(same(failure)));
+    expect(bridge.calls, 1);
+  });
 }
 
 class _Bridge implements RustLibApi {
   int calls = 0;
+  Object? inventoryFailure;
+  Object? stageFailure;
   native.ArcCloudMessagesClientDefaultAnisetteProvider? client;
   api.CloudSyncNativeSendReceiptContext? context;
   String? originalGuid;
@@ -118,6 +196,7 @@ class _Bridge implements RustLibApi {
     required api.CloudSyncNativeSendReceiptContext context,
   }) async {
     calls++;
+    if (inventoryFailure != null) throw inventoryFailure!;
     client = cloudMessagesClient;
     this.context = context;
     return [
@@ -141,6 +220,7 @@ class _Bridge implements RustLibApi {
     required int createdDateNs,
   }) async {
     calls++;
+    if (stageFailure != null) throw stageFailure!;
     client = cloudMessagesClient;
     this.context = context;
     originalGuid = originalAttachmentGuid;

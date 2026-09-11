@@ -1,5 +1,6 @@
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/lib.dart' as native;
+import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 
 import 'cloud_sync_attachment_plan_coordinator.dart';
 import 'cloud_sync_attachment_upload_executor.dart';
@@ -7,6 +8,7 @@ import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_outbound_staging.dart';
+import 'cloud_sync_safe_failure.dart';
 import 'cloudkit_writer_mutation_guard.dart';
 import 'cloudkit_writer_ownership.dart';
 import 'objectbox_cloud_sync_store.dart';
@@ -94,9 +96,12 @@ final class FrbCloudSyncAttachmentPlanSource {
     CloudSyncNativeAuthSnapshot auth,
   ) async {
     final context = receiptContext(source, auth);
-    final entries = await api.cloudSyncInspectAttachmentSources(
-      cloudMessagesClient: _client(auth),
-      context: context,
+    final entries = await _nativePlanCall(
+      'cloud_sync_attachment_plan_inventory_failed',
+      () => api.cloudSyncInspectAttachmentSources(
+        cloudMessagesClient: _client(auth),
+        context: context,
+      ),
     );
     return List.unmodifiable(
       entries.map(
@@ -121,13 +126,16 @@ final class FrbCloudSyncAttachmentPlanSource {
     if (sourcePath.isEmpty) {
       throw StateError('cloud_sync_attachment_plan_source_unavailable');
     }
-    final result = await api.cloudSyncStageAttachmentUploadPlan(
-      cloudMessagesClient: _client(auth),
-      context: context,
-      originalAttachmentGuid: item.originalAttachmentGuid,
-      sourcePath: sourcePath,
-      startDateNs: startDateNanoseconds,
-      createdDateNs: createdDateNanoseconds,
+    final result = await _nativePlanCall(
+      'cloud_sync_attachment_plan_native_stage_failed',
+      () => api.cloudSyncStageAttachmentUploadPlan(
+        cloudMessagesClient: _client(auth),
+        context: context,
+        originalAttachmentGuid: item.originalAttachmentGuid,
+        sourcePath: sourcePath,
+        startDateNs: startDateNanoseconds,
+        createdDateNs: createdDateNanoseconds,
+      ),
     );
     final stage = result.stage;
     // The coordinator checks identity, adopts and commits this exact lease.
@@ -139,6 +147,33 @@ final class FrbCloudSyncAttachmentPlanSource {
       serverRecordIdHash: stage.serverRecordIdHash,
       leaseReference: stage.leaseReference,
     );
+  }
+
+  // The native preparation already emits fixed failures, but FRB wraps them
+  // in AnyhowException. Preserve only exact reviewed values before the outer
+  // consumer redacts errors. No prefix matching, server text, or source paths.
+  Future<T> _nativePlanCall<T>(
+    String fallback,
+    Future<T> Function() action,
+  ) async {
+    try {
+      return await action();
+    } on AnyhowException catch (error, stack) {
+      final candidate = switch (error.message) {
+        'attachment source preparation unavailable' =>
+          'cloud_sync_attachment_preparation_unavailable',
+        'attachment source unavailable or does not match original IDS bytes' =>
+          'cloud_sync_attachment_source_mismatch',
+        'attachment upload source invalid' =>
+          'cloud_sync_attachment_source_invalid',
+        _ => error.message,
+      };
+      final code = cloudSyncV2SafeFailureCodeForCandidate(candidate);
+      Error.throwWithStackTrace(
+        StateError(code == 'cloud_sync_unknown_failure' ? fallback : code),
+        stack,
+      );
+    }
   }
 
   native.ArcCloudMessagesClientDefaultAnisetteProvider _client(
