@@ -56,16 +56,17 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
 | Installed Android candidate | Code `e060bcb41` repairs retained-queue scheduling above persisted IDS-proof base `731988a3d` and positive-acknowledgment native base `35551340c`. Pre-proof rows retain version 0 and cannot initiate a new CloudKit save; original envelopes remain recoverable. Prior live Android read proof remains `ad822f37cbf468a6bc74d602965e78ae02a852d1`. |
-| Windows candidate | Qualified source `6abbeede2`, manual-write variant: 30 focused Dart and 48 real Rust-DLL codec tests, 380 app Rust and 261 rustpush tests. One-time sender repair succeeded. At 16:20:53Z a fresh direct message was confirmed/admitted and exact-readback proof persisted; restart admitted zero new writes and retained one canonical message. Independent Apple-device display and ordinary Pixel composer convergence remain open. |
+| Windows candidate | Current runtime is Dart-only overlay `1d9de8629` on the signed native `3ebcc81c9` bundle. Exact claimed image `qualification-20260910-attachment-04` resumed with no second IDS send. Latest 05:30:03Z September 11: native send confirmed, admitted 0, deferred 1. Prior `3ebcc81c9` passed 51 codec tests, 78 hashes, and load/launch checks. Image save/readback/restart remain unproven; it is not attachment-qualified. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
 | Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
-| Dependency | `f2e8ea3` adds original-IDS plaintext verification and passed 275 tests in GCE `34529638374`. Only explicit IDS status 0 qualifies; missing intended group targets remain unconfirmed. |
+| Dependency | Writer fix `d201fb5` adds the exact attachment zone; `fdced92` changes only its test fixture. GCE `34567564253` passed 276 dependency tests, including the real attachment-warm regression. Earlier IDS-proof base `f2e8ea3` still requires explicit status 0 for every intended recipient. |
 | Prior-source qualification | GCE run `34437410835` fully succeeded for exact source `75440cafc`: full Dart suite, 373 app Rust tests, 253 rustpush tests, 34 protector tests, bridge drift checks, APK/native-library verification, Android JVM tests, trusted signing, and cleanup. This APK lacks the new positive-acknowledgment repair and is not a write-qualified release candidate. Older `fc132e5f8` also has the headless ready-handshake deadlock. |
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
-Windows next gate: extend the controlled qualification route to one exact
-restored group, then qualify reactions and independent Apple-device visibility.
+Windows next gate: diagnose and resume the exact claimed image intent without
+resending IDS, then prove child and parent readback and restart. Restored groups,
+reactions and independent Apple-device visibility remain separate requirements.
 The September 10 offline Windows inventory found **zero** chats with exactly
 the two approved test recipients. Do not select another personal group. The
 new request-v3 route binds the entire member set and exact restored group GUID;
@@ -74,9 +75,11 @@ including exact adopted-group selection after database reopen). This does not cr
 groups or bypass the existing protected semantic dependency. Live group proof
 needs the approved conversation restored/created first. Direct-reaction work
 and attachment integration can proceed independently of that prerequisite.
-Current private request `qualification-20260910-03` is claimed: do not change
-it or send it again. The runtime is in `../windows-cloudkit-qualified-6abbeede2`;
-the older runtime and receipt remain rollback material.
+Current private request `qualification-20260910-attachment-04` is claimed and
+IDS-confirmed: do not change it or send it again. Prior claimed plaintext
+`qualification-20260910-03` is preserved. The runtime is in
+`../windows-cloudkit-dart-1d9de8629`; older runtimes and receipts remain
+rollback material.
 
 ### Current attachment-write boundary
 
@@ -99,9 +102,11 @@ committed original IDS source
 | Group attachments | Native `d5b31d5b9`, GCE `34547723829`: 490 Rust tests passed; only generated-interface drift failed. Artifact `10179880441` was hash-verified and imported; VM/runner inventories empty. Exact restored group binding is pinned before staging and after awaits. Local transport passed 15 tests, admission 73; no live group-attachment proof. |
 | Recovery | Original source, epoch and attempt IDs remain immutable. Under current stable authority, the coordinator reuses existing plans and stages only missing entries from the original native inventory. A newly ambiguous upload may schedule only its own receipt-first next pass after native quiescence, exact fence/attempt verification and unchanged identity. Parent's composed guard/consumer test proves the missing-receipt pass creates no outbox entry or second upload. Combined qualification: **936 tests passed across 28 suites**, including fixed-inventory interruption/reopen and historical upgrades; full Dart CI passed below. Live runtime remains unqualified. |
 | Full-suite checkpoint | Source `0ff8e5595`, GCE `34555255259`: **3,016 Dart tests, 14 semantic-outbox contract cases and 3 evidence-output cases passed**. The three previous fixture/constructor-contract failures were repaired and rechecked. Cleanup completed at 02:47:11Z on September 11; independent VM/runner inventories were empty. No APK, native compilation, signing or live account access occurred in this dart-only run. |
-| Windows baseline | Source `0ff8e5595`, Windows run `34555641336`: 30 focused Dart tests, 51 actual Rust-DLL codec tests, ARM64 load and invalid-launch marker passed. Parent verified all 78 bundle files and hashes. This bundle lacks the subsequent attachment-request and durable-source-lookup correction; it is not attachment-live-qualified. The active account runtime remains `6abbeede2`. |
-| Durable source lookup | Review found that `validateReadyForCreate` reloads a Message with an empty transient `attachments` list. The executor now selects its exact persisted `dbAttachments` relation instead, retaining exactly-one original/reflected GUID matching. Eight database-reopen regressions cover both aliases, ambiguity, unrelated rows and forbidden transient/global fallback. Full exact-source CI and live proof remain open for this patch. |
+| Windows baseline | Historical source `0ff8e5595`, Windows run `34555641336`: 30 focused Dart tests, 51 actual Rust-DLL codec tests, ARM64 load and invalid-launch marker passed. Parent verified 78 bundle files. This baseline predates the attachment-request and durable-source-lookup repairs; it is retained rollback evidence, not the active runtime. |
+| Durable source lookup | Review found that `validateReadyForCreate` reloads a Message with an empty transient `attachments` list. The executor now selects its exact persisted `dbAttachments` relation instead, retaining exactly-one original/reflected GUID matching. Eight database-reopen regressions cover both aliases, ambiguity, unrelated rows and forbidden transient/global fallback. Exact source `3ebcc81c9` passed 3,042 Dart tests plus 14 outbox and 3 evidence-output cases in GCE `34557585998`; cleanup and independent empty VM/runner inventories verified. Live attachment proof remains open. |
 | Windows attachment input | Explicit request v4 adds synthetic `text-v1` and `png-v1` files only, no arbitrary user-file upload. Claim, original descriptor, protected source staging, positive IDS confirmation and the existing exact-intent production adapter remain required. Previous request-v1/v2/v3 bindings are unchanged. Interrupted IDS confirmation stays unconfirmed, not resendable. |
+| Live attachment failure | At 05:30:03Z September 11, claimed image 04 remained IDS-confirmed but deferred before plan adoption as `cloud_sync_attachment_preparation_auth_unavailable`. Source showed that the shared writer guard rejected the exact attachment zone. The native fix now passes regression tests; its new Windows runtime has not yet been imported or tested against Apple. No credential reset or second IDS send is indicated. |
+| Diagnostic repair | `1d9de8629` preserves fixed native failures through FRB; 32 targeted tests and the isolated Dart-overlay qualification passed. Native fix `62221f9` passed 493 app Rust tests in GCE `34567150925`; test-only successor `c206428a3` passed the 276-test dependency suite above. Windows build `34567152272` is still running. Active runtime remains `1d9`; image save/readback/restart is an open gate. |
 
 Prepared-handle lifecycle correction: a failed native consume can retain its
 unconsumed owner and writer permit. Waiting for futures alone cannot release
@@ -441,15 +446,17 @@ cross-device convergence
 ```
 
 Do not rebuild a Canary for every code edit. GCE handles exact-source Dart,
-Rust, bridge-generation, identity, projection, and reconciliation tests. The
-existing Windows ARM harness is stale relative to the current branch head;
-both app and rustpush revisions moved, so its reports cannot qualify the
-candidate.
-Smart App Control blocks the locally self-signed DLL and Cargo build-script
-executables with error 4551 before CloudKit starts. Keep that policy enabled.
-Restore Windows hot reload only after a trusted-provider-signed exact-source
-minimal harness exists. Credentials and PCS state remain on a private local
-profile, never on GCE. Pixel remains the live protocol and final release proof.
+Rust, bridge-generation, identity, projection, and reconciliation tests.
+Windows ARM64 bundles are built on the isolated GitHub runner and imported
+only after archive, native-codec, source/configuration and launch verification.
+The retained `6abbeede2` runtime proves its bounded direct write, not newer
+attachment code; `3ebcc81c9` must pass import and its own live test.
+Local Cargo compilation remains blocked by App Control 4551. Keep that policy
+enabled. The verified cloud bundle runs with the existing engineering signing
+path when the original ObjectBox vendor DLL is preserved; re-signing that
+vendor DLL caused the earlier startup block. Credentials and PCS state remain
+local, never on GCE. Windows qualifies protocol boundaries, not Pixel lifecycle
+or final Android release behavior.
 
 Use five promotion lanes and do not skip upward:
 

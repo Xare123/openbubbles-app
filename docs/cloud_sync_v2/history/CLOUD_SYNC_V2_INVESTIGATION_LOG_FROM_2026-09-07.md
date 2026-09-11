@@ -1735,3 +1735,116 @@ This is a chronological evidence log. It does not override the
   `not_found`. Shared source and necessary evidence/transcripts remain retained,
   with no supported session deletion or exclusive disposable worktree available.
   C: had approximately 62.6 GiB free. No account write, call or install occurred.
+- The explicit native-send await and post-send account recheck passed the
+  17-test Windows/transport contract recheck. Reviewed integration committed and
+  pushed as `3ebcc81c9c9aeac7164103e2260e7d19c94ae4fe`; unrelated dirty generated
+  and source files were not staged. The current-source total is 136 targeted
+  Dart cases across seven suites, with clean analysis of all ten changed Dart
+  source/test files; repetitions are not additional unique test coverage.
+- Dispatched exact-source GCE `34557585998` (N2D-16/us-west1-c, dart-only) and
+  Windows ARM64 `34557587481` (manual local-write variant), both on existing
+  pilot `9c63ab24d`. Prior runs were terminal-success, with no GCE instances or
+  registered runners before dispatch. Automatic uploads remain disabled; no
+  credentials/profile data enter either cloud job. At 03:12:54Z both new runs
+  were queued. Recheck these exact handles; do not redispatch on observation
+  timeout. No new live attachment save/readback/restart proof exists yet.
+
+### September 10 evening, latest full suite and local runtime preparation
+
+- Exact-source `3ebcc81c9` GCE `34557585998` passed 3,042 Dart tests,
+  14 semantic-outbox cases and three evidence-output cases. Cleanup completed
+  at 03:23:38Z September 11. Independent GCE instances and GitHub runner
+  inventories were empty. This was dart-only, with no APK or account access.
+- Prepared clean detached checkout `windows-cloudkit-qualified-3ebcc81c9`
+  for the matching Windows cloud bundle. The old runtime, private profile,
+  hardware and claimed `qualification-20260910-03` request remain unchanged.
+  The current build `34557587481` is still compiling; no live attachment test
+  has run. A bounded import script is staged under that run's private evidence
+  directory and will verify every archive file, preserve the ObjectBox vendor
+  bytes, qualify startup, and preserve the previous launch receipt.
+- Astra's bounded FaceTime review confirmed that the Windows harness has no
+  call operation and the JavaScript diagnostic harness uses fake peers. Its
+  51 offline tests pass, but cannot reproduce remote ringing/admission/media.
+  Parent checked the operation enum, desktop browser handoff and native log
+  export path. Fresh probe-enabled Android native call evidence remains the
+  next discriminator. No speculative FaceTime patch was accepted or applied.
+  Reviewer closed and shutdown verified; necessary report/session evidence
+  retained, with no supported session deletion or dedicated disposable files.
+
+### September 10 evening, first image send and isolated diagnostic loop
+
+- Windows run `34557587481` completed successfully (23m50s; Flutter compile
+  928.7s). Parent verified the archive, all 78 files, 51 actual native codec
+  tests, native load and isolated invalid-launch rejection. Existing engineering
+  signing preserved the vendor ObjectBox DLL. No PC security policy changed.
+- Imported `3ebcc81c9` into its clean detached runtime. Initial image request
+  failed on IDS 6005 before upload/send. One explicit refresh using retained
+  same-account and same-hardware credentials succeeded; the request was still
+  unclaimed when that refresh was selected.
+- At 03:40:53Z September 11, image request
+  `qualification-20260910-attachment-04` had positive IDS confirmation but
+  CloudKit admission returned admitted=0, deferred=1,
+  `cloud_sync_unknown_failure`, outboxBlocked=false. The now-claimed request
+  must never be changed or sent again. Prior plaintext request 03 is preserved.
+- Read-only inspection opened a disposable database copy. The exact image
+  intent has state 1, a valid protected/local source and fixture metadata,
+  zero upload-plan rows and no parent operation. Source database, request and
+  claim hashes stayed unchanged; the wrapper removed only its generated copy.
+  This narrows the failure to before plan adoption, not remote readback.
+- Source `1d9de8629` adds a closed native-error mapping at the attachment-plan
+  adapter. Three native preparation messages map by exact equality; approved
+  fixed codes survive, arbitrary content becomes a stage-specific fallback.
+  No retry, authority or send behavior changed. All 32 targeted tests passed
+  and analysis was clean. Only the two Dart source files and their test were
+  committed; unrelated dirty files remained unstaged.
+- Preparing a separate Dart-only overlay from clean detached source
+  `windows-cloudkit-dart-1d9de8629` with the verified 3eb native bundle. Original
+  runtime and profile receipt stay unchanged until fresh qualification. The
+  actual native cause and image save/readback/restart remain unproven.
+
+### September 11, Dart-only overlay qualification and preparation-auth cause (IN REPAIR)
+
+- Current runtime source `1d9de8629793824fad8295c888609af8a3a09687` is a separately qualified Dart-only kernel overlay of the existing signed native `3ebcc81c9` bundle, isolated source C:\Codex\OpenBubblesReview\worktrees\windows-cloudkit-dart-1d9de8629. Evidence: `C:\Codex\OpenBubblesReview\build-evidence\windows-dart-overlay-1d9de8629\local-qualification.json`, `overlay-provenance.json`, `attachment-resume-status.json` (bulk manifest not dumped).
+- Exact claimed image `qualification-20260910-attachment-04` resumed, no second IDS send. Latest 05:30:03Z September 11 status: `native_send_confirmed=true`, `admitted=0`, `deferred=1`, reason `cloud_sync_attachment_preparation_auth_unavailable`.
+- Known native `warm_attachment_writer_preparation_lookup_only` failed BEFORE the upload-plan stage. That code is generic over container/zone/PCS/identity errors, not confirmed bad Apple credentials. Parent investigates now.
+- Parent found the concrete mismatch in `rustpush/src/icloud/cloudkit.rs` `validate_writer_pcs_lookup_scope` line 3611: it matches only `chatManateeZone` and `messageManateeZone`, while the warm attachment path always passes `attachmentManateeZone`, so it deterministically returns `CloudKitSemanticOperationDenied` before PCS lookup. No credential reset corrects that. Parent is adding the exact attachment zone plus behavioral regressions, awaiting test/live verification. Mark `SOURCE-IMPLEMENTED` only once that parent patch lands; currently `IN REPAIR`.
+- 32 targeted tests passed, committed `1d9de8629`. Qualification: source/native checks, same SDK, dummy launch, unchanged profile, kernel SHA in manifest. Scripts initially had Git-wrapper case-insensitive recursion (parent killed the exact process), internal assemble empty-output list, and packaging PowerShell filter bug; compiler succeeded, parent fixed lookup and packaging recovered using recorded kernel/input hashes; all native files unchanged. No inflated success; image save/readback/restart remain unproven.
+
+### September 11, attachment-zone fix dispatched (pending)
+
+- Fix committed as app `62221f9c2fab1a85780cc2b4a938ca1525c476d3` (`fix(cloudkit): unblock attachment writer preparation scope`) on dependency `d201fb5e7443e8dc5a0d6f4b460f74f58229ee1c`, pushed fork only.
+- Isolated runs dispatched: rustpush GCE `34567149795` (T2D-60 primary), app-Rust GCE `34567150925` (T2D-32 parallel), Windows ARM64 build `34567152272`. All pending; nothing claimed passed.
+- Before dispatch: no VMs/registrations, quotas 92/100 T2D and 200/500 SSD, existing 75-minute lifetime/cleanup unchanged. No APK, new account, or sending action. Active runtime stays `1d9` until a new bundle qualifies.
+
+### September 11, rustpush CI test-compile failure and test-only fix (pending)
+
+- Rustpush GCE `34567149795` FAILED on the new test only: E0616, private field `CloudKitState.dsid` at `cloud_messages` 4118. The production patch compiled; the test suite did not run.
+- Parent fixed the fixture with `*state = CloudKitState::new(...)`. Test-only dependency `fdced92b7ff94dbb923cd48a5b711605b044218f`, app `c206428a30a9ad1b2d9a53ac392c48350ed7ba58` (app commit verified locally); new rustpush GCE `34567564253` pending. Windows `34567152272` and app-Rust `34567150925` continue on the `62221f9` fix since only the `#[cfg(test)]` body changed, so no rerun.
+- Failed-run cleanup SUCCESS; independent inventory shows the failed runner absent, with the expected app-Rust VM active. Push-triggered generic duplicates Build `34567150152` / Windows `34567150137` / Bindings `34567150154` verified cancelled (no APKs/redundancy); the explicit new CI still runs despite the test commit push-only `[skip ci]`.
+
+### September 11, native attachment-zone qualification
+
+- App-Rust GCE `34567150925` completed successfully on `62221f9`: 493 tests
+  passed, including the fixed-vocabulary preparation-diagnostic test. Bridge
+  regeneration/check passed. Cleanup succeeded; its VM and registration were
+  independently absent afterward.
+- Dependency GCE `34567564253` on test-only successor `c206428a3` passed 276
+  tests at 05:54:36Z, including the real cached attachment-warm call and all
+  three writer-zone scope cases. Its cleanup is still in progress at this
+  checkpoint. The only change from the Windows build's dependency is inside
+  the `#[cfg(test)]` identity fixture; no production behavior changed.
+- Windows run `34567152272` is still compiling the `62221f9` runtime. The new
+  detached checkout and reviewed import script are staged, but no bundle was
+  imported and no new account operation ran. Exact image claim 04, source,
+  previous runtime and profile receipt remain retained.
+- Parent reran the database-inspection helper's five tests and analyzer:
+  all passed. Its attachment output is diagnostics only and cannot claim
+  persisted child readback merely from upload rows or an IDS success.
+- Next-gate review confirmed that raw server etags already exist in native
+  save receipts and exact fetches. The missing edit/unsend work is conditional
+  update admission/encoding and reconciliation, not discovering etags from
+  scratch. Do not copy the legacy pre-reflection update path into V2.
+- All three sidecar agents were reviewed and closed, then returned
+  `not_found`. Shared patches and necessary reports/transcripts were retained;
+  there was no exclusive disposable worktree or supported session deletion.
+  C: had about 58.8 GiB free; no user data or evidence was deleted.
