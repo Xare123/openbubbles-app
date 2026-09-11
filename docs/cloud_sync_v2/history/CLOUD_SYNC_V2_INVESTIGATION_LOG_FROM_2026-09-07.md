@@ -2039,3 +2039,24 @@ This is a chronological evidence log. It does not override the
   verification. Required evidence, rollback runtimes and the unintegrated Find
   My proposal remain retained; supported session deletion is unavailable.
   C: free space at this checkpoint was 48.17 GiB. No evidence was deleted.
+
+### September 11, full attachment candidate qualified; cold fix queued separately
+
+- GCE `34576684370` completed successfully: full Dart suite, 14 semantic-outbox
+  and 3 evidence-output cases, 493 app Rust, 276 rustpush and 38 protector
+  tests; generated bindings reproduced. APK identity/native-library checks,
+  Android JVM tests, trusted GitHub-hosted signing and exact cleanup passed.
+  Signed artifact `10191138537` remains in GitHub, not downloaded or installed.
+- Independent inventories showed the old VM `gce-34576684370-1` and its runner
+  registration absent. At readback only successor VM `gce-34579830953-1` was
+  running; no runner was registered yet. This is an active new run, not cleanup
+  leakage. Required test steps and the selected-suite aggregate gate all passed.
+- Source `f860966d53b6019b46f1437312e67662724f08ce` was reviewed and pushed to
+  the fork. It adds only the cold-read repair, targeted tests, bounded inspector
+  diagnostics and documentation above the fully qualified source. User data,
+  credentials and pre-existing unrelated working changes were not staged.
+- Full successor `34579830953` was dispatched at 08:34:10Z on the existing
+  primary lane, T2D 60, Canary writer on and automatic uploads off. It waited
+  for the previous run's signing/cleanup, then began provisioning. No pilot,
+  cloud configuration, signing secret, IAM or upstream pull request was changed.
+  Its eventual pass and cleanup must be verified before the next Pixel install.
