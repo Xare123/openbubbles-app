@@ -2060,3 +2060,99 @@ This is a chronological evidence log. It does not override the
   for the previous run's signing/cleanup, then began provisioning. No pilot,
   cloud configuration, signing secret, IAM or upstream pull request was changed.
   Its eventual pass and cleanup must be verified before the next Pixel install.
+
+### September 11, Windows reaction proof and signed Pixel installation
+
+- Windows-only app `6458314d6` adds request-v5 standard reaction add/remove
+  against one explicitly named, already-confirmed plaintext test parent. It
+  reuses the production IDS payload, exact local source journal, positive
+  recipient acknowledgment and protected CloudKit admission. No native rebuild
+  was needed. Qualified Dart overlay `3984f810501b` retained signed native
+  `62221f9c2`; all 78 runtime files and profile-preservation checks passed.
+- Like-05 completed at 08:56:14Z, and remove-like-06 at 09:03:02Z. Both admitted
+  exactly one record with no deferred intents or blocked outbox. Fresh processes
+  completed at 08:57:56Z and 09:05:07Z respectively, with zero admissions.
+  The original requests, positive IDS claims and prior attachment-04 are retained.
+  No new text or personal-group message was sent during these reaction tests.
+- Inspector `ef6ba340e` verified both reaction rows against their exact parent,
+  source validation, durable readback marker and released receipt. Source DB,
+  request, claim and parent claim hashes remained unchanged. The helper opens
+  only a verified disposable DB copy, then removes that copy. Six inspector
+  tests passed, including forged-proof, parent mismatch and null/zero part cases.
+  Analyzer passed. Earlier harness/reaction suites passed 39 cases; overlapping
+  suites must not be summed as unique coverage. This is persisted exact-readback
+  proof, not a fresh independent Apple-client display observation.
+- Inspect own-parent writer proofs with the producing runtime's V2 writer and
+  outbound-canary compile flags. The default reader build correctly rejects
+  parent authority as `cloudkit_writer_build_owner_mismatch`; no production
+  guard was weakened to obtain the successful result.
+- The bounded edit/unsend reviewer withdrew an unproven network-constructor
+  recommendation. `Record.etag` exists, but the write-precondition meaning of
+  the selected save semantics remains unproven. Do not enable network edits
+  based on a field name alone. The reviewer was closed and verified absent.
+- GCE `34579830953` passed build, native verification, Android JVM tests,
+  trusted signing and cleanup for `f860966d5`. Independent inventories again
+  showed zero GCE instances and zero registered GitHub runners. Signed artifact
+  `10192048724` contains APK SHA-256
+  `ad0d6ac3e2800245bb54847a7afb12366552fb592b5c180b3cb2262efe9d6a9d`.
+  Local v2/v3 verification passed, with the same certificate as installed Canary:
+  `0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79`.
+- Wireless `install -r` succeeded at 09:14:53Z. Canary package and original
+  install time were retained, with Alpha baseline captured beforehand. Source
+  binding is from the pinned signed CI artifact, not yet a runtime getter check.
+  No credentials, cursors, messages or app storage were cleared. The previously
+  retained Pixel report was actually source `3dc614c9e`, not the older installed
+  source formerly listed in the treemap; the new candidate row corrects that drift.
+- Initial preflight showed an active coordinator lease with no semantic pull.
+  It naturally became inactive by 09:21Z, consistent with the five-minute lease
+  boundary. No lease was deleted or ignored. Authentication remained ready and
+  the protected semantic action became available. A combined restart/VM command
+  was policy-blocked and was not retried through another route. Supported ADB
+  status/preflight and ordinary protected semantic actions remain usable.
+- Evidence: `build-evidence/windows-reaction-write-3984f8105`,
+  `build-evidence/gce-full-f860966d5`, and `build-evidence/pixel-f860966d5`.
+  Retain rollback runtimes, native receipts and original requests. C: remains
+  above 46 GiB free; no retained evidence or agent transcripts were deleted.
+
+### September 11, Pixel remote-head proof and ordinary-send blocker
+
+- Protected ADB catch-up was accepted at about 09:21Z. Report
+  `obcs2-semantic-1789118680461057` verified exact runtime source `f860966d5`:
+  Chats/Messages fetched zero and observed empty terminal reads; Attachments
+  fetched one. Report `obcs2-semantic-1789118793733527` then fetched zero in all
+  three zones and proved the complete remote head. Both kept saves/deletes off,
+  outbox `0 -> 0`, and settled-outbox identity unchanged. Native authentication
+  passed on Pixel without clearing credentials or CloudKit state.
+- These reports are partial, not full sync completion. Retained totals are
+  Chats 476, Messages 7,820, Attachments 1,813. Message diagnostics distinguish
+  5,433 out-of-scope service saves from 1,893 blocking saves; attachment blocking
+  saves total 1,694. Do not conflate SMS exclusions with unresolved supported
+  records. The bounded local sweep continues after the remote-head reports.
+  The ADB controller publishes its final pass count only on completion, so
+  `passes=0` during that sweep does not mean no remote passes occurred.
+- Verified the actual developer screen after unlocking the device using the
+  user-authorized temporary test access. The first black screenshot was the
+  system lock-screen surface, not proof of a Flutter rendering regression.
+- Opened ordinary composer through the existing `imessage://` handler with
+  only approved direct test recipient and synthetic qualification-07 text.
+  One Send tap was blocked by recipient validation, before sending; the draft
+  remains intact. UI explicitly requested registration repair. Native logs
+  recorded `IDS returned 6005; attempting to re-register` at 09:27:43Z
+  (02:27:43 PDT). One validation-only retry remained unsuccessful.
+  Do not count a send, CloudKit upload or delivery for qualification-07.
+  Read authentication and IDS registration are separate gates. No login reset
+  or hardware replacement was performed while the semantic read was active.
+- Alpha version, original install time, last update and data directory all
+  match the pre-install baseline. Native logs also contain earlier APS send
+  timeouts and FaceTime link-validation failure; neither proves this read failed.
+- Astra Find My worker produced default-off, value-free diagnostic source only:
+  `lib/app/layouts/findmy/findmy_page.dart`, `findmy_diagnostics.dart`,
+  `test/findmy_diagnostics_test.dart`, and native `src/findmy.rs` plus
+  `src/findmy/diagnostics.rs`. Parent reviewed all five files and reran 10 tests
+  successfully; worker reported 54 selected tests and 10 with the gate enabled.
+  Seven native tests are still uncompiled. Preserve these unique uncommitted
+  changes for the next bundled qualification, not the frozen current APK.
+  Both build-time gates are `OPENBUBBLES_FINDMY_VERBOSE_DIAGNOSTICS=true`.
+  No location restoration is claimed. Worker closed and verified `not_found`;
+  no dedicated worktree or disposable artifact was created. Transcript deletion
+  remains unsupported, and required source/evidence stays retained.
