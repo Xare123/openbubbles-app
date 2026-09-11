@@ -821,14 +821,22 @@ state; prepared validation permits only `MessageInst::prepare_send` changes.
 Native protected staging is now implemented in
 `rust/src/cloud_sync_ids_mutation_stage.rs`: one immutable source/hash wrapper,
 its own `idsMutationSource` purpose, bounded descriptor, and exact committed
-lease validation before reopen. It is **not journal-adopted, receipt-bound or
-connected to a save**. Native qualification of this integration is pending.
+lease validation before reopen. The current unqualified integration adds
+purpose-typed bridge staging/restore, exact pre-send and prepared-send checks,
+and a version-4 native positive-IDS receipt that preserves mutation ownership
+through replay and acknowledgement. Historical receipt versions 2/3 retain
+their original meanings; create consumers retain mutation receipts without
+acknowledging them. It is **not journal-adopted or connected to a CloudKit save**.
+Bridge generation and exact-source native qualification remain required.
 Text-with-flags edits and unsends are represented; unsupported replacement
 parts must remain explicit pending work, never flattened or counted complete.
-Next integration: durable mutation journal, positive native confirmation,
+Next integration: durable mutation journal and app confirmation/reflection,
 then exact predecessor/readback. Initial-create admission remains unchanged.
 The codec-only checkpoint passed GitHub `34624049558`; expanded codec and
-protected-stage tests still need exact-source qualification.
+protected staging passed exact-source GCE `34625938024` on `3d95920ff`:
+503 Rust tests and bridge reproduction succeeded. The subsequent API/send and
+version-4 receipt integration remains unqualified until its own generated
+bridge and native tests complete.
 
 Journal integration decision: keep mutation intent separate from the existing
 initial-create journal, whose immutable source must remain unedited. Reuse its
@@ -850,6 +858,16 @@ distinct-value counts, missing digests and source preservation. Do not repeat
 this inventory without new ingestion; obtain a targeted real Apple edit/unsend
 transition when a second client is available. Storage/receipt integration can
 continue independently, but remote updates remain disabled.
+
+GCE Dart-only `34625386547`, source `4f7674c1f`, passed 3,169 Dart tests,
+14 outbox contract cases and 3 evidence-output cases. Cleanup succeeded at
+17:13:11Z on September 11; its exact VM and runner registration were absent
+from subsequent inventories. Native-only `34625938024` on `3d95920ff`
+passed in `us-west1-c`; cleanup succeeded at 17:23:33Z and independent VM and
+runner inventories were empty. Its scope predates the new bridge/receipt integration.
+The new Dart mutation-binding codec passed 10 focused tests plus the 12
+unchanged attachment-binding tests; this is identity parsing, not journal,
+delivery, CloudKit save or independent-client proof.
 
 Do not enable update transport from structural inference alone. First capture
 one genuine Apple edit and one unsend read-only, proving the same record name,

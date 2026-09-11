@@ -8437,6 +8437,10 @@ class RustPushService extends GetxService {
     final CloudSyncNativeSendReceiptResolution? resolution;
     try {
       final source = nativeReceipt.sourceBinding;
+      // Mutations have a distinct journal and target identity. An older create
+      // consumer must retain their native receipt, never reclassify/ack it as
+      // an attachment origin merely because its reference fields match.
+      if (source?.kind == api.CloudSyncNativeSendSourceKind.mutation) return;
       receiptSource = source == null ? null : CloudSyncLocalSendSourceBinding(
         accountFingerprint: auth.accountFingerprint,
         protectedStoreIdentity: auth.protectedStoreIdentity,

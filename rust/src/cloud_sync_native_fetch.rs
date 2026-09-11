@@ -1752,8 +1752,15 @@ impl PlatformCloudNativeProtectedStore {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CloudNativeIdsSendSourceKind {
+    Attachment,
+    Mutation,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CloudNativeIdsSendSourceBinding {
+    pub(crate) kind: CloudNativeIdsSendSourceKind,
     pub(crate) source_sha256: String,
     pub(crate) protected_reference: String,
     pub(crate) lease_reference: String,
@@ -1780,6 +1787,7 @@ impl CloudNativeIdsSendSourceBinding {
         let string = |key: &str| object.get(key).and_then(serde_json::Value::as_str)
             .map(str::to_owned).ok_or(CloudNativeStoreFailure::InvalidReference);
         let binding = Self {
+            kind: CloudNativeIdsSendSourceKind::Attachment,
             source_sha256: string("source_sha256")?,
             protected_reference: string("protected_reference")?,
             lease_reference: string("lease_reference")?,
@@ -1846,15 +1854,30 @@ impl CloudNativeIdsSendReceipt {
     fn encode(&self) -> Result<String, CloudNativeStoreFailure> {
         self.validate()?;
         if let Some(binding) = &self.source_binding {
-            Ok(serde_json::json!({
-                "version": 3,
-                "guidHash": self.guid_hash,
-                "accountFingerprint": self.account_fingerprint,
-                "protectedStoreIdentity": self.protected_store_identity,
-                "nativeSessionId": self.native_session_id,
-                "sourceBinding": binding.receipt_value(),
-            })
-            .to_string())
+            // Attachment keeps the exact historical v3 object shape. Mutation
+            // uses v4 with the same nested source fields plus an explicit
+            // discriminator.
+            match binding.kind {
+                CloudNativeIdsSendSourceKind::Attachment => Ok(serde_json::json!({
+                    "version": 3,
+                    "guidHash": self.guid_hash,
+                    "accountFingerprint": self.account_fingerprint,
+                    "protectedStoreIdentity": self.protected_store_identity,
+                    "nativeSessionId": self.native_session_id,
+                    "sourceBinding": binding.receipt_value(),
+                })
+                .to_string()),
+                CloudNativeIdsSendSourceKind::Mutation => Ok(serde_json::json!({
+                    "version": 4,
+                    "guidHash": self.guid_hash,
+                    "accountFingerprint": self.account_fingerprint,
+                    "protectedStoreIdentity": self.protected_store_identity,
+                    "nativeSessionId": self.native_session_id,
+                    "sourceBinding": binding.receipt_value(),
+                    "sourceKind": "idsMutationSource",
+                })
+                .to_string()),
+            }
         } else {
             Ok(serde_json::json!({
                 "version": 2,
@@ -1914,7 +1937,52 @@ impl CloudNativeIdsSendReceipt {
                 let binding_value = object
                     .get("sourceBinding")
                     .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+                // v3 is the historical attachment object shape; kind is implicit
+                // via the 5-field source default (Attachment).
                 let source_binding = CloudNativeIdsSendSourceBinding::from_receipt_value(binding_value)?;
+                let receipt = Self {
+                    guid_hash: object
+                        .get("guidHash")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    account_fingerprint: object
+                        .get("accountFingerprint")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    protected_store_identity: object
+                        .get("protectedStoreIdentity")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    native_session_id: object
+                        .get("nativeSessionId")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(CloudNativeStoreFailure::InvalidReference)?
+                        .to_owned(),
+                    source_binding: Some(source_binding),
+                };
+                receipt.validate()?;
+                Ok(receipt)
+            }
+            Some(4) => {
+                if object.len() != 7 {
+                    return Err(CloudNativeStoreFailure::InvalidReference);
+                }
+                let kind_value = object
+                    .get("sourceKind")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+                if kind_value != "idsMutationSource" {
+                    return Err(CloudNativeStoreFailure::InvalidReference);
+                }
+                let binding_value = object
+                    .get("sourceBinding")
+                    .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+                let mut source_binding =
+                    CloudNativeIdsSendSourceBinding::from_receipt_value(binding_value)?;
+                source_binding.kind = CloudNativeIdsSendSourceKind::Mutation;
                 let receipt = Self {
                     guid_hash: object
                         .get("guidHash")
@@ -6381,12 +6449,33 @@ mod tests {
 
     fn ids_send_source_binding_fixture() -> CloudNativeIdsSendSourceBinding {
         CloudNativeIdsSendSourceBinding {
+            kind: CloudNativeIdsSendSourceKind::Attachment,
             source_sha256: "a".repeat(64),
             protected_reference: format!("obcs2.ref.{}", "A".repeat(43)),
             lease_reference: format!("obcs2.lease.{}", "b".repeat(32)),
             payload_sha256: "c".repeat(64),
             payload_length: 123,
         }
+    }
+
+    fn ids_send_source_binding_fixture_with_kind(
+        kind: CloudNativeIdsSendSourceKind,
+    ) -> CloudNativeIdsSendSourceBinding {
+        CloudNativeIdsSendSourceBinding {
+            kind,
+            ..ids_send_source_binding_fixture()
+        }
+    }
+
+    fn ids_send_object_keys(value: &serde_json::Value) -> Vec<String> {
+        let mut keys = value
+            .as_object()
+            .expect("object")
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        keys.sort();
+        keys
     }
 
     #[test]
@@ -6459,7 +6548,7 @@ mod tests {
         v3_without_binding["version"] = serde_json::json!(3);
         assert!(CloudNativeIdsSendReceipt::decode(&v3_without_binding.to_string()).is_err());
         let mut unknown_version = valid_value.clone();
-        unknown_version["version"] = serde_json::json!(4);
+        unknown_version["version"] = serde_json::json!(5);
         assert!(CloudNativeIdsSendReceipt::decode(&unknown_version.to_string()).is_err());
         let mut extra_key = valid_value.clone();
         extra_key["extra"] = serde_json::json!(1);
@@ -6582,6 +6671,371 @@ mod tests {
                 &receipt.protected_store_identity,
             )
             .expect("ack with matching binding");
+        assert!(store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("replay after ack")
+            .receipts
+            .is_empty());
+    }
+
+    #[test]
+    fn ids_send_source_binding_kind_helpers_cover_both_kinds() {
+        let attachment = ids_send_source_binding_fixture();
+        assert_eq!(attachment.kind, CloudNativeIdsSendSourceKind::Attachment);
+        let mutation = ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        );
+        assert_eq!(mutation.kind, CloudNativeIdsSendSourceKind::Mutation);
+        assert_eq!(mutation.source_sha256, attachment.source_sha256);
+        assert_eq!(mutation.protected_reference, attachment.protected_reference);
+        assert_eq!(mutation.lease_reference, attachment.lease_reference);
+        assert_eq!(mutation.payload_sha256, attachment.payload_sha256);
+        assert_eq!(mutation.payload_length, attachment.payload_length);
+    }
+
+    #[test]
+    fn ids_send_receipt_v2_v3_encoding_shape_is_exact() {
+        let directory = tempdir().expect("temp directory");
+        // Unchanged v2: exactly 5 top-level keys, no binding, no kind.
+        let bare = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        let bare_value: serde_json::Value =
+            serde_json::from_str(&bare.encode().expect("encode v2")).expect("parse v2");
+        assert_eq!(
+            ids_send_object_keys(&bare_value),
+            vec![
+                "accountFingerprint".to_owned(),
+                "guidHash".to_owned(),
+                "nativeSessionId".to_owned(),
+                "protectedStoreIdentity".to_owned(),
+                "version".to_owned(),
+            ]
+        );
+        assert_eq!(
+            bare_value.get("version").and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        // A hardcoded historical v2 payload parses and re-encodes identically.
+        let legacy_v2 = serde_json::json!({
+            "version": 2,
+            "guidHash": "f".repeat(64),
+            "accountFingerprint": "F".repeat(43),
+            "protectedStoreIdentity": format!("obcs2.store.{}", "S".repeat(43)),
+            "nativeSessionId": "R".repeat(43),
+        });
+        let legacy_v2_decoded =
+            CloudNativeIdsSendReceipt::decode(&legacy_v2.to_string()).expect("old v2 decodes");
+        assert_eq!(legacy_v2_decoded.source_binding, None);
+        assert_eq!(legacy_v2_decoded.encode().unwrap(), legacy_v2.to_string());
+        let legacy_v2_roundtrip: serde_json::Value =
+            serde_json::from_str(&legacy_v2_decoded.encode().expect("re-encode v2"))
+                .expect("parse re-encoded v2");
+        assert_eq!(legacy_v2_roundtrip, legacy_v2);
+
+        // Unchanged v3 attachment: exactly 6 top-level keys plus the exact
+        // historical 5 nested source fields, no discriminator.
+        let mut bound = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        bound.source_binding = Some(ids_send_source_binding_fixture());
+        let bound_value: serde_json::Value =
+            serde_json::from_str(&bound.encode().expect("encode v3")).expect("parse v3");
+        assert_eq!(
+            ids_send_object_keys(&bound_value),
+            vec![
+                "accountFingerprint".to_owned(),
+                "guidHash".to_owned(),
+                "nativeSessionId".to_owned(),
+                "protectedStoreIdentity".to_owned(),
+                "sourceBinding".to_owned(),
+                "version".to_owned(),
+            ]
+        );
+        assert_eq!(
+            bound_value.get("version").and_then(serde_json::Value::as_u64),
+            Some(3)
+        );
+        assert!(bound_value.get("sourceKind").is_none());
+        assert_eq!(
+            ids_send_object_keys(&bound_value["sourceBinding"]),
+            vec![
+                "lease_reference".to_owned(),
+                "payload_length".to_owned(),
+                "payload_sha256".to_owned(),
+                "protected_reference".to_owned(),
+                "source_sha256".to_owned(),
+            ]
+        );
+        // A hardcoded historical v3 payload parses as Attachment and
+        // re-encodes identically.
+        let legacy_v3 = serde_json::json!({
+            "version": 3,
+            "guidHash": "f".repeat(64),
+            "accountFingerprint": "F".repeat(43),
+            "protectedStoreIdentity": format!("obcs2.store.{}", "S".repeat(43)),
+            "nativeSessionId": "R".repeat(43),
+            "sourceBinding": {
+                "source_sha256": "a".repeat(64),
+                "protected_reference": format!("obcs2.ref.{}", "A".repeat(43)),
+                "lease_reference": format!("obcs2.lease.{}", "b".repeat(32)),
+                "payload_sha256": "c".repeat(64),
+                "payload_length": 123,
+            },
+        });
+        let legacy_v3_decoded =
+            CloudNativeIdsSendReceipt::decode(&legacy_v3.to_string()).expect("old v3 decodes");
+        assert_eq!(legacy_v3_decoded.encode().unwrap(), legacy_v3.to_string());
+        assert_eq!(
+            legacy_v3_decoded
+                .source_binding
+                .as_ref()
+                .map(|binding| binding.kind),
+            Some(CloudNativeIdsSendSourceKind::Attachment)
+        );
+        let legacy_v3_roundtrip: serde_json::Value =
+            serde_json::from_str(&legacy_v3_decoded.encode().expect("re-encode v3"))
+                .expect("parse re-encoded v3");
+        assert_eq!(legacy_v3_roundtrip, legacy_v3);
+    }
+
+    #[test]
+    fn ids_send_mutation_receipt_v4_strict_parse_roundtrip() {
+        let directory = tempdir().expect("temp directory");
+        let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        receipt.source_binding = Some(ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        ));
+        let encoded = receipt.encode().expect("encode v4");
+        let value: serde_json::Value = serde_json::from_str(&encoded).expect("parse v4");
+        // v4: exactly 7 top-level keys with the explicit discriminator and
+        // the same exact nested source fields as v3.
+        assert_eq!(
+            ids_send_object_keys(&value),
+            vec![
+                "accountFingerprint".to_owned(),
+                "guidHash".to_owned(),
+                "nativeSessionId".to_owned(),
+                "protectedStoreIdentity".to_owned(),
+                "sourceBinding".to_owned(),
+                "sourceKind".to_owned(),
+                "version".to_owned(),
+            ]
+        );
+        assert_eq!(
+            value.get("version").and_then(serde_json::Value::as_u64),
+            Some(4)
+        );
+        assert_eq!(
+            value.get("sourceKind").and_then(serde_json::Value::as_str),
+            Some("idsMutationSource")
+        );
+        assert_eq!(
+            ids_send_object_keys(&value["sourceBinding"]),
+            vec![
+                "lease_reference".to_owned(),
+                "payload_length".to_owned(),
+                "payload_sha256".to_owned(),
+                "protected_reference".to_owned(),
+                "source_sha256".to_owned(),
+            ]
+        );
+        let decoded = CloudNativeIdsSendReceipt::decode(&encoded).expect("decode v4");
+        assert_eq!(
+            decoded.source_binding.as_ref().map(|binding| binding.kind),
+            Some(CloudNativeIdsSendSourceKind::Mutation)
+        );
+        assert_eq!(decoded.source_binding, receipt.source_binding);
+        assert_eq!(decoded.guid_hash, receipt.guid_hash);
+        // Unknown purposes are rejected.
+        for purpose in [
+            serde_json::json!("idsAttachmentSource"),
+            serde_json::json!("checkpointToken"),
+            serde_json::json!(""),
+            serde_json::json!("mutation"),
+            serde_json::json!(1),
+            serde_json::json!(true),
+            serde_json::Value::Null,
+        ] {
+            let mut wrong_purpose = value.clone();
+            wrong_purpose["sourceKind"] = purpose;
+            assert!(
+                CloudNativeIdsSendReceipt::decode(&wrong_purpose.to_string()).is_err(),
+                "v4 rejects unknown purpose"
+            );
+        }
+        // Wrong arity is rejected: missing discriminator, missing binding, extras.
+        let mut missing_kind = value.clone();
+        missing_kind
+            .as_object_mut()
+            .expect("v4 object")
+            .remove("sourceKind");
+        assert!(CloudNativeIdsSendReceipt::decode(&missing_kind.to_string()).is_err());
+        let mut v3_with_kind = value.clone();
+        v3_with_kind["version"] = serde_json::json!(3);
+        assert!(CloudNativeIdsSendReceipt::decode(&v3_with_kind.to_string()).is_err());
+        let mut missing_binding = value.clone();
+        missing_binding
+            .as_object_mut()
+            .expect("v4 object")
+            .remove("sourceBinding");
+        assert!(CloudNativeIdsSendReceipt::decode(&missing_binding.to_string()).is_err());
+        let mut extra_top = value.clone();
+        extra_top["extra"] = serde_json::json!(1);
+        assert!(CloudNativeIdsSendReceipt::decode(&extra_top.to_string()).is_err());
+        // Malformed fields are rejected.
+        let mut bad_nested = value.clone();
+        bad_nested["sourceBinding"]["payload_length"] = serde_json::json!(0);
+        assert!(CloudNativeIdsSendReceipt::decode(&bad_nested.to_string()).is_err());
+        let mut nested_kind = value.clone();
+        nested_kind["sourceBinding"]["kind"] = serde_json::json!("idsMutationSource");
+        assert!(CloudNativeIdsSendReceipt::decode(&nested_kind.to_string()).is_err());
+        let mut missing_nested = value.clone();
+        missing_nested["sourceBinding"]
+            .as_object_mut()
+            .expect("nested binding")
+            .remove("source_sha256");
+        assert!(CloudNativeIdsSendReceipt::decode(&missing_nested.to_string()).is_err());
+        let mut bad_guid = value.clone();
+        bad_guid["guidHash"] = serde_json::json!("zz");
+        assert!(CloudNativeIdsSendReceipt::decode(&bad_guid.to_string()).is_err());
+        let mut bad_session = value.clone();
+        bad_session["nativeSessionId"] = serde_json::json!("R".repeat(42));
+        assert!(CloudNativeIdsSendReceipt::decode(&bad_session.to_string()).is_err());
+    }
+
+    #[test]
+    fn ids_send_mutation_receipt_persist_idempotent_and_cross_kind_substitution_rejected() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        receipt.source_binding = Some(ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        ));
+        let first = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist mutation");
+        let second = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist same mutation");
+        assert_eq!(first, second);
+
+        // Same origin tuple and same source fields but attachment kind must
+        // not overwrite the mutation receipt.
+        let cross_kind = CloudNativeIdsSendReceipt {
+            guid_hash: receipt.guid_hash.clone(),
+            account_fingerprint: receipt.account_fingerprint.clone(),
+            protected_store_identity: receipt.protected_store_identity.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+            source_binding: Some(ids_send_source_binding_fixture()),
+        };
+        assert_eq!(
+            store.persist_ids_send_receipt(&cross_kind),
+            Err(CloudNativeStoreFailure::ContextMismatch)
+        );
+
+        // Same mutation kind but different source fields is also rejected.
+        let mut other_binding = ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        );
+        other_binding.payload_sha256 = "d".repeat(64);
+        let substituted = CloudNativeIdsSendReceipt {
+            guid_hash: receipt.guid_hash.clone(),
+            account_fingerprint: receipt.account_fingerprint.clone(),
+            protected_store_identity: receipt.protected_store_identity.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+            source_binding: Some(other_binding),
+        };
+        assert_eq!(
+            store.persist_ids_send_receipt(&substituted),
+            Err(CloudNativeStoreFailure::ContextMismatch)
+        );
+
+        let replayed = store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("replay after substitution attempts")
+            .receipts;
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0].source_binding, receipt.source_binding);
+        assert_eq!(
+            replayed[0].source_binding.as_ref().map(|binding| binding.kind),
+            Some(CloudNativeIdsSendSourceKind::Mutation)
+        );
+    }
+
+    #[test]
+    fn ids_send_mutation_receipt_replay_carries_kind_and_wrong_kind_ack_rejected() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
+        receipt.source_binding = Some(ids_send_source_binding_fixture_with_kind(
+            CloudNativeIdsSendSourceKind::Mutation,
+        ));
+        let receipt_id = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist mutation");
+        let page = store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .expect("replay mutation");
+        assert_eq!(page.receipts.len(), 1);
+        assert_eq!(page.receipts[0].source_binding, receipt.source_binding);
+        assert_eq!(
+            page.receipts[0]
+                .source_binding
+                .as_ref()
+                .map(|binding| binding.kind),
+            Some(CloudNativeIdsSendSourceKind::Mutation)
+        );
+
+        // A mutation receipt cannot be acknowledged with attachment kind,
+        // even when every source field matches.
+        let wrong_kind = CloudNativeIdsSendReceiptReplay {
+            receipt_id: receipt_id.clone(),
+            guid_hash: receipt.guid_hash.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+            source_binding: Some(ids_send_source_binding_fixture()),
+        };
+        assert_eq!(
+            store.acknowledge_ids_send_receipt(
+                &wrong_kind,
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+            ),
+            Err(CloudNativeStoreFailure::ContextMismatch)
+        );
+        assert_eq!(
+            store
+                .replay_ids_send_receipts(
+                    &receipt.account_fingerprint,
+                    &receipt.protected_store_identity,
+                    None,
+                )
+                .expect("receipt preserved after wrong-kind ack")
+                .receipts
+                .len(),
+            1
+        );
+        let expected = CloudNativeIdsSendReceiptReplay {
+            receipt_id,
+            guid_hash: receipt.guid_hash.clone(),
+            native_session_id: receipt.native_session_id.clone(),
+            source_binding: receipt.source_binding.clone(),
+        };
+        store
+            .acknowledge_ids_send_receipt(
+                &expected,
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+            )
+            .expect("ack with matching mutation binding");
         assert!(store
             .replay_ids_send_receipts(
                 &receipt.account_fingerprint,

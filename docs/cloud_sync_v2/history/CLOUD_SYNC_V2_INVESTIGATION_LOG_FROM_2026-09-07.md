@@ -2553,3 +2553,61 @@ This is a chronological evidence log. It does not override the
   integration or an Android build. ADB wireless discovery reconnected the Pixel;
   Astra now owns a bounded read-only FaceTime evidence capture, with no calls,
   installs, log resets or account changes permitted.
+- Native checkpoint `3d95920ff` was pushed to the fork only. GCE app-Rust-only
+  `34625938024` is queued on the same primary lane behind Dart-only
+  `34625386547`, preserving the single N2D-16 quota and cleanup ordering.
+  No APK or production credentials are involved. This run must cover the new
+  protected-stage and expanded codec tests before their source is qualified.
+- Parent reviewed Astra's bounded current-Pixel capture: no new usable
+  FaceTime admission/media/termination trace. Current native diagnostic
+  directories are absent; general warnings cannot identify a handshake failure.
+  Fifty-four JS regressions passed. Logs and manifest total 2,790,624 bytes in
+  the local ignored `device-evidence/facetime-20260911-live-review/`
+  `capture-20260911-100513-a1` directory. Installed exact source was not newly
+  attested by the agent. No additional FaceTime patch or success claim follows
+  from this evidence. Rawls closed after review and shutdown verified; the
+  bounded evidence is retained. No child agents remain active.
+
+- GCE Dart-only `34625386547` completed: 3,169 Dart tests, 14 semantic
+  outbox cases and 3 evidence-output cases passed on source `4f7674c1f`.
+  Cleanup succeeded at 17:13:11Z; the exact old VM and runner were absent
+  from independent inventories while the successor native run was active.
+  Native-only `34625938024` on `3d95920ff` provisioned successfully in
+  `us-west1-c`. No quota or infrastructure configuration changed.
+- Parent is integrating purpose-typed mutation staging and restore into the
+  native send boundary. Original source is checked before submission and
+  again after native preparation. A post-acceptance mismatch suppresses
+  CloudKit authority without reporting a resendable delivery failure. New
+  version-4 receipts distinguish mutation from attachment sources across
+  persistence, replay and acknowledgement. Versions 2/3 retain their meaning.
+  This is not wired to ordinary edit/unsend UI, a durable mutation journal or
+  a remote save. Exact-source bridge generation/native tests remain required.
+- Feynman's new content-free mutation binding and its ten tests were reviewed;
+  parent reran them with the twelve unchanged attachment-binding tests, all
+  22 passed. Targeted Dart analysis reports no issues. No schema, account,
+  send, upload or CloudKit authority comes from this codec alone.
+- Astra identified a native-only FaceTime log export eligibility defect and
+  was assigned its bounded fix. Both diagnostic switches are connected in
+  source; absent files are not a handshake diagnosis. Remote LeaveEvent
+  observability remains a distinct gap, not permission for automatic teardown.
+- GCE `34625938024` completed successfully on `3d95920ff`: bridge
+  reproduction, native compile and 503 app Rust tests passed. Cleanup completed
+  at 17:23:33Z and independent VM/runner inventories were empty. This qualifies
+  protected staging and expanded codec tests, not the subsequent API/receipt work.
+- Parent review added a real send-start ambiguity repair: rustpush's
+  `IdentityManager::send_message` can abort a send task after a 15-second
+  no-progress timeout, after packets may have been sent. Its `SendTimedOut`
+  text previously reached Dart's one-time automatic retry even for tracked
+  intents. Tracked starts now return the fixed completion-unknown code;
+  untracked legacy behavior is unchanged. Native regression qualification is
+  pending with the mutation API batch.
+- Beauvoir's receipt patch and later test additions were reviewed, including
+  exact historical v2/v3 shapes, strict v4 purpose/fields, idempotent persist,
+  replay, and wrong-kind acknowledgement preservation. Parent strengthened
+  historical fixture checks to compare encoded bytes too. Both Muse workers
+  were closed after review and shutdown verified. Their source is retained;
+  supported transcript deletion is unavailable, so provenance is preserved.
+- User additionally requested an Astra FaceTime viewer redesign. The same
+  Astra worker now owns the layout task after the export fix: video-first
+  iOS-style controls, safe insets and no overlap, while preserving signaling
+  and explicit-user teardown semantics. It is not integrated or tested yet.
