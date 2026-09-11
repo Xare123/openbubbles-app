@@ -2684,3 +2684,52 @@ This is a chronological evidence log. It does not override the
   integrated at `925b02181`; no descendants or dedicated worktree existed.
   Supported session deletion is unavailable, so transcript provenance remains.
   C: free space was 49.7 GiB; no evidence, credentials or user data was removed.
+- Checkpoint `f24e7379f` was committed and pushed to the fork only. GCE
+  `34631352089` now runs dart-only qualification on that source, N2D-16 in
+  `us-west1-c`, both writer flags off. The preceding VM/runner inventories were
+  empty; no quota or infrastructure configuration changed. Windows fast-loop
+  `34631493537` independently builds the matching native API on the same source
+  with the unchanged qualified pilot `9c63ab24d`. Its local-write option only
+  selects compilation; no valid account launch, Apple credential, message send
+  or remote save occurs on the hosted runner. Bundle import/local signing and
+  runtime qualification remain pending; retained Windows/Pixel apps are unchanged.
+- GCE `34631352089` finished with 3,220 passing and three failing Dart cases.
+  All failures were stale model-upgrade fixtures after entity 35 was added:
+  old entity-32/33 fixtures accidentally retained the new entity, and the
+  current-schema assertion still expected last entity 34. The parent corrected
+  all three and added an entity-34 upgrade followed by two opens preserving
+  existing chats, messages and local-send intents. A direct predecessor/current
+  model comparison found 26 unchanged entity definitions and unchanged retired
+  entity IDs. No real user database was opened or migrated. Cleanup succeeded
+  and independent GCE/runner inventories were empty.
+- Added mutation protected-source preparation: capture the persisted target,
+  reuse an unclaimed source or stage/adopt it once, commit the original lease,
+  restore/validate the exact native wire, then claim once under current auth.
+  Both exclusions release before the caller could submit IDS. Failed adopted
+  commits remain recoverable without a second stage; post-claim interruptions
+  stay unknown, never automatically resendable. Tests cover edit and unsend,
+  commit/reopen, altered target/wire/auth, busy exclusion and mismatched store.
+  The first local run exposed a synchronous preflight exception; the async
+  boundary is now consistent. A new migration test initially used a nonexistent
+  constructor field; it was corrected to the actual existing send entity.
+- Live native confirmation and cold replay now dispatch mutation-purpose
+  receipts to the separate journal. Unknown receipts stay retained; original
+  native-session binding still applies on replay. Neither the create writer
+  nor generic receipt acknowledgement is reached. Ordinary edit/unsend capture,
+  exact-source local projector and conditional CloudKit updates are still not
+  enabled; the next real integration target is the matching Windows fast loop.
+- Parent reviewed Astra Boole's bounded FaceTime remote-leave diagnostics.
+  Accepted as default-off observation only, not a calling fix or protocol reason.
+  Reported targeted validation: 74 Kotlin, 49 Flutter and 63 JavaScript tests;
+  Android Activity/channel compilation and live calls remain unqualified.
+  Agent was closed after review and shutdown was verified. No descendants or
+  dedicated worktree existed; shared source and provenance remain necessary.
+  Supported session deletion is unavailable. C: had about 49 GiB free and no
+  user data, protected evidence or session was deleted.
+- Final combined local qualification passed **410 tests across 12 suites**:
+  mutation identity/journal/source, send source/journal/recovery, reactions,
+  upload journal, ObjectBox store/migration, receipt and production composition.
+  An initial cohort command named a nonexistent reaction test file (402 real
+  cases passed); the corrected command validates every suite path first and
+  passes as a whole. The new/modified CloudKit source analysis is clean; the
+  shared service retains four pre-existing style infos outside these changes.

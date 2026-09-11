@@ -8,6 +8,52 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:objectbox/internal.dart' as obx;
 
 void main() {
+  test('mutation journal upgrade preserves an actual entity-34 store after reopen', () async {
+    final directory = await Directory.systemTemp.createTemp('cloud-sync-mutation-upgrade-');
+    addTearDown(() => directory.delete(recursive: true));
+    final current = getObjectBoxModel();
+    final previousMap = current.model.toMap();
+    (previousMap['entities'] as List).removeWhere(
+      (entity) => entity['name'] == 'CloudSyncLocalMutationIntentEntity',
+    );
+    previousMap['lastEntityId'] = '34:2734237264100580081';
+    previousMap['lastIndexId'] = '97:2075310387007054598';
+    final previous = obx.ModelDefinition(
+      obx.ModelInfo.fromMap(previousMap),
+      Map.of(current.bindings)..remove(CloudSyncLocalMutationIntentEntity),
+    );
+    final oldStore = Store(previous, directory: directory.path);
+    late int chatId;
+    late int messageId;
+    late int intentId;
+    try {
+      final chat = Chat(guid: 'iMessage;-;migration@example.invalid');
+      chatId = oldStore.box<Chat>().put(chat);
+      final message = Message(guid: 'old-guid', text: 'retained text', isFromMe: true)
+        ..chat.target = chat;
+      messageId = oldStore.box<Message>().put(message);
+      intentId = oldStore.box<CloudSyncLocalSendIntentEntity>().put(
+        CloudSyncLocalSendIntentEntity(
+          intentKey: 'synthetic-original-send', accountFingerprint: 'A' * 43,
+          writerEpoch: 2, localMessageId: messageId,
+          sourceSha256: 'b' * 64, messageGuidHash: 'c' * 64,
+          state: 0, createdAtMs: 1000, updatedAtMs: 1000,
+        ),
+      );
+    } finally { oldStore.close(); }
+    for (var pass = 0; pass < 2; pass++) {
+      final upgraded = await openStore(directory: directory.path);
+      try {
+        final message = upgraded.box<Message>().get(messageId)!;
+        expect(message.text, 'retained text');
+        expect(message.chat.targetId, chatId);
+        expect(upgraded.box<CloudSyncLocalSendIntentEntity>().get(intentId)!.intentKey,
+            'synthetic-original-send');
+        expect(upgraded.box<CloudSyncLocalMutationIntentEntity>().count(), 0);
+      } finally { upgraded.close(); }
+    }
+  });
+
   test(
     'Outbox property26 database upgrades to nullable localChatOrigin without data loss',
     () async {
@@ -151,7 +197,8 @@ void main() {
       (previousMap['entities'] as List).removeWhere(
         (entity) =>
             entity['name'] == 'CloudSyncLocalSendIntentEntity' ||
-            entity['name'] == 'CloudAttachmentUploadEntity',
+            entity['name'] == 'CloudAttachmentUploadEntity' ||
+            entity['name'] == 'CloudSyncLocalMutationIntentEntity',
       );
       // Exact counters from the qualified pre-journal model, not a fresh store
       // with the new model. All predecessor entity definitions stay unchanged.
@@ -161,7 +208,8 @@ void main() {
         obx.ModelInfo.fromMap(previousMap),
         Map.of(current.bindings)
           ..remove(CloudSyncLocalSendIntentEntity)
-          ..remove(CloudAttachmentUploadEntity),
+          ..remove(CloudAttachmentUploadEntity)
+          ..remove(CloudSyncLocalMutationIntentEntity),
       );
       final oldStore = Store(previous, directory: directory.path);
       late final int messageId;
@@ -662,7 +710,11 @@ void main() {
         entities,
         containsPair('CloudAttachmentUploadEntity', '34:2734237264100580081'),
       );
-      expect(model['lastEntityId'], '34:2734237264100580081');
+      expect(
+        entities,
+        containsPair('CloudSyncLocalMutationIntentEntity', '35:5717746217656693252'),
+      );
+      expect(model['lastEntityId'], '35:5717746217656693252');
       expect(model['modelVersion'], 5);
       expect(model['modelVersionParserMinimum'], 5);
 
@@ -800,7 +852,8 @@ void main() {
       final current = getObjectBoxModel();
       final previousMap = current.model.toMap();
       (previousMap['entities'] as List).removeWhere(
-        (entity) => entity['name'] == 'CloudAttachmentUploadEntity',
+        (entity) => entity['name'] == 'CloudAttachmentUploadEntity' ||
+            entity['name'] == 'CloudSyncLocalMutationIntentEntity',
       );
       // Exact counters from the qualified pre-upload model, not a fresh store
       // with the new model. All predecessor entity definitions stay unchanged.
@@ -808,7 +861,9 @@ void main() {
       previousMap['lastIndexId'] = '95:4712335069625825055';
       final previous = obx.ModelDefinition(
         obx.ModelInfo.fromMap(previousMap),
-        Map.of(current.bindings)..remove(CloudAttachmentUploadEntity),
+        Map.of(current.bindings)
+          ..remove(CloudAttachmentUploadEntity)
+          ..remove(CloudSyncLocalMutationIntentEntity),
       );
       final oldStore = Store(previous, directory: directory.path);
       late final int messageId;

@@ -42,6 +42,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_android_back
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_send_body.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_staging.dart';
@@ -8440,7 +8441,26 @@ class RustPushService extends GetxService {
       // Mutations have a distinct journal and target identity. An older create
       // consumer must retain their native receipt, never reclassify/ack it as
       // an attachment origin merely because its reference fields match.
-      if (source?.kind == api.CloudSyncNativeSendSourceKind.mutation) return;
+      if (source?.kind == api.CloudSyncNativeSendSourceKind.mutation) {
+        try {
+          CloudSyncLocalMutationJournal(
+            store: objectBox, authority: authority, authoritySnapshot: owner,
+          ).recordNativeReceiptIfTracked(
+            receipt: nativeReceipt, capturedAuth: auth,
+            stillCurrent: confirmationBindingCurrent, now: DateTime.now().toUtc(),
+            replayBinding: replayBinding,
+          );
+        } on StateError catch (error) {
+          if (!const {
+            'cloud_sync_local_mutation_receipt_changed',
+            'cloud_sync_local_mutation_owner_changed',
+          }.contains(error.message)) {
+            rethrow;
+          }
+          Logger.warn('Cloud Sync V2 mutation receipt retained; confirmation deferred');
+        }
+        return; // Never use create admission or acknowledge mutation evidence.
+      }
       receiptSource = source == null ? null : CloudSyncLocalSendSourceBinding(
         accountFingerprint: auth.accountFingerprint,
         protectedStoreIdentity: auth.protectedStoreIdentity,

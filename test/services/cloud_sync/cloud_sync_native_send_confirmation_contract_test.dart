@@ -9,6 +9,20 @@ void main() {
     'lib/services/rustpush/rustpush_service.dart',
   ).readAsStringSync();
 
+  test('live and replayed mutations use their own journal without create acknowledgement', () {
+    final start = source.indexOf('if (source?.kind == api.CloudSyncNativeSendSourceKind.mutation)');
+    expect(start, greaterThan(0));
+    final mutation = source.substring(start, source.indexOf('receiptSource =', start));
+    expect(mutation, contains('CloudSyncLocalMutationJournal('));
+    expect(mutation, contains('recordNativeReceiptIfTracked('));
+    expect(mutation, contains('stillCurrent: confirmationBindingCurrent'));
+    expect(mutation, contains('replayBinding: replayBinding'));
+    expect(mutation, contains('return;'));
+    expect(mutation, isNot(contains('cloudSyncAcknowledgeNativeSendReceipt')));
+    expect(mutation, isNot(contains('_queueCloudSyncV2LocalSends')));
+    expect(mutation, isNot(contains('resolveNativeSendReceipt')));
+  });
+
   test('early background return cannot advance ordinary send intent', () {
     final send = source.substring(
       source.indexOf('var backgroundSendPending = false;'),

@@ -872,15 +872,38 @@ Three parent-authored regressions reproduced acceptance of a wire with an
 unrelated sender, recipient or conversation; route binding now rejects all
 three. A projection cannot change routing or writer epoch during its commit.
 Local projection currently has a tested transaction seam only, not a
-qualified source-derived projector. This is not connected to ordinary edit/
-unsend calls or a remote save. Stage/commit/restore composition and native
-receipt consumption must land before enabling capture, not as a follow-up.
+qualified source-derived projector. Protected-source preparation now composes
+adoption, idempotent original-lease commit, exact restored-wire validation and
+one-time submission claiming under the existing exclusions/auth fence. A
+commit failure can reuse the staged source after reopen; a claimed outcome
+cannot re-enter submission. Both live callbacks and cold native receipt replay
+route mutations to their own journal without create admission or receipt
+acknowledgement. This is not connected to ordinary edit/unsend capture or a
+remote save. Next: use the composed path in the Windows fast-loop mutation
+request, then integrate exact-source projection before enabling app capture.
 
 GCE Dart-only `34629000411` passed 3,184 Dart tests plus 14 outbox and three
 evidence-output cases on `b701e36a7`, before this journal addition. Cleanup
 succeeded at 17:51:15Z and independent inventories showed zero VMs/runners.
 Despite its generic job label, this run produced no APK. Exact journal-source
 full-suite qualification remains separate from these prior results.
+Checkpoint `f24e7379f` failed GCE Dart qualification `34631352089`: 3,220
+passed, three migration fixtures failed because they retained entity 35 while
+pretending to be an entity-32/33 model, or expected the last entity to be 34.
+The fixtures are corrected, and an actual entity-34 upgrade/reopen case now
+preserves existing messages and send intents. Independent comparison confirmed
+all 26 predecessor entity definitions and retired entity IDs are unchanged.
+Cleanup succeeded; subsequent VM and runner inventories were empty.
+Windows fast-loop
+`34631493537` builds the same source with the unchanged isolated pilot
+`9c63ab24d`; its local-write configuration is compiled and smoke-tested only,
+not run against an account. Its result, replacement Dart qualification and the
+new Windows runtime import remain pending. Preserve native `62221f9c2` until a matching replacement is
+qualified; this dispatch does not replace the installed Windows or Pixel app.
+The combined source-preparation, mutation/send/reaction/upload journals, GC,
+migration and app receipt-composition cohort now passes **410 local tests**
+across 12 suites. This is synthetic/local-store qualification, not an Apple
+account test. Full cloud qualification must be rerun on the repaired candidate.
 
 Retained-version inspection now has live **offline** evidence: the Windows
 profile contains 23,413 scoped record groups and zero multi-row groups, so

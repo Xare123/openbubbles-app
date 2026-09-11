@@ -46,6 +46,85 @@ final class CloudSyncLocalMutationJournal {
     return _snapshot(target);
   });
 
+  /// Reuse only this unclaimed intent's original source after interrupted
+  /// preparation. A claimed/confirmed intent can never enter submission again.
+  ({int intentId, CloudSyncLocalMutationSourceBinding source})?
+  readStagedSource({
+    required int localMessageId,
+    required CloudSyncLocalMutationIdentity identity,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireOwner();
+    final existing = _findByGuid(identity.guidHash);
+    if (existing == null) return null;
+    final row = _read(existing.id, originalEpoch: true);
+    final source = validateCloudSyncMutationRow(row);
+    _requireAuth(source, currentAuth, stillCurrent);
+    source.requireOrigin(
+      accountFingerprint: _owner.scope.accountFingerprint,
+      mutationGuidHash: identity.guidHash,
+      targetGuidHash: identity.targetGuidHash,
+      targetPart: identity.targetPart,
+      sourceSha256: identity.sourceSha256,
+    );
+    if (row.state != 0) _fail('already_claimed');
+    if (row.localMessageId != localMessageId ||
+        row.kind != identity.kind.index) {
+      _fail('intent_changed');
+    }
+    final target = _target(
+      localMessageId,
+      identity.targetGuidHash,
+      row.localChatId,
+    );
+    _requireRoute(target, identity);
+    if (_snapshot(target) != row.targetSnapshotSha256) _fail('target_changed');
+    return (intentId: row.id, source: source);
+  });
+
+  /// Called by both live callbacks and cold receipt replay. Keep the native
+  /// receipt until conditional-write readback, not merely local confirmation.
+  bool recordNativeReceiptIfTracked({
+    required api.CloudSyncNativeSendReceipt receipt,
+    required CloudSyncNativeAuthSnapshot capturedAuth,
+    required bool Function() stillCurrent,
+    required DateTime now,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _requireOwner();
+    if (receipt.sourceBinding?.kind !=
+        api.CloudSyncNativeSendSourceKind.mutation) {
+      return false;
+    }
+    final row = _findByGuid(receipt.guidHash);
+    if (row == null) return false;
+    recordNativeReceipt(
+      intentId: row.id,
+      receipt: receipt,
+      capturedAuth: capturedAuth,
+      stillCurrent: stillCurrent,
+      now: now,
+      replayBinding: replayBinding,
+    );
+    return true;
+  });
+
+  CloudSyncLocalMutationIntentEntity? _findByGuid(String guidHash) {
+    final query = _rows
+        .query(
+          CloudSyncLocalMutationIntentEntity_.intentKey.equals(
+            _intentKey(_owner.scope.accountFingerprint, guidHash),
+          ),
+        )
+        .build();
+    try {
+      return query.findUnique();
+    } finally {
+      query.close();
+    }
+  }
+
   int adoptSource({
     required int localMessageId,
     required CloudSyncLocalMutationIdentity identity,

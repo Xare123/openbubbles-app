@@ -4,9 +4,12 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_source_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_source_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
@@ -124,6 +127,227 @@ void main() {
   ObjectBoxCloudSyncStore gc() =>
       ObjectBoxCloudSyncStore(store: store, protector: _NoProtector());
 
+  late _MutationTransport transport;
+  late _MutationExclusion exclusion;
+  late CloudSyncNativeAuthSnapshot stagingAuth;
+  late CloudSyncNativeAuthSnapshot capturedNow;
+  late bool current;
+  late int stageCalls;
+  late int restoreCalls;
+  Future<void> Function()? duringStage;
+  Future<void> Function()? duringRestore;
+  api.MessageInst Function()? restoredWire;
+  setUp(() {
+    transport = _MutationTransport();
+    exclusion = _MutationExclusion();
+    stagingAuth = _auth();
+    capturedNow = stagingAuth;
+    current = true;
+    stageCalls = 0;
+    restoreCalls = 0;
+    duringStage = null;
+    duringRestore = null;
+    restoredWire = null;
+  });
+  Future<
+    ({
+      int intentId,
+      CloudSyncLocalMutationSourceBinding source,
+      api.MessageInst wire,
+    })
+  >
+  prepare() =>
+      CloudSyncLocalMutationSourceStaging(
+        journal: journal,
+        authFence: CloudSyncLocalSendAuthFence(
+          expected: stagingAuth,
+          capture: () async => capturedNow,
+          stillCurrent: () => current,
+        ),
+        capturedAuth: stagingAuth,
+        stillCurrent: () => current,
+        exclusion: exclusion,
+        transport: transport,
+      ).prepareSubmission(
+        localMessageId: target.id!,
+        identity: identity,
+        stage: () async {
+          expect(exclusion.held && transport.held, isTrue);
+          stageCalls++;
+          await duringStage?.call();
+          return source;
+        },
+        restore: (committed) async {
+          expect(exclusion.held && transport.held, isTrue);
+          expect(committed.encode(), source.encode());
+          expect(transport.commits, isNotEmpty);
+          restoreCalls++;
+          await duringRestore?.call();
+          return restoredWire?.call() ?? _wire();
+        },
+      );
+
+  test(
+    'composed staging claims once and receipt routing confirms only mutation',
+    () async {
+      final prepared = await prepare();
+      expect(row(prepared.intentId).state, 1);
+      expect(stageCalls, 1);
+      expect(restoreCalls, 1);
+      expect(exclusion.held || transport.held, isFalse);
+      expect(
+        journal.recordNativeReceiptIfTracked(
+          receipt: _receipt(identity, source),
+          capturedAuth: stagingAuth,
+          stillCurrent: () => true,
+          now: DateTime.now().toUtc(),
+        ),
+        isTrue,
+      );
+      expect(row(prepared.intentId).state, 2);
+      await expectLater(prepare(), throwsA(_failure('already_claimed')));
+      expect(stageCalls, 1);
+      expect(restoreCalls, 1);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(transport.rollbacks, isEmpty);
+      expect(transport.acknowledgements, 0);
+    },
+  );
+
+  test(
+    'commit failure reopens and reuses the adopted lease without staging again',
+    () async {
+      transport.failCommit = true;
+      await expectLater(prepare(), throwsStateError);
+      final id = store
+          .box<CloudSyncLocalMutationIntentEntity>()
+          .getAll()
+          .single
+          .id;
+      expect(row(id).state, 0);
+      expect(restoreCalls, 0);
+      expect(transport.rollbacks, isEmpty);
+      await reopen();
+      transport.failCommit = false;
+      final prepared = await prepare();
+      expect(prepared.intentId, id);
+      expect(stageCalls, 1);
+      expect(transport.commits, [source.leaseReference, source.leaseReference]);
+      expect(row(id).state, 1);
+      await reopen();
+      await expectLater(prepare(), throwsA(_failure('already_claimed')));
+      expect(stageCalls, 1);
+      expect(restoreCalls, 1);
+    },
+  );
+
+  test(
+    'target changes during stage roll back only the unadopted lease',
+    () async {
+      duringStage = () async {
+        target.text = 'newer';
+        store.box<Message>().put(target);
+      };
+      await expectLater(prepare(), throwsA(_failure('target_changed')));
+      expect(store.box<CloudSyncLocalMutationIntentEntity>().count(), 0);
+      expect(transport.rollbacks, [source.leaseReference]);
+      expect(transport.commits, isEmpty);
+      expect(exclusion.held || transport.held, isFalse);
+    },
+  );
+
+  for (final point in ['stage', 'restore']) {
+    test('native auth change during $point cannot claim a send', () async {
+      Future<void> replaceAuth() async {
+        capturedNow = _auth(session: 'replacement');
+      }
+
+      if (point == 'stage') {
+        duringStage = replaceAuth;
+      } else {
+        duringRestore = replaceAuth;
+      }
+      await expectLater(prepare(), throwsStateError);
+      final rows = store.box<CloudSyncLocalMutationIntentEntity>().getAll();
+      if (point == 'stage') {
+        expect(rows, isEmpty);
+        expect(transport.rollbacks, [source.leaseReference]);
+      } else {
+        expect(rows.single.state, 0);
+        expect(transport.rollbacks, isEmpty);
+      }
+    });
+  }
+
+  test('changed restored wire is retained but not claimed', () async {
+    restoredWire = () => _wire()..sentTimestamp = 100;
+    await expectLater(prepare(), throwsA(_failure('protected_source_changed')));
+    expect(
+      store.box<CloudSyncLocalMutationIntentEntity>().getAll().single.state,
+      0,
+    );
+    expect(transport.rollbacks, isEmpty);
+  });
+
+  test(
+    'newer target after native restore is preserved without claiming',
+    () async {
+      duringRestore = () async {
+        target.text = 'newer';
+        store.box<Message>().put(target);
+      };
+      await expectLater(prepare(), throwsA(_failure('target_changed')));
+      expect(store.box<Message>().get(target.id!)!.text, 'newer');
+      expect(
+        store.box<CloudSyncLocalMutationIntentEntity>().getAll().single.state,
+        0,
+      );
+      expect(transport.rollbacks, isEmpty);
+    },
+  );
+
+  test('busy exclusion or wrong store prevents native staging', () async {
+    exclusion.busy = true;
+    await expectLater(prepare(), throwsStateError);
+    exclusion.busy = false;
+    transport.storeIdentity = 'obcs2.store.${'Z' * 43}';
+    await expectLater(prepare(), throwsA(_failure('protected_source_changed')));
+    expect(stageCalls, 0);
+    expect(store.box<CloudSyncLocalMutationIntentEntity>().count(), 0);
+  });
+
+  test(
+    'receipt routing keeps untracked and attachment receipts separate',
+    () async {
+      expect(
+        journal.recordNativeReceiptIfTracked(
+          receipt: _receipt(identity, source),
+          capturedAuth: stagingAuth,
+          stillCurrent: () => true,
+          now: _time(5),
+        ),
+        isFalse,
+      );
+      final id = adopt();
+      claim(id);
+      expect(
+        journal.recordNativeReceiptIfTracked(
+          receipt: _receipt(
+            identity,
+            source,
+            kind: api.CloudSyncNativeSendSourceKind.attachment,
+          ),
+          capturedAuth: stagingAuth,
+          stillCurrent: () => true,
+          now: _time(5),
+        ),
+        isFalse,
+      );
+      expect(row(id).state, 1);
+      expect(transport.acknowledgements, 0);
+    },
+  );
+
   test(
     'separate intent survives reopen without inventing an initial create',
     () async {
@@ -189,9 +413,17 @@ void main() {
       );
     identity = CloudSyncLocalMutationIdentity.captureWire(wire)!;
     source = _source(identity);
-    final id = adopt();
-    claim(id);
-    confirm(id);
+    restoredWire = () => wire;
+    final id = (await prepare()).intentId;
+    expect(
+      journal.recordNativeReceiptIfTracked(
+        receipt: _receipt(identity, source),
+        capturedAuth: stagingAuth,
+        stillCurrent: () => true,
+        now: DateTime.now().toUtc(),
+      ),
+      isTrue,
+    );
     await reopen();
     expect(row(id).kind, CloudSyncLocalMutationKind.unsend.index);
     expect(row(id).state, 2);
@@ -327,13 +559,15 @@ void main() {
         readStoragePath: () => directory.path,
         runtimeCurrent: () => true,
       );
-      journal.recordNativeReceipt(
-        intentId: id,
-        receipt: receipt,
-        capturedAuth: auth,
-        stillCurrent: () => true,
-        replayBinding: replay,
-        now: _time(4),
+      expect(
+        journal.recordNativeReceiptIfTracked(
+          receipt: receipt,
+          capturedAuth: auth,
+          stillCurrent: () => true,
+          replayBinding: replay,
+          now: _time(4),
+        ),
+        isTrue,
       );
       expect(row(id).state, 2);
       expect(
@@ -620,6 +854,71 @@ class _NoProtector implements CloudSyncProtector {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw StateError('Unexpected native operation');
+}
+
+final class _MutationExclusion implements CloudKitOperationExclusion {
+  bool held = false;
+  bool busy = false;
+  @override
+  Future<T> runExclusive<T>({
+    required CloudKitOperationKind kind,
+    required CloudKitOperationBody<T> action,
+  }) async {
+    expect(kind, CloudKitOperationKind.v2ReadWrite);
+    if (busy || held) throw StateError('cloudkit_operation_busy');
+    held = true;
+    try {
+      return await action();
+    } finally {
+      held = false;
+    }
+  }
+
+  @override
+  void poisonUntilProcessRestart() => throw StateError('unexpected poison');
+}
+
+final class _MutationTransport implements CloudProtectedPageLeaseTransport {
+  bool held = false;
+  bool failCommit = false;
+  int acknowledgements = 0;
+  String storeIdentity = 'obcs2.store.${'A' * 43}';
+  final commits = <String>[];
+  final rollbacks = <String>[];
+  @override
+  String get protectedPageLeaseRecoveryIdentity => storeIdentity;
+  @override
+  Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) async {
+    held = true;
+    try {
+      return await action();
+    } finally {
+      held = false;
+    }
+  }
+
+  @override
+  Future<void> commitProtectedPageLease(String lease, Set<String> refs) async {
+    expect(held, isTrue);
+    expect(refs, {'obcs2.ref.${'B' * 43}'});
+    commits.add(lease);
+    if (failCommit) throw StateError('synthetic_commit_failure');
+  }
+
+  @override
+  Future<void> rollbackProtectedPageLease(String lease) async {
+    expect(held, isTrue);
+    rollbacks.add(lease);
+  }
+
+  @override
+  Future<void> acknowledgeCommittedPageLease(String lease) async {
+    acknowledgements++;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('unexpected native call');
 }
 
 Matcher _failure(String code) => isA<StateError>().having(
