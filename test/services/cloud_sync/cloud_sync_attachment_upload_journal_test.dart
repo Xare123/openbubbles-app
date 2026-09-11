@@ -1096,6 +1096,10 @@ void main() {
       ).readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
       throwsStateError,
     );
+    await expectLater(
+      _liveStore(store).readLiveProtectedReferences(maximumCount: 4096),
+      throwsStateError,
+    );
   });
 
   test('lease recovery retains plan and result leases', () async {
@@ -1117,6 +1121,50 @@ void main() {
     ).readLiveProtectedOutboundLeaseReferences(maximumCount: 4096);
     expect(live, containsAll([_lease('d'), _lease('1'), _lease('2')]));
   });
+
+  for (final state in CloudAttachmentUploadState.values) {
+    test('protected liveness retains upload bytes after reopen: ${state.name}', () async {
+      final plan = _planA();
+      final result = _resultA();
+      final prepared = uploads.adoptPlan(
+        localSendIntentId: seedConfirmedIntent(), plan: plan, now: _time(6));
+      if (state != CloudAttachmentUploadState.prepared) {
+        uploads.beginAttempt(id: prepared.id, attemptId: _attemptA, now: _time(7));
+      }
+      if (state == CloudAttachmentUploadState.unknown) {
+        uploads.markUnknown(id: prepared.id, attemptId: _attemptA, now: _time(8));
+      }
+      final hasResult = state == CloudAttachmentUploadState.uploaded ||
+          state == CloudAttachmentUploadState.adopted;
+      if (hasResult) {
+        uploads.recordUploaded(id: prepared.id, attemptId: _attemptA,
+            result: result, now: _time(8));
+      }
+      if (state == CloudAttachmentUploadState.adopted) {
+        uploads.adoptRecordCreate(id: prepared.id, now: _time(9),
+          admit: (tx, value) {
+            _persistFinalOperation(tx, value);
+            return _finalOperation(value);
+          });
+      }
+      await reopen();
+      final sync = _liveStore(store);
+      final leases = await sync.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096);
+      final live = await sync.readLiveProtectedReferences(maximumCount: 4096);
+      expect(live.isComplete, isTrue);
+      expect(leases, contains(plan.leaseReference));
+      expect(live.references, contains(plan.protectedEnvelopeReference),
+          reason: 'A retained lease must retain its bytes as well as its handle.');
+      if (hasResult) {
+        expect(leases, contains(result.leaseReference));
+        expect(live.references, contains(result.protectedEnvelopeReference));
+      }
+      final bounded = await sync.readLiveProtectedReferences(maximumCount: 4);
+      expect(bounded.isComplete, isFalse,
+          reason: 'Bound accounting must include both upload references.');
+      expect(bounded.references, isEmpty);
+    });
+  }
 
   test('reconciliation binding is stable across attempt lifecycle stages', () {
     final intentId = seedConfirmedIntent();

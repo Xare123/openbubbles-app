@@ -702,6 +702,7 @@ class ObjectBoxCloudSyncStore
           (_recordMaps.count() * 2) +
           _writerAuthorities.count() +
           _store.box<CloudSyncLocalSendIntentEntity>().count() +
+          (_store.box<CloudAttachmentUploadEntity>().count() * 2) +
           (_attachmentMaterializations.count() * 4);
       if (upperBound > maximumCount) {
         return const _ProtectedReferenceCapture.incomplete();
@@ -781,6 +782,18 @@ class ObjectBoxCloudSyncStore
         (_store.box<CloudSyncLocalSendIntentEntity>().query()
               ..order(CloudSyncLocalSendIntentEntity_.id)).build(),
         (intent) => capture(_localSendSource(intent)?.protectedReference),
+      );
+      // Upload plans and results own committed leases before final record
+      // admission. Recovery must see their bytes, not only their lease IDs.
+      // Keep every retained state/account until explicit journal retirement.
+      scanPaged(
+        (_store.box<CloudAttachmentUploadEntity>().query()
+              ..order(CloudAttachmentUploadEntity_.id)).build(),
+        (upload) {
+          validateCloudAttachmentUploadRow(upload);
+          capture(upload.planReference);
+          capture(upload.resultReference);
+        },
       );
       scanPaged(
         (_checkpoints.query()..order(CloudSyncCheckpointEntity_.id)).build(),
