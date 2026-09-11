@@ -29,6 +29,7 @@ pub(crate) enum SummaryChange<'a> {
         part: u32,
         /// Confirmed immediate predecessor, not necessarily the first-ever body.
         original_body: &'a [u8],
+        /// Exact retained timestamp: Apple seconds or legacy whole Unix milliseconds.
         original_timestamp: f64,
         /// Original part range, never a range inferred from replacement text.
         original_range: SummaryRange,
@@ -96,7 +97,7 @@ pub(crate) fn patch_message_summary(
             }
             if original_body.is_empty()
                 || replacement_body.is_empty()
-                || !valid_time(original_timestamp)
+                || history_apple_seconds(original_timestamp).is_none()
                 || !valid_time(replacement_timestamp)
                 || original_range.lo.checked_add(original_range.le).is_none()
             {
@@ -105,7 +106,9 @@ pub(crate) fn patch_message_summary(
             if retracted.contains(&part) {
                 return Err(Error::RetractedPart);
             }
-            if replacement_timestamp <= original_timestamp {
+            if replacement_timestamp
+                <= history_apple_seconds(original_timestamp).ok_or(Error::InvalidPatch)?
+            {
                 return Err(Error::TimestampConflict);
             }
             let key = part.to_string();
@@ -125,7 +128,7 @@ pub(crate) fn patch_message_summary(
             if let Some(history) = old_history {
                 for (index, entry) in history.iter().enumerate() {
                     let (time, body) = revision(entry)?;
-                    if time == replacement_timestamp {
+                    if history_apple_seconds(time) == Some(replacement_timestamp) {
                         if body != replacement_body {
                             return Err(Error::TimestampConflict);
                         }
@@ -138,7 +141,7 @@ pub(crate) fn patch_message_summary(
                     }
                 }
                 let last = revision(history.last().ok_or(Error::InconsistentHistory)?)?;
-                if replacement_timestamp <= last.0 {
+                if replacement_timestamp <= history_apple_seconds(last.0).ok_or(Error::Malformed)? {
                     return Err(Error::TimestampConflict);
                 }
                 if last != (original_timestamp, original_body) {
@@ -246,6 +249,23 @@ fn valid_time(time: f64) -> bool {
     time.is_finite() && time > 0.0 && time <= MAX_APPLE_SECONDS
 }
 
+// Match the reader's two supported, non-overlapping timestamp domains.
+// Compare chronology in Apple seconds but never rewrite a retained `d` value.
+// New revisions are emitted in Apple's native seconds format only.
+fn history_apple_seconds(time: f64) -> Option<f64> {
+    if valid_time(time) {
+        Some(time)
+    } else if time.is_finite()
+        && time >= 978_307_200_000.0
+        && time <= 253_402_300_799_999.0
+        && time.fract() == 0.0
+    {
+        Some((time - 978_307_200_000.0) / 1000.0)
+    } else {
+        None
+    }
+}
+
 fn revision(value: &Value) -> Result<(f64, &[u8]), Error> {
     let entry = value.as_dictionary().ok_or(Error::Malformed)?;
     let time = entry
@@ -256,7 +276,7 @@ fn revision(value: &Value) -> Result<(f64, &[u8]), Error> {
         .get("t")
         .and_then(Value::as_data)
         .ok_or(Error::Malformed)?;
-    if !valid_time(time) || body.is_empty() {
+    if history_apple_seconds(time).is_none() || body.is_empty() {
         return Err(Error::Malformed);
     }
     Ok((time, body))
@@ -291,13 +311,14 @@ fn validate_summary(root: &Dictionary) -> Result<(BTreeSet<u32>, BTreeSet<u32>, 
             if entries.is_empty() {
                 return Err(Error::InconsistentHistory);
             }
-            let mut previous = 0.0;
+            let mut previous = None;
             for entry in entries {
                 let (time, _) = revision(entry)?;
-                if time <= previous {
+                let chronological = history_apple_seconds(time).ok_or(Error::Malformed)?;
+                if previous.is_some_and(|last| chronological <= last) {
                     return Err(Error::InconsistentHistory);
                 }
-                previous = time;
+                previous = Some(chronological);
             }
         }
     }
@@ -647,6 +668,56 @@ mod tests {
     }
 
     #[test]
+    fn legacy_millisecond_history_is_preserved_when_appending_native_seconds() {
+        let mut root = decode(&first());
+        let history = dict_mut(&mut root, "ec")
+            .get_mut("2")
+            .unwrap()
+            .as_array_mut()
+            .unwrap();
+        for entry in history.iter_mut() {
+            let entry = entry.as_dictionary_mut().unwrap();
+            let time = entry.get("d").unwrap().as_real().unwrap();
+            entry.insert("d".into(), Value::Real(time * 1000.0 + 978_307_200_000.0));
+        }
+        let retained_history = history.clone();
+        let input = encode(Value::Dictionary(root));
+        let change = edit(2, b"edit-one", 978_307_310_500.0, b"third", 120.25);
+        let output = patch_message_summary(Some(&input), change).unwrap();
+        let after = decode(&output);
+        let history = dictionary(&after, "ec")
+            .unwrap()
+            .unwrap()
+            .get("2")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(&history[..2], retained_history.as_slice());
+        assert_eq!(
+            revision(&history[2]).unwrap(),
+            (120.25, b"third".as_slice())
+        );
+        assert_eq!(
+            patch_message_summary(Some(&output), change).unwrap(),
+            output
+        );
+        let unsent = unsend(Some(&input), 2).unwrap();
+        assert_eq!(
+            dictionary(&decode(&unsent), "ec").unwrap(),
+            dictionary(&decode(&input), "ec").unwrap()
+        );
+        assert_eq!(
+            patch_message_summary(
+                Some(&input),
+                edit(2, b"edit-one", 978_307_310_500.0, b"third", 109.0)
+            ),
+            Err(Error::TimestampConflict)
+        );
+        assert!(history_apple_seconds(978_307_310_500.5).is_none());
+        assert!(history_apple_seconds(MAX_APPLE_SECONDS + 1.0).is_none());
+    }
+
+    #[test]
     fn unknown_values_old_bytes_ranges_and_other_parts_survive() {
         let mut root = decode(&first());
         let mut unknown = Dictionary::new();
@@ -784,14 +855,7 @@ mod tests {
             ),
             Err(Error::SourceMismatch)
         );
-        for time in [
-            0.0,
-            -1.0,
-            f64::NAN,
-            f64::INFINITY,
-            MAX_APPLE_SECONDS + 1.0,
-            978_307_200_000.0,
-        ] {
+        for time in [0.0, -1.0, f64::NAN, f64::INFINITY, MAX_APPLE_SECONDS + 1.0] {
             assert_eq!(
                 patch_message_summary(None, edit(0, b"old", time, b"new", 120.0)),
                 Err(Error::InvalidPatch)

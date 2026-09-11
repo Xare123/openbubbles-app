@@ -4080,6 +4080,59 @@ mod tests {
     }
 
     #[test]
+    fn patched_edit_then_unsend_roundtrips_through_real_message_converter() {
+        use crate::cloud_sync_message_proto_patch::patch_message_proto;
+        use crate::cloud_sync_message_summary_patch::{
+            patch_message_summary, SummaryChange, SummaryRange,
+        };
+        let hasher = CloudSemanticIdentifierHasher::new(b"patch-converter-fixture").unwrap();
+        let original_text = "Original message with Unicode 🎉";
+        let replacement_text = "Short 🎉";
+        let original_body = plain_encoded_attributed_body(original_text);
+        let replacement_body = plain_encoded_attributed_body(replacement_text);
+        let range = SummaryRange { lo: 0, le: original_text.encode_utf16().count() as u32 };
+        let summary = patch_message_summary(None, SummaryChange::Edit {
+            part: 0,
+            original_body: &original_body,
+            original_timestamp: 779_000_100.25,
+            original_range: range,
+            replacement_body: &replacement_body,
+            replacement_timestamp: 779_000_110.75,
+        }).unwrap();
+        let mut message = normal_message(Some(original_text));
+        message.msg_proto.0.attributed_body = Some(original_body);
+        let mut original_wire = message.msg_proto.0.encode_to_vec();
+        // Future wire field 99 must remain exact through both mutations.
+        let unknown = [0x98, 0x06, 0x81, 0x00];
+        original_wire.extend_from_slice(&unknown);
+        let edited_wire = patch_message_proto(&original_wire,
+            Some(replacement_text), Some(&replacement_body), &summary).unwrap();
+        assert!(edited_wire.windows(unknown.len()).any(|bytes| bytes == unknown));
+        message.msg_proto.0 = MessageProto::decode(edited_wire.as_slice()).unwrap();
+        let outcome = convert_message(&context(&hasher, "server-patched-message", None),
+            &message_presence(), &message);
+        let payload = message_payload(&outcome);
+        assert_eq!(payload.text().value().map(String::as_str), Some(replacement_text));
+        assert_eq!(payload.edit_count(), 2);
+        assert_eq!(payload.edits().iter().map(CloudCanonicalMessageEdit::modified_at_millis)
+            .collect::<Vec<_>>(), vec![1_757_307_300_250, 1_757_307_310_750]);
+        assert!(payload.edits().iter().all(|edit| edit.original_range() == Some((0, range.le))));
+
+        let retracted = patch_message_summary(Some(&summary), SummaryChange::Unsend { part: 0 }).unwrap();
+        let unsent_wire = patch_message_proto(&edited_wire, None, None, &retracted).unwrap();
+        assert!(unsent_wire.windows(unknown.len()).any(|bytes| bytes == unknown));
+        assert_eq!(patch_message_proto(&unsent_wire, None, None, &retracted).unwrap(), unsent_wire);
+        message.msg_proto.0 = MessageProto::decode(unsent_wire.as_slice()).unwrap();
+        assert_eq!(message.msg_proto.0.attributed_body.as_deref(), Some(replacement_body.as_slice()));
+        let outcome = convert_message(&context(&hasher, "server-patched-message", None),
+            &message_presence(), &message);
+        let payload = message_payload(&outcome);
+        assert_eq!(payload.retracted_parts(), &[0]);
+        assert_eq!(payload.edit_count(), 2);
+        assert_eq!(payload.text().value().map(String::as_str), Some(replacement_text));
+    }
+
+    #[test]
     fn summary_original_ranges_can_include_unedited_parts_without_inventing_edits() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut summary = MessageSummaryInfo {
