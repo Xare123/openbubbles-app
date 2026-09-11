@@ -55,7 +55,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
-| September 11 mutation candidate | **IN REPAIR:** exact `d54e2238b` passed 3,278 Dart tests and Windows build `34639474581`, then the real edit-08 experiment failed positive confirmation. Upstream edits/unsends deliberately set `no_response=true`; the new strict receipt gate therefore cannot pass. Parent-07 passed send and exact CloudKit readback. Edit-08 is claimed state 1 with no receipt/reflection and must never be resent. A Windows-only acknowledgment-request experiment with zero automatic retries is being qualified; ordinary send semantics remain unchanged. Existing-record CloudKit updates remain disabled. |
+| September 11 mutation candidate | **TEST-PROVEN, live proof pending:** `c02379430` opts only the Windows mutation experiment into positive acknowledgments with zero automatic retries. Dependency `98cc67a` passed 299 tests in `34642902143`; 26 local Dart tests and targeted analysis passed. App-native `34642902097` passed 524 tests and exact bridge regeneration; its cleanup is pending. Windows bundle `34642902373` is building. This repairs the deterministic `no_response=true` mismatch exposed by edit-08 on `d54e2238b`, not proof that Apple accepts the opt-in. Parent-07 passed send/readback; edit-08 remains claimed state 1 without receipt/reflection and must never be resent. Existing-record updates remain disabled. |
 | Installed Android candidate | Signed `f860966d53b6019b46f1437312e67662724f08ce`, installed September 11 at 09:14:53Z and runtime-verified. Two reads reached the remote head with saves/deletes off and outbox `0 -> 0`. The final local sweep examined 3,587 blocking saves, applied zero, and completed partial at 09:47:41Z. Qualification-07 remains unsent after IDS 6005. Approved registration repair quiesced reads and preserved chats, hardware and CloudKit state; saved-account reuse returned phone-number validation failure. Await normal validation, not another reset. Alpha is untouched. |
 | Qualified source, not installed | Read-transition `90f98b7eb` passed 296 focused tests, targeted analysis, and GCE `34594546421`: 3,147 Dart tests plus 14 outbox and 3 evidence-output cases. Cleanup completed at 11:44:17Z; independent VM/runner inventories were empty. It includes replay repair `fd60a8a20` and background patch `0bb67d2c4`, which avoids repeating exhaustive retained-history sweeps on routine metadata wakes. No APK or Pixel runtime proof for these patches yet. |
 | Windows candidate | Imported `d54e2238b` from `34639474581`: 38 focused tests, 51 packaged-DLL codec cases, 78 verified bundle files, native load and isolated invalid-launch smoke passed. Profile hashes stayed unchanged during import. Reaction-06 no-op restart and fresh plaintext parent-07 save/readback passed. Edit-08 remains unconfirmed, not a successful edit. Earlier image/reaction runtimes, requests, claims and checkpoints remain protected evidence. |
@@ -69,6 +69,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 Next technical gate: prove safe conditional existing-record writes. Read-transition candidate
 `90f98b7eb` passed GCE Dart-only qualification `34594546421`.
+Immediate blocking subgate: qualify and import exact `c02379430`, then use a
+fresh parent and mutation IDs to prove positive IDS acknowledgment, exact-time
+local reflection and receipt-only restart. Do not reuse claimed edit-08. The
+native acknowledgment flag is experimental, not independent recipient proof.
 Preview repair `269620126` and reviewed Find My lane isolation `ee9729ec3`
 passed GCE Dart-only `34597175527`, exact source
 `ee9729ec32fc132b386e4cbd42e608424968dbec`: 3,167 Dart tests plus 14 outbox

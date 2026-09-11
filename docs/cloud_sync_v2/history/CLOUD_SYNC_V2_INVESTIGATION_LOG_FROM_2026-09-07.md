@@ -2917,3 +2917,36 @@ This is a chronological evidence log. It does not override the
   then passed, followed by 26 inspector/Windows-request tests. Native source
   parsing passed without compilation. New native compilation and tests remain
   required before another live experiment; no completed production gate is claimed.
+
+## 2026-09-11, bounded acknowledgment candidate cloud qualification
+
+- Dependency `98cc67a80eb76af605ed2449f1853a592282aa0d` and app
+  `c02379430071ec8cabc5829d6370ad126027bcc2` are committed and pushed to the
+  existing fork branches. No upstream PR, APK, account reset or signing-policy
+  change occurred. Unrelated dirty files remain excluded.
+- Local qualification: 26 Windows-request/inspector tests passed and targeted
+  Dart analysis found no issues. Rust syntax parsing passed. Dependency run
+  `34642902143` passed 299 tests, including both opt-in envelope tests, at
+  20:14:57Z; compile took 53.98 seconds and tests 6.30 seconds. Cleanup is pending.
+- Parallel app-native run `34642902097` uses N2D-16; dependency uses T2D-32.
+  Global quota was verified at 164 CPUs, regional T2D 100/N2D 16, with zero
+  preexisting instances/runners. The existing bounded lanes, cleanup and
+  75-minute lifetime remain unchanged. Both remote writer flags are off.
+- Windows exact-source build `34642902373` runs on GitHub-hosted ARM64 without
+  Apple credentials. Prepared local import/test scripts live in its evidence
+  folder. Preview selects fresh edit parent-11/edit-12 and unsend parent-13/
+  unsend-14, with no execution yet. Existing edit-08 is never replayed.
+- The one mutation attempt may enable the existing verbose-native toggle only
+  for its bounded first pass, storing logs locally. The script restores the
+  prior setting in a finally block. No private logs go to cloud runners.
+- Existing-record review reconfirmed that decoding and reencoding a partial
+  MessageProto model cannot prove unknown-byte preservation. Retain raw
+  predecessor bytes; do not connect the conditional builder until genuine
+  before/after semantics and conflict/readback reconciliation are qualified.
+- No new agents were created; the previously verified closeout still applies.
+  C: had 48.26 GiB free before the next artifact download. No evidence was deleted.
+- Follow-up: dependency cleanup succeeded, and independent inventories retained
+  only the active app-native VM/registration. App-native qualification passed
+  524 tests at 20:20:24Z, compilation and exact generated-bridge comparison.
+  Its test compile took 1m56s, tests 2.27s; its cleanup remains in progress.
+  Windows compilation is still running. No new live mutation has been sent.
