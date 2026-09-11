@@ -39,6 +39,7 @@ void main() {
       const allowed =
           'lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
       const localSource = 'lib/services/rustpush/rustpush_service.dart';
+      const windowsSource = 'lib/cloud_sync_v2_windows_local_write.dart';
 
       for (final entity in Directory('lib').listSync(recursive: true)) {
         if (entity is! File || !entity.path.endsWith('.dart')) continue;
@@ -60,12 +61,38 @@ void main() {
           .toList(growable: false);
       expect(
         normalized,
-        unorderedEquals([allowed, localSource]),
+        unorderedEquals([allowed, localSource, windowsSource]),
         reason:
             'only reviewed canary adapters and gated local IDS source staging may construct the protected transport',
       );
 
       final adapter = File(allowed).readAsStringSync();
+      final windows = File(windowsSource).readAsStringSync();
+      final windowsRun = windows.substring(windows.indexOf('Future<Map<String, Object?>> run()'));
+      final windowsTransport = windowsRun.indexOf('NativeProtectedCloudSyncTransport(');
+      expect(windowsTransport, greaterThan(0));
+      final windowsGate = windowsRun.substring(0, windowsTransport);
+      for (final gate in ['!Platform.isWindows',
+        '!fs.cloudSyncV2WindowsDevProfileActive',
+        '!CloudSyncDevGate.manualOutboundCanaryEnabled',
+        '!CloudKitWriterOwnership.v2MutationsEnabled',
+        'CloudSyncLocalSendSourceStaging',
+      ]) {
+        // Staging follows construction; platform and build gates precede it.
+        expect(gate == 'CloudSyncLocalSendSourceStaging' ? windowsRun : windowsGate,
+            contains(gate));
+      }
+      expect(RegExp(r'NativeProtectedCloudSyncTransport\(').allMatches(windows).length, 1);
+      expect(windowsRun, contains('await CloudSyncLocalSendSourceStaging('));
+      expect(windowsRun, contains('exclusion: interlock'));
+      expect(windowsRun, contains('cloudSyncStageIdsAttachmentSource('));
+      expect(windowsRun.indexOf('await CloudSyncLocalSendSourceStaging('),
+          lessThan(windowsRun.indexOf('await sendConfirmed(wire)')));
+      for (final forbidden in ['transport.stageOutboundMessage(',
+        'transport.stageOutboundChat(', 'transport.save', 'transport.fetch',
+        'CloudSyncEngine(', 'flushOutbox(']) {
+        expect(windowsRun, isNot(contains(forbidden)));
+      }
       expect(
         RegExp(
           r'NativeProtectedCloudSyncTransport\(',

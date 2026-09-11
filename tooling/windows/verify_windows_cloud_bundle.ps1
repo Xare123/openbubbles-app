@@ -6,6 +6,8 @@ param(
     [string] $ExpectedSourceSha,
     [string] $ExpectedPilotSha,
     [string] $ExpectedVariant,
+    [ValidateRange(1, 10000)]
+    [int] $ExpectedNativeEncoderTestCount = 51,
     [switch] $FunctionsOnlyForTest
 )
 
@@ -62,7 +64,8 @@ function Invoke-VerifyWindowsCloudBundle {
         [Parameter(Mandatory)][string] $ExpectedArchiveSha256,
         [Parameter(Mandatory)][string] $ExpectedSourceSha,
         [Parameter(Mandatory)][string] $ExpectedPilotSha,
-        [Parameter(Mandatory)][string] $ExpectedVariant
+        [Parameter(Mandatory)][string] $ExpectedVariant,
+        [ValidateRange(1, 10000)][int] $ExpectedNativeEncoderTestCount = 51
     )
     foreach ($p in @($ArchivePath, $ProvenancePath)) { if (-not (Test-Path -LiteralPath $p)) { Fail "missing input $p" } }
     $actualArchiveHash = (Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -90,7 +93,9 @@ function Invoke-VerifyWindowsCloudBundle {
     if ($v.rust_bridge_load_unload -ne 'passed') { Fail 'rust_bridge_load_unload not passed' }
     $enc = $v.native_local_write_encoder_tests
     if ($enc.result -ne 'passed') { Fail 'native encoder tests not passed' }
-    if ($enc.expected_test_count -ne 48) { Fail 'native encoder expected_test_count must be 48' }
+    # Trusted caller expectation, never learn the required count from the bundle.
+    # Historical bundles can be explicitly verified against their older suite.
+    if ($enc.expected_test_count -ne $ExpectedNativeEncoderTestCount) { Fail "native encoder expected_test_count must be $ExpectedNativeEncoderTestCount" }
     if (($enc.full_file_run -isnot [bool]) -or ($enc.full_file_run -ne $true)) { Fail 'native encoder full_file_run must be boolean true' }
     if ($enc.native_library -cne 'bundle/rust_lib_bluebubbles.dll') { Fail 'native_library must be exactly bundle/rust_lib_bluebubbles.dll' }
     $inv = $v.invalid_launch_diagnostic
@@ -177,7 +182,7 @@ function Invoke-VerifyWindowsCloudBundle {
         }
         $leaf = $enc.native_library.Split('/')[-1]
         if (-not $manifest.ContainsKey($leaf)) { Fail "native library '$leaf' not in manifest" }
-        Write-Host ("OK files={0} dirs={1} bytes={2} src={3} variant={4} build={5} native48 invalid-launch=observed" -f $manifest.Count, $dirEntries.Count, $totalBytes, $ExpectedSourceSha.Substring(0, 12), $ExpectedVariant, $wantId)
+        Write-Host ("OK files={0} dirs={1} bytes={2} src={3} variant={4} build={5} native{6} invalid-launch=observed" -f $manifest.Count, $dirEntries.Count, $totalBytes, $ExpectedSourceSha.Substring(0, 12), $ExpectedVariant, $wantId, $ExpectedNativeEncoderTestCount)
         return [PSCustomObject]@{
             Files = $manifest.Count; DirEntries = $dirEntries.Count; TotalExpandedBytes = $totalBytes
             Source = $ExpectedSourceSha; Variant = $ExpectedVariant; BuildId = $wantId
@@ -189,5 +194,5 @@ if (-not $FunctionsOnlyForTest) {
     if (-not $ArchivePath -or -not $ProvenancePath -or -not $ExpectedArchiveSha256 -or -not $ExpectedSourceSha -or -not $ExpectedPilotSha -or -not $ExpectedVariant) {
         throw 'ArchivePath, ProvenancePath, ExpectedArchiveSha256, ExpectedSourceSha, ExpectedPilotSha, ExpectedVariant are all required.'
     }
-    Invoke-VerifyWindowsCloudBundle -ArchivePath $ArchivePath -ProvenancePath $ProvenancePath -ExpectedArchiveSha256 $ExpectedArchiveSha256 -ExpectedSourceSha $ExpectedSourceSha -ExpectedPilotSha $ExpectedPilotSha -ExpectedVariant $ExpectedVariant | Out-Null
+    Invoke-VerifyWindowsCloudBundle -ArchivePath $ArchivePath -ProvenancePath $ProvenancePath -ExpectedArchiveSha256 $ExpectedArchiveSha256 -ExpectedSourceSha $ExpectedSourceSha -ExpectedPilotSha $ExpectedPilotSha -ExpectedVariant $ExpectedVariant -ExpectedNativeEncoderTestCount $ExpectedNativeEncoderTestCount | Out-Null
 }

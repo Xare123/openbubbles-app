@@ -1182,6 +1182,22 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         sendConfirmed: (message) => api.cloudSyncWindowsSendConfirmed(
           path: fs.appDocDir.path, state: senderClient!, msg: message,
         ),
+        uploadAttachment: (file, fixture) async {
+          api.Attachment? uploaded;
+          await for (final event in api.uploadAttachment(
+            aps: _connection!, path: file.path, mime: fixture.mimeType,
+            uti: fixture.uti, name: fixture.filename,
+          )) {
+            if (event.attachment != null) {
+              if (uploaded != null) {
+                throw StateError('cloud_sync_windows_attachment_upload_ambiguous');
+              }
+              uploaded = event.attachment;
+            }
+          }
+          return uploaded ??
+              (throw StateError('cloud_sync_windows_attachment_upload_unconfirmed'));
+        },
       ).run();
       await _setRuntimeStage('windows-local-write-pass-complete', state: 'finished',
         detail: jsonEncode(result));

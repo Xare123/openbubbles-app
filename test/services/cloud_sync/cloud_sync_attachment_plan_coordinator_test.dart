@@ -122,6 +122,109 @@ void main() {
     }
   });
 
+  group('exact durable attachment source', () {
+    const item = CloudSyncAttachmentPlanInventoryItem(
+      originalAttachmentGuid: 'LOCAL-ATTACHMENT-A',
+      reflectedAttachmentGuid: '${_guidA}_0',
+      logicalEntityKeyHash: 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+    );
+
+    Future<Message> reopen(Message message) async {
+      final id = store.box<Message>().put(message);
+      store.close();
+      store = await openStore(directory: directory.path);
+      final restored = store.box<Message>().get(id)!;
+      expect(restored.attachments, isEmpty);
+      return restored;
+    }
+
+    for (final guid in [item.originalAttachmentGuid, item.reflectedAttachmentGuid]) {
+      test('finds durable $guid after store reopen', () async {
+        final attachment = Attachment(
+          guid: guid,
+          transferName: 'synthetic.txt',
+          metadata: const {'rustpush': '<synthetic-descriptor/>'},
+        );
+        final message = Message(guid: _guidA, hasAttachments: true)
+          ..dbAttachments.addAll([
+            attachment,
+            Attachment(guid: 'UNRELATED-DURABLE'),
+          ]);
+        final restored = await reopen(message);
+        expect(restored.dbAttachments, hasLength(2));
+        final found = cloudSyncAttachmentPlanLocalSource(restored, item);
+        expect(found.id, attachment.id);
+        expect(found.guid, guid);
+        expect(found.transferName, 'synthetic.txt');
+        expect(found.metadata!['rustpush'], '<synthetic-descriptor/>');
+        // Even a matching transient impostor cannot replace the durable row.
+        restored.attachments = [Attachment(guid: guid, transferName: 'wrong.txt')];
+        expect(cloudSyncAttachmentPlanLocalSource(restored, item).id, found.id);
+      });
+    }
+
+    test('one durable row matching both aliases counts once', () async {
+      final restored = await reopen(
+        Message(guid: _guidA)
+          ..dbAttachments.add(Attachment(guid: item.originalAttachmentGuid)),
+      );
+      final sameAliases = CloudSyncAttachmentPlanInventoryItem(
+        originalAttachmentGuid: item.originalAttachmentGuid,
+        reflectedAttachmentGuid: item.originalAttachmentGuid,
+        logicalEntityKeyHash: item.logicalEntityKeyHash,
+      );
+      expect(cloudSyncAttachmentPlanLocalSource(restored, sameAliases).guid,
+          item.originalAttachmentGuid);
+    });
+
+    test('missing relation never falls back to another message or global row', () async {
+      store.box<Message>().put(
+        Message(guid: 'OTHER-MESSAGE')
+          ..dbAttachments.add(Attachment(guid: item.originalAttachmentGuid)),
+      );
+      final restored = await reopen(
+        Message(guid: _guidA)
+          ..dbAttachments.add(Attachment(guid: 'UNRELATED-DURABLE')),
+      );
+      expect(store.box<Attachment>().count(), 2);
+      expect(
+        () => cloudSyncAttachmentPlanLocalSource(restored, item),
+        throwsA(_stateFailure('cloud_sync_attachment_plan_source_unavailable')),
+      );
+    });
+
+    test('two durable original/reflected matches remain ambiguous', () async {
+      final restored = await reopen(
+        Message(guid: _guidA)
+          ..dbAttachments.addAll([
+            Attachment(guid: item.originalAttachmentGuid),
+            Attachment(guid: item.reflectedAttachmentGuid),
+          ]),
+      );
+      expect(restored.dbAttachments, hasLength(2));
+      expect(
+        () => cloudSyncAttachmentPlanLocalSource(restored, item),
+        throwsA(_stateFailure('cloud_sync_attachment_plan_source_unavailable')),
+      );
+    });
+
+    for (final guid in [
+      item.originalAttachmentGuid,
+      item.reflectedAttachmentGuid,
+      'UNRELATED-TRANSIENT',
+    ]) {
+      test('transient-only $guid cannot supply a source', () async {
+        final restored = await reopen(Message(guid: _guidA));
+        expect(restored.dbAttachments, isEmpty);
+        restored.attachments = [Attachment(guid: guid)];
+        expect(
+          () => cloudSyncAttachmentPlanLocalSource(restored, item),
+          throwsA(_stateFailure('cloud_sync_attachment_plan_source_unavailable')),
+        );
+      });
+    }
+  });
+
   int seedConfirmedIntent({
     String stableGuid = _guidA,
     String attachmentGuid = 'LOCAL-ATTACHMENT-A',

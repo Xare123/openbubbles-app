@@ -36,6 +36,22 @@ final class CloudSyncAttachmentPlanInventoryItem {
   String toString() => 'CloudSyncAttachmentPlanInventoryItem(redacted)';
 }
 
+/// Resolve only the validated message's durable attachment relation. The UI's
+/// transient attachment list is empty after ObjectBox reload and is not source
+/// authority. Original and reflected GUIDs are aliases, not separate sources.
+Attachment cloudSyncAttachmentPlanLocalSource(
+  Message message,
+  CloudSyncAttachmentPlanInventoryItem item,
+) {
+  final matches = message.dbAttachments.where((attachment) =>
+      attachment.guid == item.originalAttachmentGuid ||
+      attachment.guid == item.reflectedAttachmentGuid).toList(growable: false);
+  if (matches.length != 1) {
+    throw StateError('cloud_sync_attachment_plan_source_unavailable');
+  }
+  return matches.single;
+}
+
 /// Callbacks receive the pinned source and live auth so inventory and staging
 /// bind to the validated origin instead of an accidental wrong closure.
 typedef CloudSyncAttachmentPlanInventoryReader =

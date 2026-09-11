@@ -1229,13 +1229,8 @@ final class CloudSyncProductionLocalSendAdapter {
               fence.run(() {
                 final message = journal.validateReadyForCreate(objectBox, scope, source,
                     retainedAttachmentResume: resuming);
-                final matches = message.attachments.whereType<Attachment>().where((a) =>
-                    a.guid == item.originalAttachmentGuid ||
-                    a.guid == item.reflectedAttachmentGuid).toList(growable: false);
-                if (matches.length != 1) {
-                  throw StateError('cloud_sync_attachment_plan_source_unavailable');
-                }
-                return matches.single.path;
+                final Attachment attachment = cloudSyncAttachmentPlanLocalSource(message, item);
+                return attachment.path;
               }, accountFingerprint: scope.accountFingerprint);
           Future<CloudSyncNativeAuthSnapshot?> liveAuth() => fence.run(() => auth,
               accountFingerprint: scope.accountFingerprint);

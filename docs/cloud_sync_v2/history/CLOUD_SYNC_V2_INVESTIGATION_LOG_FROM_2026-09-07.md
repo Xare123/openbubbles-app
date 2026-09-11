@@ -1662,3 +1662,76 @@ This is a chronological evidence log. It does not override the
 - Mechanical fixture cleanup recheck passed: 21 tests in the two touched suites
   and no analyzer issues. All 12 changed Dart source/test files are now analyzed
   clean. Diff checks passed; C: retained approximately 62.6 GiB free.
+- Reviewed source committed/pushed as `0ff8e559516e243cfa8d8e7242dcc454667c485c`.
+  GCE `34555255259` runs the full Dart suite on that exact source using the
+  existing N2D-16 primary lane, with writer/automatic-upload flags false.
+  The previous run was terminal and both inventories empty before dispatch.
+- Reviewed the existing isolated Windows ARM64 sidecar before requesting a new
+  runtime. Current source adds three attachment-header tests; the default
+  mock-backed file has 50 passing visible test events, plus one native-only
+  legacy comparison. Updated the exact native gate from 48 to 51 in isolated
+  pilot commit `9c63ab24d340a9de80879f1bf2ce0e5fd43159cc`, not the feature branch.
+  PowerShell parsing/diff checks passed. No infrastructure or signing changes.
+- Windows run `34555641336` builds `0ff8e559516e243cfa8d8e7242dcc454667c485c`
+  with `local-write`, automatic uploads disabled, on the existing ephemeral
+  GitHub ARM64 host. It must pass the 51 tests against its actual packaged DLL,
+  PE/hash/provenance checks and invalid-launch observation before import.
+  No active Windows run was replaced. Account profiles remain local and the
+  original vendor ObjectBox DLL must remain untouched during import.
+- At 02:43:58Z both exact-source runs were live: GCE executing the full Dart
+  suite, Windows setting up Flutter. Neither is yet a successful build or
+  live CloudKit proof. Windows's explicit outbound harness still supports text
+  requests only; attachment-request support is needed for its live attachment
+  vertical test unless an existing retained attachment intent can be selected.
+
+### September 10 evening, exact-source qualification and Windows attachment entry
+
+- GCE `34555255259` completed successfully on `0ff8e5595`: 3,016 Dart tests,
+  14 semantic-outbox cases and three evidence-output cases passed. Full Dart
+  execution took 5m39s; cleanup finished at 02:47:11Z September 11. Independent
+  GCE and GitHub runner inventories returned empty. No APK/native build or
+  account operation occurred in this dart-only job.
+- Windows ARM64 run `34555641336` also passed on exact `0ff8e5595`, pilot
+  `9c63ab24d`: 30 focused Dart tests, both PowerShell contracts and all 51 visible
+  codec tests against the packaged Rust DLL passed. Parent independently counted
+  51 successful, zero failed/skipped events. Job duration was 22m21s, Flutter
+  compilation 872.4 seconds. The invalid-launch Dart marker was observed, with
+  no account/profile side effects. Parent verified 78 files, ARM64 PE headers,
+  the archive and every manifest hash without extracting into an account runtime.
+  The bounded archive/provenance are retained under
+  `build-evidence/windows-fast-loop-34555641336` outside Git.
+- Parent added explicit Windows request v4 for deterministic tiny PNG/text
+  attachments. It uses ordinary MMCS upload, the existing local-send journal,
+  original protected IDS source staging, positive native send completion and
+  exact-intent production upload/child/parent admission. No native API, account
+  reset, automatic-send flag or prior request binding changed. A claimed request
+  skips upload and IDS send on restart. Unknown IDS completion still requires
+  reconciliation, never a guessed acknowledgment or automatic resend.
+- Astra review found a concrete prior production bug: the upload source callback
+  searched the transient `Message.attachments` list after the journal reloads
+  from ObjectBox. The callback now resolves the exact `dbAttachments` relation;
+  original/reflected aliases and exactly-one cardinality remain required. Eight
+  real-store reopen cases reject missing, ambiguous and transient-only sources.
+  Parent reviewed the three-file fix and accepted it.
+- Muse supplied bounded synthetic fixture helpers. Parent required actual PNG
+  decoding, profile-root link rejection, length-before-read bounds and honest
+  link-test skips before acceptance. No user file is accepted by this harness
+  input. Shared source and necessary agent evidence are retained.
+- Parent combined qualification passed 121 tests across six suites; all eight
+  changed integration Dart files analyzed clean. The fixture's 15 tests and
+  two-file analysis passed at worker review. Bundle verifier tests passed 17/17
+  and removed only their 14 synthetic files and 11 empty scratch directories.
+  Its native-codec expectation is now explicit (51 current, 48 only when the
+  caller explicitly requests the historical baseline), never trusted from
+  bundle metadata alone. The real 0ff8e5595 archive passed this verifier.
+- The old manual-selection agent was still listed by the environment. Parent
+  checked its idle task and reviewed final scope; its test is already committed
+  as `7df4fced8` and included in the full suite above. Shutdown was requested and
+  verified `not_found`. No exclusive disposable worktree or supported session
+  deletion was available; its integrated tests and provenance were preserved.
+- Parent reran all 15 fixture cases (zero skipped) and analysis successfully,
+  including actual image decoding and root/intermediate link rejection. Both
+  current workers were reviewed, accepted and closed; both handles then returned
+  `not_found`. Shared source and necessary evidence/transcripts remain retained,
+  with no supported session deletion or exclusive disposable worktree available.
+  C: had approximately 62.6 GiB free. No account write, call or install occurred.

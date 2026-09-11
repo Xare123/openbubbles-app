@@ -5,7 +5,8 @@ param(
     [string] $RealArchiveSha256 = '',
     [string] $RealSourceSha = '',
     [string] $RealPilotSha = '',
-    [string] $RealVariant = ''
+    [string] $RealVariant = '',
+    [ValidateRange(1, 10000)][int] $RealNativeEncoderTestCount = 51
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -111,7 +112,7 @@ function New-MiniFixture {
         verification = [ordered]@{
             powershell_contract_tests = 'passed'; focused_dart_tests = 'passed'
             all_pe_files_arm64 = $true; rust_bridge_load_unload = 'passed'
-            native_local_write_encoder_tests = [ordered]@{ result = 'passed'; native_library = 'bundle/rust_lib_bluebubbles.dll'; expected_test_count = 48; full_file_run = $true }
+            native_local_write_encoder_tests = [ordered]@{ result = 'passed'; native_library = 'bundle/rust_lib_bluebubbles.dll'; expected_test_count = 51; full_file_run = $true }
             invalid_launch_diagnostic = [ordered]@{ expected_dart_marker = 'cloud_sync_windows_dev_launch_id_invalid'; expected_dart_marker_seen = $true; proof_status = 'observed'; network_or_auth_requested = $false; profile_state_written = $false }
             account_profile_or_database_in_bundle = $false
         }
@@ -182,7 +183,7 @@ function New-CollisionFixture {
 # 1. Real-bundle positive is opt-in (parent runs it); otherwise explicit skip.
 if ($RealArchivePath -and $RealProvenancePath -and $RealArchiveSha256 -and $RealSourceSha -and $RealPilotSha -and $RealVariant) {
     try {
-        $s = Invoke-VerifyWindowsCloudBundle -ArchivePath $RealArchivePath -ProvenancePath $RealProvenancePath -ExpectedArchiveSha256 $RealArchiveSha256 -ExpectedSourceSha $RealSourceSha -ExpectedPilotSha $RealPilotSha -ExpectedVariant $RealVariant
+        $s = Invoke-VerifyWindowsCloudBundle -ArchivePath $RealArchivePath -ProvenancePath $RealProvenancePath -ExpectedArchiveSha256 $RealArchiveSha256 -ExpectedSourceSha $RealSourceSha -ExpectedPilotSha $RealPilotSha -ExpectedVariant $RealVariant -ExpectedNativeEncoderTestCount $RealNativeEncoderTestCount
         Write-Host ("PASS positive-real-bundle (files={0})" -f $s.Files); $script:Pass++
     } catch { Write-Host "FAIL positive-real-bundle ($_)" ; $script:FailCount++ }
 } else {
@@ -222,9 +223,15 @@ try {
 Assert-Fails -Name 'source-mismatch' -Body { Invoke-VerifyWindowsCloudBundle -ArchivePath $f.Zip -ProvenancePath $f.Prov -ExpectedArchiveSha256 $f.ZipHash -ExpectedSourceSha 'cccccccccccccccccccccccccccccccccccccccc' -ExpectedPilotSha $f.Pilot -ExpectedVariant 'local-write' }
 Assert-Fails -Name 'archive-sha-mismatch' -Body { Invoke-VerifyWindowsCloudBundle -ArchivePath $f.Zip -ProvenancePath $f.Prov -ExpectedArchiveSha256 '0000000000000000000000000000000000000000000000000000000000000000' -ExpectedSourceSha $f.Src -ExpectedPilotSha $f.Pilot -ExpectedVariant 'local-write' }
 
-# Flags mismatch (48 -> 47).
+# Current and retained historical suites require the caller's exact expectation.
 $tamperProv = New-EditedProv -Tag 'flags-tamper' -SourceProv $f.Prov -Edit { param($o) $o.verification.native_local_write_encoder_tests.expected_test_count = 47 }
-Assert-Fails -Name 'flags-48-required' -Body { Invoke-VerifyWindowsCloudBundle -ArchivePath $f.Zip -ProvenancePath $tamperProv -ExpectedArchiveSha256 $f.ZipHash -ExpectedSourceSha $f.Src -ExpectedPilotSha $f.Pilot -ExpectedVariant 'local-write' }
+Assert-Fails -Name 'flags-51-required' -Body { Invoke-VerifyWindowsCloudBundle -ArchivePath $f.Zip -ProvenancePath $tamperProv -ExpectedArchiveSha256 $f.ZipHash -ExpectedSourceSha $f.Src -ExpectedPilotSha $f.Pilot -ExpectedVariant 'local-write' }
+$oldProv = New-EditedProv -Tag 'historical-count' -SourceProv $f.Prov -Edit { param($o) $o.verification.native_local_write_encoder_tests.expected_test_count = 48 }
+Assert-Fails -Name 'older-count-not-auto-trusted' -Body { Invoke-VerifyWindowsCloudBundle -ArchivePath $f.Zip -ProvenancePath $oldProv -ExpectedArchiveSha256 $f.ZipHash -ExpectedSourceSha $f.Src -ExpectedPilotSha $f.Pilot -ExpectedVariant 'local-write' }
+try {
+    Invoke-VerifyWindowsCloudBundle -ArchivePath $f.Zip -ProvenancePath $oldProv -ExpectedArchiveSha256 $f.ZipHash -ExpectedSourceSha $f.Src -ExpectedPilotSha $f.Pilot -ExpectedVariant 'local-write' -ExpectedNativeEncoderTestCount 48 | Out-Null
+    Write-Host 'PASS explicit-historical-count'; $script:Pass++
+} catch { Write-Host "FAIL explicit-historical-count ($_)"; $script:FailCount++ }
 
 # Per-file hash mismatch: tamper manifest sha.
 $hashProv = New-EditedProv -Tag 'hash-tamper' -SourceProv $f.Prov -Edit { param($o) $o.files[0].sha256 = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' }

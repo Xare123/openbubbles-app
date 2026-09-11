@@ -97,9 +97,11 @@ committed original IDS source
 | Local qualification | Combined admission/journal/dependency/transport/composition suite: 278 passed. Timeout/reconciliation/transport subset: 42 passed after parent review. These overlap and do not establish live-account behavior. |
 | Timeout correction | Release tracked preparation before draining record saves. Otherwise a save timeout can quiesce the outer operation that is waiting on that save. A dedicated sequencing test covers this boundary. |
 | Group attachments | Native `d5b31d5b9`, GCE `34547723829`: 490 Rust tests passed; only generated-interface drift failed. Artifact `10179880441` was hash-verified and imported; VM/runner inventories empty. Exact restored group binding is pinned before staging and after awaits. Local transport passed 15 tests, admission 73; no live group-attachment proof. |
-| Recovery | Original source, epoch and attempt IDs remain immutable. Under current stable authority, the coordinator reuses existing plans and stages only missing entries from the original native inventory. A newly ambiguous upload may schedule only its own receipt-first next pass after native quiescence, exact fence/attempt verification and unchanged identity. Parent's composed guard/consumer test proves the missing-receipt pass creates no outbox entry or second upload. Combined qualification: **936 tests passed across 28 suites**, including fixed-inventory interruption/reopen and historical upgrades. Full CI and live runtime remain unqualified. |
-| Full-suite checkpoint | Source `927977c69`, GCE `34553546240`: 2,951 Dart tests passed, three failed. Two old-schema migration fixtures are inconsistent with their property IDs; the constructor contract omitted the gated local IDS-source lease path. Repairs are under review. Cleanup and independent VM/runner inventories are verified empty. No APK or signing occurred. |
-| Live proof | No new attachment write, APK or Windows runtime has been qualified from this batch. The working Windows executable remains `6abbeede2`. |
+| Recovery | Original source, epoch and attempt IDs remain immutable. Under current stable authority, the coordinator reuses existing plans and stages only missing entries from the original native inventory. A newly ambiguous upload may schedule only its own receipt-first next pass after native quiescence, exact fence/attempt verification and unchanged identity. Parent's composed guard/consumer test proves the missing-receipt pass creates no outbox entry or second upload. Combined qualification: **936 tests passed across 28 suites**, including fixed-inventory interruption/reopen and historical upgrades; full Dart CI passed below. Live runtime remains unqualified. |
+| Full-suite checkpoint | Source `0ff8e5595`, GCE `34555255259`: **3,016 Dart tests, 14 semantic-outbox contract cases and 3 evidence-output cases passed**. The three previous fixture/constructor-contract failures were repaired and rechecked. Cleanup completed at 02:47:11Z on September 11; independent VM/runner inventories were empty. No APK, native compilation, signing or live account access occurred in this dart-only run. |
+| Windows baseline | Source `0ff8e5595`, Windows run `34555641336`: 30 focused Dart tests, 51 actual Rust-DLL codec tests, ARM64 load and invalid-launch marker passed. Parent verified all 78 bundle files and hashes. This bundle lacks the subsequent attachment-request and durable-source-lookup correction; it is not attachment-live-qualified. The active account runtime remains `6abbeede2`. |
+| Durable source lookup | Review found that `validateReadyForCreate` reloads a Message with an empty transient `attachments` list. The executor now selects its exact persisted `dbAttachments` relation instead, retaining exactly-one original/reflected GUID matching. Eight database-reopen regressions cover both aliases, ambiguity, unrelated rows and forbidden transient/global fallback. Full exact-source CI and live proof remain open for this patch. |
+| Windows attachment input | Explicit request v4 adds synthetic `text-v1` and `png-v1` files only, no arbitrary user-file upload. Claim, original descriptor, protected source staging, positive IDS confirmation and the existing exact-intent production adapter remain required. Previous request-v1/v2/v3 bindings are unchanged. Interrupted IDS confirmation stays unconfirmed, not resendable. |
 
 Prepared-handle lifecycle correction: a failed native consume can retain its
 unconsumed owner and writer permit. Waiting for futures alone cannot release
@@ -575,8 +577,9 @@ CloudKit readback or independent Apple-device display.
 
 1. Qualify the integrated attachment vertical path. Source retention, plan reuse,
    byte execution, child save/readback and parent admission are connected.
-   Finish full-suite repairs and qualify automatic unknown-outcome recovery and
-   partial-plan recovery together, then run one exact-source live attachment
+   Full Dart qualification passed on `0ff8e5595`. Extend the Windows request
+   input to exercise an attachment through the same production path, then
+   run one exact-source live attachment
    save/readback/restart test. Preserve the original source and attempt across
    writer epochs; absent receipts never authorize blind reupload. Also prove
    source staging remains usable during long reads, not merely lossless on

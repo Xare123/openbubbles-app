@@ -5,6 +5,7 @@ import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/backend/filesystem/filesystem_service.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:bluebubbles/src/rust/lib.dart' as rustlib;
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as path;
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
@@ -13,6 +14,11 @@ import 'services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_group_send_route.dart';
 import 'cloud_sync_v2_windows_write_checkpoint.dart';
+import 'cloud_sync_v2_windows_attachment_fixture.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_attachment_send_body.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_local_send_source_staging.dart';
+import 'services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart';
 import 'package:uuid/uuid.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_protector.dart';
@@ -56,6 +62,12 @@ final class CloudSyncWindowsWriteRequest {
       restoredGroupGuid = json['restoredGroupGuid'] as String?,
       sender = json['sender'] as String,
       text = json['text'] as String,
+      attachmentFixture =
+          json['version'] == 4 && json['attachmentFixture'] is String
+          ? CloudSyncWindowsAttachmentFixture.fromId(
+              json['attachmentFixture'] as String,
+            )
+          : null,
       refreshSenderAuthentication = json['refreshSenderAuthentication'] == true,
       existingChatFromRequestId = json['existingChatFromRequestId'] as String? {
     final validVersion = json['version'] == 3
@@ -73,7 +85,14 @@ final class CloudSyncWindowsWriteRequest {
               recipients.length <= 31
         : restoredGroupGuid == null &&
               !json.containsKey('recipients') &&
-              (json['version'] == 1
+              (json['version'] == 4
+                  ? attachmentFixture != null &&
+                        (existingChatFromRequestId == null ||
+                            (RegExp(
+                                  r'^[a-z0-9-]{1,64}$',
+                                ).hasMatch(existingChatFromRequestId!) &&
+                                existingChatFromRequestId != id))
+                  : json['version'] == 1
                   ? existingChatFromRequestId == null
                   : json['version'] == 2 &&
                         existingChatFromRequestId != null &&
@@ -82,6 +101,7 @@ final class CloudSyncWindowsWriteRequest {
                         ).hasMatch(existingChatFromRequestId!) &&
                         existingChatFromRequestId != id);
     if (!validVersion ||
+        (json['version'] != 4 && json.containsKey('attachmentFixture')) ||
         (json.containsKey('refreshSenderAuthentication') &&
             json['refreshSenderAuthentication'] is! bool) ||
         json['allowSend'] != true ||
@@ -89,7 +109,7 @@ final class CloudSyncWindowsWriteRequest {
         recipients.toSet().length != recipients.length ||
         !recipients.every(RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch) ||
         !RegExp(r'^[^\s:@]+@[^\s:@]+\.[^\s:@]+$').hasMatch(sender) ||
-        text.trim().isEmpty ||
+        (attachmentFixture == null ? text.trim().isEmpty : text.isNotEmpty) ||
         text.length > 512) {
       throw StateError('cloud_sync_windows_write_request_invalid');
     }
@@ -105,6 +125,7 @@ final class CloudSyncWindowsWriteRequest {
       (throw StateError('cloud_sync_windows_write_group_requires_member_set'));
   final String sender;
   final String text;
+  final CloudSyncWindowsAttachmentFixture? attachmentFixture;
 
   /// Explicit operator repair before any new intent or send. Never implicit
   /// retry after failure and never a reason to clear hardware or CloudKit state.
@@ -114,7 +135,22 @@ final class CloudSyncWindowsWriteRequest {
       .convert(
         utf8.encode(
           jsonEncode(
-            isGroup
+            attachmentFixture != null
+                ? [
+                    'windows-local-write-v4',
+                    id,
+                    recipient,
+                    sender,
+                    text,
+                    existingChatFromRequestId,
+                    attachmentFixture!.id,
+                    attachmentFixture!.sha256Hex,
+                    attachmentFixture!.filename,
+                    attachmentFixture!.mimeType,
+                    attachmentFixture!.uti,
+                    if (refreshSenderAuthentication) 'refresh-sender-auth-v1',
+                  ]
+                : isGroup
                 ? [
                     'windows-local-write-v3',
                     id,
@@ -146,6 +182,39 @@ final class CloudSyncWindowsWriteRequest {
         ),
       )
       .toString();
+}
+
+/// The ordinary single-attachment composer shape. The exact descriptor survives
+/// the ObjectBox relation round-trip and is later checked against the IDS wire.
+Message cloudSyncWindowsAttachmentSubmission({
+  required CloudSyncWindowsAttachmentFixture fixture,
+  required api.MessageInst wire,
+  required String descriptor,
+}) {
+  if (descriptor.isEmpty ||
+      utf8.encode(descriptor).length >
+          CloudSyncAttachmentSendBody.maxDescriptorBytes) {
+    throw StateError('cloud_sync_windows_attachment_descriptor_invalid');
+  }
+  return Message(
+      guid: 'temp-WinWrite',
+      text: '',
+      isFromMe: true,
+      dateCreated: DateTime.now().toUtc(),
+      hasAttachments: true,
+      attributedBody: [],
+    )
+    ..dbAttachments.add(
+      Attachment(
+        guid: '${wire.id}_0',
+        uti: fixture.uti,
+        mimeType: fixture.mimeType,
+        isOutgoing: true,
+        transferName: fixture.filename,
+        totalBytes: fixture.bytes.length,
+        metadata: {'rustpush': descriptor},
+      ),
+    );
 }
 
 /// An explicit restored-group selector, not a best-match or a new group.
@@ -242,6 +311,7 @@ final class CloudSyncWindowsLocalWrite {
     required this.prepareSender,
     required this.sendConfirmed,
     required this.reportStage,
+    this.uploadAttachment,
   });
 
   final Object? Function() readClient;
@@ -253,6 +323,11 @@ final class CloudSyncWindowsLocalWrite {
   prepareSender;
   final Future<void> Function(api.MessageInst message) sendConfirmed;
   final Future<void> Function(String stage) reportStage;
+  final Future<api.Attachment> Function(
+    File file,
+    CloudSyncWindowsAttachmentFixture fixture,
+  )?
+  uploadAttachment;
 
   Future<Map<String, Object?>> run() async {
     if (!Platform.isWindows ||
@@ -274,7 +349,7 @@ final class CloudSyncWindowsLocalWrite {
       path.join(directory.path, 'windows-write-${request.id}.json'),
     );
     final client = readClient();
-    if (client == null) {
+    if (client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
       throw StateError('cloud_sync_windows_write_client_missing');
     }
     final objectBox = Database.store;
@@ -434,6 +509,31 @@ final class CloudSyncWindowsLocalWrite {
         ),
         accountFingerprint: auth.accountFingerprint,
       );
+      final fixture = request.attachmentFixture;
+      api.Attachment? uploaded;
+      String? descriptor;
+      if (fixture != null) {
+        final upload = uploadAttachment;
+        if (upload == null) {
+          throw StateError('cloud_sync_windows_attachment_upload_unavailable');
+        }
+        final file = await fixture.materialize(fs.appDocDir, request.id);
+        await reportStage('windows-write-uploading-ids-attachment');
+        await fence.run<void>(() {});
+        uploaded = await upload(file, fixture);
+        await fence.run<void>(() {});
+        if (uploaded.aType is! api.AttachmentType_MMCS ||
+            uploaded.iris ||
+            uploaded.mime != fixture.mimeType ||
+            uploaded.utiType != fixture.uti ||
+            uploaded.name != fixture.filename ||
+            (uploaded.aType as api.AttachmentType_MMCS).field0.size !=
+                fixture.bytes.length) {
+          throw StateError('cloud_sync_windows_attachment_descriptor_invalid');
+        }
+        descriptor = await api.saveAttachment(att: uploaded);
+        await fence.run<void>(() {});
+      }
       final wire = await api.newMsg(
         conversation: api.ConversationData(
           participants: [
@@ -452,17 +552,19 @@ final class CloudSyncWindowsLocalWrite {
             parts: api.MessageParts(
               field0: [
                 api.IndexedMessagePart(
-                  part_: api.MessagePart.text(
-                    request.text,
-                    const api.TextFormat.flags(
-                      api.TextFlags(
-                        bold: false,
-                        italic: false,
-                        underline: false,
-                        strikethrough: false,
-                      ),
-                    ),
-                  ),
+                  part_: uploaded != null
+                      ? api.MessagePart.attachment(uploaded)
+                      : api.MessagePart.text(
+                          request.text,
+                          const api.TextFormat.flags(
+                            api.TextFlags(
+                              bold: false,
+                              italic: false,
+                              underline: false,
+                              strikethrough: false,
+                            ),
+                          ),
+                        ),
                 ),
               ],
             ),
@@ -479,6 +581,12 @@ final class CloudSyncWindowsLocalWrite {
       // every network send. A torn claim fails closed on the next launch.
       await claim.create(exclusive: true);
       await claim.writeAsString(jsonEncode(savedClaim), flush: true);
+      // The ordinary executor reads the canonical attachment cache path.
+      // Only our deterministic fixture is written, never a user-selected file.
+      final attachmentGuid = '${wire.id}_0';
+      if (fixture != null) {
+        await fixture.materializeForAttachment(fs.appDocDir, attachmentGuid);
+      }
       late CloudSyncLocalSendIdentity source;
       late Message message;
       await fence.run(
@@ -526,17 +634,29 @@ final class CloudSyncWindowsLocalWrite {
             objectBox.box<Chat>().put(chat);
           }
           wire.conversation!.senderGuid = chat.guid;
-          message = Message(
-            guid: 'temp-WinWrite',
-            text: request.text,
-            isFromMe: true,
-            dateCreated: DateTime.now().toUtc(),
-            hasAttachments: false,
-            attributedBody: [AttributedBody.raw(request.text)],
-          );
+          message = fixture != null
+              ? cloudSyncWindowsAttachmentSubmission(
+                  fixture: fixture,
+                  wire: wire,
+                  descriptor: descriptor!,
+                )
+              : Message(
+                  guid: 'temp-WinWrite',
+                  text: request.text,
+                  isFromMe: true,
+                  dateCreated: DateTime.now().toUtc(),
+                  hasAttachments: false,
+                  attributedBody: [AttributedBody.raw(request.text)],
+                );
           message.chat.target = chat;
           source =
-              CloudSyncLocalSendIdentity.captureWire(message, chat, wire) ??
+              (fixture == null
+                  ? CloudSyncLocalSendIdentity.captureWire(message, chat, wire)
+                  : CloudSyncLocalSendIdentity.captureAttachment(
+                      message,
+                      chat,
+                      wire.id,
+                    )) ??
               (throw StateError('cloud_sync_windows_write_wire_invalid'));
           if (!CloudSyncLocalSendIdentity.isFreshLocalSubmission(
             message,
@@ -555,14 +675,78 @@ final class CloudSyncWindowsLocalWrite {
         }),
         accountFingerprint: auth.accountFingerprint,
       );
+      CloudSyncLocalSendSourceBinding? protectedSource;
+      if (fixture != null) {
+        final receipt = api.CloudSyncNativeSendReceiptContext(
+          storageDirectory: fs.appDocDir.path,
+          guidHash: source.guidHash,
+          accountFingerprint: auth.accountFingerprint,
+          protectedStoreIdentity: auth.protectedStoreIdentity,
+          nativeSessionId: auth.nativeSessionId,
+        );
+        // Same local lease/adoption sequence as the ordinary composer. This
+        // helper cannot upload or save a CloudKit record.
+        final transport = NativeProtectedCloudSyncTransport(
+          cloudMessagesClient: client,
+          storageDirectory: fs.appDocDir.path,
+          protectedStoreIdentity: auth.protectedStoreIdentity,
+        );
+        protectedSource =
+            await CloudSyncLocalSendSourceStaging(
+              journal: journal,
+              authFence: fence,
+              capturedAuth: auth,
+              stillCurrent: current,
+              exclusion: interlock,
+              transport: transport,
+            ).prepare(
+              identity: source,
+              validateWire: () async =>
+                  (await CloudSyncLocalSendIdentity.captureAttachmentWire(
+                    message,
+                    message.chat.target!,
+                    wire,
+                    expectedSourceSha256: source.sourceSha256,
+                    serializeAttachment: (value) =>
+                        api.saveAttachment(att: value),
+                  ))?.sourceSha256 ==
+                  source.sourceSha256,
+              stage: () async {
+                final native = await api.cloudSyncStageIdsAttachmentSource(
+                  cloudMessagesClient: client,
+                  context: receipt,
+                  localSourceSha256: source.sourceSha256,
+                  message: wire,
+                  attachmentGuids: CloudSyncAttachmentSendBody.capture(
+                    message,
+                  )!.attachmentGuids,
+                );
+                return CloudSyncLocalSendSourceBinding(
+                  accountFingerprint: auth.accountFingerprint,
+                  protectedStoreIdentity: auth.protectedStoreIdentity,
+                  messageGuidHash: source.guidHash,
+                  sourceSha256: native.sourceSha256,
+                  protectedReference: native.protectedReference,
+                  leaseReference: native.leaseReference,
+                  payloadSha256: native.payloadSha256,
+                  payloadLength: native.payloadLength.toInt(),
+                );
+              },
+            );
+      }
       await reportStage('windows-write-awaiting-native-send');
-      await sendConfirmed(wire); // No retry and no abandoned timeout.
-      journal.recordNativeSendConfirmation(
-        stableGuid: savedClaim['guid'] as String,
-        succeeded: true,
-        capturedAuth: auth,
-        stillCurrent: current,
-        now: DateTime.now().toUtc(),
+      await fence.run<void>(() {});
+      await sendConfirmed(wire); // No retry or abandoned timeout.
+      await fence.run(
+        () => journal.recordNativeSendConfirmation(
+          stableGuid: savedClaim['guid'] as String,
+          succeeded: true,
+          capturedAuth: auth,
+          stillCurrent: current,
+          now: DateTime.now().toUtc(),
+          protectedSource: protectedSource,
+        ),
+        accountFingerprint: auth.accountFingerprint,
       );
     }
     final guidHash = sha256
