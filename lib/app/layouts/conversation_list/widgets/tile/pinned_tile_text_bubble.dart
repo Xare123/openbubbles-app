@@ -51,6 +51,7 @@ class PinnedTileTextBubbleState extends CustomState<PinnedTileTextBubble, void, 
     subtitle = MessageHelper.getNotificationText(controller.chat.latestMessage);
     lastMessage = controller.chat.latestMessage;
     cachedLatestMessageGuid = controller.chat.latestMessage.guid!;
+    cachedDateCreated = controller.chat.latestMessage.dateCreated;
     fakeText = faker.lorem.words(subtitle.split(" ").length).join(" ");
     // run query after render has completed
     if (!kIsWeb) {
@@ -64,8 +65,9 @@ class PinnedTileTextBubbleState extends CustomState<PinnedTileTextBubble, void, 
           final message = await runAsync(() {
             return query.findFirst();
           });
-          // check if we really need to update this widget
-          if (message != null && message.guid != cachedLatestMessageGuid) {
+          if (!mounted) return;
+          // Same-record edits and retractions need a fresh preview too.
+          if (message != null) {
             message.handle = message.getHandle();
             lastMessage = message;
             String newSubtitle = MessageHelper.getNotificationText(message);
@@ -77,21 +79,26 @@ class PinnedTileTextBubbleState extends CustomState<PinnedTileTextBubble, void, 
             }
           }
           cachedLatestMessageGuid = message?.guid;
+          cachedDateCreated = message?.dateCreated;
         });
       });
     } else {
       sub = WebListeners.newMessage.listen((tuple) {
+        if (!mounted) return;
         final message = tuple.item1;
+        final sameMessage = message.guid == cachedLatestMessageGuid;
+        final newerMessage = cachedDateCreated == null ||
+            message.dateCreated == null ||
+            message.dateCreated!.isAfter(cachedDateCreated!);
         if (tuple.item2?.guid == controller.chat.guid &&
-            (cachedDateCreated == null || message.dateCreated!.isAfter(cachedDateCreated!))) {
-          if (message.guid != cachedLatestMessageGuid) {
-            String newSubtitle = MessageHelper.getNotificationText(message);
-            if (newSubtitle != subtitle) {
-              setState(() {
-                subtitle = newSubtitle;
-                fakeText = faker.lorem.words(subtitle.split(" ").length).join(" ");
-              });
-            }
+            (sameMessage || newerMessage)) {
+          lastMessage = message;
+          String newSubtitle = MessageHelper.getNotificationText(message);
+          if (newSubtitle != subtitle) {
+            setState(() {
+              subtitle = newSubtitle;
+              fakeText = faker.lorem.words(subtitle.split(" ").length).join(" ");
+            });
           }
           cachedDateCreated = message.dateCreated;
           cachedLatestMessageGuid = message.guid;

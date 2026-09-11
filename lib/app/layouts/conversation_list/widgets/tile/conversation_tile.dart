@@ -455,7 +455,6 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
   StreamSubscription? eventSub;
   String? cachedLatestMessageGuid = "";
   DateTime? cachedDateCreated;
-  DateTime? cachedDateEdited;
   bool isDelivered = false;
   bool isFromMe = false;
 
@@ -489,7 +488,6 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
     subtitle = _notificationSubtitle(latestMessage);
     cachedLatestMessageGuid = latestMessage.guid;
     cachedDateCreated = latestMessage.dateCreated;
-    cachedDateEdited = latestMessage.dateEdited;
     isFromMe = latestMessage.isFromMe ?? false;
     isDelivered = controller.chat.isGroup || !isFromMe || controller.chat.latestMessage.dateDelivered != null
         || controller.chat.latestMessage.dateRead != null;
@@ -510,17 +508,17 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
           final message = await runAsync(() {
             return query.findFirst();
           });
+          if (!mounted) return;
           final previousIsFromMe = isFromMe;
           final previousIsDelivered = isDelivered;
           isFromMe = message?.isFromMe ?? false;
           isDelivered = controller.chat.isGroup || !isFromMe || message?.dateDelivered != null || message?.dateRead != null;
           final deliveryChanged = previousIsFromMe != isFromMe ||
               previousIsDelivered != isDelivered;
-          final shouldRecomputeSubtitle = message != null &&
-              (message.guid != cachedLatestMessageGuid ||
-                  message.dateEdited != cachedDateEdited ||
-                  subtitle == "Empty message");
-          if (message != null && shouldRecomputeSubtitle) {
+          // CloudKit can change body/retraction metadata without changing
+          // either GUID or dateEdited. Compare the actual preview on this
+          // already-fetched row; rebuild only when visible state changes.
+          if (message != null) {
             message.handle = message.getHandle();
             String newSubtitle = _notificationSubtitle(message, fallback: subtitle);
             if (newSubtitle != subtitle || deliveryChanged) {
@@ -534,7 +532,7 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
             setState(() {});
           }
           cachedLatestMessageGuid = message?.guid;
-          cachedDateEdited = message?.dateEdited;
+          cachedDateCreated = message?.dateCreated;
         });
       });
     } else {
@@ -553,6 +551,7 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
         }
       });
       sub = WebListeners.newMessage.listen((tuple) {
+        if (!mounted) return;
         final message = tuple.item1;
         final sameMessage = message.guid == cachedLatestMessageGuid;
         final newerMessage = cachedDateCreated == null ||
@@ -565,24 +564,15 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
           isDelivered = controller.chat.isGroup || !isFromMe || message.dateDelivered != null || message.dateRead != null;
           final deliveryChanged = previousIsFromMe != isFromMe ||
               previousIsDelivered != isDelivered;
-          final shouldRecomputeSubtitle =
-              message.guid != cachedLatestMessageGuid ||
-              message.dateEdited != cachedDateEdited ||
-              subtitle == "Empty message";
-          if (shouldRecomputeSubtitle) {
-            final newSubtitle = _notificationSubtitle(message, fallback: subtitle);
-            if (newSubtitle != subtitle || deliveryChanged) {
-              setState(() {
-                subtitle = newSubtitle;
-                fakeText = faker.lorem.words(subtitle.split(" ").length).join(" ");
-              });
-            }
-          } else if (deliveryChanged) {
-            setState(() {});
+          final newSubtitle = _notificationSubtitle(message, fallback: subtitle);
+          if (newSubtitle != subtitle || deliveryChanged) {
+            setState(() {
+              subtitle = newSubtitle;
+              fakeText = faker.lorem.words(subtitle.split(" ").length).join(" ");
+            });
           }
           cachedDateCreated = message.dateCreated;
           cachedLatestMessageGuid = message.guid;
-          cachedDateEdited = message.dateEdited;
         }
       });
     }

@@ -142,7 +142,9 @@ class MessageHelper {
 
   static String getNotificationText(Message message, {bool withSender = false}) {
     if (message.isGroupEvent) return message.groupEventText;
-    if (message.expressiveSendStyleId == "com.apple.MobileSMS.expressivesend.invisibleink") {
+    final retractionPreview = _retractionPreview(message);
+    if (retractionPreview == null &&
+        message.expressiveSendStyleId == "com.apple.MobileSMS.expressivesend.invisibleink") {
       return "Message sent with Invisible Ink";
     }
     if (kIsWeb && !message.isFromMe! && message.handle == null) {
@@ -150,6 +152,7 @@ class MessageHelper {
     }
     String sender = !withSender ? "" : "${message.isFromMe! ? "You: " : (message.handle?.displayName ?? "Someone")}: ";
 
+    if (retractionPreview != null) return '$sender$retractionPreview';
     if (message.isInteractive) {
       return "$sender${message.interactiveText}";
     }
@@ -180,6 +183,16 @@ class MessageHelper {
         
         if (message.associatedMessageEmoji != null && verb != null) {
           verb = verb.replaceFirst("emoji_placeholder", message.associatedMessageEmoji!);
+        }
+
+        final parentRetraction = _retractionPreview(associatedMessage);
+        if (parentRetraction != null) {
+          // Retained source bytes remain available for sync/history, but must
+          // not reappear as quoted text in a reaction preview.
+          final target = parentRetraction == 'Unsent message'
+              ? 'an unsent message'
+              : 'a partially unsent message';
+          return '$sender $verb $target';
         }
 
         // we need to check balloonBundleId first because for some reason
@@ -233,6 +246,19 @@ class MessageHelper {
       // It's all other message types
       return sender + message.fullText;
     }
+  }
+
+  static String? _retractionPreview(Message message) {
+    final retracted = message.messageSummaryInfo.firstOrNull?.retractedParts;
+    if (retracted == null || retracted.isEmpty) return null;
+    // Mirror the renderer's first-body part selection without resolving
+    // attachments, mutating retained bodies or requiring dateEdited. A short
+    // label is intentional: falling back to fullText can expose unsent parts.
+    final hasRemainingPart = message.attributedBody.firstOrNull?.runs.any(
+      (run) => run.attributes?.messagePart != null &&
+          !retracted.contains(run.attributes!.messagePart),
+    ) ?? false;
+    return hasRemainingPart ? 'Partially unsent message' : 'Unsent message';
   }
 
   static String getReactionFallbackText(String sender, String? messageText) {

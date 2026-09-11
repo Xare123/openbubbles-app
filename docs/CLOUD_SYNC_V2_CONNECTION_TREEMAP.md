@@ -56,7 +56,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
 | Installed Android candidate | Signed `f860966d53b6019b46f1437312e67662724f08ce`, installed September 11 at 09:14:53Z and runtime-verified. Two reads reached the remote head with saves/deletes off and outbox `0 -> 0`. The final local sweep examined 3,587 blocking saves, applied zero, and completed partial at 09:47:41Z. Qualification-07 remains unsent after IDS 6005. Approved registration repair quiesced reads and preserved chats, hardware and CloudKit state; saved-account reuse returned phone-number validation failure. Await normal validation, not another reset. Alpha is untouched. |
-| Qualified source, not installed | Replay repair `fd60a8a20` passed 278 focused tests, targeted analysis and full GCE Dart run `34591532159`; cleanup completed at 11:06:53Z and independent inventories were empty. It includes background patch `0bb67d2c4`, separately qualified by `34588214811`, which keeps routine metadata wakes from repeating exhaustive retained-history sweeps. Foreground/manual deep repair is unchanged. Neither patch has an APK or Pixel runtime proof yet. |
+| Qualified source, not installed | Read-transition `90f98b7eb` passed 296 focused tests, targeted analysis, and GCE `34594546421`: 3,147 Dart tests plus 14 outbox and 3 evidence-output cases. Cleanup completed at 11:44:17Z; independent VM/runner inventories were empty. It includes replay repair `fd60a8a20` and background patch `0bb67d2c4`, which avoids repeating exhaustive retained-history sweeps on routine metadata wakes. No APK or Pixel runtime proof for these patches yet. |
 | Windows candidate | Writer overlay `3984f810501b` preserves signed native `62221f9c2` and adds request-v5 standard reactions. Like-05 and remove-like-06 each passed positive IDS confirmation, one admission, exact persisted readback, then a separate-process zero-admission restart. Read-only overlay `f90226831` passed two cold three-zone reads, second fetch empty, outbox `6 -> 6`, saves/deletes off. Retained writer `46bc6f027` passed image-04 parent admission and no-op restart. All prior requests, claims and runtimes remain protected evidence. |
 | Current full qualification | GCE `34579830953` passed every selected build/test gate, APK/native verification, Android JVM tests, trusted signing and cleanup on `f860966d5`, including cold-start fix `b432b9e8a`. T2D 60; writer on, automatic uploads off. Signed artifact `10192048724` was downloaded and signature-verified before the in-place Pixel install. Prior `34576684370` also passed on `5e9a532be`. Neither APK includes the later Windows-only reaction harness. |
 | Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
@@ -66,11 +66,13 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
-Next technical gate: qualify the narrowly proved read-edit transition candidate.
+Next technical gate: prove safe conditional existing-record writes and finish
+combined qualification of the conversation-preview repair. Read-transition candidate
+`90f98b7eb` passed GCE Dart-only qualification `34594546421`.
 The real inbox merge and ObjectBox test now applies an edit, rejects an
 unproved changed body, preserves current text on an older replay and applies
 an unsend after reopen. The four focused suites pass 296 tests. Full-suite GCE
-qualification and installed-device proof remain separate. The original memory
+qualification passed; installed-device proof remains separate. The original memory
 regressions now opt in explicitly to the proof capability; the real-store
 test, not those fakes, demonstrates the combined path.
 
@@ -202,7 +204,13 @@ conversation rendered the edited message and the subsequent unsend notice.
 This qualifies that local live-send/UI boundary only. No exact CloudKit
 save/readback, restart, or independent-device edit/unsend proof was obtained.
 The conversation-list preview still displayed the retracted message's text,
-an observed stale-preview defect. A semantic pull remained active and was not
+an observed stale-preview defect now repaired locally: previews honor retracted
+parts without deleting retained text; normal and pinned tiles recompute on
+same-record updates even when dateEdited is unchanged. The five-suite cohort
+passes 48 tests, including real mounted widgets/ObjectBox updates and preserved
+history. Reinstating the old same-ID gate makes that widget test fail. Full
+cloud qualification and installation of this preview patch remain pending.
+A semantic pull remained active during the original observation and was not
 restarted. See the current investigation log for timestamps and private
 evidence paths. Causal edit/unsend writes remain a gap, not a passed gate.
 
@@ -266,7 +274,7 @@ evidence paths. Causal edit/unsend writes remain a gap, not a passed gate.
 | Write-send provenance | `SOURCE-IMPLEMENTED` | Native positive-acceptance tests pass. Qualify the additive persisted-proof upgrade and dispatch/reconciliation tests. Old deferred/ready intents cannot promote or enter fresh admission without new proof; old adopted pending entries are retained and skipped for new leases. Submission rechecks proof. Exact readback remains allowed and does not retroactively prove IDS acceptance. A fresh v2 native confirmation can requalify the exact unchanged old source without resending it. Automatic uploads remain off pending execution and live proof. |
 | Retained writer queue usability | `TEST-PROVEN` | One journal-bound, read-only classifier covers queue drain, queued Chat observation, and preflight. It exempts only pristine pending creates with proof version 0, exact protected envelope/mapping, current owner/generation, no lease, attempt, Apple UUID or receipt. All rows remain counted and fingerprinted; no upload, acknowledgement, deletion, or proof upgrade occurs. GCE passed the real consumer/admission/store regression with a fresh qualified send beside retained work and reopen without duplicate submission. Apple responses are synthetic in this test; live proof remains. Unknown/retried/leased/malformed rows still block. |
 | Direct reactions | `LIVE-PROVEN` for bounded Windows like-05/remove-like-06 | Positive IDS confirmation, one admission, exact persisted readback and separate-process zero-admission restarts passed. Ordinary Pixel composition and independent Apple-device display remain. |
-| Edits and unsends | Read transition `TEST-PROVEN` for qualified shapes; write `GAP` | Same-record, rotated-tag transitions require exact durable predecessor binding and real canonical identity plus complete compatible body/history proof. The four-suite run passes 296 tests, including real inbox/merge/ObjectBox/reopen and rejection. Unsupported multi-body encodings or ambiguous lineage stay retained conflicts. Full-suite and live-device proof remain. Outbound causal updates and stale-tag reconciliation remain separate gaps. |
+| Edits and unsends | Read transition `TEST-PROVEN` for qualified shapes; write `GAP` | Same-record, rotated-tag transitions require exact durable predecessor binding and real canonical identity plus complete compatible body/history proof. The four-suite run passes 296 tests and full-suite GCE passed on `90f98b7eb`. Unsupported multi-body encodings or ambiguous lineage stay retained conflicts. Live-device proof remains. Outbound causal updates and stale-tag reconciliation remain separate gaps. |
 | Attachment writes | `LIVE-PROVEN` for bounded Windows image 04 admission/readback recovery | Source-bound upload, child readback, parent admission and no-op restart passed overlay `46bc6f027`. Independent recipient/second-client rendering, ordinary Pixel composer convergence, group attachment proof and exact-source Android qualification remain. Upload receipt alone is not record-save proof. |
 | Tombstones and deletion | Closed | Define exact ownership and recoverable semantics before enabling any local or remote delete. |
 | Token expiry | `TEST-PROVEN` | Live expired-token/restart proof remains. The exact-source path requires an authenticated protected reset proof, releases the semantic read boundary, reacquires the destructive-reset interlock and native pause, advances once, reconciles authority after process death, and replays once. |
@@ -743,6 +751,16 @@ The legacy `Message.toCloud` already serializes these fields, and generic
 updates. Reuse that encoding. Its `SaveRecordOperation::try_new(update=true)`
 does not set a predecessor record ETag; it is not evidence of V2-safe causal
 conflict handling. V2 transport currently remains initial-create-only.
+
+Verified protocol lead: the [Apple daemon request header](https://github.com/JaviSoto/iOS10-Runtime-Headers/blob/1501f5e689fda4644df0adbffc50c0f737c4ab96/PrivateFrameworks/CloudKitDaemon.framework/CKDPRecordSaveRequest.h)
+has a request-level `etag`, distinct from the nested Record's `etag`. Our
+vendored request proto omits that property; fields 4/5 are undefined. Neither
+this historical header nor the public save policy establishes its wire number,
+the private `saveSemantics` enum values, or which tag the current server honors.
+Do not guess a missing field number or treat a PCS protection tag as a version
+tag. A scoped filename search in retained build/device evidence found no
+Apple-generated save request. Our own generated requests cannot prove Apple's
+numbering. Retain this explicit gap for a real capture or verified serializer.
 
 Do not enable update transport from structural inference alone. First capture
 one genuine Apple edit and one unsend read-only, proving the same record name,

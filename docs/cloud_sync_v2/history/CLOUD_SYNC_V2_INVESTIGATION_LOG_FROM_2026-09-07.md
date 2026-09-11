@@ -2317,3 +2317,61 @@ This is a chronological evidence log. It does not override the
 - Four focused suites passed 296 tests. All six changed Dart files analyzed
   cleanly. No APK, native build, live account mutation or phone install occurred.
   Full-suite cloud qualification is the next step; no production claim is made.
+- Checkpoint `90f98b7eb7bcc8ec74fcdae90cb7c5d655c4cc0c` pushed to the fork
+  only. GCE Dart-only `34594546421` dispatched at approximately 11:32Z, T2D 60,
+  both writer flags off, existing bounded runner/cleanup workflow unchanged.
+  Eight gateway proof tests passed again after strengthening the rollback
+  harness. Full cloud result and cleanup are pending.
+- Pascal's work was reviewed, corrected and integrated; the agent was closed
+  and shutdown verified. Its source/tests and session retain review provenance;
+  there is no disposable dedicated worktree/log, and supported session deletion
+  is unavailable. No artifacts were removed. C: remained above 46 GiB free.
+- Pixel status remained `setup_finished=false`, `auth_ready=false`, idle and
+  outbox empty. This turn did not repeat registration repair or touch Alpha.
+
+### September 11, read-transition qualification and preview counterexample
+
+- GCE `34594546421` passed on exact source `90f98b7eb`: 3,147 Dart tests,
+  14 semantic-outbox contract cases and 3 evidence-output cases. The test step
+  took 4m28s; total orchestration through cleanup was 11m30s. Cleanup completed
+  at 11:44:17Z, then independent inventories showed zero VMs and registrations.
+  Dart-only means no APK, signing, native build or Apple-account access.
+- Repeated the existing offline ObjectBox inspector after recovering a lost
+  tool response and confirming no app/test process remained. Its disposable
+  copy showed 700 chats, 13,648 messages, 2,418 attachments, 16,759 snapshots and
+  8 outbox rows. The source database SHA-256 stayed unchanged. This is retained
+  Windows data, not a new sync or proof of complete iCloud history. The tool
+  removed its validated temporary copy; protected source/evidence remains.
+- Socrates found a request-level ETag in Apple's historical runtime header.
+  Parent fetched and verified both request and Record headers independently,
+  and confirmed the local proto/builder omit a predecessor tag. Accepted the
+  missing-protocol-evidence finding; rejected inference as permission to guess
+  fields 4/5 or enum values. No existing Apple save capture was identified by
+  scoped filename searches. Research agent closed and `not_found` verified;
+  no dedicated worktree/log exists. Session provenance remains retained because
+  supported session deletion is unavailable.
+- Preview regression reproduced locally before repair: seven synthetic tests
+  failed because unsent text/subject or payload descriptions were still used.
+  Normal/pinned tile listeners also skipped same-GUID updates without a changed
+  dateEdited. The repair returns a content-free unsent/partial-unsent label,
+  suppresses quoting retracted reaction parents, and compares actual previews
+  from already-fetched rows. It preserves stored text/history and does not
+  invent timestamps or issue projection writes. The five-suite cohort passed
+  48 tests, including mounted normal/pinned previews driven by real ObjectBox.
+  Parent negative control restored same-ID suppression, observed the mounted
+  edit-refresh failure, then restored the repair and passed the full cohort.
+  Web source uses the same refresh rule, but no browser runtime was tested.
+- Muse's tool call failed with undeclared `default.apply_patch`; the parent
+  reported routing evidence to the repair task and recovered the draft as text.
+  Parent reviewed/applied it, added validated temporary-directory cleanup and
+  older-row regression, and corrected native-port timing in the fake-clock
+  widget harness. Agent closed and shutdown verified. No dedicated agent
+  worktree/log existed; reviewed draft provenance remains in its session.
+- The existing inspector's separate legacy-shape aggregate found 318 messages
+  with edit history (684 entries, zero invalid/before-creation timestamps) and
+  65 with retraction metadata. Zero proved unrendered retractions; three offline
+  part builds could not be verified, which may require live presentation
+  services and is not proof of device failure. It also reported 61 visible rows
+  without renderable content by its heuristic. These retained-data counters
+  are investigation inputs, not new downloads or an end-to-end completeness
+  claim. Source hash remained unchanged after this read-only copy inspection.
