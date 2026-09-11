@@ -164,7 +164,7 @@ void main() {
       final before = sha256.convert(await data.readAsBytes());
       final report = await inspectCloudSyncControlState(directory);
       expect(sha256.convert(await data.readAsBytes()), before);
-      expect(report['schema'], 11);
+      expect(report['schema'], 12);
       expect((report['outboundControl'] as Map)['journalStates'], isEmpty);
       expect((report['outboundControl'] as Map)['journalMessageRows'],
           {'present': 0, 'readable': 0, 'legacyMessageCkSynced': 0, 'legacyChatCkSynced': 0});
@@ -222,4 +222,159 @@ void main() {
       expect(jsonEncode(report), isNot(contains('private-')));
     },
   );
+
+  test(
+    'native version inventory scopes by record plus scope, generation, zone',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'cloud-inspector-native-versions-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      CloudInboxChangeEntity versionRow({
+        required String changeKey,
+        required String scopeKey,
+        required int generation,
+        required String zone,
+        required String serverRecordIdHash,
+        required String? etagHash,
+        required int fetchSequence,
+        String? payloadSha256,
+        String changeType = 'save',
+        bool isTombstone = false,
+      }) {
+        return CloudInboxChangeEntity(
+          changeKey: changeKey,
+          changeIdHash: '$changeKey-hash',
+          scopeKey: scopeKey,
+          accountFingerprint: 'private-account',
+          zone: zone,
+          serverRecordIdHash: serverRecordIdHash,
+          etagHash: etagHash,
+          changeType: changeType,
+          isTombstone: isTombstone,
+          encryptedPayloadRef: 'private-payload-ref',
+          payloadSha256: payloadSha256,
+          batchId: 'private-batch',
+          generation: generation,
+          fetchSequence: fetchSequence,
+          status: 3,
+          createdAtMs: 1,
+          updatedAtMs: 1,
+        );
+      }
+
+      final db = await openStore(directory: directory.path);
+      try {
+        db.box<CloudInboxChangeEntity>().putMany([
+          // Same scoped record, two etags: candidate version pair.
+          versionRow(changeKey: 'private-change-a1', scopeKey: 'private-scope-a', generation: 2, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-a', etagHash: 'private-etag-aaa', fetchSequence: 1),
+          versionRow(changeKey: 'private-change-a2', scopeKey: 'private-scope-a', generation: 2, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-a', etagHash: 'private-etag-bbb', fetchSequence: 2),
+          // Same bare record hash in another scope: must not merge with A.
+          versionRow(changeKey: 'private-change-b1', scopeKey: 'private-scope-b', generation: 2, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-a', etagHash: 'private-etag-aaa', fetchSequence: 3),
+          // Exact retry: one etag, one payload, one change type.
+          versionRow(changeKey: 'private-change-c1', scopeKey: 'private-scope-c', generation: 1, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-c', etagHash: 'private-etag-ccc', payloadSha256: 'private-payload-1', fetchSequence: 4),
+          versionRow(changeKey: 'private-change-c2', scopeKey: 'private-scope-c', generation: 1, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-c', etagHash: 'private-etag-ccc', payloadSha256: 'private-payload-1', fetchSequence: 5),
+          // Missing tag: cannot prove a version pair.
+          versionRow(changeKey: 'private-change-d1', scopeKey: 'private-scope-d', generation: 1, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-d', etagHash: null, fetchSequence: 6),
+          // Save plus tombstone delete with distinct etags: candidate with
+          // tombstone context. A tombstone alone is never an unsend verdict.
+          versionRow(changeKey: 'private-change-e1', scopeKey: 'private-scope-e', generation: 1, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-e', etagHash: 'private-etag-eee', fetchSequence: 7),
+          versionRow(changeKey: 'private-change-e2', scopeKey: 'private-scope-e', generation: 1, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-e', etagHash: 'private-etag-fff', fetchSequence: 8, changeType: 'delete', isTombstone: true),
+          // Same etag with changed payload: inconsistent, never exactRetry.
+          versionRow(changeKey: 'private-change-f1', scopeKey: 'private-scope-f', generation: 1, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-f', etagHash: 'private-etag-ggg', payloadSha256: 'private-payload-2', fetchSequence: 9),
+          versionRow(changeKey: 'private-change-f2', scopeKey: 'private-scope-f', generation: 1, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-f', etagHash: 'private-etag-ggg', payloadSha256: 'private-payload-3', fetchSequence: 10),
+          // Empty etag counts as missing, not as a distinct version.
+          versionRow(changeKey: 'private-change-g1', scopeKey: 'private-scope-g', generation: 1, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-g', etagHash: '', fetchSequence: 11),
+          // Same etag with no payload digest on either row: same-etag-only,
+          // neither a proven exact retry nor an inconsistency.
+          versionRow(changeKey: 'private-change-h1', scopeKey: 'private-scope-h', generation: 1, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-h', etagHash: 'private-etag-hhh', fetchSequence: 12),
+          versionRow(changeKey: 'private-change-h2', scopeKey: 'private-scope-h', generation: 1, zone: 'messageManateeZone', serverRecordIdHash: 'private-record-h', etagHash: 'private-etag-hhh', fetchSequence: 13),
+        ]);
+      } finally {
+        db.close();
+      }
+      final data = File('${directory.path}${Platform.pathSeparator}data.mdb');
+      final before = sha256.convert(await data.readAsBytes());
+      final report = await inspectCloudSyncControlState(directory);
+      expect(sha256.convert(await data.readAsBytes()), before);
+      final versions = report['nativeRecordVersions'] as Map;
+      expect(versions['scopedRecordGroups'], 8);
+      expect(versions['multiRowGroups'], 5);
+      expect(versions['changedEtagGroups'], 2);
+      expect(versions['exactRetryGroups'], 1);
+      expect(versions['inconsistentRedeliveryGroups'], 1);
+      expect(versions['sameEtagOnlyGroups'], 1);
+      expect(versions['missingTagGroups'], 2);
+      expect(versions['tombstoneGroups'], 1);
+      expect(versions['candidateVersionPairGroups'], 2);
+      expect(versions['exampleCap'], 5);
+      final examples = versions['examples'] as List;
+      expect(examples.length, 2);
+      final first = examples.first as Map;
+      expect(first['zone'], 'messageManateeZone');
+      expect(first['generation'], 2);
+      expect(first['rows'], 2);
+      expect(first['distinctEtags'], 2);
+      expect(first['versionClass'], 'changedEtagCandidate');
+      expect(first['etagsTruncated'], false);
+      expect(first['payloadsTruncated'], false);
+      expect(jsonEncode(report), isNot(contains('private-')));
+    },
+  );
+
+  test('native version caps preserve counts and separate zones/generations', () async {
+    final directory = await Directory.systemTemp.createTemp('cloud-inspector-caps-');
+    addTearDown(() => directory.delete(recursive: true));
+    var sequence = 0;
+    CloudInboxChangeEntity row(String record, String tag, String digest,
+        {int generation = 1, String zone = 'messageManateeZone'}) {
+      sequence++;
+      return CloudInboxChangeEntity(
+        changeKey: 'private-change-$sequence',
+        changeIdHash: 'private-change-hash-$sequence',
+        scopeKey: 'private-scope', accountFingerprint: 'private-account',
+        generation: generation, zone: zone, serverRecordIdHash: record,
+        etagHash: tag, payloadSha256: digest, changeType: 'save',
+        isTombstone: false, batchId: 'private-batch', fetchSequence: sequence,
+        status: 3, createdAtMs: 1, updatedAtMs: 1,
+      );
+    }
+    final db = await openStore(directory: directory.path);
+    try {
+      db.box<CloudInboxChangeEntity>().putMany([
+        for (var i = 0; i < 20; i++)
+          row('private-record-0', 'private-etag-$i', 'private-payload-$i'),
+        // Repeated overflow must not inflate the distinct lower bounds.
+        for (var i = 0; i < 30; i++)
+          row('private-record-0', 'private-etag-19', 'private-payload-19'),
+        row('private-record-0', 'private-etag-0', 'private-payload-0', generation: 2),
+        row('private-record-0', 'private-etag-0', 'private-payload-0', zone: 'chatManateeZone'),
+        for (var group = 1; group < 8; group++) ...[
+          row('private-record-$group', 'private-etag-a', 'private-payload-a'),
+          row('private-record-$group', 'private-etag-b', 'private-payload-b'),
+        ],
+        row('private-empty-digest', 'private-etag', ''),
+        row('private-empty-digest', 'private-etag', ''),
+      ]);
+    } finally { db.close(); }
+    final data = File('${directory.path}${Platform.pathSeparator}data.mdb');
+    final before = sha256.convert(await data.readAsBytes());
+    final report = await inspectCloudSyncControlState(directory);
+    expect(sha256.convert(await data.readAsBytes()), before);
+    final versions = report['nativeRecordVersions'] as Map;
+    expect(versions['scopedRecordGroups'], 11);
+    expect(versions['multiRowGroups'], 9);
+    expect(versions['candidateVersionPairGroups'], 8);
+    expect(versions['exactRetryGroups'], 0);
+    expect(versions['sameEtagOnlyGroups'], 1);
+    final examples = versions['examples'] as List;
+    expect(examples, hasLength(5));
+    final capped = examples.cast<Map>().singleWhere((e) => e['rows'] == 50);
+    expect(capped['distinctEtags'], 16);
+    expect(capped['distinctPayloadDigests'], 16);
+    expect(capped['etagsTruncated'], true);
+    expect(capped['payloadsTruncated'], true);
+    expect(capped['rowsWithPayloadDigest'], 50);
+    expect(jsonEncode(report), isNot(contains('private-')));
+  });
 }

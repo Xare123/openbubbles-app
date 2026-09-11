@@ -4,7 +4,7 @@ title: Cloud Sync V2 Investigation Log from 2026-09-07
 description: Chronological qualification results after the current treemap was separated from the historical investigation record.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, investigation, evidence, canary]
-timestamp: 2026-09-10
+timestamp: 2026-09-11
 ---
 
 # Cloud Sync V2 investigation log from 2026-09-07
@@ -2470,3 +2470,49 @@ This is a chronological evidence log. It does not override the
   were empty. No ignored/filtered tests, APK, production account, signing or
   writer activation. Updated the treemap with the durable mutation-to-readback
   sequence; low-level protocol qualification is not end-to-end update proof.
+
+## 2026-09-11, mutation source and retained-version inventory
+
+- Parent added native exact edit/unsend source codec `c65584196`. Separate
+  operation and target identities, bounded canonical decoding, exact route/
+  body/format/index capture, reconstruction, and validation against the actual
+  native `prepare_send` method have focused tests. No FRB, ObjectBox schema,
+  live send, protected-store adoption or remote-save activation changed.
+- GCE app-Rust-only runs `34623645666` (T2D 60, us-west1-b), `34623788831`
+  (T2D 32, same zone) and `34623918659` (N2D 16, us-west1-a) all failed before
+  compilation with `ZONE_RESOURCE_POOL_EXHAUSTED`. Each cleanup succeeded;
+  independent instance and runner inventories were empty. These are capacity
+  failures, not failed source tests. Existing GitHub-hosted bridge workflow
+  `34624049558` is validating the exact `c65584196` source instead, drift
+  permission false. No APK/signing/account operation was requested.
+- Erdos found no newer substantive FaceTime trace and no evidence-backed
+  additional patch. Its 66 JS/source cases passed, but both retained trace
+  analyzers admitted zero records. ADB refused connection. Current media/lifecycle
+  fixes still require a consented live answered call and repeat-call check.
+  Reviewed the report, closed the agent and verified `not_found`. No dedicated
+  new files existed; retained evidence/session provenance was not deleted.
+- Russell's first inventory review found that current aggregate counts cannot
+  prove a same-physical-record edit/unsend pair. Assigned a bounded metadata-only
+  inspector extension instead of another capture. Parent corrected the query
+  design: scope record identity by account/scope, generation and zone; a
+  retraction can be a save, not necessarily a record tombstone. No actual
+  before/after pair is claimed until the query and protected bytes are checked.
+- Parent reviewed and retained Russell's metadata-only inspector; fixed empty
+  digests being counted as retry proof and added cap/overflow, generation/zone,
+  example-bound and source-preservation regressions. Seven actual ObjectBox
+  tests pass locally using the existing ARM64 DLL on process PATH; targeted
+  analysis reports no issues. The earlier missing-DLL failure is environmental,
+  not a need for another build. App-Rust-only CI does not test Dart inspectors.
+- Offline live-profile query, under the existing launcher mutex with no
+  OpenBubbles process running, found 23,413 scoped records, zero multi-row or
+  changed-ETag candidates, and 679 missing-tag/tombstone groups. Source database
+  SHA-256 was identical before and after; inspector removed its disposable copy.
+  No message contents, routing identifiers or protected references were printed.
+  This snapshot cannot prove edit/unsend transitions and should not be rescanned
+  without new ingestion. A deliberate before/after capture remains required.
+- Russell was closed after review and shutdown verified as `not_found`.
+  Its shared-worktree code is retained for integration; no dedicated disposable
+  worktree was created. Session provenance remains retained because no supported
+  session-deletion tool is available. C: free space is approximately 48.6 GiB;
+  no cleanup credit is claimed. One bounded Muse worker now owns mutation-source
+  protected staging; a second provides the journal integration map without edits.

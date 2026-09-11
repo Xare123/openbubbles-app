@@ -813,6 +813,28 @@ proof of a live legacy bug (local broadcast can race it), but it cannot serve
 as the V2 durable mutation/positive-confirmation contract. Preserve unknown
 remote fields and previous attempts when deriving a new candidate.
 
+Mutation source checkpoint `c65584196` adds a native-only exact-intent codec
+(`rust/src/cloud_sync_ids_mutation_source.rs`). It separates the mutation UUID
+from the target GUID/part and preserves the sender, ordered route, text runs,
+formatting and indexes. Reconstruction uses retained intent, not mutable chat
+state; prepared validation permits only `MessageInst::prepare_send` changes.
+It is **not yet staged, journal-adopted, receipt-bound or connected to a save**.
+Text-with-flags edits and unsends are represented; unsupported replacement
+parts must remain explicit pending work, never flattened or counted complete.
+Next integration: a separate protected source purpose and durable mutation
+journal, then positive native confirmation and exact predecessor/readback.
+Initial-create admission remains unchanged. Native qualification is pending.
+
+Retained-version inspection now has live **offline** evidence: the Windows
+profile contains 23,413 scoped record groups and zero multi-row groups, so
+it cannot supply a same-record before/after pair. The source database hash
+was unchanged under the launcher lock. Schema-12 metadata-only inspection
+passes seven ObjectBox tests, including generation/zone isolation, capped
+distinct-value counts, missing digests and source preservation. Do not repeat
+this inventory without new ingestion; obtain a targeted real Apple edit/unsend
+transition when a second client is available. Storage/receipt integration can
+continue independently, but remote updates remain disabled.
+
 Do not enable update transport from structural inference alone. First capture
 one genuine Apple edit and one unsend read-only, proving the same record name,
 the before/after protected system fields and change tag, the complete rewritten

@@ -180,7 +180,7 @@ Map<String, Object?> _inspectStore(Store store) {
   );
 
   return <String, Object?>{
-    'schema': 11,
+    'schema': 12,
     'canonicalCounts': <String, int>{
       'chats': store.box<Chat>().count(),
       'messages': store.box<Message>().count(),
@@ -202,6 +202,7 @@ Map<String, Object?> _inspectStore(Store store) {
     'outboundControl': _inspectOutboundControl(store),
     'checkpoints': checkpoints,
     'inboxGroups': inboxGroups,
+    'nativeRecordVersions': _inspectNativeRecordVersions(store),
     'replayOutcomes': replayOutcomes,
     'replaySafeCodes': replaySafeCodes,
   };
@@ -1215,6 +1216,259 @@ void _scanPaged<T>(Query<T> query, void Function(T row) visit) {
   } finally {
     query.close();
   }
+}
+
+/// Bounded cap for illustrative scoped-record examples. Aggregate counts are
+/// always retained across all groups; only the example list is capped.
+const _nativeVersionExampleCap = 5;
+
+/// Hard bound on distinct digest strings retained per scoped-record group.
+/// Only the illustrative distinct-value detail is bounded; aggregate row
+/// counts stay exact.
+const _maxDistinctPerGroup = 16;
+
+/// Metadata-only inventory of same-physical-record inbox versions.
+///
+/// Groups use the exact scope tuple (scopeKey, generation, zone,
+/// serverRecordIdHash), never the bare record hash, so one Apple record name
+/// reused across scopes cannot merge. Output is ordinals, allowlisted zone
+/// names, and counts only: no raw record IDs, etags, payloads, references,
+/// or content are emitted.
+///
+/// A group with two distinct etags for the same scoped record is reported as
+/// a candidate version pair. That alone is not proof of an Apple edit or
+/// unsend: retracted parts can arrive as an updated save rather than a
+/// tombstone delete, so tombstone presence is reported alongside the
+/// classification, never as a verdict.
+///
+/// Memory envelope: one accumulator per distinct scoped record (bounded by
+/// the inbox row count), each holding at most [_maxDistinctPerGroup] etag
+/// and payload digest strings plus exact integer tallies. Row, status,
+/// change-type, tombstone, and missing-tag counts are always exact; beyond
+/// the cap the set stops growing and raises its truncated flag, so counts
+/// derived from capped sets are lower bounds and never inflated by repeated
+/// over-cap values. Only the examples list is length-capped.
+Map<String, Object?> _inspectNativeRecordVersions(Store store) {
+  // Record tuple key: structural equality, so no separator string can
+  // collide two different scope tuples.
+  final groups = <(String, int, String, String),
+      _NativeRecordVersionAccumulator>{};
+  _scanPaged(
+    (store.box<CloudInboxChangeEntity>().query()
+          ..order(CloudInboxChangeEntity_.id))
+        .build(),
+    (row) {
+      final key = (
+        row.scopeKey,
+        row.generation,
+        row.zone,
+        row.serverRecordIdHash,
+      );
+      groups
+          .putIfAbsent(
+            key,
+            () => _NativeRecordVersionAccumulator(
+              zone: _allowlistedOrInvalid(row.zone, _cloudZones),
+              generation: row.generation,
+            ),
+          )
+          .add(row);
+    },
+  );
+  // The string form is used only for deterministic example ordering.
+  final sortedKeys = groups.keys.toList()
+    ..sort((a, b) => '$a'.compareTo('$b'));
+  var multiRowGroups = 0;
+  var changedEtagGroups = 0;
+  var exactRetryGroups = 0;
+  var missingTagGroups = 0;
+  var tombstoneGroups = 0;
+  var candidateVersionPairGroups = 0;
+  var inconsistentRedeliveryGroups = 0;
+  var sameEtagOnlyGroups = 0;
+  final examples = <Map<String, Object?>>[];
+  for (final key in sortedKeys) {
+    final group = groups[key]!;
+    if (group.rowCount > 1) multiRowGroups += 1;
+    if (group.distinctEtagCount > 1) changedEtagGroups += 1;
+    if (group.hasMissingEtag) missingTagGroups += 1;
+    if (group.hasTombstone) tombstoneGroups += 1;
+    if (group.isExactRetry) exactRetryGroups += 1;
+    if (group.isInconsistentRedelivery) inconsistentRedeliveryGroups += 1;
+    if (group.isSameEtagOnly) sameEtagOnlyGroups += 1;
+    if (group.isCandidateVersionPair) {
+      candidateVersionPairGroups += 1;
+      if (examples.length < _nativeVersionExampleCap) {
+        examples.add(
+          group.toJson(exampleOrdinal: examples.length + 1),
+        );
+      }
+    }
+  }
+  return <String, Object?>{
+    'scopedRecordGroups': groups.length,
+    'multiRowGroups': multiRowGroups,
+    'changedEtagGroups': changedEtagGroups,
+    'exactRetryGroups': exactRetryGroups,
+    'missingTagGroups': missingTagGroups,
+    'tombstoneGroups': tombstoneGroups,
+    'candidateVersionPairGroups': candidateVersionPairGroups,
+    'inconsistentRedeliveryGroups': inconsistentRedeliveryGroups,
+    'sameEtagOnlyGroups': sameEtagOnlyGroups,
+    'exampleCap': _nativeVersionExampleCap,
+    'examples': examples,
+  };
+}
+
+final class _NativeRecordVersionAccumulator {
+  _NativeRecordVersionAccumulator({
+    required this.zone,
+    required this.generation,
+  });
+
+  final String zone;
+  final int generation;
+  int rowCount = 0;
+  final statuses = <String, int>{};
+  final changeTypes = <String, int>{};
+  final _etags = <String>{};
+  var rowsMissingEtag = 0;
+  var etagsTruncated = false;
+  var tombstoneRows = 0;
+  var rowsWithProtectedPayload = 0;
+  var rowsWithProtectedSystemFields = 0;
+  var rowsWithPayloadDigest = 0;
+  final _payloadDigests = <String>{};
+  var payloadsTruncated = false;
+  var minFetchSequence = 0;
+  var maxFetchSequence = 0;
+
+  void add(CloudInboxChangeEntity row) {
+    rowCount += 1;
+    statuses.update(
+      _statusName(row.status),
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    final changeType = row.changeType == CloudChangeType.save.name
+        ? 'save'
+        : row.changeType == CloudChangeType.delete.name
+            ? 'delete'
+            : 'invalid';
+    changeTypes.update(changeType, (count) => count + 1, ifAbsent: () => 1);
+    final etag = row.etagHash;
+    if (etag == null || etag.isEmpty) {
+      rowsMissingEtag += 1;
+    } else if (_etags.length < _maxDistinctPerGroup) {
+      _etags.add(etag);
+    } else if (!_etags.contains(etag)) {
+      etagsTruncated = true;
+    }
+    if (row.isTombstone) tombstoneRows += 1;
+    if (row.encryptedPayloadRef != null) rowsWithProtectedPayload += 1;
+    if (row.protectedSystemFieldsRef != null) {
+      rowsWithProtectedSystemFields += 1;
+    }
+    final payloadDigest = row.payloadSha256;
+    if (payloadDigest != null && payloadDigest.isNotEmpty) {
+      rowsWithPayloadDigest += 1;
+      if (_payloadDigests.length < _maxDistinctPerGroup) {
+        _payloadDigests.add(payloadDigest);
+      } else if (!_payloadDigests.contains(payloadDigest)) {
+        payloadsTruncated = true;
+      }
+    }
+    if (rowCount == 1) {
+      minFetchSequence = row.fetchSequence;
+      maxFetchSequence = row.fetchSequence;
+    } else {
+      if (row.fetchSequence < minFetchSequence) {
+        minFetchSequence = row.fetchSequence;
+      }
+      if (row.fetchSequence > maxFetchSequence) {
+        maxFetchSequence = row.fetchSequence;
+      }
+    }
+  }
+
+  // Lower bounds: capped sets stop growing at [_maxDistinctPerGroup] and
+  // raise the truncated flags below instead of counting repeats.
+  int get distinctEtagCount => _etags.length;
+  int get distinctPayloadCount => _payloadDigests.length;
+  bool get hasMissingEtag => rowsMissingEtag > 0;
+  bool get hasTombstone => tombstoneRows > 0;
+  bool get hasTombstoneMix => hasTombstone && tombstoneRows < rowCount;
+
+  /// Repeated delivery of one identical version, proven by a payload digest
+  /// on every row: one etag, one digest, one change type, no tombstone mix,
+  /// no gaps. Rows without a digest cannot prove an exact retry.
+  bool get isExactRetry =>
+      rowCount > 1 &&
+      !hasMissingEtag &&
+      distinctEtagCount == 1 &&
+      rowsWithPayloadDigest == rowCount &&
+      distinctPayloadCount == 1 &&
+      changeTypes.length == 1 &&
+      !hasTombstoneMix;
+
+  /// One etag but positive evidence of a different shape: differing payload
+  /// digests, mixed change types, or a tombstone mix. Reported separately,
+  /// never folded into exact-retry counts.
+  bool get isInconsistentRedelivery =>
+      rowCount > 1 &&
+      !hasMissingEtag &&
+      distinctEtagCount == 1 &&
+      (distinctPayloadCount > 1 ||
+          changeTypes.length > 1 ||
+          hasTombstoneMix);
+
+  /// One etag with neither proof of identity nor proof of difference, e.g.
+  /// duplicate rows carrying no payload digest. Not claimed as an exact
+  /// retry and not flagged inconsistent.
+  bool get isSameEtagOnly =>
+      rowCount > 1 &&
+      !hasMissingEtag &&
+      distinctEtagCount == 1 &&
+      !isExactRetry &&
+      !isInconsistentRedelivery;
+
+  /// Same scoped physical record seen with two distinct etags. Candidate
+  /// version pair only, not proof of an edit or unsend.
+  bool get isCandidateVersionPair => distinctEtagCount > 1;
+
+  Map<String, Object?> toJson({required int exampleOrdinal}) =>
+      <String, Object?>{
+        'exampleOrdinal': exampleOrdinal,
+        'zone': zone,
+        'generation': generation,
+        'rows': rowCount,
+        'statuses': statuses,
+        'changeTypes': changeTypes,
+        'distinctEtags': distinctEtagCount,
+        'rowsMissingEtag': rowsMissingEtag,
+        'hasTombstone': hasTombstone,
+        'tombstoneRows': tombstoneRows,
+        'hasTombstoneMix': hasTombstoneMix,
+        'etagsTruncated': etagsTruncated,
+        'rowsWithProtectedPayload': rowsWithProtectedPayload,
+        'rowsWithProtectedSystemFields': rowsWithProtectedSystemFields,
+        'rowsWithPayloadDigest': rowsWithPayloadDigest,
+        'distinctPayloadDigests': _payloadDigests.length,
+        'payloadsTruncated': payloadsTruncated,
+        'minFetchSequence': minFetchSequence,
+        'maxFetchSequence': maxFetchSequence,
+        'versionClass': isCandidateVersionPair
+            ? 'changedEtagCandidate'
+            : isExactRetry
+                ? 'exactRetry'
+                : isInconsistentRedelivery
+                    ? 'inconsistentRedelivery'
+                    : isSameEtagOnly
+                        ? 'sameEtagOnly'
+                        : hasMissingEtag
+                            ? 'missingTag'
+                            : 'singleVersion',
+      };
 }
 
 final class _InboxGroupAccumulator {
