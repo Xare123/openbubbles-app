@@ -3050,3 +3050,56 @@ This is a chronological evidence log. It does not override the
   was rebuilt or installed, and no Apple credentials or user content went to CI.
   Final local generated output remained 2.39 GiB in `build` and 7.50 GiB in
   `.dart_tool`, with about 47.55 GiB free. No manual artifact deletion occurred.
+
+## 2026-09-11, qualify conditional-update staging and retained receipt proof
+
+- App `b8b27bee3` adds native-only immutable update staging under a separate
+  protected purpose and bounded summary mutation. Exact predecessor, ETag,
+  encrypted request, source/authority digests and attempt UUIDs remain pinned.
+  Reopen requires an exact committed lease. No network write is enabled.
+- Parent review of Astra's summary patch retained singleton histories, unknown
+  plist values and old attributed-body bytes. Follow-up `d07ecf6ff` accepts the
+  reader's legacy whole Unix-millisecond dates alongside Apple-second dates,
+  normalizing only comparisons, never rewriting historical values. Its composed
+  edit-then-unsend test uses the actual attributed-body encoder, lossless proto
+  patcher and message converter, including unknown outer protobuf field bytes.
+- GCE `34650028801` compiled and regenerated the exact bridge, then passed 549
+  tests and failed three staging cases with `ProtectedStorage`. The new purpose
+  had not been registered in the native protector allowlist. `3260dc506` fixes
+  that omission and bounds the nested envelope to 9 MiB for the existing 18 MiB
+  protected-file limit. The failed run cleaned up at 21:43:07Z; independent
+  inventories showed zero instances and zero GitHub runner registrations before
+  the corrected run began. Pending obsolete run `34650475225` was canceled
+  before any job existed and created no runner.
+- Corrected exact-source run `34650587629` passed all 554 native tests in 2.74s
+  at 21:50:15Z, exact bridge regeneration and cleanup at 21:52:03Z. No APK or
+  signing occurred despite the generic job's APK label. Both writer flags were
+  off; the source-only runner used T2D-32 and no Apple credentials.
+- `8d98a8c56` extracts exact, non-consuming receipt verification from the
+  existing protected acknowledgement path. Missing receipts fail verification
+  while repeated acknowledgement remains idempotent. A native integration seam
+  joins that verification to committed mutation-source reopen and current auth.
+  Historical send sessions remain valid under the same store/account after a
+  cold login; no replacement IDS send or invented wire time is allowed. Three
+  new tests cover cold reopen, source/receipt/auth substitutions and retained
+  timeless historical evidence. Exact-source GCE `34651357165` passed 557 native
+  tests in 2.76s at 21:59:18Z and exact bridge regeneration. Compilation plus
+  tests took 1m38s; the native job took 5m52s. Cleanup completed at 22:01:12Z.
+  Independent inventories then showed zero GCE instances and zero registered
+  GitHub runners. Both source-only qualification runs are fully complete.
+- Reviewed Muse patch `9a8fd6d50` requires the outgoing FaceTime join to match
+  the session and an active non-self participant in the refreshed snapshot.
+  Self, missing, stale and unrelated join events no longer count as acceptance.
+  Parent reran five focused suites: 53 tests passed. This is source/test proof,
+  not a live-call fix claim or an installed APK.
+- Both child agents (Pasteur and Godel) had their work reviewed and integrated;
+  shutdown was verified with `not_found`. No dedicated worktrees/log bundles
+  were created. The agent's stray helper copy outside the checkout was removed
+  and its absence verified. Transcripts remain because an exclusive artifact
+  locator and supported session deletion were unavailable. No shared databases,
+  unrelated changes, user data or evidence were deleted. C: free 47.26 GiB;
+  existing checkout outputs remain about 7.50 GiB `.dart_tool` and 2.39 GiB build.
+- Next boundary is causal candidate preparation and atomic journal/outbox
+  adoption, then exact conditional submission/conflict/readback. The new helpers
+  alone do not establish live CloudKit edits/unsends. Alpha, Canary, the Windows
+  runtime, account credentials and messages were untouched during this work.

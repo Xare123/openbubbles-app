@@ -56,7 +56,8 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
 | Conditional-update predecessor | **TEST-PROVEN:** app `c092ef1a7` pins rustpush `90787d3`. Native `lookup_message_record_version` retains decoded CloudKit fields, opaque encrypted payloads and exact identity/ETag without a typed `CloudMessage` roundtrip. The old typed lookup delegates to it; current-container and cached-PCS checks remain. GCE dependency-only `34647348048` passed 305 tests and cleanup; app-native `34647652095` passed 533 tests and exact bridge regeneration. No update/save path is enabled. |
-| Conditional-update staging | **SOURCE-IMPLEMENTED, not enabled:** `cloud_sync_message_update_stage.rs` retains the exact predecessor, version-checked merge request, original ciphertext and request IDs under a distinct protected purpose. Reopen requires the exact committed lease and binding. `cloud_sync_message_summary_patch.rs` preserves unknown plist values and existing body bytes; singleton history is accepted to match the reader. Tests cover mutation retries, source/authority changes, create/update purpose isolation, changed ETags and forbidden field replacement. GCE qualification is pending. Neither helper grants save authority; journal adoption, protected liveness, causal candidate preparation and conflict/readback reconciliation still need integration. |
+| Conditional-update staging | **TEST-PROVEN, not enabled:** exact `3260dc506` passed 554 native tests and bridge regeneration in GCE `34650587629`; cleanup completed at 21:52:03Z. Protected staging retains the original predecessor, conditional merge request, ciphertext, ETag and request IDs. Summary patching preserves unknown plist values, singleton history and both supported timestamp formats. A composed test passes edit then unsend through the real message converter without discarding unknown protobuf fields. The first qualification exposed a missing protected-purpose allowlist entry, now fixed. These helpers do not authorize a save. |
+| Conditional-update source proof | **TEST-PROVEN:** exact `8d98a8c56` passed 557 native tests and bridge regeneration in GCE `34651357165`; cleanup completed at 22:01:12Z, with independent instance/runner inventories empty. It reopens a committed mutation source plus its exact encrypted positive IDS receipt, without consuming either. Current login and historical send session are checked separately, permitting cold recovery without resending IDS. Missing, changed or timeless receipts do not supply update authority; legacy evidence remains retained. The preparer and journal/outbox integration remain unconnected. |
 | Edited-then-unsent readback | **TEST-PROVEN:** `5bb07dcdf` removes the reader's mutual-exclusion rule for edited/retracted part IDs. Both existing producers retain that history on unsend; the DTO and projection already support it. Timestamp/body/part validation remains. All 136 focused Dart tests passed, including real ObjectBox reopen and stale replay without resurrection. GCE `34648004825` passed 534 native tests and exact bridge regeneration; no Apple-device or APK proof yet. |
 | September 11 mutation candidate | **LIVE-PROVEN on Windows, IDS/local scope only:** `c02379430` with dependency `98cc67a` passed fresh edit-16 and unsend-18, each with positive IDS acknowledgment, retained native receipt, local reflection and a separate-process reconciliation without resending. Both parent messages passed CloudKit save/readback. Copied-DB inspection confirmed state 3, exact stored display and zero initial-send intents for each mutation; source DB unchanged. Existing-record CloudKit updates remain disabled, and independent recipient display is unverified. Old edit-08 stays unknown and must never be resent. |
 | Installed Android candidate | Signed `f860966d53b6019b46f1437312e67662724f08ce`, installed September 11 at 09:14:53Z and runtime-verified. Two reads reached the remote head with saves/deletes off and outbox `0 -> 0`. The final local sweep examined 3,587 blocking saves, applied zero, and completed partial at 09:47:41Z. Qualification-07 remains unsent after IDS 6005. Approved registration repair quiesced reads and preserved chats, hardware and CloudKit state; saved-account reuse returned phone-number validation failure. Await normal validation, not another reset. Alpha is untouched. |
@@ -80,6 +81,35 @@ before submission. Qualify conflict/unknown-outcome readback and restart without
 resending IDS. Do not enable arbitrary existing-record writes from a successful
 local reflection or synthetic roundtrip alone. Independent Apple-device and
 Android end-to-end proof remain separate.
+
+Remaining conditional-writer integration, in order:
+
+1. Connect the native confirmed-source opener to the journal's exact retained
+   receipt. The opener now verifies the protected file instead of trusting a
+   replay descriptor; the journal keeps that receipt after local reflection.
+   State 3 alone is not a CloudKit authorization.
+2. Fetch/decrypt the original record version under the existing auth/PCS fences,
+   then compose source-proven protobuf/plist changes. Preserve both Apple-second
+   and legacy Unix-millisecond history dates without rewriting their values.
+3. Atomically adopt the staged update into the existing outbox with its own
+   mutation identity and protected-reference liveness. Do not route it through
+   `cloud_sync_prepare_message_create`, which intentionally admits only creates.
+4. Submit the exact retained conditional request once. Conflict or unknown
+   outcome goes to readback; no new IDS send, replacement ETag or override.
+   Release the original receipt only after verified conditional-write readback.
+
+The native preparation seam belongs beside the existing scoped writer lookup
+in `rustpush/src/imessage/cloud_messages.rs`. Use bounded raw-field decryption
+and the original uncompressed protobuf bytes, not `CloudMessage` reserialization.
+The existing generic conditional-save builder can encrypt a minimal `msgProto`
+merge against the fetched ETag; it must not be given a full typed replacement.
+Define and test the causal predecessor/part check before joining these helpers.
+The current Dart transport's `prepareSubmission` is also explicitly create-only
+(`native_protected_cloud_sync_transport.dart`); keep that validation intact and
+add a distinct update route through admission, preparation and readback. Batch
+that integration for one native/Dart qualification rather than enabling helpers
+piecemeal or rebuilding an APK after each private helper.
+
 Preview repair `269620126` and reviewed Find My lane isolation `ee9729ec3`
 passed GCE Dart-only `34597175527`, exact source
 `ee9729ec32fc132b386e4cbd42e608424968dbec`: 3,167 Dart tests plus 14 outbox
