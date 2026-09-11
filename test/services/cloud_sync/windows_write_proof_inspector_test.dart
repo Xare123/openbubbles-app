@@ -167,6 +167,7 @@ void main() {
         'persisted_attachment_count': 1,
         'attachment_upload_row_count': 0,
         'attachment_upload_states': <int>[],
+        'attachment_child_operations': <Object>[],
         'attachment_upload_failure': null,
         'parent_operation_present': true,
         'persisted_readback_proven': false,
@@ -211,8 +212,60 @@ void main() {
       {
         'attachment_upload_row_count': 2,
         'attachment_upload_states': [2, 3],
+        'attachment_child_operations': [
+          {'matching_operations': 0},
+          {'matching_operations': 0},
+        ],
         'attachment_upload_failure': null,
       },
+    );
+    final uploadBox = store.box<CloudAttachmentUploadEntity>();
+    final upload = uploadBox.getAll().singleWhere(
+      (row) => row.uploadKey == 'one',
+    )..admittedOperationId = 'child-operation';
+    uploadBox.put(upload);
+    final operation = CloudOutboxOperationEntity(
+      operationId: 'child-operation',
+      scopeKey: 'synthetic-scope',
+      accountFingerprint: 'B' * 43,
+      zone: 'attachmentManateeZone',
+      logicalEntityKeyHash: 'C' * 43,
+      action: 0,
+      mutationRevision: 1,
+      checkpointGeneration: 1,
+      serverRecordIdHash: 'D' * 43,
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    );
+    final operationBox = store.box<CloudOutboxOperationEntity>();
+    operationBox.put(operation);
+    List<Object?> children() =>
+        readAttachmentUploadDiagnostic(
+              store,
+              intentId: 7,
+              accountFingerprint: account,
+            )['attachment_child_operations']
+            as List<Object?>;
+    expect(children(), everyElement({'matching_operations': 0}));
+    operation
+      ..accountFingerprint = account
+      ..zone = 'messageManateeZone';
+    operationBox.put(operation);
+    expect(children(), everyElement({'matching_operations': 0}));
+    operation.zone = 'attachmentManateeZone';
+    operationBox.put(operation);
+    expect(
+      children(),
+      contains(equals({
+        'matching_operations': 1,
+        'state': 0,
+        'attempt_count': 0,
+        'generation_matches_upload': true,
+        'record_matches_upload': true,
+        'payload_reference_retained': false,
+        'receipt_lease_retained': false,
+        'confirmed_timestamp_present': false,
+      })),
     );
   });
   test('upload query failure reports nulls instead of zero rows', () async {
@@ -227,6 +280,7 @@ void main() {
         {
           'attachment_upload_row_count': null,
           'attachment_upload_states': null,
+          'attachment_child_operations': null,
           'attachment_upload_failure':
               'cloud_sync_windows_proof_upload_query_failed',
         },

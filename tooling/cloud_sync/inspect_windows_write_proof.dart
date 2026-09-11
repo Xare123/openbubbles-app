@@ -215,6 +215,9 @@ Map<String, Object?> readAttachmentUploadDiagnostic(
         'attachment_upload_row_count': rows.length,
         'attachment_upload_states': rows.map((row) => row.state).toList()
           ..sort(),
+        'attachment_child_operations': rows
+            .map((row) => _readAttachmentChildDiagnostic(store, row))
+            .toList(),
         'attachment_upload_failure': null,
       };
     } finally {
@@ -224,8 +227,55 @@ Map<String, Object?> readAttachmentUploadDiagnostic(
     return {
       'attachment_upload_row_count': null,
       'attachment_upload_states': null,
+      'attachment_child_operations': null,
       'attachment_upload_failure':
           'cloud_sync_windows_proof_upload_query_failed',
     };
+  }
+}
+
+Map<String, Object?> _readAttachmentChildDiagnostic(
+  Store store,
+  CloudAttachmentUploadEntity upload,
+) {
+  final operationId = upload.admittedOperationId;
+  if (operationId == null) return {'matching_operations': 0};
+  final query =
+      store
+          .box<CloudOutboxOperationEntity>()
+          .query(
+            CloudOutboxOperationEntity_.operationId
+                .equals(operationId)
+                .and(
+                  CloudOutboxOperationEntity_.accountFingerprint
+                      .equals(upload.accountFingerprint)
+                      .and(
+                        CloudOutboxOperationEntity_.zone.equals(
+                          'attachmentManateeZone',
+                        ),
+                      ),
+                ),
+          )
+          .build()
+        ..limit = 2;
+  try {
+    final rows = query.find();
+    if (rows.length != 1) return {'matching_operations': rows.length};
+    final row = rows.single;
+    return {
+      'matching_operations': 1,
+      'state': row.state,
+      'attempt_count': row.attemptCount,
+      'generation_matches_upload':
+          row.checkpointGeneration == upload.checkpointGeneration,
+      'record_matches_upload':
+          row.serverRecordIdHash == upload.serverRecordIdHash,
+      'payload_reference_retained': row.encryptedPayloadRef != null,
+      'receipt_lease_retained': row.protectedLeaseReference != null,
+      'confirmed_timestamp_present': row.confirmedAtMs > 0,
+      // These are diagnostics only, never a substitute for native readback.
+    };
+  } finally {
+    query.close();
   }
 }
