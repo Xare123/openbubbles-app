@@ -11497,6 +11497,82 @@ pub async fn cloud_sync_windows_send_confirmed(
         || confirmation.require_confirmed()).await
 }
 
+/// Explicit Windows qualification path for a journal-claimed edit/unsend.
+/// Uses the same committed-source checks and protected receipt as ordinary
+/// sending. Never retries, returns early, acknowledges receipts or saves CK.
+/// A successful IDS send followed by any local failure remains reconciliation
+/// work, not permission to resubmit the claimed mutation.
+pub async fn cloud_sync_windows_send_mutation_confirmed(
+    state: &Arc<IMClient>,
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    mut msg: MessageInst,
+    context: CloudSyncNativeSendReceiptContext,
+) -> anyhow::Result<CloudSyncNativeSendReceipt> {
+    if !is_cloud_sync_windows_dev_profile(&context.storage_directory) {
+        return Err(anyhow!("cloud_sync_windows_sender_profile_required"));
+    }
+    let auth = cloud_sync_capture_auth_snapshot(
+        cloud_messages_client, context.storage_directory.clone(),
+    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    cloud_sync_require_source_context_auth(&context, &auth)?;
+    let source = cloud_sync_windows_mutation_send_source(&context, &msg)?;
+    let started = systemtime_to_millis(SystemTime::now());
+    let result = state.send(&mut msg).await
+        .map_err(|error| cloud_sync_send_start_error(error, true))?;
+    let finished = systemtime_to_millis(SystemTime::now());
+    let validation = cloud_sync_validate_prepared_send_source(Some(source), &msg, started, finished);
+    let confirmation = result.confirmation();
+    let storage = context.storage_directory.clone();
+    cloud_sync_windows_finish_mutation_send(
+        result.handle, || confirmation.require_confirmed(), context, &msg.id,
+        validation, async {
+            cloud_sync_capture_auth_snapshot(cloud_messages_client, storage).await
+                .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))
+        },
+    ).await
+}
+
+#[frb(ignore)]
+async fn cloud_sync_windows_finish_mutation_send(
+    handle: Option<tokio::task::JoinHandle<Result<(), PushError>>>,
+    confirm_participants: impl FnOnce() -> Result<(), PushError>,
+    context: CloudSyncNativeSendReceiptContext,
+    stable_guid: &str,
+    source_validation: Result<(), &'static str>,
+    reauthenticate: impl std::future::Future<Output = anyhow::Result<CloudSyncNativeAuthMetadata>>,
+) -> anyhow::Result<CloudSyncNativeSendReceipt> {
+    cloud_sync_windows_finish_send_job(handle, confirm_participants).await?;
+    cloud_sync_require_source_context_auth(&context, &reauthenticate.await?)?;
+    cloud_sync_windows_mutation_send_receipt(context, stable_guid, source_validation)
+}
+
+#[frb(ignore)]
+fn cloud_sync_windows_mutation_send_source(
+    context: &CloudSyncNativeSendReceiptContext,
+    msg: &MessageInst,
+) -> anyhow::Result<CloudSyncBoundSendSource> {
+    if cloud_sync_local_send_guid_hash(&msg.id) != context.guid_hash
+        || !context.source_binding.as_ref().is_some_and(|binding|
+            binding.kind == Some(CloudSyncNativeSendSourceKind::Mutation))
+    {
+        return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
+    }
+    match cloud_sync_send_source(Some(context), msg)? {
+        Some(source @ CloudSyncBoundSendSource::Mutation(_)) => Ok(source),
+        _ => Err(anyhow!("cloud_sync_native_mutation_source_changed")),
+    }
+}
+
+#[frb(ignore)]
+fn cloud_sync_windows_mutation_send_receipt(
+    context: CloudSyncNativeSendReceiptContext,
+    stable_guid: &str,
+    source_validation: Result<(), &'static str>,
+) -> anyhow::Result<CloudSyncNativeSendReceipt> {
+    source_validation.map_err(|code| anyhow!(code))?;
+    persist_cloud_sync_native_send_receipt(context, stable_guid)
+}
+
 #[frb(ignore)]
 async fn cloud_sync_windows_finish_send_job(
     handle: Option<tokio::task::JoinHandle<Result<(), PushError>>>,
@@ -11514,6 +11590,121 @@ async fn cloud_sync_windows_finish_send_job(
 #[cfg(test)]
 mod cloud_sync_mutation_send_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn windows_mutation_completion_retains_real_receipt_without_remote_save() {
+        for unsend in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let message = fixture(unsend);
+            let mut context = context(directory.path(), &message);
+            context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
+                &context, &auth(&context), &"a".repeat(64), &message,
+            ).unwrap());
+            assert!(cloud_sync_windows_mutation_send_source(&context, &message).is_err());
+            commit(&context);
+            let source = cloud_sync_windows_mutation_send_source(&context, &message).unwrap();
+            let mut prepared = message.clone();
+            let started = systemtime_to_millis(SystemTime::now());
+            prepared.prepare_send(&[message.sender.clone().unwrap()]);
+            let finished = systemtime_to_millis(SystemTime::now());
+            let validation = cloud_sync_validate_prepared_send_source(Some(source), &prepared, started, finished);
+            let receipt = cloud_sync_windows_finish_mutation_send(
+                Some(tokio::spawn(async { Ok(()) })), || Ok(()), context.clone(),
+                &prepared.id, validation, async { Ok(auth(&context)) },
+            ).await.unwrap();
+            let replay = cloud_sync_replay_native_send_receipts(
+                context.storage_directory.clone(), context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(), None,
+            ).await.unwrap();
+            assert_eq!(replay.receipts.len(), 1);
+            assert_eq!(replay.receipts[0].receipt_id, receipt.receipt_id);
+            assert_eq!(receipt.source_binding.unwrap().kind, Some(CloudSyncNativeSendSourceKind::Mutation));
+            assert!(cloud_sync_open_mutation_source_bound(&context).is_ok());
+        }
+    }
+
+    #[test]
+    fn windows_mutation_preflight_rejects_guid_purpose_and_changed_wire() {
+        let directory = tempfile::tempdir().unwrap();
+        let message = fixture(false);
+        let mut context = context(directory.path(), &message);
+        assert!(cloud_sync_windows_mutation_send_source(&context, &message).is_err());
+        context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
+            &context, &auth(&context), &"a".repeat(64), &message,
+        ).unwrap());
+        commit(&context);
+        for alteration in 0..4 {
+            let mut changed_context = context.clone();
+            let mut changed_wire = message.clone();
+            match alteration {
+                0 => changed_context.guid_hash = "b".repeat(64),
+                1 => changed_context.source_binding.as_mut().unwrap().kind = None,
+                2 => changed_context.source_binding.as_mut().unwrap().kind = Some(CloudSyncNativeSendSourceKind::Attachment),
+                _ => changed_wire.sender = Some("mailto:other@example.invalid".to_owned()),
+            }
+            assert!(cloud_sync_windows_mutation_send_source(&changed_context, &changed_wire).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn windows_mutation_requires_job_acceptance_current_auth_and_validated_source() {
+        for failure in 0..5 {
+            let directory = tempfile::tempdir().unwrap();
+            let message = fixture(false);
+            let mut context = context(directory.path(), &message);
+            context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
+                &context, &auth(&context), &"a".repeat(64), &message,
+            ).unwrap());
+            commit(&context);
+            let handle = if failure == 0 {
+                Some(tokio::spawn(async { Err(PushError::SendTimedOut) }))
+            } else if failure == 1 {
+                let pending = tokio::spawn(async {
+                    std::future::pending::<Result<(), PushError>>().await
+                });
+                pending.abort();
+                Some(pending)
+            } else { None };
+            let mut after = auth(&context);
+            if failure == 3 { after.native_session_id = "other".to_owned(); }
+            let validation = if failure == 4 {
+                Err("cloud_sync_native_mutation_prepared_source_changed")
+            } else { Ok(()) };
+            let result = cloud_sync_windows_finish_mutation_send(handle, || {
+                assert!(failure > 1, "failed job must not confirm");
+                if failure == 2 { Err(PushError::NoValidTargets) } else { Ok(()) }
+            }, context.clone(), &message.id, validation, async { Ok(after) }).await;
+            assert!(result.is_err());
+            let replay = cloud_sync_replay_native_send_receipts(
+                context.storage_directory.clone(), context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(), None,
+            ).await.unwrap();
+            assert!(replay.receipts.is_empty());
+            assert!(cloud_sync_open_mutation_source_bound(&context).is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn windows_mutation_changed_prepared_source_persists_no_receipt() {
+        let directory = tempfile::tempdir().unwrap();
+        let message = fixture(false);
+        let mut context = context(directory.path(), &message);
+        context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
+            &context, &auth(&context), &"a".repeat(64), &message,
+        ).unwrap());
+        commit(&context);
+        let source = cloud_sync_windows_mutation_send_source(&context, &message).unwrap();
+        let mut changed = message.clone();
+        changed.sender = Some("mailto:other@example.invalid".to_owned());
+        let validation = cloud_sync_validate_prepared_send_source(Some(source), &changed, 0, 1);
+        assert!(cloud_sync_windows_mutation_send_receipt(context.clone(), &message.id, validation).is_err());
+        let replay = cloud_sync_replay_native_send_receipts(
+            context.storage_directory.clone(), context.account_fingerprint.clone(),
+            context.protected_store_identity.clone(), None,
+        ).await.unwrap();
+        assert!(replay.receipts.is_empty());
+        assert!(cloud_sync_open_mutation_source_bound(&context).is_ok());
+    }
 
     #[test]
     fn tracked_start_timeout_cannot_trigger_legacy_automatic_resubmission() {
