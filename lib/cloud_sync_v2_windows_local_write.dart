@@ -12,6 +12,8 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 
 import 'services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_models.dart'
+    show CloudSyncSafeCodeFailure;
 import 'services/rustpush/cloud_sync/cloud_sync_group_send_route.dart';
 import 'cloud_sync_v2_windows_write_checkpoint.dart';
 import 'cloud_sync_v2_windows_attachment_fixture.dart';
@@ -44,6 +46,62 @@ String cloudSyncWindowsWriteFailureCode(Object error) {
     }
   }
   return cloudSyncV2SafeFailureCode(error);
+}
+
+/// Development-only attribution without exception bodies, handles or file paths.
+/// Unknown code hashes can be compared to source literals offline, not promoted
+/// to retry authority. Stack output is restricted to these reviewed source files.
+Map<String, Object?> cloudSyncWindowsWriteFailureDiagnostic(
+  Object error,
+  StackTrace stack,
+) {
+  final code = cloudSyncWindowsWriteFailureCode(error);
+  final candidate = switch (error) {
+    CloudSyncSafeCodeFailure() => error.safeCode,
+    StateError() => error.message is String ? error.message as String : null,
+    AnyhowException() => error.message,
+    _ => null,
+  };
+  const sources = {
+    'cloud_sync_v2_windows_local_write.dart',
+    'cloud_sync_v2_windows_harness.dart',
+    'cloud_sync_production_sampler_adapter.dart',
+    'cloud_sync_local_send_consumer.dart',
+    'cloud_sync_local_send_journal.dart',
+    'cloud_sync_local_send_selection.dart',
+    'cloud_sync_outbound_admission.dart',
+    'cloud_sync_attachment_parent_coordinator.dart',
+    'cloud_sync_attachment_upload_journal.dart',
+    'cloud_sync_attachment_plan_coordinator.dart',
+    'cloud_sync_attachment_upload_executor.dart',
+    'native_protected_cloud_sync_transport.dart',
+    'objectbox_cloud_sync_store.dart',
+    'objectbox_cloud_sync_preflight.dart',
+    'cloud_protected_page_lease_lifecycle.dart',
+    'cloudkit_writer_authority.dart',
+    'cloudkit_writer_mutation_guard.dart',
+  };
+  final frames = RegExp(
+    r'\(package:bluebubbles/(?:services/rustpush/cloud_sync/)?([a-z0-9_]+\.dart):([0-9]{1,7}):([0-9]{1,5})\)',
+  ).allMatches(stack.toString()).where((m) => sources.contains(m[1])).take(6)
+      .map((m) => {'source': m[1], 'line': int.parse(m[2]!), 'column': int.parse(m[3]!)})
+      .toList();
+  final codeShape = candidate == null
+      ? null
+      : RegExp(r'^cloud_sync_[a-z_]{1,100}$').firstMatch(candidate);
+  return {
+    'code': code,
+    'kind': switch (error) {
+      CloudSyncSafeCodeFailure() => 'safe_code_failure',
+      StateError() => 'state_error',
+      AnyhowException() => 'native_bridge',
+      _ => 'other',
+    },
+    'unreviewed_code_sha256': code == 'cloud_sync_unknown_failure' &&
+        candidate != null && codeShape != null && codeShape.end == candidate.length
+        ? sha256.convert(utf8.encode(candidate)).toString() : null,
+    'frames': frames,
+  };
 }
 
 /// Explicit qualification input, never read by ordinary app startup. Request

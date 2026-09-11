@@ -8,13 +8,59 @@ import 'package:bluebubbles/cloud_sync_v2_windows_write_checkpoint.dart';
 import 'package:bluebubbles/cloud_sync_v2_windows_attachment_fixture.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_send_body.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
+    show CloudSyncSafeCodeFailure;
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 
+final class _SafeFailure implements CloudSyncSafeCodeFailure {
+  const _SafeFailure(this.safeCode);
+  @override
+  final String? safeCode;
+}
+
 void main() {
+  test('write attribution retains only reviewed frames and fixed-shape code hash', () {
+    const missing = 'cloud_sync_new_unreviewed_predicate';
+    final report = cloudSyncWindowsWriteFailureDiagnostic(
+      StateError(missing), StackTrace.fromString(
+        '#0 secretFunction (package:bluebubbles/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart:10:2)\n'
+        '#1 secret (file:///C:/private/secret.dart:3:4)\n'
+        '#2 secret (package:bluebubbles/private_account.dart:5:6)',
+      ));
+    expect(report['kind'], 'state_error');
+    expect(report['code'], 'cloud_sync_unknown_failure');
+    expect(report['unreviewed_code_sha256'], sha256.convert(utf8.encode(missing)).toString());
+    expect(report['frames'], [{'source': 'native_protected_cloud_sync_transport.dart', 'line': 10, 'column': 2}]);
+    expect(jsonEncode(report), isNot(contains('secret')));
+    expect(jsonEncode(report), isNot(contains(missing)));
+    for (final text in ['secret@example.test', 'cloud_sync_failure token=secret', 'cloud_sync_secret123', 'cloud_sync_hidden\n']) {
+      final hidden = cloudSyncWindowsWriteFailureDiagnostic(AnyhowException(text), StackTrace.empty);
+      expect(hidden['kind'], 'native_bridge');
+      expect(hidden['unreviewed_code_sha256'], isNull);
+      expect(jsonEncode(hidden), isNot(contains(text)));
+    }
+    expect(cloudSyncWindowsWriteFailureDiagnostic(Object(), StackTrace.empty)['kind'], 'other');
+  });
+  test('write attribution caps frames and preserves typed safe-code handling', () {
+    final report = cloudSyncWindowsWriteFailureDiagnostic(
+      const _SafeFailure('cloud_sync_attachment_parent_readback_pending'),
+      StackTrace.fromString(List.generate(9, (i) =>
+        '#$i privateFunction (package:bluebubbles/cloud_sync_v2_windows_local_write.dart:${i + 1}:2)',
+      ).join('\n')),
+    );
+    expect(report['kind'], 'safe_code_failure');
+    expect(report['code'], 'cloud_sync_attachment_parent_readback_pending');
+    expect(report['unreviewed_code_sha256'], isNull);
+    expect(report['frames'], hasLength(6));
+    expect(jsonEncode(report), isNot(contains('privateFunction')));
+    expect(cloudSyncWindowsWriteFailureDiagnostic(
+      const _SafeFailure(null), StackTrace.empty,
+    )['unreviewed_code_sha256'], isNull);
+  });
   test('registration diagnostics expose fixed causes, never raw server data', () {
     expect(
       cloudSyncWindowsWriteFailureCode(

@@ -1202,10 +1202,11 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       await _setRuntimeStage('windows-local-write-pass-complete', state: 'finished',
         detail: jsonEncode(result));
       if (mounted) setState(() { _busy = false; _status = 'Write pass complete. See the bounded status report.'; });
-    } catch (error) {
+    } catch (error, stack) {
       // Do not silently restart authentication or resend on a failed write.
       final code = cloudSyncWindowsWriteFailureCode(error);
-      _showFailure(StateError(code)); // Never report raw registration/server data.
+      _showFailure(StateError(code), writeFailureDetail: jsonEncode(
+        cloudSyncWindowsWriteFailureDiagnostic(error, stack)));
     }
   }
 
@@ -1728,7 +1729,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
     }
   }
 
-  void _showFailure(Object error) {
+  void _showFailure(Object error, {String? writeFailureDetail}) {
     if (!mounted) return;
     _resumeAfterTwoFactor = null;
     unawaited(
@@ -1737,7 +1738,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         stage: _runtimeStage,
         safeCode: cloudSyncV2SafeFailureCode(error),
         errorType: error.runtimeType.toString(),
-        detail: _sanitizeHarnessDetail(error.toString()),
+        detail: _sanitizeHarnessDetail(writeFailureDetail ?? error.toString()),
       ),
     );
     setState(() {
