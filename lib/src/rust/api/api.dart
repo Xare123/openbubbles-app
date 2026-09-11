@@ -1628,6 +1628,23 @@ Future<void> cloudSyncWindowsSendConfirmed({
   msg: msg,
 );
 
+/// Explicit Windows qualification path for a journal-claimed edit/unsend.
+/// Uses the same committed-source checks and protected receipt as ordinary
+/// sending. Never retries, returns early, acknowledges receipts or saves CK.
+/// A successful IDS send followed by any local failure remains reconciliation
+/// work, not permission to resubmit the claimed mutation.
+Future<CloudSyncNativeSendReceipt> cloudSyncWindowsSendMutationConfirmed({
+  required ArcImClient state,
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required MessageInst msg,
+  required CloudSyncNativeSendReceiptContext context,
+}) => RustLib.instance.api.crateApiApiCloudSyncWindowsSendMutationConfirmed(
+  state: state,
+  cloudMessagesClient: cloudMessagesClient,
+  msg: msg,
+  context: context,
+);
+
 Future<List<String>> getHandles({required ArcImClient state}) =>
     RustLib.instance.api.crateApiApiGetHandles(state: state);
 
