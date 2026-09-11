@@ -20,6 +20,14 @@ import 'objectbox_canonical_semantic_entity_adapter.dart';
 /// satisfying this contract accidentally.
 enum CloudCanonicalSemanticMutationReceipt { committed }
 
+abstract interface class CloudMessageContentTransitionProofAdapter {
+  CloudMessageContentTransition? classifyMessageContentTransition({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudMessageEntityPayload payload,
+  });
+}
+
 /// Proves an existing canonical direct Chat can own another physical record.
 /// A shared hash/alias alone is not enough; this must validate the actual
 /// recipient, service, style, participant relation and all incoming aliases.
@@ -1974,7 +1982,9 @@ final class _SemanticTransactionContext {
 }
 
 final class _ObjectBoxCloudSemanticStoreTransaction
-    implements CloudSemanticStoreTransaction {
+    implements
+        CloudSemanticStoreTransaction,
+        CloudMessageContentTransitionTransaction {
   _ObjectBoxCloudSemanticStoreTransaction({
     required this._context,
     required this._updatedAtMs,
@@ -2086,6 +2096,257 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       kind: kind,
       logicalEntityKeyHash: logicalEntityKeyHash,
     );
+  }
+
+  /// Bounded read-only proof for a read-side edited Message content change.
+  ///
+  /// Proves the caller-supplied [local] is the exact stored snapshot, the
+  /// incoming snapshot carries the current change envelope with a rotated
+  /// ETag on the same physical record, and a durable older APPLIED replay
+  /// for that record still binds to its own applied inbox row. Returns null
+  /// when the edit is not proved. Malformed envelopes throw through the
+  /// shared validators so decoder bugs stay loud. Never mutates state and
+  /// never consults clocks or updatedAtMs as causal proof.
+  @override
+  CloudMessageContentTransition? classifyMessageContentTransition({
+    required CloudMessageEntityPayload payload,
+    required CloudSemanticSnapshot local,
+    required CloudSemanticSnapshot incoming,
+  }) {
+    _ensureActive();
+    _ensureOpen();
+    if (payload.kind != CloudEntityKind.message ||
+        local.kind != CloudEntityKind.message ||
+        incoming.kind != CloudEntityKind.message ||
+        payload.logicalEntityKeyHash != local.logicalEntityKeyHash ||
+        payload.logicalEntityKeyHash != incoming.logicalEntityKeyHash) {
+      return null;
+    }
+    _validateHashedValue(payload.logicalEntityKeyHash);
+    final scope = _context.entry.scope;
+    if (scope.streamKind != CloudSyncStreamKind.messages ||
+        scope.zone != 'messageManateeZone') {
+      return null;
+    }
+    final stored = _findSnapshot(
+      _context.snapshotKey(
+        CloudEntityKind.message,
+        payload.logicalEntityKeyHash,
+      ),
+    );
+    if (stored == null) {
+      return null;
+    }
+    _validateSnapshotScope(
+      stored,
+      expectedKind: CloudEntityKind.message,
+      expectedLogicalKeyHash: payload.logicalEntityKeyHash,
+    );
+    if (!ObjectBoxCloudSemanticStoreGateway._legacySnapshotsMatchExactly(
+      _snapshotFromEntity(stored),
+      local,
+    )) {
+      return null;
+    }
+    _validatePayloadParent(payload, incoming);
+    _validateSnapshot(incoming);
+    if (_canonicalAdapter is! CloudMessageContentTransitionProofAdapter) {
+      return null;
+    }
+    final change = _context.entry.change;
+    final map = _findRecordMapByKey(
+      _context.recordMapKey(payload.logicalEntityKeyHash),
+    );
+    if (map == null) {
+      return null;
+    }
+    _validateRecordMapScope(
+      map,
+      payload.logicalEntityKeyHash,
+      expectedChange: change,
+    );
+    if (map.serverRecordIdHash != change.recordIdHash) {
+      return null;
+    }
+    final oldEtag = local.etagHash;
+    final newEtag = incoming.etagHash;
+    if (oldEtag == null ||
+        newEtag == null ||
+        oldEtag == newEtag ||
+        map.etagHash != oldEtag ||
+        newEtag != change.etagHash ||
+        local.encryptedRawRecordReference != map.encryptedRawRecordRef) {
+      return null;
+    }
+    if (!_hasDurableAppliedMessageEditProof(
+      logicalEntityKeyHash: payload.logicalEntityKeyHash,
+      serverRecordIdHash: map.serverRecordIdHash,
+      oldEtagHash: oldEtag,
+      oldRawRecordReference: local.encryptedRawRecordReference,
+    )) {
+      return null;
+    }
+    return (_canonicalAdapter as CloudMessageContentTransitionProofAdapter)
+        .classifyMessageContentTransition(
+      scope: scope,
+      generation: _context.entry.generation,
+      payload: payload,
+    );
+  }
+
+  /// Finds one older APPLIED replay on the same logical message and physical
+  /// record and cross-checks it against its own applied inbox row. A
+  /// same-sequence (current) replay is never causal authority.
+  bool _hasDurableAppliedMessageEditProof({
+    required String logicalEntityKeyHash,
+    required String serverRecordIdHash,
+    required String oldEtagHash,
+    required String? oldRawRecordReference,
+  }) {
+    if (oldRawRecordReference == null) {
+      return false;
+    }
+    final oldReferenceHash = _SemanticTransactionContext._digest(
+      'semantic-payload-reference\u001f$oldRawRecordReference',
+    );
+    final scope = _context.entry.scope;
+    final replayQuery =
+        _replay
+            .query(
+              CloudSemanticReplayEntity_.scopeGenerationKey
+                  .equals(_context.scopeGenerationKey)
+                  .and(
+                    CloudSemanticReplayEntity_.serverRecordIdHash.equals(
+                      serverRecordIdHash,
+                    ),
+                  )
+                  .and(
+                    CloudSemanticReplayEntity_.logicalEntityKeyHash.equals(
+                      logicalEntityKeyHash,
+                    ),
+                  )
+                  .and(
+                    CloudSemanticReplayEntity_.protectedPayloadReferenceHash
+                        .equals(oldReferenceHash),
+                  )
+                  .and(
+                    CloudSemanticReplayEntity_.inboxSequence.lessThan(
+                      _context.entry.sequence,
+                    ),
+                  ),
+            )
+            .build()
+          ..limit = 2;
+    final List<CloudSemanticReplayEntity> candidates;
+    try {
+      candidates = replayQuery.find();
+    } finally {
+      replayQuery.close();
+    }
+    if (candidates.length != 1) {
+      return false;
+    }
+    for (final prior in candidates) {
+      if (prior.inboxSequence <= 0 ||
+          prior.inboxSequence >= _context.entry.sequence ||
+          prior.scopeKey != _context.scopeKey ||
+          prior.scopeGenerationKey != _context.scopeGenerationKey ||
+          prior.accountFingerprint != scope.accountFingerprint ||
+          prior.container != scope.container ||
+          prior.database != scope.database ||
+          prior.zone != scope.zone ||
+          prior.streamKind != scope.streamKind.name ||
+          prior.schemaVersion != scope.schemaVersion ||
+          prior.generation != _context.entry.generation ||
+          prior.serverRecordIdHash != serverRecordIdHash ||
+          prior.changeType != CloudChangeType.save.name ||
+          prior.protectedPayloadReferenceHash != oldReferenceHash) {
+        continue;
+      }
+      final _SemanticReplayOutcome outcome;
+      try {
+        outcome = _replayOutcome(prior.terminalOutcome);
+      } catch (_) {
+        continue;
+      }
+      if (outcome != _SemanticReplayOutcome.applied &&
+          outcome != _SemanticReplayOutcome.appliedWithConflict) {
+        continue;
+      }
+      if ((outcome == _SemanticReplayOutcome.applied &&
+              prior.terminalSafeCode != null) ||
+          (outcome == _SemanticReplayOutcome.appliedWithConflict &&
+              (prior.terminalSafeCode == null ||
+                  !ObjectBoxCloudSemanticStoreGateway._safeCodePattern
+                      .hasMatch(prior.terminalSafeCode!)))) {
+        continue;
+      }
+      final priorPayloadSha = prior.payloadSha256;
+      if (priorPayloadSha == null ||
+          !ObjectBoxCloudSemanticStoreGateway._lowerHexDigestPattern
+              .hasMatch(priorPayloadSha)) {
+        continue;
+      }
+      final inboxQuery =
+          _inbox
+              .query(
+                CloudInboxChangeEntity_.scopeKey
+                    .equals(_context.scopeKey)
+                    .and(
+                      CloudInboxChangeEntity_.generation.equals(
+                        _context.entry.generation,
+                      ),
+                    )
+                    .and(
+                      CloudInboxChangeEntity_.fetchSequence.equals(
+                        prior.inboxSequence,
+                      ),
+                    ),
+              )
+              .build()
+            ..limit = 2;
+      final List<CloudInboxChangeEntity> rows;
+      try {
+        rows = inboxQuery.find();
+      } finally {
+        inboxQuery.close();
+      }
+      if (rows.length != 1) {
+        continue;
+      }
+      final row = rows.single;
+      if (row.scopeKey != _context.scopeKey ||
+          row.accountFingerprint != scope.accountFingerprint ||
+          row.zone != scope.zone ||
+          row.generation != _context.entry.generation ||
+          row.fetchSequence != prior.inboxSequence ||
+          row.status != CloudInboxStatus.applied.index ||
+          row.isTombstone ||
+          row.changeType != CloudChangeType.save.name ||
+          row.changeType != prior.changeType ||
+          row.serverRecordIdHash != prior.serverRecordIdHash ||
+          row.payloadSha256 != priorPayloadSha ||
+          row.encryptedPayloadRef != oldRawRecordReference ||
+          row.etagHash != oldEtagHash ||
+          !ObjectBoxCloudSemanticStoreGateway._base64UrlDigestPattern
+              .hasMatch(row.changeIdHash)) {
+        continue;
+      }
+      final changeHash = _SemanticTransactionContext._digest(
+        row.changeIdHash,
+      );
+      if (prior.changeIdHash != changeHash ||
+          prior.replayKey !=
+              'semantic-replay4:${_context.scopeGenerationKey}:$changeHash' ||
+          _SemanticTransactionContext._digest(
+                'semantic-payload-reference\u001f${row.encryptedPayloadRef}',
+              ) !=
+              prior.protectedPayloadReferenceHash) {
+        continue;
+      }
+      return true;
+    }
+    return false;
   }
 
   @override

@@ -943,6 +943,19 @@ abstract interface class CloudRetainedProjectionWindowStoreGateway {
   });
 }
 
+/// Local projection only, never authorization to update an Apple record.
+enum CloudMessageContentTransition { preserve, replace }
+
+/// Optional proof made against the exact canonical row and durable record
+/// mapping within the current transaction. An edit flag alone is not proof.
+abstract interface class CloudMessageContentTransitionTransaction {
+  CloudMessageContentTransition? classifyMessageContentTransition({
+    required CloudMessageEntityPayload payload,
+    required CloudSemanticSnapshot local,
+    required CloudSemanticSnapshot incoming,
+  });
+}
+
 abstract interface class CloudSemanticStoreTransaction {
   CloudSyncScope get activeScope;
   int get activeGeneration;
@@ -1814,9 +1827,39 @@ class TransactionalCloudInboxApplier
       kind: incoming.kind,
       logicalEntityKeyHash: incoming.logicalEntityKeyHash,
     );
+    var mergeLocal = local;
+    var mergeIncoming = incoming;
+    CloudMessageContentTransition? contentTransition;
+    final payload = decoded.payload;
+    if (local != null &&
+        local.immutableContentDigest != null &&
+        incoming.immutableContentDigest != null &&
+        local.immutableContentDigest != incoming.immutableContentDigest &&
+        payload is CloudMessageEntityPayload &&
+        transaction is CloudMessageContentTransitionTransaction) {
+      contentTransition =
+          (transaction as CloudMessageContentTransitionTransaction)
+              .classifyMessageContentTransition(
+                payload: payload,
+                local: local,
+                incoming: incoming,
+              );
+      switch (contentTransition) {
+        case CloudMessageContentTransition.replace:
+          mergeLocal = local.copyWith(
+            immutableContentDigest: incoming.immutableContentDigest,
+          );
+        case CloudMessageContentTransition.preserve:
+          mergeIncoming = incoming.copyWith(
+            immutableContentDigest: local.immutableContentDigest,
+          );
+        case null:
+          break;
+      }
+    }
     final decision = _mergePolicy.merge(
-      local: local,
-      incoming: incoming,
+      local: mergeLocal,
+      incoming: mergeIncoming,
       parentExists:
           incoming.parentLogicalKeyHash == null ||
           transaction.entityExists(
@@ -1863,7 +1906,8 @@ class TransactionalCloudInboxApplier
     }
 
     if (decision.action == CloudMergeAction.create ||
-        decision.action == CloudMergeAction.update) {
+        decision.action == CloudMergeAction.update ||
+        contentTransition == CloudMessageContentTransition.replace) {
       transaction.applyEntity(
         payload: decoded.payload!,
         snapshot: decision.snapshot!,

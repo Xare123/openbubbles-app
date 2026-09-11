@@ -2291,3 +2291,29 @@ This is a chronological evidence log. It does not override the
   `setup_finished=false`, `auth_ready=false`, semantic pull inactive, no active
   coordinator, empty outbox, legacy sync off. No launch, reset, new sign-in,
   semantic start, outbound send or install was invoked.
+
+### September 11, proved read-edit transition across the real transaction
+
+- Added an optional local-projection transition proof without changing native
+  digests, schema, remote update transport or global conflict policy. Gateway
+  evidence binds the exact stored snapshot, physical record, changed ETag,
+  protected reference and prior applied replay/inbox sequence. A bounded query
+  rejects duplicate evidence. The canonical reader verifies stable identity
+  and complete compatible part/body history; it never creates handles or writes
+  rows while classifying. Unknown or multi-body ambiguity remains a conflict.
+- Parent implemented and reviewed the canonical/orchestration path. Pascal's
+  gateway work initially had an invalid test getter, an unbounded receipt query
+  and a proof-only test transaction missing its required terminal outcome.
+  Parent review required corrections: exact bounded lookup, explicit sequence
+  validation, test-only rollback, and confirmation the classifier returned
+  before that deliberate rollback. No production transaction contract weakened.
+- Eight new gateway boundary tests cover valid delegation and missing/forged,
+  stale, same-tag, different-record, mismatched-local and old-reference proof.
+  Canonical tests cover reopen, edit/undo, stable sender/time/subject, complete
+  lineage, multipart unchanged parts and malformed/ambiguous ranges. The real
+  inbox/merge/ObjectBox test applies original/edit/stale/undo, quarantines an
+  unproved body and keeps one canonical message, five receipts and zero outbox
+  rows. Its decoder boundary is synthetic, not a live Apple response.
+- Four focused suites passed 296 tests. All six changed Dart files analyzed
+  cleanly. No APK, native build, live account mutation or phone install occurred.
+  Full-suite cloud qualification is the next step; no production claim is made.

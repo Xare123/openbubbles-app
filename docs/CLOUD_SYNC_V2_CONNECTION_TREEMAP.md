@@ -66,12 +66,13 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
-Next technical gate: prove a legitimate changed-body edit/unsend through the
-whole merge and ObjectBox transaction, not only the adapter. Two local draft
-`DESIRED:` merge-boundary tests in `cloud_inbox_applier_test.dart` reproduce
-quarantine-before-projection; they are intentionally uncommitted and are not
-part of the qualified checkpoint. Their memory transaction is not real-store
-proof. Preserve them for the causal-transition repair, not an APK release.
+Next technical gate: qualify the narrowly proved read-edit transition candidate.
+The real inbox merge and ObjectBox test now applies an edit, rejects an
+unproved changed body, preserves current text on an older replay and applies
+an unsend after reopen. The four focused suites pass 296 tests. Full-suite GCE
+qualification and installed-device proof remain separate. The original memory
+regressions now opt in explicitly to the proof capability; the real-store
+test, not those fakes, demonstrates the combined path.
 
 Next device gate: finish normal Canary authentication, then exercise the
 combined signed Android source and independently verify
@@ -265,7 +266,7 @@ evidence paths. Causal edit/unsend writes remain a gap, not a passed gate.
 | Write-send provenance | `SOURCE-IMPLEMENTED` | Native positive-acceptance tests pass. Qualify the additive persisted-proof upgrade and dispatch/reconciliation tests. Old deferred/ready intents cannot promote or enter fresh admission without new proof; old adopted pending entries are retained and skipped for new leases. Submission rechecks proof. Exact readback remains allowed and does not retroactively prove IDS acceptance. A fresh v2 native confirmation can requalify the exact unchanged old source without resending it. Automatic uploads remain off pending execution and live proof. |
 | Retained writer queue usability | `TEST-PROVEN` | One journal-bound, read-only classifier covers queue drain, queued Chat observation, and preflight. It exempts only pristine pending creates with proof version 0, exact protected envelope/mapping, current owner/generation, no lease, attempt, Apple UUID or receipt. All rows remain counted and fingerprinted; no upload, acknowledgement, deletion, or proof upgrade occurs. GCE passed the real consumer/admission/store regression with a fresh qualified send beside retained work and reopen without duplicate submission. Apple responses are synthetic in this test; live proof remains. Unknown/retried/leased/malformed rows still block. |
 | Direct reactions | `LIVE-PROVEN` for bounded Windows like-05/remove-like-06 | Positive IDS confirmation, one admission, exact persisted readback and separate-process zero-admission restarts passed. Ordinary Pixel composition and independent Apple-device display remain. |
-| Edits and unsends | `IN REPAIR` on read; write `GAP` | Monotonic retractions and coupled body/history selection passed 120 adapter tests; the four-suite run passed 278 tests. The earlier merge layer still fingerprints mutable text as immutable and can quarantine a genuine edit before projection. See the edit evidence gate. Outbound causal updates, stale-tag reconciliation and independent-device proof remain separate gaps. |
+| Edits and unsends | Read transition `TEST-PROVEN` for qualified shapes; write `GAP` | Same-record, rotated-tag transitions require exact durable predecessor binding and real canonical identity plus complete compatible body/history proof. The four-suite run passes 296 tests, including real inbox/merge/ObjectBox/reopen and rejection. Unsupported multi-body encodings or ambiguous lineage stay retained conflicts. Full-suite and live-device proof remain. Outbound causal updates and stale-tag reconciliation remain separate gaps. |
 | Attachment writes | `LIVE-PROVEN` for bounded Windows image 04 admission/readback recovery | Source-bound upload, child readback, parent admission and no-op restart passed overlay `46bc6f027`. Independent recipient/second-client rendering, ordinary Pixel composer convergence, group attachment proof and exact-source Android qualification remain. Upload receipt alone is not record-save proof. |
 | Tombstones and deletion | Closed | Define exact ownership and recoverable semantics before enabling any local or remote delete. |
 | Token expiry | `TEST-PROVEN` | Live expired-token/restart proof remains. The exact-source path requires an authenticated protected reset proof, releases the semantic read boundary, reacquires the destructive-reset interlock and native pause, advances once, reconciles authority after process death, and replays once. |
@@ -719,16 +720,23 @@ retained with a content-free conflict. Retractions are an irreversible union
 for the exact owned message. Do not synthesize multipart bodies from histories:
 the renderer takes current text from the attributed body, not its edit list.
 
-**Earlier read gate still open:** `cloud_sync_canonical_converter.rs` includes
-subject/text/attributed bytes in `immutable_content_digest`. `_applyUpsert` in
-`cloud_inbox_applier.dart` quarantines a changed digest before calling the
-canonical adapter. Consequently, adapter replay tests do not prove that a
-new genuine edit reaches the UI. The next test must use the complete
-decode/merge/transaction path with different original and edited fingerprints.
-Do not simply omit that digest, disable conflict checking, or rewrite existing
-snapshot metadata. Admit any content-changing transition only with exact
-identity and causal edit/retraction proof, while preserving existing snapshots
-and retaining ambiguous records. Outbound ETag handling is a separate gate.
+**Read transition candidate:** the native digest still includes current body
+bytes. The inbox applier may reconcile that difference only through the optional
+transaction proof: exact stored snapshot, same physical Message record, distinct
+non-null ETags, exact protected reference and an earlier durable applied
+replay cross-checked against its original inbox row. The bounded lookup reads
+at most two matching receipts and rejects ambiguity. The real canonical adapter
+then verifies owner, chat, sender, creation date, subject, full body/part ranges
+and compatible edit/retraction lineage without modifying rows. Unchanged parts
+and their order are preserved; unknown retractions and contradictory text fail.
+One-body multipart content is supported; ambiguous multi-body encodings remain
+conflicts. Global immutable and edit-revision conflict checks stay enabled.
+
+The combined regression uses real ObjectBox, the inbox applier and a synthetic
+decoded DTO boundary. It proves edit, forged-body rejection, stale replay and
+undo across reopen with zero outbound rows. It does not prove native Apple
+decoding, capture a real Apple update or authorize remote writes. Earlier raw
+records/receipts remain intact. Outbound ETag handling is a separate gate.
 
 The legacy `Message.toCloud` already serializes these fields, and generic
 `CloudMessagesClient.save_records` is called by `save_messages` for message

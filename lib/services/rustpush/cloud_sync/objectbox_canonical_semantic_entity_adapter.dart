@@ -213,6 +213,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         CloudAppliedChatProjectionRepairAdapter,
         CloudAppliedAttachmentProjectionRepairAdapter,
         CloudLegacyCanonicalOwnershipProofAdapter,
+        CloudMessageContentTransitionProofAdapter,
         CloudDirectChatRecordConvergenceProofAdapter {
   static final RegExp _externalDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
 
@@ -1397,6 +1398,194 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       handles.add(handle);
     }
     return handles;
+  }
+
+  @override
+  CloudMessageContentTransition? classifyMessageContentTransition({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudMessageEntityPayload payload,
+  }) {
+    _requireActiveScope(scope, generation);
+    if (!_allowMessageUpserts ||
+        payload.service != CloudSemanticService.iMessage ||
+        payload.createdAt == null ||
+        payload.knownFlags == null ||
+        payload.associationKind != CloudSemanticAssociationKind.none ||
+        payload.decodedExtensionPayloadState == CloudSemanticFieldState.value) {
+      return null;
+    }
+    _validateMutationIdentitySet(payload);
+    final guid = _requireResolvedGuid(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: payload.logicalEntityKeyHash,
+      payloadCanonicalGuid: payload.canonicalGuid,
+    );
+    final message = _findMessage(guid);
+    if (message == null ||
+        message.dateCreated?.toUtc() != payload.createdAt!.toUtc() ||
+        message.isFromMe != payload.knownFlags!.fromMe ||
+        message.associatedMessageGuid != null) {
+      return null;
+    }
+    final dependency = _dependencyScopeFor(
+      kind: CloudEntityKind.chat,
+      currentScope: scope,
+      currentGeneration: generation,
+    );
+    final chat = _resolveMessageChat(
+      scope: dependency.scope,
+      generation: dependency.generation,
+      service: payload.service!,
+      payload: payload,
+    );
+    if (message.chat.targetId != chat.id ||
+        _applyNullableStringField(
+              state: payload.subjectState,
+              incoming: payload.subject,
+              existing: message.subject,
+            ) !=
+            message.subject) {
+      return null;
+    }
+    // Message.handle is transient. Resolve only the existing local handle;
+    // the normal sender resolver can create rows and is not a proof reader.
+    if (payload.senderHandle.isEmpty && payload.knownFlags!.fromMe) {
+      if (message.handleId != 0) return null;
+    } else {
+      final sender = _normalizeHandle(payload.senderHandle, allowBusinessUrn: true);
+      if (sender == null) return null;
+      final handle = _findHandle('${sender.address}/iMessage');
+      if (handle == null ||
+          handle.originalROWID == null ||
+          handle.originalROWID != message.handleId) {
+        return null;
+      }
+    }
+
+    final currentBodies = message.attributedBody.isNotEmpty
+        ? message.attributedBody
+        : [AttributedBody.raw(message.text ?? '')];
+    final incomingBodies = switch (payload.attributedBodiesState) {
+      CloudSemanticFieldState.value => _attributedBodies(payload.attributedBodies),
+      CloudSemanticFieldState.explicitClear => <AttributedBody>[],
+      CloudSemanticFieldState.absent => payload.bodyState == CloudSemanticFieldState.absent
+          ? currentBodies
+          : [AttributedBody.raw(payload.body ?? '')],
+    };
+    // A second contradictory plain-text field is not an edit proof.
+    if (payload.bodyState == CloudSemanticFieldState.value &&
+        incomingBodies.isNotEmpty &&
+        payload.body != incomingBodies.first.string) {
+      return null;
+    }
+    final before = _messagePartSignatures(currentBodies);
+    final after = _messagePartSignatures(incomingBodies);
+    if (before == null || after == null) return null;
+    final summary = message.messageSummaryInfo.isEmpty
+        ? MessageSummaryInfo.empty()
+        : message.messageSummaryInfo.single;
+    final retracted = {...summary.retractedParts, ...payload.retractedParts};
+    for (final part in payload.retractedParts) {
+      if (!before.containsKey(part) &&
+          !summary.retractedParts.contains(part) &&
+          !summary.editedContent.containsKey(part.toString())) {
+        return null;
+      }
+    }
+    if (before.keys.where((part) => !retracted.contains(part)).join(',') !=
+        after.keys.where((part) => !retracted.contains(part)).join(',')) {
+      return null;
+    }
+    final replace = _incomingEditContentMayReplace(message, payload);
+    var provedChange = payload.retractedParts.any(
+      (part) => !summary.retractedParts.contains(part),
+    );
+    for (final part in {...before.keys, ...after.keys}) {
+      if (retracted.contains(part)) continue;
+      if (before[part] == after[part]) continue;
+      // Adding an unrelated part or silently dropping one is not an edit.
+      if (before[part] == null || after[part] == null) return null;
+      final revisions = <(int, String)>[];
+      if (replace) {
+        for (final edit in payload.edits.where((edit) => edit.part == part)) {
+          final signature = _editPartSignature(_attributedBodies(edit.bodies), part);
+          if (signature == null) return null;
+          revisions.add((edit.modifiedAt.millisecondsSinceEpoch, signature));
+        }
+      } else {
+        for (final edit in summary.editedContent[part.toString()] ?? <EditedContent>[]) {
+          final signature = _editPartSignature(edit.text?.values ?? [], part);
+          if (signature == null) return null;
+          revisions.add((_editTimestampMillis(edit), signature));
+        }
+      }
+      revisions.sort((a, b) => a.$1.compareTo(b.$1));
+      if (revisions.isEmpty) return null;
+      final newest = revisions.last;
+      if (revisions.any((entry) => entry.$1 == newest.$1 && entry.$2 != newest.$2)) {
+        return null;
+      }
+      final newerBody = replace ? after[part] : before[part];
+      final olderBody = replace ? before[part] : after[part];
+      if (newest.$2 != newerBody ||
+          !revisions.any((entry) => entry.$1 < newest.$1 && entry.$2 == olderBody)) {
+        return null;
+      }
+      provedChange = true;
+    }
+    if (!provedChange) return null;
+    return replace
+        ? CloudMessageContentTransition.replace
+        : CloudMessageContentTransition.preserve;
+  }
+
+  // Pure transient comparison: no Message.buildMessageParts(), which consults
+  // global attachment services. Keep formatting, mentions and attachment IDs.
+  // Unsupported multi-body encodings remain conflicts, not guessed rewrites.
+  Map<int, String>? _messagePartSignatures(List<AttributedBody> bodies) {
+    if (bodies.isEmpty) return {};
+    if (bodies.length != 1) return null;
+    final body = bodies.single;
+    if (body.string.isEmpty && body.runs.isEmpty) return {};
+    final runs = body.runs.isEmpty
+        ? [Run(range: [0, body.string.length], attributes: Attributes(messagePart: 0))]
+        : List<Run>.of(body.runs);
+    if (runs.any((run) => run.range.length != 2)) return null;
+    runs.sort((a, b) => a.range.first.compareTo(b.range.first));
+    var offset = 0;
+    final parts = <int, List<Map<String, Object?>>>{};
+    for (final run in runs) {
+      final start = run.range[0];
+      final length = run.range[1];
+      final part = run.attributes?.messagePart ?? 0;
+      if (start != offset || length < 0 || start + length > body.string.length || part < 0) {
+        return null;
+      }
+      offset = start + length;
+      if (length == 0) continue;
+      final attributes = run.attributes?.toMap() ?? <String, dynamic>{};
+      attributes.remove('__kIMMessagePartAttributeName');
+      final segments = parts.putIfAbsent(part, () => []);
+      final text = body.string.substring(start, offset);
+      if (segments.isNotEmpty && jsonEncode(segments.last['attributes']) == jsonEncode(attributes)) {
+        segments.last['text'] = '${segments.last['text']}$text';
+      } else {
+        segments.add({'text': text, 'attributes': attributes});
+      }
+    }
+    if (offset != body.string.length) return null;
+    return parts.map((part, value) => MapEntry(part, jsonEncode(value)));
+  }
+
+  String? _editPartSignature(List<AttributedBody> bodies, int part) {
+    final parts = _messagePartSignatures(bodies);
+    if (parts == null) return null;
+    // Legacy can retain the whole original body; a later edit body may use
+    // internal part zero even when its parent part is nonzero.
+    return parts[part] ?? (parts.length == 1 ? parts.values.single : null);
   }
 
   CloudCanonicalSemanticMutationReceipt _applyMessageUpsert({
@@ -3295,6 +3484,12 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   }
 
   String _editIdentity(String part, EditedContent edit) {
+    final millis = _editTimestampMillis(edit);
+    // Transient comparison only. Never persist or log this plaintext key.
+    return jsonEncode([part, millis, edit.text!.toJson()]);
+  }
+
+  int _editTimestampMillis(EditedContent edit) {
     final date = edit.date;
     const appleEpochMillis = 978307200000;
     const maximumMillis = 253402300799999;
@@ -3322,8 +3517,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         safeCode: 'canonical_message_edit_history_conflict',
       );
     }
-    // Transient comparison only. Never persist or log this plaintext key.
-    return jsonEncode([part, millis, edit.text!.toJson()]);
+    return millis;
   }
 
   void _applyMessageSummary(

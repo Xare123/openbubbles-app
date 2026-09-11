@@ -7,6 +7,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dar
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_semantic_store_gateway.dart';
@@ -7203,6 +7204,10 @@ void main() {
         );
     CloudMessageEntityPayload gatePage({
       String body = currentText,
+      String logicalKey = messageHash,
+      String sender = 'mailto:sender@example.com',
+      DateTime? createdAt,
+      String? subject,
       List<CloudSemanticMessageEdit> edits = const [],
       CloudSemanticFieldState? editsState,
       CloudSemanticFieldState bodiesState = CloudSemanticFieldState.value,
@@ -7212,13 +7217,15 @@ void main() {
       Iterable<int> retractedParts = const [],
     }) =>
         CloudMessageEntityPayload(
-          logicalEntityKeyHash: messageHash,
+          logicalEntityKeyHash: logicalKey,
           canonicalGuid: 'message-guid',
           chatAliasKeyHash: _testChatAliasHash(chatIdentifier),
           chatIdentifier: chatIdentifier,
           body: body,
-          senderHandle: 'mailto:sender@example.com',
-          createdAt: testEpoch,
+          senderHandle: sender,
+          createdAt: createdAt ?? testEpoch,
+          subjectState: subject == null ? CloudSemanticFieldState.absent : CloudSemanticFieldState.value,
+          subject: subject,
           service: CloudSemanticService.iMessage,
           attributedBodiesState: bodiesState,
           attributedBodies:
@@ -7270,6 +7277,203 @@ void main() {
     Message onlyMessage() => store.box<Message>().getAll().single;
     List<EditedContent> onlyHistory(Message message) =>
         message.messageSummaryInfo.single.editedContent['0']!;
+
+    void seedTransition(CloudMessageEntityPayload payload) {
+      seedGateChat();
+      gateAdapter().applyEntity(
+        scope: scope, generation: generation, payload: payload,
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      );
+      seedGateMessage();
+    }
+
+    CloudMessageContentTransition? classify(CloudMessageEntityPayload payload) =>
+        store.runInTransaction(TxMode.read, () => gateAdapter().classifyMessageContentTransition(
+          scope: scope, generation: generation, payload: payload,
+        ));
+
+    test('transition proves full edit lineage after reopen without changing rows', () async {
+      seedTransition(gatePage(body: originalText));
+      await reopenGate();
+      expect(classify(fullPage()), CloudMessageContentTransition.replace);
+      expect(onlyMessage().text, originalText);
+      expect(onlyMessage().messageSummaryInfo, isEmpty);
+      gateAdapter().applyEntity(
+        scope: scope, generation: generation, payload: fullPage(),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      );
+      expect(onlyMessage().buildMessageParts().single.text, currentText);
+    });
+
+    test('transition proves undo-send but rejects unknown retracted parts', () {
+      seedTransition(gatePage(body: originalText));
+      final undone = gatePage(body: '', bodies: [],
+        retractedPartsState: CloudSemanticFieldState.value, retractedParts: [0]);
+      expect(classify(undone), CloudMessageContentTransition.replace);
+      expect(classify(gatePage(body: '', bodies: [],
+        retractedPartsState: CloudSemanticFieldState.value, retractedParts: [9])), isNull);
+      expect(onlyMessage().text, originalText);
+      gateAdapter().applyEntity(
+        scope: scope, generation: generation, payload: undone,
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      );
+      expect(onlyMessage().buildMessageParts().single.isUnsent, isTrue);
+    });
+
+    test('transition refuses changed body without a predecessor or with contradictory fields', () {
+      seedTransition(gatePage(body: originalText));
+      expect(classify(gatePage()), isNull);
+      expect(classify(gatePage(edits: [gateRev(currentText, 1, secondEditAt)])), isNull);
+      expect(classify(gatePage(body: divergentText, bodies: [gateBody(currentText)],
+        edits: fullPage().edits)), isNull);
+      expect(onlyMessage().text, originalText);
+    });
+
+    test('transition rejects changed sender, creation time and subject despite valid edit history', () {
+      seedTransition(gatePage(body: originalText));
+      for (final payload in [
+        gatePage(sender: 'mailto:other@example.com', edits: fullPage().edits),
+        gatePage(createdAt: secondEditAt, edits: fullPage().edits),
+        gatePage(subject: 'different subject', edits: fullPage().edits),
+      ]) {
+        expect(classify(payload), isNull);
+      }
+      expect(store.box<Handle>().count(), 1);
+      expect(onlyMessage().text, originalText);
+    });
+
+    test('transition preserves older known body and refuses equal-time contradictory edits', () {
+      seedTransition(fullPage());
+      expect(classify(gatePage(body: originalText)), CloudMessageContentTransition.preserve);
+      expect(classify(gatePage(body: originalText, edits: [gateRev(originalText, 0, firstEditAt)])),
+        CloudMessageContentTransition.preserve);
+      expect(classify(gatePage(body: newerText, edits: [
+        ...fullPage().edits, gateRev(newerText, 2, secondEditAt),
+      ])), isNull);
+      expect(onlyMessage().text, currentText);
+    });
+
+    test('transition proves multipart edit only when unaffected part is unchanged', () {
+      CloudSemanticAttributedBody multipart(String first, String second) =>
+          CloudSemanticAttributedBody(text: '$first$second', runs: [
+            gateRun(first), gateRun(second, start: first.length, part: 1),
+          ]);
+      seedTransition(gatePage(body: '${originalText}tail',
+        bodies: [multipart(originalText, 'tail')]));
+      expect(classify(gatePage(body: '${currentText}tail',
+        bodies: [multipart(currentText, 'tail')], edits: fullPage().edits)),
+        CloudMessageContentTransition.replace);
+      expect(classify(gatePage(body: '${currentText}forged',
+        bodies: [multipart(currentText, 'forged')], edits: fullPage().edits)), isNull);
+      expect(onlyMessage().text, '${originalText}tail');
+    });
+
+    test('transition rejects uncovered text ranges and ambiguous multi-body encodings', () {
+      seedTransition(gatePage(body: originalText));
+      expect(classify(gatePage(edits: fullPage().edits, bodies: [
+        CloudSemanticAttributedBody(text: currentText, runs: [gateRun(currentText.substring(1), start: 1)]),
+      ])), isNull);
+      expect(classify(gatePage(edits: fullPage().edits,
+        bodies: [gateBody(currentText), gateBody('second representation')])), isNull);
+    });
+
+    test('real inbox merge and ObjectBox commit edit, stale replay and undo after reopen', () async {
+      String digest(String value) => base64UrlEncode(sha256.convert(utf8.encode(value)).bytes).replaceAll('=', '');
+      String hex(String value) => sha256.convert(utf8.encode(value)).toString();
+      String scopedKey(String purpose, String value) =>
+          '$purpose:${hex('${scope.storageKey}\u001f$purpose\u001f$value')}';
+      final logicalKey = digest('real-transition-message');
+      final chatKey = digest('real-transition-chat');
+      final physicalKey = digest('real-transition-record');
+      resolver = _Resolver()
+        ..put(scope: scope, generation: generation, kind: CloudEntityKind.message,
+          logicalEntityKeyHash: logicalKey, canonicalGuid: 'message-guid')
+        ..put(scope: scope, generation: generation, kind: CloudEntityKind.chat,
+          logicalEntityKeyHash: chatKey, canonicalGuid: 'chat-guid');
+      final chatId = store.box<Chat>().put(Chat(guid: 'chat-guid',
+        chatIdentifier: chatIdentifier, style: 45));
+      _seedChatOwnershipAndAlias(store, scope: scope, generation: generation,
+        logicalEntityKeyHash: chatKey, canonicalGuid: 'chat-guid',
+        chatIdentifier: chatIdentifier, chatId: chatId);
+      _seedCheckpoint(store, scope: scope, generation: generation);
+      const fence = CloudCoordinatorLeaseFence(ownerId: 'real-transition-owner', generation: generation);
+      store.box<CloudSyncLeaseEntity>().put(CloudSyncLeaseEntity(
+        leaseKey: scopedKey('coordinator-lease', 'v1'),
+        scopeKey: _semanticScopeKey(scope), accountFingerprint: scope.accountFingerprint,
+        ownerIdHash: hex('coordinator-owner\u001f${fence.ownerId}'), generation: generation,
+        acquiredAtMs: testEpoch.subtract(const Duration(seconds: 1)).millisecondsSinceEpoch,
+        expiresAtMs: testEpoch.add(const Duration(minutes: 10)).millisecondsSinceEpoch,
+      ));
+
+      Future<CloudInboxApplyResult> applyPage(int sequence, CloudMessageEntityPayload payload,
+          String content, {Map<String, CloudEditPart> edits = const {}}) async {
+        final change = CloudFetchedChange(
+          changeId: digest('real-change-$sequence'), recordIdHash: physicalKey,
+          etagHash: digest('real-etag-$sequence'), type: CloudChangeType.save,
+          encryptedServerRecordId: _protectedReference('real-server'),
+          protectedSystemFieldsReference: _protectedReference('real-fields-$sequence'),
+          encryptedPayloadReference: _protectedReference('real-payload-$sequence'),
+          payloadSha256: hex('real-payload-$sequence'),
+        );
+        final entry = CloudInboxEntry(scope: scope, sequence: sequence, change: change,
+          status: CloudInboxStatus.pending, attemptCount: 0, createdAt: testEpoch,
+          batchId: 'real-batch-$sequence', generation: generation);
+        final checkpoints = store.box<CloudSyncCheckpointEntity>();
+        final checkpoint = checkpoints.getAll().single
+          ..lastBatchId = entry.batchId ..fetchedSequence = sequence;
+        checkpoints.put(checkpoint);
+        store.box<CloudInboxChangeEntity>().put(CloudInboxChangeEntity(
+          changeKey: scopedKey('change', change.changeId), changeIdHash: change.changeId,
+          scopeKey: _semanticScopeKey(scope), accountFingerprint: scope.accountFingerprint,
+          zone: scope.zone, serverRecordIdHash: physicalKey, etagHash: change.etagHash,
+          changeType: change.type.name, encryptedServerRecordId: change.encryptedServerRecordId,
+          protectedSystemFieldsRef: change.protectedSystemFieldsReference,
+          encryptedPayloadRef: change.encryptedPayloadReference, payloadSha256: change.payloadSha256,
+          batchId: entry.batchId, generation: generation, fetchSequence: sequence,
+          status: CloudInboxStatus.pending.index, isTombstone: false,
+          createdAtMs: testEpoch.millisecondsSinceEpoch, updatedAtMs: testEpoch.millisecondsSinceEpoch,
+        ));
+        final snapshot = CloudSemanticSnapshot(kind: CloudEntityKind.message,
+          logicalEntityKeyHash: logicalKey, immutableContentDigest: digest(content),
+          createdAt: testEpoch, editParts: edits, etagHash: change.etagHash,
+          encryptedRawRecordReference: change.encryptedPayloadReference);
+        final applier = TransactionalCloudInboxApplier(
+          decoder: _TransitionDecoder(CloudDecodedMutation.upsert(scope: scope,
+            generation: generation, changeId: change.changeId, snapshot: snapshot, payload: payload)),
+          store: ObjectBoxCloudSemanticStoreGateway(store: store,
+            canonicalAdapter: gateAdapter(), clock: () => testEpoch),
+        );
+        return applier.apply(entry, leaseFence: fence);
+      }
+
+      expect((await applyPage(1, gatePage(logicalKey: logicalKey, body: originalText), 'original')).disposition,
+        CloudInboxApplyDisposition.applied);
+      await reopenGate();
+      expect((await applyPage(2, gatePage(logicalKey: logicalKey, body: divergentText,
+        edits: [gateRev(divergentText, 1, secondEditAt)]), 'forged')).disposition,
+        CloudInboxApplyDisposition.quarantined);
+      expect(onlyMessage().text, originalText);
+      final editedParts = {digest('part-0'): CloudEditPart(partKeyHash: digest('part-0'),
+        revision: 1, contentDigest: digest(currentText), modifiedAt: secondEditAt)};
+      expect((await applyPage(3, gatePage(logicalKey: logicalKey, edits: fullPage().edits),
+        'edited', edits: editedParts)).disposition, CloudInboxApplyDisposition.applied);
+      expect(onlyMessage().buildMessageParts().single.text, currentText);
+      expect((await applyPage(4, gatePage(logicalKey: logicalKey, body: originalText),
+        'original')).disposition, CloudInboxApplyDisposition.applied);
+      expect(onlyMessage().buildMessageParts().single.text, currentText);
+      await reopenGate();
+      expect((await applyPage(5, gatePage(logicalKey: logicalKey, body: '', bodies: [],
+        retractedPartsState: CloudSemanticFieldState.value, retractedParts: [0]), 'undone')).disposition,
+        CloudInboxApplyDisposition.applied);
+      expect(onlyMessage().buildMessageParts().single.isUnsent, isTrue);
+      expect(store.box<CloudSemanticReplayEntity>().count(), 5);
+      expect(store.box<CloudInboxChangeEntity>().getAll().where(
+        (row) => row.status == CloudInboxStatus.applied.index), hasLength(4));
+      expect(store.box<CloudInboxChangeEntity>().getAll().where(
+        (row) => row.status == CloudInboxStatus.quarantined.index), hasLength(1));
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(store.box<Message>().count(), 1);
+    });
 
     test('absent and explicitClear edit states preserve newer text and history', () async {
       var adapter = gateAdapter();
@@ -7987,6 +8191,13 @@ String _semanticScopeGenerationKey(CloudSyncScope scope, int generation) =>
 
 String _protectedReference(String value) =>
     'obcs2.ref.${base64Url.encode(sha256.convert(utf8.encode(value)).bytes).replaceAll('=', '')}';
+
+final class _TransitionDecoder implements CloudSemanticDecoder {
+  _TransitionDecoder(this.mutation);
+  final CloudDecodedMutation mutation;
+  @override
+  Future<CloudDecodedMutation> decode(CloudInboxEntry entry) async => mutation;
+}
 
 final class _Resolver implements CloudCanonicalIdentityResolver {
   final Map<String, String> _values = {};

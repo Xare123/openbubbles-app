@@ -278,6 +278,140 @@ void main() {
     );
   });
 
+  const ordinaryKnownFlags = CloudSemanticKnownMessageFlags(
+    fromMe: false,
+    delivered: true,
+    read: false,
+    hasDataDetectorResults: false,
+    deliveredQuietly: false,
+    didNotifyRecipient: true,
+  );
+
+  CloudSemanticAttributedBody plainBody(String text) =>
+      CloudSemanticAttributedBody(text: text, runs: const []);
+
+  // These exercise orchestration only. The opt-in fake proof is not a
+  // substitute for real gateway and canonical-adapter proof tests.
+  test('proved edited body with changed digest and edit history applies',
+      () async {
+    final inbox = entry(1);
+    store.transaction.contentTransition = CloudMessageContentTransition.replace;
+    store.transaction.put(message(content: 'content-original'));
+    final editedPayload = CloudMessageEntityPayload(
+      logicalEntityKeyHash: 'message-key',
+      canonicalGuid: 'message-guid',
+      chatAliasKeyHash: 'chat-key',
+      chatIdentifier: 'iMessage;-;chat',
+      body: 'edited body',
+      senderHandle: 'sender@example.invalid',
+      createdAt: epoch,
+      service: CloudSemanticService.iMessage,
+      knownFlags: ordinaryKnownFlags,
+      attributedBodiesState: CloudSemanticFieldState.value,
+      attributedBodies: [
+        CloudSemanticAttributedBody(
+          text: 'edited body',
+          runs: [
+            CloudSemanticTextRun(
+              startUtf16: 0,
+              lengthUtf16: 11,
+              messagePart: 0,
+              attachmentCanonicalGuid: null,
+              attachmentLogicalKeyHash: null,
+              mentionHandle: null,
+              audioTranscript: null,
+              textEffect: null,
+              bold: null,
+              italic: null,
+              strikethrough: null,
+              underline: null,
+            ),
+          ],
+        ),
+      ],
+      editsState: CloudSemanticFieldState.value,
+      edits: [
+        CloudSemanticMessageEdit(
+          part: 0,
+          revision: 0,
+          bodies: [plainBody('original body')],
+          modifiedAt: epoch,
+          originalRangeLocation: null,
+          originalRangeLength: null,
+        ),
+        CloudSemanticMessageEdit(
+          part: 0,
+          revision: 1,
+          bodies: [plainBody('edited body')],
+          modifiedAt: epoch.add(const Duration(minutes: 1)),
+          originalRangeLocation: null,
+          originalRangeLength: null,
+        ),
+      ],
+    );
+    decodeUpsert(
+      inbox,
+      message(
+        content: 'content-edited',
+        etag: 'etag-b',
+        edits: {
+          'part-0': CloudEditPart(
+            partKeyHash: 'part-0',
+            revision: 1,
+            contentDigest: 'edit-digest',
+            modifiedAt: epoch.add(const Duration(minutes: 1)),
+          ),
+        },
+      ),
+      payload: editedPayload,
+    );
+
+    final result = await _apply(applier, inbox);
+
+    expect(result.disposition, CloudInboxApplyDisposition.applied);
+    final merged = store.transaction.snapshot('message-key')!;
+    expect(merged.immutableContentDigest, 'content-edited');
+    expect(merged.editParts['part-0']!.contentDigest, 'edit-digest');
+    expect(store.transaction.appliedPayloads, contains(editedPayload));
+    expect(store.transaction.quarantines, isEmpty);
+  });
+
+  test('proved unsent body with changed digest and retraction applies',
+      () async {
+    final inbox = entry(1);
+    store.transaction.contentTransition = CloudMessageContentTransition.replace;
+    store.transaction.put(message(content: 'content-original'));
+    final unsendPayload = CloudMessageEntityPayload(
+      logicalEntityKeyHash: 'message-key',
+      canonicalGuid: 'message-guid',
+      chatAliasKeyHash: 'chat-key',
+      chatIdentifier: 'iMessage;-;chat',
+      body: '',
+      senderHandle: 'sender@example.invalid',
+      createdAt: epoch,
+      service: CloudSemanticService.iMessage,
+      knownFlags: ordinaryKnownFlags,
+      retractedPartsState: CloudSemanticFieldState.value,
+      retractedParts: const [0],
+    );
+    decodeUpsert(
+      inbox,
+      // Native converter passes None for retractedAt: the unsend signal
+      // travels in payload retractedParts, with no edit history for part 0.
+      message(content: 'content-unsent', etag: 'etag-b'),
+      payload: unsendPayload,
+    );
+
+    final result = await _apply(applier, inbox);
+
+    expect(result.disposition, CloudInboxApplyDisposition.applied);
+    final merged = store.transaction.snapshot('message-key')!;
+    expect(merged.immutableContentDigest, 'content-unsent');
+    expect(merged.retractedAt, isNull);
+    expect(store.transaction.appliedPayloads, contains(unsendPayload));
+    expect(store.transaction.quarantines, isEmpty);
+  });
+
   test('retractions and delivered/read timestamps remain monotonic', () async {
     final inbox = entry(1);
     store.transaction.put(
@@ -2042,7 +2176,7 @@ class _MemorySemanticStore
   }
 }
 
-class _MemoryTransaction implements CloudSemanticStoreTransaction {
+class _MemoryTransaction implements CloudSemanticStoreTransaction, CloudMessageContentTransitionTransaction {
   _MemoryTransaction(this.activeScope, this._activeGeneration);
 
   @override
@@ -2057,6 +2191,14 @@ class _MemoryTransaction implements CloudSemanticStoreTransaction {
   final boundLogicalEntityKeyHashes = <String>[];
   final existingEntities = <(CloudEntityKind, String)>{};
   int entityApplyCount = 0;
+  CloudMessageContentTransition? contentTransition;
+
+  @override
+  CloudMessageContentTransition? classifyMessageContentTransition({
+    required CloudMessageEntityPayload payload,
+    required CloudSemanticSnapshot local,
+    required CloudSemanticSnapshot incoming,
+  }) => contentTransition;
 
   @override
   int get activeGeneration => activeGenerationOverride ?? _activeGeneration;

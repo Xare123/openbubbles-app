@@ -4739,6 +4739,151 @@ void main() {
       );
     },
   );
+
+  test('message content transition forwards replace on a proved edit',
+      () async {
+    final fixture = await _seedMessageEditProof(
+      store: objectBox,
+      scope: scope,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final before = _durableSyncControlFingerprint(objectBox);
+    expect(
+      await _classifyMessageEdit(fixture, leaseFence),
+      CloudMessageContentTransition.replace,
+    );
+    expect(fixture.proof.proofCalls, 1);
+    expect(_durableSyncControlFingerprint(objectBox), before);
+  });
+
+  test('message content transition stays null without a prior receipt',
+      () async {
+    final fixture = await _seedMessageEditProof(
+      store: objectBox,
+      scope: scope,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    objectBox.box<CloudSemanticReplayEntity>().removeAll();
+    final before = _durableSyncControlFingerprint(objectBox);
+    expect(await _classifyMessageEdit(fixture, leaseFence), isNull);
+    expect(fixture.proof.proofCalls, 0);
+    expect(_durableSyncControlFingerprint(objectBox), before);
+  });
+
+  test('message content transition stays null on a forged payload receipt',
+      () async {
+    final fixture = await _seedMessageEditProof(
+      store: objectBox,
+      scope: scope,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final replayBox = objectBox.box<CloudSemanticReplayEntity>();
+    final replay = replayBox.getAll().single
+      ..payloadSha256 = _sha256('msg-edit-forged-payload');
+    replayBox.put(replay);
+    final before = _durableSyncControlFingerprint(objectBox);
+    expect(await _classifyMessageEdit(fixture, leaseFence), isNull);
+    expect(fixture.proof.proofCalls, 0);
+    expect(_durableSyncControlFingerprint(objectBox), before);
+  });
+
+  test('message content transition stays null on a stale same-record replay',
+      () async {
+    final fixture = await _seedMessageEditProof(
+      store: objectBox,
+      scope: scope,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final replayBox = objectBox.box<CloudSemanticReplayEntity>();
+    final replay = replayBox.getAll().single
+      ..inboxSequence = fixture.second.sequence;
+    replayBox.put(replay);
+    final before = _durableSyncControlFingerprint(objectBox);
+    expect(await _classifyMessageEdit(fixture, leaseFence), isNull);
+    expect(fixture.proof.proofCalls, 0);
+    expect(_durableSyncControlFingerprint(objectBox), before);
+  });
+
+  test('message content transition stays null without an ETag rotation',
+      () async {
+    final fixture = await _seedMessageEditProof(
+      store: objectBox,
+      scope: scope,
+      leaseFence: leaseFence,
+      now: now,
+      sameEtag: true,
+    );
+    final before = _durableSyncControlFingerprint(objectBox);
+    expect(await _classifyMessageEdit(fixture, leaseFence), isNull);
+    expect(fixture.proof.proofCalls, 0);
+    expect(_durableSyncControlFingerprint(objectBox), before);
+  });
+
+  test('message content transition stays null on a different record',
+      () async {
+    final fixture = await _seedMessageEditProof(
+      store: objectBox,
+      scope: scope,
+      leaseFence: leaseFence,
+      now: now,
+      secondRecordIdHash: _indexedDigest('msg-edit-record-other'),
+    );
+    final before = _durableSyncControlFingerprint(objectBox);
+    expect(await _classifyMessageEdit(fixture, leaseFence), isNull);
+    expect(fixture.proof.proofCalls, 0);
+    expect(_durableSyncControlFingerprint(objectBox), before);
+  });
+
+  test('message content transition stays null on a passed-local mismatch',
+      () async {
+    final fixture = await _seedMessageEditProof(
+      store: objectBox,
+      scope: scope,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final before = _durableSyncControlFingerprint(objectBox);
+    expect(
+      await _classifyMessageEdit(
+        fixture,
+        leaseFence,
+        localOverride: fixture.local.copyWith(
+          immutableContentDigest: _digestValue('Z'),
+        ),
+      ),
+      isNull,
+    );
+    expect(fixture.proof.proofCalls, 0);
+    expect(_durableSyncControlFingerprint(objectBox), before);
+  });
+
+  test('message content transition stays null on a forged old reference',
+      () async {
+    final fixture = await _seedMessageEditProof(
+      store: objectBox,
+      scope: scope,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final before = _durableSyncControlFingerprint(objectBox);
+    expect(
+      await _classifyMessageEdit(
+        fixture,
+        leaseFence,
+        localOverride: fixture.local.copyWith(
+          encryptedRawRecordReference:
+              _indexedProtectedReference('msg-edit-ref-forged'),
+        ),
+      ),
+      isNull,
+    );
+    expect(fixture.proof.proofCalls, 0);
+    expect(_durableSyncControlFingerprint(objectBox), before);
+  });
 }
 
 CloudSyncScope _scope({
@@ -5493,6 +5638,251 @@ final class _FixedDecoder implements CloudSemanticDecoder {
 
   @override
   Future<CloudDecodedMutation> decode(CloudInboxEntry entry) async => _mutation;
+}
+
+// Fake content-transition proof adapter for the gateway tests below. Parent
+// coverage owns the real canonical adapter; this fake only counts proof
+// delegation and returns a canned decision without touching real adapter
+// behavior.
+final class _MessageContentTransitionFakeProofAdapter
+    implements
+        CloudCanonicalSemanticEntityAdapter,
+        CloudMessageContentTransitionProofAdapter {
+  _MessageContentTransitionFakeProofAdapter(this._inner);
+
+  final _ObjectBoxTestCanonicalAdapter _inner;
+  int proofCalls = 0;
+  CloudMessageContentTransition? proofResult =
+      CloudMessageContentTransition.replace;
+
+  @override
+  Store get store => _inner.store;
+
+  @override
+  bool isActiveAccountScope({
+    required CloudSyncScope scope,
+    required int generation,
+  }) =>
+      _inner.isActiveAccountScope(scope: scope, generation: generation);
+
+  @override
+  bool entityExists({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+  }) =>
+      _inner.entityExists(
+        scope: scope,
+        generation: generation,
+        kind: kind,
+        logicalEntityKeyHash: logicalEntityKeyHash,
+      );
+
+  @override
+  void validateOwnershipEvidence({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+  }) =>
+      _inner.validateOwnershipEvidence(
+        scope: scope,
+        generation: generation,
+        kind: kind,
+        logicalEntityKeyHash: logicalEntityKeyHash,
+      );
+
+  @override
+  CloudCanonicalSemanticMutationReceipt applyEntity({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) =>
+      _inner.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: payload,
+        snapshot: snapshot,
+      );
+
+  @override
+  CloudCanonicalSemanticMutationReceipt applyTombstone({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticTombstone tombstone,
+  }) =>
+      _inner.applyTombstone(
+        scope: scope,
+        generation: generation,
+        tombstone: tombstone,
+      );
+
+  @override
+  CloudMessageContentTransition? classifyMessageContentTransition({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudMessageEntityPayload payload,
+  }) {
+    proofCalls++;
+    return proofResult;
+  }
+}
+
+final class _MessageEditProofFixture {
+  const _MessageEditProofFixture({
+    required this.proof,
+    required this.gateway,
+    required this.first,
+    required this.second,
+    required this.payload,
+    required this.local,
+    required this.incoming,
+  });
+
+  final _MessageContentTransitionFakeProofAdapter proof;
+  final ObjectBoxCloudSemanticStoreGateway gateway;
+  final CloudInboxEntry first;
+  final CloudInboxEntry second;
+  final CloudMessageEntityPayload payload;
+  final CloudSemanticSnapshot local;
+  final CloudSemanticSnapshot incoming;
+}
+
+Future<_MessageEditProofFixture> _seedMessageEditProof({
+  required Store store,
+  required CloudSyncScope scope,
+  required CloudCoordinatorLeaseFence leaseFence,
+  required DateTime now,
+  bool sameEtag = false,
+  String? secondRecordIdHash,
+  String? secondDigest,
+}) async {
+  final inner = _ObjectBoxTestCanonicalAdapter(store)
+    ..activeScope = scope
+    ..activeGeneration = leaseFence.generation;
+  final proof = _MessageContentTransitionFakeProofAdapter(inner);
+  final gateway = ObjectBoxCloudSemanticStoreGateway(
+    store: store,
+    canonicalAdapter: proof,
+    clock: () => now,
+  );
+  final logicalKey = _digestValue('L');
+  final recordId = _indexedDigest('msg-edit-record');
+  final oldEtag = _indexedDigest('msg-edit-etag-old');
+  final oldRef = _indexedProtectedReference('msg-edit-ref-old');
+  final newEtag = sameEtag ? oldEtag : _indexedDigest('msg-edit-etag-new');
+  final newRef =
+      sameEtag ? oldRef : _indexedProtectedReference('msg-edit-ref-new');
+  final createdAt = DateTime.utc(2026, 7, 31, 10);
+  final first = _entry(
+    scope: scope,
+    sequence: 1,
+    changeId: _indexedDigest('msg-edit-change-1'),
+    recordIdHash: recordId,
+    etagHash: oldEtag,
+    payloadSha256: _sha256('msg-edit-payload-1'),
+    encryptedPayloadReference: oldRef,
+  );
+  _seedDurableFence(store, entry: first, leaseFence: leaseFence, now: now);
+  final payload = CloudMessageEntityPayload(
+    logicalEntityKeyHash: logicalKey,
+    canonicalGuid: 'msg-edit-guid',
+    chatAliasKeyHash: _digestValue('H'),
+    chatIdentifier: 'iMessage;-;msg-edit-chat',
+    body: 'edited body',
+    senderHandle: 'mailto:editor@example.com',
+    createdAt: createdAt,
+  );
+  final local = CloudSemanticSnapshot(
+    kind: CloudEntityKind.message,
+    logicalEntityKeyHash: logicalKey,
+    immutableContentDigest: _digestValue('I'),
+    createdAt: createdAt,
+    etagHash: oldEtag,
+    encryptedRawRecordReference: oldRef,
+  );
+  await gateway.writeTransaction<void>(
+    entry: first,
+    leaseFence: leaseFence,
+    action: (transaction) {
+      transaction.applyEntity(payload: payload, snapshot: local);
+      transaction.markChangeApplied(first.change.changeId);
+    },
+  );
+  final second = _entry(
+    scope: scope,
+    sequence: 2,
+    changeId: _indexedDigest('msg-edit-change-2'),
+    recordIdHash: secondRecordIdHash ?? recordId,
+    etagHash: newEtag,
+    payloadSha256: _sha256('msg-edit-payload-2'),
+    encryptedPayloadReference: newRef,
+  );
+  store.runInTransaction(TxMode.write, () {
+    final checkpoints = store.box<CloudSyncCheckpointEntity>();
+    final checkpoint = checkpoints.getAll().single
+      ..lastBatchId = second.batchId
+      ..fetchedSequence = second.sequence
+      ..updatedAtMs = now.millisecondsSinceEpoch;
+    checkpoints.put(checkpoint);
+    _putPendingInboxEntry(store, entry: second, now: now);
+  });
+  final incoming = CloudSemanticSnapshot(
+    kind: CloudEntityKind.message,
+    logicalEntityKeyHash: logicalKey,
+    immutableContentDigest: secondDigest ?? _digestValue('J'),
+    createdAt: createdAt,
+    etagHash: second.change.etagHash,
+    encryptedRawRecordReference: second.change.encryptedPayloadReference,
+  );
+  return _MessageEditProofFixture(
+    proof: proof,
+    gateway: gateway,
+    first: first,
+    second: second,
+    payload: payload,
+    local: local,
+    incoming: incoming,
+  );
+}
+
+/// Deliberate rollback carrying a read-only proof result out of a write
+/// transaction. Gateway contracts are unchanged: the sentinel is test-side
+/// only, so proof capture never needs a terminal outcome and never persists.
+final class _ProofCaptureRollback {
+  const _ProofCaptureRollback();
+}
+
+Future<CloudMessageContentTransition?> _classifyMessageEdit(
+  _MessageEditProofFixture fixture,
+  CloudCoordinatorLeaseFence leaseFence,
+  {CloudSemanticSnapshot? localOverride,
+  CloudSemanticSnapshot? incomingOverride}
+) async {
+  CloudMessageContentTransition? captured;
+  var proofReturned = false;
+  await expectLater(
+    fixture.gateway.writeTransaction<void>(
+      entry: fixture.second,
+      leaseFence: leaseFence,
+      action: (transaction) {
+        captured =
+            (transaction as CloudMessageContentTransitionTransaction)
+                .classifyMessageContentTransition(
+          payload: fixture.payload,
+          local: localOverride ?? fixture.local,
+          incoming: incomingOverride ?? fixture.incoming,
+        );
+        proofReturned = true;
+        throw const _ProofCaptureRollback();
+      },
+    ),
+    throwsA(_failureCode('semantic_canonical_write_failed')),
+  );
+  expect(proofReturned, isTrue, reason: 'the classifier must return before the deliberate rollback');
+  return captured;
 }
 
 final class _ObjectBoxTestCanonicalAdapter
