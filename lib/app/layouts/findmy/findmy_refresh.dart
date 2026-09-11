@@ -1,5 +1,49 @@
 import 'dart:async';
 
+enum _FindMyRefreshLane { people, devices, items }
+
+/// One operation per lane, including projection/geocoding. Polls while a lane
+/// is busy coalesce into that work without queuing or waiting on it again.
+/// Explicit People selections keep their existing separate FIFO.
+class FindMyRefreshScheduler {
+  final _busy = <_FindMyRefreshLane>{};
+  bool _disposed = false;
+
+  bool get allBusy => _busy.length == _FindMyRefreshLane.values.length;
+
+  Future<void> refresh({
+    required Future<void> Function() people,
+    required Future<void> Function() devices,
+    required Future<void> Function() items,
+  }) async {
+    await Future.wait([
+      _run(_FindMyRefreshLane.people, people),
+      _run(_FindMyRefreshLane.devices, devices),
+      refreshItems(items),
+    ]);
+  }
+
+  /// The Items-only retry button must share the same slot as periodic polls.
+  Future<void> refreshItems(Future<void> Function() items) =>
+      _run(_FindMyRefreshLane.items, items);
+
+  Future<void> _run(
+    _FindMyRefreshLane lane,
+    Future<void> Function() operation,
+  ) async {
+    if (_disposed || !_busy.add(lane)) return;
+    try {
+      await operation();
+    } finally {
+      _busy.remove(lane);
+    }
+  }
+
+  // Do not release busy slots or pretend to cancel an outstanding native call.
+  // Page/state liveness checks suppress its late publication and follow-up work.
+  void dispose() => _disposed = true;
+}
+
 /// Per-section last-good data and retry state. A failed service cannot invalidate
 /// another section or make a failed refresh look fresh.
 class FindMyRefreshState<T> {

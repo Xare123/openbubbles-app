@@ -138,7 +138,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   bool isInClique = true;
   final Set<String> soundingDevices = {};
   bool nearbyAccessoryBusy = false;
-  bool locationsRequestInFlight = false;
+  final _cloudRefresh = FindMyRefreshScheduler();
   bool currentLocationRequestInFlight = false;
   final _peopleRefresh = FindMyPeopleRefreshState<api.Follow, FindMyFriend>([]);
   final _peopleSelection = FindMySelectionIntent();
@@ -418,14 +418,11 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     bool refreshDevices = true,
     bool userInitiated = false,
   }) async {
-    if (locationsRequestInFlight) return;
-
-    locationsRequestInFlight = true;
+    if (!mounted) return;
     unawaited(refreshCurrentLocation(refreshFriends: refreshFriends));
     try {
       await getCloudLocations(refreshFriends: refreshFriends, refreshDevices: refreshDevices, force: userInitiated);
     } finally {
-      locationsRequestInFlight = false;
       if (mounted && !canRefresh) setState(() => canRefresh = true);
     }
   }
@@ -474,11 +471,11 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   }
 
   Future<void> getCloudLocations({bool refreshFriends = true, bool refreshDevices = true, bool force = false}) async {
-    await Future.wait([
-      refreshPeople(refreshFriends: refreshFriends, force: force),
-      refreshCloudDevices(refreshDevices: refreshDevices, force: force),
-      refreshItems(force: force),
-    ]);
+    await _cloudRefresh.refresh(
+      people: () => refreshPeople(refreshFriends: refreshFriends, force: force),
+      devices: () => refreshCloudDevices(refreshDevices: refreshDevices, force: force),
+      items: () => refreshItems(force: force),
+    );
   }
 
   Future<void> refreshPeople({required bool refreshFriends, required bool force}) async {
@@ -586,6 +583,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       buildFriendMarker(e);
     }
     setState(() {
+      canRefresh = true;
       fetching2 = _peopleRefresh.error == null ? false : null;
       refreshing2 = false;
     });
@@ -601,14 +599,20 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         anisette: pushService.state!.anisette,
         provider: pushService.state!.icloudServices!.tokenProvider,
       );
+      if (!mounted) return <FindMyDevice>[];
       if (refreshDevices && !isNewi) {
-        await withFmipLock(() => api.refreshDevices(
-              config: pushService.state!.osConfig,
-              client: fmipClient!,
-            ));
+        await withFmipLock(() async {
+          if (!mounted) return <api.FoundDevice>[];
+          return api.refreshDevices(
+            config: pushService.state!.osConfig,
+            client: fmipClient!,
+          );
+        });
       }
 
+      if (!mounted) return <FindMyDevice>[];
       var following = await api.getDevices(client: fmipClient!);
+      if (!mounted) return <FindMyDevice>[];
     
       return following
           .map((e) => 
@@ -676,7 +680,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
             )
           )
           .toList().cast<FindMyDevice>();
-    }, force: force);
+    }, force: force, isActive: () => mounted);
     if (!mounted) return;
     publishDevicesAndItems();
   }
@@ -684,22 +688,26 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   Future<void> refreshItems({required bool force}) async {
     final updated = await _itemsRefresh.refresh(() async {
       try {
-        isInClique = await api.isInClique(keychain: pushService.state!.icloudServices!.keychain!);
+        final inClique = await api.isInClique(keychain: pushService.state!.icloudServices!.keychain!);
+        if (!mounted) return <api.DartBeacon>[];
+        isInClique = inClique;
         if (!isInClique) throw StateError("Find My Items keychain unavailable");
         final beacons = await api.getBeaconItems(items: pushService.state!.icloudServices!.fmfd!);
+        if (!mounted) return <api.DartBeacon>[];
         _findMyDiagnostics.items(
           stage: FindMyItemsStage.beacons, outcome: FindMyItemsOutcome.succeeded,
           beacons: () => beacons.length, emit: (message) => Logger.info(message),
         );
         return beacons;
       } catch (_) {
+        if (!mounted) rethrow;
         _findMyDiagnostics.items(
           stage: FindMyItemsStage.beacons, outcome: FindMyItemsOutcome.failed,
           emit: (message) => Logger.info(message),
         );
         rethrow;
       }
-    }, force: force, maxAge: const Duration(minutes: 3));
+    }, force: force, maxAge: const Duration(minutes: 3), isActive: () => mounted);
     if (!mounted) return;
     publishDevicesAndItems();
     if (updated) {
@@ -708,6 +716,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           if (cached.lastReport == null) continue;
           try {
             var placemark = await pushService.reverseGeocode(cached.lastReport!.lat, cached.lastReport!.long);
+            if (!mounted) return;
             if (placemark != null) {
               cachedAddresses[(cached.lastReport!.lat, cached.lastReport!.long)] = Address(
                 subAdministrativeArea: placemark.subAdministrativeArea,
@@ -861,6 +870,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         }
       setState(() {
         fetching = _devicesRefresh.error != null ? null : _devicesRefresh.lastSuccessAt == null;
+        canRefresh = true;
         refreshing = _devicesRefresh.loading || _itemsRefresh.loading;
       });
       _findMyDiagnostics.items(
@@ -977,6 +987,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
 
   @override
   void dispose() {
+    _cloudRefresh.dispose();
     locationSub?.cancel();
     mapController.dispose();
     popupController.dispose();
@@ -1037,7 +1048,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                     if (fetching == true) buildProgressIndicator(context, size: 15),
                     if (fetching == null)
                       TextButton.icon(
-                        onPressed: locationsRequestInFlight ? null : () => getLocations(userInitiated: true),
+                        onPressed: _cloudRefresh.allBusy ? null : () => getLocations(userInitiated: true),
                         icon: const Icon(Icons.refresh),
                         label: const Text("Retry Cloud Find My"),
                       ),
@@ -1132,7 +1143,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
               child: Column(children: [
                 Text("Items: ${findMyCloudFailureMessage(_itemsRefresh.error!)} Last known data is retained."),
                 TextButton.icon(
-                  onPressed: _itemsRefresh.loading ? null : () => refreshItems(force: true),
+                  onPressed: _itemsRefresh.loading ? null : () => _cloudRefresh.refreshItems(() => refreshItems(force: true)),
                   icon: const Icon(Icons.refresh),
                   label: const Text("Retry Items"),
                 ),
@@ -1623,7 +1634,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                             ),
                             child: Container(
                               width: 48,
-                              child: refreshing || refreshing2
+                              child: _cloudRefresh.allBusy
                                   ? buildProgressIndicator(context)
                                   : IconButton(
                                       iconSize: 22,
@@ -1981,7 +1992,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                   ),
                   child: Container(
                     width: 48,
-                    child: refreshing || refreshing2
+                    child: _cloudRefresh.allBusy
                         ? buildProgressIndicator(context)
                         : IconButton(
                             iconSize: 22,
@@ -2054,7 +2065,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           child: Container(
             width: 48,
             margin: const EdgeInsets.only(right: 8),
-            child: refreshing || refreshing2
+            child: _cloudRefresh.allBusy
                 ? buildProgressIndicator(context)
                 : IconButton(
                     iconSize: 22,

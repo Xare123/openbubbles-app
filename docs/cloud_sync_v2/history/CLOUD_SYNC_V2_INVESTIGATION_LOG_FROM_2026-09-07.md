@@ -2375,3 +2375,14 @@ This is a chronological evidence log. It does not override the
   without renderable content by its heuristic. These retained-data counters
   are investigation inputs, not new downloads or an end-to-end completeness
   claim. Source hash remained unchanged after this read-only copy inspection.
+
+- Astra's bounded Find My sidecar confirmed People endpoint/auth/model/ID joins
+  match upstream. No initial-null fix is claimed. It identified a real coupling:
+  Items waits on the protected writer gate, while an aggregate UI in-flight bit
+  suppressed later People/Devices polls until Items completed. Parent reviewed
+  the independent single-flight scheduler and disposal guards. Busy lanes skip
+  polls without building a queue; the Items-only retry shares that same slot.
+  The protected writer gate and required native alignment writes are unchanged.
+  Agent reported 82 focused and 23 diagnostics-enabled tests passed, including
+  a 100-poll stalled-Items case. This prevents cross-section refresh starvation,
+  not a missing native People location. No live Find My call was made.
