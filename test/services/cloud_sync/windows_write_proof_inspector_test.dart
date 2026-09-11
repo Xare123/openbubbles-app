@@ -174,6 +174,12 @@ void main() {
         'parent_readback_marker_matches_admission': true,
         'parent_confirmed_receipt_released': true,
         'parent_save_attempt_count': 0,
+        'written_record_ingestion': {
+          'count': 0,
+          'statuses': <int>[],
+          'tombstones': 0,
+          'latest_created_at_ms': null,
+        },
         'persisted_readback_proven': false,
       });
       final pending = store.box<CloudOutboxOperationEntity>().getAll().single;
@@ -198,6 +204,47 @@ void main() {
       expect(absentReport['persisted_readback_proven'], isFalse);
     },
   );
+  test('ingestion diagnostics bind the exact account, scope, zone and record', () {
+    final operation = CloudOutboxOperationEntity(
+      operationId: 'operation', scopeKey: 'scope', accountFingerprint: 'A' * 43,
+      zone: 'messageManateeZone', logicalEntityKeyHash: 'C' * 43,
+      action: 0, mutationRevision: 1, serverRecordIdHash: 'D' * 43,
+      createdAtMs: 1, updatedAtMs: 2,
+    );
+    for (var index = 0; index < 6; index++) {
+      store.box<CloudInboxChangeEntity>().put(CloudInboxChangeEntity(
+        changeKey: 'change-$index', changeIdHash: 'change-$index',
+        scopeKey: index == 2 ? 'other' : 'scope',
+        accountFingerprint: (index == 1 ? 'B' : 'A') * 43,
+        zone: index == 3 ? 'attachmentManateeZone' : 'messageManateeZone',
+        serverRecordIdHash: (index == 4 ? 'E' : 'D') * 43,
+        changeType: index == 5 ? 'deleted' : 'modified',
+        batchId: 'batch', fetchSequence: index, status: 1,
+        isTombstone: index == 5, createdAtMs: 10 + index, updatedAtMs: 20,
+      ));
+    }
+    expect(readWrittenRecordIngestionDiagnostic(store, operation), {
+      'written_record_ingestion': {
+        'count': 2, 'statuses': [1, 1], 'tombstones': 1,
+        'latest_created_at_ms': 15,
+      },
+    });
+    expect(readWrittenRecordIngestionDiagnostic(store, null), {
+      'written_record_ingestion': null,
+    });
+    for (var index = 6; index < 133; index++) {
+      store.box<CloudInboxChangeEntity>().put(CloudInboxChangeEntity(
+        changeKey: 'change-$index', changeIdHash: 'change-$index',
+        scopeKey: 'scope', accountFingerprint: 'A' * 43,
+        zone: 'messageManateeZone', serverRecordIdHash: 'D' * 43,
+        changeType: 'modified', batchId: 'batch', fetchSequence: index,
+        createdAtMs: 30, updatedAtMs: 30,
+      ));
+    }
+    expect(readWrittenRecordIngestionDiagnostic(store, operation), {
+      'written_record_ingestion': null,
+    });
+  });
   test('upload diagnostics filter exact account and intent', () {
     final account = claim['account'] as String;
     for (final (key, ownerAccount, ownerIntent, state) in [

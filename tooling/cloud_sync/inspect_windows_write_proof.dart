@@ -156,6 +156,7 @@ Map<String, Object?> inspectWindowsWriteProof(
       'parent_readback_marker_matches_admission': readbackMarker,
       'parent_confirmed_receipt_released': settled,
       'parent_save_attempt_count': operation?.attemptCount,
+      ...readWrittenRecordIngestionDiagnostic(store, operation),
       'persisted_readback_proven': false,
     };
   }
@@ -193,6 +194,38 @@ Map<String, Object?> inspectWindowsWriteProof(
         settled,
   };
 });
+
+/// Ingestion evidence is separate from upload receipts and local projection.
+/// Compare before/after a real read-only pull; this never contacts Apple.
+Map<String, Object?> readWrittenRecordIngestionDiagnostic(
+  Store store,
+  CloudOutboxOperationEntity? operation,
+) {
+  if (operation == null || operation.serverRecordIdHash == null) {
+    return {'written_record_ingestion': null};
+  }
+  final query = store.box<CloudInboxChangeEntity>().query(
+    CloudInboxChangeEntity_.accountFingerprint.equals(operation.accountFingerprint)
+      .and(CloudInboxChangeEntity_.zone.equals(operation.zone))
+      .and(CloudInboxChangeEntity_.scopeKey.equals(operation.scopeKey))
+      .and(CloudInboxChangeEntity_.serverRecordIdHash.equals(operation.serverRecordIdHash!)),
+  ).build()..limit = 129;
+  try {
+    final rows = query.find();
+    if (rows.length > 128) return {'written_record_ingestion': null};
+    return {
+      'written_record_ingestion': {
+        'count': rows.length,
+        'statuses': rows.map((row) => row.status).toList()..sort(),
+        'tombstones': rows.where((row) => row.isTombstone).length,
+        'latest_created_at_ms': rows.isEmpty ? null : rows
+          .map((row) => row.createdAtMs).reduce((a, b) => a > b ? a : b),
+      },
+    };
+  } finally {
+    query.close();
+  }
+}
 
 /// Query failure is unknown, never evidence of zero upload rows.
 Map<String, Object?> readAttachmentUploadDiagnostic(
