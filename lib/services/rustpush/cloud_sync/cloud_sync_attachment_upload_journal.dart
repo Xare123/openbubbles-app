@@ -434,16 +434,54 @@ final class CloudSyncAttachmentUploadJournal {
   /// missing release-candidate identity) throws the readback failure.
   CloudOutboxOperationEntity _requireReadbackAcknowledgedFinalOperation(
     CloudAttachmentUploadEntity upload,
+  ) => _readbackAcknowledgedFinalOperation(
+    _store, upload, scope: _scope, generation: _generation);
+
+  /// Recovery liveness only, never write authority. The result lease is also
+  /// the final-save receipt. Exact verified readback releases that receipt;
+  /// the immutable upload still retains its historical lease and payload.
+  /// Reuse the parent proof predicate so a merely terminal/mismatched row
+  /// cannot make a missing receipt acceptable. Works across account switches.
+  static bool resultLeaseReleasedAfterReadback(
+    Store store,
+    CloudAttachmentUploadEntity upload,
   ) {
+    validateCloudAttachmentUploadRow(upload);
+    if (upload.state != CloudAttachmentUploadState.adopted.index) return false;
+    final scope = CloudSyncScope(
+      accountFingerprint: upload.accountFingerprint,
+      container: 'com.apple.messages.cloud', database: 'private',
+      zone: 'attachmentManateeZone', streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: 2, persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    try {
+      _readbackAcknowledgedFinalOperation(store, upload,
+        scope: scope, generation: upload.checkpointGeneration);
+      return true;
+    } on StateError catch (error) {
+      if (error.message == 'cloud_sync_attachment_upload_adoption_changed' ||
+          error.message == 'cloud_sync_attachment_upload_readback_not_ready') {
+        return false; // Retain the lease requirement on incomplete proof.
+      }
+      rethrow;
+    }
+  }
+
+  static CloudOutboxOperationEntity _readbackAcknowledgedFinalOperation(
+    Store store,
+    CloudAttachmentUploadEntity upload, {
+    required CloudSyncScope scope,
+    required int generation,
+  }) {
     if (upload.admittedOperationId !=
         CloudOperationIdentity.forInitialCreate(
-          scope: _scope,
+          scope: scope,
           logicalEntityKeyHash: upload.attachmentKeyHash,
           payloadVersion: 1,
         )) {
       throw StateError('cloud_sync_attachment_upload_adoption_changed');
     }
-    final query = _store
+    final query = store
         .box<CloudOutboxOperationEntity>()
         .query(
           CloudOutboxOperationEntity_.operationId.equals(
@@ -460,10 +498,10 @@ final class CloudSyncAttachmentUploadJournal {
     if (row == null ||
         row.action != CloudOutboxAction.save.index ||
         row.payloadVersion != 1 ||
-        row.accountFingerprint != _scope.accountFingerprint ||
-        row.zone != _scope.zone ||
-        row.scopeKey != cloudSyncPersistentScopeKey(_scope) ||
-        row.checkpointGeneration != _generation ||
+        row.accountFingerprint != scope.accountFingerprint ||
+        row.zone != scope.zone ||
+        row.scopeKey != cloudSyncPersistentScopeKey(scope) ||
+        row.checkpointGeneration != generation ||
         row.logicalEntityKeyHash != upload.attachmentKeyHash ||
         row.serverRecordIdHash != upload.serverRecordIdHash ||
         row.encryptedPayloadRef != upload.resultReference ||

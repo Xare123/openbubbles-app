@@ -11,6 +11,14 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('missing outbound receipt remains a specific bounded storage failure', () {
+    expect(cloudSyncV2SafeFailureCode(CloudSyncFailure(
+      category: CloudFailureCategory.localStorage,
+      safeCode: 'protected_outbound_lease_missing',
+    )), 'protected_outbound_lease_missing');
+    expect(cloudSyncV2SafeFailureCode(StateError('protected_outbound_lease_missing private')),
+      'cloud_sync_unknown_failure');
+  });
   test('attachment admission diagnostics retain reviewed codes without content', () {
     final paths = [
       'lib/services/rustpush/cloud_sync/cloud_sync_attachment_parent_coordinator.dart',

@@ -1122,6 +1122,76 @@ void main() {
     expect(live, containsAll([_lease('d'), _lease('1'), _lease('2')]));
   });
 
+  test('lease recovery does not resurrect a result receipt released after readback', () async {
+    final plan = _planA();
+    final result = _resultA();
+    final prepared = toUploaded(seedConfirmedIntent(), plan, result, _attemptA);
+    seedAccountReadReady();
+    final sync = _liveStore(store, uploads: uploads);
+    final adopted = sync.admitCompletedAttachmentUpload(
+      scope: _uploadScope, uploads: uploads, uploadId: prepared.id, createdAt: _time(9));
+    final outbox = store.box<CloudOutboxOperationEntity>();
+    final row = outbox.getAll().single
+      ..state = CloudOutboxStatus.confirmed.index
+      ..confirmedAtMs = _time(10).millisecondsSinceEpoch
+      ..appleRequestUuid = _attemptA
+      ..appleOperationUuid = _attemptB;
+    outbox.put(row);
+    final expected = (await sync.readOutboxEntries(_uploadScope)).single;
+    await sync.clearConfirmedProtectedOutboundLeaseReference(
+      expectedOperation: expected, recordVerifiedLocalSendReadback: true);
+    expect(uploads.read(adopted.id).result!.leaseReference, result.leaseReference,
+      reason: 'Historical immutable upload evidence is not erased.');
+    await reopen();
+    final restored = _liveStore(store);
+    final leases = await restored.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096);
+    expect(leases, isNot(contains(result.leaseReference)),
+      reason: 'Native acknowledgement removed this exact result receipt after verified child readback.');
+    expect(leases, contains(plan.leaseReference));
+    final live = await restored.readLiveProtectedReferences(maximumCount: 4096);
+    expect(live.isComplete, isTrue);
+    expect(live.references, containsAll([plan.protectedEnvelopeReference, result.protectedEnvelopeReference]));
+    final box = store.box<CloudOutboxOperationEntity>();
+    final original = box.getAll().single;
+    final mutations = <String, void Function(CloudOutboxOperationEntity)>{
+      'pending': (row) => row.state = CloudOutboxStatus.pending.index,
+      'unknown': (row) => row.state = CloudOutboxStatus.unknownOutcome.index,
+      'retained receipt': (row) => row.protectedLeaseReference = result.leaseReference,
+      'foreign account': (row) => row.accountFingerprint = _accountB,
+      'foreign zone': (row) => row.zone = 'messageZone',
+      'foreign scope': (row) => row.scopeKey = 'unrelated',
+      'different generation': (row) => row.checkpointGeneration++,
+      'different record': (row) => row.serverRecordIdHash = _token('Z'),
+      'different key': (row) => row.logicalEntityKeyHash = _token('Z'),
+      'different payload': (row) => row.payloadSha256 = _digest('f'),
+      'different reference': (row) => row.encryptedPayloadRef = _ref('Z'),
+      'missing request': (row) => row.appleRequestUuid = null,
+      'missing operation': (row) => row.appleOperationUuid = null,
+      'invalid request': (row) => row.appleRequestUuid = 'invalid',
+      'same request and operation': (row) => row.appleOperationUuid = _attemptA,
+      'missing confirmation': (row) => row.confirmedAtMs = 0,
+      'lease held': (row) => row.leaseIdHash = _digest('e'),
+      'lease expiration': (row) => row.leaseExpiresAtMs = _time(30).millisecondsSinceEpoch,
+      'retry pending': (row) => row.nextEligibleAtMs = _time(30).millisecondsSinceEpoch,
+      'failure retained': (row) => row.lastErrorCategory = 'unknown',
+    };
+    for (final mutation in mutations.entries) {
+      final changed = box.get(original.id)!;
+      mutation.value(changed);
+      box.put(changed);
+      try {
+        final required = await restored.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096);
+        expect(required, contains(result.leaseReference), reason: mutation.key);
+      } finally {
+        box.put(original);
+      }
+    }
+    box.remove(original.id);
+    expect(await restored.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
+      contains(result.leaseReference), reason: 'Missing final operation is not proof of release.');
+    box.put(original);
+  });
+
   for (final state in CloudAttachmentUploadState.values) {
     test('protected liveness retains upload bytes after reopen: ${state.name}', () async {
       final plan = _planA();

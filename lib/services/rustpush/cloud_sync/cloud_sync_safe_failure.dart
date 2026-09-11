@@ -427,6 +427,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   ...CloudSyncV2SemanticStoreSafeFailureCodes.all,
   ...CloudSyncV2ProjectionSweepSafeFailureCodes.all,
   'cloud_sync_unknown_failure',
+  'protected_outbound_lease_missing',
   // Fixed attachment admission/recovery predicates, never exception content.
   'cloud_sync_attachment_parent_group_changed',
   'cloud_sync_attachment_parent_inventory_required',

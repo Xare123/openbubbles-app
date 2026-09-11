@@ -591,8 +591,9 @@ class ObjectBoxCloudSyncStore
         sources.close();
       }
       // Upload preparation and result precede final-save outbox admission.
-      // Retain both leases even after interruption or account replacement;
-      // neither a missing record nor a terminal parent releases these keys.
+      // Retain leases across interruption/account replacement. The result
+      // lease is also the final-save receipt: exact verified child readback
+      // releases it. Its historical reference and payload are still retained.
       final uploads = _store.box<CloudAttachmentUploadEntity>();
       if (uploads.count() > maximumCount) {
         throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
@@ -601,7 +602,11 @@ class ObjectBoxCloudSyncStore
         validateCloudAttachmentUploadRow(upload);
         references.add(upload.planLeaseReference);
         final resultLease = upload.resultLeaseReference;
-        if (resultLease != null) references.add(resultLease);
+        if (resultLease != null &&
+            !CloudSyncAttachmentUploadJournal.resultLeaseReleasedAfterReadback(
+              _store, upload)) {
+          references.add(resultLease);
+        }
         if (references.length > maximumCount) {
           throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
         }
