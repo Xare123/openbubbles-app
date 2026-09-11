@@ -12,6 +12,11 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 
 import 'services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_local_mutation_identity.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_local_mutation_source_binding.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_local_mutation_source_staging.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_models.dart'
     show CloudSyncSafeCodeFailure, CloudSyncScope, CloudSyncPersistenceLane;
 import 'services/rustpush/imessage_reaction_payload.dart';
@@ -82,11 +87,21 @@ Map<String, Object?> cloudSyncWindowsWriteFailureDiagnostic(
     'cloudkit_writer_authority.dart',
     'cloudkit_writer_mutation_guard.dart',
   };
-  final frames = RegExp(
-    r'\(package:bluebubbles/(?:services/rustpush/cloud_sync/)?([a-z0-9_]+\.dart):([0-9]{1,7}):([0-9]{1,5})\)',
-  ).allMatches(stack.toString()).where((m) => sources.contains(m[1])).take(6)
-      .map((m) => {'source': m[1], 'line': int.parse(m[2]!), 'column': int.parse(m[3]!)})
-      .toList();
+  final frames =
+      RegExp(
+            r'\(package:bluebubbles/(?:services/rustpush/cloud_sync/)?([a-z0-9_]+\.dart):([0-9]{1,7}):([0-9]{1,5})\)',
+          )
+          .allMatches(stack.toString())
+          .where((m) => sources.contains(m[1]))
+          .take(6)
+          .map(
+            (m) => {
+              'source': m[1],
+              'line': int.parse(m[2]!),
+              'column': int.parse(m[3]!),
+            },
+          )
+          .toList();
   final codeShape = candidate == null
       ? null
       : RegExp(r'^cloud_sync_[a-z_]{1,100}$').firstMatch(candidate);
@@ -98,9 +113,13 @@ Map<String, Object?> cloudSyncWindowsWriteFailureDiagnostic(
       AnyhowException() => 'native_bridge',
       _ => 'other',
     },
-    'unreviewed_code_sha256': code == 'cloud_sync_unknown_failure' &&
-        candidate != null && codeShape != null && codeShape.end == candidate.length
-        ? sha256.convert(utf8.encode(candidate)).toString() : null,
+    'unreviewed_code_sha256':
+        code == 'cloud_sync_unknown_failure' &&
+            candidate != null &&
+            codeShape != null &&
+            codeShape.end == candidate.length
+        ? sha256.convert(utf8.encode(candidate)).toString()
+        : null,
     'frames': frames,
   };
 }
@@ -122,9 +141,21 @@ final class CloudSyncWindowsWriteRequest {
       sender = json['sender'] as String,
       text = json['text'] as String,
       reactionType = json['version'] == 5 && json['reactionType'] is String
-          ? json['reactionType'] as String : null,
-      reactionPart = json['reactionPart'] == null ? null
-          : json['reactionPart'] is int ? json['reactionPart'] as int : -1,
+          ? json['reactionType'] as String
+          : null,
+      reactionPart = json['reactionPart'] == null
+          ? null
+          : json['reactionPart'] is int
+          ? json['reactionPart'] as int
+          : -1,
+      mutationType = json['version'] == 6 && json['mutationType'] is String
+          ? json['mutationType'] as String
+          : null,
+      mutationPart = json['mutationPart'] == null
+          ? null
+          : json['mutationPart'] is int
+          ? json['mutationPart'] as int
+          : -1,
       attachmentFixture =
           json['version'] == 4 && json['attachmentFixture'] is String
           ? CloudSyncWindowsAttachmentFixture.fromId(
@@ -150,13 +181,35 @@ final class CloudSyncWindowsWriteRequest {
               !json.containsKey('recipients') &&
               (json['version'] == 5
                   ? reactionType != null &&
-                        const {'love', 'like', 'dislike', 'laugh', 'emphasize', 'question',
-                          '-love', '-like', '-dislike', '-laugh', '-emphasize', '-question'}
-                            .contains(reactionType) &&
+                        const {
+                          'love',
+                          'like',
+                          'dislike',
+                          'laugh',
+                          'emphasize',
+                          'question',
+                          '-love',
+                          '-like',
+                          '-dislike',
+                          '-laugh',
+                          '-emphasize',
+                          '-question',
+                        }.contains(reactionType) &&
                         json.containsKey('reactionPart') &&
                         (reactionPart == null || reactionPart == 0) &&
                         existingChatFromRequestId != null &&
-                        RegExp(r'^[a-z0-9-]{1,64}$').hasMatch(existingChatFromRequestId!) &&
+                        RegExp(
+                          r'^[a-z0-9-]{1,64}$',
+                        ).hasMatch(existingChatFromRequestId!) &&
+                        existingChatFromRequestId != id
+                  : json['version'] == 6
+                  ? mutationType != null &&
+                        const {'edit', 'unsend'}.contains(mutationType) &&
+                        mutationPart == 0 &&
+                        existingChatFromRequestId != null &&
+                        RegExp(
+                          r'^[a-z0-9-]{1,64}$',
+                        ).hasMatch(existingChatFromRequestId!) &&
                         existingChatFromRequestId != id
                   : json['version'] == 4
                   ? attachmentFixture != null &&
@@ -175,8 +228,12 @@ final class CloudSyncWindowsWriteRequest {
                         existingChatFromRequestId != id);
     if (!validVersion ||
         (json['version'] != 5 &&
-            (json.containsKey('reactionType') || json.containsKey('reactionPart'))) ||
+            (json.containsKey('reactionType') ||
+                json.containsKey('reactionPart'))) ||
         (json['version'] != 4 && json.containsKey('attachmentFixture')) ||
+        (json['version'] != 6 &&
+            (json.containsKey('mutationType') ||
+                json.containsKey('mutationPart'))) ||
         (json.containsKey('refreshSenderAuthentication') &&
             json['refreshSenderAuthentication'] is! bool) ||
         json['allowSend'] != true ||
@@ -184,8 +241,11 @@ final class CloudSyncWindowsWriteRequest {
         recipients.toSet().length != recipients.length ||
         !recipients.every(RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch) ||
         !RegExp(r'^[^\s:@]+@[^\s:@]+\.[^\s:@]+$').hasMatch(sender) ||
-        (attachmentFixture == null && reactionType == null
-            ? text.trim().isEmpty : text.isNotEmpty) ||
+        (mutationType != null
+            ? (mutationType == 'edit' ? text.trim().isEmpty : text.isNotEmpty)
+            : attachmentFixture == null && reactionType == null
+            ? text.trim().isEmpty
+            : text.isNotEmpty) ||
         text.length > 512) {
       throw StateError('cloud_sync_windows_write_request_invalid');
     }
@@ -203,6 +263,8 @@ final class CloudSyncWindowsWriteRequest {
   final String text;
   final String? reactionType;
   final int? reactionPart;
+  final String? mutationType;
+  final int? mutationPart;
   final CloudSyncWindowsAttachmentFixture? attachmentFixture;
 
   /// Explicit operator repair before any new intent or send. Never implicit
@@ -213,10 +275,29 @@ final class CloudSyncWindowsWriteRequest {
       .convert(
         utf8.encode(
           jsonEncode(
-            reactionType != null
-                ? ['windows-local-write-v5', id, recipient, sender,
-                    existingChatFromRequestId, reactionType, reactionPart,
-                    if (refreshSenderAuthentication) 'refresh-sender-auth-v1']
+            mutationType != null
+                ? [
+                    'windows-local-write-v6',
+                    id,
+                    recipient,
+                    sender,
+                    existingChatFromRequestId,
+                    mutationType,
+                    mutationPart,
+                    text,
+                    if (refreshSenderAuthentication) 'refresh-sender-auth-v1',
+                  ]
+                : reactionType != null
+                ? [
+                    'windows-local-write-v5',
+                    id,
+                    recipient,
+                    sender,
+                    existingChatFromRequestId,
+                    reactionType,
+                    reactionPart,
+                    if (refreshSenderAuthentication) 'refresh-sender-auth-v1',
+                  ]
                 : attachmentFixture != null
                 ? [
                     'windows-local-write-v4',
@@ -388,50 +469,170 @@ Chat cloudSyncWindowsExistingWriteChat(
 /// This is route/shape selection only; the caller must revalidate the actual
 /// journal readback dependency before claiming and immediately before sending.
 Message cloudSyncWindowsReactionParent(
-  Store store, Map<String, dynamic> claim, CloudSyncWindowsWriteRequest request,
+  Store store,
+  Map<String, dynamic> claim,
+  CloudSyncWindowsWriteRequest request,
   String accountFingerprint,
 ) {
   if (request.reactionType == null) {
     throw StateError('cloud_sync_windows_reaction_request_required');
   }
-  final chat = cloudSyncWindowsExistingWriteChat(store, claim, request, accountFingerprint);
-  final query = store.box<Message>().query(Message_.guid.equals(claim['guid'] as String)).build()
-    ..limit = 2;
+  final chat = cloudSyncWindowsExistingWriteChat(
+    store,
+    claim,
+    request,
+    accountFingerprint,
+  );
+  final query =
+      store
+          .box<Message>()
+          .query(Message_.guid.equals(claim['guid'] as String))
+          .build()
+        ..limit = 2;
   try {
     final rows = query.find();
     final parent = rows.length == 1 ? rows.single : null;
-    if (parent == null || parent.chat.targetId != chat.id ||
-        chat.guid != 'iMessage;-;${request.recipient}' || chat.chatIdentifier != request.recipient ||
-        parent.isFromMe != true || parent.dateDeleted != null || parent.dateEdited != null ||
-        parent.associatedMessageGuid != null || parent.associatedMessageType != null ||
-        parent.hasAttachments || parent.dbAttachments.isNotEmpty ||
-        parent.text?.trim().isNotEmpty != true || parent.attributedBody.length != 1 ||
+    if (parent == null ||
+        parent.chat.targetId != chat.id ||
+        chat.guid != 'iMessage;-;${request.recipient}' ||
+        chat.chatIdentifier != request.recipient ||
+        parent.isFromMe != true ||
+        parent.dateDeleted != null ||
+        parent.dateEdited != null ||
+        parent.associatedMessageGuid != null ||
+        parent.associatedMessageType != null ||
+        parent.hasAttachments ||
+        parent.dbAttachments.isNotEmpty ||
+        parent.text?.trim().isNotEmpty != true ||
+        parent.attributedBody.length != 1 ||
         parent.attributedBody.single.string != parent.text) {
       throw StateError('cloud_sync_windows_reaction_parent_invalid');
     }
     return parent;
-  } finally { query.close(); }
+  } finally {
+    query.close();
+  }
 }
 
-api.Message cloudSyncWindowsReactionPayload(CloudSyncWindowsWriteRequest request, Message parent) {
+api.Message cloudSyncWindowsReactionPayload(
+  CloudSyncWindowsWriteRequest request,
+  Message parent,
+) {
   final type = request.reactionType;
   if (type == null || parent.guid == null || parent.text == null) {
     throw StateError('cloud_sync_windows_reaction_parent_invalid');
   }
   final base = type.startsWith('-') ? type.substring(1) : type;
   final reaction = switch (base) {
-    'love' => const api.Reaction.heart(), 'like' => const api.Reaction.like(),
-    'dislike' => const api.Reaction.dislike(), 'laugh' => const api.Reaction.laugh(),
-    'emphasize' => const api.Reaction.emphasize(), 'question' => const api.Reaction.question(),
+    'love' => const api.Reaction.heart(),
+    'like' => const api.Reaction.like(),
+    'dislike' => const api.Reaction.dislike(),
+    'laugh' => const api.Reaction.laugh(),
+    'emphasize' => const api.Reaction.emphasize(),
+    'question' => const api.Reaction.question(),
     _ => throw StateError('cloud_sync_windows_reaction_request_required'),
   };
-  return buildIMessageReactionPayload(parentGuid: parent.guid!, parentPart: request.reactionPart,
-    parentText: parent.text!, reaction: reaction, enable: !type.startsWith('-'));
+  return buildIMessageReactionPayload(
+    parentGuid: parent.guid!,
+    parentPart: request.reactionPart,
+    parentText: parent.text!,
+    reaction: reaction,
+    enable: !type.startsWith('-'),
+  );
 }
 
 /// Small Windows composition of the ordinary journal and writer, not another
 /// uploader. One immutable request can send at most once. A crash before native
 /// completion leaves the journal pending and requires explicit reconciliation.
+/// The first Windows mutation experiment is a direct, single-part plaintext
+/// parent selected by its prior successful test claim. No arbitrary chat scan.
+Message cloudSyncWindowsMutationParent(
+  Store store,
+  Map<String, dynamic> claim,
+  CloudSyncWindowsWriteRequest request,
+  String accountFingerprint,
+) {
+  if (request.mutationType == null) {
+    throw StateError('cloud_sync_windows_mutation_request_required');
+  }
+  final chat = cloudSyncWindowsExistingWriteChat(
+    store,
+    claim,
+    request,
+    accountFingerprint,
+  );
+  final query =
+      store
+          .box<Message>()
+          .query(Message_.guid.equals(claim['guid'] as String))
+          .build()
+        ..limit = 2;
+  try {
+    final rows = query.find();
+    final parent = rows.length == 1 ? rows.single : null;
+    if (parent == null ||
+        parent.chat.targetId != chat.id ||
+        chat.guid != 'iMessage;-;${request.recipient}' ||
+        chat.chatIdentifier != request.recipient ||
+        parent.isFromMe != true ||
+        parent.dateDeleted != null ||
+        parent.dateEdited != null ||
+        parent.dateScheduled != null ||
+        parent.verificationFailed ||
+        parent.associatedMessageGuid != null ||
+        parent.associatedMessageType != null ||
+        parent.hasAttachments ||
+        parent.dbAttachments.isNotEmpty ||
+        parent.subject?.isNotEmpty == true ||
+        parent.messageSummaryInfo.isNotEmpty ||
+        parent.text?.trim().isNotEmpty != true ||
+        parent.attributedBody.length != 1 ||
+        parent.attributedBody.single.string != parent.text) {
+      throw StateError('cloud_sync_windows_mutation_parent_invalid');
+    }
+    return parent;
+  } finally {
+    query.close();
+  }
+}
+
+api.Message cloudSyncWindowsMutationPayload(
+  CloudSyncWindowsWriteRequest request,
+  Message parent,
+) {
+  if (request.mutationType == null ||
+      request.mutationPart != 0 ||
+      parent.guid == null) {
+    throw StateError('cloud_sync_windows_mutation_parent_invalid');
+  }
+  return request.mutationType == 'unsend'
+      ? api.Message.unsend(api.UnsendMessage(tuuid: parent.guid!, editPart: 0))
+      : api.Message.edit(
+          api.EditMessage(
+            tuuid: parent.guid!,
+            editPart: 0,
+            newParts: api.MessageParts(
+              field0: [
+                api.IndexedMessagePart(
+                  idx: 0,
+                  part_: api.MessagePart.text(
+                    request.text,
+                    const api.TextFormat.flags(
+                      api.TextFlags(
+                        bold: false,
+                        italic: false,
+                        underline: false,
+                        strikethrough: false,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+}
+
 final class CloudSyncWindowsLocalWrite {
   CloudSyncWindowsLocalWrite({
     required this.readClient,
@@ -439,6 +640,7 @@ final class CloudSyncWindowsLocalWrite {
     required this.sendConfirmed,
     required this.reportStage,
     this.uploadAttachment,
+    this.sendMutationConfirmed,
   });
 
   final Object? Function() readClient;
@@ -449,6 +651,11 @@ final class CloudSyncWindowsLocalWrite {
   })
   prepareSender;
   final Future<void> Function(api.MessageInst message) sendConfirmed;
+  final Future<api.CloudSyncNativeSendReceipt> Function(
+    api.MessageInst message,
+    api.CloudSyncNativeSendReceiptContext context,
+  )?
+  sendMutationConfirmed;
   final Future<void> Function(String stage) reportStage;
   final Future<api.Attachment> Function(
     File file,
@@ -472,6 +679,11 @@ final class CloudSyncWindowsLocalWrite {
           )
           as Map<String, dynamic>,
     );
+    // v6 has a separate protected-source/receipt contract. Never let a
+    // recognized mutation fall through into the initial-message writer.
+    if (request.mutationType != null && sendMutationConfirmed == null) {
+      throw StateError('cloud_sync_windows_mutation_runtime_unavailable');
+    }
     final claim = File(
       path.join(directory.path, 'windows-write-${request.id}.json'),
     );
@@ -588,6 +800,25 @@ final class CloudSyncWindowsLocalWrite {
       capture: authProvider.capture,
       stillCurrent: current,
     );
+    if (request.mutationType != null) {
+      return _runMutation(
+        request: request,
+        claim: claim,
+        directory: directory,
+        client: client,
+        store: objectBox,
+        auth: auth,
+        current: current,
+        fence: fence,
+        interlock: interlock,
+        createJournal: journal,
+        journal: CloudSyncLocalMutationJournal(
+          store: objectBox,
+          authority: authority,
+          authoritySnapshot: owner.snapshot,
+        ),
+      );
+    }
     late Map<String, dynamic> savedClaim;
     if (claim.existsSync()) {
       savedClaim =
@@ -626,17 +857,33 @@ final class CloudSyncWindowsLocalWrite {
       }
       Message requireReactionParent() {
         final parent = cloudSyncWindowsReactionParent(
-          objectBox, previousClaim!, request, auth.accountFingerprint);
-        final scope = CloudSyncScope(accountFingerprint: auth.accountFingerprint,
-          container: 'com.apple.messages.cloud', database: 'private',
-          zone: 'messageManateeZone', persistenceLane: CloudSyncPersistenceLane.semantic);
-        if (journal.readConfirmedParentDependency(objectBox, scope, parent) == null) {
-          throw StateError('cloud_sync_windows_reaction_parent_readback_required');
+          objectBox,
+          previousClaim!,
+          request,
+          auth.accountFingerprint,
+        );
+        final scope = CloudSyncScope(
+          accountFingerprint: auth.accountFingerprint,
+          container: 'com.apple.messages.cloud',
+          database: 'private',
+          zone: 'messageManateeZone',
+          persistenceLane: CloudSyncPersistenceLane.semantic,
+        );
+        if (journal.readConfirmedParentDependency(objectBox, scope, parent) ==
+            null) {
+          throw StateError(
+            'cloud_sync_windows_reaction_parent_readback_required',
+          );
         }
         return parent;
       }
-      final reactionParent = request.reactionType == null ? null
-          : await fence.run(requireReactionParent, accountFingerprint: auth.accountFingerprint);
+
+      final reactionParent = request.reactionType == null
+          ? null
+          : await fence.run(
+              requireReactionParent,
+              accountFingerprint: auth.accountFingerprint,
+            );
       // Preserve both layers of the pre-send checkpoint. An ObjectBox backup
       // alone becomes unreplayable when normal GC retires its native reference.
       await fence.run(
@@ -688,30 +935,30 @@ final class CloudSyncWindowsLocalWrite {
         message: reactionParent != null
             ? cloudSyncWindowsReactionPayload(request, reactionParent)
             : api.Message.message(
-          api.NormalMessage(
-            service: const api.MessageType.iMessage(),
-            voice: false,
-            parts: api.MessageParts(
-              field0: [
-                api.IndexedMessagePart(
-                  part_: uploaded != null
-                      ? api.MessagePart.attachment(uploaded)
-                      : api.MessagePart.text(
-                          request.text,
-                          const api.TextFormat.flags(
-                            api.TextFlags(
-                              bold: false,
-                              italic: false,
-                              underline: false,
-                              strikethrough: false,
-                            ),
-                          ),
-                        ),
+                api.NormalMessage(
+                  service: const api.MessageType.iMessage(),
+                  voice: false,
+                  parts: api.MessageParts(
+                    field0: [
+                      api.IndexedMessagePart(
+                        part_: uploaded != null
+                            ? api.MessagePart.attachment(uploaded)
+                            : api.MessagePart.text(
+                                request.text,
+                                const api.TextFormat.flags(
+                                  api.TextFlags(
+                                    bold: false,
+                                    italic: false,
+                                    underline: false,
+                                    strikethrough: false,
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ],
+                  ),
                 ),
-              ],
-            ),
-          ),
-        ),
+              ),
       );
       savedClaim = {
         'version': 1,
@@ -778,15 +1025,23 @@ final class CloudSyncWindowsLocalWrite {
           wire.conversation!.senderGuid = chat.guid;
           if (reactionParent != null) {
             final fresh = requireReactionParent();
-            if (fresh.guid != reactionParent.guid || fresh.text != reactionParent.text) {
+            if (fresh.guid != reactionParent.guid ||
+                fresh.text != reactionParent.text) {
               throw StateError('cloud_sync_windows_reaction_parent_changed');
             }
           }
           message = reactionParent != null
-              ? Message(guid: 'temp-WinWrite', text: '', isFromMe: true,
-                  dateCreated: DateTime.now().toUtc(), hasAttachments: false,
-                  attributedBody: [], associatedMessageGuid: reactionParent.guid,
-                  associatedMessagePart: request.reactionPart, associatedMessageType: request.reactionType)
+              ? Message(
+                  guid: 'temp-WinWrite',
+                  text: '',
+                  isFromMe: true,
+                  dateCreated: DateTime.now().toUtc(),
+                  hasAttachments: false,
+                  attributedBody: [],
+                  associatedMessageGuid: reactionParent.guid,
+                  associatedMessagePart: request.reactionPart,
+                  associatedMessageType: request.reactionType,
+                )
               : fixture != null
               ? cloudSyncWindowsAttachmentSubmission(
                   fixture: fixture,
@@ -804,7 +1059,11 @@ final class CloudSyncWindowsLocalWrite {
           message.chat.target = chat;
           source =
               (reactionParent != null
-                  ? CloudSyncLocalSendIdentity.captureReactionWire(message, chat, wire)
+                  ? CloudSyncLocalSendIdentity.captureReactionWire(
+                      message,
+                      chat,
+                      wire,
+                    )
                   : fixture == null
                   ? CloudSyncLocalSendIdentity.captureWire(message, chat, wire)
                   : CloudSyncLocalSendIdentity.captureAttachment(
@@ -894,7 +1153,8 @@ final class CloudSyncWindowsLocalWrite {
       if (reactionParent != null) {
         await fence.run(() {
           final fresh = requireReactionParent();
-          if (fresh.guid != reactionParent.guid || fresh.text != reactionParent.text) {
+          if (fresh.guid != reactionParent.guid ||
+              fresh.text != reactionParent.text) {
             throw StateError('cloud_sync_windows_reaction_parent_changed');
           }
         }, accountFingerprint: auth.accountFingerprint);
@@ -979,6 +1239,288 @@ final class CloudSyncWindowsLocalWrite {
       'chat_readback_pending': result.chatReadbackPending,
       'deferred_reasons': result.deferredReasons,
       'existing_history_diagnostics': result.existingHistoryDiagnostics,
+    };
+  }
+
+  /// IDS qualification only. No initial-create admission, CK update, receipt
+  /// acknowledgement or local body projection belongs in this branch.
+  Future<Map<String, Object?>> _runMutation({
+    required CloudSyncWindowsWriteRequest request,
+    required File claim,
+    required Directory directory,
+    required rustlib.ArcCloudMessagesClientDefaultAnisetteProvider client,
+    required Store store,
+    required CloudSyncNativeAuthSnapshot auth,
+    required bool Function() current,
+    required CloudSyncLocalSendAuthFence fence,
+    required CloudKitOperationInterlock interlock,
+    required CloudSyncLocalSendJournal createJournal,
+    required CloudSyncLocalMutationJournal journal,
+  }) async {
+    final replay = claim.existsSync();
+    late Map<String, dynamic> saved;
+    if (replay) {
+      saved = jsonDecode(await claim.readAsString()) as Map<String, dynamic>;
+      if (saved['version'] != 2 ||
+          saved['purpose'] != 'mutation' ||
+          saved['binding'] != request.binding ||
+          saved['account'] != auth.accountFingerprint ||
+          saved['guid'] is! String) {
+        throw StateError('cloud_sync_windows_write_request_changed');
+      }
+    } else {
+      final previous =
+          jsonDecode(
+                await File(
+                  path.join(
+                    directory.path,
+                    'windows-write-${request.existingChatFromRequestId}.json',
+                  ),
+                ).readAsString(),
+              )
+              as Map<String, dynamic>;
+      Message selectParent() {
+        final parent = cloudSyncWindowsMutationParent(
+          store,
+          previous,
+          request,
+          auth.accountFingerprint,
+        );
+        // Deliberately narrow qualification window, not a claim about Apple's
+        // full product limits. Use a freshly sent approved test message.
+        final created = parent.dateCreated?.toUtc();
+        final age = created == null
+            ? null
+            : DateTime.now().toUtc().difference(created);
+        if (age == null ||
+            age.isNegative ||
+            age > const Duration(seconds: 60)) {
+          throw StateError(
+            'cloud_sync_windows_mutation_fresh_test_parent_required',
+          );
+        }
+        final scope = CloudSyncScope(
+          accountFingerprint: auth.accountFingerprint,
+          container: 'com.apple.messages.cloud',
+          database: 'private',
+          zone: 'messageManateeZone',
+          persistenceLane: CloudSyncPersistenceLane.semantic,
+        );
+        if (createJournal.readConfirmedParentDependency(store, scope, parent) ==
+            null) {
+          throw StateError(
+            'cloud_sync_windows_mutation_parent_readback_required',
+          );
+        }
+        return parent;
+      }
+
+      final parent = await fence.run(selectParent);
+      await fence.run(
+        () => cloudSyncWindowsPreserveWriteCheckpoint(
+          store: store,
+          profile: fs.appDocDir,
+          requestId: request.id,
+          requestBinding: request.binding,
+          accountFingerprint: auth.accountFingerprint,
+        ),
+      );
+      final wire = await api.newMsg(
+        conversation: api.ConversationData(
+          participants: [
+            'tel:${request.recipient}',
+            'mailto:${request.sender}',
+          ],
+          senderGuid: parent.chat.target!.guid,
+          cvName: parent.chat.target!.apnTitle,
+          afterGuid: parent.guid,
+        ),
+        sender: 'mailto:${request.sender}',
+        message: cloudSyncWindowsMutationPayload(request, parent),
+      );
+      final identity =
+          CloudSyncLocalMutationIdentity.captureWire(wire) ??
+          (throw StateError('cloud_sync_windows_mutation_wire_invalid'));
+      await fence.run(() {
+        if (selectParent().id != parent.id) {
+          throw StateError('cloud_sync_windows_mutation_parent_changed');
+        }
+      });
+      saved = {
+        'version': 2,
+        'purpose': 'mutation',
+        'binding': request.binding,
+        'account': auth.accountFingerprint,
+        'guid': wire.id,
+        'local_message_id': parent.id,
+        'target_guid_hash': identity.targetGuidHash,
+        'source_sha256': identity.sourceSha256,
+      };
+      await claim.create(exclusive: true);
+      await claim.writeAsString(jsonEncode(saved), flush: true);
+      api.CloudSyncNativeSendReceiptContext context([
+        CloudSyncLocalMutationSourceBinding? source,
+      ]) => api.CloudSyncNativeSendReceiptContext(
+        storageDirectory: fs.appDocDir.path,
+        guidHash: identity.guidHash,
+        accountFingerprint: auth.accountFingerprint,
+        protectedStoreIdentity: auth.protectedStoreIdentity,
+        nativeSessionId: auth.nativeSessionId,
+        sourceBinding: source == null
+            ? null
+            : api.CloudSyncNativeSendSourceBinding(
+                kind: api.CloudSyncNativeSendSourceKind.mutation,
+                sourceSha256: source.sourceSha256,
+                protectedReference: source.protectedReference,
+                leaseReference: source.leaseReference,
+                payloadSha256: source.payloadSha256,
+                payloadLength: BigInt.from(source.payloadLength),
+              ),
+      );
+      await reportStage('windows-mutation-preparing-protected-source');
+      await CloudSyncLocalMutationSourceStaging(
+        journal: journal,
+        authFence: fence,
+        capturedAuth: auth,
+        stillCurrent: current,
+        exclusion: interlock,
+        transport: NativeProtectedCloudSyncTransport(
+          cloudMessagesClient: client,
+          storageDirectory: fs.appDocDir.path,
+          protectedStoreIdentity: auth.protectedStoreIdentity,
+        ),
+      ).submitConfirmed(
+        localMessageId: parent.id!,
+        identity: identity,
+        stage: () async {
+          final native = await api.cloudSyncStageIdsMutationSource(
+            cloudMessagesClient: client,
+            context: context(),
+            localSourceSha256: identity.sourceSha256,
+            message: wire,
+          );
+          if (native.kind != api.CloudSyncNativeSendSourceKind.mutation) {
+            throw StateError('cloud_sync_windows_mutation_source_invalid');
+          }
+          return CloudSyncLocalMutationSourceBinding(
+            accountFingerprint: auth.accountFingerprint,
+            protectedStoreIdentity: auth.protectedStoreIdentity,
+            mutationGuidHash: identity.guidHash,
+            targetGuidHash: identity.targetGuidHash,
+            targetPart: identity.targetPart,
+            sourceSha256: native.sourceSha256,
+            protectedReference: native.protectedReference,
+            leaseReference: native.leaseReference,
+            payloadSha256: native.payloadSha256,
+            payloadLength: native.payloadLength.toInt(),
+          );
+        },
+        restore: (source) => api.cloudSyncRestoreIdsMutationSource(
+          cloudMessagesClient: client,
+          context: context(source),
+        ),
+        validateBeforeSend: selectParent,
+        send: (wire, source) => sendMutationConfirmed!(wire, context(source)),
+      );
+    }
+    final guidHash = sha256
+        .convert(
+          utf8.encode(
+            jsonEncode(['cloud-sync-local-send-guid-v1', saved['guid']]),
+          ),
+        )
+        .toString();
+    CloudSyncLocalMutationIntentEntity readIntent() {
+      final query = store
+          .box<CloudSyncLocalMutationIntentEntity>()
+          .query(
+            CloudSyncLocalMutationIntentEntity_.accountFingerprint
+                .equals(auth.accountFingerprint)
+                .and(
+                  CloudSyncLocalMutationIntentEntity_.mutationGuidHash.equals(
+                    guidHash,
+                  ),
+                ),
+          )
+          .build();
+      try {
+        final row = query.findUnique();
+        if (row == null) {
+          throw StateError('cloud_sync_windows_mutation_intent_missing');
+        }
+        validateCloudSyncMutationRow(row);
+        if (row.localMessageId != saved['local_message_id'] ||
+            row.targetGuidHash != saved['target_guid_hash'] ||
+            row.sourceSha256 != saved['source_sha256'] ||
+            row.targetPart != request.mutationPart ||
+            row.kind !=
+                CloudSyncLocalMutationKind.values
+                    .byName(request.mutationType!)
+                    .index) {
+          throw StateError('cloud_sync_windows_write_request_changed');
+        }
+        return row;
+      } finally {
+        query.close();
+      }
+    }
+
+    var intent = await fence.run(readIntent);
+    if (replay && intent.state == 1) {
+      final replayBinding = CloudSyncNativeReceiptReplayBinding(
+        expectedAuth: auth,
+        expectedState: this,
+        expectedStore: store,
+        expectedClient: client,
+        expectedStoragePath: fs.appDocDir.path,
+        readState: () => this,
+        readStore: () => Database.store,
+        readClient: readClient,
+        readStoragePath: () => fs.appDocDir.path,
+        runtimeCurrent: current,
+      );
+      String? after;
+      final cursors = <String>{};
+      do {
+        await fence.run<void>(replayBinding.requireCurrent);
+        final page = await api.cloudSyncReplayNativeSendReceipts(
+          storageDirectory: fs.appDocDir.path,
+          expectedAccountFingerprint: auth.accountFingerprint,
+          expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+          afterReceiptId: after,
+        );
+        for (final receipt in page.receipts.where(
+          (r) => r.guidHash == guidHash,
+        )) {
+          await fence.run(
+            () => journal.recordNativeReceipt(
+              intentId: intent.id,
+              receipt: receipt,
+              capturedAuth: auth,
+              stillCurrent: current,
+              now: DateTime.now().toUtc(),
+              replayBinding: replayBinding,
+            ),
+          );
+        }
+        after = page.nextCursor;
+        if (after != null && !cursors.add(after)) {
+          throw StateError(
+            'cloud_sync_windows_mutation_receipt_cursor_repeated',
+          );
+        }
+      } while (after != null);
+      intent = await fence.run(readIntent);
+    }
+    if (intent.state < 2) {
+      throw StateError('cloud_sync_windows_mutation_send_unconfirmed_no_retry');
+    }
+    return {
+      'native_send_confirmed': true,
+      'mutation_receipt_retained': true,
+      'restart_reconciliation_only': replay,
+      'cloudkit_update_enabled': false,
+      'local_reflection_complete': intent.state == 3,
     };
   }
 }

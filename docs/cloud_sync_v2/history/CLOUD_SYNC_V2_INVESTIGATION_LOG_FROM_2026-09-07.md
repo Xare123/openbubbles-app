@@ -2733,3 +2733,59 @@ This is a chronological evidence log. It does not override the
   cases passed); the corrected command validates every suite path first and
   passes as a whole. The new/modified CloudKit source analysis is clean; the
   shared service retains four pre-existing style infos outside these changes.
+- CloudKit composition/fixture repair committed as `c988a5844`; reviewed
+  FaceTime diagnostic changes committed separately as `99d45a9c7`. Shared
+  service hunks were staged by subsystem and reviewed before committing;
+  unrelated generated/native/tooling edits remained untouched. Both commits
+  were pushed only to the fork. Full Dart rerun `34633136729` targets exact
+  `99d45a9c7a0cf21be2ecbcaea3ea673e402c870d`, with the unchanged isolated
+  pilot `9c63ab24d`, N2D-16/us-west1-c, both writer flags off. Previous-run
+  cleanup and empty GCE inventory were verified before dispatch. Windows
+  `34631493537` continues its original native build on `f24e7379f`; no duplicate
+  native build, APK, account operation or device installation was started.
+  Final run/cleanup results remain pending. C: free was 49.3 GiB.
+
+### September 11, Windows mutation submission and qualification
+
+- GCE `34633136729` passed 3,237 Dart tests and the 14 outbox/3 evidence-output
+  cases on `99d45a9c7`. Cleanup and independent empty VM/runner inventories
+  were verified. Windows `34631493537` passed 38 focused Dart cases, 51 actual
+  packaged-DLL codec cases and ARM64 invalid-launch/load smoke on `f24e7379f`.
+  Artifact `10277865440` remains unimported; existing signed runtimes preserved.
+- Native `db5c1508c` adds a Windows-only-profile confirmed mutation API: exact
+  committed source, full IDS job and positive recipient acceptance, unchanged
+  authentication, then durable mutation-purpose receipt. Four new tests pass
+  alongside the native cohort: GCE `34634299421` passed **517 Rust tests** and
+  compilation. Only expected generated-binding drift failed. Artifact
+  `10277519451` SHA-256
+  `c1aaad49e9bf1e4cb466d0f8cd682a2812efcf07fea73addf6a8c6c11e48bbbf`
+  was verified before importing its exact seven-file allowlist. Three files
+  have logical changes. Cleanup succeeded at 18:47:41Z; inventories empty.
+- Reviewed Muse Euler's parser and target tests. Request v6 binds direct
+  edit/unsend part 0 to an exact earlier successful test request. All v1-v5
+  bindings remain compatible. The first regression attempt lacked ObjectBox
+  on PATH; rerun with the existing ARM64 library passed. Duplicate GUID setup
+  correctly fails at the database unique index; the test records that boundary
+  rather than claiming to exercise an impossible duplicate row.
+- Parent blocked mutation fall-through to the ordinary initial-create branch
+  and wired a distinct Windows mutation path. A flushed exclusive claim
+  precedes staging and sending; journal/source adoption, committed restore,
+  final target/auth checks, one IDS send and exact positive receipt retention
+  are composed. Failed/ambiguous claims can only reconcile native receipts
+  after restart, never resend. No CK save, body reflection or receipt ack.
+  Fresh first-pristine plaintext parents only, with a deliberate 60-second
+  experiment window. Chained edits and general app capture are not enabled.
+- Parent added timeout, wrong-purpose receipt, post-send identity change,
+  after-prepare target change and reopen regressions; the combined local
+  request/target/journal/confirmation cohort passed **75 tests**. New source analysis is
+  clean. The Windows harness now points to the exact new native API, requiring
+  a matching native build; no old-DLL content-hash bypass or account launch.
+- A projector prerequisite remains explicit: original mutation source starts
+  at timestamp zero; native preparation supplies the actual wire timestamp.
+  Local reflection/CloudKit summary generation must qualify the retained time
+  semantics rather than copying zero or guessing from receipt arrival.
+- Euler's work was reviewed and accepted, the agent closed and shutdown
+  verified. Shared uncommitted source/tests and transcript provenance remain
+  necessary; no dedicated worktree exists and supported session deletion is
+  unavailable. No user files, profiles, credentials, device evidence or logs
+  were removed. C: free approximately 49.3 GiB. No Pixel operations this pass.

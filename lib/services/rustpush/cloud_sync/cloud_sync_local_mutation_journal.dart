@@ -223,6 +223,35 @@ final class CloudSyncLocalMutationJournal {
     _rows.put(row);
   });
 
+  /// Final local check after asynchronous preparation, immediately before IDS.
+  /// This validates an already-claimed operation and cannot claim it again.
+  void requireClaimedSubmission({
+    required int intentId,
+    required CloudSyncLocalMutationSourceBinding committedSource,
+    required CloudSyncNativeAuthSnapshot capturedAuth,
+    required bool Function() stillCurrent,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireOwner();
+    final row = _read(intentId, originalEpoch: true);
+    _requireAuth(committedSource, capturedAuth, stillCurrent);
+    if (row.state != 1 ||
+        row.protectedSourceBinding != committedSource.encode() ||
+        row.submissionAuthBindingSha256 !=
+            _authHash(
+              capturedAuth.accountFingerprint,
+              capturedAuth.protectedStoreIdentity,
+              capturedAuth.nativeSessionId,
+            )) {
+      _fail('submission_changed');
+    }
+    if (_snapshot(
+          _target(row.localMessageId, row.targetGuidHash, row.localChatId),
+        ) !=
+        row.targetSnapshotSha256) {
+      _fail('target_changed');
+    }
+  });
+
   /// Only the native positive-participant-acceptance receipt can promote a
   /// claimed intent. A cold replay must carry the existing runtime/auth fence;
   /// it cannot merely disable the native session check with a boolean flag.

@@ -55,6 +55,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current state |
 | --- | --- |
 | App branch | `agent/cloudkit-v2-sms-chat-contract` |
+| September 11 mutation candidate | Windows request-v6 supports a first edit or unsend of a fresh, explicitly named, confirmed test parent. The dedicated IDS path retains original source and positive acceptance receipts; restart reconciles rather than resends. Native `db5c1508c` passed 517 Rust tests; generated bridge import `954413261` uses hash `1030619495`. Combined local Dart checks pass 75 tests with clean targeted analysis. A matching Windows binary and full combined Dart qualification are next. No live mutation send, CloudKit existing-record update or local reflection is claimed. |
 | Installed Android candidate | Signed `f860966d53b6019b46f1437312e67662724f08ce`, installed September 11 at 09:14:53Z and runtime-verified. Two reads reached the remote head with saves/deletes off and outbox `0 -> 0`. The final local sweep examined 3,587 blocking saves, applied zero, and completed partial at 09:47:41Z. Qualification-07 remains unsent after IDS 6005. Approved registration repair quiesced reads and preserved chats, hardware and CloudKit state; saved-account reuse returned phone-number validation failure. Await normal validation, not another reset. Alpha is untouched. |
 | Qualified source, not installed | Read-transition `90f98b7eb` passed 296 focused tests, targeted analysis, and GCE `34594546421`: 3,147 Dart tests plus 14 outbox and 3 evidence-output cases. Cleanup completed at 11:44:17Z; independent VM/runner inventories were empty. It includes replay repair `fd60a8a20` and background patch `0bb67d2c4`, which avoids repeating exhaustive retained-history sweeps on routine metadata wakes. No APK or Pixel runtime proof for these patches yet. |
 | Windows candidate | Writer overlay `3984f810501b` preserves signed native `62221f9c2` and adds request-v5 standard reactions. Like-05 and remove-like-06 each passed positive IDS confirmation, one admission, exact persisted readback, then a separate-process zero-admission restart. Read-only overlay `f90226831` passed two cold three-zone reads, second fetch empty, outbox `6 -> 6`, saves/deletes off. Retained writer `46bc6f027` passed image-04 parent admission and no-op restart. All prior requests, claims and runtimes remain protected evidence. |
@@ -894,16 +895,43 @@ The fixtures are corrected, and an actual entity-34 upgrade/reopen case now
 preserves existing messages and send intents. Independent comparison confirmed
 all 26 predecessor entity definitions and retired entity IDs are unchanged.
 Cleanup succeeded; subsequent VM and runner inventories were empty.
-Windows fast-loop
-`34631493537` builds the same source with the unchanged isolated pilot
-`9c63ab24d`; its local-write configuration is compiled and smoke-tested only,
-not run against an account. Its result, replacement Dart qualification and the
-new Windows runtime import remain pending. Preserve native `62221f9c2` until a matching replacement is
-qualified; this dispatch does not replace the installed Windows or Pixel app.
+Windows fast-loop `34631493537` passed on `f24e7379f` with isolated pilot
+`9c63ab24d`: 38 focused Dart tests, 51 packaged-DLL codec cases, ARM64 load and
+invalid-launch smoke. Its local-write configuration was compiled only, not run
+against an account. Artifact `10277865440` is not yet imported or locally
+signed. Preserve native `62221f9c2` until a matching replacement is qualified.
+This result does not replace the installed Windows or Pixel app.
 The combined source-preparation, mutation/send/reaction/upload journals, GC,
 migration and app receipt-composition cohort now passes **410 local tests**
 across 12 suites. This is synthetic/local-store qualification, not an Apple
 account test. Full cloud qualification must be rerun on the repaired candidate.
+Source preparation/receipt routing and fixture repairs are committed as
+`c988a5844`. Reviewed default-off FaceTime diagnostics are separate at
+`99d45a9c7`. Full Dart rerun `34633136729` passed that exact combined head:
+3,237 Dart tests, 14 outbox cases and 3 evidence-output cases. Cleanup and
+independent empty VM/runner inventories were verified before the next run.
+
+Windows mutation experiment: native source `db5c1508c` passed compilation and
+517 Rust tests in GCE app-Rust-only `34634299421`, N2D-16/us-west1-c, writer
+flags off. Only generated-binding drift failed. Artifact `10277519451` was
+checksum-verified and imported: the exact API plus paired bridge dispatch/hash
+changes, with unrelated generated edits preserved. Cleanup succeeded at
+18:47:41Z and independent inventories were empty. The API waits for
+positive IDS acceptance and persists the mutation-purpose receipt. The working
+Dart request-v6 branch now uses separate mutation journaling, never initial-create
+admission. Missing native callback fails before authentication or claim. Requests
+bind one exact prior successful test send, direct plaintext part 0, and a fresh
+60-second qualification window. Reopening a claim can reconcile retained receipts
+only, never submit again. The composed local pipeline passes 39 journal tests,
+including timeout, wrong-purpose receipt, post-send auth change, and reopen.
+The 71-test local cohort covers request compatibility, exact target/payload,
+source-to-confirmation composition, unknown-result restart and branch separation.
+The request/target agent's patches were reviewed, refined and retained; agent
+shutdown was verified. Full combined Dart qualification and Windows runtime
+proof remain. No real edit/unsend sent, local body projected or CK update enabled.
+Before local reflection, qualify mutation time semantics: `new_msg` starts at
+timestamp zero and `prepare_send` changes it. Do not project time zero, or
+mistake receipt arrival time for the exact on-wire edit time.
 
 Retained-version inspection now has live **offline** evidence: the Windows
 profile contains 23,413 scoped record groups and zero multi-row groups, so

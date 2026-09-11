@@ -10,7 +10,8 @@ import 'cloudkit_operation_interlock.dart';
 
 /// Adopt, commit and reopen the original edit/unsend before claiming one send.
 /// Holds exclusion for local protected storage only. The caller sends the
-/// returned wire after this method releases exclusion, never inside it.
+/// returned wire after preparation releases exclusion, never inside it.
+/// [submitConfirmed] composes that handoff with positive receipt retention.
 /// A crash after claiming remains ambiguous and cannot re-enter this method.
 final class CloudSyncLocalMutationSourceStaging {
   const CloudSyncLocalMutationSourceStaging({
@@ -28,6 +29,54 @@ final class CloudSyncLocalMutationSourceStaging {
   final bool Function() _stillCurrent;
   final CloudKitOperationExclusion _exclusion;
   final CloudProtectedPageLeaseTransport _transport;
+
+  /// One positive-acceptance submission composed with its durable journal.
+  /// No timeout, retry, CK update or receipt acknowledgement occurs here.
+  /// In particular, a successful send followed by a fence/storage failure is
+  /// reconciled from its native receipt, never by calling this method again.
+  Future<int> submitConfirmed({
+    required int localMessageId,
+    required CloudSyncLocalMutationIdentity identity,
+    required Future<CloudSyncLocalMutationSourceBinding> Function() stage,
+    required Future<api.MessageInst> Function(
+      CloudSyncLocalMutationSourceBinding,
+    )
+    restore,
+    required Future<api.CloudSyncNativeSendReceipt> Function(
+      api.MessageInst,
+      CloudSyncLocalMutationSourceBinding,
+    )
+    send,
+    void Function()? validateBeforeSend,
+  }) async {
+    final prepared = await prepareSubmission(
+      localMessageId: localMessageId,
+      identity: identity,
+      stage: stage,
+      restore: restore,
+    );
+    await _authFence.run(() {
+      _journal.requireClaimedSubmission(
+        intentId: prepared.intentId,
+        committedSource: prepared.source,
+        capturedAuth: _auth,
+        stillCurrent: _stillCurrent,
+      );
+      validateBeforeSend?.call();
+    });
+    // Both exclusions have been released before any network operation.
+    final receipt = await send(prepared.wire, prepared.source);
+    await _authFence.run(
+      () => _journal.recordNativeReceipt(
+        intentId: prepared.intentId,
+        receipt: receipt,
+        capturedAuth: _auth,
+        stillCurrent: _stillCurrent,
+        now: DateTime.now().toUtc(),
+      ),
+    );
+    return prepared.intentId;
+  }
 
   Future<
     ({

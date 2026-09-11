@@ -1182,6 +1182,17 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         sendConfirmed: (message) => api.cloudSyncWindowsSendConfirmed(
           path: fs.appDocDir.path, state: senderClient!, msg: message,
         ),
+        sendMutationConfirmed: (message, context) {
+          final client = _activeClient;
+          if (senderClient == null ||
+              client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+            throw StateError('cloud_sync_windows_mutation_client_missing');
+          }
+          return api.cloudSyncWindowsSendMutationConfirmed(
+            state: senderClient!, cloudMessagesClient: client,
+            msg: message, context: context,
+          );
+        },
         uploadAttachment: (file, fixture) async {
           api.Attachment? uploaded;
           await for (final event in api.uploadAttachment(

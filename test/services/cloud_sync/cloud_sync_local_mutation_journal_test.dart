@@ -187,6 +187,152 @@ void main() {
         },
       );
 
+  Future<int> submit(Future<api.CloudSyncNativeSendReceipt> Function() send) =>
+      CloudSyncLocalMutationSourceStaging(
+        journal: journal,
+        authFence: CloudSyncLocalSendAuthFence(
+          expected: stagingAuth,
+          capture: () async => capturedNow,
+          stillCurrent: () => current,
+        ),
+        capturedAuth: stagingAuth,
+        stillCurrent: () => current,
+        exclusion: exclusion,
+        transport: transport,
+      ).submitConfirmed(
+        localMessageId: target.id!,
+        identity: identity,
+        stage: () async {
+          stageCalls++;
+          return source;
+        },
+        restore: (_) async {
+          restoreCalls++;
+          return _wire();
+        },
+        send: (wire, original) {
+          expect(exclusion.held || transport.held, isFalse);
+          expect(original.encode(), source.encode());
+          expect(
+            CloudSyncLocalMutationIdentity.captureWire(wire)!.sourceSha256,
+            identity.sourceSha256,
+          );
+          expect(
+            store
+                .box<CloudSyncLocalMutationIntentEntity>()
+                .getAll()
+                .single
+                .state,
+            1,
+          );
+          return send();
+        },
+      );
+
+  test(
+    'composed submission sends once and confirms durable original after reopen',
+    () async {
+      var sends = 0;
+      final id = await submit(() async {
+        sends++;
+        return _receipt(identity, source);
+      });
+      expect(row(id).state, 2);
+      expect(store.box<Message>().get(target.id!)!.text, 'original');
+      await reopen();
+      await expectLater(
+        submit(() async {
+          sends++;
+          return _receipt(identity, source);
+        }),
+        throwsA(_failure('already_claimed')),
+      );
+      expect(sends, 1);
+      expect(stageCalls, 1);
+      expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(transport.rollbacks, isEmpty);
+      expect(transport.acknowledgements, 0);
+    },
+  );
+
+  for (final fault in ['timeout', 'bad-receipt', 'auth-after-send']) {
+    test(
+      'composed $fault retains unknown outcome and cannot resend after reopen',
+      () async {
+        var sends = 0;
+        await expectLater(
+          submit(() async {
+            sends++;
+            if (fault == 'timeout') {
+              throw StateError('synthetic_network_timeout');
+            }
+            if (fault == 'auth-after-send') {
+              capturedNow = _auth(session: 'replacement');
+            }
+            return _receipt(
+              identity,
+              source,
+              kind: fault == 'bad-receipt'
+                  ? api.CloudSyncNativeSendSourceKind.attachment
+                  : api.CloudSyncNativeSendSourceKind.mutation,
+            );
+          }),
+          throwsStateError,
+        );
+        final id = store
+            .box<CloudSyncLocalMutationIntentEntity>()
+            .getAll()
+            .single
+            .id;
+        expect(row(id).state, 1);
+        await reopen();
+        capturedNow = stagingAuth;
+        await expectLater(
+          submit(() async {
+            sends++;
+            return _receipt(identity, source);
+          }),
+          throwsA(_failure('already_claimed')),
+        );
+        expect(sends, 1);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        expect(store.box<Message>().get(target.id!)!.text, 'original');
+        expect(transport.rollbacks, isEmpty);
+        expect(transport.acknowledgements, 0);
+      },
+    );
+  }
+
+  test(
+    'final submission check rejects changed target and current native session',
+    () async {
+      final prepared = await prepare();
+      void verify() => journal.requireClaimedSubmission(
+        intentId: prepared.intentId,
+        committedSource: source,
+        capturedAuth: stagingAuth,
+        stillCurrent: () => current,
+      );
+      verify();
+      target.text = 'changed after preparation';
+      store.box<Message>().put(target);
+      expect(verify, throwsA(_failure('target_changed')));
+      target.text = 'original';
+      store.box<Message>().put(target);
+      expect(
+        () => journal.requireClaimedSubmission(
+          intentId: prepared.intentId,
+          committedSource: source,
+          capturedAuth: _auth(session: 'replacement'),
+          stillCurrent: () => true,
+        ),
+        throwsA(_failure('submission_changed')),
+      );
+      expect(row(prepared.intentId).state, 1);
+    },
+  );
+
   test(
     'composed staging claims once and receipt routing confirms only mutation',
     () async {
