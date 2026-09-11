@@ -202,6 +202,7 @@ mod cloud_sync_outbound_attachment;
 mod cloud_sync_ids_attachment_source;
 mod cloud_sync_ids_mutation_source;
 mod cloud_sync_ids_mutation_stage;
+mod cloud_sync_message_proto_patch;
 mod cloud_sync_attachment_source_file;
 mod cloud_sync_attachment_upload;
 mod cloud_sync_attachment_upload_receipt;

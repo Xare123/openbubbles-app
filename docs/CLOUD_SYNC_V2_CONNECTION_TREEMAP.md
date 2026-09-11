@@ -794,6 +794,12 @@ passed GCE qualification. The caller still needs durable mutation intent,
 account/container/database authority and unknown-outcome readback reconciliation;
 an ETag conflict after a lost success response does not prove that nothing saved.
 
+The native-only `cloud_sync_message_proto_patch` candidate patches decompressed
+msgProto fields 3/4/7 while preserving all other wire spans verbatim. It rejects
+ambiguous mutable fields and malformed/over-budget input. Nine synthetic tests
+are awaiting cloud qualification. This helper is not connected to a writer;
+it does not prove Apple mutation semantics, PCS authority or causal merge.
+
 Dependency `fbf9b4c` passed native-only GCE qualification `34621760644`, pinned
 by app `4dc324995`: 297 tests, zero failures. Compile took 56s, tests 6.3s,
 and the full run including cleanup took approximately 5m12s. Cleanup completed
