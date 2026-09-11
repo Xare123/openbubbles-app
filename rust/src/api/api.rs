@@ -707,7 +707,12 @@ pub async fn cloud_sync_stage_attachment_upload_plan(
         .ok_or_else(|| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
     let writer_binding = cloud_messages_client
         .warm_attachment_writer_preparation_lookup_only().await
-        .map_err(|_| anyhow!("cloud_sync_attachment_preparation_auth_unavailable"))?;
+        .map_err(|error| {
+            warn!("Cloud Sync writer preparation failed kind=attachment cause={}",
+                cloud_sync_writer_preparation_failure_code(&error));
+            log::logger().flush();
+            anyhow!("cloud_sync_attachment_preparation_auth_unavailable")
+        })?;
     let after_warm = cloud_sync_capture_auth_snapshot(
         cloud_messages_client, context.storage_directory.clone(),
     ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
@@ -2864,6 +2869,7 @@ fn cloud_sync_writer_preparation_failure_code(mut error: &PushError) -> &'static
             PushError::ResourceFailure(inner) => error = &inner.error,
             PushError::TokenMissing => return "token-missing",
             PushError::CloudKitWarmAuthenticationRequired => return "warm-auth-required",
+            PushError::CloudKitSemanticOperationDenied => return "writer-scope-denied",
             PushError::DelegateLoginFailed(_, _, _) => return "delegate-login-failed",
             PushError::AuthError(_) => return "authentication-rejected",
             PushError::UnauthorizedAccountError => return "account-identity-unavailable",
@@ -13905,6 +13911,7 @@ mod cloud_sync_failure_mapping_tests {
         let cases = [
             (PushError::TokenMissing, "token-missing"),
             (PushError::CloudKitWarmAuthenticationRequired, "warm-auth-required"),
+            (PushError::CloudKitSemanticOperationDenied, "writer-scope-denied"),
             (PushError::DelegateLoginFailed("private-delegate".into(), 123,
                 "private-response".into()), "delegate-login-failed"),
             (PushError::AuthError(Value::String("private-token".into())),
