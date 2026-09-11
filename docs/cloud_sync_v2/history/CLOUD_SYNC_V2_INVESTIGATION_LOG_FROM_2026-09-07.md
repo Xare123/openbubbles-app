@@ -1995,3 +1995,47 @@ This is a chronological evidence log. It does not override the
   Scoped storage audit: build-evidence 2.67 GiB, retained writer runtimes
   0.93 GiB and writer Dart cache 0.97 GiB at measurement; C: later 49.26 GiB
   free. Only the inspector's verified disposable database copy was removed.
+
+### September 11, cold read authentication and independent-proof limits
+
+- Read-only overlay `46bc6f027185` failed at 08:11:08Z with
+  `cloud_sync_native_auth_identity_mismatch`. Reset recovery captured native
+  identity before the ordinary read session restored GSA identifiers. The
+  writer already established authentication first; no wrong password, account
+  replacement or damaged CloudKit cursor was established by this failure.
+- App `b432b9e8a` introduces the production provider's
+  `prepareResetRecoveryAuthentication` under the semantic-read interlock. It
+  releases that lock before the existing reset coordinator acquires its own.
+  Exact identity, reset authority and client-replacement checks remain intact.
+  The cold-path test reproduced the old failure; 126 adapter, reset, sampler
+  and interlock tests passed afterward. No credential/cursor reset was used.
+- Qualified read-only overlay `f90226831663`, signed native `62221f9c2`,
+  completed fresh-process reads at 08:19:24Z and 08:23:09Z. First pass fetched
+  one Attachment and repaired one chat-order cache; repeat fetched zero.
+  Both applied zero new entries, retained 6,654 old entries and preserved
+  settled outbox `6 -> 6`. Remote saves/deletes were disabled. All three zones
+  retained the honest `retained_projection_incomplete` status, including
+  out-of-scope SMS/service records and unresolved historical dependencies.
+- Inspector `1c02fae40` adds bounded exact-account/scope/record ingestion
+  diagnostics, with six tests. Image 04 has no matching Message inbox entry
+  after the first fresh read. That same-client observation does not disprove
+  the existing exact remote-record readback, and does not establish independent
+  Apple-device visibility. Do not require a self-echo or build another proof
+  framework merely to change the offline inspector's conservative result.
+- Evidence: `build-evidence/windows-read-after-write-46bc6f027` contains the
+  failed cold-auth trace and tests; `windows-read-after-write-f90226831`
+  contains pinned 78-file manifests, qualification and both semantic reports.
+  Original image-04 request/claim and writer runtime remain rollback material.
+- The first fixed read's host observer incorrectly supplied a Find My-only
+  schema expectation to `Wait-HarnessOperation`, so it missed a successful
+  semantic terminal report. The parent verified exact launch ID, PID, build,
+  stage and report before stopping that process. The corrected evidence
+  wrapper retained those identity checks; the second launch exited successfully.
+  This observer error is not a failed read or a changed production app result.
+- GCE `34576684370` remains pinned to `5e9a532be`, excluding this cold fix.
+  At 08:30Z its full qualification was building the APK. Do not install it as
+  containing `b432b9e8a`, or call signing/cleanup passed before readback.
+- All five reviewed agents now report `not_found` through supported shutdown
+  verification. Required evidence, rollback runtimes and the unintegrated Find
+  My proposal remain retained; supported session deletion is unavailable.
+  C: free space at this checkpoint was 48.17 GiB. No evidence was deleted.
