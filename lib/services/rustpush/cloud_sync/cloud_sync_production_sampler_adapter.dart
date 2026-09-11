@@ -547,12 +547,13 @@ final class CloudSyncProductionSemanticPullAdapter {
     );
     final activeNativeWriterPause =
         nativeWriterPause ?? FrbCloudSyncNativeWriterPause();
+    final resetInterlock = CloudKitOperationInterlock(
+      privateStorageDirectory: privateStorageDirectory,
+      fenceStore: durableStore,
+    );
     final resetCoordinator = CloudSyncResetCoordinator(
       authority: ObjectBoxCloudKitWriterAuthority(store: Database.store),
-      interlock: CloudKitOperationInterlock(
-        privateStorageDirectory: privateStorageDirectory,
-        fenceStore: durableStore,
-      ),
+      interlock: resetInterlock,
       store: durableStore,
       readAuthSnapshot: authProvider.capture,
       readPreflight: readPreflight,
@@ -648,7 +649,7 @@ final class CloudSyncProductionSemanticPullAdapter {
       coordinateProtectedReset: (expectedAuth, context) => resetCoordinator
           .coordinate(expectedAuth: expectedAuth, context: context),
       recoverPendingReset: () async {
-        final auth = await authProvider.capture();
+        final auth = await authProvider.prepareResetRecoveryAuthentication(resetInterlock);
         if (auth == null) return;
         await resetCoordinator.recoverPending(
           expectedAuth: auth,
@@ -2118,6 +2119,17 @@ final class CloudSyncProductionAuthSnapshotProvider {
   final ActiveCloudMessagesClientReader _readActiveClient;
   final CloudSyncNativeAuthBinding _nativeAuthBinding;
   final String privateStorageDirectory;
+
+  /// Recovery runs before the first semantic session, including a cold start.
+  /// Establish cached native identity under a read interlock first. Release
+  /// that interlock before the coordinator takes its destructive-reset lock;
+  /// it must still revalidate this exact snapshot after reacquiring ownership.
+  Future<CloudSyncNativeAuthSnapshot?> prepareResetRecoveryAuthentication(
+    CloudKitOperationExclusion interlock,
+  ) => interlock.runExclusive(
+    kind: CloudKitOperationKind.v2SemanticRead,
+    action: ensureReadAuthenticationUnderInterlock,
+  );
 
   /// Performs the single bounded CloudKit read-auth warmup for a manual run.
   /// The caller must already hold the CloudKit operation interlock.

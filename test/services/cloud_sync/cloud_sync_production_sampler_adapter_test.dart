@@ -463,6 +463,50 @@ void main() {
     },
   );
 
+  test('reset recovery warms a cold client before identity capture', () async {
+    final client = Object();
+    final binding = _FakeNativeAuthBinding(rejectColdCapture: true);
+    final provider = CloudSyncProductionAuthSnapshotProvider(
+      readActiveClient: () => client, nativeAuthBinding: binding,
+      privateStorageDirectory: temporaryDirectory.path,
+    );
+    final snapshot = await provider.prepareResetRecoveryAuthentication(interlock);
+    expect(snapshot, isNotNull);
+    expect(binding.operationOrder, ['ensure', 'capture', 'capture']);
+    expect(binding.ensureKinds, [CloudKitOperationKind.v2SemanticRead]);
+    // The read lock must be released before reset recovery reacquires its own.
+    await interlock.runExclusive(kind: CloudKitOperationKind.destructiveReset,
+      action: () async { expect(snapshot!.cloudMessagesClient, same(client)); });
+  });
+
+  test('reset recovery rejects a client replaced during cold authentication', () async {
+    var active = Object();
+    final started = Completer<void>();
+    final blocked = Completer<void>();
+    final binding = _FakeNativeAuthBinding(rejectColdCapture: true,
+      ensureStarted: started, ensureBlocker: blocked);
+    final provider = CloudSyncProductionAuthSnapshotProvider(
+      readActiveClient: () => active, nativeAuthBinding: binding,
+      privateStorageDirectory: temporaryDirectory.path,
+    );
+    final pending = provider.prepareResetRecoveryAuthentication(interlock);
+    await started.future;
+    active = Object();
+    blocked.complete();
+    expect(await pending, isNull);
+    expect(binding.calls, 0);
+  });
+
+  test('production reset recovery uses authenticated preparation before recovery', () {
+    final source = File('lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart').readAsStringSync();
+    final callback = source.substring(source.indexOf('recoverPendingReset: () async'),
+      source.indexOf('scheduleSession: scheduleSession'));
+    expect(callback, contains('authProvider.prepareResetRecoveryAuthentication(resetInterlock)'));
+    expect(callback, isNot(contains('authProvider.capture()')));
+    expect(callback.indexOf('prepareResetRecoveryAuthentication'),
+      lessThan(callback.indexOf('resetCoordinator.recoverPending')));
+  });
+
   test(
     'client replacement during semantic read authentication ensure fails closed',
     () async {
@@ -1078,6 +1122,7 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
     this.warmStarted,
     this.ensureBlocker,
     this.ensureStarted,
+    this.rejectColdCapture = false,
     List<CloudSyncNativeAuthMetadata>? captureResults,
   }) : captureResults = captureResults ?? const <CloudSyncNativeAuthMetadata>[];
 
@@ -1086,6 +1131,8 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
   final Completer<void>? warmStarted;
   final Completer<void>? ensureBlocker;
   final Completer<void>? ensureStarted;
+  final bool rejectColdCapture;
+  final List<CloudKitOperationKind> ensureKinds = [];
   final List<CloudSyncNativeAuthMetadata> captureResults;
   int calls = 0;
   int warmCalls = 0;
@@ -1106,6 +1153,10 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
   }) async {
     ensureCalls++;
     operationOrder.add('ensure');
+    if (rejectColdCapture) {
+      CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2SemanticRead);
+      ensureKinds.add(CloudKitOperationKind.v2SemanticRead);
+    }
     ensuredClients.add(cloudMessagesClient);
     ensureStorageDirectories.add(privateStorageDirectory);
     final started = ensureStarted;
@@ -1152,6 +1203,9 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
   }) async {
     calls++;
     operationOrder.add('capture');
+    if (rejectColdCapture && ensureCalls == 0) {
+      throw StateError('cloud_sync_native_auth_identity_mismatch');
+    }
     clients.add(cloudMessagesClient);
     await blocker?.future;
     if (captureResults.isNotEmpty) {
