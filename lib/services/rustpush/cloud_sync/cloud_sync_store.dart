@@ -199,6 +199,7 @@ abstract interface class CloudSyncStore {
     required String leaseId,
     required Duration leaseDuration,
     required Set<CloudOutboxAction> allowedActions,
+    Set<int>? allowedPayloadVersions,
   });
 
   /// Atomically extends the exact live lease for every requested operation.
@@ -503,6 +504,7 @@ abstract interface class CloudSyncUnknownOutcomeLeasingStore {
     required int limit,
     required String leaseId,
     required Duration leaseDuration,
+    Set<int>? allowedPayloadVersions,
   });
 }
 

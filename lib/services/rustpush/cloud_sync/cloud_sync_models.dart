@@ -7,6 +7,13 @@ import 'dart:collection';
 /// the only version eligible for remote submission.
 const int cloudSyncOutboundPayloadVersion = 2;
 
+/// Protected conditional-update envelope for an existing Messages record.
+///
+/// This must remain distinct from the version-2 initial-create envelope. A
+/// writer may therefore route or quarantine the two operation classes without
+/// ever interpreting a conditional update as permission to create a record.
+const int cloudSyncMessageUpdatePayloadVersion = 3;
+
 /// Separate protected Chat envelope and initial-operation domain. This does
 /// not make legacy version-1 Message operations eligible for transmission.
 const int cloudSyncOutboundChatPayloadVersion = 1;

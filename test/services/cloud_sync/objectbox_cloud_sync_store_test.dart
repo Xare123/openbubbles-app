@@ -33,94 +33,177 @@ void main() {
     );
   }
 
-  test('local source remains live for lease recovery and GC after reopen', () async {
-    final source = CloudSyncLocalSendSourceBinding(
-      accountFingerprint: 'A' * 43, protectedStoreIdentity: 'obcs2.store.${'A' * 43}',
-      messageGuidHash: 'a' * 64, sourceSha256: 'b' * 64,
-      protectedReference: 'obcs2.ref.${'S' * 43}',
-      leaseReference: 'obcs2.lease.${'c' * 32}',
-      payloadSha256: 'd' * 64, payloadLength: 123,
-    );
-    final id = objectBox.box<CloudSyncLocalSendIntentEntity>().put(
-      CloudSyncLocalSendIntentEntity(intentKey: 'local-source-fixture',
-        accountFingerprint: source.accountFingerprint, writerEpoch: 1,
-        localMessageId: 1, messageGuidHash: source.messageGuidHash,
-        sourceSha256: source.sourceSha256, createdAtMs: 1, updatedAtMs: 1,
-        protectedSourceBinding: source.encode()),
-    );
-    await reopen();
-    final live = await store.readLiveProtectedReferences(maximumCount: 100);
-    expect(live.isComplete, isTrue);
-    expect(live.references, contains(source.protectedReference));
-    expect(await store.readLiveProtectedOutboundLeaseReferences(maximumCount: 100),
-      contains(source.leaseReference));
-    final changed = objectBox.box<CloudSyncLocalSendIntentEntity>().get(id)!
-      ..sourceSha256 = 'e' * 64;
-    objectBox.box<CloudSyncLocalSendIntentEntity>().put(changed);
-    await expectLater(store.readLiveProtectedReferences(maximumCount: 100), throwsStateError);
-    await expectLater(store.readLiveProtectedOutboundLeaseReferences(maximumCount: 100), throwsStateError);
-  });
+  test(
+    'local source remains live for lease recovery and GC after reopen',
+    () async {
+      final source = CloudSyncLocalSendSourceBinding(
+        accountFingerprint: 'A' * 43,
+        protectedStoreIdentity: 'obcs2.store.${'A' * 43}',
+        messageGuidHash: 'a' * 64,
+        sourceSha256: 'b' * 64,
+        protectedReference: 'obcs2.ref.${'S' * 43}',
+        leaseReference: 'obcs2.lease.${'c' * 32}',
+        payloadSha256: 'd' * 64,
+        payloadLength: 123,
+      );
+      final id = objectBox.box<CloudSyncLocalSendIntentEntity>().put(
+        CloudSyncLocalSendIntentEntity(
+          intentKey: 'local-source-fixture',
+          accountFingerprint: source.accountFingerprint,
+          writerEpoch: 1,
+          localMessageId: 1,
+          messageGuidHash: source.messageGuidHash,
+          sourceSha256: source.sourceSha256,
+          createdAtMs: 1,
+          updatedAtMs: 1,
+          protectedSourceBinding: source.encode(),
+        ),
+      );
+      await reopen();
+      final live = await store.readLiveProtectedReferences(maximumCount: 100);
+      expect(live.isComplete, isTrue);
+      expect(live.references, contains(source.protectedReference));
+      expect(
+        await store.readLiveProtectedOutboundLeaseReferences(maximumCount: 100),
+        contains(source.leaseReference),
+      );
+      final changed = objectBox.box<CloudSyncLocalSendIntentEntity>().get(id)!
+        ..sourceSha256 = 'e' * 64;
+      objectBox.box<CloudSyncLocalSendIntentEntity>().put(changed);
+      await expectLater(
+        store.readLiveProtectedReferences(maximumCount: 100),
+        throwsStateError,
+      );
+      await expectLater(
+        store.readLiveProtectedOutboundLeaseReferences(maximumCount: 100),
+        throwsStateError,
+      );
+    },
+  );
 
   for (final scenario in ['exact member update', 'corrupt owner', 'reset']) {
-    test('physical Chat mapping $scenario survives reopen without retargeting', () async {
-      final scope = CloudSyncScope(
-        accountFingerprint: testAccountFingerprintA, container: 'com.apple.messages.cloud',
-        database: 'private', zone: 'chatManateeZone', persistenceLane: CloudSyncPersistenceLane.semantic,
-      );
-      await store.readCheckpoint(scope);
-      final logical = 'L' * 43;
-      final a = 'A' * 43;
-      final b = 'B' * 43;
-      CloudRecordMapEntity row(String key, String server) => CloudRecordMapEntity(
-        mapKey: key, scopeKey: cloudSyncPersistentScopeKey(scope),
-        accountFingerprint: scope.accountFingerprint, zone: scope.zone,
-        logicalEntityKeyHash: logical, serverRecordIdHash: server, generation: 1,
-        encryptedServerRecordId: testProtectedReference(server.substring(0, 1)),
-        etagHash: server, encryptedRawRecordRef: testProtectedReference('R'),
-        updatedAtMs: testEpoch.millisecondsSinceEpoch,
-      );
-      final aKey = cloudSyncChatRecordMemberKey(scope, 1, a);
-      objectBox.box<CloudRecordMapEntity>().putMany([
-        row(cloudSyncCanonicalRecordMapKey(scope, logical), b),
-        row(aKey, a), row(cloudSyncChatRecordMemberKey(scope, 1, b), b),
-      ]);
-      await reopen();
-      Future<CloudRecordMapEntry?> read([String? server]) => store.readRecordMap(
-        scope, logicalEntityKeyHash: logical, generation: 1, serverRecordIdHash: server,
-      );
-      expect((await read())!.serverRecordIdHash, b);
-      expect((await read(a))!.serverRecordIdHash, a);
-      expect(await read('X' * 43), isNull);
-      if (scenario == 'exact member update') {
-        await store.upsertRecordMap(CloudRecordMapEntry(
-          scope: scope, logicalEntityKeyHash: logical, serverRecordIdHash: a,
-          encryptedServerRecordId: testProtectedReference('A'), etagHash: 'N' * 43,
-          encryptedRawRecordReference: testProtectedReference('N'), updatedAt: testEpoch,
-        ), generation: 1);
-        expect((await read(a))!.etagHash, 'N' * 43);
+    test(
+      'physical Chat mapping $scenario survives reopen without retargeting',
+      () async {
+        final scope = CloudSyncScope(
+          accountFingerprint: testAccountFingerprintA,
+          container: 'com.apple.messages.cloud',
+          database: 'private',
+          zone: 'chatManateeZone',
+          persistenceLane: CloudSyncPersistenceLane.semantic,
+        );
+        await store.readCheckpoint(scope);
+        final logical = 'L' * 43;
+        final a = 'A' * 43;
+        final b = 'B' * 43;
+        CloudRecordMapEntity row(String key, String server) =>
+            CloudRecordMapEntity(
+              mapKey: key,
+              scopeKey: cloudSyncPersistentScopeKey(scope),
+              accountFingerprint: scope.accountFingerprint,
+              zone: scope.zone,
+              logicalEntityKeyHash: logical,
+              serverRecordIdHash: server,
+              generation: 1,
+              encryptedServerRecordId: testProtectedReference(
+                server.substring(0, 1),
+              ),
+              etagHash: server,
+              encryptedRawRecordRef: testProtectedReference('R'),
+              updatedAtMs: testEpoch.millisecondsSinceEpoch,
+            );
+        final aKey = cloudSyncChatRecordMemberKey(scope, 1, a);
+        objectBox.box<CloudRecordMapEntity>().putMany([
+          row(cloudSyncCanonicalRecordMapKey(scope, logical), b),
+          row(aKey, a),
+          row(cloudSyncChatRecordMemberKey(scope, 1, b), b),
+        ]);
+        await reopen();
+        Future<CloudRecordMapEntry?> read([String? server]) =>
+            store.readRecordMap(
+              scope,
+              logicalEntityKeyHash: logical,
+              generation: 1,
+              serverRecordIdHash: server,
+            );
         expect((await read())!.serverRecordIdHash, b);
-        expect((await read())!.etagHash, b);
-        await store.upsertRecordMap(CloudRecordMapEntry(
-          scope: scope, logicalEntityKeyHash: logical, serverRecordIdHash: b,
-          encryptedServerRecordId: testProtectedReference('B'), etagHash: 'Z' * 43,
-          encryptedRawRecordReference: testProtectedReference('Z'), updatedAt: testEpoch,
-        ), generation: 1);
-        expect((await read())!.etagHash, 'Z' * 43);
-        expect(objectBox.box<CloudRecordMapEntity>().getAll().where((r) => r.serverRecordIdHash == b).every((r) => r.etagHash == 'Z' * 43), true);
-      } else if (scenario == 'corrupt owner') {
-        final member = objectBox.box<CloudRecordMapEntity>().getAll().singleWhere((r) => r.mapKey == aKey);
-        objectBox.box<CloudRecordMapEntity>().put(member..logicalEntityKeyHash = 'X' * 43);
-        await expectLater(read(a), throwsA(isA<CloudSyncFailure>()));
-        expect((await read())!.serverRecordIdHash, b);
-      } else {
-        await store.rebootstrapAfterReset(_resetRequest(scope), now: testEpoch);
-        expect((await store.readCheckpoint(scope)).generation, 2);
-        expect(objectBox.box<CloudRecordMapEntity>().getAll().where((r) => r.mapKey.startsWith('record-member-v1:')).every((r) => r.generation == 1), true);
-        expect(await store.readRecordMap(scope, logicalEntityKeyHash: logical, generation: 2, serverRecordIdHash: a), isNull);
-      }
-      expect(objectBox.box<CloudRecordMapEntity>().count(), 3);
-      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
-    });
+        expect((await read(a))!.serverRecordIdHash, a);
+        expect(await read('X' * 43), isNull);
+        if (scenario == 'exact member update') {
+          await store.upsertRecordMap(
+            CloudRecordMapEntry(
+              scope: scope,
+              logicalEntityKeyHash: logical,
+              serverRecordIdHash: a,
+              encryptedServerRecordId: testProtectedReference('A'),
+              etagHash: 'N' * 43,
+              encryptedRawRecordReference: testProtectedReference('N'),
+              updatedAt: testEpoch,
+            ),
+            generation: 1,
+          );
+          expect((await read(a))!.etagHash, 'N' * 43);
+          expect((await read())!.serverRecordIdHash, b);
+          expect((await read())!.etagHash, b);
+          await store.upsertRecordMap(
+            CloudRecordMapEntry(
+              scope: scope,
+              logicalEntityKeyHash: logical,
+              serverRecordIdHash: b,
+              encryptedServerRecordId: testProtectedReference('B'),
+              etagHash: 'Z' * 43,
+              encryptedRawRecordReference: testProtectedReference('Z'),
+              updatedAt: testEpoch,
+            ),
+            generation: 1,
+          );
+          expect((await read())!.etagHash, 'Z' * 43);
+          expect(
+            objectBox
+                .box<CloudRecordMapEntity>()
+                .getAll()
+                .where((r) => r.serverRecordIdHash == b)
+                .every((r) => r.etagHash == 'Z' * 43),
+            true,
+          );
+        } else if (scenario == 'corrupt owner') {
+          final member = objectBox
+              .box<CloudRecordMapEntity>()
+              .getAll()
+              .singleWhere((r) => r.mapKey == aKey);
+          objectBox.box<CloudRecordMapEntity>().put(
+            member..logicalEntityKeyHash = 'X' * 43,
+          );
+          await expectLater(read(a), throwsA(isA<CloudSyncFailure>()));
+          expect((await read())!.serverRecordIdHash, b);
+        } else {
+          await store.rebootstrapAfterReset(
+            _resetRequest(scope),
+            now: testEpoch,
+          );
+          expect((await store.readCheckpoint(scope)).generation, 2);
+          expect(
+            objectBox
+                .box<CloudRecordMapEntity>()
+                .getAll()
+                .where((r) => r.mapKey.startsWith('record-member-v1:'))
+                .every((r) => r.generation == 1),
+            true,
+          );
+          expect(
+            await store.readRecordMap(
+              scope,
+              logicalEntityKeyHash: logical,
+              generation: 2,
+              serverRecordIdHash: a,
+            ),
+            isNull,
+          );
+        }
+        expect(objectBox.box<CloudRecordMapEntity>().count(), 3);
+        expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      },
+    );
   }
 
   group('Chat member create receipt', () {
@@ -246,25 +329,33 @@ void main() {
             serverRecordIdHash: serverA,
             state: status.index,
             appleRequestUuid: status == CloudOutboxStatus.unknownOutcome
-                ? submission.requestUuid : null,
+                ? submission.requestUuid
+                : null,
             appleOperationUuid: status == CloudOutboxStatus.unknownOutcome
-                ? submission.operationUuids[operationId] : null,
+                ? submission.operationUuids[operationId]
+                : null,
             lastErrorCategory: status == CloudOutboxStatus.unknownOutcome
-                ? CloudFailureCategory.unknown.name : null,
-            leaseIdHash: sha256.convert(
-              utf8.encode('outbox-lease\u001f$leaseId'),
-            ).toString(),
-            leaseExpiresAtMs: testEpoch.add(
-              const Duration(minutes: 5),
-            ).millisecondsSinceEpoch,
+                ? CloudFailureCategory.unknown.name
+                : null,
+            leaseIdHash: sha256
+                .convert(utf8.encode('outbox-lease\u001f$leaseId'))
+                .toString(),
+            leaseExpiresAtMs: testEpoch
+                .add(const Duration(minutes: 5))
+                .millisecondsSinceEpoch,
             createdAtMs: testEpoch.millisecondsSinceEpoch,
             updatedAtMs: testEpoch.millisecondsSinceEpoch,
           ),
         );
       });
-      expect((await store.readRecordMap(
-        scope, logicalEntityKeyHash: logical, generation: 1,
-      ))!.serverRecordIdHash, serverA);
+      expect(
+        (await store.readRecordMap(
+          scope,
+          logicalEntityKeyHash: logical,
+          generation: 1,
+        ))!.serverRecordIdHash,
+        serverA,
+      );
       // Simulate the persisted result of inbound B joining the SAME logical
       // Chat. Gateway projection/corruption coverage belongs to its own suite.
       objectBox.runInTransaction(TxMode.write, () {
@@ -276,9 +367,14 @@ void main() {
         ]);
       });
       await reopen();
-      expect((await store.readRecordMap(
-        scope, logicalEntityKeyHash: logical, generation: 1,
-      ))!.serverRecordIdHash, serverB);
+      expect(
+        (await store.readRecordMap(
+          scope,
+          logicalEntityKeyHash: logical,
+          generation: 1,
+        ))!.serverRecordIdHash,
+        serverB,
+      );
       expect(outboxState()['serverRecordIdHash'], serverA);
       currentTime = testEpoch.add(const Duration(seconds: 30));
     }
@@ -296,58 +392,72 @@ void main() {
       CloudOutboxStatus.unknownOutcome,
     ]) {
       for (final recordedEtag in [false, true]) {
-        test('${status.name} updates A only (recorded etag=$recordedEtag)', () async {
-          await seedPinnedReceipt(
-            status: status,
-            initialEtag: recordedEtag ? receiptEtag : null,
-          );
-          final beforeMaps = mapStates();
-          final beforeOutbox = outboxState();
-          final retainReceipt = status == CloudOutboxStatus.unknownOutcome;
-          await store.commitOutboxCreateReceipt(
-            scope,
-            leaseId: leaseId,
-            receipt: receipt(),
-            retainProtectedLeaseReference: retainReceipt,
-            now: currentTime,
-          );
-          final expectedMaps = {
-            ...beforeMaps,
-            memberAKey: {
-              ...beforeMaps[memberAKey]!,
-              'etagHash': receiptEtag,
+        test(
+          '${status.name} updates A only (recorded etag=$recordedEtag)',
+          () async {
+            await seedPinnedReceipt(
+              status: status,
+              initialEtag: recordedEtag ? receiptEtag : null,
+            );
+            final beforeMaps = mapStates();
+            final beforeOutbox = outboxState();
+            final retainReceipt = status == CloudOutboxStatus.unknownOutcome;
+            await store.commitOutboxCreateReceipt(
+              scope,
+              leaseId: leaseId,
+              receipt: receipt(),
+              retainProtectedLeaseReference: retainReceipt,
+              now: currentTime,
+            );
+            final expectedMaps = {
+              ...beforeMaps,
+              memberAKey: {
+                ...beforeMaps[memberAKey]!,
+                'etagHash': receiptEtag,
+                'updatedAtMs': currentTime.millisecondsSinceEpoch,
+              },
+            };
+            final expectedOutbox = {
+              ...beforeOutbox,
+              'state': CloudOutboxStatus.confirmed.index,
+              'confirmedAtMs': currentTime.millisecondsSinceEpoch,
               'updatedAtMs': currentTime.millisecondsSinceEpoch,
-            },
-          };
-          final expectedOutbox = {
-            ...beforeOutbox,
-            'state': CloudOutboxStatus.confirmed.index,
-            'confirmedAtMs': currentTime.millisecondsSinceEpoch,
-            'updatedAtMs': currentTime.millisecondsSinceEpoch,
-            'leaseIdHash': null,
-            'leaseExpiresAtMs': 0,
-            'lastErrorCategory': null,
-            'nextEligibleAtMs': 0,
-            'protectedLeaseReference': retainReceipt
-                ? beforeOutbox['protectedLeaseReference'] : null,
-          };
-          // Compare every persisted field, including both B copies and A's
-          // protected references; only A's ETag/time and receipt state change.
-          expect(mapStates(), expectedMaps);
-          expect(outboxState(), expectedOutbox);
-          await reopen();
-          expect(mapStates(), expectedMaps);
-          expect(outboxState(), expectedOutbox);
-          expect((await store.readRecordMap(
-            scope, logicalEntityKeyHash: logical, generation: 1,
-            serverRecordIdHash: serverA,
-          ))!.etagHash, receiptEtag);
-          expect((await store.readRecordMap(
-            scope, logicalEntityKeyHash: logical, generation: 1,
-          ))!.serverRecordIdHash, serverB);
-          expect(objectBox.box<CloudRecordMapEntity>().count(), 3);
-          expect(objectBox.box<CloudOutboxOperationEntity>().count(), 1);
-        });
+              'leaseIdHash': null,
+              'leaseExpiresAtMs': 0,
+              'lastErrorCategory': null,
+              'nextEligibleAtMs': 0,
+              'protectedLeaseReference': retainReceipt
+                  ? beforeOutbox['protectedLeaseReference']
+                  : null,
+            };
+            // Compare every persisted field, including both B copies and A's
+            // protected references; only A's ETag/time and receipt state change.
+            expect(mapStates(), expectedMaps);
+            expect(outboxState(), expectedOutbox);
+            await reopen();
+            expect(mapStates(), expectedMaps);
+            expect(outboxState(), expectedOutbox);
+            expect(
+              (await store.readRecordMap(
+                scope,
+                logicalEntityKeyHash: logical,
+                generation: 1,
+                serverRecordIdHash: serverA,
+              ))!.etagHash,
+              receiptEtag,
+            );
+            expect(
+              (await store.readRecordMap(
+                scope,
+                logicalEntityKeyHash: logical,
+                generation: 1,
+              ))!.serverRecordIdHash,
+              serverB,
+            );
+            expect(objectBox.box<CloudRecordMapEntity>().count(), 3);
+            expect(objectBox.box<CloudOutboxOperationEntity>().count(), 1);
+          },
+        );
       }
     }
 
@@ -383,13 +493,19 @@ void main() {
             leaseId: leaseId,
             receipt: receipt(
               server: failure.key == 'receipt targets B' ? serverB : null,
-              owner: failure.key == 'receipt logical mismatch' ? 'X' * 43 : null,
+              owner: failure.key == 'receipt logical mismatch'
+                  ? 'X' * 43
+                  : null,
             ),
             now: currentTime,
           ),
-          throwsA(isA<CloudSyncFailure>().having(
-            (error) => error.safeCode, 'safeCode', failure.value,
-          )),
+          throwsA(
+            isA<CloudSyncFailure>().having(
+              (error) => error.safeCode,
+              'safeCode',
+              failure.value,
+            ),
+          ),
         );
         expect(mapStates(), beforeMaps);
         expect(outboxState(), beforeOutbox);
@@ -2462,6 +2578,169 @@ void main() {
       expect((await store.readCheckpoint(scope)).mutationRevisionCounter, 1);
     },
   );
+
+  test(
+    'protected create cannot overwrite an existing-record predecessor',
+    () async {
+      final scope = testScope();
+      final logicalKeyHash = List.filled(43, 'L').join();
+      final serverRecordIdHash = List.filled(43, 'S').join();
+      await store.upsertRecordMap(
+        CloudRecordMapEntry(
+          scope: scope,
+          logicalEntityKeyHash: logicalKeyHash,
+          serverRecordIdHash: serverRecordIdHash,
+          encryptedServerRecordId: testProtectedReference('R'),
+          etagHash: List.filled(43, 'E').join(),
+          encryptedRawRecordReference: testProtectedReference('W'),
+          updatedAt: testEpoch,
+        ),
+        generation: 1,
+      );
+      final draft = CloudOutboxDraft(
+        scope: scope,
+        logicalEntityKeyHash: logicalKeyHash,
+        action: CloudOutboxAction.save,
+        payloadVersion: cloudSyncOutboundPayloadVersion,
+        dependencyOperationIds: const {},
+        createdAt: testEpoch,
+        encryptedPayloadReference: testProtectedReference('P'),
+        payloadSha256: testSha256('a'),
+        serverRecordIdHash: serverRecordIdHash,
+        protectedLeaseReference: testProtectedLeaseReference('a'),
+      );
+
+      await expectLater(
+        store.admitProtectedOutboundCreate(
+          draft: draft,
+          recordMapping: CloudRecordMapEntry(
+            scope: scope,
+            logicalEntityKeyHash: logicalKeyHash,
+            serverRecordIdHash: serverRecordIdHash,
+            encryptedServerRecordId: draft.encryptedPayloadReference!,
+            updatedAt: testEpoch,
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'protected_outbound_existing_record_requires_update',
+          ),
+        ),
+      );
+      final retained = await store.readRecordMap(
+        scope,
+        logicalEntityKeyHash: logicalKeyHash,
+        generation: 1,
+      );
+      expect(retained?.etagHash, List.filled(43, 'E').join());
+      expect(
+        retained?.encryptedRawRecordReference,
+        testProtectedReference('W'),
+      );
+      expect(await store.readOutboxEntries(scope), isEmpty);
+      expect((await store.readCheckpoint(scope)).mutationRevisionCounter, 0);
+    },
+  );
+
+  test('different durable payload lanes survive enqueue and reopen', () async {
+    final scope = testScope();
+    const logicalKeyHash = 'shared-durable-payload-lane-key';
+    final update = await store.enqueueOutboxMutation(
+      CloudOutboxDraft(
+        scope: scope,
+        logicalEntityKeyHash: logicalKeyHash,
+        action: CloudOutboxAction.save,
+        payloadVersion: cloudSyncMessageUpdatePayloadVersion,
+        encryptedPayloadReference: 'protected:update-envelope',
+        payloadSha256: 'digest:update-envelope',
+        dependencyOperationIds: const [],
+        createdAt: testEpoch,
+      ),
+    );
+    final create = await store.enqueueOutboxMutation(
+      CloudOutboxDraft(
+        scope: scope,
+        logicalEntityKeyHash: logicalKeyHash,
+        action: CloudOutboxAction.save,
+        payloadVersion: cloudSyncOutboundPayloadVersion,
+        encryptedPayloadReference: 'protected:create-envelope',
+        payloadSha256: 'digest:create-envelope',
+        dependencyOperationIds: const [],
+        createdAt: testEpoch.add(const Duration(microseconds: 1)),
+      ),
+    );
+
+    expect(await store.readOutboxEntries(scope), hasLength(2));
+    await reopen();
+    final entries = await store.readOutboxEntries(scope);
+    expect(entries, hasLength(2));
+    expect(
+      entries.map((entry) => entry.operationId),
+      containsAll({update.operationId, create.operationId}),
+    );
+    expect(
+      entries.map((entry) => entry.payloadVersion),
+      containsAll({
+        cloudSyncMessageUpdatePayloadVersion,
+        cloudSyncOutboundPayloadVersion,
+      }),
+    );
+  });
+
+  test('protected create rejects a live conditional-update lane', () async {
+    final scope = testScope();
+    final logicalKeyHash = List.filled(43, 'L').join();
+    await store.enqueueOutboxMutation(
+      CloudOutboxDraft(
+        scope: scope,
+        logicalEntityKeyHash: logicalKeyHash,
+        action: CloudOutboxAction.save,
+        payloadVersion: cloudSyncMessageUpdatePayloadVersion,
+        encryptedPayloadReference: 'protected:update-envelope',
+        payloadSha256: 'digest:update-envelope',
+        dependencyOperationIds: const [],
+        createdAt: testEpoch,
+      ),
+    );
+    final draft = CloudOutboxDraft(
+      scope: scope,
+      logicalEntityKeyHash: logicalKeyHash,
+      action: CloudOutboxAction.save,
+      payloadVersion: cloudSyncOutboundPayloadVersion,
+      dependencyOperationIds: const {},
+      createdAt: testEpoch.add(const Duration(microseconds: 1)),
+      encryptedPayloadReference: testProtectedReference('P'),
+      payloadSha256: testSha256('a'),
+      serverRecordIdHash: List.filled(43, 'S').join(),
+      protectedLeaseReference: testProtectedLeaseReference('a'),
+    );
+
+    await expectLater(
+      store.admitProtectedOutboundCreate(
+        draft: draft,
+        recordMapping: CloudRecordMapEntry(
+          scope: scope,
+          logicalEntityKeyHash: logicalKeyHash,
+          serverRecordIdHash: draft.serverRecordIdHash!,
+          encryptedServerRecordId: draft.encryptedPayloadReference!,
+          updatedAt: draft.createdAt,
+        ),
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'protected_outbound_record_lane_busy',
+        ),
+      ),
+    );
+    final entries = await store.readOutboxEntries(scope);
+    expect(entries, hasLength(1));
+    expect(entries.single.payloadVersion, cloudSyncMessageUpdatePayloadVersion);
+    expect(entries.single.status, CloudOutboxStatus.pending);
+  });
 
   test(
     'protected create rejects malformed capabilities before mutation',

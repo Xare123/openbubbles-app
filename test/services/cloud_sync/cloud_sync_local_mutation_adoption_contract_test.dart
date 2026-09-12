@@ -11,13 +11,11 @@
 // - cloudSyncFindRecordMap resolves (or fail-closes) a predecessor map by
 //   exact account/scope/generation/logical-key/server-ID.
 //
-// What is still missing (skipped skeleton group at the bottom):
-// - No production seam joins a journal intent's targetGuid to the message
-//   logicalEntityKeyHash, opens the predecessor only through the mapped
-//   server ID with its exact ETag, or adopts the journal row and the
-//   CloudOutboxOperationEntity in one atomic transaction. The gap tripwire
-//   below pins the current behavior (no outbox row is created) so the
-//   missing seam cannot land silently.
+// The store seam also proves atomic journal/outbox adoption, exact predecessor
+// revalidation, idempotent restart recovery, and rollback on stale local or
+// remote state. Native preparation still owns the remaining target-GUID to
+// keyed-logical-hash and protected-predecessor proof; its explicit skipped
+// contract remains at the bottom until that boundary is exported.
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
@@ -27,9 +25,11 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutati
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_record_maps.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
@@ -65,6 +65,12 @@ Matcher _mappingConflict() => isA<CloudSyncFailure>().having(
   'semantic_record_mapping_conflict',
 );
 
+Matcher _cloudFailure(String code) => isA<CloudSyncFailure>().having(
+  (failure) => failure.safeCode,
+  'safeCode',
+  code,
+);
+
 api.MessageInst _mutationWire({
   required String mutationId,
   required String targetGuid,
@@ -80,7 +86,7 @@ api.MessageInst _mutationWire({
     api.EditMessage(
       tuuid: targetGuid,
       editPart: targetPart,
-      newParts: api.MessageParts(
+      newParts: const api.MessageParts(
         field0: [
           api.IndexedMessagePart(
             part_: api.MessagePart.text(
@@ -152,6 +158,7 @@ CloudRecordMapEntity _mapRow({
   int generation = 1,
   String? etag,
   String? encryptedRef,
+  String? rawRef,
   String? account,
 }) => CloudRecordMapEntity(
   mapKey: cloudSyncCanonicalRecordMapKey(_messageScope, logical),
@@ -163,8 +170,42 @@ CloudRecordMapEntity _mapRow({
   generation: generation,
   encryptedServerRecordId: encryptedRef ?? 'obcs2.ref.${'R' * 43}',
   etagHash: etag ?? _etag,
-  encryptedRawRecordRef: 'obcs2.ref.${'W' * 43}',
+  encryptedRawRecordRef: rawRef ?? 'obcs2.ref.${'W' * 43}',
   updatedAtMs: _time(10).millisecondsSinceEpoch,
+);
+
+CloudRecordMapEntry _mapEntry({
+  String logical = _logical,
+  String server = _server,
+  String etag = _etag,
+  String encryptedRef = 'obcs2.ref.RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR',
+  String rawRef = 'obcs2.ref.WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW',
+}) => CloudRecordMapEntry(
+  scope: _messageScope,
+  logicalEntityKeyHash: logical,
+  serverRecordIdHash: server,
+  encryptedServerRecordId: encryptedRef,
+  etagHash: etag,
+  encryptedRawRecordReference: rawRef,
+  updatedAt: _time(10),
+);
+
+CloudOutboxDraft _updateDraft({
+  String logical = _logical,
+  String server = _server,
+  String payload = 'c',
+  DateTime? createdAt,
+}) => CloudOutboxDraft(
+  scope: _messageScope,
+  logicalEntityKeyHash: logical,
+  action: CloudOutboxAction.save,
+  payloadVersion: cloudSyncMessageUpdatePayloadVersion,
+  dependencyOperationIds: const {},
+  createdAt: createdAt ?? _time(20),
+  encryptedPayloadReference: 'obcs2.ref.${'U' * 43}',
+  payloadSha256: payload * 64,
+  serverRecordIdHash: server,
+  protectedLeaseReference: 'obcs2.lease.${'c' * 32}',
 );
 
 void main() {
@@ -185,7 +226,10 @@ void main() {
         buildDecision: CloudKitWriterOwnership.resolve('v2'),
       );
       if (authority.read(_writerScope) == null) {
-        final disabled = authority.initializeDisabled(_writerScope, now: _time(0));
+        final disabled = authority.initializeDisabled(
+          _writerScope,
+          now: _time(0),
+        );
         authority.provisionInitialOwner(
           _writerScope,
           owner: CloudKitWriterOwner.v2,
@@ -285,7 +329,12 @@ void main() {
     CloudSyncLocalMutationIntentEntity row(int id) =>
         store.box<CloudSyncLocalMutationIntentEntity>().get(id)!;
 
-    ({CloudSyncLocalMutationIdentity identity, CloudSyncLocalMutationSourceBinding source, String snapshot, int intentId})
+    ({
+      CloudSyncLocalMutationIdentity identity,
+      CloudSyncLocalMutationSourceBinding source,
+      String snapshot,
+      int intentId,
+    })
     adoptOther() {
       final otherIdentity = CloudSyncLocalMutationIdentity.captureWire(
         _mutationWire(
@@ -335,42 +384,39 @@ void main() {
       expect(row(id).state, 0);
     });
 
-    test('duplicate adoption is idempotent only for the identical operation', () {
-      final first = adopt();
-      expect(adopt(), first);
-      final changedIdentity = CloudSyncLocalMutationIdentity.captureWire(
-        _mutationWire(
-          mutationId: _mutationId,
-          targetGuid: _targetGuid,
-          targetPart: 1,
-        ),
-      )!;
-      expect(
-        () => journal.adoptSource(
-          localMessageId: target.id!,
-          identity: changedIdentity,
-          targetSnapshotSha256: snapshot,
-          source: _mutationSource(changedIdentity),
-          capturedAuth: _auth(),
-          stillCurrent: () => true,
-          now: _time(2),
-        ),
-        throwsA(_mutationFailure('intent_changed')),
-      );
-      expect(
-        store.box<CloudSyncLocalMutationIntentEntity>().count(),
-        1,
-      );
-    });
+    test(
+      'duplicate adoption is idempotent only for the identical operation',
+      () {
+        final first = adopt();
+        expect(adopt(), first);
+        final changedIdentity = CloudSyncLocalMutationIdentity.captureWire(
+          _mutationWire(
+            mutationId: _mutationId,
+            targetGuid: _targetGuid,
+            targetPart: 1,
+          ),
+        )!;
+        expect(
+          () => journal.adoptSource(
+            localMessageId: target.id!,
+            identity: changedIdentity,
+            targetSnapshotSha256: snapshot,
+            source: _mutationSource(changedIdentity),
+            capturedAuth: _auth(),
+            stillCurrent: () => true,
+            now: _time(2),
+          ),
+          throwsA(_mutationFailure('intent_changed')),
+        );
+        expect(store.box<CloudSyncLocalMutationIntentEntity>().count(), 1);
+      },
+    );
 
     test('different target GUIDs never share an intent', () {
       final first = adopt();
       final other = adoptOther();
       expect(other.intentId, isNot(first));
-      expect(
-        store.box<CloudSyncLocalMutationIntentEntity>().count(),
-        2,
-      );
+      expect(store.box<CloudSyncLocalMutationIntentEntity>().count(), 2);
     });
 
     test('changed account cannot claim an adopted mutation', () {
@@ -487,9 +533,9 @@ void main() {
         );
 
     test('resolves the exact current-generation predecessor map', () {
-      store
-          .box<CloudRecordMapEntity>()
-          .put(_mapRow(logical: _logical, server: _server));
+      store.box<CloudRecordMapEntity>().put(
+        _mapRow(logical: _logical, server: _server),
+      );
       final found = resolve();
       expect(found, isNotNull);
       expect(found!.serverRecordIdHash, _server);
@@ -499,9 +545,9 @@ void main() {
     });
 
     test('stale generation and foreign server hash resolve to null', () {
-      store
-          .box<CloudRecordMapEntity>()
-          .put(_mapRow(logical: _logical, server: _server));
+      store.box<CloudRecordMapEntity>().put(
+        _mapRow(logical: _logical, server: _server),
+      );
       expect(resolve(generation: 2), isNull);
       expect(resolve(server: 'Z' * 43), isNull);
     });
@@ -528,40 +574,293 @@ void main() {
     });
   });
 
+  group('mutation-to-outbox atomic adoption', () {
+    late Directory directory;
+    late Store store;
+    late ObjectBoxCloudKitWriterAuthority authority;
+    late CloudSyncLocalMutationJournal journal;
+    late ObjectBoxCloudSyncStore cloudStore;
+    late Message target;
+    late CloudSyncLocalMutationIdentity identity;
+    late CloudSyncLocalMutationSourceBinding source;
+    late CloudSyncLocalMutationAdmissionSource admissionSource;
+    late CloudRecordMapEntry expectedPredecessor;
+    late CloudOutboxDraft draft;
+    late int intentId;
+
+    void bind() {
+      authority = ObjectBoxCloudKitWriterAuthority.forTest(
+        store: store,
+        buildDecision: CloudKitWriterOwnership.resolve('v2'),
+      );
+      if (authority.read(_writerScope) == null) {
+        final disabled = authority.initializeDisabled(
+          _writerScope,
+          now: _time(0),
+        );
+        authority.provisionInitialOwner(
+          _writerScope,
+          owner: CloudKitWriterOwner.v2,
+          expectedEpoch: disabled.epoch,
+          evidence: const CloudKitWriterTransitionEvidence.forTest(
+            operationsQuiesced: true,
+            activeIdentityRevalidated: true,
+            legacyMutationQueues: LegacyMutationQueueDisposition.empty,
+          ),
+          now: _time(1),
+        );
+      }
+      journal = CloudSyncLocalMutationJournal(
+        store: store,
+        authority: authority,
+        authoritySnapshot: authority.read(_writerScope)!,
+      );
+      cloudStore = ObjectBoxCloudSyncStore(
+        store: store,
+        protector: _NoProtector(),
+        localMutationJournal: journal,
+        clock: () => _time(20),
+      );
+    }
+
+    Future<void> reopen() async {
+      store.close();
+      store = await openStore(directory: directory.path);
+      bind();
+    }
+
+    setUp(() async {
+      directory = await Directory.systemTemp.createTemp(
+        'ob-mutation-outbox-adoption-',
+      );
+      store = await openStore(directory: directory.path);
+      bind();
+      final handle = Handle(
+        address: 'peer@example.invalid',
+        service: 'iMessage',
+        uniqueAddressAndService: 'peer@example.invalid/iMessage',
+      );
+      store.box<Handle>().put(handle);
+      final chat = Chat(
+        guid: 'iMessage;-;peer@example.invalid',
+        style: 45,
+        chatIdentifier: 'peer@example.invalid',
+        usingHandle: 'mailto:me@example.invalid',
+        participants: [handle],
+      );
+      chat.handles.add(handle);
+      store.box<Chat>().put(chat);
+      target = Message(
+        guid: _targetGuid,
+        isFromMe: true,
+        text: 'original',
+        dateCreated: _time(1),
+        attributedBody: [AttributedBody.raw('original')],
+      );
+      target.chat.target = chat;
+      store.box<Message>().put(target);
+      identity = CloudSyncLocalMutationIdentity.captureWire(
+        _mutationWire(mutationId: _mutationId, targetGuid: _targetGuid),
+      )!;
+      source = _mutationSource(identity);
+      final snapshot = journal.captureTargetSnapshot(
+        localMessageId: target.id!,
+        identity: identity,
+      );
+      intentId = journal.adoptSource(
+        localMessageId: target.id!,
+        identity: identity,
+        targetSnapshotSha256: snapshot,
+        source: source,
+        capturedAuth: _auth(),
+        stillCurrent: () => true,
+        now: _time(2),
+      );
+      journal.beginSubmission(
+        intentId: intentId,
+        committedSource: source,
+        capturedAuth: _auth(),
+        stillCurrent: () => true,
+        now: _time(3),
+      );
+      final receipt = _receipt(identity, source);
+      journal.recordNativeReceipt(
+        intentId: intentId,
+        receipt: receipt,
+        capturedAuth: _auth(),
+        stillCurrent: () => true,
+        now: _time(4),
+      );
+      journal.reflectConfirmed(
+        intentId: intentId,
+        receipt: receipt,
+        currentAuth: _auth(),
+        stillCurrent: () => true,
+        project: (message, preparedSentTimestampMs) => message
+          ..text = 'replacement'
+          ..attributedBody = [AttributedBody.raw('replacement')]
+          ..dateEdited = DateTime.fromMillisecondsSinceEpoch(
+            preparedSentTimestampMs,
+            isUtc: true,
+          ),
+        now: _time(5),
+      );
+      admissionSource = journal.readReflectedForUpdate(
+        intentId: intentId,
+        currentAuth: _auth(),
+        stillCurrent: () => true,
+      );
+      await cloudStore.readCheckpoint(_messageScope);
+      store.box<CloudRecordMapEntity>().put(
+        _mapRow(logical: _logical, server: _server),
+      );
+      expectedPredecessor = _mapEntry();
+      draft = _updateDraft();
+    });
+
+    tearDown(() async {
+      if (!store.isClosed()) store.close();
+      await directory.delete(recursive: true);
+    });
+
+    CloudOutboxOperation admit({
+      CloudOutboxDraft? withDraft,
+      CloudRecordMapEntry? withPredecessor,
+      CloudSyncNativeAuthSnapshot? auth,
+      bool Function()? stillCurrent,
+    }) => cloudStore.admitProtectedLocalMutationUpdate(
+      draft: withDraft ?? draft,
+      expectedPredecessor: withPredecessor ?? expectedPredecessor,
+      journal: journal,
+      source: admissionSource,
+      currentAuth: auth ?? _auth(),
+      stillCurrent: stillCurrent ?? () => true,
+    );
+
+    void expectRolledBack() {
+      final row = store.box<CloudSyncLocalMutationIntentEntity>().get(
+        intentId,
+      )!;
+      expect(row.state, 3);
+      expect(row.admittedOperationId, isNull);
+      expect(row.admittedBindingSha256, isNull);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    }
+
+    test('journal and one immutable outbox row commit atomically', () async {
+      final operation = admit();
+      final row = store.box<CloudSyncLocalMutationIntentEntity>().get(
+        intentId,
+      )!;
+      final checkpoint = await cloudStore.readCheckpoint(_messageScope);
+
+      expect(row.state, 4);
+      expect(row.admittedOperationId, operation.operationId);
+      expect(row.admittedBindingSha256, isNotNull);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+      expect(checkpoint.mutationRevisionCounter, 1);
+      expect(operation.logicalEntityKeyHash, _logical);
+      expect(operation.serverRecordIdHash, _server);
+      expect(operation.payloadVersion, cloudSyncMessageUpdatePayloadVersion);
+      journal.validateAdoptedOperation(
+        store,
+        operation,
+        store.box<CloudRecordMapEntity>().getAll().single,
+      );
+    });
+
+    test('identical retry and restart recover the same operation', () async {
+      final first = admit();
+      expect(admit().operationId, first.operationId);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+      expect(
+        (await cloudStore.readCheckpoint(
+          _messageScope,
+        )).mutationRevisionCounter,
+        1,
+      );
+
+      await reopen();
+      admissionSource = journal.readReflectedForUpdate(
+        intentId: intentId,
+        currentAuth: _auth(),
+        stillCurrent: () => true,
+      );
+      final recovered = admit();
+      expect(recovered.operationId, first.operationId);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 1);
+      expect(
+        (await cloudStore.readCheckpoint(
+          _messageScope,
+        )).mutationRevisionCounter,
+        1,
+      );
+    });
+
+    test('changed predecessor ETag rolls back outbox and journal', () {
+      final row = store.box<CloudRecordMapEntity>().getAll().single
+        ..etagHash = 'F' * 43;
+      store.box<CloudRecordMapEntity>().put(row);
+      expect(
+        admit,
+        throwsA(_cloudFailure('protected_message_update_predecessor_changed')),
+      );
+      expectRolledBack();
+    });
+
+    test('changed local reflection rolls back outbox and journal', () {
+      final changed = store.box<Message>().get(target.id!)!
+        ..text = 'newer edit';
+      store.box<Message>().put(changed);
+      expect(admit, throwsA(_mutationFailure('reflection_changed')));
+      expectRolledBack();
+    });
+
+    test('changed native auth and stale session both roll back', () {
+      expect(
+        () => admit(auth: _auth(session: 'replacement-session')),
+        throwsA(_mutationFailure('adoption_changed')),
+      );
+      expectRolledBack();
+      expect(
+        () => admit(stillCurrent: () => false),
+        throwsA(_mutationFailure('auth_changed')),
+      );
+      expectRolledBack();
+    });
+
+    test('pre-dispatch validation rechecks the adopted predecessor', () {
+      final operation = admit();
+      final row = store.box<CloudRecordMapEntity>().getAll().single
+        ..encryptedRawRecordRef = 'obcs2.ref.${'X' * 43}';
+      store.box<CloudRecordMapEntity>().put(row);
+      expect(
+        () => journal.validateAdoptedOperation(
+          store,
+          operation,
+          store.box<CloudRecordMapEntity>().getAll().single,
+        ),
+        throwsA(_mutationFailure('adoption_changed')),
+      );
+      expect(operation.operationId, isNotEmpty);
+    });
+  });
+
   group(
-    'mutation-to-outbox adoption (missing production seam)',
+    'native mutation update preparation (missing exported seam)',
     skip:
-        'no production seam joins a journal intent to a CloudRecordMapEntity '
-        'and CloudOutboxOperationEntity atomically',
+        'native API must bind target GUID, keyed logical identity, mapped '
+        'record ID, ETag, PCS prefix, and staged envelope before adoption',
     () {
-      test('canonical target GUID resolves to exactly one logical key', () {
-        // Required: derive the expected message logical key natively from the
-        // verbatim targetGuid with the Message hasher, then resolve it through
-        // cloudSyncFindRecordMap at the current generation. The journal never
-        // performs this join today.
-        fail('missing production seam: target GUID to logical key join');
-      });
-
-      test('predecessor opens only through the mapped server ID', () {
-        // Required: open the predecessor via that map entry only, verify the
-        // record identifier equals the mapped server ID, and copy its ETag
-        // and PCS prefix exactly into a conditional update.
-        fail('missing production seam: ETag/PCS-checked predecessor open');
-      });
-
-      test('outbox and journal transition in one atomic transaction', () {
-        // Required: adopt the CloudOutboxOperation with logical key, server
-        // ID, ETag, predecessor snapshot, and staged refs in the same
-        // transaction that claims the journal intent.
-        fail('missing production seam: atomic outbox and journal adoption');
-      });
-
-      test('a positive receipt is single-consumed across journal and outbox', () {
-        // Required: the IDS receipt proof that confirmed the journal intent
-        // must be the single credential consumed by the outbox save, so two
-        // staged updates can never share one receipt.
-        fail('missing production seam: shared receipt single-consumption');
+      test('target GUID and mapped predecessor are one native proof', () {
+        fail('missing native preparation API');
       });
     },
   );
+}
+
+class _NoProtector implements CloudSyncProtector {
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('Unexpected native operation');
 }

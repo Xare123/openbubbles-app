@@ -2730,7 +2730,7 @@
     },
     {
       "id": "35:5717746217656693252",
-      "lastPropertyId": "19:7401126705954944764",
+      "lastPropertyId": "21:8641231184256149762",
       "name": "CloudSyncLocalMutationIntentEntity",
       "properties": [
         {
@@ -2833,6 +2833,16 @@
         {
           "id": "19:7401126705954944764",
           "name": "submissionAuthBindingSha256",
+          "type": 9
+        },
+        {
+          "id": "20:7346900127559432127",
+          "name": "admittedOperationId",
+          "type": 9
+        },
+        {
+          "id": "21:8641231184256149762",
+          "name": "admittedBindingSha256",
           "type": 9
         }
       ],

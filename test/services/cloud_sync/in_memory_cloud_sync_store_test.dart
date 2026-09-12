@@ -1987,6 +1987,52 @@ void main() {
     },
   );
 
+  test('different payload lanes never supersede each other', () async {
+    const logicalKeyHash = 'shared-cross-payload-lane-key';
+    final update = await store.enqueueOutboxMutation(
+      CloudOutboxDraft(
+        scope: scope,
+        logicalEntityKeyHash: logicalKeyHash,
+        action: CloudOutboxAction.save,
+        payloadVersion: cloudSyncMessageUpdatePayloadVersion,
+        encryptedPayloadReference: 'protected:update-envelope',
+        payloadSha256: 'digest:update-envelope',
+        dependencyOperationIds: const [],
+        createdAt: testEpoch,
+      ),
+    );
+    final create = await store.enqueueOutboxMutation(
+      CloudOutboxDraft(
+        scope: scope,
+        logicalEntityKeyHash: logicalKeyHash,
+        action: CloudOutboxAction.save,
+        payloadVersion: cloudSyncOutboundPayloadVersion,
+        encryptedPayloadReference: 'protected:create-envelope',
+        payloadSha256: 'digest:create-envelope',
+        dependencyOperationIds: const [],
+        createdAt: testEpoch.add(const Duration(microseconds: 1)),
+      ),
+    );
+
+    final entries = await store.outboxEntries(scope);
+    expect(entries, hasLength(2));
+    expect(
+      entries.map((entry) => entry.operationId),
+      contains(update.operationId),
+    );
+    expect(
+      entries.map((entry) => entry.operationId),
+      contains(create.operationId),
+    );
+    expect(
+      entries.map((entry) => entry.payloadVersion),
+      containsAll({
+        cloudSyncMessageUpdatePayloadVersion,
+        cloudSyncOutboundPayloadVersion,
+      }),
+    );
+  });
+
   test('coordinator lease renews and cannot be stolen before expiry', () async {
     final fence = await store.tryAcquireCoordinatorLease(
       scope,

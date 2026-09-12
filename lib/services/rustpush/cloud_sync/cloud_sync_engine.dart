@@ -552,6 +552,28 @@ class CloudSyncEngine {
   final CloudSyncUuidFactory _uuidFactory;
   final CloudSyncEngineConfig config;
 
+  /// Payload versions this create-only engine is permitted to submit for the
+  /// production Messages Cloud semantic scopes. Conditional message updates
+  /// use a separate payload version and must wait for the dedicated update
+  /// transport lane rather than being interpreted as creates.
+  Set<int>? get _createOnlyPayloadVersions {
+    if (scope.container != 'com.apple.messages.cloud' ||
+        scope.database != 'private' ||
+        scope.schemaVersion != 2 ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semanticV2) {
+      // Generic and legacy test/compatibility scopes preserve their existing
+      // behavior. Only the known production semantic namespace is routed here.
+      return null;
+    }
+    return switch (scope.zone) {
+      'messageManateeZone' => const {cloudSyncOutboundPayloadVersion},
+      'chatManateeZone' => const {cloudSyncOutboundChatPayloadVersion},
+      'attachmentManateeZone' => const {1},
+      // An unrecognized production zone is not permission to write.
+      _ => const <int>{},
+    };
+  }
+
   bool _runActive = false;
   int _runSerial = 0;
   DateTime? _lastCoordinatorLeaseRenewal;
@@ -2132,6 +2154,7 @@ class CloudSyncEngine {
         leaseId: leaseId,
         leaseDuration: config.outboxLeaseDuration,
         allowedActions: allowedActions,
+        allowedPayloadVersions: _createOnlyPayloadVersions,
       );
       if (leased.isEmpty) break;
 
@@ -2167,6 +2190,7 @@ class CloudSyncEngine {
                 .releasePreparedSubmission(abandoned);
           }
         }
+
         try {
           await _withWriteLeaseHeartbeats(
             leaseId: leaseId,
@@ -2222,7 +2246,10 @@ class CloudSyncEngine {
           var bodyFailed = false;
           try {
             await _verifyWriterPermit();
-            await _renewOutboxLeaseOrThrow(leaseId: leaseId, operations: leased);
+            await _renewOutboxLeaseOrThrow(
+              leaseId: leaseId,
+              operations: leased,
+            );
             // Persist the ambiguity boundary only after native authentication,
             // PCS lookup, protected payload compilation, and request creation
             // have completed without sending a remote mutation.
@@ -2287,7 +2314,8 @@ class CloudSyncEngine {
             // already closed native admission either way.
             // Written as a guarded cast: the store/write-transport capability
             // import cycle defeats promotion on a plain type check here.
-            final releaser = _writeTransport is CloudSyncPreparedSubmissionReleaser
+            final releaser =
+                _writeTransport is CloudSyncPreparedSubmissionReleaser
                 ? _writeTransport as CloudSyncPreparedSubmissionReleaser
                 : null;
             if (releaser != null) {
@@ -2444,6 +2472,7 @@ class CloudSyncEngine {
         limit: config.maximumBatchSize,
         leaseId: leaseId,
         leaseDuration: config.outboxLeaseDuration,
+        allowedPayloadVersions: _createOnlyPayloadVersions,
       );
       if (operations.isEmpty) break;
 

@@ -33,7 +33,8 @@ class CloudSyncLocalMutationIntentEntity {
   String protectedSourceBinding;
 
   /// 0 staged, 1 submission claimed (outcome may be unknown),
-  /// 2 positive IDS receipt retained, 3 local reflection committed.
+  /// 2 positive IDS receipt retained, 3 local reflection committed,
+  /// 4 atomically adopted by the conditional-update outbox.
   /// No state grants remote CloudKit save authority or automatic IDS retry.
   @Index()
   int state;
@@ -46,6 +47,14 @@ class CloudSyncLocalMutationIntentEntity {
 
   /// Exact local post-reflection snapshot. Null until atomic reflection.
   String? reflectedSnapshotSha256;
+
+  /// Exact durable conditional-update operation. Set in the same ObjectBox
+  /// transaction as the outbox row so restart cannot allocate a second write.
+  String? admittedOperationId;
+
+  /// Digest of the adopted operation plus its exact predecessor map binding.
+  /// This contains no record identifier, ETag, message body or other plaintext.
+  String? admittedBindingSha256;
   int createdAtMs;
   int updatedAtMs;
 
@@ -67,6 +76,8 @@ class CloudSyncLocalMutationIntentEntity {
     this.submissionAuthBindingSha256,
     this.idsReceiptBindingSha256,
     this.reflectedSnapshotSha256,
+    this.admittedOperationId,
+    this.admittedBindingSha256,
     required this.createdAtMs,
     required this.updatedAtMs,
   });

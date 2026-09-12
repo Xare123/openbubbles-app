@@ -715,6 +715,7 @@ class InMemoryCloudSyncStore
     required String leaseId,
     required Duration leaseDuration,
     required Set<CloudOutboxAction> allowedActions,
+    Set<int>? allowedPayloadVersions,
   }) {
     _requirePositiveLimit(limit);
     if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
@@ -752,6 +753,10 @@ class InMemoryCloudSyncStore
                 (operation) =>
                     operation.status == CloudOutboxStatus.pending &&
                     allowedActions.contains(operation.action) &&
+                    (allowedPayloadVersions == null ||
+                        allowedPayloadVersions.contains(
+                          operation.payloadVersion,
+                        )) &&
                     (operation.nextEligibleAt == null ||
                         !operation.nextEligibleAt!.isAfter(now)) &&
                     operation.dependencyOperationIds.every((dependencyId) {
@@ -842,6 +847,7 @@ class InMemoryCloudSyncStore
     required int limit,
     required String leaseId,
     required Duration leaseDuration,
+    Set<int>? allowedPayloadVersions,
   }) {
     _requirePositiveLimit(limit);
     if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
@@ -857,6 +863,10 @@ class InMemoryCloudSyncStore
                 (operation) =>
                     operation.checkpointGeneration == checkpoint.generation &&
                     operation.status == CloudOutboxStatus.unknownOutcome &&
+                    (allowedPayloadVersions == null ||
+                        allowedPayloadVersions.contains(
+                          operation.payloadVersion,
+                        )) &&
                     operation.appleRequestUuid != null &&
                     operation.appleOperationUuid != null &&
                     (operation.leaseExpiresAt == null ||
@@ -1898,6 +1908,7 @@ class InMemoryCloudSyncStore
         (candidate) =>
             candidate.status != CloudOutboxStatus.quarantined &&
             candidate.action == CloudOutboxAction.save &&
+            candidate.payloadVersion == operation.payloadVersion &&
             candidate.logicalEntityKeyHash == operation.logicalEntityKeyHash &&
             _compareMutationOrder(candidate, operation) >= 0,
       );
@@ -1908,6 +1919,7 @@ class InMemoryCloudSyncStore
             (candidate) =>
                 candidate.status == CloudOutboxStatus.pending &&
                 candidate.action == CloudOutboxAction.save &&
+                candidate.payloadVersion == operation.payloadVersion &&
                 candidate.logicalEntityKeyHash ==
                     operation.logicalEntityKeyHash &&
                 _compareMutationOrder(candidate, operation) < 0,

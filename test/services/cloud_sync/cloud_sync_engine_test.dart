@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_backoff.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_cancellation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
@@ -224,6 +225,34 @@ void main() {
 
   String nativeDigest(String marker) => List.filled(43, marker).join();
 
+  CloudOutboxOperation semanticMessageUpdateOperation({int revision = 1}) {
+    const logicalKeyHash = 'UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU';
+    final payloadSha256 = revision.toRadixString(16).padLeft(64, '0');
+    return CloudOutboxOperation(
+      scope: scope,
+      operationId: CloudOperationIdentity.forMutation(
+        scope: scope,
+        logicalEntityKeyHash: logicalKeyHash,
+        action: CloudOutboxAction.save,
+        payloadVersion: cloudSyncMessageUpdatePayloadVersion,
+        mutationRevision: revision,
+        payloadSha256: payloadSha256,
+      ),
+      logicalEntityKeyHash: logicalKeyHash,
+      action: CloudOutboxAction.save,
+      payloadVersion: cloudSyncMessageUpdatePayloadVersion,
+      mutationRevision: revision,
+      checkpointGeneration: 1,
+      encryptedPayloadReference: 'obcs2.ref.${List.filled(43, 'U').join()}',
+      payloadSha256: payloadSha256,
+      serverRecordIdHash: nativeDigest('R'),
+      protectedLeaseReference:
+          'obcs2.lease.${revision.toRadixString(16).padLeft(32, '0')}',
+      dependencyOperationIds: const [],
+      createdAt: testEpoch.add(Duration(microseconds: revision)),
+    );
+  }
+
   CloudOutboxCreateReceipt createReceiptFor(
     CloudOutboxOperation operation, {
     int mappingOrdinal = 1,
@@ -251,6 +280,87 @@ void main() {
       ),
     );
   }
+
+  test(
+    'production create lane leaves conditional message updates pending',
+    () async {
+      scope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintA,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'messageManateeZone',
+        streamKind: CloudSyncStreamKind.messages,
+        schemaVersion: 2,
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+      );
+      final update = semanticMessageUpdateOperation();
+      await store.enqueueOutbox(update);
+
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      expect(transport.prepareSubmissionCallCount, 0);
+      expect(transport.pushCallCount, 0);
+      final stored = (await store.outboxEntries(scope)).single;
+      expect(stored.operationId, update.operationId);
+      expect(stored.status, CloudOutboxStatus.pending);
+      expect(stored.leaseId, isNull);
+    },
+  );
+
+  test(
+    'production create lane does not reconcile conditional update uncertainty',
+    () async {
+      scope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintA,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'messageManateeZone',
+        streamKind: CloudSyncStreamKind.messages,
+        schemaVersion: 2,
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+      );
+      final update = semanticMessageUpdateOperation();
+      await store.enqueueOutbox(update);
+      final leaseId = 'seed-update-unknown';
+      final leased = await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: leaseId,
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      expect(leased.single.operationId, update.operationId);
+      await store.markOutboxSubmissionStarted(
+        scope,
+        leaseId: leaseId,
+        submissionIdentity: testSubmissionIdentity([update.operationId]),
+        now: testEpoch,
+      );
+      await store.applyOutboxTransitions(
+        scope,
+        leaseId: leaseId,
+        transitions: [CloudOutboxTransition.unknownOutcome(update.operationId)],
+        now: testEpoch,
+      );
+
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      expect(transport.unknownOutcomeCallCount, 0);
+      expect(transport.pushCallCount, 0);
+      final stored = (await store.outboxEntries(scope)).single;
+      expect(stored.status, CloudOutboxStatus.unknownOutcome);
+      expect(stored.appleRequestUuid, isNotNull);
+      expect(stored.appleOperationUuid, isNotNull);
+      expect(stored.leaseId, isNull);
+    },
+  );
 
   test('fetches, journals, applies, and advances checkpoint', () async {
     transport.enqueueFetchBatch(

@@ -3170,7 +3170,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(35, 5717746217656693252),
     name: 'CloudSyncLocalMutationIntentEntity',
-    lastPropertyId: const obx_int.IdUid(19, 7401126705954944764),
+    lastPropertyId: const obx_int.IdUid(21, 8641231184256149762),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -3287,6 +3287,18 @@ final _entities = <obx_int.ModelEntity>[
       obx_int.ModelProperty(
         id: const obx_int.IdUid(19, 7401126705954944764),
         name: 'submissionAuthBindingSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 7346900127559432127),
+        name: 'admittedOperationId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 8641231184256149762),
+        name: 'admittedBindingSha256',
         type: 9,
         flags: 0,
       ),
@@ -7605,7 +7617,15 @@ obx_int.ModelDefinition getObjectBoxModel() {
                     object.submissionAuthBindingSha256 == null
                     ? null
                     : fbb.writeString(object.submissionAuthBindingSha256!);
-                fbb.startTable(20);
+                final admittedOperationIdOffset =
+                    object.admittedOperationId == null
+                    ? null
+                    : fbb.writeString(object.admittedOperationId!);
+                final admittedBindingSha256Offset =
+                    object.admittedBindingSha256 == null
+                    ? null
+                    : fbb.writeString(object.admittedBindingSha256!);
+                fbb.startTable(22);
                 fbb.addInt64(0, object.id);
                 fbb.addOffset(1, intentKeyOffset);
                 fbb.addOffset(2, accountFingerprintOffset);
@@ -7625,6 +7645,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
                 fbb.addInt64(16, object.createdAtMs);
                 fbb.addInt64(17, object.updatedAtMs);
                 fbb.addOffset(18, submissionAuthBindingSha256Offset);
+                fbb.addOffset(19, admittedOperationIdOffset);
+                fbb.addOffset(20, admittedBindingSha256Offset);
                 fbb.finish(fbb.endTable());
                 return object.id;
               },
@@ -7703,6 +7725,12 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final reflectedSnapshotSha256Param = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 34);
+            final admittedOperationIdParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 42);
+            final admittedBindingSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 44);
             final createdAtMsParam = const fb.Int64Reader().vTableGet(
               buffer,
               rootOffset,
@@ -7733,6 +7761,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
               submissionAuthBindingSha256: submissionAuthBindingSha256Param,
               idsReceiptBindingSha256: idsReceiptBindingSha256Param,
               reflectedSnapshotSha256: reflectedSnapshotSha256Param,
+              admittedOperationId: admittedOperationIdParam,
+              admittedBindingSha256: admittedBindingSha256Param,
               createdAtMs: createdAtMsParam,
               updatedAtMs: updatedAtMsParam,
             );
@@ -10438,5 +10468,17 @@ class CloudSyncLocalMutationIntentEntity_ {
   static final submissionAuthBindingSha256 =
       obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
         _entities[26].properties[18],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.admittedOperationId].
+  static final admittedOperationId =
+      obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[19],
+      );
+
+  /// See [CloudSyncLocalMutationIntentEntity.admittedBindingSha256].
+  static final admittedBindingSha256 =
+      obx.QueryStringProperty<CloudSyncLocalMutationIntentEntity>(
+        _entities[26].properties[20],
       );
 }

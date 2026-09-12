@@ -215,6 +215,7 @@ final class ShadowOnlyCloudSyncStore
     required String leaseId,
     required Duration leaseDuration,
     required Set<CloudOutboxAction> allowedActions,
+    Set<int>? allowedPayloadVersions,
   }) => _blocked();
 
   @override

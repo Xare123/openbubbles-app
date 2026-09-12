@@ -7,9 +7,12 @@ import 'package:crypto/crypto.dart';
 import 'cloud_sync_local_mutation_identity.dart';
 import 'cloud_sync_local_mutation_projection.dart';
 import 'cloud_sync_local_mutation_source_binding.dart';
+import 'cloud_operation_identity.dart';
 import 'cloud_sync_local_send_journal.dart'
     show CloudSyncNativeReceiptReplayBinding;
 import 'cloud_sync_manual_shadow_sampler.dart';
+import 'cloud_sync_models.dart';
+import 'cloud_sync_persistent_keys.dart';
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
 
@@ -34,6 +37,8 @@ final class CloudSyncLocalMutationJournal {
   final CloudKitWriterAuthoritySnapshot _owner;
   Box<CloudSyncLocalMutationIntentEntity> get _rows =>
       _store.box<CloudSyncLocalMutationIntentEntity>();
+
+  bool isBoundToStore(Store store) => identical(store, _store);
 
   /// Capture before any asynchronous staging. Its digest covers the exact
   /// existing local body/history and route, not just a mutable message row ID.
@@ -426,7 +431,7 @@ final class CloudSyncLocalMutationJournal {
     if (preparedTime == null || preparedTime > BigInt.from(8640000000000000)) {
       _fail('receipt_time_unavailable');
     }
-    if (row.state == 3) return;
+    if (row.state >= 3) return;
     final target = _target(
       row.localMessageId,
       row.targetGuidHash,
@@ -456,6 +461,283 @@ final class CloudSyncLocalMutationJournal {
       ..updatedAtMs = _advanceTime(row, now);
     _rows.put(row);
   });
+
+  /// Captures the exact reflected mutation that may be staged as one
+  /// conditional CloudKit update. The returned value is immutable evidence,
+  /// not permission to send or to follow a newer record mapping.
+  CloudSyncLocalMutationAdmissionSource readReflectedForUpdate({
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireOwner();
+    final row = _read(intentId, originalEpoch: true);
+    final source = validateCloudSyncMutationRow(row);
+    _requireAuth(source, currentAuth, stillCurrent);
+    if ((row.state != 3 && row.state != 4) || row.targetPart != 0) {
+      _fail('update_not_ready');
+    }
+    if (row.submissionAuthBindingSha256 !=
+        _authHash(
+          currentAuth.accountFingerprint,
+          currentAuth.protectedStoreIdentity,
+          currentAuth.nativeSessionId,
+        )) {
+      _fail('auth_changed');
+    }
+    final target = _target(
+      row.localMessageId,
+      row.targetGuidHash,
+      row.localChatId,
+    );
+    if (_snapshot(target) != row.reflectedSnapshotSha256) {
+      _fail('reflection_changed');
+    }
+    return CloudSyncLocalMutationAdmissionSource._(row);
+  });
+
+  /// Returns the already-adopted operation while executing in the caller's
+  /// exact ObjectBox transaction. A non-null result is recovery evidence only;
+  /// [adoptInOutboxTransaction] must still validate the operation and map.
+  String? adoptedOperationIdInOutboxTransaction(
+    Store transactionStore,
+    CloudSyncLocalMutationAdmissionSource expected, {
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) {
+    final row = _requireUpdateSource(
+      transactionStore,
+      expected,
+      currentAuth: currentAuth,
+      stillCurrent: stillCurrent,
+    );
+    return row.state == 4 ? row.admittedOperationId : null;
+  }
+
+  /// Atomically consumes one reflected IDS receipt into one immutable
+  /// conditional-update outbox row. This method is synchronous by design and
+  /// must be called from the same Store write transaction that inserts the
+  /// [operation]. It performs no network or protected-store work.
+  void adoptInOutboxTransaction(
+    Store transactionStore,
+    CloudSyncLocalMutationAdmissionSource expected,
+    CloudOutboxOperation operation,
+    CloudRecordMapEntity predecessor, {
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+    required DateTime now,
+  }) {
+    final row = _requireUpdateSource(
+      transactionStore,
+      expected,
+      currentAuth: currentAuth,
+      stillCurrent: stillCurrent,
+    );
+    _requireUpdateOperation(row, operation, predecessor);
+    final binding = _updateAdoptionBinding(row, operation, predecessor);
+    if (row.state == 4) {
+      if (row.admittedOperationId != operation.operationId ||
+          row.admittedBindingSha256 != binding) {
+        _fail('adoption_changed');
+      }
+      return;
+    }
+    if (row.admittedOperationId != null || row.admittedBindingSha256 != null) {
+      _fail('row_corrupt');
+    }
+    if (!stillCurrent()) _fail('auth_changed');
+    _requireOwner();
+    row
+      ..state = 4
+      ..admittedOperationId = operation.operationId
+      ..admittedBindingSha256 = binding
+      ..updatedAtMs = _advanceTime(row, now);
+    _rows.put(row);
+  }
+
+  /// Revalidates the durable journal/outbox/map triangle immediately before
+  /// leasing or submission. Mutable lease, retry and receipt state is ignored;
+  /// every immutable field remains covered by the adoption binding.
+  void validateAdoptedOperation(
+    Store transactionStore,
+    CloudOutboxOperation operation,
+    CloudRecordMapEntity predecessor,
+  ) {
+    if (!identical(transactionStore, _store)) {
+      _fail('adoption_store_mismatch');
+    }
+    _requireOwner();
+    final query = _rows
+        .query(
+          CloudSyncLocalMutationIntentEntity_.admittedOperationId.equals(
+            operation.operationId,
+          ),
+        )
+        .build();
+    final CloudSyncLocalMutationIntentEntity? row;
+    try {
+      row = query.findUnique();
+    } finally {
+      query.close();
+    }
+    if (row == null) _fail('adoption_missing');
+    validateCloudSyncMutationRow(row);
+    if (row.state != 4 ||
+        row.accountFingerprint != _owner.scope.accountFingerprint ||
+        row.writerEpoch != _owner.epoch) {
+      _fail('adoption_changed');
+    }
+    final target = _target(
+      row.localMessageId,
+      row.targetGuidHash,
+      row.localChatId,
+    );
+    if (_snapshot(target) != row.reflectedSnapshotSha256) {
+      _fail('reflection_changed');
+    }
+    _requireUpdateOperation(row, operation, predecessor);
+    if (row.admittedBindingSha256 !=
+        _updateAdoptionBinding(row, operation, predecessor)) {
+      _fail('adoption_changed');
+    }
+  }
+
+  CloudSyncLocalMutationIntentEntity _requireUpdateSource(
+    Store transactionStore,
+    CloudSyncLocalMutationAdmissionSource expected, {
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) {
+    if (!identical(transactionStore, _store)) {
+      _fail('adoption_store_mismatch');
+    }
+    _requireOwner();
+    final row = _read(expected.intentId, originalEpoch: true);
+    final source = validateCloudSyncMutationRow(row);
+    _requireAuth(source, currentAuth, stillCurrent);
+    if (!expected._matches(row) ||
+        (row.state != 3 && row.state != 4) ||
+        row.targetPart != 0 ||
+        row.submissionAuthBindingSha256 !=
+            _authHash(
+              currentAuth.accountFingerprint,
+              currentAuth.protectedStoreIdentity,
+              currentAuth.nativeSessionId,
+            )) {
+      _fail('adoption_changed');
+    }
+    final target = _target(
+      row.localMessageId,
+      row.targetGuidHash,
+      row.localChatId,
+    );
+    if (_snapshot(target) != row.reflectedSnapshotSha256) {
+      _fail('reflection_changed');
+    }
+    return row;
+  }
+
+  void _requireUpdateOperation(
+    CloudSyncLocalMutationIntentEntity row,
+    CloudOutboxOperation operation,
+    CloudRecordMapEntity predecessor,
+  ) {
+    final scope = operation.scope;
+    if (scope.accountFingerprint != row.accountFingerprint ||
+        scope.container != 'com.apple.messages.cloud' ||
+        scope.database != 'private' ||
+        scope.zone != 'messageManateeZone' ||
+        scope.streamKind != CloudSyncStreamKind.messages ||
+        scope.schemaVersion != 2 ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
+        operation.action != CloudOutboxAction.save ||
+        operation.payloadVersion != cloudSyncMessageUpdatePayloadVersion ||
+        operation.mutationRevision <= 0 ||
+        operation.checkpointGeneration <= 0 ||
+        operation.dependencyOperationIds.isNotEmpty ||
+        operation.encryptedPayloadReference == null ||
+        !_protectedReference.hasMatch(operation.encryptedPayloadReference!) ||
+        operation.payloadSha256 == null ||
+        !_hash.hasMatch(operation.payloadSha256!) ||
+        operation.serverRecordIdHash == null ||
+        !_nativeDigest.hasMatch(operation.logicalEntityKeyHash) ||
+        !_nativeDigest.hasMatch(operation.serverRecordIdHash!) ||
+        operation.protectedLeaseReference == null ||
+        !_protectedLease.hasMatch(operation.protectedLeaseReference!) ||
+        !operation.createdAt.isUtc ||
+        operation.createdAt.millisecondsSinceEpoch <= 0 ||
+        operation.operationId !=
+            CloudOperationIdentity.forMutation(
+              scope: scope,
+              logicalEntityKeyHash: operation.logicalEntityKeyHash,
+              action: operation.action,
+              payloadVersion: operation.payloadVersion,
+              mutationRevision: operation.mutationRevision,
+              payloadSha256: operation.payloadSha256,
+            ) ||
+        predecessor.mapKey !=
+            cloudSyncCanonicalRecordMapKey(
+              scope,
+              operation.logicalEntityKeyHash,
+            ) ||
+        predecessor.scopeKey != cloudSyncPersistentScopeKey(scope) ||
+        predecessor.accountFingerprint != scope.accountFingerprint ||
+        predecessor.zone != scope.zone ||
+        predecessor.generation != operation.checkpointGeneration ||
+        predecessor.logicalEntityKeyHash != operation.logicalEntityKeyHash ||
+        predecessor.serverRecordIdHash != operation.serverRecordIdHash ||
+        !_protectedReference.hasMatch(predecessor.encryptedServerRecordId) ||
+        predecessor.etagHash == null ||
+        !_nativeDigest.hasMatch(predecessor.etagHash!) ||
+        predecessor.encryptedRawRecordRef == null ||
+        !_protectedReference.hasMatch(predecessor.encryptedRawRecordRef!) ||
+        (row.state == 3 &&
+            (operation.status != CloudOutboxStatus.pending ||
+                operation.attemptCount != 0 ||
+                operation.nextEligibleAt != null ||
+                operation.lastFailure != null ||
+                operation.leaseId != null ||
+                operation.leaseExpiresAt != null ||
+                operation.confirmedAt != null ||
+                operation.appleRequestUuid != null ||
+                operation.appleOperationUuid != null))) {
+      _fail('adoption_operation_invalid');
+    }
+  }
+
+  String _updateAdoptionBinding(
+    CloudSyncLocalMutationIntentEntity row,
+    CloudOutboxOperation operation,
+    CloudRecordMapEntity predecessor,
+  ) => _digest([
+    'cloud-sync-local-mutation-update-adoption-v1',
+    row.intentKey,
+    row.idsReceiptBindingSha256,
+    row.reflectedSnapshotSha256,
+    operation.scope.storageKey,
+    operation.operationId,
+    operation.logicalEntityKeyHash,
+    operation.action.name,
+    operation.payloadVersion,
+    operation.mutationRevision,
+    operation.checkpointGeneration,
+    operation.encryptedPayloadReference,
+    operation.payloadSha256,
+    operation.serverRecordIdHash,
+    operation.protectedLeaseReference,
+    operation.dependencyOperationIds.toList()..sort(),
+    operation.createdAt.millisecondsSinceEpoch,
+    predecessor.mapKey,
+    predecessor.scopeKey,
+    predecessor.accountFingerprint,
+    predecessor.zone,
+    predecessor.logicalEntityKeyHash,
+    predecessor.serverRecordIdHash,
+    predecessor.encryptedServerRecordId,
+    predecessor.etagHash,
+    predecessor.encryptedRawRecordRef,
+    predecessor.generation,
+  ]);
 
   /// Read-only reconciliation inventory. Neither staged nor claimed intents
   /// are returned as confirmed. Old epochs retain evidence but grant no send.
@@ -573,6 +855,70 @@ final class CloudSyncLocalMutationJournal {
   String toString() => 'CloudSyncLocalMutationJournal(redacted)';
 }
 
+/// Immutable bridge from a reflected mutation receipt to one outbox adoption.
+/// It contains only local identifiers, one-way digests and protected refs.
+final class CloudSyncLocalMutationAdmissionSource {
+  CloudSyncLocalMutationAdmissionSource._(
+    CloudSyncLocalMutationIntentEntity row,
+  ) : intentId = row.id,
+      intentKey = row.intentKey,
+      accountFingerprint = row.accountFingerprint,
+      writerEpoch = row.writerEpoch,
+      localMessageId = row.localMessageId,
+      localChatId = row.localChatId,
+      mutationGuidHash = row.mutationGuidHash,
+      targetGuidHash = row.targetGuidHash,
+      targetPart = row.targetPart,
+      kind = row.kind,
+      sourceSha256 = row.sourceSha256,
+      targetSnapshotSha256 = row.targetSnapshotSha256,
+      protectedSourceBinding = row.protectedSourceBinding,
+      submissionAuthBindingSha256 = row.submissionAuthBindingSha256!,
+      idsReceiptBindingSha256 = row.idsReceiptBindingSha256!,
+      reflectedSnapshotSha256 = row.reflectedSnapshotSha256!,
+      createdAtMs = row.createdAtMs;
+
+  final int intentId;
+  final String intentKey;
+  final String accountFingerprint;
+  final int writerEpoch;
+  final int localMessageId;
+  final int localChatId;
+  final String mutationGuidHash;
+  final String targetGuidHash;
+  final int targetPart;
+  final int kind;
+  final String sourceSha256;
+  final String targetSnapshotSha256;
+  final String protectedSourceBinding;
+  final String submissionAuthBindingSha256;
+  final String idsReceiptBindingSha256;
+  final String reflectedSnapshotSha256;
+  final int createdAtMs;
+
+  bool _matches(CloudSyncLocalMutationIntentEntity row) =>
+      intentId == row.id &&
+      intentKey == row.intentKey &&
+      accountFingerprint == row.accountFingerprint &&
+      writerEpoch == row.writerEpoch &&
+      localMessageId == row.localMessageId &&
+      localChatId == row.localChatId &&
+      mutationGuidHash == row.mutationGuidHash &&
+      targetGuidHash == row.targetGuidHash &&
+      targetPart == row.targetPart &&
+      kind == row.kind &&
+      sourceSha256 == row.sourceSha256 &&
+      targetSnapshotSha256 == row.targetSnapshotSha256 &&
+      protectedSourceBinding == row.protectedSourceBinding &&
+      submissionAuthBindingSha256 == row.submissionAuthBindingSha256 &&
+      idsReceiptBindingSha256 == row.idsReceiptBindingSha256 &&
+      reflectedSnapshotSha256 == row.reflectedSnapshotSha256 &&
+      createdAtMs == row.createdAtMs;
+
+  @override
+  String toString() => 'CloudSyncLocalMutationAdmissionSource(redacted)';
+}
+
 /// Shared by journal and *both* native GC roots. Every retained row, account and
 /// state owns its original source/lease, even after local reflection. No generic
 /// terminal flag is permission to reclaim the bytes or native acceptance receipt.
@@ -586,7 +932,7 @@ CloudSyncLocalMutationSourceBinding validateCloudSyncMutationRow(
       row.kind < 0 ||
       row.kind > 1 ||
       row.state < 0 ||
-      row.state > 3 ||
+      row.state > 4 ||
       row.createdAtMs <= 0 ||
       row.updatedAtMs < row.createdAtMs ||
       !_hash.hasMatch(row.targetSnapshotSha256) ||
@@ -600,7 +946,13 @@ CloudSyncLocalMutationSourceBinding validateCloudSyncMutationRow(
           !_hash.hasMatch(row.idsReceiptBindingSha256!)) ||
       ((row.state < 3) != (row.reflectedSnapshotSha256 == null)) ||
       (row.reflectedSnapshotSha256 != null &&
-          !_hash.hasMatch(row.reflectedSnapshotSha256!))) {
+          !_hash.hasMatch(row.reflectedSnapshotSha256!)) ||
+      ((row.state < 4) != (row.admittedOperationId == null)) ||
+      ((row.state < 4) != (row.admittedBindingSha256 == null)) ||
+      (row.admittedOperationId != null &&
+          !_operationId.hasMatch(row.admittedOperationId!)) ||
+      (row.admittedBindingSha256 != null &&
+          !_hash.hasMatch(row.admittedBindingSha256!))) {
     _fail('row_corrupt');
   }
   final source = CloudSyncLocalMutationSourceBinding.decode(
@@ -677,6 +1029,10 @@ String _authHash(String account, String store, String session) => _digest([
 ]);
 final _hash = RegExp(r'^[a-f0-9]{64}$');
 final _receiptId = RegExp(r'^obcs2\.ids\.[A-Za-z0-9_-]{43}$');
+final _operationId = RegExp(r'^op1:[a-f0-9]{64}$');
+final _nativeDigest = RegExp(r'^[A-Za-z0-9_-]{43}$');
+final _protectedReference = RegExp(r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$');
+final _protectedLease = RegExp(r'^obcs2\.lease\.[a-f0-9]{32}$');
 int _time(DateTime now) {
   if (!now.isUtc || now.millisecondsSinceEpoch <= 0) _fail('time_invalid');
   return now.millisecondsSinceEpoch;

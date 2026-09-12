@@ -8,9 +8,10 @@ import 'cloud_operation_identity.dart';
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
-import 'cloud_sync_local_mutation_journal.dart' show validateCloudSyncMutationRow;
+import 'cloud_sync_local_mutation_journal.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_chat_identity_evidence.dart';
+import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
@@ -47,11 +48,13 @@ class ObjectBoxCloudSyncStore
     required this._protector,
     DateTime Function()? clock,
     CloudSyncLocalSendJournal? localSendJournal,
+    CloudSyncLocalMutationJournal? localMutationJournal,
     CloudSyncAttachmentUploadJournal? attachmentUploadJournal,
     this._readChatIdentityEvidence,
     CloudSyncSemanticDiagnosticRecorder? recordExistingHistoryDiagnostic,
   }) : _store = store,
        _localSendJournal = localSendJournal,
+       _localMutationJournal = localMutationJournal,
        // Keep the public named parameter stable while the field stays private.
        // ignore: prefer_initializing_formals
        _attachmentUploadJournal = attachmentUploadJournal,
@@ -73,6 +76,10 @@ class ObjectBoxCloudSyncStore
     if (localSendJournal != null && !localSendJournal.isBoundToStore(store)) {
       throw StateError('cloud_sync_local_send_adoption_store_mismatch');
     }
+    if (localMutationJournal != null &&
+        !localMutationJournal.isBoundToStore(store)) {
+      throw StateError('cloud_sync_local_mutation_adoption_store_mismatch');
+    }
   }
 
   factory ObjectBoxCloudSyncStore.fromDatabase({
@@ -83,7 +90,7 @@ class ObjectBoxCloudSyncStore
 
   static const int _maximumRetainedRunsPerScope = 256;
   final CloudSyncChatIdentityEvidence? Function(CloudOutboxOperation operation)?
-      _readChatIdentityEvidence;
+  _readChatIdentityEvidence;
   final CloudSyncSemanticDiagnosticRecorder? _recordExistingHistoryDiagnostic;
   static const String _messagesCloudContainer = 'com.apple.messages.cloud';
   static const String _messagesCloudDatabase = 'private';
@@ -107,6 +114,7 @@ class ObjectBoxCloudSyncStore
   // Explicitly scoped by the production local-send session. Generic/legacy
   // stores never infer local origin or relax their existing projection gate.
   final CloudSyncLocalSendJournal? _localSendJournal;
+  final CloudSyncLocalMutationJournal? _localMutationJournal;
   final CloudSyncAttachmentUploadJournal? _attachmentUploadJournal;
   final CloudSyncProtector _protector;
   final DateTime Function() _clock;
@@ -575,17 +583,24 @@ class ObjectBoxCloudSyncStore
           );
         }
       }
-      final sources = _store.box<CloudSyncLocalSendIntentEntity>().query(
-        CloudSyncLocalSendIntentEntity_.protectedSourceBinding.notNull(),
-      ).build();
+      final sources = _store
+          .box<CloudSyncLocalSendIntentEntity>()
+          .query(
+            CloudSyncLocalSendIntentEntity_.protectedSourceBinding.notNull(),
+          )
+          .build();
       try {
         if (sources.count() > maximumCount) {
-          throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+          throw _storageFailure(
+            'protected_outbound_lease_recovery_bound_exceeded',
+          );
         }
         for (final intent in sources.find()) {
           references.add(_localSendSource(intent)!.leaseReference);
           if (references.length > maximumCount) {
-            throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+            throw _storageFailure(
+              'protected_outbound_lease_recovery_bound_exceeded',
+            );
           }
         }
       } finally {
@@ -593,12 +608,16 @@ class ObjectBoxCloudSyncStore
       }
       final mutations = _store.box<CloudSyncLocalMutationIntentEntity>();
       if (mutations.count() > maximumCount) {
-        throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+        throw _storageFailure(
+          'protected_outbound_lease_recovery_bound_exceeded',
+        );
       }
       for (final mutation in mutations.getAll()) {
         references.add(validateCloudSyncMutationRow(mutation).leaseReference);
         if (references.length > maximumCount) {
-          throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+          throw _storageFailure(
+            'protected_outbound_lease_recovery_bound_exceeded',
+          );
         }
       }
       // Upload preparation and result precede final-save outbox admission.
@@ -607,7 +626,9 @@ class ObjectBoxCloudSyncStore
       // releases it. Its historical reference and payload are still retained.
       final uploads = _store.box<CloudAttachmentUploadEntity>();
       if (uploads.count() > maximumCount) {
-        throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+        throw _storageFailure(
+          'protected_outbound_lease_recovery_bound_exceeded',
+        );
       }
       for (final upload in uploads.getAll()) {
         validateCloudAttachmentUploadRow(upload);
@@ -615,11 +636,15 @@ class ObjectBoxCloudSyncStore
         final resultLease = upload.resultLeaseReference;
         if (resultLease != null &&
             !CloudSyncAttachmentUploadJournal.resultLeaseReleasedAfterReadback(
-              _store, upload)) {
+              _store,
+              upload,
+            )) {
           references.add(resultLease);
         }
         if (references.length > maximumCount) {
-          throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+          throw _storageFailure(
+            'protected_outbound_lease_recovery_bound_exceeded',
+          );
         }
       }
       return Set<String>.unmodifiable(references);
@@ -675,11 +700,14 @@ class ObjectBoxCloudSyncStore
       if (recordVerifiedLocalSendReadback) {
         final journal = _localSendJournal;
         if (journal == null) {
-          final intentQuery = _store.box<CloudSyncLocalSendIntentEntity>().query(
-            CloudSyncLocalSendIntentEntity_.admittedOperationId.equals(
-              current.operationId,
-            ),
-          ).build();
+          final intentQuery = _store
+              .box<CloudSyncLocalSendIntentEntity>()
+              .query(
+                CloudSyncLocalSendIntentEntity_.admittedOperationId.equals(
+                  current.operationId,
+                ),
+              )
+              .build();
           try {
             if (intentQuery.count() != 0) {
               throw StateError('cloud_sync_local_send_journal_required');
@@ -777,8 +805,7 @@ class ObjectBoxCloudSyncStore
         },
       );
       scanPaged(
-        (_writerAuthorities.query()
-              ..order(CloudKitWriterAuthorityEntity_.id))
+        (_writerAuthorities.query()..order(CloudKitWriterAuthorityEntity_.id))
             .build(),
         (entry) => capture(entry.resetProofReference),
       );
@@ -797,20 +824,24 @@ class ObjectBoxCloudSyncStore
       final checkpoints = <_ProtectedCheckpointCapture>[];
       scanPaged(
         (_store.box<CloudSyncLocalSendIntentEntity>().query()
-              ..order(CloudSyncLocalSendIntentEntity_.id)).build(),
+              ..order(CloudSyncLocalSendIntentEntity_.id))
+            .build(),
         (intent) => capture(_localSendSource(intent)?.protectedReference),
       );
       scanPaged(
         (_store.box<CloudSyncLocalMutationIntentEntity>().query()
-              ..order(CloudSyncLocalMutationIntentEntity_.id)).build(),
-        (intent) => capture(validateCloudSyncMutationRow(intent).protectedReference),
+              ..order(CloudSyncLocalMutationIntentEntity_.id))
+            .build(),
+        (intent) =>
+            capture(validateCloudSyncMutationRow(intent).protectedReference),
       );
       // Upload plans and results own committed leases before final record
       // admission. Recovery must see their bytes, not only their lease IDs.
       // Keep every retained state/account until explicit journal retirement.
       scanPaged(
         (_store.box<CloudAttachmentUploadEntity>().query()
-              ..order(CloudAttachmentUploadEntity_.id)).build(),
+              ..order(CloudAttachmentUploadEntity_.id))
+            .build(),
         (upload) {
           validateCloudAttachmentUploadRow(upload);
           capture(upload.planReference);
@@ -1770,6 +1801,222 @@ class ObjectBoxCloudSyncStore
     required CloudRecordMapEntry recordMapping,
   }) async => _admitProtectedOutboundCreate(draft, recordMapping);
 
+  /// Atomically consumes one reflected local edit/unsend into a protected
+  /// conditional-update outbox row. The mapped predecessor is re-read inside
+  /// this exact transaction; a changed ETag, raw record, generation, identity,
+  /// auth fence or local reflection rolls the entire adoption back.
+  CloudOutboxOperation admitProtectedLocalMutationUpdate({
+    required CloudOutboxDraft draft,
+    required CloudRecordMapEntry expectedPredecessor,
+    required CloudSyncLocalMutationJournal journal,
+    required CloudSyncLocalMutationAdmissionSource source,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) {
+    if (!journal.isBoundToStore(_store) ||
+        draft.scope.container != _messagesCloudContainer ||
+        draft.scope.database != _messagesCloudDatabase ||
+        draft.scope.zone != 'messageManateeZone' ||
+        draft.scope.streamKind != CloudSyncStreamKind.messages ||
+        draft.scope.schemaVersion != cloudSyncSchemaVersion ||
+        draft.scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
+        draft.action != CloudOutboxAction.save ||
+        draft.payloadVersion != cloudSyncMessageUpdatePayloadVersion ||
+        draft.dependencyOperationIds.isNotEmpty ||
+        draft.encryptedPayloadReference == null ||
+        !_isNativeProtectedReference(draft.encryptedPayloadReference!) ||
+        draft.payloadSha256 == null ||
+        !_isContentDigest(draft.payloadSha256!) ||
+        draft.serverRecordIdHash == null ||
+        !_isNativeDigest(draft.logicalEntityKeyHash) ||
+        !_isNativeDigest(draft.serverRecordIdHash!) ||
+        draft.protectedLeaseReference == null ||
+        !_isProtectedPageLease(draft.protectedLeaseReference!) ||
+        !draft.createdAt.isUtc ||
+        draft.createdAt.millisecondsSinceEpoch <= 0 ||
+        expectedPredecessor.scope != draft.scope ||
+        expectedPredecessor.logicalEntityKeyHash !=
+            draft.logicalEntityKeyHash ||
+        expectedPredecessor.serverRecordIdHash != draft.serverRecordIdHash ||
+        !_isNativeProtectedReference(
+          expectedPredecessor.encryptedServerRecordId,
+        ) ||
+        expectedPredecessor.etagHash == null ||
+        !_isNativeDigest(expectedPredecessor.etagHash!) ||
+        expectedPredecessor.encryptedRawRecordReference == null ||
+        !_isNativeProtectedReference(
+          expectedPredecessor.encryptedRawRecordReference!,
+        )) {
+      throw _storageFailure('protected_message_update_admission_invalid');
+    }
+
+    return _store.runInTransaction(TxMode.write, () {
+      final nowMs = draft.createdAt.millisecondsSinceEpoch;
+      final checkpoint = _checkpointLocked(draft.scope, nowMs: nowMs);
+      _fenceStaleOutboxLocked(
+        draft.scope,
+        checkpoint: checkpoint,
+        nowMs: nowMs,
+      );
+      final predecessor = cloudSyncFindRecordMap(
+        store: _store,
+        scope: draft.scope,
+        generation: checkpoint.generation,
+        logicalEntityKeyHash: draft.logicalEntityKeyHash,
+        serverRecordIdHash: draft.serverRecordIdHash,
+      );
+      if (predecessor == null ||
+          predecessor.mapKey !=
+              cloudSyncCanonicalRecordMapKey(
+                draft.scope,
+                draft.logicalEntityKeyHash,
+              ) ||
+          predecessor.scopeKey != _scopeKey(draft.scope) ||
+          predecessor.accountFingerprint != draft.scope.accountFingerprint ||
+          predecessor.zone != draft.scope.zone ||
+          predecessor.generation != checkpoint.generation ||
+          predecessor.logicalEntityKeyHash !=
+              expectedPredecessor.logicalEntityKeyHash ||
+          predecessor.serverRecordIdHash !=
+              expectedPredecessor.serverRecordIdHash ||
+          predecessor.encryptedServerRecordId !=
+              expectedPredecessor.encryptedServerRecordId ||
+          predecessor.etagHash != expectedPredecessor.etagHash ||
+          predecessor.encryptedRawRecordRef !=
+              expectedPredecessor.encryptedRawRecordReference ||
+          predecessor.updatedAtMs !=
+              expectedPredecessor.updatedAt.millisecondsSinceEpoch) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'protected_message_update_predecessor_changed',
+        );
+      }
+
+      final adoptedId = journal.adoptedOperationIdInOutboxTransaction(
+        _store,
+        source,
+        currentAuth: currentAuth,
+        stillCurrent: stillCurrent,
+      );
+      if (adoptedId != null) {
+        final existingEntity = _findOutboxByOperationIdLocked(adoptedId);
+        if (existingEntity == null ||
+            existingEntity.scopeKey != _scopeKey(draft.scope)) {
+          throw _storageFailure('protected_message_update_outbox_missing');
+        }
+        final existing = _outboxFromEntity(draft.scope, existingEntity);
+        if (!_sameUpdateDraft(existing, draft) ||
+            existing.checkpointGeneration != checkpoint.generation) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'protected_message_update_retry_changed',
+          );
+        }
+        journal.adoptInOutboxTransaction(
+          _store,
+          source,
+          existing,
+          predecessor,
+          currentAuth: currentAuth,
+          stillCurrent: stillCurrent,
+          now: draft.createdAt,
+        );
+        return existing;
+      }
+
+      final blockingSameRecord = _findOutboxForScopeLocked(draft.scope).any(
+        (row) =>
+            row.logicalEntityKeyHash == draft.logicalEntityKeyHash &&
+            _isBlockingOutboxStatus(_outboxStatusFromInt(row.state)),
+      );
+      if (blockingSameRecord) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'protected_message_update_predecessor_busy',
+        );
+      }
+
+      final revision = checkpoint.mutationRevisionCounter + 1;
+      final operation = CloudOutboxOperation(
+        scope: draft.scope,
+        operationId: CloudOperationIdentity.forMutation(
+          scope: draft.scope,
+          logicalEntityKeyHash: draft.logicalEntityKeyHash,
+          action: draft.action,
+          payloadVersion: draft.payloadVersion,
+          mutationRevision: revision,
+          payloadSha256: draft.payloadSha256,
+        ),
+        logicalEntityKeyHash: draft.logicalEntityKeyHash,
+        action: draft.action,
+        payloadVersion: draft.payloadVersion,
+        mutationRevision: revision,
+        checkpointGeneration: checkpoint.generation,
+        encryptedPayloadReference: draft.encryptedPayloadReference,
+        payloadSha256: draft.payloadSha256,
+        serverRecordIdHash: draft.serverRecordIdHash,
+        protectedLeaseReference: draft.protectedLeaseReference,
+        dependencyOperationIds: draft.dependencyOperationIds,
+        createdAt: draft.createdAt,
+      );
+      if (_findOutboxByOperationIdLocked(operation.operationId) != null) {
+        throw _storageFailure('outbox_operation_scope_collision');
+      }
+      _outbox.put(_outboxEntity(operation));
+      journal.adoptInOutboxTransaction(
+        _store,
+        source,
+        operation,
+        predecessor,
+        currentAuth: currentAuth,
+        stillCurrent: stillCurrent,
+        now: draft.createdAt,
+      );
+      checkpoint
+        ..mutationRevisionCounter = revision
+        ..updatedAtMs = nowMs;
+      _checkpoints.put(checkpoint);
+      final inserted = _findOutboxByOperationIdLocked(operation.operationId);
+      if (inserted == null ||
+          !_outboxFromEntity(
+            draft.scope,
+            inserted,
+          ).sameDurableSnapshotAs(operation)) {
+        throw _storageFailure('protected_message_update_outbox_changed');
+      }
+      return operation;
+    });
+  }
+
+  bool _sameUpdateDraft(
+    CloudOutboxOperation operation,
+    CloudOutboxDraft draft,
+  ) =>
+      operation.scope == draft.scope &&
+      operation.logicalEntityKeyHash == draft.logicalEntityKeyHash &&
+      operation.action == draft.action &&
+      operation.payloadVersion == draft.payloadVersion &&
+      operation.encryptedPayloadReference == draft.encryptedPayloadReference &&
+      operation.payloadSha256 == draft.payloadSha256 &&
+      operation.serverRecordIdHash == draft.serverRecordIdHash &&
+      operation.protectedLeaseReference == draft.protectedLeaseReference &&
+      operation.dependencyOperationIds.length ==
+          draft.dependencyOperationIds.length &&
+      operation.dependencyOperationIds.containsAll(
+        draft.dependencyOperationIds,
+      ) &&
+      operation.createdAt.millisecondsSinceEpoch ==
+          draft.createdAt.millisecondsSinceEpoch &&
+      operation.operationId ==
+          CloudOperationIdentity.forMutation(
+            scope: operation.scope,
+            logicalEntityKeyHash: operation.logicalEntityKeyHash,
+            action: operation.action,
+            payloadVersion: operation.payloadVersion,
+            mutationRevision: operation.mutationRevision,
+            payloadSha256: operation.payloadSha256,
+          );
+
   /// Read a prior Chat create before staging. A retry keeps the original
   /// random record name even after an uncertain submission or process restart.
   CloudOutboxOperation? readOutboundChatCreateForLocalRow(
@@ -1790,7 +2037,9 @@ class ObjectBoxCloudSyncStore
     final row = matches.single;
     final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
     final mapping = cloudSyncFindRecordMap(
-      store: _store, scope: scope, generation: row.checkpointGeneration,
+      store: _store,
+      scope: scope,
+      generation: row.checkpointGeneration,
       logicalEntityKeyHash: row.logicalEntityKeyHash,
       serverRecordIdHash: row.serverRecordIdHash,
     );
@@ -1832,32 +2081,61 @@ class ObjectBoxCloudSyncStore
   /// lease remain. This transaction must finish before selection validation,
   /// so an invalid diagnostic selection cannot roll the disposition back.
   int retireUnsubmittedChatCreates(
-    CloudSyncScope scope, {required DateTime now, int? onlyIntentId}
-  ) => _store.runInTransaction(TxMode.write, () {
-    if (!_isMessagesCloudSemanticScope(scope) || scope.zone != 'chatManateeZone') {
+    CloudSyncScope scope, {
+    required DateTime now,
+    int? onlyIntentId,
+  }) => _store.runInTransaction(TxMode.write, () {
+    if (!_isMessagesCloudSemanticScope(scope) ||
+        scope.zone != 'chatManateeZone') {
       throw _storageFailure('cloud_sync_outbound_chat_scope_invalid');
     }
-    final query = _outbox.query(CloudOutboxOperationEntity_.scopeKey.equals(_scopeKey(scope))
-      .and(CloudOutboxOperationEntity_.localChatOrigin.startsWith('[2,'))
-      .and(CloudOutboxOperationEntity_.state.oneOf([
-        CloudOutboxStatus.pending.index, CloudOutboxStatus.paused.index,
-        CloudOutboxStatus.quarantined.index]))).build()..limit = 4097;
+    final query =
+        _outbox
+            .query(
+              CloudOutboxOperationEntity_.scopeKey
+                  .equals(_scopeKey(scope))
+                  .and(
+                    CloudOutboxOperationEntity_.localChatOrigin.startsWith(
+                      '[2,',
+                    ),
+                  )
+                  .and(
+                    CloudOutboxOperationEntity_.state.oneOf([
+                      CloudOutboxStatus.pending.index,
+                      CloudOutboxStatus.paused.index,
+                      CloudOutboxStatus.quarantined.index,
+                    ]),
+                  ),
+            )
+            .build()
+          ..limit = 4097;
     final List<CloudOutboxOperationEntity> rows;
-    try { rows = query.find(); } finally { query.close(); }
+    try {
+      rows = query.find();
+    } finally {
+      query.close();
+    }
     if (rows.length > 4096) {
-      throw _storageFailure('cloud_sync_outbound_chat_retirement_bound_exceeded');
+      throw _storageFailure(
+        'cloud_sync_outbound_chat_retirement_bound_exceeded',
+      );
     }
     var retired = 0;
     for (final row in rows) {
       if (!cloudSyncIsNeverSubmittedChatCreate(row) ||
-          row.leaseIdHash != null || row.leaseExpiresAtMs != 0) {
+          row.leaseIdHash != null ||
+          row.leaseExpiresAtMs != 0) {
         continue;
       }
       final proof = cloudSyncOutboundChatOriginSendProof(row.localChatOrigin!);
       if (proof == null) continue;
       if (onlyIntentId != null) {
         final decoded = jsonDecode(proof);
-        if (decoded is! List || decoded.length != 3 || decoded[1] != onlyIntentId) continue;
+        if (decoded is! List ||
+            decoded.length != 3 ||
+            decoded[1] != onlyIntentId) {
+          continue;
+        }
       }
       final operation = _outboxFromEntity(scope, row);
       final chatId = cloudSyncOutboundChatOriginId(row.localChatOrigin!);
@@ -1865,8 +2143,13 @@ class ObjectBoxCloudSyncStore
       if (recovered == null || !recovered.sameDurableSnapshotAs(operation)) {
         throw _storageFailure('cloud_sync_outbound_chat_recovery_changed');
       }
-      if (!_requireChatCreateJournal().hasRetiredChatCreateSource(_store,
-          operation, chatId, cloudSyncOutboundChatOriginIdentity(row.localChatOrigin!), proof)) {
+      if (!_requireChatCreateJournal().hasRetiredChatCreateSource(
+        _store,
+        operation,
+        chatId,
+        cloudSyncOutboundChatOriginIdentity(row.localChatOrigin!),
+        proof,
+      )) {
         continue;
       }
       row
@@ -1886,19 +2169,27 @@ class ObjectBoxCloudSyncStore
 
   bool isRetiredUnsubmittedChatCreate(CloudOutboxOperation expected) =>
       _store.runInTransaction(TxMode.read, () {
-    final row = _findOutboxByOperationIdLocked(expected.operationId);
-    return row != null && row.scopeKey == _scopeKey(expected.scope) &&
-        cloudSyncIsRetiredUnsubmittedChatCreate(row) &&
-        _outboxFromEntity(expected.scope, row).sameDurableSnapshotAs(expected);
-  });
+        final row = _findOutboxByOperationIdLocked(expected.operationId);
+        return row != null &&
+            row.scopeKey == _scopeKey(expected.scope) &&
+            cloudSyncIsRetiredUnsubmittedChatCreate(row) &&
+            _outboxFromEntity(
+              expected.scope,
+              row,
+            ).sameDurableSnapshotAs(expected);
+      });
 
   bool isRetainedPreproofPendingCreate(CloudOutboxOperation expected) =>
       _store.runInTransaction(TxMode.read, () {
-    final row = _findOutboxByOperationIdLocked(expected.operationId);
-    return row != null && row.scopeKey == _scopeKey(expected.scope) &&
-        _outboxFromEntity(expected.scope, row).sameDurableSnapshotAs(expected) &&
-        (_localSendJournal?.isRetainedPreproofPendingCreate(row) ?? false);
-  });
+        final row = _findOutboxByOperationIdLocked(expected.operationId);
+        return row != null &&
+            row.scopeKey == _scopeKey(expected.scope) &&
+            _outboxFromEntity(
+              expected.scope,
+              row,
+            ).sameDurableSnapshotAs(expected) &&
+            (_localSendJournal?.isRetainedPreproofPendingCreate(row) ?? false);
+      });
 
   /// Candidate capture only, never adoption or permission to create remotely.
   CloudSyncOutboundChatOrigin captureOutboundChatObservationOrigin(
@@ -1907,14 +2198,23 @@ class ObjectBoxCloudSyncStore
     required CloudSyncLocalSendAdmissionSource localSendSource,
   }) => _store.runInTransaction(TxMode.read, () {
     _requireChatCreateJournal().validateChatCreateSource(
-      _store, scope, chatId, localSendSource);
+      _store,
+      scope,
+      chatId,
+      localSendSource,
+    );
     _requireMessagesCloudAccountProjectionReadyLocked(
-      scope, allowRetainedForFreshCreate: true);
+      scope,
+      allowRetainedForFreshCreate: true,
+    );
     final chat = _store.box<Chat>().get(chatId);
     if (chat == null) {
       throw _storageFailure('cloud_sync_outbound_chat_origin_missing');
     }
-    final origin = CloudSyncOutboundChatOrigin.capture(scope: scope, chat: chat);
+    final origin = CloudSyncOutboundChatOrigin.capture(
+      scope: scope,
+      chat: chat,
+    );
     _requireNoPriorChatIdentityLocked(origin);
     return origin;
   });
@@ -1923,21 +2223,30 @@ class ObjectBoxCloudSyncStore
     CloudSyncScope scope,
     int chatId, {
     CloudSyncLocalSendAdmissionSource? localSendSource,
-  }
-  ) => _store.runInTransaction(TxMode.read, () {
+  }) => _store.runInTransaction(TxMode.read, () {
     if (localSendSource == null) {
       _requireMessagesCloudAccountProjectionReadyLocked(scope);
     } else {
       _requireChatCreateJournal().validateChatCreateSource(
-        _store, scope, chatId, localSendSource);
+        _store,
+        scope,
+        chatId,
+        localSendSource,
+      );
       _requireMessagesCloudAccountProjectionReadyLocked(
-        scope, allowRetainedForFreshCreate: true, requireResolvedChatSaves: true);
+        scope,
+        allowRetainedForFreshCreate: true,
+        requireResolvedChatSaves: true,
+      );
     }
     final chat = _store.box<Chat>().get(chatId);
     if (chat == null) {
       throw _storageFailure('cloud_sync_outbound_chat_origin_missing');
     }
-    final origin = CloudSyncOutboundChatOrigin.capture(scope: scope, chat: chat);
+    final origin = CloudSyncOutboundChatOrigin.capture(
+      scope: scope,
+      chat: chat,
+    );
     if (localSendSource != null) _requireNoPriorChatIdentityLocked(origin);
     return origin;
   });
@@ -1965,10 +2274,18 @@ class ObjectBoxCloudSyncStore
       origin.requireUnchanged(_store);
       final row = _findOutboxByOperationIdLocked(operation.operationId)!;
       final identity = origin.binding(operation.checkpointGeneration);
-      final binding = origin.binding(operation.checkpointGeneration,
-        localSendProof: localSendSource == null ? null :
-          _requireChatCreateJournal().bindChatCreateSource(
-            _store, operation, origin.chatId, identity, localSendSource));
+      final binding = origin.binding(
+        operation.checkpointGeneration,
+        localSendProof: localSendSource == null
+            ? null
+            : _requireChatCreateJournal().bindChatCreateSource(
+                _store,
+                operation,
+                origin.chatId,
+                identity,
+                localSendSource,
+              ),
+      );
       if (row.localChatOrigin != null && row.localChatOrigin != binding) {
         throw _storageFailure('cloud_sync_outbound_chat_origin_changed');
       }
@@ -1989,8 +2306,12 @@ class ObjectBoxCloudSyncStore
   }) => _store.runInTransaction(TxMode.read, () {
     final journal = _localSendJournal;
     if (journal != null && localSendSource != null) {
-      journal.validateReadyForCreate(_store, scope, localSendSource,
-          retainedAttachmentResume: retainedAttachmentResume);
+      journal.validateReadyForCreate(
+        _store,
+        scope,
+        localSendSource,
+        retainedAttachmentResume: retainedAttachmentResume,
+      );
       _requireMessagesCloudAccountProjectionReadyLocked(
         scope,
         allowRetainedForFreshCreate: true,
@@ -2011,9 +2332,8 @@ class ObjectBoxCloudSyncStore
           localSendSource,
           retainedAttachmentResume: retainedAttachmentResume,
         ),
-        readConfirmedLocalParent: (parent) => localSendJournal.readConfirmedParentDependency(
-          _store, scope, parent,
-        ),
+        readConfirmedLocalParent: (parent) => localSendJournal
+            .readConfirmedParentDependency(_store, scope, parent),
       );
     }
   });
@@ -2037,19 +2357,29 @@ class ObjectBoxCloudSyncStore
       // mapping, in the same write transaction as current writer authority.
       if (attachmentParentChatBinding != null) {
         journal.requireFreshAttachmentGroupDependency(
-            draft.scope, source, attachmentParentChatBinding,
-            retainedAttachmentResume: retainedAttachmentResume);
+          draft.scope,
+          source,
+          attachmentParentChatBinding,
+          retainedAttachmentResume: retainedAttachmentResume,
+        );
       }
-      journal.adoptInOutboxTransaction(_store, source, operation,
-          retainedAttachmentResume: retainedAttachmentResume);
+      journal.adoptInOutboxTransaction(
+        _store,
+        source,
+        operation,
+        retainedAttachmentResume: retainedAttachmentResume,
+      );
     },
     localSendSource: source,
     retainedAttachmentResume: retainedAttachmentResume,
     validateFreshDependency: () {
       if (attachmentParentChatBinding != null) {
         journal.requireFreshAttachmentGroupDependency(
-            draft.scope, source, attachmentParentChatBinding,
-            retainedAttachmentResume: retainedAttachmentResume);
+          draft.scope,
+          source,
+          attachmentParentChatBinding,
+          retainedAttachmentResume: retainedAttachmentResume,
+        );
       }
       requireCloudSyncLocalSendDependencies(
         store: _store,
@@ -2061,9 +2391,8 @@ class ObjectBoxCloudSyncStore
           adopting: true,
           retainedAttachmentResume: retainedAttachmentResume,
         ),
-        readConfirmedLocalParent: (parent) => journal.readConfirmedParentDependency(
-          _store, draft.scope, parent,
-        ),
+        readConfirmedLocalParent: (parent) =>
+            journal.readConfirmedParentDependency(_store, draft.scope, parent),
       );
     },
   );
@@ -2127,8 +2456,8 @@ class ObjectBoxCloudSyncStore
             (isAttachmentCreate
                 ? 1
                 : isChatCreate
-                    ? cloudSyncOutboundChatPayloadVersion
-                    : cloudSyncOutboundPayloadVersion) ||
+                ? cloudSyncOutboundChatPayloadVersion
+                : cloudSyncOutboundPayloadVersion) ||
         (isAttachmentCreate &&
             (isChatCreate || draft.scope.zone != 'attachmentManateeZone')) ||
         (isChatCreate &&
@@ -2172,7 +2501,9 @@ class ObjectBoxCloudSyncStore
       if (existingOperation != null) {
         final existing = _outboxFromEntity(draft.scope, existingOperation);
         final existingMapping = cloudSyncFindRecordMap(
-          store: _store, scope: draft.scope, generation: checkpoint.generation,
+          store: _store,
+          scope: draft.scope,
+          generation: checkpoint.generation,
           logicalEntityKeyHash: draft.logicalEntityKeyHash,
           serverRecordIdHash: existing.serverRecordIdHash,
         );
@@ -2235,23 +2566,35 @@ class ObjectBoxCloudSyncStore
       final journal = _localSendJournal;
       if (chatOrigin != null && chatLocalSendSource != null) {
         _requireChatCreateJournal().validateChatCreateSource(
-          _store, draft.scope, chatOrigin.chatId, chatLocalSendSource);
-        _requireMessagesCloudAccountProjectionReadyLocked(draft.scope,
-          allowRetainedForFreshCreate: true, requireResolvedChatSaves: true,
+          _store,
+          draft.scope,
+          chatOrigin.chatId,
+          chatLocalSendSource,
+        );
+        _requireMessagesCloudAccountProjectionReadyLocked(
+          draft.scope,
+          allowRetainedForFreshCreate: true,
+          requireResolvedChatSaves: true,
           freshRecordIdHash: draft.serverRecordIdHash,
-          requireChatIdentityEvidence: chatIdentityEvidence == null ? null : () {
-            chatIdentityEvidence.requireMatches(
-              store: _store, origin: chatOrigin,
-              logicalEntityKeyHash: draft.logicalEntityKeyHash,
-              serverRecordIdHash: draft.serverRecordIdHash,
-              payloadSha256: draft.payloadSha256,
-              protectedEnvelopeReference: draft.encryptedPayloadReference,
-              leaseReference: draft.protectedLeaseReference,
-            );
-          });
-        _requireNoPriorChatIdentityLocked(chatOrigin,
+          requireChatIdentityEvidence: chatIdentityEvidence == null
+              ? null
+              : () {
+                  chatIdentityEvidence.requireMatches(
+                    store: _store,
+                    origin: chatOrigin,
+                    logicalEntityKeyHash: draft.logicalEntityKeyHash,
+                    serverRecordIdHash: draft.serverRecordIdHash,
+                    payloadSha256: draft.payloadSha256,
+                    protectedEnvelopeReference: draft.encryptedPayloadReference,
+                    leaseReference: draft.protectedLeaseReference,
+                  );
+                },
+        );
+        _requireNoPriorChatIdentityLocked(
+          chatOrigin,
           logicalEntityKeyHash: draft.logicalEntityKeyHash,
-          freshRecordIdHash: draft.serverRecordIdHash);
+          freshRecordIdHash: draft.serverRecordIdHash,
+        );
       } else if (journal != null && localSendSource != null) {
         journal.validateReadyForCreate(
           _store,
@@ -2287,12 +2630,34 @@ class ObjectBoxCloudSyncStore
       );
       final existingMapping = _findRecordMapByKeyLocked(mapKey);
       if (existingMapping != null &&
-          existingMapping.generation == checkpoint.generation &&
-          existingMapping.serverRecordIdHash !=
-              recordMapping.serverRecordIdHash) {
+          existingMapping.generation == checkpoint.generation) {
+        if (existingMapping.serverRecordIdHash !=
+            recordMapping.serverRecordIdHash) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'server_mapping_changed',
+          );
+        }
+        if (existingMapping.etagHash != null ||
+            existingMapping.encryptedRawRecordRef != null) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'protected_outbound_existing_record_requires_update',
+          );
+        }
+      }
+      final crossLaneOutboxConflict = _findOutboxForScopeLocked(draft.scope)
+          .any(
+            (entity) =>
+                entity.logicalEntityKeyHash == draft.logicalEntityKeyHash &&
+                entity.payloadVersion != draft.payloadVersion &&
+                _outboxStatusFromInt(entity.state) !=
+                    CloudOutboxStatus.quarantined,
+          );
+      if (crossLaneOutboxConflict) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.conflict,
-          safeCode: 'server_mapping_changed',
+          safeCode: 'protected_outbound_record_lane_busy',
         );
       }
       final reverseCollision = _findRecordMapsForScopeLocked(draft.scope).any(
@@ -2395,9 +2760,12 @@ class ObjectBoxCloudSyncStore
         nowMs: nowMs,
       );
       for (final entity in _findRecordMapsForScopeLocked(request.scope)) {
-        if (entity.mapKey == cloudSyncChatRecordMemberKey(
-          request.scope, entity.generation, entity.serverRecordIdHash,
-        )) {
+        if (entity.mapKey ==
+            cloudSyncChatRecordMemberKey(
+              request.scope,
+              entity.generation,
+              entity.serverRecordIdHash,
+            )) {
           continue; // Preserve the historical member's epoch and evidence.
         }
         entity
@@ -2465,6 +2833,7 @@ class ObjectBoxCloudSyncStore
     required String leaseId,
     required Duration leaseDuration,
     required Set<CloudOutboxAction> allowedActions,
+    Set<int>? allowedPayloadVersions,
   }) async {
     _requirePositiveLimit(limit);
     if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
@@ -2504,6 +2873,10 @@ class ObjectBoxCloudSyncStore
                     _outboxStatusFromInt(entity.state) ==
                         CloudOutboxStatus.pending &&
                     allowedActions.contains(_actionFromInt(entity.action)) &&
+                    (allowedPayloadVersions == null ||
+                        allowedPayloadVersions.contains(
+                          entity.payloadVersion,
+                        )) &&
                     entity.nextEligibleAtMs <= nowMs,
               )
               .toList()
@@ -2599,6 +2972,10 @@ class ObjectBoxCloudSyncStore
             entity.leaseExpiresAtMs <= nowMs) {
           return false;
         }
+        // A lease renewal extends remote-mutation authority. Revalidate the
+        // same immutable source, mapping and protected evidence required for
+        // the original lease before extending that authority.
+        _requireOperationProjectionReadyLocked(scope, entity);
         entities.add(entity);
       }
       for (final entity in entities) {
@@ -2618,6 +2995,7 @@ class ObjectBoxCloudSyncStore
     required int limit,
     required String leaseId,
     required Duration leaseDuration,
+    Set<int>? allowedPayloadVersions,
   }) async {
     _requirePositiveLimit(limit);
     if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
@@ -2633,6 +3011,10 @@ class ObjectBoxCloudSyncStore
                     entity.checkpointGeneration == checkpoint.generation &&
                     _outboxStatusFromInt(entity.state) ==
                         CloudOutboxStatus.unknownOutcome &&
+                    (allowedPayloadVersions == null ||
+                        allowedPayloadVersions.contains(
+                          entity.payloadVersion,
+                        )) &&
                     entity.appleRequestUuid != null &&
                     entity.appleOperationUuid != null &&
                     entity.leaseExpiresAtMs <= nowMs &&
@@ -2650,6 +3032,10 @@ class ObjectBoxCloudSyncStore
       final leased = <CloudOutboxOperation>[];
       for (final entity in eligible) {
         if (leased.length == limit) break;
+        // Unknown outcome means the prior network result is unresolved, not
+        // that its source proof may be skipped. Recovery must retain the exact
+        // journal/outbox/predecessor triangle before granting another lease.
+        _requireOperationProjectionReadyLocked(scope, entity);
         entity
           ..state = _outboxStatusToInt(CloudOutboxStatus.unknownOutcome)
           ..leaseIdHash = leaseIdHash
@@ -2708,7 +3094,9 @@ class ObjectBoxCloudSyncStore
       }
       for (final entity in entities.values) {
         if (entity.localChatOrigin != null) {
-          entity.localChatOrigin = cloudSyncSubmittedChatOrigin(entity.localChatOrigin!);
+          entity.localChatOrigin = cloudSyncSubmittedChatOrigin(
+            entity.localChatOrigin!,
+          );
         }
         entity
           ..state = _outboxStatusToInt(CloudOutboxStatus.unknownOutcome)
@@ -2821,8 +3209,10 @@ class ObjectBoxCloudSyncStore
               ..state = _outboxStatusToInt(CloudOutboxStatus.quarantined)
               ..attemptCount += 1
               ..nextEligibleAtMs = 0
-              ..protectedLeaseReference = cloudSyncIsNeverSubmittedChatCreate(entity)
-                  ? entity.protectedLeaseReference : null
+              ..protectedLeaseReference =
+                  cloudSyncIsNeverSubmittedChatCreate(entity)
+                  ? entity.protectedLeaseReference
+                  : null
               ..lastErrorCategory =
                   (transition.category ?? CloudFailureCategory.unknown).name;
             break;
@@ -2960,7 +3350,9 @@ class ObjectBoxCloudSyncStore
         );
       }
       final mapping = cloudSyncFindRecordMap(
-        store: _store, scope: scope, generation: checkpoint.generation,
+        store: _store,
+        scope: scope,
+        generation: checkpoint.generation,
         logicalEntityKeyHash: receipt.logicalEntityKeyHash,
         serverRecordIdHash: receipt.serverRecordIdHash,
       );
@@ -2968,10 +3360,13 @@ class ObjectBoxCloudSyncStore
         final other = _findRecordMapByKeyLocked(
           cloudSyncCanonicalRecordMapKey(scope, receipt.logicalEntityKeyHash),
         );
-        if (other != null && other.generation == checkpoint.generation &&
+        if (other != null &&
+            other.generation == checkpoint.generation &&
             other.serverRecordIdHash != receipt.serverRecordIdHash) {
-          throw CloudSyncFailure(category: CloudFailureCategory.conflict,
-              safeCode: 'server_mapping_changed');
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'server_mapping_changed',
+          );
         }
       }
       if (mapping == null ||
@@ -3046,9 +3441,16 @@ class ObjectBoxCloudSyncStore
   }
 
   bool _requiresAttachmentReadbackLocked(String operationId) {
-    final query = _store.box<CloudAttachmentUploadEntity>().query(
-      CloudAttachmentUploadEntity_.admittedOperationId.equals(operationId)
-    ).build()..limit = 1;
+    final query =
+        _store
+            .box<CloudAttachmentUploadEntity>()
+            .query(
+              CloudAttachmentUploadEntity_.admittedOperationId.equals(
+                operationId,
+              ),
+            )
+            .build()
+          ..limit = 1;
     try {
       return query.findFirst() != null;
     } finally {
@@ -3122,7 +3524,9 @@ class ObjectBoxCloudSyncStore
     final operation = _outboxFromEntity(scope, entity);
     journal.validateAdoptedOperation(_store, source, operation);
     final mapping = cloudSyncFindRecordMap(
-      store: _store, scope: scope, generation: operation.checkpointGeneration,
+      store: _store,
+      scope: scope,
+      generation: operation.checkpointGeneration,
       logicalEntityKeyHash: operation.logicalEntityKeyHash,
       serverRecordIdHash: operation.serverRecordIdHash,
     );
@@ -3301,7 +3705,9 @@ class ObjectBoxCloudSyncStore
         throw _storageFailure('record_map_generation_mismatch');
       }
       final entity = cloudSyncFindRecordMap(
-        store: _store, scope: scope, generation: generation,
+        store: _store,
+        scope: scope,
+        generation: generation,
         logicalEntityKeyHash: logicalEntityKeyHash,
         serverRecordIdHash: serverRecordIdHash,
       );
@@ -3344,7 +3750,9 @@ class ObjectBoxCloudSyncStore
       }
       final canonical = _findRecordMapByKeyLocked(mapKey);
       final selected = cloudSyncFindRecordMap(
-        store: _store, scope: entry.scope, generation: generation,
+        store: _store,
+        scope: entry.scope,
+        generation: generation,
         logicalEntityKeyHash: entry.logicalEntityKeyHash,
         serverRecordIdHash: entry.serverRecordIdHash,
       );
@@ -3355,7 +3763,8 @@ class ObjectBoxCloudSyncStore
         );
       }
       final existing = selected ?? canonical;
-      _putRecordMapAndMirrorLocked(entry.scope,
+      _putRecordMapAndMirrorLocked(
+        entry.scope,
         CloudRecordMapEntity(
           id: existing?.id ?? 0,
           mapKey: selected?.mapKey ?? mapKey,
@@ -3604,6 +4013,7 @@ class ObjectBoxCloudSyncStore
           .where(
             (entity) =>
                 _actionFromInt(entity.action) == CloudOutboxAction.save &&
+                entity.payloadVersion == operation.payloadVersion &&
                 entity.logicalEntityKeyHash == operation.logicalEntityKeyHash,
           )
           .toList();
@@ -3753,7 +4163,8 @@ class ObjectBoxCloudSyncStore
       final status = _outboxStatusFromInt(entity.state);
       if (!_isBlockingOutboxStatus(status) ||
           _actionFromInt(entity.action) != CloudOutboxAction.save ||
-          entity.payloadVersion == cloudSyncOutboundPayloadVersion) {
+          entity.payloadVersion == cloudSyncOutboundPayloadVersion ||
+          entity.payloadVersion == cloudSyncMessageUpdatePayloadVersion) {
         continue;
       }
       entity
@@ -3944,7 +4355,8 @@ class ObjectBoxCloudSyncStore
   }
 
   CloudSyncLocalSendJournal _requireChatCreateJournal() =>
-      _localSendJournal ?? (throw StateError('cloud_sync_local_send_chat_journal_missing'));
+      _localSendJournal ??
+      (throw StateError('cloud_sync_local_send_chat_journal_missing'));
 
   /// Chat record names are random, but the recipient identity is not. Saved
   /// Chat identities must be resolved separately. Retain and reject known
@@ -4002,31 +4414,47 @@ class ObjectBoxCloudSyncStore
       if (chat.id == origin.chatId) continue;
       final handles = chat.handles.toList(growable: false);
       if (chat.guid == origin.canonicalGuid ||
-          (!chat.isRpSms && !chat.isRoutingStub && handles.length == 1 &&
-            handles.single.service == 'iMessage' &&
-            handles.single.address == origin.chatIdentifier)) {
+          (!chat.isRpSms &&
+              !chat.isRoutingStub &&
+              handles.length == 1 &&
+              handles.single.service == 'iMessage' &&
+              handles.single.address == origin.chatIdentifier)) {
         localChatMatch = true;
         break;
       }
     }
-    String lookup(int generation) => CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
-      scope: scope, generation: generation, canonicalGuid: origin.canonicalGuid);
+    String lookup(int generation) =>
+        CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+          scope: scope,
+          generation: generation,
+          canonicalGuid: origin.canonicalGuid,
+        );
     final snapshotMatch = readLaterPredicate(localChatMatch, () {
-      final snapshots = _store.box<CloudSemanticSnapshotEntity>().query(
-        CloudSemanticSnapshotEntity_.scopeKey.equals(_scopeKey(scope))).build();
+      final snapshots = _store
+          .box<CloudSemanticSnapshotEntity>()
+          .query(CloudSemanticSnapshotEntity_.scopeKey.equals(_scopeKey(scope)))
+          .build();
       try {
-        return snapshots.find().any((row) =>
-            row.canonicalGuidLookupHash == lookup(row.generation));
+        return snapshots.find().any(
+          (row) => row.canonicalGuidLookupHash == lookup(row.generation),
+        );
       } finally {
         snapshots.close();
       }
     });
     final aliasMatch = readLaterPredicate(localChatMatch || snapshotMatch, () {
-      final aliases = _store.box<CloudSemanticChatAliasEntity>().query(
-        CloudSemanticChatAliasEntity_.scopeKey.equals(_scopeKey(scope))).build();
+      final aliases = _store
+          .box<CloudSemanticChatAliasEntity>()
+          .query(
+            CloudSemanticChatAliasEntity_.scopeKey.equals(_scopeKey(scope)),
+          )
+          .build();
       try {
-        return aliases.find().any((row) => row.chatId == origin.chatId ||
-            row.canonicalGuidLookupHash == lookup(row.generation));
+        return aliases.find().any(
+          (row) =>
+              row.chatId == origin.chatId ||
+              row.canonicalGuidLookupHash == lookup(row.generation),
+        );
       } finally {
         aliases.close();
       }
@@ -4038,30 +4466,46 @@ class ObjectBoxCloudSyncStore
           if (row.operationId == allowedOperationId) continue;
           if (row.localChatOrigin != null &&
               cloudSyncOutboundChatOriginMatchesCanonical(
-                row.localChatOrigin!, scope, origin.canonicalGuid)) {
+                row.localChatOrigin!,
+                scope,
+                origin.canonicalGuid,
+              )) {
             return true;
           }
         }
         return false;
       },
     );
-    final priorMatch = localChatMatch || snapshotMatch || aliasMatch ||
+    final priorMatch =
+        localChatMatch ||
+        snapshotMatch ||
+        aliasMatch ||
         priorOutboundOriginMatch;
-    final recordMapConflict = logicalEntityKeyHash != null &&
+    final recordMapConflict =
+        logicalEntityKeyHash != null &&
         readLaterPredicate(priorMatch, () {
-          final own = allowedOperationId == null ? null :
-              _findOutboxByOperationIdLocked(allowedOperationId);
-          return _findRecordMapsForScopeLocked(scope).any((row) =>
-          row.logicalEntityKeyHash == logicalEntityKeyHash &&
-          (own == null || row.generation != own.checkpointGeneration ||
-            row.serverRecordIdHash != own.serverRecordIdHash));
+          final own = allowedOperationId == null
+              ? null
+              : _findOutboxByOperationIdLocked(allowedOperationId);
+          return _findRecordMapsForScopeLocked(scope).any(
+            (row) =>
+                row.logicalEntityKeyHash == logicalEntityKeyHash &&
+                (own == null ||
+                    row.generation != own.checkpointGeneration ||
+                    row.serverRecordIdHash != own.serverRecordIdHash),
+          );
         });
-    final tombstoneConflict = freshRecordIdHash != null && readLaterPredicate(
-      priorMatch || recordMapConflict,
-      () => _findInboxForScopeLocked(scope).any((row) =>
-          row.isTombstone && row.changeType == CloudChangeType.delete.name &&
-          row.serverRecordIdHash == freshRecordIdHash),
-    );
+    final tombstoneConflict =
+        freshRecordIdHash != null &&
+        readLaterPredicate(
+          priorMatch || recordMapConflict,
+          () => _findInboxForScopeLocked(scope).any(
+            (row) =>
+                row.isTombstone &&
+                row.changeType == CloudChangeType.delete.name &&
+                row.serverRecordIdHash == freshRecordIdHash,
+          ),
+        );
     return _ExistingChatHistoryMatches(
       localChatMatch: localChatMatch,
       snapshotMatch: snapshotMatch,
@@ -4072,18 +4516,32 @@ class ObjectBoxCloudSyncStore
     );
   }
 
-  void _putRecordMapAndMirrorLocked(CloudSyncScope scope, CloudRecordMapEntity row) {
+  void _putRecordMapAndMirrorLocked(
+    CloudSyncScope scope,
+    CloudRecordMapEntity row,
+  ) {
     _recordMaps.put(row);
     if (scope.zone != 'chatManateeZone') return;
-    final canonicalKey = cloudSyncCanonicalRecordMapKey(scope, row.logicalEntityKeyHash);
-    final memberKey = cloudSyncChatRecordMemberKey(scope, row.generation, row.serverRecordIdHash);
-    final mirror = _findRecordMapByKeyLocked(row.mapKey == canonicalKey ? memberKey : canonicalKey);
-    if (mirror == null || mirror.generation != row.generation ||
+    final canonicalKey = cloudSyncCanonicalRecordMapKey(
+      scope,
+      row.logicalEntityKeyHash,
+    );
+    final memberKey = cloudSyncChatRecordMemberKey(
+      scope,
+      row.generation,
+      row.serverRecordIdHash,
+    );
+    final mirror = _findRecordMapByKeyLocked(
+      row.mapKey == canonicalKey ? memberKey : canonicalKey,
+    );
+    if (mirror == null ||
+        mirror.generation != row.generation ||
         mirror.serverRecordIdHash != row.serverRecordIdHash) {
       return;
     }
     if (mirror.logicalEntityKeyHash != row.logicalEntityKeyHash ||
-        mirror.accountFingerprint != row.accountFingerprint || mirror.scopeKey != row.scopeKey ||
+        mirror.accountFingerprint != row.accountFingerprint ||
+        mirror.scopeKey != row.scopeKey ||
         mirror.zone != row.zone) {
       throw _storageFailure('scope_collision');
     }
@@ -4102,8 +4560,10 @@ class ObjectBoxCloudSyncStore
   ) => _store.runInTransaction(TxMode.read, () {
     final row = _findOutboxByOperationIdLocked(expected.operationId);
     final scope = expected.scope;
-    if (row == null || row.scopeKey != _scopeKey(scope) ||
-        row.accountFingerprint != scope.accountFingerprint || row.zone != scope.zone ||
+    if (row == null ||
+        row.scopeKey != _scopeKey(scope) ||
+        row.accountFingerprint != scope.accountFingerprint ||
+        row.zone != scope.zone ||
         !_outboxFromEntity(scope, row).sameDurableSnapshotAs(expected) ||
         row.state != CloudOutboxStatus.pending.index ||
         expected.status != CloudOutboxStatus.pending) {
@@ -4121,20 +4581,31 @@ class ObjectBoxCloudSyncStore
     if (chatBinding != null && cloudSyncChatOriginIsRetired(chatBinding)) {
       throw _storageFailure('cloud_sync_outbound_chat_source_retired');
     }
-    final chatProof = chatBinding == null ? null :
-        cloudSyncOutboundChatOriginSendProof(chatBinding);
+    final chatProof = chatBinding == null
+        ? null
+        : cloudSyncOutboundChatOriginSendProof(chatBinding);
     if (chatProof != null) {
       final chatId = cloudSyncOutboundChatOriginId(chatBinding!);
       final identity = cloudSyncOutboundChatOriginIdentity(chatBinding);
       _requireChatCreateJournal().validateChatCreateBinding(
-        _store, operation, chatId, identity, chatProof);
+        _store,
+        operation,
+        chatId,
+        identity,
+        chatProof,
+      );
       final recovered = readOutboundChatCreateForLocalRow(scope, chatId);
       if (recovered?.operationId != operation.operationId) {
         throw _storageFailure('cloud_sync_outbound_chat_recovery_changed');
       }
       final chat = _store.box<Chat>().get(chatId);
-      if (chat == null) throw _storageFailure('cloud_sync_outbound_chat_origin_missing');
-      final origin = CloudSyncOutboundChatOrigin.capture(scope: scope, chat: chat);
+      if (chat == null) {
+        throw _storageFailure('cloud_sync_outbound_chat_origin_missing');
+      }
+      final origin = CloudSyncOutboundChatOrigin.capture(
+        scope: scope,
+        chat: chat,
+      );
       if (origin.binding(operation.checkpointGeneration) != identity) {
         throw _storageFailure('cloud_sync_outbound_chat_origin_changed');
       }
@@ -4148,6 +4619,31 @@ class ObjectBoxCloudSyncStore
     CloudOutboxOperationEntity entity,
   ) {
     final operation = _outboxFromEntity(scope, entity);
+    if (_isMessagesCloudSemanticScope(scope) &&
+        scope.zone == 'messageManateeZone' &&
+        operation.payloadVersion == cloudSyncMessageUpdatePayloadVersion) {
+      final journal = _localMutationJournal;
+      if (journal == null || !journal.isBoundToStore(_store)) {
+        throw StateError('cloud_sync_local_mutation_journal_required');
+      }
+      final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+      final predecessor = checkpoint == null
+          ? null
+          : cloudSyncFindRecordMap(
+              store: _store,
+              scope: scope,
+              generation: checkpoint.generation,
+              logicalEntityKeyHash: operation.logicalEntityKeyHash,
+              serverRecordIdHash: operation.serverRecordIdHash,
+            );
+      if (checkpoint == null ||
+          operation.checkpointGeneration != checkpoint.generation ||
+          predecessor == null) {
+        throw _storageFailure('protected_message_update_predecessor_changed');
+      }
+      journal.validateAdoptedOperation(_store, operation, predecessor);
+      return;
+    }
     if (_isMessagesCloudSemanticScope(scope) &&
         scope.zone == 'attachmentManateeZone' &&
         operation.payloadVersion == 1) {
@@ -4165,20 +4661,33 @@ class ObjectBoxCloudSyncStore
     }
     final origin = _captureJournalBoundChatOriginLocked(scope, entity);
     if (origin != null) {
-      _requireMessagesCloudAccountProjectionReadyLocked(scope,
-        allowRetainedForFreshCreate: true, requireResolvedChatSaves: true,
+      _requireMessagesCloudAccountProjectionReadyLocked(
+        scope,
+        allowRetainedForFreshCreate: true,
+        requireResolvedChatSaves: true,
         freshRecordIdHash: operation.serverRecordIdHash,
-        requireChatIdentityEvidence: _readChatIdentityEvidence == null ? null : () {
-          final evidence = _readChatIdentityEvidence(operation);
-          if (evidence == null) {
-            throw _storageFailure('cloud_sync_chat_identity_evidence_required');
-          }
-          evidence.requireOperation(store: _store, origin: origin, operation: operation);
-        });
-      _requireNoPriorChatIdentityLocked(origin,
+        requireChatIdentityEvidence: _readChatIdentityEvidence == null
+            ? null
+            : () {
+                final evidence = _readChatIdentityEvidence(operation);
+                if (evidence == null) {
+                  throw _storageFailure(
+                    'cloud_sync_chat_identity_evidence_required',
+                  );
+                }
+                evidence.requireOperation(
+                  store: _store,
+                  origin: origin,
+                  operation: operation,
+                );
+              },
+      );
+      _requireNoPriorChatIdentityLocked(
+        origin,
         logicalEntityKeyHash: operation.logicalEntityKeyHash,
         allowedOperationId: operation.operationId,
-        freshRecordIdHash: operation.serverRecordIdHash);
+        freshRecordIdHash: operation.serverRecordIdHash,
+      );
       return;
     }
     final journal = _localSendJournal;
@@ -4188,11 +4697,16 @@ class ObjectBoxCloudSyncStore
       if (journal == null) {
         // A generic store may read an adopted envelope, but cannot send it
         // without the account-bound journal that validates its dependencies.
-        final query = _store.box<CloudSyncLocalSendIntentEntity>().query(
-          CloudSyncLocalSendIntentEntity_.admittedOperationId.equals(
-            operation.operationId,
-          ),
-        ).build()..limit = 1;
+        final query =
+            _store
+                .box<CloudSyncLocalSendIntentEntity>()
+                .query(
+                  CloudSyncLocalSendIntentEntity_.admittedOperationId.equals(
+                    operation.operationId,
+                  ),
+                )
+                .build()
+              ..limit = 1;
         try {
           if (query.findFirst() != null) {
             throw StateError('cloud_sync_local_send_journal_required');
@@ -4213,9 +4727,8 @@ class ObjectBoxCloudSyncStore
       binding: source.admittedChatBinding,
       requireAttachmentReadback: (proof) =>
           journal.requireAttachmentParentReadback(source, proof),
-      readConfirmedLocalParent: (parent) => journal.readConfirmedParentDependency(
-        _store, scope, parent,
-      ),
+      readConfirmedLocalParent: (parent) =>
+          journal.readConfirmedParentDependency(_store, scope, parent),
     );
     _requireMessagesCloudAccountProjectionReadyLocked(
       scope,
@@ -4253,13 +4766,14 @@ class ObjectBoxCloudSyncStore
       // permission. Undecoded Chat saves block unless every retained save was
       // natively observed as disjoint from this exact staged candidate.
       final allowRetained = allowRetainedForFreshCreate;
-      final requireResolvedSaves = requireResolvedChatSaves &&
-          zone == 'chatManateeZone';
+      final requireResolvedSaves =
+          requireResolvedChatSaves && zone == 'chatManateeZone';
       // Retention is not completed projection. Only a journal-proven initial
       // create may be independent of unrelated history. It still cannot
       // recreate a record with an observed deletion; all other writes keep
       // the original full-projection requirement.
-      final freshRecordTombstoneConflict = allowRetainedForFreshCreate &&
+      final freshRecordTombstoneConflict =
+          allowRetainedForFreshCreate &&
           freshRecordIdHash != null &&
           siblingScope == scope &&
           _findInboxForScopeLocked(scope).any(
@@ -4303,7 +4817,8 @@ class ObjectBoxCloudSyncStore
                     )))) {
         throw _storageFailure('messages_cloud_account_projection_incomplete');
       }
-      if (allowRetained && requireResolvedSaves &&
+      if (allowRetained &&
+          requireResolvedSaves &&
           !_hasOnlyAppliedChatSavesLocked(siblingScope, checkpoint)) {
         if (requireChatIdentityEvidence == null) {
           throw _storageFailure('messages_cloud_account_projection_incomplete');
@@ -4323,11 +4838,16 @@ class ObjectBoxCloudSyncStore
     CloudSyncCheckpointEntity checkpoint,
   ) => _findInboxForScopeLocked(scope)
       .where((row) => row.generation == checkpoint.generation)
-      .every((row) => row.status == CloudInboxStatus.applied.index ||
-          (row.status == CloudInboxStatus.retainedUnprojected.index &&
-              row.isTombstone && row.changeType == CloudChangeType.delete.name &&
-              row.failureCategory == null && row.preflightCategory == null &&
-              row.preflightCode == null));
+      .every(
+        (row) =>
+            row.status == CloudInboxStatus.applied.index ||
+            (row.status == CloudInboxStatus.retainedUnprojected.index &&
+                row.isTombstone &&
+                row.changeType == CloudChangeType.delete.name &&
+                row.failureCategory == null &&
+                row.preflightCategory == null &&
+                row.preflightCode == null),
+      );
 
   bool _hasRetainedTombstoneLocked(
     CloudSyncScope scope,
@@ -5062,10 +5582,8 @@ final class _ExistingChatHistoryMatches {
     if (aliasMatch) 'outbound_chat_existing_history_alias_match',
     if (priorOutboundOriginMatch)
       'outbound_chat_existing_history_prior_outbound_origin_match',
-    if (recordMapConflict)
-      'outbound_chat_existing_history_record_map_conflict',
-    if (tombstoneConflict)
-      'outbound_chat_existing_history_tombstone_conflict',
+    if (recordMapConflict) 'outbound_chat_existing_history_record_map_conflict',
+    if (tombstoneConflict) 'outbound_chat_existing_history_tombstone_conflict',
   ];
 }
 
