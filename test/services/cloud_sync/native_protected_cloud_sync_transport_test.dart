@@ -8,6 +8,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_write_transp
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
+import 'package:bluebubbles/src/rust/frb_generated.dart';
+import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -120,6 +122,250 @@ void main() {
 
   CloudKitWriterScope writerScope() =>
       CloudKitWriterScope(accountFingerprint: scope.accountFingerprint);
+
+  group('conditional Message update FRB binding contract', () {
+    late _MessageUpdateBridge bridge;
+    late FrbNativeProtectedCloudSyncBindings updateBindings;
+    late _FakeCloudMessagesClient cloudMessagesClient;
+    late frb_api.CloudSyncMessageUpdatePrepareInput stageInput;
+    late frb_api.CloudSyncMessageUpdateSubmissionInput input;
+
+    setUp(() {
+      bridge = _MessageUpdateBridge();
+      updateBindings = FrbNativeProtectedCloudSyncBindings(api: bridge);
+      cloudMessagesClient = _FakeCloudMessagesClient();
+      stageInput = _messageUpdatePrepareInput();
+      input = _messageUpdateSubmissionInput();
+    });
+
+    test('update-only capability does not imply create authority', () {
+      final capability = _UpdateOnlyBindingsProbe();
+      expect(capability, isA<NativeProtectedCloudSyncMessageUpdateBindings>());
+      expect(capability, isNot(isA<NativeProtectedCloudSyncWriteBindings>()));
+    });
+
+    test('forwards the exact no-save update staging envelope', () async {
+      final result = await updateBindings.prepareMessageUpdate(
+        cloudMessagesClient: cloudMessagesClient,
+        storageDirectory: 'private-storage',
+        expectedAccountFingerprint: _hash('A'),
+        expectedProtectedStoreIdentity: _storeIdentity,
+        input: stageInput,
+      );
+
+      expect(result, same(bridge.stagePrepareResult));
+      expect(bridge.stagePrepareCalls, 1);
+      expect(bridge.capturedClient, same(cloudMessagesClient));
+      expect(bridge.capturedStorageDirectory, 'private-storage');
+      expect(bridge.capturedAccountFingerprint, _hash('A'));
+      expect(bridge.capturedProtectedStoreIdentity, _storeIdentity);
+      expect(bridge.capturedStageInput, same(stageInput));
+      expect(result.prepared!.protectedReference, _reference('U'));
+      expect(result.prepared!.leaseReference, _lease('d'));
+    });
+
+    test('rejects malformed no-save staging input before FRB', () async {
+      final invalid = _messageUpdatePrepareInput(
+        protectedRawRecordReference: 'plaintext-record',
+      );
+
+      await expectLater(
+        updateBindings.prepareMessageUpdate(
+          cloudMessagesClient: cloudMessagesClient,
+          storageDirectory: 'private-storage',
+          expectedAccountFingerprint: _hash('A'),
+          expectedProtectedStoreIdentity: _storeIdentity,
+          input: invalid,
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_message_update_stage_invalid',
+          ),
+        ),
+      );
+      expect(bridge.stagePrepareCalls, 0);
+    });
+
+    test('rejects an unbound no-save staging result after FRB', () async {
+      bridge.stagePrepareResult = frb_api.CloudSyncPrepareMessageUpdateResult(
+        prepared: frb_api.CloudSyncPreparedMessageUpdate(
+          protectedReference: _reference('U'),
+          leaseReference: _lease('d'),
+          payloadSha256: _sha('8'),
+          logicalEntityKeyHash: _hash('X'),
+          serverRecordIdHash: stageInput.expectedServerRecordIdHash,
+        ),
+      );
+
+      await expectLater(
+        updateBindings.prepareMessageUpdate(
+          cloudMessagesClient: cloudMessagesClient,
+          storageDirectory: 'private-storage',
+          expectedAccountFingerprint: _hash('A'),
+          expectedProtectedStoreIdentity: _storeIdentity,
+          input: stageInput,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_message_update_stage_envelope_invalid',
+          ),
+        ),
+      );
+      expect(bridge.stagePrepareCalls, 1);
+    });
+
+    test(
+      'forwards exact protected submission, consume, and readback values',
+      () async {
+        final prepareResult = await updateBindings
+            .prepareMessageUpdateSubmission(
+              cloudMessagesClient: cloudMessagesClient,
+              storageDirectory: 'private-storage',
+              expectedAccountFingerprint: _hash('A'),
+              expectedProtectedStoreIdentity: _storeIdentity,
+              requestUuid: _messageUpdateRequestUuid,
+              requestTimeout: const Duration(seconds: 45),
+              input: input,
+            );
+
+        expect(prepareResult, same(bridge.prepareResult));
+        expect(bridge.prepareCalls, 1);
+        expect(bridge.capturedClient, same(cloudMessagesClient));
+        expect(bridge.capturedStorageDirectory, 'private-storage');
+        expect(bridge.capturedAccountFingerprint, _hash('A'));
+        expect(bridge.capturedProtectedStoreIdentity, _storeIdentity);
+        expect(bridge.capturedRequestUuid, _messageUpdateRequestUuid);
+        expect(bridge.capturedRequestTimeoutSeconds, BigInt.from(45));
+        expect(bridge.capturedInput, same(input));
+
+        final consumeResult = await updateBindings.consumePreparedMessageUpdate(
+          handle: bridge.handle,
+          mutationCapabilityToken: 'opaque-capability',
+        );
+        expect(consumeResult, same(bridge.consumeResult));
+        expect(bridge.consumeCalls, 1);
+        expect(bridge.capturedHandle, same(bridge.handle));
+        expect(bridge.capturedMutationCapabilityToken, 'opaque-capability');
+
+        final reconcileResult = await updateBindings.reconcileMessageUpdate(
+          cloudMessagesClient: cloudMessagesClient,
+          storageDirectory: 'private-storage',
+          expectedAccountFingerprint: _hash('A'),
+          expectedProtectedStoreIdentity: _storeIdentity,
+          requestUuid: _messageUpdateRequestUuid,
+          input: input,
+        );
+        expect(reconcileResult, same(bridge.reconcileResult));
+        expect(bridge.reconcileCalls, 1);
+        expect(bridge.capturedInput, same(input));
+        expect(
+          reconcileResult.protectedProofReference,
+          input.protectedPayloadReference,
+        );
+        expect(
+          reconcileResult.receipt!.protectedCurrentRawRecordReference,
+          _reference('R'),
+        );
+        expect(
+          reconcileResult.receipt!.protectedCurrentRawRecordLeaseReference,
+          _lease('b'),
+        );
+      },
+    );
+
+    test('rejects malformed submission input before FRB', () async {
+      final invalid = _messageUpdateSubmissionInput(
+        protectedPayloadReference: 'plaintext-record',
+      );
+
+      await expectLater(
+        updateBindings.prepareMessageUpdateSubmission(
+          cloudMessagesClient: cloudMessagesClient,
+          storageDirectory: 'private-storage',
+          expectedAccountFingerprint: _hash('A'),
+          expectedProtectedStoreIdentity: _storeIdentity,
+          requestUuid: _messageUpdateRequestUuid,
+          requestTimeout: const Duration(seconds: 45),
+          input: invalid,
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_message_update_submission_invalid',
+          ),
+        ),
+      );
+      expect(bridge.prepareCalls, 0);
+      expect(bridge.reconcileCalls, 0);
+    });
+
+    test('rejects malformed prepare envelopes after FRB', () async {
+      bridge.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: bridge.handle,
+        handleBindingSha256: _sha('a'),
+        failure: frb_api.CloudSyncOutboundSafeCode.invalidRequest,
+      );
+
+      await expectLater(
+        updateBindings.prepareMessageUpdateSubmission(
+          cloudMessagesClient: cloudMessagesClient,
+          storageDirectory: 'private-storage',
+          expectedAccountFingerprint: _hash('A'),
+          expectedProtectedStoreIdentity: _storeIdentity,
+          requestUuid: _messageUpdateRequestUuid,
+          requestTimeout: const Duration(seconds: 45),
+          input: input,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_message_update_prepare_envelope_invalid',
+          ),
+        ),
+      );
+      expect(bridge.prepareCalls, 1);
+    });
+
+    test('rejects unbound readback capabilities after FRB', () async {
+      bridge.reconcileResult = frb_api.CloudSyncMessageUpdateReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: input.protectedPayloadReference,
+        receipt: frb_api.CloudSyncMessageUpdateReadbackReceipt(
+          serverRecordIdHash: input.serverRecordIdHash,
+          predecessorEtagHash: input.predecessorEtagHash,
+          resultingEtagHash: _hash('T'),
+          protectedCurrentRawRecordReference: 'raw-record',
+          protectedCurrentRawRecordLeaseReference: _lease('b'),
+          rawGeneration: input.rawGeneration,
+        ),
+      );
+
+      await expectLater(
+        updateBindings.reconcileMessageUpdate(
+          cloudMessagesClient: cloudMessagesClient,
+          storageDirectory: 'private-storage',
+          expectedAccountFingerprint: _hash('A'),
+          expectedProtectedStoreIdentity: _storeIdentity,
+          requestUuid: _messageUpdateRequestUuid,
+          input: input,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_message_update_reconcile_envelope_invalid',
+          ),
+        ),
+      );
+      expect(bridge.reconcileCalls, 1);
+    });
+  });
 
   test('every generated protected failure code is report allowlisted', () {
     final mapped = frb_api.CloudSyncProtectedSafeCode.values
@@ -483,41 +729,44 @@ void main() {
     );
   });
 
-  test('maps a protected reset proof only onto the exact failed fetch', () async {
-    final proofReference = _reference('Z');
-    bindings.fetchResult = NativeProtectedFetchResult(
-      failure: NativeProtectedFailure(
-        category: NativeProtectedFailureCategory.unknown,
-        safeCode: 'cloudkit_reset_required',
-        protectedResetProofReference: proofReference,
-      ),
-    );
-
-    Object? thrown;
-    try {
-      await transport.fetchChanges(
-        scope,
-        previousToken: _reference('O'),
-        generation: 7,
-        limit: 20,
+  test(
+    'maps a protected reset proof only onto the exact failed fetch',
+    () async {
+      final proofReference = _reference('Z');
+      bindings.fetchResult = NativeProtectedFetchResult(
+        failure: NativeProtectedFailure(
+          category: NativeProtectedFailureCategory.unknown,
+          safeCode: 'cloudkit_reset_required',
+          protectedResetProofReference: proofReference,
+        ),
       );
-    } catch (error) {
-      thrown = error;
-    }
 
-    expect(thrown, isA<CloudSyncFailure>());
-    final failure = thrown! as CloudSyncFailure;
-    expect(failure.safeCode, 'cloudkit_reset_required');
-    expect(failure.resetContext, isNotNull);
-    expect(failure.resetContext!.scope, scope);
-    expect(failure.resetContext!.expectedGeneration, 7);
-    expect(
-      failure.resetContext!.protectedRemoteStateProofReference,
-      proofReference,
-    );
-    expect(failure.toString(), isNot(contains(proofReference)));
-    expect(failure.resetContext.toString(), isNot(contains(proofReference)));
-  });
+      Object? thrown;
+      try {
+        await transport.fetchChanges(
+          scope,
+          previousToken: _reference('O'),
+          generation: 7,
+          limit: 20,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown, isA<CloudSyncFailure>());
+      final failure = thrown! as CloudSyncFailure;
+      expect(failure.safeCode, 'cloudkit_reset_required');
+      expect(failure.resetContext, isNotNull);
+      expect(failure.resetContext!.scope, scope);
+      expect(failure.resetContext!.expectedGeneration, 7);
+      expect(
+        failure.resetContext!.protectedRemoteStateProofReference,
+        proofReference,
+      );
+      expect(failure.toString(), isNot(contains(proofReference)));
+      expect(failure.resetContext.toString(), isNot(contains(proofReference)));
+    },
+  );
 
   test('rejects a reset proof on any non-reset failure', () async {
     bindings.fetchResult = NativeProtectedFetchResult(
@@ -1321,12 +1570,11 @@ void main() {
       transport = buildTransport();
     });
     void absent() {
-      attachmentBindings.reconcileResult =
-          frb_api.CloudSyncOutboundReconcileResult(
-            disposition:
-                frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
-            protectedProofReference: _reference('P'),
-          );
+      attachmentBindings
+          .reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: _reference('P'),
+      );
       attachmentBindings.prepareResult =
           frb_api.CloudSyncPreparedMessageCreateResult(
             handle: _FakePreparedHandle(),
@@ -1394,7 +1642,10 @@ void main() {
         );
         final attachment = _attachmentOperation(scope);
         scope = _semanticScope();
-        await expectLater(prepare(attachment), throwsA(isA<CloudSyncFailure>()));
+        await expectLater(
+          prepare(attachment),
+          throwsA(isA<CloudSyncFailure>()),
+        );
         scope = _semanticScope(zone: 'attachmentManateeZone');
         // A chat-scoped operation stays bound to its chat scope: resubmitting
         // it under the attachment scope must fail before any native lookup,
@@ -1451,14 +1702,13 @@ void main() {
       'existing Attachment readback is a confirmed no-op without native prepare or consume',
       () async {
         final op = _attachmentOperation(scope);
-        attachmentBindings.reconcileResult =
-            frb_api.CloudSyncOutboundReconcileResult(
-              disposition:
-                  frb_api.CloudSyncOutboundReconcileDisposition.committed,
-              protectedProofReference: _reference('P'),
-              serverRecordIdHash: _hash('S'),
-              etagHash: _hash('E'),
-            );
+        attachmentBindings
+            .reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+          disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+          protectedProofReference: _reference('P'),
+          serverRecordIdHash: _hash('S'),
+          etagHash: _hash('E'),
+        );
         final prepared = await prepare(op);
         final result = await runV2(
           () => transport.consumePreparedSubmission(
@@ -1486,14 +1736,13 @@ void main() {
           scope,
           status: CloudOutboxStatus.confirmed,
         );
-        attachmentBindings.reconcileResult =
-            frb_api.CloudSyncOutboundReconcileResult(
-              disposition:
-                  frb_api.CloudSyncOutboundReconcileDisposition.committed,
-              protectedProofReference: _reference('P'),
-              serverRecordIdHash: _hash('S'),
-              etagHash: _hash('E'),
-            );
+        attachmentBindings
+            .reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+          disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+          protectedProofReference: _reference('P'),
+          serverRecordIdHash: _hash('S'),
+          etagHash: _hash('E'),
+        );
         await runV2(
           () => transport.verifyConfirmedAttachmentCreateNoSave(
             scope,
@@ -1511,10 +1760,8 @@ void main() {
         );
         await expectLater(
           runV2(
-            () => transport.verifyConfirmedChatCreateNoSave(
-              scope,
-              operation: op,
-            ),
+            () =>
+                transport.verifyConfirmedChatCreateNoSave(scope, operation: op),
           ),
           throwsA(isA<CloudSyncFailure>()),
         );
@@ -3988,6 +4235,64 @@ String _reference(String character) => 'obcs2.ref.${_hash(character)}';
 String _lease(String character) => 'obcs2.lease.${_repeat(character, 32)}';
 final String _storeIdentity = 'obcs2.store.${_hash('S')}';
 final String _preparedHandleBindingSha256 = _sha('a');
+const String _messageUpdateRequestUuid = '11111111-2222-4ABC-8DEF-555555555555';
+
+frb_api.CloudSyncMessageUpdatePrepareInput _messageUpdatePrepareInput({
+  String? protectedRawRecordReference,
+}) {
+  final sourceBinding = frb_api.CloudSyncNativeSendSourceBinding(
+    kind: frb_api.CloudSyncNativeSendSourceKind.mutation,
+    sourceSha256: _sha('6'),
+    protectedReference: _reference('M'),
+    leaseReference: _lease('c'),
+    payloadSha256: _sha('7'),
+    payloadLength: BigInt.from(512),
+  );
+  final guidHash = _sha('8');
+  return frb_api.CloudSyncMessageUpdatePrepareInput(
+    expectedLogicalEntityKeyHash: _hash('L'),
+    expectedServerRecordIdHash: _hash('S'),
+    expectedEtagHash: _hash('E'),
+    mutationContext: frb_api.CloudSyncNativeSendReceiptContext(
+      storageDirectory: 'private-storage',
+      guidHash: guidHash,
+      accountFingerprint: _hash('A'),
+      protectedStoreIdentity: _storeIdentity,
+      nativeSessionId: _hash('N'),
+      sourceBinding: sourceBinding,
+    ),
+    protectedRawRecordReference: protectedRawRecordReference ?? _reference('R'),
+    rawGeneration: BigInt.one,
+    mutationReceipt: frb_api.CloudSyncNativeSendReceipt(
+      receiptId: 'obcs2.ids.${_hash('I')}',
+      guidHash: guidHash,
+      nativeSessionId: _hash('H'),
+      sourceBinding: sourceBinding,
+      preparedSentTimestampMs: BigInt.from(1789146004000),
+    ),
+    expectedReceiptBindingSha256: _sha('9'),
+    reflectedSnapshotSha256: _sha('a'),
+    writerEpoch: BigInt.one,
+  );
+}
+
+frb_api.CloudSyncMessageUpdateSubmissionInput _messageUpdateSubmissionInput({
+  String? protectedPayloadReference,
+}) => frb_api.CloudSyncMessageUpdateSubmissionInput(
+  localOperationId: 'op1:${_sha('1')}',
+  logicalEntityKeyHash: _hash('L'),
+  serverRecordIdHash: _hash('S'),
+  predecessorEtagHash: _hash('E'),
+  protectedLeaseReference: _lease('a'),
+  protectedPayloadReference: protectedPayloadReference ?? _reference('P'),
+  payloadSha256: _sha('2'),
+  mutationSourceSha256: _sha('3'),
+  idsReceiptBindingSha256: _sha('4'),
+  reflectedSnapshotSha256: _sha('5'),
+  writerEpoch: BigInt.one,
+  rawGeneration: BigInt.one,
+  appleOperationUuid: 'AAAAAAAA-BBBB-4CCC-8DDD-000000000001',
+);
 
 CloudSyncScope _semanticScope({String zone = 'messageManateeZone'}) =>
     CloudSyncScope(
@@ -4312,6 +4617,183 @@ final class _FakePreparedHandle
     implements frb_api.CloudSyncPreparedMessageCreateHandle {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _FakeCloudMessagesClient
+    implements frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _MessageUpdateBridge implements RustLibApi {
+  final frb_api.CloudSyncPreparedMessageCreateHandle handle =
+      _FakePreparedHandle();
+  late frb_api.CloudSyncPrepareMessageUpdateResult stagePrepareResult =
+      frb_api.CloudSyncPrepareMessageUpdateResult(
+        prepared: frb_api.CloudSyncPreparedMessageUpdate(
+          protectedReference: _reference('U'),
+          leaseReference: _lease('d'),
+          payloadSha256: _sha('8'),
+          logicalEntityKeyHash: _hash('L'),
+          serverRecordIdHash: _hash('S'),
+        ),
+      );
+  late frb_api.CloudSyncPreparedMessageCreateResult prepareResult =
+      frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: handle,
+        handleBindingSha256: _sha('a'),
+      );
+  final frb_api.CloudSyncOutboundConsumeResult consumeResult =
+      const frb_api.CloudSyncOutboundConsumeResult(
+        outcomes: [],
+        failure: frb_api.CloudSyncOutboundSafeCode.invalidRequest,
+      );
+  late frb_api.CloudSyncMessageUpdateReconcileResult reconcileResult =
+      frb_api.CloudSyncMessageUpdateReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: _reference('P'),
+        receipt: frb_api.CloudSyncMessageUpdateReadbackReceipt(
+          serverRecordIdHash: _hash('S'),
+          predecessorEtagHash: _hash('E'),
+          resultingEtagHash: _hash('T'),
+          protectedCurrentRawRecordReference: _reference('R'),
+          protectedCurrentRawRecordLeaseReference: _lease('b'),
+          rawGeneration: BigInt.one,
+        ),
+      );
+
+  int stagePrepareCalls = 0;
+  int prepareCalls = 0;
+  int consumeCalls = 0;
+  int reconcileCalls = 0;
+  frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider? capturedClient;
+  String? capturedStorageDirectory;
+  String? capturedAccountFingerprint;
+  String? capturedProtectedStoreIdentity;
+  String? capturedRequestUuid;
+  BigInt? capturedRequestTimeoutSeconds;
+  frb_api.CloudSyncMessageUpdatePrepareInput? capturedStageInput;
+  frb_api.CloudSyncMessageUpdateSubmissionInput? capturedInput;
+  frb_api.CloudSyncPreparedMessageCreateHandle? capturedHandle;
+  String? capturedMutationCapabilityToken;
+
+  @override
+  Future<frb_api.CloudSyncPrepareMessageUpdateResult>
+  crateApiApiCloudSyncPrepareMessageUpdate({
+    required frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider
+    cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required frb_api.CloudSyncMessageUpdatePrepareInput input,
+  }) async {
+    stagePrepareCalls++;
+    capturedClient = cloudMessagesClient;
+    capturedStorageDirectory = storageDirectory;
+    capturedAccountFingerprint = expectedAccountFingerprint;
+    capturedProtectedStoreIdentity = expectedProtectedStoreIdentity;
+    capturedStageInput = input;
+    return stagePrepareResult;
+  }
+
+  @override
+  Future<frb_api.CloudSyncPreparedMessageCreateResult>
+  crateApiApiCloudSyncPrepareMessageUpdateSubmission({
+    required frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider
+    cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required BigInt requestTimeoutSeconds,
+    required frb_api.CloudSyncMessageUpdateSubmissionInput input,
+  }) async {
+    prepareCalls++;
+    capturedClient = cloudMessagesClient;
+    capturedStorageDirectory = storageDirectory;
+    capturedAccountFingerprint = expectedAccountFingerprint;
+    capturedProtectedStoreIdentity = expectedProtectedStoreIdentity;
+    capturedRequestUuid = requestUuid;
+    capturedRequestTimeoutSeconds = requestTimeoutSeconds;
+    capturedInput = input;
+    return prepareResult;
+  }
+
+  @override
+  Future<frb_api.CloudSyncOutboundConsumeResult>
+  crateApiApiCloudSyncConsumePreparedMessageCreate({
+    required frb_api.CloudSyncPreparedMessageCreateHandle handle,
+    required String mutationCapabilityToken,
+  }) async {
+    consumeCalls++;
+    capturedHandle = handle;
+    capturedMutationCapabilityToken = mutationCapabilityToken;
+    return consumeResult;
+  }
+
+  @override
+  Future<frb_api.CloudSyncMessageUpdateReconcileResult>
+  crateApiApiCloudSyncReconcileMessageUpdate({
+    required frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider
+    cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncMessageUpdateSubmissionInput input,
+  }) async {
+    reconcileCalls++;
+    capturedClient = cloudMessagesClient;
+    capturedStorageDirectory = storageDirectory;
+    capturedAccountFingerprint = expectedAccountFingerprint;
+    capturedProtectedStoreIdentity = expectedProtectedStoreIdentity;
+    capturedRequestUuid = requestUuid;
+    capturedInput = input;
+    return reconcileResult;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _UpdateOnlyBindingsProbe
+    implements NativeProtectedCloudSyncMessageUpdateBindings {
+  @override
+  Future<frb_api.CloudSyncPrepareMessageUpdateResult> prepareMessageUpdate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required frb_api.CloudSyncMessageUpdatePrepareInput input,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<frb_api.CloudSyncPreparedMessageCreateResult>
+  prepareMessageUpdateSubmission({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required Duration requestTimeout,
+    required frb_api.CloudSyncMessageUpdateSubmissionInput input,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<frb_api.CloudSyncOutboundConsumeResult> consumePreparedMessageUpdate({
+    required frb_api.CloudSyncPreparedMessageCreateHandle handle,
+    required String mutationCapabilityToken,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<frb_api.CloudSyncMessageUpdateReconcileResult> reconcileMessageUpdate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncMessageUpdateSubmissionInput input,
+  }) => throw UnimplementedError();
 }
 
 final class _FakeCloudMessage implements frb_api.CloudMessage {
