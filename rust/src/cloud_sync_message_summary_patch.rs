@@ -23,6 +23,12 @@ pub(crate) struct SummaryRange {
     pub le: u32,
 }
 
+pub(crate) struct SummaryEditBasis {
+    pub body: Vec<u8>,
+    pub timestamp: f64,
+    pub range: SummaryRange,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum SummaryChange<'a> {
     Edit {
@@ -187,6 +193,71 @@ pub(crate) fn patch_message_summary(
     // Ensure our result also meets the input structural/expansion limits.
     validate_binary(&output.0)?;
     Ok(output.0)
+}
+
+/// Resolves the exact immediate predecessor required to append an edit. A
+/// fresh history is seeded from the current attributed body and message time;
+/// an existing history must provide both its last revision and original range.
+/// The caller still has to prove that the returned body is the current body.
+pub(crate) fn resolve_edit_basis(
+    original: Option<&[u8]>,
+    part: u32,
+    fallback_body: &[u8],
+    fallback_timestamp: f64,
+    fallback_range: SummaryRange,
+) -> Result<SummaryEditBasis, SummaryPatchError> {
+    if fallback_body.is_empty()
+        || fallback_body.len() > MAX_BYTES
+        || history_apple_seconds(fallback_timestamp).is_none()
+        || fallback_range.lo.checked_add(fallback_range.le).is_none()
+    {
+        return Err(Error::InvalidPatch);
+    }
+    let root = match original {
+        Some(bytes) => {
+            validate_binary(bytes)?;
+            Value::from_reader(Cursor::new(bytes))
+                .map_err(|_| Error::Malformed)?
+                .into_dictionary()
+                .ok_or(Error::Malformed)?
+        }
+        None => Dictionary::new(),
+    };
+    let (edited, retracted, _) = validate_summary(&root)?;
+    if retracted.contains(&part) {
+        return Err(Error::RetractedPart);
+    }
+    let key = part.to_string();
+    let range = dictionary(&root, "otr")?.and_then(|ranges| ranges.get(&key));
+    let history = dictionary(&root, "ec")?
+        .and_then(|histories| histories.get(&key))
+        .and_then(Value::as_array);
+    match history {
+        Some(history) => {
+            if !edited.contains(&part) {
+                return Err(Error::InconsistentHistory);
+            }
+            let range = range
+                .ok_or(Error::InconsistentHistory)
+                .and_then(read_range)?;
+            let (timestamp, body) = revision(history.last().ok_or(Error::InconsistentHistory)?)?;
+            Ok(SummaryEditBasis {
+                body: body.to_vec(),
+                timestamp,
+                range,
+            })
+        }
+        None => {
+            if edited.contains(&part) || range.is_some() {
+                return Err(Error::InconsistentHistory);
+            }
+            Ok(SummaryEditBasis {
+                body: fallback_body.to_vec(),
+                timestamp: fallback_timestamp,
+                range: fallback_range,
+            })
+        }
+    }
 }
 
 fn dictionary<'a>(root: &'a Dictionary, key: &str) -> Result<Option<&'a Dictionary>, Error> {

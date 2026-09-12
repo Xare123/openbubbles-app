@@ -794,10 +794,7 @@ mod tests {
     fn utm_field(time: f64) -> record::Field {
         let mut value = record::field::Value::default();
         value.r#type = Some(Type::DateType as i32);
-        value
-            .date_value
-            .get_or_insert_with(Default::default)
-            .time = Some(time);
+        value.date_value.get_or_insert_with(Default::default).time = Some(time);
         record::Field {
             identifier: Some(record::field::Identifier {
                 name: Some("utm".into()),

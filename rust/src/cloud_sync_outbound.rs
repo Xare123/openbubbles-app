@@ -16,11 +16,11 @@ use rustpush::cloud_messages::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::cloud_sync_attachment_parent::project_parent_attributed_body;
 use crate::cloud_sync_canonical_dto::{
     parse_associated_parent, CloudCanonicalChatPayload, CloudCanonicalChatStyle,
-    CloudCanonicalService, CloudCanonicalEntityKind, CloudCanonicalReactionKind,
+    CloudCanonicalEntityKind, CloudCanonicalReactionKind, CloudCanonicalService,
 };
-use crate::cloud_sync_attachment_parent::project_parent_attributed_body;
 use crate::cloud_sync_ids_attachment_source::DecodedIdsAttachmentSource;
 
 use crate::cloud_sync_native_fetch::{
@@ -132,8 +132,14 @@ pub(crate) fn stage_outbound_message(
     let record_name =
         deterministic_message_record_name(&logical_message_guid, &container_scoped_user_id)?;
     let encoded = encode_outbound_message(message, &record_name)?;
-    stage_encoded_message(storage_directory, account_fingerprint, entity_kind,
-        &logical_message_guid, &record_name, encoded)
+    stage_encoded_message(
+        storage_directory,
+        account_fingerprint,
+        entity_kind,
+        &logical_message_guid,
+        &record_name,
+        encoded,
+    )
 }
 
 fn stage_encoded_message(
@@ -153,10 +159,7 @@ fn stage_encoded_message(
     )
     .map_err(|_| CloudSyncOutboundFailure::ProtectedStorage)?;
     let logical_entity_key_hash = hasher
-        .canonical_entity_key_hash(
-            entity_kind,
-            &logical_message_guid,
-        )
+        .canonical_entity_key_hash(entity_kind, &logical_message_guid)
         .map_err(|_| CloudSyncOutboundFailure::MalformedMessage)?
         .value()
         .to_owned();
@@ -214,8 +217,12 @@ pub(crate) struct NativeOpenedAttachmentParent {
 }
 
 impl NativeOpenedAttachmentParent {
-    pub(crate) fn message(&self) -> &CloudMessage { &self.message }
-    pub(crate) fn server_record_name(&self) -> &str { &self.server_record_name }
+    pub(crate) fn message(&self) -> &CloudMessage {
+        &self.message
+    }
+    pub(crate) fn server_record_name(&self) -> &str {
+        &self.server_record_name
+    }
 }
 
 /// API opens the committed IDS source under its exact context/auth interlock.
@@ -228,8 +235,14 @@ pub(crate) fn stage_outbound_attachment_parent(
     message_headers: CloudMessage,
     source: &DecodedIdsAttachmentSource,
 ) -> Result<NativeProtectedOutboundStage, CloudSyncOutboundFailure> {
-    stage_outbound_attachment_parent_with_group(storage_directory, account_fingerprint,
-        container_scoped_user_id, message_headers, source, None)
+    stage_outbound_attachment_parent_with_group(
+        storage_directory,
+        account_fingerprint,
+        container_scoped_user_id,
+        message_headers,
+        source,
+        None,
+    )
 }
 
 pub(crate) fn stage_outbound_attachment_parent_with_group(
@@ -242,9 +255,16 @@ pub(crate) fn stage_outbound_attachment_parent_with_group(
 ) -> Result<NativeProtectedOutboundStage, CloudSyncOutboundFailure> {
     let guid = message_headers.guid.clone();
     let record_name = deterministic_message_record_name(&guid, &container_scoped_user_id)?;
-    let encoded = encode_outbound_attachment_parent_with_group(message_headers, &record_name, source, group)?;
-    stage_encoded_message(storage_directory, account_fingerprint,
-        CloudCanonicalEntityKind::Message, &guid, &record_name, encoded)
+    let encoded =
+        encode_outbound_attachment_parent_with_group(message_headers, &record_name, source, group)?;
+    stage_encoded_message(
+        storage_directory,
+        account_fingerprint,
+        CloudCanonicalEntityKind::Message,
+        &guid,
+        &record_name,
+        encoded,
+    )
 }
 
 /// No caller-authored body is accepted, including an empty attributed archive.
@@ -264,7 +284,12 @@ pub(crate) fn encode_outbound_attachment_parent_with_group(
     source: &DecodedIdsAttachmentSource,
     group: Option<&CloudCanonicalChatPayload>,
 ) -> Result<Vec<u8>, CloudSyncOutboundFailure> {
-    if message_headers.msg_proto.0.text.as_deref().is_some_and(|v| !v.is_empty())
+    if message_headers
+        .msg_proto
+        .0
+        .text
+        .as_deref()
+        .is_some_and(|v| !v.is_empty())
         || message_headers.msg_proto.0.attributed_body.is_some()
     {
         return Err(CloudSyncOutboundFailure::UnsupportedMessage);
@@ -297,8 +322,14 @@ pub(crate) fn decode_outbound_attachment_parent_with_group(
     if message.msg_proto.0.text.as_deref() != Some(projection.text.as_str()) {
         return Err(CloudSyncOutboundFailure::BindingMismatch);
     }
-    projection.validate_encoded_body(message.msg_proto.0.attributed_body.as_deref()
-        .ok_or(CloudSyncOutboundFailure::MalformedMessage)?)?;
+    projection.validate_encoded_body(
+        message
+            .msg_proto
+            .0
+            .attributed_body
+            .as_deref()
+            .ok_or(CloudSyncOutboundFailure::MalformedMessage)?,
+    )?;
     // Reject unknown/duplicate/noncanonical envelope or nested proto fields:
     // do not discard them and later mistake a different re-encoding for the
     // persisted payload. The attributed bytes themselves are kept unchanged.
@@ -306,7 +337,10 @@ pub(crate) fn decode_outbound_attachment_parent_with_group(
         return Err(CloudSyncOutboundFailure::MalformedMessage);
     }
     Ok(NativeOpenedAttachmentParent {
-        message, server_record_name, encoded: encoded.to_vec(), group: group.cloned(),
+        message,
+        server_record_name,
+        encoded: encoded.to_vec(),
+        group: group.cloned(),
     })
 }
 
@@ -317,8 +351,14 @@ pub(crate) fn open_staged_outbound_attachment_parent(
     expected_payload_sha256: &str,
     source: &DecodedIdsAttachmentSource,
 ) -> Result<NativeOpenedAttachmentParent, CloudSyncOutboundFailure> {
-    open_staged_outbound_attachment_parent_with_group(storage_directory, account_fingerprint,
-        protected_payload_reference, expected_payload_sha256, source, None)
+    open_staged_outbound_attachment_parent_with_group(
+        storage_directory,
+        account_fingerprint,
+        protected_payload_reference,
+        expected_payload_sha256,
+        source,
+        None,
+    )
 }
 
 pub(crate) fn open_staged_outbound_attachment_parent_with_group(
@@ -330,12 +370,16 @@ pub(crate) fn open_staged_outbound_attachment_parent_with_group(
     group: Option<&CloudCanonicalChatPayload>,
 ) -> Result<NativeOpenedAttachmentParent, CloudSyncOutboundFailure> {
     let protected = cloud_sync_open_protected_outbound_message(
-        storage_directory, account_fingerprint, protected_payload_reference,
-    ).map_err(|_| CloudSyncOutboundFailure::ProtectedStorage)?;
+        storage_directory,
+        account_fingerprint,
+        protected_payload_reference,
+    )
+    .map_err(|_| CloudSyncOutboundFailure::ProtectedStorage)?;
     if protected.len() > MAX_OUTBOUND_ENVELOPE_BYTES.div_ceil(3) * 4 {
         return Err(CloudSyncOutboundFailure::OversizedMessage);
     }
-    let encoded = URL_SAFE_NO_PAD.decode(protected)
+    let encoded = URL_SAFE_NO_PAD
+        .decode(protected)
         .map_err(|_| CloudSyncOutboundFailure::MalformedMessage)?;
     if sha256_hex(&encoded) != expected_payload_sha256 {
         return Err(CloudSyncOutboundFailure::BindingMismatch);
@@ -359,13 +403,22 @@ pub(crate) fn verify_attachment_parent_readback(
     if digest != expected_payload_sha256 {
         return Err(CloudSyncOutboundFailure::BindingMismatch);
     }
-    let reopened = decode_outbound_attachment_parent_with_group(&expected.encoded, source, expected.group.as_ref())?;
+    let reopened = decode_outbound_attachment_parent_with_group(
+        &expected.encoded,
+        source,
+        expected.group.as_ref(),
+    )?;
     if actual.utm != reopened.message.utm {
-        let value = reopened.message.utm.ok_or(CloudSyncOutboundFailure::BindingMismatch)?;
+        let value = reopened
+            .message
+            .utm
+            .ok_or(CloudSyncOutboundFailure::BindingMismatch)?;
         if value < UNIX_EPOCH + Duration::from_secs(978307200) {
             return Err(CloudSyncOutboundFailure::MalformedMessage);
         }
-        let wire = value.to_value().ok_or(CloudSyncOutboundFailure::MalformedMessage)?;
+        let wire = value
+            .to_value()
+            .ok_or(CloudSyncOutboundFailure::MalformedMessage)?;
         if actual.utm != SystemTime::from_value(&wire) {
             return Err(CloudSyncOutboundFailure::BindingMismatch);
         }
@@ -378,7 +431,9 @@ pub(crate) fn verify_attachment_parent_readback(
 }
 
 fn source_bare_handle(value: &str) -> Result<&str, CloudSyncOutboundFailure> {
-    let bare = value.strip_prefix("mailto:").or_else(|| value.strip_prefix("tel:"))
+    let bare = value
+        .strip_prefix("mailto:")
+        .or_else(|| value.strip_prefix("tel:"))
         .unwrap_or(value);
     validate_identifier(bare)?;
     if bare.chars().any(char::is_control) || bare.contains(';') || bare.contains(':') {
@@ -412,19 +467,28 @@ fn validate_attachment_parent_headers(
     let mut peers = Vec::new();
     for participant in &source.participants {
         let peer = source_bare_handle(participant)?;
-        if peer != sender { peers.push(peer); }
+        if peer != sender {
+            peers.push(peer);
+        }
     }
     // The pre-send source does not bind a restored group's opaque CloudKit
     // chat ID to its local GUID. Do not invent that mapping or accept an
     // arbitrary header. Group parents need separately verified chat evidence.
-    if peers.len() != 1 || source.sender_guid.as_deref()
-        .is_some_and(|v| v.starts_with("iMessage;+;"))
+    if peers.len() != 1
+        || source
+            .sender_guid
+            .as_deref()
+            .is_some_and(|v| v.starts_with("iMessage;+;"))
     {
         return Err(CloudSyncOutboundFailure::UnsupportedMessage);
     }
     let chat_id = format!("iMessage;-;{}", peers[0]);
-    if message.chat_id != chat_id || message.msg_proto_4.as_ref()
-        .and_then(|v| v.0.group_id.as_deref()).is_some_and(|v| v != chat_id)
+    if message.chat_id != chat_id
+        || message
+            .msg_proto_4
+            .as_ref()
+            .and_then(|v| v.0.group_id.as_deref())
+            .is_some_and(|v| v != chat_id)
     {
         return Err(CloudSyncOutboundFailure::BindingMismatch);
     }
@@ -450,36 +514,62 @@ fn validate_attachment_parent_group_route(
         || group.style() != CloudCanonicalChatStyle::Group
         || group.guid() != format!("iMessage;+;{}", group.chat_identifier())
         || source.sender_guid.as_deref() != Some(group.guid())
-        || message.msg_proto_4.as_ref().and_then(|v| v.0.group_id.as_deref()) != Some(group.guid())
+        || message
+            .msg_proto_4
+            .as_ref()
+            .and_then(|v| v.0.group_id.as_deref())
+            != Some(group.guid())
         || message.chat_id != group.group_id()
-    { return Err(CloudSyncOutboundFailure::BindingMismatch); }
+    {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
     let sender = group_bare_handle(&source.sender)?;
     if message.destination_caller_id != sender {
         return Err(CloudSyncOutboundFailure::BindingMismatch);
     }
-    let mut members = group.participant_handles().iter()
-        .map(|v| group_member_identity(v)).collect::<Result<Vec<_>, _>>()?;
+    let mut members = group
+        .participant_handles()
+        .iter()
+        .map(|v| group_member_identity(v))
+        .collect::<Result<Vec<_>, _>>()?;
     members.sort_unstable();
-    if members.is_empty() || members.contains(&sender)
-        || members.windows(2).any(|v| v[0] == v[1])
-    { return Err(CloudSyncOutboundFailure::BindingMismatch); }
+    if members.is_empty() || members.contains(&sender) || members.windows(2).any(|v| v[0] == v[1]) {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
     members.push(sender);
     members.sort_unstable();
-    let mut original = source.participants.iter()
-        .map(|v| group_member_identity(v)).collect::<Result<Vec<_>, _>>()?;
+    let mut original = source
+        .participants
+        .iter()
+        .map(|v| group_member_identity(v))
+        .collect::<Result<Vec<_>, _>>()?;
     original.sort_unstable();
-    if original != members { return Err(CloudSyncOutboundFailure::BindingMismatch); }
+    if original != members {
+        return Err(CloudSyncOutboundFailure::BindingMismatch);
+    }
     Ok(())
 }
 
 fn group_bare_handle(value: &str) -> Result<&str, CloudSyncOutboundFailure> {
-    let bare = if value.get(..7).is_some_and(|v| v.eq_ignore_ascii_case("mailto:")) {
+    let bare = if value
+        .get(..7)
+        .is_some_and(|v| v.eq_ignore_ascii_case("mailto:"))
+    {
         &value[7..]
-    } else if value.get(..4).is_some_and(|v| v.eq_ignore_ascii_case("tel:")) {
+    } else if value
+        .get(..4)
+        .is_some_and(|v| v.eq_ignore_ascii_case("tel:"))
+    {
         &value[4..]
-    } else { value };
+    } else {
+        value
+    };
     validate_identifier(bare)?;
-    if bare.trim() != bare || bare.chars().any(char::is_control) || bare.contains(';') || bare.contains(':') {
+    if bare.trim() != bare
+        || bare.chars().any(char::is_control)
+        || bare.contains(';')
+        || bare.contains(':')
+    {
         return Err(CloudSyncOutboundFailure::MalformedMessage);
     }
     Ok(bare)
@@ -489,9 +579,12 @@ fn group_member_identity(value: &str) -> Result<&str, CloudSyncOutboundFailure> 
     // Same opaque business-member form admitted by GroupSendRoute.matchesWire.
     // Do not normalize UUID case or use it as a caller/sender handle.
     if let Some(uuid) = value.strip_prefix("urn:biz:") {
-        if uuid.len() == 36 && [8, 13, 18, 23].iter().all(|i| uuid.as_bytes()[*i] == b'-')
+        if uuid.len() == 36
+            && [8, 13, 18, 23].iter().all(|i| uuid.as_bytes()[*i] == b'-')
             && uuid::Uuid::parse_str(uuid).is_ok()
-        { return Ok(value); }
+        {
+            return Ok(value);
+        }
     }
     group_bare_handle(value)
 }
@@ -1136,18 +1229,32 @@ pub(crate) mod attachment_parent_test_support {
 
     pub(crate) fn group() -> CloudCanonicalChatPayload {
         use crate::cloud_sync_canonical_dto::CloudCanonicalField;
-        CloudCanonicalChatPayload::new("iMessage;+;restored-chat".into(), "restored-chat".into(),
-            "opaque-CloudKit-chat-id".into(), "original-group-id".into(),
-            CloudCanonicalService::IMessage, CloudCanonicalChatStyle::Group,
-            vec!["mailto:peer@example.invalid".into(), "tel:+15555550100".into()],
-            CloudCanonicalField::Absent, CloudCanonicalField::Absent,
-            CloudCanonicalField::Value(9), CloudCanonicalField::Absent, CloudCanonicalField::Absent).unwrap()
+        CloudCanonicalChatPayload::new(
+            "iMessage;+;restored-chat".into(),
+            "restored-chat".into(),
+            "opaque-CloudKit-chat-id".into(),
+            "original-group-id".into(),
+            CloudCanonicalService::IMessage,
+            CloudCanonicalChatStyle::Group,
+            vec![
+                "mailto:peer@example.invalid".into(),
+                "tel:+15555550100".into(),
+            ],
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Value(9),
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+        )
+        .unwrap()
     }
 
     pub(crate) fn group_source() -> DecodedIdsAttachmentSource {
         let mut value = source();
         value.sender_guid = Some(group().guid().to_owned());
-        value.participants.push("mailto:sender@example.invalid".into());
+        value
+            .participants
+            .push("mailto:sender@example.invalid".into());
         value.participants.push("tel:+15555550100".into());
         value
     }
@@ -1155,29 +1262,51 @@ pub(crate) mod attachment_parent_test_support {
     pub(crate) fn group_headers() -> CloudMessage {
         let mut value = headers();
         value.chat_id = group().group_id().to_owned();
-        value.msg_proto_4 = Some(GZipWrapper(MessageProto4 { group_id: Some(group().guid().to_owned()),
-            ..Default::default() }));
+        value.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+            group_id: Some(group().guid().to_owned()),
+            ..Default::default()
+        }));
         value
     }
 
     pub(crate) fn source() -> DecodedIdsAttachmentSource {
-        let attachment = |guid: &str, part: u64, idx: u64| DecodedPart::Attachment(DecodedAttachment {
-            guid: guid.to_owned(), part, idx: Some(idx), uti_type: "public.jpeg".to_owned(),
-            mime: "image/jpeg".to_owned(), name: "synthetic.jpg".to_owned(), iris: false,
-            key: vec![7; 32], signature: vec![9; 21], object: "synthetic-object".to_owned(),
-            url: "https://example.invalid/asset".to_owned(), size: 123,
-        });
+        let attachment = |guid: &str, part: u64, idx: u64| {
+            DecodedPart::Attachment(DecodedAttachment {
+                guid: guid.to_owned(),
+                part,
+                idx: Some(idx),
+                uti_type: "public.jpeg".to_owned(),
+                mime: "image/jpeg".to_owned(),
+                name: "synthetic.jpg".to_owned(),
+                iris: false,
+                key: vec![7; 32],
+                signature: vec![9; 21],
+                object: "synthetic-object".to_owned(),
+                url: "https://example.invalid/asset".to_owned(),
+                size: 123,
+            })
+        };
         DecodedIdsAttachmentSource {
             message_guid: "parent-fixture-guid".to_owned(),
-            sender: "mailto:sender@example.invalid".to_owned(), sent_timestamp: 0,
+            sender: "mailto:sender@example.invalid".to_owned(),
+            sent_timestamp: 0,
             send_delivered: false,
             participants: vec!["mailto:peer@example.invalid".to_owned()],
-            cv_name: None, sender_guid: None, after_guid: None, embedded_profile: None,
+            cv_name: None,
+            sender_guid: None,
+            after_guid: None,
+            embedded_profile: None,
             attachment_guids: vec!["original-A".to_owned(), "original-B".to_owned()],
             parts: vec![
-                DecodedPart::Text { text: "A😀".to_owned(), idx: None },
+                DecodedPart::Text {
+                    text: "A😀".to_owned(),
+                    idx: None,
+                },
                 attachment("original-A", 0, 1),
-                DecodedPart::Text { text: "B".to_owned(), idx: Some(1) },
+                DecodedPart::Text {
+                    text: "B".to_owned(),
+                    idx: Some(1),
+                },
                 attachment("original-B", 1, 7),
             ],
         }
@@ -1186,14 +1315,25 @@ pub(crate) mod attachment_parent_test_support {
     pub(crate) fn headers() -> CloudMessage {
         CloudMessage {
             utm: Some(UNIX_EPOCH + std::time::Duration::new(1_720_000_000, 123)),
-            r#type: 1, error: 0, chat_id: "iMessage;-;peer@example.invalid".to_owned(),
-            sender: String::new(), time: 741_692_800_000_000_000,
-            msg_proto_2: None, destination_caller_id: "sender@example.invalid".to_owned(),
-            msg_proto: GZipWrapper(MessageProto { unk1: 1, ..Default::default() }),
-            flags: MessageFlags::IS_FINISHED | MessageFlags::IS_FROM_ME | MessageFlags::IS_SENT
+            r#type: 1,
+            error: 0,
+            chat_id: "iMessage;-;peer@example.invalid".to_owned(),
+            sender: String::new(),
+            time: 741_692_800_000_000_000,
+            msg_proto_2: None,
+            destination_caller_id: "sender@example.invalid".to_owned(),
+            msg_proto: GZipWrapper(MessageProto {
+                unk1: 1,
+                ..Default::default()
+            }),
+            flags: MessageFlags::IS_FINISHED
+                | MessageFlags::IS_FROM_ME
+                | MessageFlags::IS_SENT
                 | MessageFlags::WAS_DATA_DETECTED,
-            guid: "parent-fixture-guid".to_owned(), msg_proto_3: None,
-            service: "iMessage".to_owned(), msg_proto_4: None,
+            guid: "parent-fixture-guid".to_owned(),
+            msg_proto_3: None,
+            service: "iMessage".to_owned(),
+            msg_proto_4: None,
         }
     }
 }
@@ -1207,36 +1347,136 @@ mod tests {
         use super::attachment_parent_test_support::{group, group_headers, group_source, source};
         let route = group();
         let original = group_source();
-        let name = deterministic_message_record_name(&original.message_guid, "container-user").unwrap();
-        let bytes = encode_outbound_attachment_parent_with_group(group_headers(), &name, &original, Some(&route)).unwrap();
-        let opened = decode_outbound_attachment_parent_with_group(&bytes, &original, Some(&route)).unwrap();
+        let name =
+            deterministic_message_record_name(&original.message_guid, "container-user").unwrap();
+        let bytes = encode_outbound_attachment_parent_with_group(
+            group_headers(),
+            &name,
+            &original,
+            Some(&route),
+        )
+        .unwrap();
+        let opened =
+            decode_outbound_attachment_parent_with_group(&bytes, &original, Some(&route)).unwrap();
         assert_eq!(opened.message().chat_id, "opaque-CloudKit-chat-id");
-        assert_eq!(opened.message().msg_proto_4.as_ref().unwrap().0.group_id.as_deref(), Some("iMessage;+;restored-chat"));
+        assert_eq!(
+            opened
+                .message()
+                .msg_proto_4
+                .as_ref()
+                .unwrap()
+                .0
+                .group_id
+                .as_deref(),
+            Some("iMessage;+;restored-chat")
+        );
         assert_eq!(opened.message().msg_proto.0.text.as_deref(), Some("A😀 B "));
         assert_eq!(opened.encoded, bytes);
-        assert_eq!(verify_attachment_parent_readback(opened.message().clone(), &opened, &sha256_hex(&bytes), &original).unwrap(), sha256_hex(&bytes));
+        assert_eq!(
+            verify_attachment_parent_readback(
+                opened.message().clone(),
+                &opened,
+                &sha256_hex(&bytes),
+                &original
+            )
+            .unwrap(),
+            sha256_hex(&bytes)
+        );
         // NSDictionary key order is intentionally not a byte-level identity.
-        let again = encode_outbound_attachment_parent_with_group(group_headers(), &name, &original, Some(&route)).unwrap();
-        assert_eq!(decode_outbound_attachment_parent_with_group(&again, &original, Some(&route)).unwrap().server_record_name(), name);
+        let again = encode_outbound_attachment_parent_with_group(
+            group_headers(),
+            &name,
+            &original,
+            Some(&route),
+        )
+        .unwrap();
+        assert_eq!(
+            decode_outbound_attachment_parent_with_group(&again, &original, Some(&route))
+                .unwrap()
+                .server_record_name(),
+            name
+        );
         let projection = project_parent_attributed_body(&source()).unwrap();
-        projection.validate_encoded_body(opened.message().msg_proto.0.attributed_body.as_deref().unwrap()).unwrap();
-        let links = |value: crate::cloud_sync_attachment_parent::ParentAttributedProjection|
-            value.links.into_iter().map(|v| (v.original_guid, v.apple_guid, v.local_guid,
-                v.canonical_guid, v.field_idx, v.start_utf16, v.length_utf16)).collect::<Vec<_>>();
-        assert_eq!(links(project_parent_attributed_body(&original).unwrap()), links(projection));
-        assert_eq!(name, deterministic_message_record_name(&source().message_guid, "container-user").unwrap());
+        projection
+            .validate_encoded_body(
+                opened
+                    .message()
+                    .msg_proto
+                    .0
+                    .attributed_body
+                    .as_deref()
+                    .unwrap(),
+            )
+            .unwrap();
+        let links = |value: crate::cloud_sync_attachment_parent::ParentAttributedProjection| {
+            value
+                .links
+                .into_iter()
+                .map(|v| {
+                    (
+                        v.original_guid,
+                        v.apple_guid,
+                        v.local_guid,
+                        v.canonical_guid,
+                        v.field_idx,
+                        v.start_utf16,
+                        v.length_utf16,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            links(project_parent_attributed_body(&original).unwrap()),
+            links(projection)
+        );
+        assert_eq!(
+            name,
+            deterministic_message_record_name(&source().message_guid, "container-user").unwrap()
+        );
         let directory = tempfile::tempdir().unwrap();
-        let stage = stage_outbound_attachment_parent_with_group(directory.path().into(), "A".repeat(43),
-            "container-user".into(), group_headers(), &original, Some(&route)).unwrap();
-        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(directory.path().into(),
-            &stage.lease_reference, std::slice::from_ref(&stage.protected_payload_reference)).unwrap();
-        let protected = open_staged_outbound_attachment_parent_with_group(directory.path().into(), "A".repeat(43),
-            &stage.protected_payload_reference, &stage.payload_sha256, &original, Some(&route)).unwrap();
+        let stage = stage_outbound_attachment_parent_with_group(
+            directory.path().into(),
+            "A".repeat(43),
+            "container-user".into(),
+            group_headers(),
+            &original,
+            Some(&route),
+        )
+        .unwrap();
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            directory.path().into(),
+            &stage.lease_reference,
+            std::slice::from_ref(&stage.protected_payload_reference),
+        )
+        .unwrap();
+        let protected = open_staged_outbound_attachment_parent_with_group(
+            directory.path().into(),
+            "A".repeat(43),
+            &stage.protected_payload_reference,
+            &stage.payload_sha256,
+            &original,
+            Some(&route),
+        )
+        .unwrap();
         assert_eq!(protected.server_record_name(), name);
-        assert_eq!(verify_attachment_parent_readback(protected.message().clone(), &protected,
-            &stage.payload_sha256, &original).unwrap(), stage.payload_sha256);
-        assert!(open_staged_outbound_attachment_parent(directory.path().into(), "A".repeat(43),
-            &stage.protected_payload_reference, &stage.payload_sha256, &original).is_err());
+        assert_eq!(
+            verify_attachment_parent_readback(
+                protected.message().clone(),
+                &protected,
+                &stage.payload_sha256,
+                &original
+            )
+            .unwrap(),
+            stage.payload_sha256
+        );
+        assert!(open_staged_outbound_attachment_parent(
+            directory.path().into(),
+            "A".repeat(43),
+            &stage.protected_payload_reference,
+            &stage.payload_sha256,
+            &original
+        )
+        .is_err());
         // Neither source-only nor ordinary plaintext decoding can reopen this route.
         assert!(decode_outbound_attachment_parent(&bytes, &original).is_err());
         assert!(decode_outbound_envelope(&bytes).is_err());
@@ -1244,7 +1484,9 @@ mod tests {
 
     #[test]
     fn group_attachment_parent_rejects_guid_opaque_id_and_participant_substitution() {
-        use super::attachment_parent_test_support::{group, group_headers, group_source, headers, source};
+        use super::attachment_parent_test_support::{
+            group, group_headers, group_source, headers, source,
+        };
         let route = group();
         let original = group_source();
         for case in 0..9 {
@@ -1254,26 +1496,68 @@ mod tests {
                 0 => msg.chat_id = route.guid().into(), // GUID is not the opaque ID.
                 1 => msg.msg_proto_4.as_mut().unwrap().0.group_id = Some(route.group_id().into()),
                 2 => changed.sender_guid = Some(route.group_id().into()),
-                3 => { changed.participants.pop(); },
+                3 => {
+                    changed.participants.pop();
+                }
                 4 => changed.participants.push(changed.participants[0].clone()),
                 5 => changed.participants[0] = "other@example.invalid".into(),
                 6 => changed.message_guid = "other-message".into(),
                 7 => msg.destination_caller_id = "other-sender@example.invalid".into(),
                 _ => changed.sender_guid = None,
             }
-            assert!(encode_outbound_attachment_parent_with_group(msg, "record", &changed, Some(&route)).is_err(), "case {case}");
+            assert!(
+                encode_outbound_attachment_parent_with_group(msg, "record", &changed, Some(&route))
+                    .is_err(),
+                "case {case}"
+            );
         }
-        assert!(encode_outbound_attachment_parent_with_group(headers(), "record", &source(), Some(&route)).is_err());
-        let bytes = encode_outbound_attachment_parent_with_group(group_headers(), "record", &original, Some(&route)).unwrap();
-        let opened = decode_outbound_attachment_parent_with_group(&bytes, &original, Some(&route)).unwrap();
+        assert!(encode_outbound_attachment_parent_with_group(
+            headers(),
+            "record",
+            &source(),
+            Some(&route)
+        )
+        .is_err());
+        let bytes = encode_outbound_attachment_parent_with_group(
+            group_headers(),
+            "record",
+            &original,
+            Some(&route),
+        )
+        .unwrap();
+        let opened =
+            decode_outbound_attachment_parent_with_group(&bytes, &original, Some(&route)).unwrap();
         let mut tampered = opened.message().clone();
         tampered.msg_proto.0.attributed_body = Some(vec![1, 2, 3]);
-        assert!(decode_outbound_attachment_parent_with_group(&encode_message_fields(tampered.clone(), "record").unwrap(), &original, Some(&route)).is_err());
-        assert!(verify_attachment_parent_readback(tampered, &opened, &sha256_hex(&bytes), &original).is_err());
-        assert!(encode_outbound_attachment_parent_with_group(opened.message().clone(), "record", &original, Some(&route)).is_err());
+        assert!(decode_outbound_attachment_parent_with_group(
+            &encode_message_fields(tampered.clone(), "record").unwrap(),
+            &original,
+            Some(&route)
+        )
+        .is_err());
+        assert!(verify_attachment_parent_readback(
+            tampered,
+            &opened,
+            &sha256_hex(&bytes),
+            &original
+        )
+        .is_err());
+        assert!(encode_outbound_attachment_parent_with_group(
+            opened.message().clone(),
+            "record",
+            &original,
+            Some(&route)
+        )
+        .is_err());
         let mut changed = group_source();
         changed.sender_guid = Some("iMessage;+;different-group".into());
-        assert!(verify_attachment_parent_readback(opened.message().clone(), &opened, &sha256_hex(&bytes), &changed).is_err());
+        assert!(verify_attachment_parent_readback(
+            opened.message().clone(),
+            &opened,
+            &sha256_hex(&bytes),
+            &changed
+        )
+        .is_err());
     }
 
     #[test]
@@ -1289,7 +1573,8 @@ mod tests {
     fn attachment_parent_roundtrip_is_source_bound_and_preserves_original_bytes() {
         use super::attachment_parent_test_support::{headers, source};
         let source = source();
-        let name = deterministic_message_record_name(&source.message_guid, "container-user").unwrap();
+        let name =
+            deterministic_message_record_name(&source.message_guid, "container-user").unwrap();
         let bytes = encode_outbound_attachment_parent(headers(), &name, &source).unwrap();
         let opened = decode_outbound_attachment_parent(&bytes, &source).unwrap();
         assert_eq!(opened.message().msg_proto.0.text.as_deref(), Some("A😀 B "));
@@ -1299,16 +1584,29 @@ mod tests {
         assert!(outbound_entity_kind(opened.message()).is_err());
         assert!(encode_outbound_message(opened.message().clone(), &name).is_err());
         let digest = sha256_hex(&bytes);
-        assert_eq!(verify_attachment_parent_readback(opened.message().clone(), &opened, &digest, &source).unwrap(), digest);
+        assert_eq!(
+            verify_attachment_parent_readback(opened.message().clone(), &opened, &digest, &source)
+                .unwrap(),
+            digest
+        );
         let roundtrip = cloudkit_roundtrip(opened.message());
-        assert_eq!(verify_attachment_parent_readback(roundtrip, &opened, &digest, &source).unwrap(), digest);
+        assert_eq!(
+            verify_attachment_parent_readback(roundtrip, &opened, &digest, &source).unwrap(),
+            digest
+        );
     }
 
     #[test]
     fn attachment_parent_rejects_caller_body_and_source_guid_mismatch() {
         use super::attachment_parent_test_support::{headers, source};
         let source = source();
-        for body in [Vec::new(), vec![0x80, 0x01], project_parent_attributed_body(&source).unwrap().encoded_body] {
+        for body in [
+            Vec::new(),
+            vec![0x80, 0x01],
+            project_parent_attributed_body(&source)
+                .unwrap()
+                .encoded_body,
+        ] {
             let mut supplied = headers();
             supplied.msg_proto.0.attributed_body = Some(body);
             assert!(encode_outbound_attachment_parent(supplied, "record", &source).is_err());
@@ -1318,7 +1616,10 @@ mod tests {
         assert!(encode_outbound_attachment_parent(text, "record", &source).is_err());
         let mut wrong = headers();
         wrong.guid = "other-parent".to_owned();
-        assert_eq!(encode_outbound_attachment_parent(wrong, "record", &source), Err(CloudSyncOutboundFailure::BindingMismatch));
+        assert_eq!(
+            encode_outbound_attachment_parent(wrong, "record", &source),
+            Err(CloudSyncOutboundFailure::BindingMismatch)
+        );
         let bytes = encode_outbound_attachment_parent(headers(), "record", &source).unwrap();
         let mut changed = source;
         changed.message_guid = "other-parent".to_owned();
@@ -1340,9 +1641,12 @@ mod tests {
             Box::new(|m| m.msg_proto.0.associated_message_type = Some(2000)),
             Box::new(|m| m.r#type = 2),
             Box::new(|m| m.service = "SMS".to_owned()),
-            Box::new(|m| m.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
-                group_id: Some("other-route".to_owned()), ..Default::default()
-            }))),
+            Box::new(|m| {
+                m.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+                    group_id: Some("other-route".to_owned()),
+                    ..Default::default()
+                }))
+            }),
         ];
         for mutate in mutations {
             let mut candidate = headers();
@@ -1350,7 +1654,9 @@ mod tests {
             assert!(encode_outbound_attachment_parent(candidate, "record", &source).is_err());
         }
         let mut group = source;
-        group.participants.push("mailto:third@example.invalid".to_owned());
+        group
+            .participants
+            .push("mailto:third@example.invalid".to_owned());
         assert!(encode_outbound_attachment_parent(headers(), "record", &group).is_err());
     }
 
@@ -1369,16 +1675,35 @@ mod tests {
         let name = deterministic_message_record_name(&source.message_guid, "user").unwrap();
         let first = encode_outbound_attachment_parent(headers(), &name, &source).unwrap();
         let second = encode_outbound_attachment_parent(headers(), &name, &source).unwrap();
-        assert_eq!(decode_outbound_attachment_parent(&first, &source).unwrap().server_record_name(),
-            decode_outbound_attachment_parent(&second, &source).unwrap().server_record_name());
-        let hasher = crate::cloud_sync_semantic_decoder::CloudSemanticIdentifierHasher::new(b"test-only-key").unwrap();
-        let parent_key = hasher.canonical_entity_key_hash(CloudCanonicalEntityKind::Message, &source.message_guid).unwrap();
+        assert_eq!(
+            decode_outbound_attachment_parent(&first, &source)
+                .unwrap()
+                .server_record_name(),
+            decode_outbound_attachment_parent(&second, &source)
+                .unwrap()
+                .server_record_name()
+        );
+        let hasher = crate::cloud_sync_semantic_decoder::CloudSemanticIdentifierHasher::new(
+            b"test-only-key",
+        )
+        .unwrap();
+        let parent_key = hasher
+            .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, &source.message_guid)
+            .unwrap();
         let first_links = project_parent_attributed_body(&source).unwrap().links;
         let second_links = project_parent_attributed_body(&source).unwrap().links;
         for (a, b) in first_links.iter().zip(&second_links) {
             let child = hasher.canonical_attachment_key_hash(&a.apple_guid).unwrap();
-            assert_eq!(child, hasher.canonical_attachment_key_hash(&b.apple_guid).unwrap());
-            assert_eq!(child, hasher.canonical_owned_attachment_key_hash(&source.message_guid, a.field_idx).unwrap());
+            assert_eq!(
+                child,
+                hasher.canonical_attachment_key_hash(&b.apple_guid).unwrap()
+            );
+            assert_eq!(
+                child,
+                hasher
+                    .canonical_owned_attachment_key_hash(&source.message_guid, a.field_idx)
+                    .unwrap()
+            );
             assert_ne!(child, parent_key);
             assert_eq!(a.original_guid, b.original_guid);
             assert_eq!(a.local_guid, b.canonical_guid);
@@ -1393,15 +1718,43 @@ mod tests {
         let opened = decode_outbound_attachment_parent(&bytes, &source).unwrap();
         let mut wrong_body = opened.message().clone();
         wrong_body.msg_proto.0.attributed_body = Some(vec![4, 11, 255]);
-        assert!(decode_outbound_attachment_parent(&encode_message_fields(wrong_body, "record").unwrap(), &source).is_err());
+        assert!(decode_outbound_attachment_parent(
+            &encode_message_fields(wrong_body, "record").unwrap(),
+            &source
+        )
+        .is_err());
         let mut wrong_text = opened.message().clone();
         wrong_text.msg_proto.0.text = Some("tampered".to_owned());
-        assert!(decode_outbound_attachment_parent(&encode_message_fields(wrong_text.clone(), "record").unwrap(), &source).is_err());
-        assert!(verify_attachment_parent_readback(wrong_text, &opened, &sha256_hex(&bytes), &source).is_err());
-        assert!(verify_attachment_parent_readback(opened.message().clone(), &opened, &"0".repeat(64), &source).is_err());
+        assert!(decode_outbound_attachment_parent(
+            &encode_message_fields(wrong_text.clone(), "record").unwrap(),
+            &source
+        )
+        .is_err());
+        assert!(verify_attachment_parent_readback(
+            wrong_text,
+            &opened,
+            &sha256_hex(&bytes),
+            &source
+        )
+        .is_err());
+        assert!(verify_attachment_parent_readback(
+            opened.message().clone(),
+            &opened,
+            &"0".repeat(64),
+            &source
+        )
+        .is_err());
         let mut wrong_utm = opened.message().clone();
-        wrong_utm.utm = wrong_utm.utm.map(|t| t + std::time::Duration::from_millis(1));
-        assert!(verify_attachment_parent_readback(wrong_utm, &opened, &sha256_hex(&bytes), &source).is_err());
+        wrong_utm.utm = wrong_utm
+            .utm
+            .map(|t| t + std::time::Duration::from_millis(1));
+        assert!(verify_attachment_parent_readback(
+            wrong_utm,
+            &opened,
+            &sha256_hex(&bytes),
+            &source
+        )
+        .is_err());
         let mut extra = bytes;
         extra.extend_from_slice(&[0x98, 0x06, 0x01]); // unknown field 99
         assert!(decode_outbound_attachment_parent(&extra, &source).is_err());
@@ -1993,26 +2346,40 @@ mod tests {
                 let bytes = encode_outbound_message(expected.clone(), "SERVER-RECORD").unwrap();
                 let (actual, record) = decode_outbound_envelope(&bytes).unwrap();
                 assert_eq!(record, "SERVER-RECORD");
-                assert_eq!(outbound_entity_kind(&actual).unwrap(), CloudCanonicalEntityKind::Reaction);
+                assert_eq!(
+                    outbound_entity_kind(&actual).unwrap(),
+                    CloudCanonicalEntityKind::Reaction
+                );
                 assert!(message_readback_differences(&expected, &actual).is_empty());
                 let descriptor = validate_candidate_reaction_message(&actual).unwrap();
                 assert_eq!(descriptor.is_remove(), atype >= 3000);
                 assert_eq!(descriptor.parent_guid(), "parent-guid");
-                assert_eq!(descriptor.parent_part(), if parent.starts_with("p:") {
-                    Some(0)
-                } else if parent.starts_with("bp:") {
-                    Some(2)
-                } else { None });
+                assert_eq!(
+                    descriptor.parent_part(),
+                    if parent.starts_with("p:") {
+                        Some(0)
+                    } else if parent.starts_with("bp:") {
+                        Some(2)
+                    } else {
+                        None
+                    }
+                );
             }
         }
-        assert_eq!(outbound_entity_kind(&fixture()).unwrap(), CloudCanonicalEntityKind::Message);
+        assert_eq!(
+            outbound_entity_kind(&fixture()).unwrap(),
+            CloudCanonicalEntityKind::Message
+        );
     }
 
     #[test]
     fn malformed_reaction_never_gets_a_valid_outbound_kind() {
         for atype in [1999, 2006, 2007, 2999, 3006, 3007] {
             let message = candidate_fixture(atype, "parent-guid");
-            assert_eq!(outbound_entity_kind(&message).unwrap_err(), CloudSyncOutboundFailure::UnsupportedMessage);
+            assert_eq!(
+                outbound_entity_kind(&message).unwrap_err(),
+                CloudSyncOutboundFailure::UnsupportedMessage
+            );
             assert!(encode_outbound_message(message, "SERVER-RECORD").is_err());
         }
     }

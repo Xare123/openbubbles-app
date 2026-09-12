@@ -20,8 +20,8 @@ use crate::{
         convert_attachment, convert_chat_with_diagnostic, convert_message, convert_tombstone,
         CloudCanonicalConversionContext, CloudCanonicalConversionOutcome,
         CloudCanonicalOutOfScopeService, CloudCanonicalQuarantineReason,
-        CloudCanonicalValidationDiagnosticClass, CloudChatDiagnosticCode, CloudRawPresenceFailure,
-        CloudRawFieldPresence, CloudRawRecordPresence,
+        CloudCanonicalValidationDiagnosticClass, CloudChatDiagnosticCode, CloudRawFieldPresence,
+        CloudRawPresenceFailure, CloudRawRecordPresence,
     },
     cloud_sync_canonical_dto::{
         CloudCanonicalAliasKind, CloudCanonicalEntityKind, CloudCanonicalHash,
@@ -29,15 +29,15 @@ use crate::{
         CloudCanonicalService, CloudCanonicalValidationFailure,
         CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS,
     },
+    cloud_sync_chat_identity::{
+        observe_chat_identity, validate_chat_identity_candidate, CloudChatIdentityObservation,
+    },
     cloud_sync_native_fetch::{
         cloud_sync_unprotect_raw_envelope, CloudNativeFailureCategory, CloudNativeProtectionScope,
         CloudNativeRawEnvelope, CloudNativeRawEnvelopeKind, CloudNativeSafeCode, CloudNativeStream,
         MAX_RAW_RECORD_BYTES,
     },
     cloud_sync_protector,
-    cloud_sync_chat_identity::{
-        observe_chat_identity, validate_chat_identity_candidate, CloudChatIdentityObservation,
-    },
     cloud_sync_semantic_identity::CloudSemanticIdentifierHasher,
 };
 use flate2::bufread::GzDecoder;
@@ -944,11 +944,9 @@ fn decode_group_action(value: &[u8]) -> Result<(), DecodeError> {
 
 fn primary_message_proto_spec(record: &Record) -> GzipFieldSpec {
     match message_outer_type(record) {
-        MessageOuterType::Value(3) => GzipFieldSpec::required(
-            "msgProto",
-            "group_title_change",
-            decode_group_title_change,
-        ),
+        MessageOuterType::Value(3) => {
+            GzipFieldSpec::required("msgProto", "group_title_change", decode_group_title_change)
+        }
         MessageOuterType::Value(4) => GzipFieldSpec::required(
             "msgProto",
             "location_share_status_change",
@@ -957,11 +955,9 @@ fn primary_message_proto_spec(record: &Record) -> GzipFieldSpec {
         MessageOuterType::Value(5) => {
             GzipFieldSpec::required("msgProto", "message_action", decode_message_action)
         }
-        MessageOuterType::Value(6) => GzipFieldSpec::required(
-            "msgProto",
-            "participant_change",
-            decode_participant_change,
-        ),
+        MessageOuterType::Value(6) => {
+            GzipFieldSpec::required("msgProto", "participant_change", decode_participant_change)
+        }
         MessageOuterType::Value(7) => {
             GzipFieldSpec::required("msgProto", "group_action", decode_group_action)
         }
@@ -2194,7 +2190,8 @@ pub(crate) async fn cloud_sync_observe_chat_identity_cached_only(
         CloudTransientPcsAccess::CachedOnly,
         Some(read_authentication_permit),
         Some(candidate),
-    ).await
+    )
+    .await
 }
 
 async fn cloud_sync_decode_transient_record_with_pcs_access(
@@ -2209,7 +2206,9 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
             || read_authentication_permit.is_none()
             || validate_chat_identity_request(&request, candidate).is_err()
         {
-            return CloudTransientDecodeOutcome::Failure(CloudTransientBridgeFailure::InvalidRequest);
+            return CloudTransientDecodeOutcome::Failure(
+                CloudTransientBridgeFailure::InvalidRequest,
+            );
         }
     }
     let Some(storage_directory) = request.storage_directory.to_str().map(str::to_owned) else {
@@ -2518,8 +2517,12 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
             };
             if let Some(candidate) = identity_candidate {
                 return match observe_chat_identity(candidate, &chat, &presence, &hasher) {
-                    Ok(observation) => CloudTransientDecodeOutcome::ChatIdentityObserved(observation),
-                    Err(()) => CloudTransientDecodeOutcome::Failure(CloudTransientBridgeFailure::InvalidRequest),
+                    Ok(observation) => {
+                        CloudTransientDecodeOutcome::ChatIdentityObserved(observation)
+                    }
+                    Err(()) => CloudTransientDecodeOutcome::Failure(
+                        CloudTransientBridgeFailure::InvalidRequest,
+                    ),
                 };
             }
             let (converted, diagnostic) = convert_chat_with_diagnostic(&context, &presence, &chat);
@@ -2581,10 +2584,7 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
             // them retained as typed unsupported events until their projection
             // semantics are implemented; the normal decoder is the wrong wire
             // schema and previously mislabeled all classes 4-7 as malformed.
-            if matches!(
-                message_outer_type(&record),
-                MessageOuterType::Value(3..=7)
-            ) {
+            if matches!(message_outer_type(&record), MessageOuterType::Value(3..=7)) {
                 let reason = if has_required_message_identity(&presence) {
                     CloudCanonicalQuarantineReason::UnsupportedMessageType
                 } else {
@@ -3672,22 +3672,41 @@ mod tests {
     fn identity_observer_requires_exact_saved_chat_revision_and_valid_candidate() {
         let directory = tempfile::tempdir().unwrap();
         let request = CloudTransientDecodeRequest::new(
-            directory.path().to_path_buf(), digest('a'),
+            directory.path().to_path_buf(),
+            digest('a'),
             format!("obcs2.store.{}", digest('b')),
-            "com.apple.messages.cloud".into(), "private".into(),
-            "chatManateeZone".into(), "messages".into(), 2,
-            CloudNativeStream::Chats, 7, CloudTransientExpectedChangeKind::Save,
-            digest('c'), digest('d'), Some(digest('e')), "e".repeat(64),
-            Some(1), None, format!("obcs2.ref.{}", digest('f')), None,
-        ).unwrap();
+            "com.apple.messages.cloud".into(),
+            "private".into(),
+            "chatManateeZone".into(),
+            "messages".into(),
+            2,
+            CloudNativeStream::Chats,
+            7,
+            CloudTransientExpectedChangeKind::Save,
+            digest('c'),
+            digest('d'),
+            Some(digest('e')),
+            "e".repeat(64),
+            Some(1),
+            None,
+            format!("obcs2.ref.{}", digest('f')),
+            None,
+        )
+        .unwrap();
         let candidate = CloudChat {
             guid: "iMessage;-;+15555550101".into(),
             chat_identifier: "+15555550101".into(),
             group_id: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".into(),
             original_group_id: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".into(),
-            service_name: "iMessage".into(), style: 45, state: 3, successful_query: 1,
-            participants: vec![CloudParticipant { uri: "+15555550101".into() }],
-            last_addressed_handle: "owner@example.invalid".into(), ..Default::default()
+            service_name: "iMessage".into(),
+            style: 45,
+            state: 3,
+            successful_query: 1,
+            participants: vec![CloudParticipant {
+                uri: "+15555550101".into(),
+            }],
+            last_addressed_handle: "owner@example.invalid".into(),
+            ..Default::default()
         };
         assert_eq!(validate_chat_identity_request(&request, &candidate), Ok(()));
         for corrupt in [0, 1, 2, 3, 4] {
@@ -3697,32 +3716,63 @@ mod tests {
                 1 => invalid.expected_change_kind = CloudTransientExpectedChangeKind::Delete,
                 2 => invalid.expected_change_kind = CloudTransientExpectedChangeKind::Quarantined,
                 3 => invalid.expected_etag_hash = None,
-                _ => invalid.tombstone_mapping = Some(CloudTransientTombstoneMapping::new(
-                    CloudCanonicalEntityKind::Chat, digest('g')).unwrap()),
+                _ => {
+                    invalid.tombstone_mapping = Some(
+                        CloudTransientTombstoneMapping::new(
+                            CloudCanonicalEntityKind::Chat,
+                            digest('g'),
+                        )
+                        .unwrap(),
+                    )
+                }
             }
-            assert_eq!(validate_chat_identity_request(&invalid, &candidate),
-                Err(CloudTransientBridgeFailure::InvalidRequest));
+            assert_eq!(
+                validate_chat_identity_request(&invalid, &candidate),
+                Err(CloudTransientBridgeFailure::InvalidRequest)
+            );
         }
-        let invalid = CloudChat { participants: vec![], ..candidate };
-        assert_eq!(validate_chat_identity_request(&request, &invalid),
-            Err(CloudTransientBridgeFailure::InvalidRequest));
+        let invalid = CloudChat {
+            participants: vec![],
+            ..candidate
+        };
+        assert_eq!(
+            validate_chat_identity_request(&request, &invalid),
+            Err(CloudTransientBridgeFailure::InvalidRequest)
+        );
     }
 
     #[test]
     fn identity_observer_uses_strict_cached_decode_before_service_projection() {
         let source = include_str!("cloud_sync_transient_bridge.rs");
-        let wrapper = source.split("pub(crate) async fn cloud_sync_observe_chat_identity_cached_only")
-            .nth(1).unwrap().split("async fn cloud_sync_decode_transient_record_with_pcs_access")
-            .next().unwrap();
+        let wrapper = source
+            .split("pub(crate) async fn cloud_sync_observe_chat_identity_cached_only")
+            .nth(1)
+            .unwrap()
+            .split("async fn cloud_sync_decode_transient_record_with_pcs_access")
+            .next()
+            .unwrap();
         assert!(wrapper.contains("validate_chat_identity_request(&request, candidate)"));
         assert!(wrapper.contains("CloudTransientPcsAccess::CachedOnly"));
         assert!(wrapper.contains("Some(read_authentication_permit)"));
-        let body = source.split("async fn cloud_sync_decode_transient_record_with_pcs_access")
-            .nth(1).unwrap().split("#[cfg(test)]").next().unwrap();
-        let bind = body.find("bind_envelope(&request, &envelope, &hasher)").unwrap();
-        let decode = body.find("decode_cloud_chat_record(&record, &strict_record_key)").unwrap();
-        let observe = body.find("observe_chat_identity(candidate, &chat, &presence, &hasher)").unwrap();
-        let project = body.find("convert_chat_with_diagnostic(&context, &presence, &chat)").unwrap();
+        let body = source
+            .split("async fn cloud_sync_decode_transient_record_with_pcs_access")
+            .nth(1)
+            .unwrap()
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        let bind = body
+            .find("bind_envelope(&request, &envelope, &hasher)")
+            .unwrap();
+        let decode = body
+            .find("decode_cloud_chat_record(&record, &strict_record_key)")
+            .unwrap();
+        let observe = body
+            .find("observe_chat_identity(candidate, &chat, &presence, &hasher)")
+            .unwrap();
+        let project = body
+            .find("convert_chat_with_diagnostic(&context, &presence, &chat)")
+            .unwrap();
         assert!(bind < decode && decode < observe && observe < project);
     }
 
@@ -3823,7 +3873,11 @@ mod tests {
 
         assert_eq!(message_outer_type_class(&Record::default()), "missing");
         let mut malformed = gzip_test_record("msgType", Type::StringType as i32, None);
-        malformed.record_field[0].value.as_mut().unwrap().signed_value = Some(3);
+        malformed.record_field[0]
+            .value
+            .as_mut()
+            .unwrap()
+            .signed_value = Some(3);
         assert_eq!(message_outer_type_class(&malformed), "malformed");
     }
 
@@ -3843,7 +3897,10 @@ mod tests {
         ] {
             let mut record = gzip_test_record("msgType", Type::Int64Type as i32, None);
             record.record_field[0].value.as_mut().unwrap().signed_value = Some(message_type);
-            assert_eq!(primary_message_proto_spec(&record).decoder_stage, expected_stage);
+            assert_eq!(
+                primary_message_proto_spec(&record).decoder_stage,
+                expected_stage
+            );
         }
 
         // Class 3 carries a string in field 2. Classes 4-7 carry an int64.
@@ -4186,8 +4243,7 @@ mod tests {
 
         let mut non_dictionary =
             gzip_test_record("prop", Type::EncryptedBytesType as i32, Some(vec![1, 2, 3]));
-        let mut non_dictionary_presence =
-            CloudRawRecordPresence::extract(&non_dictionary).unwrap();
+        let mut non_dictionary_presence = CloudRawRecordPresence::extract(&non_dictionary).unwrap();
         assert_eq!(
             normalize_empty_optional_chat_property(
                 &mut non_dictionary,

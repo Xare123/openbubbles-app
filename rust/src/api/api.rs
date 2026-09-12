@@ -265,7 +265,9 @@ pub fn do_first_time_init(path: String) {
 
     // This dedicated process emits only the Dart allowlisted probe report.
     // Authentication errors must not escape into unrestricted native logs.
-    if !windows_findmy_probe_enabled() { init_logger(&dir); }
+    if !windows_findmy_probe_enabled() {
+        init_logger(&dir);
+    }
 
     #[cfg(target_os = "windows")]
     if let Err(error) = initialize_windows_protected_keystore(&dir) {
@@ -397,10 +399,12 @@ impl From<CloudSyncNativeSendSourceBinding>
     fn from(source: CloudSyncNativeSendSourceBinding) -> Self {
         Self {
             kind: match source.kind {
-                Some(CloudSyncNativeSendSourceKind::Mutation) =>
-                    crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceKind::Mutation,
-                None | Some(CloudSyncNativeSendSourceKind::Attachment) =>
-                    crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceKind::Attachment,
+                Some(CloudSyncNativeSendSourceKind::Mutation) => {
+                    crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceKind::Mutation
+                }
+                None | Some(CloudSyncNativeSendSourceKind::Attachment) => {
+                    crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceKind::Attachment
+                }
             },
             source_sha256: source.source_sha256,
             protected_reference: source.protected_reference,
@@ -417,8 +421,9 @@ impl From<crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceBinding>
     fn from(source: crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceBinding) -> Self {
         Self {
             kind: match source.kind {
-                crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceKind::Mutation =>
-                    Some(CloudSyncNativeSendSourceKind::Mutation),
+                crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceKind::Mutation => {
+                    Some(CloudSyncNativeSendSourceKind::Mutation)
+                }
                 crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceKind::Attachment => None,
             },
             source_sha256: source.source_sha256,
@@ -465,8 +470,10 @@ fn persist_cloud_sync_native_send_receipt(
     if cloud_sync_local_send_guid_hash(stable_guid) != context.guid_hash {
         return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
     }
-    let mutation = context.source_binding.as_ref().is_some_and(|source|
-        source.kind == Some(CloudSyncNativeSendSourceKind::Mutation));
+    let mutation = context
+        .source_binding
+        .as_ref()
+        .is_some_and(|source| source.kind == Some(CloudSyncNativeSendSourceKind::Mutation));
     if mutation != prepared_sent_timestamp_ms.is_some()
         || prepared_sent_timestamp_ms.is_some_and(|time| time == 0 || time > i64::MAX as u64)
     {
@@ -567,13 +574,15 @@ pub async fn cloud_sync_restore_ids_attachment_source(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     context: CloudSyncNativeSendReceiptContext,
 ) -> anyhow::Result<MessageInst> {
-    let auth = cloud_sync_capture_auth_snapshot(
-        cloud_messages_client, context.storage_directory.clone(),
-    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let auth =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
     let message = cloud_sync_restore_attachment_source_bound(&context, &auth)?;
-    let after = cloud_sync_capture_auth_snapshot(
-        cloud_messages_client, context.storage_directory.clone(),
-    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let after =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
     cloud_sync_require_source_context_auth(&context, &after)?;
     Ok(message)
 }
@@ -594,14 +603,16 @@ fn cloud_sync_open_attachment_source_bound(
     auth: &CloudSyncNativeAuthMetadata,
 ) -> anyhow::Result<Vec<u8>> {
     cloud_sync_require_source_context_auth(context, auth)?;
-    let binding = context.source_binding.as_ref()
+    let binding = context
+        .source_binding
+        .as_ref()
         .ok_or_else(|| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
     if binding.kind == Some(CloudSyncNativeSendSourceKind::Mutation) {
         return Err(anyhow!("cloud_sync_native_attachment_source_invalid"));
     }
-    let identity = crate::cloud_sync_protector::protected_store_identity(
-        context.storage_directory.clone(),
-    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
+    let identity =
+        crate::cloud_sync_protector::protected_store_identity(context.storage_directory.clone())
+            .map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
     if identity != context.protected_store_identity {
         return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
     }
@@ -612,11 +623,15 @@ fn cloud_sync_open_attachment_source_bound(
         payload_length: binding.payload_length,
     };
     let envelope = crate::cloud_sync_ids_attachment_source::open_staged_source_envelope(
-        PathBuf::from(&context.storage_directory), context.account_fingerprint.clone(),
-        &binding.source_sha256, &stage,
-    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
-    let message = crate::cloud_sync_ids_attachment_source::restore_ids_attachment_message(&envelope)
-        .map_err(|_| anyhow!("cloud_sync_native_attachment_source_invalid"))?;
+        PathBuf::from(&context.storage_directory),
+        context.account_fingerprint.clone(),
+        &binding.source_sha256,
+        &stage,
+    )
+    .map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
+    let message =
+        crate::cloud_sync_ids_attachment_source::restore_ids_attachment_message(&envelope)
+            .map_err(|_| anyhow!("cloud_sync_native_attachment_source_invalid"))?;
     if cloud_sync_local_send_guid_hash(&message.id) != context.guid_hash {
         return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
     }
@@ -647,13 +662,15 @@ pub async fn cloud_sync_inspect_attachment_sources(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     context: CloudSyncNativeSendReceiptContext,
 ) -> anyhow::Result<Vec<CloudSyncAttachmentSourceEntry>> {
-    let auth = cloud_sync_capture_auth_snapshot(
-        cloud_messages_client, context.storage_directory.clone(),
-    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let auth =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
     let inventory = cloud_sync_inspect_attachment_sources_bound(&context, &auth)?;
-    let after = cloud_sync_capture_auth_snapshot(
-        cloud_messages_client, context.storage_directory.clone(),
-    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let after =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
     cloud_sync_require_source_context_auth(&context, &after)?;
     Ok(inventory)
 }
@@ -668,18 +685,23 @@ fn cloud_sync_inspect_attachment_sources_bound(
         .map_err(|_| anyhow!("cloud_sync_native_attachment_source_invalid"))?;
     let projection = crate::cloud_sync_attachment_parent::project_parent_attributed_body(&decoded)
         .map_err(|_| anyhow!("cloud_sync_native_attachment_parent_invalid"))?;
-    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(
-        context.storage_directory.clone(),
-    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
-    projection.links.into_iter().map(|link| {
-        let logical = hasher.canonical_attachment_key_hash(&link.apple_guid)
-            .map_err(|_| anyhow!("cloud_sync_native_attachment_parent_invalid"))?;
-        Ok(CloudSyncAttachmentSourceEntry {
-            original_attachment_guid: link.original_guid,
-            reflected_attachment_guid: link.local_guid,
-            logical_entity_key_hash: logical.value().to_owned(),
+    let hasher =
+        crate::cloud_sync_protector::semantic_identifier_hasher(context.storage_directory.clone())
+            .map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
+    projection
+        .links
+        .into_iter()
+        .map(|link| {
+            let logical = hasher
+                .canonical_attachment_key_hash(&link.apple_guid)
+                .map_err(|_| anyhow!("cloud_sync_native_attachment_parent_invalid"))?;
+            Ok(CloudSyncAttachmentSourceEntry {
+                original_attachment_guid: link.original_guid,
+                reflected_attachment_guid: link.local_guid,
+                logical_entity_key_hash: logical.value().to_owned(),
+            })
         })
-    }).collect()
+        .collect()
 }
 
 /// Stages the provided native IDS attachment value without sending anything or
@@ -697,14 +719,19 @@ pub async fn cloud_sync_stage_ids_attachment_source(
     {
         return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
     }
-    let auth = cloud_sync_capture_auth_snapshot(
-        cloud_messages_client, context.storage_directory.clone(),
-    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let auth =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
     cloud_sync_require_source_context_auth(&context, &auth)?;
     let staged = crate::cloud_sync_ids_attachment_source::stage_ids_attachment_source(
-        PathBuf::from(context.storage_directory), context.account_fingerprint,
-        &local_source_sha256, &message, &attachment_guids,
-    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_stage_failed"))?;
+        PathBuf::from(context.storage_directory),
+        context.account_fingerprint,
+        &local_source_sha256,
+        &message,
+        &attachment_guids,
+    )
+    .map_err(|_| anyhow!("cloud_sync_native_attachment_source_stage_failed"))?;
     Ok(CloudSyncNativeSendSourceBinding {
         kind: None,
         source_sha256: local_source_sha256,
@@ -724,9 +751,10 @@ pub async fn cloud_sync_stage_ids_mutation_source(
     local_source_sha256: String,
     message: MessageInst,
 ) -> anyhow::Result<CloudSyncNativeSendSourceBinding> {
-    let auth = cloud_sync_capture_auth_snapshot(
-        cloud_messages_client, context.storage_directory.clone(),
-    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let auth =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
     cloud_sync_stage_mutation_source_bound(&context, &auth, &local_source_sha256, &message)
 }
 
@@ -747,9 +775,12 @@ fn cloud_sync_stage_mutation_source_bound(
         return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
     }
     let staged = crate::cloud_sync_ids_mutation_stage::stage_ids_mutation_source(
-        PathBuf::from(&context.storage_directory), context.account_fingerprint.clone(),
-        source_sha256, message,
-    ).map_err(|_| anyhow!("cloud_sync_native_mutation_source_stage_failed"))?;
+        PathBuf::from(&context.storage_directory),
+        context.account_fingerprint.clone(),
+        source_sha256,
+        message,
+    )
+    .map_err(|_| anyhow!("cloud_sync_native_mutation_source_stage_failed"))?;
     Ok(CloudSyncNativeSendSourceBinding {
         kind: Some(CloudSyncNativeSendSourceKind::Mutation),
         source_sha256: source_sha256.to_owned(),
@@ -766,17 +797,19 @@ pub async fn cloud_sync_restore_ids_mutation_source(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     context: CloudSyncNativeSendReceiptContext,
 ) -> anyhow::Result<MessageInst> {
-    let auth = cloud_sync_capture_auth_snapshot(
-        cloud_messages_client, context.storage_directory.clone(),
-    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let auth =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
     cloud_sync_require_source_context_auth(&context, &auth)?;
     let envelope = cloud_sync_open_mutation_source_bound(&context)?;
     let message = crate::cloud_sync_ids_mutation_source::open_mutation_source(&envelope)
         .and_then(|source| source.message())
         .map_err(|_| anyhow!("cloud_sync_native_mutation_source_invalid"))?;
-    let after = cloud_sync_capture_auth_snapshot(
-        cloud_messages_client, context.storage_directory.clone(),
-    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let after =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
     cloud_sync_require_source_context_auth(&context, &after)?;
     Ok(message)
 }
@@ -785,11 +818,14 @@ pub async fn cloud_sync_restore_ids_mutation_source(
 fn cloud_sync_open_mutation_source_bound(
     context: &CloudSyncNativeSendReceiptContext,
 ) -> anyhow::Result<Vec<u8>> {
-    let binding = context.source_binding.as_ref()
+    let binding = context
+        .source_binding
+        .as_ref()
         .filter(|binding| binding.kind == Some(CloudSyncNativeSendSourceKind::Mutation))
         .ok_or_else(|| anyhow!("cloud_sync_native_mutation_source_unavailable"))?;
-    let identity = crate::cloud_sync_protector::protected_store_identity(context.storage_directory.clone())
-        .map_err(|_| anyhow!("cloud_sync_native_mutation_source_unavailable"))?;
+    let identity =
+        crate::cloud_sync_protector::protected_store_identity(context.storage_directory.clone())
+            .map_err(|_| anyhow!("cloud_sync_native_mutation_source_unavailable"))?;
     if identity != context.protected_store_identity {
         return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
     }
@@ -800,9 +836,12 @@ fn cloud_sync_open_mutation_source_bound(
         payload_length: binding.payload_length,
     };
     let envelope = crate::cloud_sync_ids_mutation_stage::open_staged_mutation_source_envelope(
-        PathBuf::from(&context.storage_directory), context.account_fingerprint.clone(),
-        &binding.source_sha256, &stage,
-    ).map_err(|_| anyhow!("cloud_sync_native_mutation_source_unavailable"))?;
+        PathBuf::from(&context.storage_directory),
+        context.account_fingerprint.clone(),
+        &binding.source_sha256,
+        &stage,
+    )
+    .map_err(|_| anyhow!("cloud_sync_native_mutation_source_unavailable"))?;
     let source = crate::cloud_sync_ids_mutation_source::open_mutation_source(&envelope)
         .map_err(|_| anyhow!("cloud_sync_native_mutation_source_invalid"))?;
     if cloud_sync_local_send_guid_hash(source.mutation_guid()) != context.guid_hash {
@@ -823,12 +862,17 @@ fn cloud_sync_open_confirmed_mutation_source_bound(
     context: &CloudSyncNativeSendReceiptContext,
     current_auth: &CloudSyncNativeAuthMetadata,
     receipt: &CloudSyncNativeSendReceipt,
-) -> anyhow::Result<(crate::cloud_sync_ids_mutation_source::OpenedMutationSource, u64)> {
+) -> anyhow::Result<(
+    crate::cloud_sync_ids_mutation_source::OpenedMutationSource,
+    u64,
+)> {
     cloud_sync_require_source_context_auth(context, current_auth)?;
     let envelope = cloud_sync_open_mutation_source_bound(context)?;
-    let source_binding: crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceBinding =
-        context.source_binding.clone()
-            .ok_or_else(|| anyhow!("cloud_sync_native_mutation_source_unavailable"))?.into();
+    let source_binding: crate::cloud_sync_native_fetch::CloudNativeIdsSendSourceBinding = context
+        .source_binding
+        .clone()
+        .ok_or_else(|| anyhow!("cloud_sync_native_mutation_source_unavailable"))?
+        .into();
     let expected = crate::cloud_sync_native_fetch::CloudNativeIdsSendReceiptReplay {
         receipt_id: receipt.receipt_id.clone(),
         guid_hash: receipt.guid_hash.clone(),
@@ -842,10 +886,14 @@ fn cloud_sync_open_confirmed_mutation_source_bound(
         return Err(anyhow!("cloud_sync_native_mutation_receipt_changed"));
     }
     crate::cloud_sync_native_fetch::cloud_sync_verify_ids_send_receipt(
-        PathBuf::from(&context.storage_directory), &expected,
-        &context.account_fingerprint, &context.protected_store_identity,
-    ).map_err(|_| anyhow!("cloud_sync_native_mutation_receipt_unavailable"))?;
-    let time = expected.prepared_sent_timestamp_ms
+        PathBuf::from(&context.storage_directory),
+        &expected,
+        &context.account_fingerprint,
+        &context.protected_store_identity,
+    )
+    .map_err(|_| anyhow!("cloud_sync_native_mutation_receipt_unavailable"))?;
+    let time = expected
+        .prepared_sent_timestamp_ms
         .ok_or_else(|| anyhow!("cloud_sync_native_mutation_receipt_time_unavailable"))?;
     let source = crate::cloud_sync_ids_mutation_source::open_mutation_source(&envelope)
         .map_err(|_| anyhow!("cloud_sync_native_mutation_source_invalid"))?;
@@ -873,27 +921,36 @@ pub async fn cloud_sync_stage_attachment_upload_plan(
     start_date_ns: i64,
     created_date_ns: i64,
 ) -> anyhow::Result<CloudSyncAttachmentUploadPlanResult> {
-    let auth = cloud_sync_capture_auth_snapshot(
-        cloud_messages_client, context.storage_directory.clone(),
-    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let auth =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
     let encoded = cloud_sync_open_attachment_source_bound(&context, &auth)?;
     let decoded = crate::cloud_sync_ids_attachment_source::decode_ids_attachment_source(&encoded)
         .map_err(|_| anyhow!("cloud_sync_native_attachment_source_invalid"))?;
-    let source_binding = context.source_binding.as_ref()
+    let source_binding = context
+        .source_binding
+        .as_ref()
         .ok_or_else(|| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
     let writer_binding = cloud_messages_client
-        .warm_attachment_writer_preparation_lookup_only().await
+        .warm_attachment_writer_preparation_lookup_only()
+        .await
         .map_err(|error| {
-            warn!("Cloud Sync writer preparation failed kind=attachment cause={}",
-                cloud_sync_writer_preparation_failure_code(&error));
+            warn!(
+                "Cloud Sync writer preparation failed kind=attachment cause={}",
+                cloud_sync_writer_preparation_failure_code(&error)
+            );
             log::logger().flush();
             anyhow!("cloud_sync_attachment_preparation_auth_unavailable")
         })?;
-    let after_warm = cloud_sync_capture_auth_snapshot(
-        cloud_messages_client, context.storage_directory.clone(),
-    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let after_warm =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
     cloud_sync_require_source_context_auth(&context, &after_warm)?;
-    cloud_messages_client.validate_writer_preparation_binding(&writer_binding).await
+    cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
         .map_err(|_| anyhow!("cloud_sync_attachment_preparation_binding_changed"))?;
 
     // Recreate the native private-zone shape using the exact warmed container's
@@ -908,30 +965,45 @@ pub async fn cloud_sync_stage_attachment_upload_plan(
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
         return Err(anyhow!("cloud_sync_attachment_source_unavailable"));
     }
-    let mut source = File::open(path)
-        .map_err(|_| anyhow!("cloud_sync_attachment_source_unavailable"))?;
+    let mut source =
+        File::open(path).map_err(|_| anyhow!("cloud_sync_attachment_source_unavailable"))?;
     if !source.metadata().is_ok_and(|value| value.is_file()) {
         return Err(anyhow!("cloud_sync_attachment_source_unavailable"));
     }
     let plan = crate::cloud_sync_attachment_upload::prepare_verified_ids_upload_plan(
-        cloud_messages_client, &decoded, source_binding.source_sha256.clone(),
+        cloud_messages_client,
+        &decoded,
+        source_binding.source_sha256.clone(),
         &original_attachment_guid,
         &crate::cloud_sync_ids_attachment_source::NativeAttachmentMetaTimes {
-            start_date_ns, created_date_ns,
+            start_date_ns,
+            created_date_ns,
         },
-        record_identifier, &mut source, std::path::Path::new(&context.storage_directory),
-    ).await.map_err(|error| anyhow!("{error}"))?;
-    let after_prepare = cloud_sync_capture_auth_snapshot(
-        cloud_messages_client, context.storage_directory.clone(),
-    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+        record_identifier,
+        &mut source,
+        std::path::Path::new(&context.storage_directory),
+    )
+    .await
+    .map_err(|error| anyhow!("{error}"))?;
+    let after_prepare =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
     cloud_sync_require_source_context_auth(&context, &after_prepare)?;
-    cloud_messages_client.validate_writer_preparation_binding(&writer_binding).await
+    cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
         .map_err(|_| anyhow!("cloud_sync_attachment_preparation_binding_changed"))?;
-    let upload_attempt_id = plan.upload_attempt_id()
-        .map_err(|_| anyhow!("cloud_sync_attachment_preparation_invalid"))?.to_owned();
+    let upload_attempt_id = plan
+        .upload_attempt_id()
+        .map_err(|_| anyhow!("cloud_sync_attachment_preparation_invalid"))?
+        .to_owned();
     let stage = crate::cloud_sync_attachment_upload::stage_attachment_upload(
-        PathBuf::from(context.storage_directory), context.account_fingerprint, &plan,
-    ).map_err(|_| anyhow!("cloud_sync_attachment_preparation_stage_failed"))?;
+        PathBuf::from(context.storage_directory),
+        context.account_fingerprint,
+        &plan,
+    )
+    .map_err(|_| anyhow!("cloud_sync_attachment_preparation_stage_failed"))?;
     Ok(CloudSyncAttachmentUploadPlanResult {
         stage: CloudSyncProtectedOutboundStage {
             logical_entity_key_hash: stage.logical_entity_key_hash,
@@ -952,25 +1024,30 @@ fn cloud_sync_attachment_upload_record_identifier(
     record_name: &str,
 ) -> anyhow::Result<rustpush::cloudkit_proto::RecordIdentifier> {
     use rustpush::cloudkit_proto::{identifier::Type, Identifier, RecordZoneIdentifier};
-    if container_user_id.is_empty() || container_user_id.len() > 4096
+    if container_user_id.is_empty()
+        || container_user_id.len() > 4096
         || container_user_id.chars().any(char::is_control)
-        || !Uuid::parse_str(record_name).is_ok_and(|id|
+        || !Uuid::parse_str(record_name).is_ok_and(|id| {
             id.get_version() == Some(uuid::Version::Random)
-                && id.to_string().to_uppercase() == record_name)
+                && id.to_string().to_uppercase() == record_name
+        })
     {
         return Err(anyhow!("cloud_sync_attachment_preparation_binding_invalid"));
     }
-    Ok(rustpush::cloudkit::record_identifier(RecordZoneIdentifier {
-        value: Some(Identifier {
-            name: Some("attachmentManateeZone".to_owned()),
-            r#type: Some(Type::RecordZone as i32),
-        }),
-        owner_identifier: Some(Identifier {
-            name: Some(container_user_id.to_owned()),
-            r#type: Some(Type::User as i32),
-        }),
-        environment: None,
-    }, record_name))
+    Ok(rustpush::cloudkit::record_identifier(
+        RecordZoneIdentifier {
+            value: Some(Identifier {
+                name: Some("attachmentManateeZone".to_owned()),
+                r#type: Some(Type::RecordZone as i32),
+            }),
+            owner_identifier: Some(Identifier {
+                name: Some(container_user_id.to_owned()),
+                r#type: Some(Type::User as i32),
+            }),
+            environment: None,
+        },
+        record_name,
+    ))
 }
 
 /// Byte-upload owner, separate from a final CloudKit record-save owner. The
@@ -993,10 +1070,14 @@ impl std::fmt::Debug for CloudSyncPreparedAttachmentUploadHandle {
 enum CloudSyncAttachmentUploadOwner {
     Native {
         prepared: rustpush::cloud_messages::CloudMessagesPreparedUploadSubmission<
-            DefaultAnisetteProvider, crate::cloud_sync_attachment_source_file::OwnedAttachmentSource>,
+            DefaultAnisetteProvider,
+            crate::cloud_sync_attachment_source_file::OwnedAttachmentSource,
+        >,
         permit: rustpush::cloudkit_operation_gate::CloudKitWriterOperationPermit,
         client: Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
-        writer_binding: rustpush::cloud_messages::CloudMessagesWriterPreparationBinding<DefaultAnisetteProvider>,
+        writer_binding: rustpush::cloud_messages::CloudMessagesWriterPreparationBinding<
+            DefaultAnisetteProvider,
+        >,
         plan: crate::cloud_sync_attachment_upload::AttachmentUploadPlan,
         local_operation_id: String,
     },
@@ -1051,18 +1132,25 @@ pub struct CloudSyncAttachmentUploadReceiptEvidence {
     pub server_record_id_hash: String,
 }
 
-fn cloud_sync_open_journaled_upload(context: &CloudSyncNativeSendReceiptContext,
-    stage: &CloudSyncAttachmentUploadPlanReference)
-    -> anyhow::Result<crate::cloud_sync_attachment_upload::AttachmentUploadPlan> {
+fn cloud_sync_open_journaled_upload(
+    context: &CloudSyncNativeSendReceiptContext,
+    stage: &CloudSyncAttachmentUploadPlanReference,
+) -> anyhow::Result<crate::cloud_sync_attachment_upload::AttachmentUploadPlan> {
     crate::cloud_sync_attachment_upload::open_journaled_attachment_upload(
-        PathBuf::from(&context.storage_directory), context.account_fingerprint.clone(),
-        &stage.logical_entity_key_hash, &stage.protected_payload_reference,
-        &stage.payload_sha256, &stage.server_record_id_hash, &stage.lease_reference,
-    ).map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_unavailable"))
+        PathBuf::from(&context.storage_directory),
+        context.account_fingerprint.clone(),
+        &stage.logical_entity_key_hash,
+        &stage.protected_payload_reference,
+        &stage.payload_sha256,
+        &stage.server_record_id_hash,
+        &stage.lease_reference,
+    )
+    .map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_unavailable"))
 }
 
-fn cloud_sync_bridge_stage(stage: crate::cloud_sync_outbound::NativeProtectedOutboundStage)
-    -> CloudSyncProtectedOutboundStage {
+fn cloud_sync_bridge_stage(
+    stage: crate::cloud_sync_outbound::NativeProtectedOutboundStage,
+) -> CloudSyncProtectedOutboundStage {
     CloudSyncProtectedOutboundStage {
         logical_entity_key_hash: stage.logical_entity_key_hash,
         protected_payload_reference: stage.protected_payload_reference,
@@ -1079,13 +1167,17 @@ fn cloud_sync_upload_receipt_binding(
     stage: &CloudSyncAttachmentUploadPlanReference,
     plan: &crate::cloud_sync_attachment_upload::AttachmentUploadPlan,
 ) -> anyhow::Result<crate::cloud_sync_attachment_upload_receipt::AttachmentUploadReceiptBinding> {
-    Ok(crate::cloud_sync_attachment_upload_receipt::AttachmentUploadReceiptBinding {
-        account_fingerprint: context.account_fingerprint.clone(),
-        protected_store_identity: context.protected_store_identity.clone(),
-        plan_payload_sha256: stage.payload_sha256.clone(),
-        upload_attempt_id: plan.upload_attempt_id()
-            .map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_invalid"))?.to_owned(),
-    })
+    Ok(
+        crate::cloud_sync_attachment_upload_receipt::AttachmentUploadReceiptBinding {
+            account_fingerprint: context.account_fingerprint.clone(),
+            protected_store_identity: context.protected_store_identity.clone(),
+            plan_payload_sha256: stage.payload_sha256.clone(),
+            upload_attempt_id: plan
+                .upload_attempt_id()
+                .map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_invalid"))?
+                .to_owned(),
+        },
+    )
 }
 
 /// Reopens the adopted original plan; does not upload. Caller must retain the
@@ -1102,20 +1194,27 @@ pub async fn cloud_sync_prepare_attachment_upload(
     if !(1..=300).contains(&request_timeout_seconds) {
         return Err(anyhow!("cloud_sync_attachment_upload_timeout_invalid"));
     }
-    let auth = cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
-        .await.map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
+    let auth =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
     let encoded = cloud_sync_open_attachment_source_bound(&context, &auth)?;
     let decoded = crate::cloud_sync_ids_attachment_source::decode_ids_attachment_source(&encoded)
         .map_err(|_| anyhow!("cloud_sync_attachment_upload_source_invalid"))?;
-    let source_binding = context.source_binding.as_ref()
+    let source_binding = context
+        .source_binding
+        .as_ref()
         .ok_or_else(|| anyhow!("cloud_sync_attachment_upload_source_missing"))?;
     let plan = cloud_sync_open_journaled_upload(&context, &plan_stage)?;
     let receipt_binding = cloud_sync_upload_receipt_binding(&context, &plan_stage, &plan)?;
-    let writer_binding = cloud_messages_client.warm_attachment_writer_preparation_lookup_only()
-        .await.map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
+    let writer_binding = cloud_messages_client
+        .warm_attachment_writer_preparation_lookup_only()
+        .await
+        .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
     let record = cloud_sync_attachment_upload_record_identifier(
         writer_binding.container_scoped_user_id(),
-        plan.record_name().map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_invalid"))?,
+        plan.record_name()
+            .map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_invalid"))?,
     )?;
     let path = PathBuf::from(source_path);
     let metadata = fs::symlink_metadata(&path)
@@ -1123,44 +1222,72 @@ pub async fn cloud_sync_prepare_attachment_upload(
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err(anyhow!("cloud_sync_attachment_source_unavailable"));
     }
-    let mut source = File::open(path).map_err(|_| anyhow!("cloud_sync_attachment_source_unavailable"))?;
+    let mut source =
+        File::open(path).map_err(|_| anyhow!("cloud_sync_attachment_source_unavailable"))?;
     if !source.metadata().is_ok_and(|meta| meta.is_file()) {
         return Err(anyhow!("cloud_sync_attachment_source_unavailable"));
     }
     let local_operation_id = format!("upload1:{}", plan_stage.payload_sha256);
-    let permit = rustpush::cloudkit_operation_gate::acquire_cloudkit_writer_operation().await
+    let permit = rustpush::cloudkit_operation_gate::acquire_cloudkit_writer_operation()
+        .await
         .map_err(|_| anyhow!("cloud_sync_attachment_upload_writer_busy"))?;
-    let prepared = permit.run(plan.prepare_verified_submission(
-        cloud_messages_client, &writer_binding, &decoded, &source_binding.source_sha256,
-        &original_attachment_guid, &record, local_operation_id.clone(), &mut source,
-        std::path::Path::new(&context.storage_directory), Duration::from_secs(request_timeout_seconds),
-    )).await.map_err(|_| anyhow!("cloud_sync_attachment_upload_prepare_failed"))?;
-    let after = cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
-        .await.map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
+    let prepared = permit
+        .run(plan.prepare_verified_submission(
+            cloud_messages_client,
+            &writer_binding,
+            &decoded,
+            &source_binding.source_sha256,
+            &original_attachment_guid,
+            &record,
+            local_operation_id.clone(),
+            &mut source,
+            std::path::Path::new(&context.storage_directory),
+            Duration::from_secs(request_timeout_seconds),
+        ))
+        .await
+        .map_err(|_| anyhow!("cloud_sync_attachment_upload_prepare_failed"))?;
+    let after =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
     cloud_sync_require_source_context_auth(&context, &after)?;
-    cloud_messages_client.validate_writer_preparation_binding(&writer_binding).await
+    cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
         .map_err(|_| anyhow!("cloud_sync_attachment_upload_binding_changed"))?;
     let handle_binding_sha256 = cloud_sync_new_prepared_handle_binding_sha256();
     let upload_attempt_id = receipt_binding.upload_attempt_id.clone();
     Ok(CloudSyncPreparedAttachmentUploadResult {
         handle: CloudSyncPreparedAttachmentUploadHandle {
             owner: tokio::sync::Mutex::new(Some(CloudSyncAttachmentUploadOwner::Native {
-                prepared, permit, client: cloud_messages_client.clone(), writer_binding, plan,
+                prepared,
+                permit,
+                client: cloud_messages_client.clone(),
+                writer_binding,
+                plan,
                 local_operation_id,
             })),
-            context, receipt_binding,
+            context,
+            receipt_binding,
             handle_binding_sha256: handle_binding_sha256.clone(),
             reconciliation_binding_sha256: std::sync::OnceLock::new(),
         },
-        handle_binding_sha256, upload_attempt_id,
+        handle_binding_sha256,
+        upload_attempt_id,
     })
 }
 
-fn cloud_sync_upload_capability_valid(handle: &CloudSyncPreparedAttachmentUploadHandle, token: &str) -> bool {
+fn cloud_sync_upload_capability_valid(
+    handle: &CloudSyncPreparedAttachmentUploadHandle,
+    token: &str,
+) -> bool {
     cloud_sync_bound_mutation_capability_is_valid(
-        &handle.context.storage_directory, &handle.context.account_fingerprint,
-        &handle.context.protected_store_identity, &handle.handle_binding_sha256,
-        &handle.reconciliation_binding_sha256, token,
+        &handle.context.storage_directory,
+        &handle.context.account_fingerprint,
+        &handle.context.protected_store_identity,
+        &handle.handle_binding_sha256,
+        &handle.reconciliation_binding_sha256,
+        token,
     )
 }
 
@@ -1176,12 +1303,23 @@ pub async fn cloud_sync_consume_prepared_attachment_upload(
     }
     let owner = {
         let mut guard = handle.owner.lock().await;
-        let owner = guard.as_ref().ok_or_else(|| anyhow!("cloud_sync_attachment_upload_already_consumed"))?;
-        if let CloudSyncAttachmentUploadOwner::Native { client, writer_binding, .. } = owner {
-            let auth = cloud_sync_capture_auth_snapshot(client, handle.context.storage_directory.clone()).await
-                .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
+        let owner = guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("cloud_sync_attachment_upload_already_consumed"))?;
+        if let CloudSyncAttachmentUploadOwner::Native {
+            client,
+            writer_binding,
+            ..
+        } = owner
+        {
+            let auth =
+                cloud_sync_capture_auth_snapshot(client, handle.context.storage_directory.clone())
+                    .await
+                    .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
             cloud_sync_require_source_context_auth(&handle.context, &auth)?;
-            client.validate_writer_preparation_binding(writer_binding).await
+            client
+                .validate_writer_preparation_binding(writer_binding)
+                .await
                 .map_err(|_| anyhow!("cloud_sync_attachment_upload_binding_changed"))?;
         }
         // Recheck after authentication awaits, before persisting a claim.
@@ -1189,20 +1327,26 @@ pub async fn cloud_sync_consume_prepared_attachment_upload(
             return Err(anyhow!("cloud_sync_attachment_upload_capability_invalid"));
         }
         crate::cloud_sync_attachment_upload_receipt::claim_attempt(
-            std::path::Path::new(&handle.context.storage_directory), &handle.receipt_binding,
-        ).map_err(|_| anyhow!("cloud_sync_attachment_upload_attempt_unavailable"))?;
+            std::path::Path::new(&handle.context.storage_directory),
+            &handle.receipt_binding,
+        )
+        .map_err(|_| anyhow!("cloud_sync_attachment_upload_attempt_unavailable"))?;
         if !cloud_sync_upload_capability_valid(handle, &mutation_capability_token) {
             // The durable claim remains conservative after this interruption,
             // but its file owner must not survive as another usable handle.
             guard.take();
             return Err(anyhow!("cloud_sync_attachment_upload_capability_changed"));
         }
-        guard.take().ok_or_else(|| anyhow!("cloud_sync_attachment_upload_already_consumed"))?
+        guard
+            .take()
+            .ok_or_else(|| anyhow!("cloud_sync_attachment_upload_already_consumed"))?
     };
     let mut result = CloudSyncAttachmentUploadConsumeResult {
         upload_attempt_id: handle.receipt_binding.upload_attempt_id.clone(),
-        disposition: CloudSyncOutboundSaveDisposition::UnknownOutcome, stage: None,
-        failure_class: None, retry_after_seconds: None,
+        disposition: CloudSyncOutboundSaveDisposition::UnknownOutcome,
+        stage: None,
+        failure_class: None,
+        retry_after_seconds: None,
     };
     let active_client = match &owner {
         CloudSyncAttachmentUploadOwner::Native { client, .. } => Some(client.clone()),
@@ -1210,64 +1354,105 @@ pub async fn cloud_sync_consume_prepared_attachment_upload(
         CloudSyncAttachmentUploadOwner::Test { .. } => None,
     };
     let completed = match owner {
-        CloudSyncAttachmentUploadOwner::Native { prepared, permit, client, writer_binding, plan, local_operation_id } => {
+        CloudSyncAttachmentUploadOwner::Native {
+            prepared,
+            permit,
+            client,
+            writer_binding,
+            plan,
+            local_operation_id,
+        } => {
             use rustpush::cloud_messages::CloudAttachmentNativeUploadResult as NativeResult;
-            let outcome = permit.run(prepared.consume_once(&client, &writer_binding)).await
+            let outcome = permit
+                .run(prepared.consume_once(&client, &writer_binding))
+                .await
                 .map_err(|_| anyhow!("cloud_sync_attachment_upload_consume_failed"))?;
-            if outcome.local_operation_id != local_operation_id || outcome.apple_operation_uuid != result.upload_attempt_id {
+            if outcome.local_operation_id != local_operation_id
+                || outcome.apple_operation_uuid != result.upload_attempt_id
+            {
                 return Err(anyhow!("cloud_sync_attachment_upload_correlation_changed"));
             }
             match outcome.result {
                 NativeResult::Uploaded(asset) => {
-                    let attachment = plan.complete(asset)
+                    let attachment = plan
+                        .complete(asset)
                         .map_err(|_| anyhow!("cloud_sync_attachment_upload_result_invalid"))?;
-                    Some(crate::cloud_sync_outbound_attachment::encode_attachment(&attachment,
-                        plan.record_name().map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_invalid"))?)
-                        .map_err(|_| anyhow!("cloud_sync_attachment_upload_result_invalid"))?)
-                },
-                NativeResult::Failed { failure_class, retry_after } => {
+                    Some(
+                        crate::cloud_sync_outbound_attachment::encode_attachment(
+                            &attachment,
+                            plan.record_name().map_err(|_| {
+                                anyhow!("cloud_sync_attachment_upload_plan_invalid")
+                            })?,
+                        )
+                        .map_err(|_| anyhow!("cloud_sync_attachment_upload_result_invalid"))?,
+                    )
+                }
+                NativeResult::Failed {
+                    failure_class,
+                    retry_after,
+                } => {
                     result.disposition = CloudSyncOutboundSaveDisposition::Failed;
                     result.failure_class = failure_class.map(map_cloud_sync_outbound_failure_class);
                     result.retry_after_seconds = retry_after.map(|value| value.as_secs());
                     None
-                },
-                NativeResult::UnknownOutcome { failure_class, retry_after } => {
+                }
+                NativeResult::UnknownOutcome {
+                    failure_class,
+                    retry_after,
+                } => {
                     result.failure_class = failure_class.map(map_cloud_sync_outbound_failure_class);
                     result.retry_after_seconds = retry_after.map(|value| value.as_secs());
                     None
-                },
+                }
             }
-        },
+        }
         #[cfg(test)]
-        CloudSyncAttachmentUploadOwner::Test { remote_calls, completed, after_call } => {
+        CloudSyncAttachmentUploadOwner::Test {
+            remote_calls,
+            completed,
+            after_call,
+        } => {
             remote_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if let Some(action) = after_call { action(); }
+            if let Some(action) = after_call {
+                action();
+            }
             Some(completed)
-        },
+        }
     };
     if let Some(encoded) = completed {
         crate::cloud_sync_attachment_upload_receipt::persist_completed(
-            std::path::Path::new(&handle.context.storage_directory), &handle.receipt_binding, &encoded,
-        ).map_err(|_| anyhow!("cloud_sync_attachment_upload_receipt_unavailable"))?;
+            std::path::Path::new(&handle.context.storage_directory),
+            &handle.receipt_binding,
+            &encoded,
+        )
+        .map_err(|_| anyhow!("cloud_sync_attachment_upload_receipt_unavailable"))?;
         // Preserve the receipt even if the UI timed out/revoked authority while
         // Apple returned success. Recovery will revalidate against its plan.
         if !cloud_sync_upload_capability_valid(handle, &mutation_capability_token) {
             return Err(anyhow!("cloud_sync_attachment_upload_capability_changed"));
         }
-        let (attachment, record_name) = crate::cloud_sync_outbound_attachment::decode_attachment_envelope(&encoded)
-            .map_err(|_| anyhow!("cloud_sync_attachment_upload_result_invalid"))?;
-        result.stage = Some(cloud_sync_bridge_stage(crate::cloud_sync_outbound_attachment::stage_outbound_attachment(
-            PathBuf::from(&handle.context.storage_directory), handle.context.account_fingerprint.clone(),
-            attachment, &record_name,
-        ).map_err(|_| anyhow!("cloud_sync_attachment_upload_result_stage_failed"))?));
+        let (attachment, record_name) =
+            crate::cloud_sync_outbound_attachment::decode_attachment_envelope(&encoded)
+                .map_err(|_| anyhow!("cloud_sync_attachment_upload_result_invalid"))?;
+        result.stage = Some(cloud_sync_bridge_stage(
+            crate::cloud_sync_outbound_attachment::stage_outbound_attachment(
+                PathBuf::from(&handle.context.storage_directory),
+                handle.context.account_fingerprint.clone(),
+                attachment,
+                &record_name,
+            )
+            .map_err(|_| anyhow!("cloud_sync_attachment_upload_result_stage_failed"))?,
+        ));
         result.disposition = CloudSyncOutboundSaveDisposition::Succeeded;
     }
     if !cloud_sync_upload_capability_valid(handle, &mutation_capability_token) {
         return Err(anyhow!("cloud_sync_attachment_upload_capability_changed"));
     }
     if let Some(client) = active_client {
-        let auth = cloud_sync_capture_auth_snapshot(&client, handle.context.storage_directory.clone()).await
-            .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
+        let auth =
+            cloud_sync_capture_auth_snapshot(&client, handle.context.storage_directory.clone())
+                .await
+                .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
         cloud_sync_require_source_context_auth(&handle.context, &auth)?;
         // Identity capture may yield while the Dart owner revokes the fence.
         if !cloud_sync_upload_capability_valid(handle, &mutation_capability_token) {
@@ -1281,22 +1466,36 @@ async fn cloud_sync_load_attachment_upload_completion(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     context: &CloudSyncNativeSendReceiptContext,
     plan_stage: &CloudSyncAttachmentUploadPlanReference,
-) -> anyhow::Result<(crate::cloud_sync_attachment_upload::AttachmentUploadPlan, Option<Vec<u8>>)> {
-    let auth = cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone()).await
-        .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
+) -> anyhow::Result<(
+    crate::cloud_sync_attachment_upload::AttachmentUploadPlan,
+    Option<Vec<u8>>,
+)> {
+    let auth =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
     let encoded_source = cloud_sync_open_attachment_source_bound(context, &auth)?;
-    let decoded = crate::cloud_sync_ids_attachment_source::decode_ids_attachment_source(&encoded_source)
-        .map_err(|_| anyhow!("cloud_sync_attachment_upload_source_invalid"))?;
+    let decoded =
+        crate::cloud_sync_ids_attachment_source::decode_ids_attachment_source(&encoded_source)
+            .map_err(|_| anyhow!("cloud_sync_attachment_upload_source_invalid"))?;
     let plan = cloud_sync_open_journaled_upload(context, plan_stage)?;
-    plan.validate_parent_source(&decoded.message_guid, &context.source_binding.as_ref()
-        .ok_or_else(|| anyhow!("cloud_sync_attachment_upload_source_missing"))?.source_sha256)
-        .map_err(|_| anyhow!("cloud_sync_attachment_upload_source_changed"))?;
+    plan.validate_parent_source(
+        &decoded.message_guid,
+        &context
+            .source_binding
+            .as_ref()
+            .ok_or_else(|| anyhow!("cloud_sync_attachment_upload_source_missing"))?
+            .source_sha256,
+    )
+    .map_err(|_| anyhow!("cloud_sync_attachment_upload_source_changed"))?;
     let binding = cloud_sync_upload_receipt_binding(context, plan_stage, &plan)?;
-    let encoded = plan.recover_completed_receipt(
-        std::path::Path::new(&context.storage_directory), &binding,
-    ).map_err(|_| anyhow!("cloud_sync_attachment_upload_receipt_unavailable"))?;
-    let after = cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone()).await
-        .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
+    let encoded = plan
+        .recover_completed_receipt(std::path::Path::new(&context.storage_directory), &binding)
+        .map_err(|_| anyhow!("cloud_sync_attachment_upload_receipt_unavailable"))?;
+    let after =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_attachment_upload_auth_unavailable"))?;
     cloud_sync_require_source_context_auth(context, &after)?;
     Ok((plan, encoded))
 }
@@ -1309,19 +1508,25 @@ pub async fn cloud_sync_verify_attachment_upload_receipt(
     plan_stage: CloudSyncAttachmentUploadPlanReference,
     expected_attempt_id: String,
 ) -> anyhow::Result<Option<CloudSyncAttachmentUploadReceiptEvidence>> {
-    let (plan, encoded) = cloud_sync_load_attachment_upload_completion(
-        cloud_messages_client, &context, &plan_stage,
-    ).await?;
-    if plan.upload_attempt_id().map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_invalid"))? != expected_attempt_id {
+    let (plan, encoded) =
+        cloud_sync_load_attachment_upload_completion(cloud_messages_client, &context, &plan_stage)
+            .await?;
+    if plan
+        .upload_attempt_id()
+        .map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_invalid"))?
+        != expected_attempt_id
+    {
         return Err(anyhow!("cloud_sync_attachment_upload_attempt_changed"));
     }
-    Ok(encoded.map(|value| CloudSyncAttachmentUploadReceiptEvidence {
-        upload_attempt_id: expected_attempt_id,
-        plan_payload_sha256: plan_stage.payload_sha256,
-        completed_payload_sha256: format!("{:x}", sha2::Sha256::digest(&value)),
-        logical_entity_key_hash: plan_stage.logical_entity_key_hash,
-        server_record_id_hash: plan_stage.server_record_id_hash,
-    }))
+    Ok(
+        encoded.map(|value| CloudSyncAttachmentUploadReceiptEvidence {
+            upload_attempt_id: expected_attempt_id,
+            plan_payload_sha256: plan_stage.payload_sha256,
+            completed_payload_sha256: format!("{:x}", sha2::Sha256::digest(&value)),
+            logical_entity_key_hash: plan_stage.logical_entity_key_hash,
+            server_record_id_hash: plan_stage.server_record_id_hash,
+        }),
+    )
 }
 
 /// No network mutation. Reconstructs a lost bridge result from the original
@@ -1332,16 +1537,25 @@ pub async fn cloud_sync_recover_attachment_upload(
     context: CloudSyncNativeSendReceiptContext,
     plan_stage: CloudSyncAttachmentUploadPlanReference,
 ) -> anyhow::Result<Option<CloudSyncProtectedOutboundStage>> {
-    let (plan, encoded) = cloud_sync_load_attachment_upload_completion(
-        cloud_messages_client, &context, &plan_stage,
-    ).await?;
-    let Some(encoded) = encoded else { return Ok(None); };
-    let attachment = plan.validate_completed_envelope(&encoded)
+    let (plan, encoded) =
+        cloud_sync_load_attachment_upload_completion(cloud_messages_client, &context, &plan_stage)
+            .await?;
+    let Some(encoded) = encoded else {
+        return Ok(None);
+    };
+    let attachment = plan
+        .validate_completed_envelope(&encoded)
         .map_err(|_| anyhow!("cloud_sync_attachment_upload_result_invalid"))?;
-    Ok(Some(cloud_sync_bridge_stage(crate::cloud_sync_outbound_attachment::stage_outbound_attachment(
-        PathBuf::from(context.storage_directory), context.account_fingerprint, attachment,
-        plan.record_name().map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_invalid"))?,
-    ).map_err(|_| anyhow!("cloud_sync_attachment_upload_result_stage_failed"))?)))
+    Ok(Some(cloud_sync_bridge_stage(
+        crate::cloud_sync_outbound_attachment::stage_outbound_attachment(
+            PathBuf::from(context.storage_directory),
+            context.account_fingerprint,
+            attachment,
+            plan.record_name()
+                .map_err(|_| anyhow!("cloud_sync_attachment_upload_plan_invalid"))?,
+        )
+        .map_err(|_| anyhow!("cloud_sync_attachment_upload_result_stage_failed"))?,
+    )))
 }
 
 #[cfg(test)]
@@ -1352,53 +1566,88 @@ mod cloud_sync_attachment_upload_consume_tests {
     const RECORD: &str = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEE2";
 
     fn completed() -> Vec<u8> {
-        use rustpush::{cloud_messages::{AttachmentMeta, CloudAttachment, GZipWrapper},
-            cloudkit_proto::{Asset, ProtectionInfo}};
+        use rustpush::{
+            cloud_messages::{AttachmentMeta, CloudAttachment, GZipWrapper},
+            cloudkit_proto::{Asset, ProtectionInfo},
+        };
         let attachment = CloudAttachment {
             cm: GZipWrapper(AttachmentMeta {
-                guid: "synthetic-guid".to_owned(), version: 1, is_outgoing: true, total_bytes: 7,
+                guid: "synthetic-guid".to_owned(),
+                version: 1,
+                is_outgoing: true,
+                total_bytes: 7,
                 ..Default::default()
             }),
             lqa: Asset {
-                signature: Some(vec![4; 21]), reference_signature: Some(vec![1; 21]), size: Some(7),
-                protection_info: Some(ProtectionInfo { protection_info: Some(vec![7; 32]), ..Default::default() }),
-                record_id: Some(cloud_sync_attachment_upload_record_identifier("fixture-owner", RECORD).unwrap()),
-                upload_receipt: Some("synthetic-asset-receipt".to_owned()), ..Default::default()
+                signature: Some(vec![4; 21]),
+                reference_signature: Some(vec![1; 21]),
+                size: Some(7),
+                protection_info: Some(ProtectionInfo {
+                    protection_info: Some(vec![7; 32]),
+                    ..Default::default()
+                }),
+                record_id: Some(
+                    cloud_sync_attachment_upload_record_identifier("fixture-owner", RECORD)
+                        .unwrap(),
+                ),
+                upload_receipt: Some("synthetic-asset-receipt".to_owned()),
+                ..Default::default()
             },
         };
         crate::cloud_sync_outbound_attachment::encode_attachment(&attachment, RECORD).unwrap()
     }
 
-    fn handle(directory: &std::path::Path, calls: Arc<AtomicUsize>, after_call: Option<Box<dyn FnOnce() + Send>>)
-        -> CloudSyncPreparedAttachmentUploadHandle {
-        let store_identity = crate::cloud_sync_protector::protected_store_identity(directory.to_string_lossy().into_owned()).unwrap();
+    fn handle(
+        directory: &std::path::Path,
+        calls: Arc<AtomicUsize>,
+        after_call: Option<Box<dyn FnOnce() + Send>>,
+    ) -> CloudSyncPreparedAttachmentUploadHandle {
+        let store_identity = crate::cloud_sync_protector::protected_store_identity(
+            directory.to_string_lossy().into_owned(),
+        )
+        .unwrap();
         CloudSyncPreparedAttachmentUploadHandle {
             owner: tokio::sync::Mutex::new(Some(CloudSyncAttachmentUploadOwner::Test {
-                remote_calls: calls, completed: completed(), after_call,
+                remote_calls: calls,
+                completed: completed(),
+                after_call,
             })),
             context: CloudSyncNativeSendReceiptContext {
                 storage_directory: directory.to_string_lossy().into_owned(),
-                guid_hash: "G".repeat(43), account_fingerprint: "A".repeat(43),
-                protected_store_identity: store_identity.clone(), native_session_id: "fixture-session".to_owned(), source_binding: None,
+                guid_hash: "G".repeat(43),
+                account_fingerprint: "A".repeat(43),
+                protected_store_identity: store_identity.clone(),
+                native_session_id: "fixture-session".to_owned(),
+                source_binding: None,
             },
-            receipt_binding: crate::cloud_sync_attachment_upload_receipt::AttachmentUploadReceiptBinding {
-                account_fingerprint: "A".repeat(43), protected_store_identity: store_identity,
-                plan_payload_sha256: "a".repeat(64), upload_attempt_id: ATTEMPT.to_owned(),
-            },
-            handle_binding_sha256: "b".repeat(64), reconciliation_binding_sha256: std::sync::OnceLock::new(),
+            receipt_binding:
+                crate::cloud_sync_attachment_upload_receipt::AttachmentUploadReceiptBinding {
+                    account_fingerprint: "A".repeat(43),
+                    protected_store_identity: store_identity,
+                    plan_payload_sha256: "a".repeat(64),
+                    upload_attempt_id: ATTEMPT.to_owned(),
+                },
+            handle_binding_sha256: "b".repeat(64),
+            reconciliation_binding_sha256: std::sync::OnceLock::new(),
         }
     }
 
     fn arm(handle: &CloudSyncPreparedAttachmentUploadHandle, token: &str) -> PathBuf {
-        let path = PathBuf::from(&handle.context.storage_directory).join(CLOUD_SYNC_WRITER_MUTATION_FENCE_FILE);
-        fs::write(&path, serde_json::to_vec(&serde_json::json!({
-            "accountFingerprint": handle.context.account_fingerprint,
-            "capabilitySha256": format!("{:x}", Sha256::digest(token.as_bytes())),
-            "container": "com.apple.messages.cloud", "database": "private", "epoch": 1,
-            "owner": "v2", "preparedHandleBindingSha256": handle.handle_binding_sha256,
-            "protectedStoreIdentity": handle.context.protected_store_identity,
-            "reconciliationBindingSha256": "c".repeat(64), "version": 3,
-        })).unwrap()).unwrap();
+        let path = PathBuf::from(&handle.context.storage_directory)
+            .join(CLOUD_SYNC_WRITER_MUTATION_FENCE_FILE);
+        fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "accountFingerprint": handle.context.account_fingerprint,
+                "capabilitySha256": format!("{:x}", Sha256::digest(token.as_bytes())),
+                "container": "com.apple.messages.cloud", "database": "private", "epoch": 1,
+                "owner": "v2", "preparedHandleBindingSha256": handle.handle_binding_sha256,
+                "protectedStoreIdentity": handle.context.protected_store_identity,
+                "reconciliationBindingSha256": "c".repeat(64), "version": 3,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         path
     }
 
@@ -1408,10 +1657,19 @@ mod cloud_sync_attachment_upload_consume_tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let owner = handle(dir.path(), calls.clone(), None);
         arm(&owner, &"d".repeat(64));
-        assert!(cloud_sync_consume_prepared_attachment_upload(&owner, "e".repeat(64)).await.is_err());
+        assert!(
+            cloud_sync_consume_prepared_attachment_upload(&owner, "e".repeat(64))
+                .await
+                .is_err()
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        let result = cloud_sync_consume_prepared_attachment_upload(&owner, "d".repeat(64)).await.unwrap();
-        assert_eq!(result.disposition, CloudSyncOutboundSaveDisposition::Succeeded);
+        let result = cloud_sync_consume_prepared_attachment_upload(&owner, "d".repeat(64))
+            .await
+            .unwrap();
+        assert_eq!(
+            result.disposition,
+            CloudSyncOutboundSaveDisposition::Succeeded
+        );
         assert!(result.stage.is_some());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
@@ -1428,12 +1686,21 @@ mod cloud_sync_attachment_upload_consume_tests {
         );
         assert_ne!(first.is_ok(), second.is_ok());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        let recovered = crate::cloud_sync_attachment_upload_receipt::recover_completed(dir.path(), &owner.receipt_binding).unwrap().unwrap();
+        let recovered = crate::cloud_sync_attachment_upload_receipt::recover_completed(
+            dir.path(),
+            &owner.receipt_binding,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(recovered, completed());
         // Reconstructed native owners after a restart cannot replay the claim.
         let reopened = handle(dir.path(), calls.clone(), None);
         arm(&reopened, &"d".repeat(64));
-        assert!(cloud_sync_consume_prepared_attachment_upload(&reopened, "d".repeat(64)).await.is_err());
+        assert!(
+            cloud_sync_consume_prepared_attachment_upload(&reopened, "d".repeat(64))
+                .await
+                .is_err()
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
@@ -1442,11 +1709,29 @@ mod cloud_sync_attachment_upload_consume_tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(CLOUD_SYNC_WRITER_MUTATION_FENCE_FILE);
         let calls = Arc::new(AtomicUsize::new(0));
-        let owner = handle(dir.path(), calls.clone(), Some(Box::new(move || { fs::remove_file(path).unwrap(); })));
+        let owner = handle(
+            dir.path(),
+            calls.clone(),
+            Some(Box::new(move || {
+                fs::remove_file(path).unwrap();
+            })),
+        );
         arm(&owner, &"d".repeat(64));
-        assert!(cloud_sync_consume_prepared_attachment_upload(&owner, "d".repeat(64)).await.is_err());
+        assert!(
+            cloud_sync_consume_prepared_attachment_upload(&owner, "d".repeat(64))
+                .await
+                .is_err()
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(crate::cloud_sync_attachment_upload_receipt::recover_completed(dir.path(), &owner.receipt_binding).unwrap().unwrap(), completed());
+        assert_eq!(
+            crate::cloud_sync_attachment_upload_receipt::recover_completed(
+                dir.path(),
+                &owner.receipt_binding
+            )
+            .unwrap()
+            .unwrap(),
+            completed()
+        );
     }
 
     #[tokio::test]
@@ -1455,8 +1740,16 @@ mod cloud_sync_attachment_upload_consume_tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let owner = handle(dir.path(), calls.clone(), None);
         arm(&owner, &"d".repeat(64));
-        fs::write(dir.path().join("cloud_sync_v2_native_store"), b"not a directory").unwrap();
-        assert!(cloud_sync_consume_prepared_attachment_upload(&owner, "d".repeat(64)).await.is_err());
+        fs::write(
+            dir.path().join("cloud_sync_v2_native_store"),
+            b"not a directory",
+        )
+        .unwrap();
+        assert!(
+            cloud_sync_consume_prepared_attachment_upload(&owner, "d".repeat(64))
+                .await
+                .is_err()
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }
@@ -1470,14 +1763,30 @@ mod cloud_sync_attachment_upload_staging_tests {
     #[test]
     fn upload_record_uses_exact_warmed_owner_and_attachment_zone() {
         use rustpush::cloudkit_proto::identifier::Type;
-        let first = cloud_sync_attachment_upload_record_identifier("fixture-owner", RECORD).unwrap();
+        let first =
+            cloud_sync_attachment_upload_record_identifier("fixture-owner", RECORD).unwrap();
         let zone = first.zone_identifier.as_ref().unwrap();
         assert_eq!(first.value.as_ref().unwrap().name.as_deref(), Some(RECORD));
-        assert_eq!(first.value.as_ref().unwrap().r#type, Some(Type::Record as i32));
-        assert_eq!(zone.value.as_ref().unwrap().name.as_deref(), Some("attachmentManateeZone"));
-        assert_eq!(zone.value.as_ref().unwrap().r#type, Some(Type::RecordZone as i32));
-        assert_eq!(zone.owner_identifier.as_ref().unwrap().name.as_deref(), Some("fixture-owner"));
-        assert_eq!(zone.owner_identifier.as_ref().unwrap().r#type, Some(Type::User as i32));
+        assert_eq!(
+            first.value.as_ref().unwrap().r#type,
+            Some(Type::Record as i32)
+        );
+        assert_eq!(
+            zone.value.as_ref().unwrap().name.as_deref(),
+            Some("attachmentManateeZone")
+        );
+        assert_eq!(
+            zone.value.as_ref().unwrap().r#type,
+            Some(Type::RecordZone as i32)
+        );
+        assert_eq!(
+            zone.owner_identifier.as_ref().unwrap().name.as_deref(),
+            Some("fixture-owner")
+        );
+        assert_eq!(
+            zone.owner_identifier.as_ref().unwrap().r#type,
+            Some(Type::User as i32)
+        );
         assert!(zone.environment.is_none());
         let other = cloud_sync_attachment_upload_record_identifier("other-owner", RECORD).unwrap();
         assert_ne!(first, other);
@@ -1488,9 +1797,15 @@ mod cloud_sync_attachment_upload_staging_tests {
         for owner in ["".to_owned(), "x".repeat(4097), "owner\n".to_owned()] {
             assert!(cloud_sync_attachment_upload_record_identifier(&owner, RECORD).is_err());
         }
-        for name in ["".to_owned(), RECORD.to_lowercase(), "x".repeat(64),
-            "AAAAAAAA-BBBB-1CCC-8DDD-EEEEEEEEEEEE".to_owned()] {
-            assert!(cloud_sync_attachment_upload_record_identifier("fixture-owner", &name).is_err());
+        for name in [
+            "".to_owned(),
+            RECORD.to_lowercase(),
+            "x".repeat(64),
+            "AAAAAAAA-BBBB-1CCC-8DDD-EEEEEEEEEEEE".to_owned(),
+        ] {
+            assert!(
+                cloud_sync_attachment_upload_record_identifier("fixture-owner", &name).is_err()
+            );
         }
     }
 
@@ -1505,12 +1820,27 @@ mod cloud_sync_attachment_upload_staging_tests {
             source_binding: None,
         };
         for auth in [
-            CloudSyncNativeAuthMetadata { account_fingerprint: "B".repeat(43), protected_store_identity: "S".repeat(43), native_session_id: "N".repeat(43) },
-            CloudSyncNativeAuthMetadata { account_fingerprint: "A".repeat(43), protected_store_identity: "T".repeat(43), native_session_id: "N".repeat(43) },
-            CloudSyncNativeAuthMetadata { account_fingerprint: "A".repeat(43), protected_store_identity: "S".repeat(43), native_session_id: "M".repeat(43) },
+            CloudSyncNativeAuthMetadata {
+                account_fingerprint: "B".repeat(43),
+                protected_store_identity: "S".repeat(43),
+                native_session_id: "N".repeat(43),
+            },
+            CloudSyncNativeAuthMetadata {
+                account_fingerprint: "A".repeat(43),
+                protected_store_identity: "T".repeat(43),
+                native_session_id: "N".repeat(43),
+            },
+            CloudSyncNativeAuthMetadata {
+                account_fingerprint: "A".repeat(43),
+                protected_store_identity: "S".repeat(43),
+                native_session_id: "M".repeat(43),
+            },
         ] {
             let err = cloud_sync_open_attachment_source_bound(&context, &auth).unwrap_err();
-            assert_eq!(err.to_string(), "cloud_sync_native_send_receipt_context_invalid");
+            assert_eq!(
+                err.to_string(),
+                "cloud_sync_native_send_receipt_context_invalid"
+            );
         }
     }
 }
@@ -2222,35 +2552,63 @@ pub async fn cloud_sync_open_attachment_parent_group_proof(
     routing_metadata_digest: String,
     source: super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput,
 ) -> anyhow::Result<CloudSyncAttachmentParentGroupProof> {
-    use crate::cloud_sync_transient_bridge::{cloud_sync_decode_transient_record_cached_only,
-        CloudTransientDecodeOutcome};
+    use crate::cloud_sync_transient_bridge::{
+        cloud_sync_decode_transient_record_cached_only, CloudTransientDecodeOutcome,
+    };
     if !is_cloud_sync_hex_digest(&routing_metadata_digest) {
         return Err(anyhow!("cloud_sync_attachment_parent_group_proof_invalid"));
     }
     let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
         .map_err(|_| anyhow!("cloud_sync_attachment_parent_group_proof_auth"))?;
-    let before = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await
+    let before = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+        .await
         .map_err(|_| anyhow!("cloud_sync_attachment_parent_group_proof_auth"))?;
     if before.account_fingerprint != expected_account_fingerprint
         || before.protected_store_identity != expected_protected_store_identity
-    { return Err(anyhow!("cloud_sync_attachment_parent_group_proof_scope")); }
-    let request = cloud_sync_attachment_group_decode_request(&storage_directory, &before, generation, &source)
-        .map_err(|_| anyhow!("cloud_sync_attachment_parent_group_proof_invalid"))?;
+    {
+        return Err(anyhow!("cloud_sync_attachment_parent_group_proof_scope"));
+    }
+    let request = cloud_sync_attachment_group_decode_request(
+        &storage_directory,
+        &before,
+        generation,
+        &source,
+    )
+    .map_err(|_| anyhow!("cloud_sync_attachment_parent_group_proof_invalid"))?;
     let mutation = match cloud_sync_decode_transient_record_cached_only(
-        cloud_messages_client, &permit, request.clone(),
-    ).await {
+        cloud_messages_client,
+        &permit,
+        request.clone(),
+    )
+    .await
+    {
         CloudTransientDecodeOutcome::Ready(value) => value,
-        _ => return Err(anyhow!("cloud_sync_attachment_parent_group_proof_unavailable")),
+        _ => {
+            return Err(anyhow!(
+                "cloud_sync_attachment_parent_group_proof_unavailable"
+            ))
+        }
     };
     let route = cloud_sync_attachment_group_route(&mutation, generation, &routing_metadata_digest)
         .map_err(|_| anyhow!("cloud_sync_attachment_parent_group_proof_mismatch"))?;
-    let after = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await
+    let after = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+        .await
         .map_err(|_| anyhow!("cloud_sync_attachment_parent_group_proof_auth"))?;
-    if !cloud_sync_auth_identity_remains_exact(&before, &after,
-        &expected_account_fingerprint, &expected_protected_store_identity)
-    { return Err(anyhow!("cloud_sync_attachment_parent_group_proof_scope")); }
+    if !cloud_sync_auth_identity_remains_exact(
+        &before,
+        &after,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) {
+        return Err(anyhow!("cloud_sync_attachment_parent_group_proof_scope"));
+    }
     let proof = CloudSyncAttachmentParentGroupProof {
-        storage_directory, auth: Arc::new(after), generation, source, request, route,
+        storage_directory,
+        auth: Arc::new(after),
+        generation,
+        source,
+        request,
+        route,
         expires_at: std::time::Instant::now() + Duration::from_secs(300),
     };
     // Reopen the exact protected raw record after awaited decoding/auth checks.
@@ -2265,15 +2623,35 @@ fn cloud_sync_attachment_group_decode_request(
     auth: &CloudSyncNativeAuthMetadata,
     generation: u64,
     source: &super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput,
-) -> Result<crate::cloud_sync_transient_bridge::CloudTransientDecodeRequest, CloudSyncOutboundSafeCode> {
-    use crate::cloud_sync_transient_bridge::{CloudTransientDecodeRequest, CloudTransientExpectedChangeKind};
-    CloudTransientDecodeRequest::new(PathBuf::from(storage), auth.account_fingerprint.clone(),
-        auth.protected_store_identity.clone(), "com.apple.messages.cloud".into(), "private".into(),
-        "chatManateeZone".into(), "messages".into(), 2, crate::cloud_sync_native_fetch::CloudNativeStream::Chats,
-        generation, CloudTransientExpectedChangeKind::Save, source.change_id_hash.clone(),
-        source.record_id_hash.clone(), Some(source.etag_hash.clone()), source.payload_sha256.clone(),
-        source.payload_length, source.server_modified_at_millis, source.protected_raw_envelope_reference.clone(), None)
-        .map_err(|_| CloudSyncOutboundSafeCode::BindingMismatch)
+) -> Result<
+    crate::cloud_sync_transient_bridge::CloudTransientDecodeRequest,
+    CloudSyncOutboundSafeCode,
+> {
+    use crate::cloud_sync_transient_bridge::{
+        CloudTransientDecodeRequest, CloudTransientExpectedChangeKind,
+    };
+    CloudTransientDecodeRequest::new(
+        PathBuf::from(storage),
+        auth.account_fingerprint.clone(),
+        auth.protected_store_identity.clone(),
+        "com.apple.messages.cloud".into(),
+        "private".into(),
+        "chatManateeZone".into(),
+        "messages".into(),
+        2,
+        crate::cloud_sync_native_fetch::CloudNativeStream::Chats,
+        generation,
+        CloudTransientExpectedChangeKind::Save,
+        source.change_id_hash.clone(),
+        source.record_id_hash.clone(),
+        Some(source.etag_hash.clone()),
+        source.payload_sha256.clone(),
+        source.payload_length,
+        source.server_modified_at_millis,
+        source.protected_raw_envelope_reference.clone(),
+        None,
+    )
+    .map_err(|_| CloudSyncOutboundSafeCode::BindingMismatch)
 }
 
 #[frb(ignore)]
@@ -2282,15 +2660,27 @@ fn cloud_sync_attachment_group_route(
     generation: u64,
     digest: &str,
 ) -> Result<crate::cloud_sync_canonical_dto::CloudCanonicalChatPayload, CloudSyncOutboundSafeCode> {
-    use crate::cloud_sync_canonical_dto::{CloudCanonicalPayload, CloudCanonicalChatStyle,
-        CloudCanonicalService};
-    if generation == 0 || mutation.envelope().generation() != generation
+    use crate::cloud_sync_canonical_dto::{
+        CloudCanonicalChatStyle, CloudCanonicalPayload, CloudCanonicalService,
+    };
+    if generation == 0
+        || mutation.envelope().generation() != generation
         || !is_cloud_sync_hex_digest(digest)
-        || mutation.snapshot().and_then(|v| v.group_metadata_digest()).map(|v| v.value()) != Some(digest)
-    { return Err(CloudSyncOutboundSafeCode::BindingMismatch); }
+        || mutation
+            .snapshot()
+            .and_then(|v| v.group_metadata_digest())
+            .map(|v| v.value())
+            != Some(digest)
+    {
+        return Err(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
     match mutation.payload() {
         Some(CloudCanonicalPayload::Chat(chat))
-            if chat.style() == CloudCanonicalChatStyle::Group && chat.service() == CloudCanonicalService::IMessage => Ok((**chat).clone()),
+            if chat.style() == CloudCanonicalChatStyle::Group
+                && chat.service() == CloudCanonicalService::IMessage =>
+        {
+            Ok((**chat).clone())
+        }
         _ => Err(CloudSyncOutboundSafeCode::BindingMismatch),
     }
 }
@@ -2301,20 +2691,36 @@ fn cloud_sync_validate_attachment_group_proof(
     auth: &CloudSyncNativeAuthMetadata,
     proof: &CloudSyncAttachmentParentGroupProof,
 ) -> Result<(), CloudSyncOutboundSafeCode> {
-    use crate::cloud_sync_native_fetch::{CloudNativeProtectionScope, CloudNativeStream,
-        cloud_sync_unprotect_raw_envelope};
-    if std::time::Instant::now() >= proof.expires_at || proof.storage_directory != storage
-        || !cloud_sync_auth_identity_remains_exact(&proof.auth, auth,
-            &auth.account_fingerprint, &auth.protected_store_identity)
-    { return Err(CloudSyncOutboundSafeCode::InvalidScope); }
+    use crate::cloud_sync_native_fetch::{
+        cloud_sync_unprotect_raw_envelope, CloudNativeProtectionScope, CloudNativeStream,
+    };
+    if std::time::Instant::now() >= proof.expires_at
+        || proof.storage_directory != storage
+        || !cloud_sync_auth_identity_remains_exact(
+            &proof.auth,
+            auth,
+            &auth.account_fingerprint,
+            &auth.protected_store_identity,
+        )
+    {
+        return Err(CloudSyncOutboundSafeCode::InvalidScope);
+    }
     let actual_store = crate::cloud_sync_protector::protected_store_identity(storage.to_owned())
         .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
-    if actual_store != auth.protected_store_identity { return Err(CloudSyncOutboundSafeCode::InvalidScope); }
-    let scope = CloudNativeProtectionScope::new(auth.account_fingerprint.clone(), CloudNativeStream::Chats)
-        .map_err(|_| CloudSyncOutboundSafeCode::InvalidScope)?;
-    let envelope = cloud_sync_unprotect_raw_envelope(PathBuf::from(storage), &scope,
-        CloudNativeStream::Chats, proof.generation, &proof.source.protected_raw_envelope_reference)
-        .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
+    if actual_store != auth.protected_store_identity {
+        return Err(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let scope =
+        CloudNativeProtectionScope::new(auth.account_fingerprint.clone(), CloudNativeStream::Chats)
+            .map_err(|_| CloudSyncOutboundSafeCode::InvalidScope)?;
+    let envelope = cloud_sync_unprotect_raw_envelope(
+        PathBuf::from(storage),
+        &scope,
+        CloudNativeStream::Chats,
+        proof.generation,
+        &proof.source.protected_raw_envelope_reference,
+    )
+    .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
     let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(storage.to_owned())
         .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
     crate::cloud_sync_transient_bridge::bind_envelope(&proof.request, &envelope, &hasher)
@@ -2379,11 +2785,18 @@ impl CloudSyncPreparedMessageCreateOwner {
                 // A delayed prepared handle cannot submit using an expired,
                 // removed or account/session-stale retained Chat proof.
                 if let Some(proof) = attachment_parent_group_proofs.first() {
-                    let auth = cloud_sync_capture_auth_snapshot(&cloud_messages_client,
-                        proof.storage_directory.clone()).await
-                        .map_err(|_| CloudSyncOutboundSafeCode::NativeAuthUnavailable)?;
+                    let auth = cloud_sync_capture_auth_snapshot(
+                        &cloud_messages_client,
+                        proof.storage_directory.clone(),
+                    )
+                    .await
+                    .map_err(|_| CloudSyncOutboundSafeCode::NativeAuthUnavailable)?;
                     for bound in &attachment_parent_group_proofs {
-                        cloud_sync_validate_attachment_group_proof(&proof.storage_directory, &auth, bound)?;
+                        cloud_sync_validate_attachment_group_proof(
+                            &proof.storage_directory,
+                            &auth,
+                            bound,
+                        )?;
                     }
                 }
                 let outcomes = native_writer_permit
@@ -2476,8 +2889,7 @@ fn cloud_sync_bound_mutation_capability_is_valid(
     {
         return false;
     }
-    let fence_path =
-        PathBuf::from(storage_directory).join(CLOUD_SYNC_WRITER_MUTATION_FENCE_FILE);
+    let fence_path = PathBuf::from(storage_directory).join(CLOUD_SYNC_WRITER_MUTATION_FENCE_FILE);
     let metadata = match fs::symlink_metadata(&fence_path) {
         Ok(metadata) => metadata,
         Err(_) => return false,
@@ -2517,14 +2929,14 @@ fn cloud_sync_bound_mutation_capability_is_valid(
 
     match expected_reconciliation_binding_sha256.get() {
         Some(expected) => expected == &fence.reconciliation_binding_sha256,
-        None => match expected_reconciliation_binding_sha256
-            .set(fence.reconciliation_binding_sha256)
-        {
-            Ok(()) => true,
-            Err(binding) => expected_reconciliation_binding_sha256
-                .get()
-                .is_some_and(|expected| expected == &binding),
-        },
+        None => {
+            match expected_reconciliation_binding_sha256.set(fence.reconciliation_binding_sha256) {
+                Ok(()) => true,
+                Err(binding) => expected_reconciliation_binding_sha256
+                    .get()
+                    .is_some_and(|expected| expected == &binding),
+            }
+        }
     }
 }
 
@@ -3090,12 +3502,14 @@ pub async fn cloud_sync_stage_outbound_message(
     {
         Ok(binding) => binding,
         Err(error) => {
-            warn!("Cloud Sync writer preparation failed kind=message cause={}",
-                cloud_sync_writer_preparation_failure_code(&error));
+            warn!(
+                "Cloud Sync writer preparation failed kind=message cause={}",
+                cloud_sync_writer_preparation_failure_code(&error)
+            );
             log::logger().flush();
             return cloud_sync_outbound_failure_result(
                 CloudSyncOutboundSafeCode::NativeAuthUnavailable,
-            )
+            );
         }
     };
     let auth_after_preparation =
@@ -3180,12 +3594,14 @@ pub async fn cloud_sync_stage_outbound_chat(
     {
         Ok(binding) => binding,
         Err(error) => {
-            warn!("Cloud Sync writer preparation failed kind=chat cause={}",
-                cloud_sync_writer_preparation_failure_code(&error));
+            warn!(
+                "Cloud Sync writer preparation failed kind=chat cause={}",
+                cloud_sync_writer_preparation_failure_code(&error)
+            );
             log::logger().flush();
             return cloud_sync_outbound_failure_result(
                 CloudSyncOutboundSafeCode::NativeAuthUnavailable,
-            )
+            );
         }
     };
     let auth_after_preparation =
@@ -3391,14 +3807,22 @@ pub async fn cloud_sync_prepare_message_create(
             Ok(identity) => identity,
             Err(_) => return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidRequest),
         };
-    let attachment_parent_inputs: Vec<_> = inputs.iter()
-        .filter(|input| input.attachment_parent_context.is_some()).cloned().collect();
-    let attachment_parent_group_proofs = inputs.iter()
-        .filter_map(|input| input.attachment_parent_group_proof.clone()).collect();
+    let attachment_parent_inputs: Vec<_> = inputs
+        .iter()
+        .filter(|input| input.attachment_parent_context.is_some())
+        .cloned()
+        .collect();
+    let attachment_parent_group_proofs = inputs
+        .iter()
+        .filter_map(|input| input.attachment_parent_group_proof.clone())
+        .collect();
     let mut messages = Vec::with_capacity(inputs.len());
     for input in inputs {
         let opened = match cloud_sync_open_message_create_bound(
-            &storage_directory, &auth_after_preparation, &container_scoped_user_id, &input,
+            &storage_directory,
+            &auth_after_preparation,
+            &container_scoped_user_id,
+            &input,
         ) {
             Ok(opened) => opened,
             Err(code) => return cloud_sync_prepare_failure(code),
@@ -3458,8 +3882,13 @@ pub async fn cloud_sync_prepare_message_create(
             }
             for input in &attachment_parent_inputs {
                 if let Err(code) = cloud_sync_open_message_create_bound(
-                    &storage_directory, &auth_after_native_prepare, &container_scoped_user_id, input,
-                ) { return cloud_sync_prepare_failure(code); }
+                    &storage_directory,
+                    &auth_after_native_prepare,
+                    &container_scoped_user_id,
+                    input,
+                ) {
+                    return cloud_sync_prepare_failure(code);
+                }
             }
             let handle_binding_sha256 = cloud_sync_new_prepared_handle_binding_sha256();
             CloudSyncPreparedMessageCreateResult {
@@ -3722,24 +4151,47 @@ pub async fn cloud_sync_stage_outbound_attachment_parent(
     attachment_parent_group_proof: Option<CloudSyncAttachmentParentGroupProof>,
 ) -> CloudSyncProtectedOutboundStageResult {
     let storage = context.storage_directory.clone();
-    let auth = match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage.clone()).await {
+    let auth = match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage.clone()).await
+    {
         Ok(auth) => auth,
-        Err(_) => return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+        Err(_) => {
+            return cloud_sync_outbound_failure_result(
+                CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+            )
+        }
     };
     if cloud_sync_open_attachment_parent_source(&storage, &auth, &context).is_err() {
         return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::BindingMismatch);
     }
-    let binding = match cloud_messages_client.warm_message_writer_preparation_lookup_only().await {
+    let binding = match cloud_messages_client
+        .warm_message_writer_preparation_lookup_only()
+        .await
+    {
         Ok(binding) => binding,
-        Err(_) => return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+        Err(_) => {
+            return cloud_sync_outbound_failure_result(
+                CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+            )
+        }
     };
-    let after = match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage.clone()).await {
+    let after = match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage.clone()).await
+    {
         Ok(auth) => auth,
-        Err(_) => return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+        Err(_) => {
+            return cloud_sync_outbound_failure_result(
+                CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+            )
+        }
     };
-    if !cloud_sync_auth_identity_remains_exact(&auth, &after,
-        &context.account_fingerprint, &context.protected_store_identity)
-        || cloud_messages_client.validate_writer_preparation_binding(&binding).await.is_err()
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth,
+        &after,
+        &context.account_fingerprint,
+        &context.protected_store_identity,
+    ) || cloud_messages_client
+        .validate_writer_preparation_binding(&binding)
+        .await
+        .is_err()
     {
         return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::InvalidScope);
     }
@@ -3754,14 +4206,20 @@ pub async fn cloud_sync_stage_outbound_attachment_parent(
         }
     }
     match crate::cloud_sync_outbound::stage_outbound_attachment_parent_with_group(
-        PathBuf::from(storage), after.account_fingerprint,
-        binding.container_scoped_user_id().to_owned(), message_headers, &source,
+        PathBuf::from(storage),
+        after.account_fingerprint,
+        binding.container_scoped_user_id().to_owned(),
+        message_headers,
+        &source,
         attachment_parent_group_proof.as_ref().map(|v| &v.route),
     ) {
         Ok(stage) => CloudSyncProtectedOutboundStageResult {
-            stage: Some(cloud_sync_bridge_stage(stage)), failure: None,
+            stage: Some(cloud_sync_bridge_stage(stage)),
+            failure: None,
         },
-        Err(failure) => cloud_sync_outbound_failure_result(map_cloud_sync_outbound_failure(failure)),
+        Err(failure) => {
+            cloud_sync_outbound_failure_result(map_cloud_sync_outbound_failure(failure))
+        }
     }
 }
 
@@ -3770,7 +4228,10 @@ fn cloud_sync_open_attachment_parent_source(
     storage_directory: &str,
     auth: &CloudSyncNativeAuthMetadata,
     context: &CloudSyncNativeSendReceiptContext,
-) -> Result<crate::cloud_sync_ids_attachment_source::DecodedIdsAttachmentSource, CloudSyncOutboundSafeCode> {
+) -> Result<
+    crate::cloud_sync_ids_attachment_source::DecodedIdsAttachmentSource,
+    CloudSyncOutboundSafeCode,
+> {
     // Exact caller scope, not a context-supplied alternate directory. The
     // source helper also checks actual store identity, account, native session,
     // committed lease, wrapper hash/length, local source hash and receipt GUID.
@@ -3789,7 +4250,10 @@ fn cloud_sync_open_attachment_parent_source(
 // still use the exact existing validators; parent messages always retain the
 // source and original envelope together for readback.
 enum CloudSyncOpenedMessageCreate {
-    Ordinary { message: CloudMessage, record_name: String },
+    Ordinary {
+        message: CloudMessage,
+        record_name: String,
+    },
     AttachmentParent {
         parent: crate::cloud_sync_outbound::NativeOpenedAttachmentParent,
         source: crate::cloud_sync_ids_attachment_source::DecodedIdsAttachmentSource,
@@ -3797,21 +4261,37 @@ enum CloudSyncOpenedMessageCreate {
 }
 impl CloudSyncOpenedMessageCreate {
     fn message(&self) -> &CloudMessage {
-        match self { Self::Ordinary { message, .. } => message,
-            Self::AttachmentParent { parent, .. } => parent.message() }
+        match self {
+            Self::Ordinary { message, .. } => message,
+            Self::AttachmentParent { parent, .. } => parent.message(),
+        }
     }
     fn record_name(&self) -> &str {
-        match self { Self::Ordinary { record_name, .. } => record_name,
-            Self::AttachmentParent { parent, .. } => parent.server_record_name() }
-    }
-    fn verify_readback(&self, actual: CloudMessage, digest: &str)
-        -> Result<String, crate::cloud_sync_outbound::CloudSyncOutboundFailure>
-    {
         match self {
-            Self::Ordinary { message, record_name } =>
-                crate::cloud_sync_outbound::verify_message_readback(actual, message, record_name, digest),
-            Self::AttachmentParent { parent, source } =>
-                crate::cloud_sync_outbound::verify_attachment_parent_readback(actual, parent, digest, source),
+            Self::Ordinary { record_name, .. } => record_name,
+            Self::AttachmentParent { parent, .. } => parent.server_record_name(),
+        }
+    }
+    fn verify_readback(
+        &self,
+        actual: CloudMessage,
+        digest: &str,
+    ) -> Result<String, crate::cloud_sync_outbound::CloudSyncOutboundFailure> {
+        match self {
+            Self::Ordinary {
+                message,
+                record_name,
+            } => crate::cloud_sync_outbound::verify_message_readback(
+                actual,
+                message,
+                record_name,
+                digest,
+            ),
+            Self::AttachmentParent { parent, source } => {
+                crate::cloud_sync_outbound::verify_attachment_parent_readback(
+                    actual, parent, digest, source,
+                )
+            }
         }
     }
 }
@@ -3832,46 +4312,79 @@ fn cloud_sync_open_message_create_bound(
         return Err(CloudSyncOutboundSafeCode::BindingMismatch);
     }
     crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
-        storage.clone(), &input.protected_lease_reference,
+        storage.clone(),
+        &input.protected_lease_reference,
         std::slice::from_ref(&input.protected_payload_reference),
-    ).map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
+    )
+    .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
     let (opened, kind) = match &input.attachment_parent_context {
         Some(context) => {
-            let source = cloud_sync_open_attachment_parent_source(storage_directory, auth, context)?;
+            let source =
+                cloud_sync_open_attachment_parent_source(storage_directory, auth, context)?;
             if let Some(proof) = &input.attachment_parent_group_proof {
                 cloud_sync_validate_attachment_group_proof(storage_directory, auth, proof)?;
             }
-            let parent = crate::cloud_sync_outbound::open_staged_outbound_attachment_parent_with_group(
-                storage, auth.account_fingerprint.clone(), &input.protected_payload_reference,
-                &input.payload_sha256, &source,
-                input.attachment_parent_group_proof.as_ref().map(|v| &v.route),
-            ).map_err(map_cloud_sync_outbound_failure)?;
-            (CloudSyncOpenedMessageCreate::AttachmentParent { parent, source }, CloudCanonicalEntityKind::Message)
+            let parent =
+                crate::cloud_sync_outbound::open_staged_outbound_attachment_parent_with_group(
+                    storage,
+                    auth.account_fingerprint.clone(),
+                    &input.protected_payload_reference,
+                    &input.payload_sha256,
+                    &source,
+                    input
+                        .attachment_parent_group_proof
+                        .as_ref()
+                        .map(|v| &v.route),
+                )
+                .map_err(map_cloud_sync_outbound_failure)?;
+            (
+                CloudSyncOpenedMessageCreate::AttachmentParent { parent, source },
+                CloudCanonicalEntityKind::Message,
+            )
         }
         None => {
             let message = crate::cloud_sync_outbound::open_staged_outbound_message(
-                storage.clone(), auth.account_fingerprint.clone(),
-                &input.protected_payload_reference, &input.payload_sha256,
-            ).map_err(map_cloud_sync_outbound_failure)?;
+                storage.clone(),
+                auth.account_fingerprint.clone(),
+                &input.protected_payload_reference,
+                &input.payload_sha256,
+            )
+            .map_err(map_cloud_sync_outbound_failure)?;
             let kind = crate::cloud_sync_outbound::outbound_entity_kind(&message)
                 .map_err(map_cloud_sync_outbound_failure)?;
             let record_name = crate::cloud_sync_outbound::open_staged_server_record_name(
-                storage, auth.account_fingerprint.clone(),
-                &input.protected_server_record_reference, &input.server_record_id_hash,
-            ).map_err(map_cloud_sync_outbound_failure)?;
-            (CloudSyncOpenedMessageCreate::Ordinary { message, record_name }, kind)
+                storage,
+                auth.account_fingerprint.clone(),
+                &input.protected_server_record_reference,
+                &input.server_record_id_hash,
+            )
+            .map_err(map_cloud_sync_outbound_failure)?;
+            (
+                CloudSyncOpenedMessageCreate::Ordinary {
+                    message,
+                    record_name,
+                },
+                kind,
+            )
         }
     };
-    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.to_owned())
-        .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
-    let logical_hash = hasher.canonical_entity_key_hash(kind, &opened.message().guid)
+    let hasher =
+        crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.to_owned())
+            .map_err(|_| CloudSyncOutboundSafeCode::ProtectedStorage)?;
+    let logical_hash = hasher
+        .canonical_entity_key_hash(kind, &opened.message().guid)
         .map_err(|_| CloudSyncOutboundSafeCode::BindingMismatch)?;
     if logical_hash.value() != input.logical_entity_key_hash
         || hasher.server_record_id_hash(opened.record_name()) != input.server_record_id_hash
-    { return Err(CloudSyncOutboundSafeCode::BindingMismatch); }
+    {
+        return Err(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
     crate::cloud_sync_outbound::verify_deterministic_message_record_name(
-        &opened.message().guid, container_scoped_user_id, opened.record_name(),
-    ).map_err(map_cloud_sync_outbound_failure)?;
+        &opened.message().guid,
+        container_scoped_user_id,
+        opened.record_name(),
+    )
+    .map_err(map_cloud_sync_outbound_failure)?;
     Ok(opened)
 }
 
@@ -3881,23 +4394,65 @@ mod cloud_sync_attachment_parent_create_tests {
     use crate::cloud_sync_outbound::attachment_parent_test_support::{headers, source};
 
     fn group_mutation(opaque_id: &str) -> crate::cloud_sync_canonical_dto::CloudCanonicalMutation {
-        use crate::cloud_sync_canonical_converter::{CloudCanonicalConversionContext,
-            CloudCanonicalConversionOutcome, CloudRawRecordPresence, convert_chat};
+        use crate::cloud_sync_canonical_converter::{
+            convert_chat, CloudCanonicalConversionContext, CloudCanonicalConversionOutcome,
+            CloudRawRecordPresence,
+        };
         use crate::cloud_sync_canonical_dto::CloudCanonicalHash;
-        use rustpush::{cloud_messages::{CloudChat, CloudParticipant}, cloudkit_proto::{Record, record::{Field, field}}};
-        let hasher = crate::cloud_sync_semantic_identity::CloudSemanticIdentifierHasher::new([7; 32]).unwrap();
+        use rustpush::{
+            cloud_messages::{CloudChat, CloudParticipant},
+            cloudkit_proto::{
+                record::{field, Field},
+                Record,
+            },
+        };
+        let hasher =
+            crate::cloud_sync_semantic_identity::CloudSemanticIdentifierHasher::new([7; 32])
+                .unwrap();
         let hash = |c: &str| CloudCanonicalHash::new(c.repeat(43)).unwrap();
-        let context = CloudCanonicalConversionContext::new(&hasher, hash("a"), hash("b"), 7,
-            hash("c"), "chat-record", Some("etag"), None, None, "obcs2.fixture.protected");
-        let record = Record { record_field: ["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts"]
-            .into_iter().map(|name| Field { identifier: Some(field::Identifier { name: Some(name.into()) }),
-                value: Some(field::Value::default()), ..Default::default() }).collect(), ..Default::default() };
+        let context = CloudCanonicalConversionContext::new(
+            &hasher,
+            hash("a"),
+            hash("b"),
+            7,
+            hash("c"),
+            "chat-record",
+            Some("etag"),
+            None,
+            None,
+            "obcs2.fixture.protected",
+        );
+        let record = Record {
+            record_field: ["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts"]
+                .into_iter()
+                .map(|name| Field {
+                    identifier: Some(field::Identifier {
+                        name: Some(name.into()),
+                    }),
+                    value: Some(field::Value::default()),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
         let presence = CloudRawRecordPresence::extract(&record).unwrap();
-        let chat = CloudChat { guid: "iMessage;+;restored-chat".into(), chat_identifier: "restored-chat".into(),
-            group_id: opaque_id.into(), original_group_id: "original-group-id".into(),
-            service_name: "iMessage".into(), style: 43,
-            participants: vec![CloudParticipant { uri: "mailto:peer@example.invalid".into() },
-                CloudParticipant { uri: "tel:+15555550100".into() }], ..Default::default() };
+        let chat = CloudChat {
+            guid: "iMessage;+;restored-chat".into(),
+            chat_identifier: "restored-chat".into(),
+            group_id: opaque_id.into(),
+            original_group_id: "original-group-id".into(),
+            service_name: "iMessage".into(),
+            style: 43,
+            participants: vec![
+                CloudParticipant {
+                    uri: "mailto:peer@example.invalid".into(),
+                },
+                CloudParticipant {
+                    uri: "tel:+15555550100".into(),
+                },
+            ],
+            ..Default::default()
+        };
         match convert_chat(&context, &presence, &chat) {
             CloudCanonicalConversionOutcome::Ready(value) => *value,
             _ => panic!("synthetic group conversion failed"),
@@ -3905,24 +4460,45 @@ mod cloud_sync_attachment_parent_create_tests {
     }
 
     fn group_proof_fixture(storage: &str) -> CloudSyncAttachmentParentGroupProof {
-        let auth = CloudSyncNativeAuthMetadata { account_fingerprint: "A".repeat(43),
+        let auth = CloudSyncNativeAuthMetadata {
+            account_fingerprint: "A".repeat(43),
             native_session_id: "N".repeat(43),
-            protected_store_identity: crate::cloud_sync_protector::protected_store_identity(storage.into()).unwrap() };
+            protected_store_identity: crate::cloud_sync_protector::protected_store_identity(
+                storage.into(),
+            )
+            .unwrap(),
+        };
         let source = super::super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput {
-            change_id_hash: "C".repeat(43), record_id_hash: "R".repeat(43), etag_hash: "E".repeat(43),
-            payload_sha256: "a".repeat(64), payload_length: Some(20), server_modified_at_millis: None,
+            change_id_hash: "C".repeat(43),
+            record_id_hash: "R".repeat(43),
+            etag_hash: "E".repeat(43),
+            payload_sha256: "a".repeat(64),
+            payload_length: Some(20),
+            server_modified_at_millis: None,
             protected_raw_envelope_reference: format!("obcs2.ref.{}", "P".repeat(43)),
         };
-        let request = cloud_sync_attachment_group_decode_request(storage, &auth, 7, &source).unwrap();
-        CloudSyncAttachmentParentGroupProof { storage_directory: storage.into(), auth: Arc::new(auth), generation: 7, source, request,
+        let request =
+            cloud_sync_attachment_group_decode_request(storage, &auth, 7, &source).unwrap();
+        CloudSyncAttachmentParentGroupProof {
+            storage_directory: storage.into(),
+            auth: Arc::new(auth),
+            generation: 7,
+            source,
+            request,
             route: crate::cloud_sync_outbound::attachment_parent_test_support::group(),
-            expires_at: std::time::Instant::now() + Duration::from_secs(300) }
+            expires_at: std::time::Instant::now() + Duration::from_secs(300),
+        }
     }
 
     #[test]
     fn group_parent_proof_selects_native_route_only_for_exact_generation_and_digest() {
         let mutation = group_mutation("opaque-CloudKit-chat-id");
-        let digest = mutation.snapshot().unwrap().group_metadata_digest().unwrap().value();
+        let digest = mutation
+            .snapshot()
+            .unwrap()
+            .group_metadata_digest()
+            .unwrap()
+            .value();
         let route = cloud_sync_attachment_group_route(&mutation, 7, digest).unwrap();
         assert_eq!(route.group_id(), "opaque-CloudKit-chat-id");
         assert_ne!(route.guid(), route.group_id());
@@ -3932,14 +4508,33 @@ mod cloud_sync_attachment_parent_create_tests {
         let different = group_mutation("different-opaque-id");
         assert!(cloud_sync_attachment_group_route(&different, 7, digest).is_err());
         // Feed the real converter result into the integrated parent encoder/open.
-        use crate::cloud_sync_outbound::{attachment_parent_test_support::{group_headers, group_source},
-            encode_outbound_attachment_parent_with_group, decode_outbound_attachment_parent_with_group};
+        use crate::cloud_sync_outbound::{
+            attachment_parent_test_support::{group_headers, group_source},
+            decode_outbound_attachment_parent_with_group,
+            encode_outbound_attachment_parent_with_group,
+        };
         let source = group_source();
-        let bytes = encode_outbound_attachment_parent_with_group(group_headers(), "record", &source, Some(&route)).unwrap();
-        assert!(decode_outbound_attachment_parent_with_group(&bytes, &source, Some(&route)).is_ok());
-        let other_digest = different.snapshot().unwrap().group_metadata_digest().unwrap().value();
+        let bytes = encode_outbound_attachment_parent_with_group(
+            group_headers(),
+            "record",
+            &source,
+            Some(&route),
+        )
+        .unwrap();
+        assert!(
+            decode_outbound_attachment_parent_with_group(&bytes, &source, Some(&route)).is_ok()
+        );
+        let other_digest = different
+            .snapshot()
+            .unwrap()
+            .group_metadata_digest()
+            .unwrap()
+            .value();
         let other_route = cloud_sync_attachment_group_route(&different, 7, other_digest).unwrap();
-        assert!(decode_outbound_attachment_parent_with_group(&bytes, &source, Some(&other_route)).is_err());
+        assert!(
+            decode_outbound_attachment_parent_with_group(&bytes, &source, Some(&other_route))
+                .is_err()
+        );
     }
 
     #[test]
@@ -3949,27 +4544,50 @@ mod cloud_sync_attachment_parent_create_tests {
         let mut proof = group_proof_fixture(storage);
         // A structurally valid request and route are not enough. The raw
         // protected source must still exist and authenticate on every use.
-        assert!(matches!(cloud_sync_validate_attachment_group_proof(storage, &proof.auth, &proof),
-            Err(CloudSyncOutboundSafeCode::ProtectedStorage)));
+        assert!(matches!(
+            cloud_sync_validate_attachment_group_proof(storage, &proof.auth, &proof),
+            Err(CloudSyncOutboundSafeCode::ProtectedStorage)
+        ));
         proof.expires_at = std::time::Instant::now();
-        assert!(matches!(cloud_sync_validate_attachment_group_proof(storage, &proof.auth, &proof),
-            Err(CloudSyncOutboundSafeCode::InvalidScope)));
+        assert!(matches!(
+            cloud_sync_validate_attachment_group_proof(storage, &proof.auth, &proof),
+            Err(CloudSyncOutboundSafeCode::InvalidScope)
+        ));
         proof.expires_at = std::time::Instant::now() + Duration::from_secs(300);
         for field in 0..3 {
-            let mut auth = CloudSyncNativeAuthMetadata { account_fingerprint: proof.auth.account_fingerprint.clone(),
-                native_session_id: proof.auth.native_session_id.clone(), protected_store_identity: proof.auth.protected_store_identity.clone() };
-            match field { 0 => auth.account_fingerprint = "B".repeat(43),
-                1 => auth.native_session_id = "M".repeat(43), _ => auth.protected_store_identity = "T".repeat(43) }
-            assert!(matches!(cloud_sync_validate_attachment_group_proof(storage, &auth, &proof),
-                Err(CloudSyncOutboundSafeCode::InvalidScope)));
+            let mut auth = CloudSyncNativeAuthMetadata {
+                account_fingerprint: proof.auth.account_fingerprint.clone(),
+                native_session_id: proof.auth.native_session_id.clone(),
+                protected_store_identity: proof.auth.protected_store_identity.clone(),
+            };
+            match field {
+                0 => auth.account_fingerprint = "B".repeat(43),
+                1 => auth.native_session_id = "M".repeat(43),
+                _ => auth.protected_store_identity = "T".repeat(43),
+            }
+            assert!(matches!(
+                cloud_sync_validate_attachment_group_proof(storage, &auth, &proof),
+                Err(CloudSyncOutboundSafeCode::InvalidScope)
+            ));
         }
-        assert!(matches!(cloud_sync_validate_attachment_group_proof("alternate-storage", &proof.auth, &proof),
-            Err(CloudSyncOutboundSafeCode::InvalidScope)));
-        assert!(cloud_sync_attachment_group_decode_request(storage, &proof.auth, 0, &proof.source).is_err());
+        assert!(matches!(
+            cloud_sync_validate_attachment_group_proof("alternate-storage", &proof.auth, &proof),
+            Err(CloudSyncOutboundSafeCode::InvalidScope)
+        ));
+        assert!(
+            cloud_sync_attachment_group_decode_request(storage, &proof.auth, 0, &proof.source)
+                .is_err()
+        );
         let mut malformed = proof.source.clone();
         malformed.etag_hash.clear();
-        assert!(cloud_sync_attachment_group_decode_request(storage, &proof.auth, 7, &malformed).is_err());
-        assert_eq!(format!("{proof:?}"), "CloudSyncAttachmentParentGroupProof(redacted)");
+        assert!(
+            cloud_sync_attachment_group_decode_request(storage, &proof.auth, 7, &malformed)
+                .is_err()
+        );
+        assert_eq!(
+            format!("{proof:?}"),
+            "CloudSyncAttachmentParentGroupProof(redacted)"
+        );
     }
 
     #[test]
@@ -3978,67 +4596,121 @@ mod cloud_sync_attachment_parent_create_tests {
         let storage = directory.path().to_str().unwrap();
         let proof = group_proof_fixture(storage);
         let mut input = CloudSyncPreparedMessageCreateInput {
-            local_operation_id: crate::cloud_sync_outbound_chat::initial_chat_create_operation_id(&proof.auth.account_fingerprint, &"L".repeat(43)).unwrap(),
+            local_operation_id: crate::cloud_sync_outbound_chat::initial_chat_create_operation_id(
+                &proof.auth.account_fingerprint,
+                &"L".repeat(43),
+            )
+            .unwrap(),
             logical_entity_key_hash: "L".repeat(43),
             protected_lease_reference: format!("obcs2.lease.{}", "a".repeat(32)),
-            protected_payload_reference: format!("obcs2.ref.{}", "P".repeat(43)), payload_sha256: "a".repeat(64),
-            protected_server_record_reference: format!("obcs2.ref.{}", "P".repeat(43)), server_record_id_hash: "R".repeat(43),
+            protected_payload_reference: format!("obcs2.ref.{}", "P".repeat(43)),
+            payload_sha256: "a".repeat(64),
+            protected_server_record_reference: format!("obcs2.ref.{}", "P".repeat(43)),
+            server_record_id_hash: "R".repeat(43),
             apple_operation_uuid: "AAAAAAAA-BBBB-4CCC-8DDD-000000000001".into(),
-            attachment_parent_context: None, attachment_parent_group_proof: Some(proof.clone()),
+            attachment_parent_context: None,
+            attachment_parent_group_proof: Some(proof.clone()),
         };
         let request = "11111111-2222-4ABC-8DEF-555555555555";
-        assert!(matches!(cloud_sync_open_message_create_bound(storage, &proof.auth, "container-user", &input),
-            Err(CloudSyncOutboundSafeCode::InvalidRequest)));
-        assert!(!is_valid_cloud_sync_chat_create_input(&proof.auth.account_fingerprint, request, &input));
+        assert!(matches!(
+            cloud_sync_open_message_create_bound(storage, &proof.auth, "container-user", &input),
+            Err(CloudSyncOutboundSafeCode::InvalidRequest)
+        ));
+        assert!(!is_valid_cloud_sync_chat_create_input(
+            &proof.auth.account_fingerprint,
+            request,
+            &input
+        ));
         input.attachment_parent_group_proof = None;
-        assert!(is_valid_cloud_sync_chat_create_input(&proof.auth.account_fingerprint, request, &input));
-        input.local_operation_id = crate::cloud_sync_outbound_attachment::initial_attachment_create_operation_id(
-            &proof.auth.account_fingerprint, &input.logical_entity_key_hash).unwrap();
-        assert!(is_valid_cloud_sync_attachment_create_input(&proof.auth.account_fingerprint, request, &input));
+        assert!(is_valid_cloud_sync_chat_create_input(
+            &proof.auth.account_fingerprint,
+            request,
+            &input
+        ));
+        input.local_operation_id =
+            crate::cloud_sync_outbound_attachment::initial_attachment_create_operation_id(
+                &proof.auth.account_fingerprint,
+                &input.logical_entity_key_hash,
+            )
+            .unwrap();
+        assert!(is_valid_cloud_sync_attachment_create_input(
+            &proof.auth.account_fingerprint,
+            request,
+            &input
+        ));
         input.attachment_parent_group_proof = Some(proof.clone());
-        assert!(!is_valid_cloud_sync_attachment_create_input(&proof.auth.account_fingerprint, request, &input));
+        assert!(!is_valid_cloud_sync_attachment_create_input(
+            &proof.auth.account_fingerprint,
+            request,
+            &input
+        ));
         input.attachment_parent_group_proof = None;
-        assert!(matches!(cloud_sync_open_message_create_bound(storage, &proof.auth, "container-user", &input),
-            Err(CloudSyncOutboundSafeCode::ProtectedStorage)));
+        assert!(matches!(
+            cloud_sync_open_message_create_bound(storage, &proof.auth, "container-user", &input),
+            Err(CloudSyncOutboundSafeCode::ProtectedStorage)
+        ));
     }
 
     #[test]
     fn protected_parent_create_requires_exact_context_and_both_committed_leases() {
         let directory = tempfile::tempdir().unwrap();
         let storage = directory.path().to_string_lossy().into_owned();
-        let (message, guids) = crate::cloud_sync_ids_attachment_source::message_inst_from_decoded_source(&source()).unwrap();
+        let (message, guids) =
+            crate::cloud_sync_ids_attachment_source::message_inst_from_decoded_source(&source())
+                .unwrap();
         let source_stage = crate::cloud_sync_ids_attachment_source::stage_ids_attachment_source(
-            directory.path().to_path_buf(), "A".repeat(43), &"a".repeat(64), &message, &guids,
-        ).unwrap();
+            directory.path().to_path_buf(),
+            "A".repeat(43),
+            &"a".repeat(64),
+            &message,
+            &guids,
+        )
+        .unwrap();
         let context = CloudSyncNativeSendReceiptContext {
-            storage_directory: storage.clone(), guid_hash: cloud_sync_local_send_guid_hash(&message.id),
-            account_fingerprint: "A".repeat(43), native_session_id: "N".repeat(43),
-            protected_store_identity: crate::cloud_sync_protector::protected_store_identity(storage.clone()).unwrap(),
+            storage_directory: storage.clone(),
+            guid_hash: cloud_sync_local_send_guid_hash(&message.id),
+            account_fingerprint: "A".repeat(43),
+            native_session_id: "N".repeat(43),
+            protected_store_identity: crate::cloud_sync_protector::protected_store_identity(
+                storage.clone(),
+            )
+            .unwrap(),
             source_binding: Some(CloudSyncNativeSendSourceBinding {
                 kind: None,
-                source_sha256: "a".repeat(64), protected_reference: source_stage.protected_reference.clone(),
-                lease_reference: source_stage.lease_reference.clone(), payload_sha256: source_stage.payload_sha256.clone(),
+                source_sha256: "a".repeat(64),
+                protected_reference: source_stage.protected_reference.clone(),
+                lease_reference: source_stage.lease_reference.clone(),
+                payload_sha256: source_stage.payload_sha256.clone(),
                 payload_length: source_stage.payload_length,
             }),
         };
         let auth = CloudSyncNativeAuthMetadata {
-            account_fingerprint: context.account_fingerprint.clone(), native_session_id: context.native_session_id.clone(),
+            account_fingerprint: context.account_fingerprint.clone(),
+            native_session_id: context.native_session_id.clone(),
             protected_store_identity: context.protected_store_identity.clone(),
         };
         assert!(cloud_sync_open_attachment_parent_source(&storage, &auth, &context).is_err());
         crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
-            directory.path().to_path_buf(), &source_stage.lease_reference,
+            directory.path().to_path_buf(),
+            &source_stage.lease_reference,
             std::slice::from_ref(&source_stage.protected_reference),
-        ).unwrap();
+        )
+        .unwrap();
         let decoded = cloud_sync_open_attachment_parent_source(&storage, &auth, &context).unwrap();
         let stage = crate::cloud_sync_outbound::stage_outbound_attachment_parent(
-            directory.path().to_path_buf(), context.account_fingerprint.clone(),
-            "container-user".to_owned(), headers(), &decoded,
-        ).unwrap();
+            directory.path().to_path_buf(),
+            context.account_fingerprint.clone(),
+            "container-user".to_owned(),
+            headers(),
+            &decoded,
+        )
+        .unwrap();
         let input = CloudSyncPreparedMessageCreateInput {
             local_operation_id: crate::cloud_sync_outbound::initial_message_create_operation_id(
-                &context.account_fingerprint, &stage.logical_entity_key_hash,
-            ).unwrap(),
+                &context.account_fingerprint,
+                &stage.logical_entity_key_hash,
+            )
+            .unwrap(),
             logical_entity_key_hash: stage.logical_entity_key_hash,
             protected_lease_reference: stage.lease_reference,
             protected_payload_reference: stage.protected_payload_reference,
@@ -4049,17 +4721,33 @@ mod cloud_sync_attachment_parent_create_tests {
             attachment_parent_context: Some(context.clone()),
             attachment_parent_group_proof: None,
         };
-        assert!(cloud_sync_open_message_create_bound(&storage, &auth, "container-user", &input).is_err());
+        assert!(
+            cloud_sync_open_message_create_bound(&storage, &auth, "container-user", &input)
+                .is_err()
+        );
         crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
-            directory.path().to_path_buf(), &input.protected_lease_reference,
+            directory.path().to_path_buf(),
+            &input.protected_lease_reference,
             std::slice::from_ref(&input.protected_payload_reference),
-        ).unwrap();
-        let opened = cloud_sync_open_message_create_bound(&storage, &auth, "container-user", &input).unwrap();
+        )
+        .unwrap();
+        let opened =
+            cloud_sync_open_message_create_bound(&storage, &auth, "container-user", &input)
+                .unwrap();
         assert_eq!(opened.message().msg_proto.0.text.as_deref(), Some("A😀 B "));
-        assert_eq!(opened.verify_readback(opened.message().clone(), &input.payload_sha256).unwrap(), input.payload_sha256);
-        assert!(cloud_sync_open_message_create_bound(&storage, &auth, "other-user", &input).is_err());
+        assert_eq!(
+            opened
+                .verify_readback(opened.message().clone(), &input.payload_sha256)
+                .unwrap(),
+            input.payload_sha256
+        );
+        assert!(
+            cloud_sync_open_message_create_bound(&storage, &auth, "other-user", &input).is_err()
+        );
         let alternate_storage = format!("{storage}-different");
-        assert!(cloud_sync_open_attachment_parent_source(&alternate_storage, &auth, &context).is_err());
+        assert!(
+            cloud_sync_open_attachment_parent_source(&alternate_storage, &auth, &context).is_err()
+        );
         for field in 0..10 {
             let mut wrong = input.clone();
             let c = wrong.attachment_parent_context.as_mut().unwrap();
@@ -4073,39 +4761,81 @@ mod cloud_sync_attachment_parent_create_tests {
                 6 => c.source_binding.as_mut().unwrap().payload_sha256 = "b".repeat(64),
                 7 => c.source_binding.as_mut().unwrap().source_sha256 = "b".repeat(64),
                 8 => c.source_binding.as_mut().unwrap().payload_length += 1,
-                _ => c.source_binding.as_mut().unwrap().lease_reference = input.protected_lease_reference.clone(),
+                _ => {
+                    c.source_binding.as_mut().unwrap().lease_reference =
+                        input.protected_lease_reference.clone()
+                }
             }
-            assert!(cloud_sync_open_message_create_bound(&storage, &auth, "container-user", &wrong).is_err());
+            assert!(cloud_sync_open_message_create_bound(
+                &storage,
+                &auth,
+                "container-user",
+                &wrong
+            )
+            .is_err());
         }
         let mut unbound = input.clone();
         unbound.attachment_parent_context = None;
-        assert!(cloud_sync_open_message_create_bound(&storage, &auth, "container-user", &unbound).is_err());
+        assert!(
+            cloud_sync_open_message_create_bound(&storage, &auth, "container-user", &unbound)
+                .is_err()
+        );
         let inventory = cloud_sync_inspect_attachment_sources_bound(&context, &auth).unwrap();
         assert_eq!(inventory.len(), 2);
         assert_eq!(inventory[0].original_attachment_guid, "original-A");
-        assert_eq!(inventory[1].reflected_attachment_guid, "parent-fixture-guid_7");
+        assert_eq!(
+            inventory[1].reflected_attachment_guid,
+            "parent-fixture-guid_7"
+        );
         // Reopen has not allocated a new parent, changed identity or consumed
         // the source lease. Recovery keeps the original protected reference.
-        let reopened = cloud_sync_open_message_create_bound(&storage, &auth, "container-user", &input).unwrap();
+        let reopened =
+            cloud_sync_open_message_create_bound(&storage, &auth, "container-user", &input)
+                .unwrap();
         assert_eq!(opened.record_name(), reopened.record_name());
         assert!(cloud_sync_open_attachment_parent_source(&storage, &auth, &context).is_ok());
-        assert_eq!(format!("{context:?}"), "CloudSyncNativeSendReceiptContext(redacted)");
+        assert_eq!(
+            format!("{context:?}"),
+            "CloudSyncNativeSendReceiptContext(redacted)"
+        );
 
         let request = "11111111-2222-4ABC-8DEF-555555555555";
         let mut other_kind = input.clone();
-        other_kind.local_operation_id = crate::cloud_sync_outbound_chat::initial_chat_create_operation_id(
-            &context.account_fingerprint, &input.logical_entity_key_hash,
-        ).unwrap();
-        assert!(!is_valid_cloud_sync_chat_create_input(&context.account_fingerprint, request, &other_kind));
+        other_kind.local_operation_id =
+            crate::cloud_sync_outbound_chat::initial_chat_create_operation_id(
+                &context.account_fingerprint,
+                &input.logical_entity_key_hash,
+            )
+            .unwrap();
+        assert!(!is_valid_cloud_sync_chat_create_input(
+            &context.account_fingerprint,
+            request,
+            &other_kind
+        ));
         other_kind.attachment_parent_context = None;
-        assert!(is_valid_cloud_sync_chat_create_input(&context.account_fingerprint, request, &other_kind));
+        assert!(is_valid_cloud_sync_chat_create_input(
+            &context.account_fingerprint,
+            request,
+            &other_kind
+        ));
         other_kind.attachment_parent_context = Some(context.clone());
-        other_kind.local_operation_id = crate::cloud_sync_outbound_attachment::initial_attachment_create_operation_id(
-            &context.account_fingerprint, &input.logical_entity_key_hash,
-        ).unwrap();
-        assert!(!is_valid_cloud_sync_attachment_create_input(&context.account_fingerprint, request, &other_kind));
+        other_kind.local_operation_id =
+            crate::cloud_sync_outbound_attachment::initial_attachment_create_operation_id(
+                &context.account_fingerprint,
+                &input.logical_entity_key_hash,
+            )
+            .unwrap();
+        assert!(!is_valid_cloud_sync_attachment_create_input(
+            &context.account_fingerprint,
+            request,
+            &other_kind
+        ));
         other_kind.attachment_parent_context = None;
-        assert!(is_valid_cloud_sync_attachment_create_input(&context.account_fingerprint, request, &other_kind));
+        assert!(is_valid_cloud_sync_attachment_create_input(
+            &context.account_fingerprint,
+            request,
+            &other_kind
+        ));
     }
 }
 
@@ -4888,15 +5618,25 @@ mod cloud_sync_writer_mutation_capability_tests {
         let directory = tempfile::tempdir().unwrap();
         let token = "a".repeat(64);
         let binding = "d".repeat(64);
-        let fence_path = write_valid_fence(directory.path(), &token,
-            "account-fingerprint", "protected-store", &binding);
+        let fence_path = write_valid_fence(
+            directory.path(),
+            &token,
+            "account-fingerprint",
+            "protected-store",
+            &binding,
+        );
         let original_fence = fs::read(&fence_path).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let handle = test_handle(directory.path(), calls.clone(), None, &binding);
-        let failed = cloud_sync_consume_prepared_message_create_with_hasher(
-            &handle, token.clone(), |_| Err(()),
-        ).await;
-        assert_eq!(failed.failure, Some(CloudSyncOutboundSafeCode::ProtectedStorage));
+        let failed =
+            cloud_sync_consume_prepared_message_create_with_hasher(&handle, token.clone(), |_| {
+                Err(())
+            })
+            .await;
+        assert_eq!(
+            failed.failure,
+            Some(CloudSyncOutboundSafeCode::ProtectedStorage)
+        );
         assert!(handle.prepared.lock().await.is_some());
         assert!(cloud_sync_release_prepared_message_create(&handle).await);
         assert!(handle.prepared.lock().await.is_none());
@@ -4904,7 +5644,10 @@ mod cloud_sync_writer_mutation_capability_tests {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert_eq!(fs::read(&fence_path).unwrap(), original_fence);
         let rejected = consume_test_handle(&handle, token).await;
-        assert_eq!(rejected.failure, Some(CloudSyncOutboundSafeCode::AlreadyConsumed));
+        assert_eq!(
+            rejected.failure,
+            Some(CloudSyncOutboundSafeCode::AlreadyConsumed)
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert_eq!(fs::read(&fence_path).unwrap(), original_fence);
     }
@@ -4914,8 +5657,13 @@ mod cloud_sync_writer_mutation_capability_tests {
         let directory = tempfile::tempdir().unwrap();
         let token = "a".repeat(64);
         let binding = "d".repeat(64);
-        let fence_path = write_valid_fence(directory.path(), &token,
-            "account-fingerprint", "protected-store", &binding);
+        let fence_path = write_valid_fence(
+            directory.path(),
+            &token,
+            "account-fingerprint",
+            "protected-store",
+            &binding,
+        );
         let original_fence = fs::read(&fence_path).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let handle = test_handle(directory.path(), calls.clone(), None, &binding);
@@ -5190,7 +5938,10 @@ pub async fn cloud_sync_reconcile_message_create(
     let container_scoped_user_id = writer_binding.container_scoped_user_id().to_owned();
 
     let opened = match cloud_sync_open_message_create_bound(
-        &storage_directory, &auth_after_preparation, &container_scoped_user_id, &input,
+        &storage_directory,
+        &auth_after_preparation,
+        &container_scoped_user_id,
+        &input,
     ) {
         Ok(opened) => opened,
         Err(code) => return cloud_sync_reconcile_failure(code),
@@ -5210,9 +5961,15 @@ pub async fn cloud_sync_reconcile_message_create(
         .await
     {
         Ok(CloudMessageRecordLookup::Found(message, receipt)) => {
-            let differences = crate::cloud_sync_outbound::message_readback_differences(&expected_message, &message);
+            let differences = crate::cloud_sync_outbound::message_readback_differences(
+                &expected_message,
+                &message,
+            );
             if !differences.is_empty() {
-                warn!("Cloud Sync message readback differing_fields={}", differences.join(","));
+                warn!(
+                    "Cloud Sync message readback differing_fields={}",
+                    differences.join(",")
+                );
             }
             let receipt_server_record_id_hash = hasher.server_record_id_hash(receipt.record_name());
             let receipt_etag_hash = hasher
@@ -5268,8 +6025,13 @@ pub async fn cloud_sync_reconcile_message_create(
         // Its storage_directory was compared to the passed directory before
         // lookup and the immutable context has not changed across that await.
         if let Err(code) = cloud_sync_open_message_create_bound(
-            &context.storage_directory, &auth_after_lookup, &container_scoped_user_id, &input,
-        ) { return cloud_sync_reconcile_failure(code); }
+            &context.storage_directory,
+            &auth_after_lookup,
+            &container_scoped_user_id,
+            &input,
+        ) {
+            return cloud_sync_reconcile_failure(code);
+        }
     }
     classify_cloud_sync_reconcile_observation(
         observation,
@@ -5490,21 +6252,32 @@ fn cloud_sync_attachment_lookup_observation(
             }
             match (
                 crate::cloud_sync_outbound_attachment::verify_attachment_readback(
-                    expected, &actual, receipt.record_name(), original_record_name, &input.payload_sha256,
+                    expected,
+                    &actual,
+                    receipt.record_name(),
+                    original_record_name,
+                    &input.payload_sha256,
                 ),
                 etag_hash,
             ) {
-                (Ok(payload_sha256), Ok(etag)) => CloudSyncReconcileObservation::FoundPayloadDigest {
-                    payload_sha256,
-                    server_record_id_hash: record_hash,
-                    etag_hash: etag.value().to_owned(),
-                },
+                (Ok(payload_sha256), Ok(etag)) => {
+                    CloudSyncReconcileObservation::FoundPayloadDigest {
+                        payload_sha256,
+                        server_record_id_hash: record_hash,
+                        etag_hash: etag.value().to_owned(),
+                    }
+                }
                 _ => CloudSyncReconcileObservation::DivergedRecord,
             }
         }
         Ok(CloudAttachmentRecordLookup::NotFound) => CloudSyncReconcileObservation::NotFound,
-        Ok(CloudAttachmentRecordLookup::Unresolved { failure_class, retry_after }) =>
-            CloudSyncReconcileObservation::Unresolved { failure_class, retry_after },
+        Ok(CloudAttachmentRecordLookup::Unresolved {
+            failure_class,
+            retry_after,
+        }) => CloudSyncReconcileObservation::Unresolved {
+            failure_class,
+            retry_after,
+        },
         Err(_) => CloudSyncReconcileObservation::UnknownFailure,
     }
 }
@@ -5520,8 +6293,11 @@ pub async fn cloud_sync_reconcile_attachment_create(
     request_uuid: String,
     input: CloudSyncPreparedMessageCreateInput,
 ) -> CloudSyncOutboundReconcileResult {
-    if !is_valid_cloud_sync_attachment_create_input(&expected_account_fingerprint, &request_uuid, &input)
-    {
+    if !is_valid_cloud_sync_attachment_create_input(
+        &expected_account_fingerprint,
+        &request_uuid,
+        &input,
+    ) {
         return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidRequest);
     }
     let auth =
@@ -5616,8 +6392,13 @@ pub async fn cloud_sync_reconcile_attachment_create(
     let lookup = cloud_messages_client
         .lookup_attachment_record(&writer_binding, &server_record_name)
         .await;
-    let observation =
-        cloud_sync_attachment_lookup_observation(lookup, &expected_attachment, &server_record_name, &input, &hasher);
+    let observation = cloud_sync_attachment_lookup_observation(
+        lookup,
+        &expected_attachment,
+        &server_record_name,
+        &input,
+        &hasher,
+    );
     let auth_after_lookup =
         match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory).await {
             Ok(auth) => auth,
@@ -5697,7 +6478,8 @@ mod cloud_sync_outbound_reconcile_contract_tests {
             crate::cloud_sync_outbound_attachment::initial_attachment_create_operation_id(
                 &account(),
                 &attachment.logical_entity_key_hash,
-            ).unwrap();
+            )
+            .unwrap();
         attachment
     }
 
@@ -5706,22 +6488,48 @@ mod cloud_sync_outbound_reconcile_contract_tests {
         let attachment = attachment_input();
         for timeout in [1, 300] {
             assert!(is_valid_cloud_sync_attachment_create_request(
-                &account(), REQUEST_UUID, timeout, &[attachment.clone()]
+                &account(),
+                REQUEST_UUID,
+                timeout,
+                &[attachment.clone()]
             ));
         }
         for timeout in [0, 301] {
             assert!(!is_valid_cloud_sync_attachment_create_request(
-                &account(), REQUEST_UUID, timeout, &[attachment.clone()]
+                &account(),
+                REQUEST_UUID,
+                timeout,
+                &[attachment.clone()]
             ));
         }
-        for inputs in [vec![], vec![attachment.clone(), attachment.clone()], vec![input()], vec![chat_input()]] {
+        for inputs in [
+            vec![],
+            vec![attachment.clone(), attachment.clone()],
+            vec![input()],
+            vec![chat_input()],
+        ] {
             assert!(!is_valid_cloud_sync_attachment_create_request(
-                &account(), REQUEST_UUID, 30, &inputs
+                &account(),
+                REQUEST_UUID,
+                30,
+                &inputs
             ));
         }
-        assert!(!is_valid_cloud_sync_chat_create_input(&account(), REQUEST_UUID, &attachment));
-        assert!(!is_valid_cloud_sync_reconcile_message_create_input(&account(), REQUEST_UUID, &attachment));
-        assert!(!is_valid_cloud_sync_attachment_create_input(&"B".repeat(43), REQUEST_UUID, &attachment));
+        assert!(!is_valid_cloud_sync_chat_create_input(
+            &account(),
+            REQUEST_UUID,
+            &attachment
+        ));
+        assert!(!is_valid_cloud_sync_reconcile_message_create_input(
+            &account(),
+            REQUEST_UUID,
+            &attachment
+        ));
+        assert!(!is_valid_cloud_sync_attachment_create_input(
+            &"B".repeat(43),
+            REQUEST_UUID,
+            &attachment
+        ));
 
         let mutations: &[fn(&mut CloudSyncPreparedMessageCreateInput)] = &[
             |input| input.local_operation_id = "b".repeat(64),
@@ -5729,7 +6537,9 @@ mod cloud_sync_outbound_reconcile_contract_tests {
             |input| input.logical_entity_key_hash = "K".repeat(43),
             |input| input.protected_lease_reference.clear(),
             |input| input.protected_payload_reference.clear(),
-            |input| input.protected_server_record_reference = format!("obcs2.ref.{}", "Q".repeat(43)),
+            |input| {
+                input.protected_server_record_reference = format!("obcs2.ref.{}", "Q".repeat(43))
+            },
             |input| input.payload_sha256 = "not-a-digest".to_owned(),
             |input| input.server_record_id_hash.clear(),
             |input| input.apple_operation_uuid = REQUEST_UUID.to_owned(),
@@ -5738,7 +6548,11 @@ mod cloud_sync_outbound_reconcile_contract_tests {
         for mutate in mutations {
             let mut changed = attachment.clone();
             mutate(&mut changed);
-            assert!(!is_valid_cloud_sync_attachment_create_input(&account(), REQUEST_UUID, &changed));
+            assert!(!is_valid_cloud_sync_attachment_create_input(
+                &account(),
+                REQUEST_UUID,
+                &changed
+            ));
         }
     }
 
@@ -5925,28 +6739,49 @@ mod cloud_sync_outbound_reconcile_contract_tests {
         let input = attachment_input();
         let hasher = crate::cloud_sync_semantic_identity::CloudSemanticIdentifierHasher::new(
             b"attachment-readback-fixture-key",
-        ).unwrap();
+        )
+        .unwrap();
         for (lookup, expected) in [
-            (Ok(CloudAttachmentRecordLookup::NotFound), CloudSyncOutboundReconcileDisposition::NotApplied),
-            (Ok(CloudAttachmentRecordLookup::Unresolved {
-                failure_class: Some(CloudKitFailureClass::Authentication), retry_after: None,
-            }), CloudSyncOutboundReconcileDisposition::Unresolved),
-            (Ok(CloudAttachmentRecordLookup::Unresolved {
-                failure_class: Some(CloudKitFailureClass::TransientServer), retry_after: Some(Duration::from_secs(7)),
-            }), CloudSyncOutboundReconcileDisposition::Unresolved),
-            (Err(rustpush::PushError::BadMsg), CloudSyncOutboundReconcileDisposition::Unresolved),
+            (
+                Ok(CloudAttachmentRecordLookup::NotFound),
+                CloudSyncOutboundReconcileDisposition::NotApplied,
+            ),
+            (
+                Ok(CloudAttachmentRecordLookup::Unresolved {
+                    failure_class: Some(CloudKitFailureClass::Authentication),
+                    retry_after: None,
+                }),
+                CloudSyncOutboundReconcileDisposition::Unresolved,
+            ),
+            (
+                Ok(CloudAttachmentRecordLookup::Unresolved {
+                    failure_class: Some(CloudKitFailureClass::TransientServer),
+                    retry_after: Some(Duration::from_secs(7)),
+                }),
+                CloudSyncOutboundReconcileDisposition::Unresolved,
+            ),
+            (
+                Err(rustpush::PushError::BadMsg),
+                CloudSyncOutboundReconcileDisposition::Unresolved,
+            ),
         ] {
             let result = classify_cloud_sync_reconcile_observation(
                 cloud_sync_attachment_lookup_observation(
-                    lookup, &CloudAttachment::default(),
-                    "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC", &input, &hasher,
+                    lookup,
+                    &CloudAttachment::default(),
+                    "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC",
+                    &input,
+                    &hasher,
                 ),
-                &input.payload_sha256, input.protected_payload_reference.clone(),
+                &input.payload_sha256,
+                input.protected_payload_reference.clone(),
             );
             assert_eq!(result.disposition, Some(expected));
-            assert_eq!(result.protected_proof_reference,
+            assert_eq!(
+                result.protected_proof_reference,
                 (expected == CloudSyncOutboundReconcileDisposition::NotApplied)
-                    .then(|| input.protected_payload_reference.clone()));
+                    .then(|| input.protected_payload_reference.clone())
+            );
             assert_eq!(result.server_record_id_hash, None);
             assert_eq!(result.etag_hash, None);
         }
@@ -6199,7 +7034,6 @@ fn map_cloud_sync_protected_failure(
             .protected_reset_proof_reference()
             .map(str::to_owned),
     }
-
 }
 
 fn local_cloud_sync_protected_failure(
@@ -6281,27 +7115,47 @@ pub async fn cloud_sync_windows_probe_message_feed(
     checkpoint_reference: String,
     expected_record_id_hash: String,
 ) -> anyhow::Result<String> {
-    use crate::cloud_sync_native_fetch::{CloudNativeFetchRequest, CloudNativeProtectionScope, CloudNativeStream};
-    if !is_cloud_sync_windows_dev_profile(&storage_directory) || generation == 0 ||
-        expected_record_id_hash.len() != 43 || !expected_record_id_hash.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')) {
+    use crate::cloud_sync_native_fetch::{
+        CloudNativeFetchRequest, CloudNativeProtectionScope, CloudNativeStream,
+    };
+    if !is_cloud_sync_windows_dev_profile(&storage_directory)
+        || generation == 0
+        || expected_record_id_hash.len() != 43
+        || !expected_record_id_hash
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    {
         return Err(anyhow!("cloud_sync_windows_feed_probe_request_invalid"));
     }
     let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
         .map_err(|_| anyhow!("cloud_sync_windows_feed_probe_auth_failed"))?;
-    let auth = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await
+    let auth = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+        .await
         .map_err(|_| anyhow!("cloud_sync_windows_feed_probe_auth_failed"))?;
     if auth.account_fingerprint != expected_account_fingerprint {
         return Err(anyhow!("cloud_sync_windows_feed_probe_account_mismatch"));
     }
-    let scope = CloudNativeProtectionScope::new(auth.account_fingerprint, CloudNativeStream::Messages)
-        .map_err(|_| anyhow!("cloud_sync_windows_feed_probe_request_invalid"))?;
+    let scope =
+        CloudNativeProtectionScope::new(auth.account_fingerprint, CloudNativeStream::Messages)
+            .map_err(|_| anyhow!("cloud_sync_windows_feed_probe_request_invalid"))?;
     let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.clone())
         .map_err(|_| anyhow!("cloud_sync_windows_feed_probe_protector_failed"))?;
-    let request = CloudNativeFetchRequest::new(CloudNativeStream::Messages, &scope,
-        generation, Some(&checkpoint_reference), 200);
-    crate::cloud_sync_native_fetch::cloud_sync_windows_probe_feed(cloud_messages_client,
-        &permit, PathBuf::from(storage_directory), &hasher, &request, &expected_record_id_hash).await
+    let request = CloudNativeFetchRequest::new(
+        CloudNativeStream::Messages,
+        &scope,
+        generation,
+        Some(&checkpoint_reference),
+        200,
+    );
+    crate::cloud_sync_native_fetch::cloud_sync_windows_probe_feed(
+        cloud_messages_client,
+        &permit,
+        PathBuf::from(storage_directory),
+        &hasher,
+        &request,
+        &expected_record_id_hash,
+    )
+    .await
 }
 
 /// Fetches and protects one bounded CloudKit page for the separately compile-
@@ -8874,32 +9728,41 @@ pub fn read_hardware(path: String) -> Option<SavedHardwareState> {
             !hardware.identity.is_empty(),
             hardware.push.keypair.is_some(),
             hardware.push.token.is_some(),
-        ).ok()?;
+        )
+        .ok()?;
         // The Find My constructors read this retained DSID, never create it.
         let streams: SharedStreamsState = plist::from_file(dir.join("sharedstreams.plist")).ok()?;
-        if streams.dsid.is_empty() { return None; }
+        if streams.dsid.is_empty() {
+            return None;
+        }
     }
     Some(hardware)
 }
 
 fn windows_findmy_probe_enabled() -> bool {
-    cfg!(target_os = "windows") &&
-        std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_FINDMY_PROBE").as_deref() == Ok("1")
+    cfg!(target_os = "windows")
+        && std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_FINDMY_PROBE").as_deref() == Ok("1")
 }
 
 fn require_windows_findmy_probe_profile(directory: &std::path::Path) -> anyhow::Result<()> {
-    let expected = PathBuf::from(std::env::var_os("APPDATA")
-        .ok_or_else(|| anyhow!("findmy_probe_profile_required"))?)
-        .join("OpenBubbles").join("cloudkit-v2-dev");
-    if fs::canonicalize(directory)? != fs::canonicalize(&expected)? ||
-        !is_cloud_sync_windows_dev_profile(&directory.to_string_lossy()) {
+    let expected = PathBuf::from(
+        std::env::var_os("APPDATA").ok_or_else(|| anyhow!("findmy_probe_profile_required"))?,
+    )
+    .join("OpenBubbles")
+    .join("cloudkit-v2-dev");
+    if fs::canonicalize(directory)? != fs::canonicalize(&expected)?
+        || !is_cloud_sync_windows_dev_profile(&directory.to_string_lossy())
+    {
         return Err(anyhow!("findmy_probe_profile_required"));
     }
     Ok(())
 }
 
 fn validate_findmy_probe_retained_state(
-    postdata_done: Option<bool>, identity_present: bool, aps_key_present: bool, aps_token_present: bool,
+    postdata_done: Option<bool>,
+    identity_present: bool,
+    aps_key_present: bool,
+    aps_token_present: bool,
 ) -> anyhow::Result<()> {
     if postdata_done != Some(true) || !identity_present || !aps_key_present || !aps_token_present {
         return Err(anyhow!("findmy_probe_retained_state_required"));
@@ -8919,31 +9782,50 @@ async fn findmy_probe_native_read<T>(
 }
 
 async fn bounded_findmy_probe_read<T>(
-    deadline: Duration, future: impl Future<Output = Result<T, PushError>>,
+    deadline: Duration,
+    future: impl Future<Output = Result<T, PushError>>,
 ) -> anyhow::Result<T> {
-    tokio::time::timeout(deadline, future).await
+    tokio::time::timeout(deadline, future)
+        .await
         .map_err(|_| anyhow!("findmy_probe_native_timeout"))?
         .map_err(|error| match error {
             // Never format the original error: it may contain bodies, URLs or credentials.
-            PushError::StatusError(status) => anyhow!("findmy_probe_native_http_{}", status.as_u16()),
-            PushError::RequestError(error) if error.is_timeout() => anyhow!("findmy_probe_native_timeout"),
-            PushError::RequestError(error) if error.is_decode() => anyhow!("findmy_probe_native_decode"),
-            PushError::JsonError(_) | PushError::PlistError(_) => anyhow!("findmy_probe_native_decode"),
-            PushError::RequestError(_) | PushError::IoError(_) | PushError::TLSError(_) => anyhow!("findmy_probe_native_transport"),
+            PushError::StatusError(status) => {
+                anyhow!("findmy_probe_native_http_{}", status.as_u16())
+            }
+            PushError::RequestError(error) if error.is_timeout() => {
+                anyhow!("findmy_probe_native_timeout")
+            }
+            PushError::RequestError(error) if error.is_decode() => {
+                anyhow!("findmy_probe_native_decode")
+            }
+            PushError::JsonError(_) | PushError::PlistError(_) => {
+                anyhow!("findmy_probe_native_decode")
+            }
+            PushError::RequestError(_) | PushError::IoError(_) | PushError::TLSError(_) => {
+                anyhow!("findmy_probe_native_transport")
+            }
             _ => anyhow!("findmy_probe_native_read_failed"),
         })
 }
 
 #[cfg(test)]
 mod findmy_probe_guard_tests {
-    use super::{bounded_findmy_probe_read, validate_findmy_probe_retained_state, Duration, PushError};
+    use super::{
+        bounded_findmy_probe_read, validate_findmy_probe_retained_state, Duration, PushError,
+    };
 
     #[tokio::test]
     async fn native_deadline_drops_read_and_failures_do_not_expose_details() {
-        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
         struct Dropped(Arc<AtomicBool>);
         impl Drop for Dropped {
-            fn drop(&mut self) { self.0.store(true, Ordering::SeqCst); }
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
         }
         let dropped = Arc::new(AtomicBool::new(false));
         let flag = dropped.clone();
@@ -8951,29 +9833,62 @@ mod findmy_probe_guard_tests {
             let _guard = Dropped(flag);
             std::future::pending::<Result<(), PushError>>().await
         };
-        let error = bounded_findmy_probe_read(Duration::from_millis(1), pending).await.unwrap_err();
+        let error = bounded_findmy_probe_read(Duration::from_millis(1), pending)
+            .await
+            .unwrap_err();
         assert_eq!(error.to_string(), "findmy_probe_native_timeout");
         assert!(dropped.load(Ordering::SeqCst));
-        let failure = async { Err::<(), _>(PushError::MobileMeError("private-error-body".into(), None)) };
-        let error = bounded_findmy_probe_read(Duration::from_secs(1), failure).await.unwrap_err();
+        let failure =
+            async { Err::<(), _>(PushError::MobileMeError("private-error-body".into(), None)) };
+        let error = bounded_findmy_probe_read(Duration::from_secs(1), failure)
+            .await
+            .unwrap_err();
         assert_eq!(error.to_string(), "findmy_probe_native_read_failed");
-        assert_eq!(bounded_findmy_probe_read(Duration::from_secs(1), async { Ok(7) }).await.unwrap(), 7);
+        assert_eq!(
+            bounded_findmy_probe_read(Duration::from_secs(1), async { Ok(7) })
+                .await
+                .unwrap(),
+            7
+        );
     }
 
     #[tokio::test]
     async fn native_failures_preserve_only_category_and_numeric_http_status() {
         for code in [401, 429, 503] {
             let failure = PushError::StatusError(code.to_string().parse().unwrap());
-            let error = bounded_findmy_probe_read(Duration::from_secs(1), async { Err::<(), _>(failure) }).await.unwrap_err();
-            assert_eq!(error.to_string(), format!("findmy_probe_native_http_{code}"));
+            let error =
+                bounded_findmy_probe_read(Duration::from_secs(1), async { Err::<(), _>(failure) })
+                    .await
+                    .unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!("findmy_probe_native_http_{code}")
+            );
         }
         let failures = [
-            (PushError::JsonError(serde_json::from_str::<serde_json::Value>("private-body").unwrap_err()), "findmy_probe_native_decode"),
-            (PushError::IoError(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "private-url-and-body")), "findmy_probe_native_transport"),
-            (PushError::MobileMeError("findmy_probe_native_http_401 private-body".into(), None), "findmy_probe_native_read_failed"),
+            (
+                PushError::JsonError(
+                    serde_json::from_str::<serde_json::Value>("private-body").unwrap_err(),
+                ),
+                "findmy_probe_native_decode",
+            ),
+            (
+                PushError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "private-url-and-body",
+                )),
+                "findmy_probe_native_transport",
+            ),
+            (
+                PushError::MobileMeError("findmy_probe_native_http_401 private-body".into(), None),
+                "findmy_probe_native_read_failed",
+            ),
         ];
         for (failure, expected) in failures {
-            let error = bounded_findmy_probe_read(Duration::from_secs(1), async { Err::<(), _>(failure) }).await.unwrap_err();
+            let error =
+                bounded_findmy_probe_read(Duration::from_secs(1), async { Err::<(), _>(failure) })
+                    .await
+                    .unwrap_err();
             assert_eq!(error.to_string(), expected);
         }
     }
@@ -8984,8 +9899,13 @@ mod findmy_probe_guard_tests {
         for postdata in [None, Some(false)] {
             assert!(validate_findmy_probe_retained_state(postdata, true, true, true).is_err());
         }
-        for (identity, key, token) in [(false, true, true), (true, false, true), (true, true, false)] {
-            let error = validate_findmy_probe_retained_state(Some(true), identity, key, token).unwrap_err();
+        for (identity, key, token) in [
+            (false, true, true),
+            (true, false, true),
+            (true, true, false),
+        ] {
+            let error =
+                validate_findmy_probe_retained_state(Some(true), identity, key, token).unwrap_err();
             assert_eq!(error.to_string(), "findmy_probe_retained_state_required");
         }
     }
@@ -9396,7 +10316,9 @@ pub async fn restore_account(
     // preflight is not authority to update postdata or restore a fresh account.
     if windows_findmy_probe_enabled() {
         require_windows_findmy_probe_profile(&dir).ok()?;
-        if state.postdata_done != Some(true) { return None; }
+        if state.postdata_done != Some(true) {
+            return None;
+        }
     }
 
     let mut apple_account = AppleAccount::new_with_anisette(
@@ -11266,8 +12188,12 @@ fn cloud_sync_attachment_send_source(
     context: Option<&CloudSyncNativeSendReceiptContext>,
     message: &MessageInst,
 ) -> anyhow::Result<Option<(Vec<u8>, Vec<String>)>> {
-    let Some(context) = context else { return Ok(None); };
-    let Some(binding) = &context.source_binding else { return Ok(None); };
+    let Some(context) = context else {
+        return Ok(None);
+    };
+    let Some(binding) = &context.source_binding else {
+        return Ok(None);
+    };
     if binding.kind == Some(CloudSyncNativeSendSourceKind::Mutation) {
         return Err(anyhow!("cloud_sync_native_attachment_source_invalid"));
     }
@@ -11277,21 +12203,27 @@ fn cloud_sync_attachment_send_source(
         payload_sha256: binding.payload_sha256.clone(),
         payload_length: binding.payload_length,
     };
-    let protected_identity = crate::cloud_sync_protector::protected_store_identity(
-        context.storage_directory.clone(),
-    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
+    let protected_identity =
+        crate::cloud_sync_protector::protected_store_identity(context.storage_directory.clone())
+            .map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
     if protected_identity != context.protected_store_identity {
         return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
     }
     let envelope = crate::cloud_sync_ids_attachment_source::open_staged_source_envelope(
-        PathBuf::from(&context.storage_directory), context.account_fingerprint.clone(),
-        &binding.source_sha256, &stage,
-    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
+        PathBuf::from(&context.storage_directory),
+        context.account_fingerprint.clone(),
+        &binding.source_sha256,
+        &stage,
+    )
+    .map_err(|_| anyhow!("cloud_sync_native_attachment_source_unavailable"))?;
     let decoded = crate::cloud_sync_ids_attachment_source::decode_ids_attachment_source(&envelope)
         .map_err(|_| anyhow!("cloud_sync_native_attachment_source_invalid"))?;
     crate::cloud_sync_ids_attachment_source::validate_ids_attachment_source(
-        &envelope, message, &decoded.attachment_guids,
-    ).map_err(|_| anyhow!("cloud_sync_native_attachment_source_changed"))?;
+        &envelope,
+        message,
+        &decoded.attachment_guids,
+    )
+    .map_err(|_| anyhow!("cloud_sync_native_attachment_source_changed"))?;
     Ok(Some((envelope, decoded.attachment_guids)))
 }
 
@@ -11308,17 +12240,22 @@ fn cloud_sync_send_source(
     context: Option<&CloudSyncNativeSendReceiptContext>,
     message: &MessageInst,
 ) -> anyhow::Result<Option<CloudSyncBoundSendSource>> {
-    let Some(context) = context else { return Ok(None); };
-    if context.source_binding.as_ref().is_some_and(|binding|
-        binding.kind == Some(CloudSyncNativeSendSourceKind::Mutation))
+    let Some(context) = context else {
+        return Ok(None);
+    };
+    if context
+        .source_binding
+        .as_ref()
+        .is_some_and(|binding| binding.kind == Some(CloudSyncNativeSendSourceKind::Mutation))
     {
         let source = cloud_sync_open_mutation_source_bound(context)?;
         crate::cloud_sync_ids_mutation_source::validate_mutation_source(&source, message)
             .map_err(|_| anyhow!("cloud_sync_native_mutation_source_changed"))?;
         Ok(Some(CloudSyncBoundSendSource::Mutation(source)))
     } else {
-        cloud_sync_attachment_send_source(Some(context), message)
-            .map(|source| source.map(|(bytes, guids)| CloudSyncBoundSendSource::Attachment(bytes, guids)))
+        cloud_sync_attachment_send_source(Some(context), message).map(|source| {
+            source.map(|(bytes, guids)| CloudSyncBoundSendSource::Attachment(bytes, guids))
+        })
     }
 }
 
@@ -11330,19 +12267,23 @@ fn cloud_sync_validate_prepared_send_source(
     finish_ms: u64,
 ) -> Result<Option<u64>, &'static str> {
     match source {
-        Some(CloudSyncBoundSendSource::Attachment(bytes, guids)) =>
+        Some(CloudSyncBoundSendSource::Attachment(bytes, guids)) => {
             crate::cloud_sync_ids_attachment_source::validate_prepared_ids_attachment_source(
                 &bytes, message, &guids, start_ms, finish_ms,
-            ).map(|()| None).map_err(|_| "cloud_sync_native_attachment_prepared_source_changed"),
+            )
+            .map(|()| None)
+            .map_err(|_| "cloud_sync_native_attachment_prepared_source_changed")
+        }
         Some(CloudSyncBoundSendSource::Mutation(bytes)) => {
             crate::cloud_sync_ids_mutation_source::validate_prepared_mutation_source(
                 &bytes, message, start_ms, finish_ms,
-            ).map_err(|_| "cloud_sync_native_mutation_prepared_source_changed")?;
+            )
+            .map_err(|_| "cloud_sync_native_mutation_prepared_source_changed")?;
             if message.sent_timestamp == 0 || message.sent_timestamp > i64::MAX as u64 {
                 return Err("cloud_sync_native_mutation_prepared_time_invalid");
             }
             Ok(Some(message.sent_timestamp))
-        },
+        }
         None => Ok(None),
     }
 }
@@ -11373,12 +12314,13 @@ pub async fn send(
     }
     let source = cloud_sync_send_source(native_receipt_context.as_ref(), &msg)?;
     let send_started_ms = systemtime_to_millis(SystemTime::now());
-    let result = state.send(&mut msg).await
+    let result = state
+        .send(&mut msg)
+        .await
         .map_err(|error| cloud_sync_send_start_error(error, native_receipt_context.is_some()))?;
     let send_finished_ms = systemtime_to_millis(SystemTime::now());
-    let source_validation = cloud_sync_validate_prepared_send_source(
-        source, &msg, send_started_ms, send_finished_ms,
-    );
+    let source_validation =
+        cloud_sync_validate_prepared_send_source(source, &msg, send_started_ms, send_finished_ms);
     let confirmation = result.confirmation();
     info!("send_finish");
 
@@ -11418,8 +12360,13 @@ pub async fn send(
         // protected success receipt in either completion path.
         let uuid = msg.id.clone();
         let (error, native_receipt, native_receipt_error) =
-            cloud_sync_send_confirmation_fields_with_source(Ok(()), native_receipt_context, &uuid,
-                || confirmation.require_confirmed(), source_validation);
+            cloud_sync_send_confirmation_fields_with_source(
+                Ok(()),
+                native_receipt_context,
+                &uuid,
+                || confirmation.require_confirmed(),
+                source_validation,
+            );
         let _ = local
             .send(PushMessage::SendConfirm {
                 uuid,
@@ -11447,7 +12394,11 @@ fn cloud_sync_send_confirmation_fields(
     Option<String>,
 ) {
     cloud_sync_send_confirmation_fields_with_source(
-        result, native_receipt_context, stable_guid, confirm_participants, Ok(None),
+        result,
+        native_receipt_context,
+        stable_guid,
+        confirm_participants,
+        Ok(None),
     )
 }
 
@@ -11458,7 +12409,11 @@ fn cloud_sync_send_confirmation_fields_with_source(
     stable_guid: &str,
     confirm_participants: impl FnOnce() -> Result<(), PushError>,
     source_validation: Result<Option<u64>, &'static str>,
-) -> (Option<String>, Option<CloudSyncNativeSendReceipt>, Option<String>) {
+) -> (
+    Option<String>,
+    Option<CloudSyncNativeSendReceipt>,
+    Option<String>,
+) {
     // Legacy/untracked send semantics stay unchanged. Strict V2 receipts need
     // both job completion and positive acceptance, not APSError/TimedOut
     // progress or a missing native handle. Fixed errors cannot trigger the
@@ -11471,23 +12426,23 @@ fn cloud_sync_send_confirmation_fields_with_source(
     match result {
         // IDS already accepted the send. A local source mismatch suppresses
         // CloudKit authority, but must not ask the user/wrapper to resend it.
-        Ok(()) if source_validation.is_err() => (
-            None, None, source_validation.err().map(str::to_owned),
-        ),
+        Ok(()) if source_validation.is_err() => {
+            (None, None, source_validation.err().map(str::to_owned))
+        }
         Ok(()) => match native_receipt_context {
             Some(context) => match persist_cloud_sync_native_send_receipt(
-                context, stable_guid, source_validation.expect("validated source"),
+                context,
+                stable_guid,
+                source_validation.expect("validated source"),
             ) {
                 Ok(receipt) => (None, Some(receipt), None),
                 Err(error) => (None, None, Some(error.to_string())),
             },
             None => (None, None, None),
         },
-        Err(_) if native_receipt_context.is_some() => (
-            Some("cloud_sync_native_send_failed".to_owned()),
-            None,
-            None,
-        ),
+        Err(_) if native_receipt_context.is_some() => {
+            (Some("cloud_sync_native_send_failed".to_owned()), None, None)
+        }
         Err(error) => (Some(error.to_string()), None, None),
     }
 }
@@ -11527,17 +12482,24 @@ pub async fn cloud_sync_windows_authenticate_sender(
         // A missing session fails here. Never reset credentials to make it pass.
         if account.get_token("com.apple.gs.idms.pet").await.is_none()
             || account.get_pet().is_none()
-            || account.spd.as_ref().and_then(|spd| spd.get("adsid"))
-                .and_then(Value::as_string).is_none_or(str::is_empty)
+            || account
+                .spd
+                .as_ref()
+                .and_then(|spd| spd.get("adsid"))
+                .and_then(Value::as_string)
+                .is_none_or(str::is_empty)
         {
             return Err(anyhow!("cloud_sync_windows_sender_auth_required"));
         }
-        let delegates = login_apple_delegates(
-            &*account, None, &*config.config(), &[LoginDelegate::IDS],
-        ).await.map_err(|_| anyhow!("cloud_sync_windows_sender_delegate_failed"))?;
-        let ids = delegates.ids
+        let delegates =
+            login_apple_delegates(&*account, None, &*config.config(), &[LoginDelegate::IDS])
+                .await
+                .map_err(|_| anyhow!("cloud_sync_windows_sender_delegate_failed"))?;
+        let ids = delegates
+            .ids
             .ok_or_else(|| anyhow!("cloud_sync_windows_sender_delegate_missing"))?;
-        authenticate_apple(ids, &*config.config()).await
+        authenticate_apple(ids, &*config.config())
+            .await
             .map_err(|_| anyhow!("cloud_sync_windows_sender_authentication_failed"))
     }
 }
@@ -11553,11 +12515,12 @@ pub async fn cloud_sync_windows_send_confirmed(
     if !is_cloud_sync_windows_dev_profile(&path) {
         return Err(anyhow!("cloud_sync_windows_sender_profile_required"));
     }
-    let result = state.send(&mut msg).await
+    let result = state
+        .send(&mut msg)
+        .await
         .map_err(|_| anyhow!("cloud_sync_windows_sender_send_failed"))?;
     let confirmation = result.confirmation();
-    cloud_sync_windows_finish_send_job(result.handle,
-        || confirmation.require_confirmed()).await
+    cloud_sync_windows_finish_send_job(result.handle, || confirmation.require_confirmed()).await
 }
 
 /// Explicit Windows qualification path for a journal-claimed edit/unsend.
@@ -11574,25 +12537,35 @@ pub async fn cloud_sync_windows_send_mutation_confirmed(
     if !is_cloud_sync_windows_dev_profile(&context.storage_directory) {
         return Err(anyhow!("cloud_sync_windows_sender_profile_required"));
     }
-    let auth = cloud_sync_capture_auth_snapshot(
-        cloud_messages_client, context.storage_directory.clone(),
-    ).await.map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
+    let auth =
+        cloud_sync_capture_auth_snapshot(cloud_messages_client, context.storage_directory.clone())
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))?;
     cloud_sync_require_source_context_auth(&context, &auth)?;
     let source = cloud_sync_windows_mutation_send_source(&context, &msg)?;
     let started = systemtime_to_millis(SystemTime::now());
-    let result = state.send_mutation_requesting_acknowledgment(&mut msg).await
+    let result = state
+        .send_mutation_requesting_acknowledgment(&mut msg)
+        .await
         .map_err(|error| cloud_sync_send_start_error(error, true))?;
     let finished = systemtime_to_millis(SystemTime::now());
-    let validation = cloud_sync_validate_prepared_send_source(Some(source), &msg, started, finished);
+    let validation =
+        cloud_sync_validate_prepared_send_source(Some(source), &msg, started, finished);
     let confirmation = result.confirmation();
     let storage = context.storage_directory.clone();
     cloud_sync_windows_finish_mutation_send(
-        result.handle, || confirmation.require_confirmed(), context, &msg.id,
-        validation, async {
-            cloud_sync_capture_auth_snapshot(cloud_messages_client, storage).await
+        result.handle,
+        || confirmation.require_confirmed(),
+        context,
+        &msg.id,
+        validation,
+        async {
+            cloud_sync_capture_auth_snapshot(cloud_messages_client, storage)
+                .await
                 .map_err(|_| anyhow!("cloud_sync_native_send_auth_unavailable"))
         },
-    ).await
+    )
+    .await
 }
 
 #[frb(ignore)]
@@ -11615,8 +12588,10 @@ fn cloud_sync_windows_mutation_send_source(
     msg: &MessageInst,
 ) -> anyhow::Result<CloudSyncBoundSendSource> {
     if cloud_sync_local_send_guid_hash(&msg.id) != context.guid_hash
-        || !context.source_binding.as_ref().is_some_and(|binding|
-            binding.kind == Some(CloudSyncNativeSendSourceKind::Mutation))
+        || !context
+            .source_binding
+            .as_ref()
+            .is_some_and(|binding| binding.kind == Some(CloudSyncNativeSendSourceKind::Mutation))
     {
         return Err(anyhow!("cloud_sync_native_send_receipt_context_invalid"));
     }
@@ -11632,7 +12607,8 @@ fn cloud_sync_windows_mutation_send_receipt(
     stable_guid: &str,
     source_validation: Result<Option<u64>, &'static str>,
 ) -> anyhow::Result<CloudSyncNativeSendReceipt> {
-    let time = source_validation.map_err(|code| anyhow!(code))?
+    let time = source_validation
+        .map_err(|code| anyhow!(code))?
         .ok_or_else(|| anyhow!("cloud_sync_native_mutation_prepared_time_invalid"))?;
     persist_cloud_sync_native_send_receipt(context, stable_guid, Some(time))
 }
@@ -11643,12 +12619,12 @@ async fn cloud_sync_windows_finish_send_job(
     confirm_participants: impl FnOnce() -> Result<(), PushError>,
 ) -> anyhow::Result<()> {
     if let Some(handle) = handle {
-        handle.await
+        handle
+            .await
             .map_err(|_| anyhow!("cloud_sync_windows_sender_completion_unknown"))?
             .map_err(|_| anyhow!("cloud_sync_windows_sender_send_failed"))?;
     }
-    confirm_participants()
-        .map_err(|_| anyhow!("cloud_sync_windows_sender_unconfirmed"))
+    confirm_participants().map_err(|_| anyhow!("cloud_sync_windows_sender_unconfirmed"))
 }
 
 #[cfg(test)]
@@ -11656,44 +12632,68 @@ mod cloud_sync_mutation_send_tests {
     use super::*;
 
     #[tokio::test]
-    async fn confirmed_mutation_opens_original_source_after_cold_session_without_consuming_receipt() {
+    async fn confirmed_mutation_opens_original_source_after_cold_session_without_consuming_receipt()
+    {
         for unsend in [false, true] {
             let directory = tempfile::tempdir().unwrap();
             let message = fixture(unsend);
             let mut context = context(directory.path(), &message);
-            context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
-                &context, &auth(&context), &"a".repeat(64), &message,
-            ).unwrap());
+            context.source_binding = Some(
+                cloud_sync_stage_mutation_source_bound(
+                    &context,
+                    &auth(&context),
+                    &"a".repeat(64),
+                    &message,
+                )
+                .unwrap(),
+            );
             let time = 1_789_000_000_123;
-            let receipt = persist_cloud_sync_native_send_receipt(
-                context.clone(), &message.id, Some(time),
-            ).unwrap();
+            let receipt =
+                persist_cloud_sync_native_send_receipt(context.clone(), &message.id, Some(time))
+                    .unwrap();
             // A receipt cannot substitute for the durable source lease.
             assert!(cloud_sync_open_confirmed_mutation_source_bound(
-                &context, &auth(&context), &receipt,
-            ).is_err());
+                &context,
+                &auth(&context),
+                &receipt,
+            )
+            .is_err());
             commit(&context);
             let original = cloud_sync_open_mutation_source_bound(&context).unwrap();
             context.native_session_id = "C".repeat(43);
             assert_ne!(context.native_session_id, receipt.native_session_id);
             for _ in 0..2 {
                 let (source, prepared_time) = cloud_sync_open_confirmed_mutation_source_bound(
-                    &context, &auth(&context), &receipt,
-                ).unwrap();
+                    &context,
+                    &auth(&context),
+                    &receipt,
+                )
+                .unwrap();
                 assert_eq!(prepared_time, time);
                 assert_eq!(source.mutation_guid(), message.id);
-                assert_eq!(crate::cloud_sync_ids_mutation_source::encode_mutation_source(
-                    &source.message().unwrap(),
-                ).unwrap(), original);
+                assert_eq!(
+                    crate::cloud_sync_ids_mutation_source::encode_mutation_source(
+                        &source.message().unwrap(),
+                    )
+                    .unwrap(),
+                    original
+                );
             }
             let retained = cloud_sync_replay_native_send_receipts(
-                context.storage_directory.clone(), context.account_fingerprint.clone(),
-                context.protected_store_identity.clone(), None,
-            ).await.unwrap();
+                context.storage_directory.clone(),
+                context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(),
+                None,
+            )
+            .await
+            .unwrap();
             assert_eq!(retained.receipts.len(), 1);
             assert_eq!(retained.receipts[0].receipt_id, receipt.receipt_id);
             assert_eq!(retained.receipts[0].prepared_sent_timestamp_ms, Some(time));
-            assert_eq!(cloud_sync_open_mutation_source_bound(&context).unwrap(), original);
+            assert_eq!(
+                cloud_sync_open_mutation_source_bound(&context).unwrap(),
+                original
+            );
         }
     }
 
@@ -11702,13 +12702,22 @@ mod cloud_sync_mutation_send_tests {
         let directory = tempfile::tempdir().unwrap();
         let message = fixture(false);
         let mut context = context(directory.path(), &message);
-        context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
-            &context, &auth(&context), &"a".repeat(64), &message,
-        ).unwrap());
+        context.source_binding = Some(
+            cloud_sync_stage_mutation_source_bound(
+                &context,
+                &auth(&context),
+                &"a".repeat(64),
+                &message,
+            )
+            .unwrap(),
+        );
         commit(&context);
         let receipt = persist_cloud_sync_native_send_receipt(
-            context.clone(), &message.id, Some(1_789_000_000_123),
-        ).unwrap();
+            context.clone(),
+            &message.id,
+            Some(1_789_000_000_123),
+        )
+        .unwrap();
         for field in 0..11 {
             let mut changed = receipt.clone();
             match field {
@@ -11719,53 +12728,86 @@ mod cloud_sync_mutation_send_tests {
                 4 => changed.source_binding.as_mut().unwrap().source_sha256 = "b".repeat(64),
                 5 => changed.source_binding.as_mut().unwrap().payload_sha256 = "b".repeat(64),
                 6 => changed.source_binding.as_mut().unwrap().payload_length += 1,
-                7 => changed.source_binding.as_mut().unwrap().protected_reference =
-                    format!("obcs2.ref.{}", "B".repeat(43)),
-                8 => changed.source_binding.as_mut().unwrap().lease_reference =
-                    format!("obcs2.lease.{}", "b".repeat(32)),
+                7 => {
+                    changed.source_binding.as_mut().unwrap().protected_reference =
+                        format!("obcs2.ref.{}", "B".repeat(43))
+                }
+                8 => {
+                    changed.source_binding.as_mut().unwrap().lease_reference =
+                        format!("obcs2.lease.{}", "b".repeat(32))
+                }
                 9 => changed.prepared_sent_timestamp_ms = Some(1_789_000_000_124),
                 _ => changed.prepared_sent_timestamp_ms = None,
             }
-            assert!(cloud_sync_open_confirmed_mutation_source_bound(
-                &context, &auth(&context), &changed,
-            ).is_err(), "receipt field {field}");
+            assert!(
+                cloud_sync_open_confirmed_mutation_source_bound(
+                    &context,
+                    &auth(&context),
+                    &changed,
+                )
+                .is_err(),
+                "receipt field {field}"
+            );
         }
         for field in 0..3 {
             let mut wrong_auth = auth(&context);
             match field {
                 0 => wrong_auth.account_fingerprint = "B".repeat(43),
-                1 => wrong_auth.protected_store_identity = format!("obcs2.store.{}", "B".repeat(43)),
+                1 => {
+                    wrong_auth.protected_store_identity = format!("obcs2.store.{}", "B".repeat(43))
+                }
                 _ => wrong_auth.native_session_id = "B".repeat(43),
             }
             assert!(cloud_sync_open_confirmed_mutation_source_bound(
-                &context, &wrong_auth, &receipt,
-            ).is_err());
+                &context,
+                &wrong_auth,
+                &receipt,
+            )
+            .is_err());
         }
         // Even mutually matching current metadata cannot borrow another store
         // or account for the retained source/receipt.
         for field in 0..2 {
             let mut changed = context.clone();
-            if field == 0 { changed.account_fingerprint = "B".repeat(43); }
-            else { changed.protected_store_identity = format!("obcs2.store.{}", "B".repeat(43)); }
+            if field == 0 {
+                changed.account_fingerprint = "B".repeat(43);
+            } else {
+                changed.protected_store_identity = format!("obcs2.store.{}", "B".repeat(43));
+            }
             assert!(cloud_sync_open_confirmed_mutation_source_bound(
-                &changed, &auth(&changed), &receipt,
-            ).is_err());
+                &changed,
+                &auth(&changed),
+                &receipt,
+            )
+            .is_err());
         }
         assert!(cloud_sync_open_confirmed_mutation_source_bound(
-            &context, &auth(&context), &receipt,
-        ).is_ok());
+            &context,
+            &auth(&context),
+            &receipt,
+        )
+        .is_ok());
         cloud_sync_acknowledge_native_send_receipt(
-            context.storage_directory.clone(), context.account_fingerprint.clone(),
-            context.protected_store_identity.clone(), receipt.clone(),
-        ).unwrap();
+            context.storage_directory.clone(),
+            context.account_fingerprint.clone(),
+            context.protected_store_identity.clone(),
+            receipt.clone(),
+        )
+        .unwrap();
         // Absence stays an error for verification, while cleanup stays idempotent.
         assert!(cloud_sync_open_confirmed_mutation_source_bound(
-            &context, &auth(&context), &receipt,
-        ).is_err());
+            &context,
+            &auth(&context),
+            &receipt,
+        )
+        .is_err());
         cloud_sync_acknowledge_native_send_receipt(
-            context.storage_directory.clone(), context.account_fingerprint.clone(),
-            context.protected_store_identity.clone(), receipt,
-        ).unwrap();
+            context.storage_directory.clone(),
+            context.account_fingerprint.clone(),
+            context.protected_store_identity.clone(),
+            receipt,
+        )
+        .unwrap();
     }
 
     #[tokio::test]
@@ -11773,9 +12815,15 @@ mod cloud_sync_mutation_send_tests {
         let directory = tempfile::tempdir().unwrap();
         let message = fixture(true);
         let mut context = context(directory.path(), &message);
-        context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
-            &context, &auth(&context), &"a".repeat(64), &message,
-        ).unwrap());
+        context.source_binding = Some(
+            cloud_sync_stage_mutation_source_bound(
+                &context,
+                &auth(&context),
+                &"a".repeat(64),
+                &message,
+            )
+            .unwrap(),
+        );
         commit(&context);
         let old = crate::cloud_sync_native_fetch::cloud_sync_persist_ids_send_receipt(
             directory.path().to_path_buf(),
@@ -11787,21 +12835,31 @@ mod cloud_sync_mutation_send_tests {
                 source_binding: context.source_binding.clone().map(Into::into),
                 prepared_sent_timestamp_ms: None,
             },
-        ).unwrap();
+        )
+        .unwrap();
         let receipt = CloudSyncNativeSendReceipt {
-            receipt_id: old.receipt_id.clone(), guid_hash: old.guid_hash,
+            receipt_id: old.receipt_id.clone(),
+            guid_hash: old.guid_hash,
             native_session_id: old.native_session_id,
             source_binding: old.source_binding.map(Into::into),
             prepared_sent_timestamp_ms: None,
         };
-        let failure = cloud_sync_open_confirmed_mutation_source_bound(
-            &context, &auth(&context), &receipt,
-        ).err().unwrap();
-        assert_eq!(failure.to_string(), "cloud_sync_native_mutation_receipt_time_unavailable");
+        let failure =
+            cloud_sync_open_confirmed_mutation_source_bound(&context, &auth(&context), &receipt)
+                .err()
+                .unwrap();
+        assert_eq!(
+            failure.to_string(),
+            "cloud_sync_native_mutation_receipt_time_unavailable"
+        );
         let retained = cloud_sync_replay_native_send_receipts(
-            context.storage_directory.clone(), context.account_fingerprint.clone(),
-            context.protected_store_identity.clone(), None,
-        ).await.unwrap();
+            context.storage_directory.clone(),
+            context.account_fingerprint.clone(),
+            context.protected_store_identity.clone(),
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(retained.receipts.len(), 1);
         assert_eq!(retained.receipts[0].receipt_id, old.receipt_id);
         assert_eq!(retained.receipts[0].prepared_sent_timestamp_ms, None);
@@ -11813,9 +12871,15 @@ mod cloud_sync_mutation_send_tests {
             let directory = tempfile::tempdir().unwrap();
             let message = fixture(unsend);
             let mut context = context(directory.path(), &message);
-            context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
-                &context, &auth(&context), &"a".repeat(64), &message,
-            ).unwrap());
+            context.source_binding = Some(
+                cloud_sync_stage_mutation_source_bound(
+                    &context,
+                    &auth(&context),
+                    &"a".repeat(64),
+                    &message,
+                )
+                .unwrap(),
+            );
             assert!(cloud_sync_windows_mutation_send_source(&context, &message).is_err());
             commit(&context);
             let source = cloud_sync_windows_mutation_send_source(&context, &message).unwrap();
@@ -11823,20 +12887,44 @@ mod cloud_sync_mutation_send_tests {
             let started = systemtime_to_millis(SystemTime::now());
             prepared.prepare_send(&[message.sender.clone().unwrap()]);
             let finished = systemtime_to_millis(SystemTime::now());
-            let validation = cloud_sync_validate_prepared_send_source(Some(source), &prepared, started, finished);
+            let validation = cloud_sync_validate_prepared_send_source(
+                Some(source),
+                &prepared,
+                started,
+                finished,
+            );
             let receipt = cloud_sync_windows_finish_mutation_send(
-                Some(tokio::spawn(async { Ok(()) })), || Ok(()), context.clone(),
-                &prepared.id, validation, async { Ok(auth(&context)) },
-            ).await.unwrap();
+                Some(tokio::spawn(async { Ok(()) })),
+                || Ok(()),
+                context.clone(),
+                &prepared.id,
+                validation,
+                async { Ok(auth(&context)) },
+            )
+            .await
+            .unwrap();
             let replay = cloud_sync_replay_native_send_receipts(
-                context.storage_directory.clone(), context.account_fingerprint.clone(),
-                context.protected_store_identity.clone(), None,
-            ).await.unwrap();
+                context.storage_directory.clone(),
+                context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(),
+                None,
+            )
+            .await
+            .unwrap();
             assert_eq!(replay.receipts.len(), 1);
             assert_eq!(replay.receipts[0].receipt_id, receipt.receipt_id);
-            assert_eq!(receipt.prepared_sent_timestamp_ms, Some(prepared.sent_timestamp));
-            assert_eq!(replay.receipts[0].prepared_sent_timestamp_ms, Some(prepared.sent_timestamp));
-            assert_eq!(receipt.source_binding.unwrap().kind, Some(CloudSyncNativeSendSourceKind::Mutation));
+            assert_eq!(
+                receipt.prepared_sent_timestamp_ms,
+                Some(prepared.sent_timestamp)
+            );
+            assert_eq!(
+                replay.receipts[0].prepared_sent_timestamp_ms,
+                Some(prepared.sent_timestamp)
+            );
+            assert_eq!(
+                receipt.source_binding.unwrap().kind,
+                Some(CloudSyncNativeSendSourceKind::Mutation)
+            );
             assert!(cloud_sync_open_mutation_source_bound(&context).is_ok());
         }
     }
@@ -11847,9 +12935,15 @@ mod cloud_sync_mutation_send_tests {
         let message = fixture(false);
         let mut context = context(directory.path(), &message);
         assert!(cloud_sync_windows_mutation_send_source(&context, &message).is_err());
-        context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
-            &context, &auth(&context), &"a".repeat(64), &message,
-        ).unwrap());
+        context.source_binding = Some(
+            cloud_sync_stage_mutation_source_bound(
+                &context,
+                &auth(&context),
+                &"a".repeat(64),
+                &message,
+            )
+            .unwrap(),
+        );
         commit(&context);
         for alteration in 0..4 {
             let mut changed_context = context.clone();
@@ -11857,10 +12951,15 @@ mod cloud_sync_mutation_send_tests {
             match alteration {
                 0 => changed_context.guid_hash = "b".repeat(64),
                 1 => changed_context.source_binding.as_mut().unwrap().kind = None,
-                2 => changed_context.source_binding.as_mut().unwrap().kind = Some(CloudSyncNativeSendSourceKind::Attachment),
+                2 => {
+                    changed_context.source_binding.as_mut().unwrap().kind =
+                        Some(CloudSyncNativeSendSourceKind::Attachment)
+                }
                 _ => changed_wire.sender = Some("mailto:other@example.invalid".to_owned()),
             }
-            assert!(cloud_sync_windows_mutation_send_source(&changed_context, &changed_wire).is_err());
+            assert!(
+                cloud_sync_windows_mutation_send_source(&changed_context, &changed_wire).is_err()
+            );
         }
     }
 
@@ -11870,33 +12969,60 @@ mod cloud_sync_mutation_send_tests {
             let directory = tempfile::tempdir().unwrap();
             let message = fixture(false);
             let mut context = context(directory.path(), &message);
-            context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
-                &context, &auth(&context), &"a".repeat(64), &message,
-            ).unwrap());
+            context.source_binding = Some(
+                cloud_sync_stage_mutation_source_bound(
+                    &context,
+                    &auth(&context),
+                    &"a".repeat(64),
+                    &message,
+                )
+                .unwrap(),
+            );
             commit(&context);
             let handle = if failure == 0 {
                 Some(tokio::spawn(async { Err(PushError::SendTimedOut) }))
             } else if failure == 1 {
-                let pending = tokio::spawn(async {
-                    std::future::pending::<Result<(), PushError>>().await
-                });
+                let pending =
+                    tokio::spawn(async { std::future::pending::<Result<(), PushError>>().await });
                 pending.abort();
                 Some(pending)
-            } else { None };
+            } else {
+                None
+            };
             let mut after = auth(&context);
-            if failure == 3 { after.native_session_id = "other".to_owned(); }
+            if failure == 3 {
+                after.native_session_id = "other".to_owned();
+            }
             let validation = if failure == 4 {
                 Err("cloud_sync_native_mutation_prepared_source_changed")
-            } else { Ok(Some(123)) };
-            let result = cloud_sync_windows_finish_mutation_send(handle, || {
-                assert!(failure > 1, "failed job must not confirm");
-                if failure == 2 { Err(PushError::NoValidTargets) } else { Ok(()) }
-            }, context.clone(), &message.id, validation, async { Ok(after) }).await;
+            } else {
+                Ok(Some(123))
+            };
+            let result = cloud_sync_windows_finish_mutation_send(
+                handle,
+                || {
+                    assert!(failure > 1, "failed job must not confirm");
+                    if failure == 2 {
+                        Err(PushError::NoValidTargets)
+                    } else {
+                        Ok(())
+                    }
+                },
+                context.clone(),
+                &message.id,
+                validation,
+                async { Ok(after) },
+            )
+            .await;
             assert!(result.is_err());
             let replay = cloud_sync_replay_native_send_receipts(
-                context.storage_directory.clone(), context.account_fingerprint.clone(),
-                context.protected_store_identity.clone(), None,
-            ).await.unwrap();
+                context.storage_directory.clone(),
+                context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(),
+                None,
+            )
+            .await
+            .unwrap();
             assert!(replay.receipts.is_empty());
             assert!(cloud_sync_open_mutation_source_bound(&context).is_ok());
         }
@@ -11907,34 +13033,57 @@ mod cloud_sync_mutation_send_tests {
         let directory = tempfile::tempdir().unwrap();
         let message = fixture(false);
         let mut context = context(directory.path(), &message);
-        context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
-            &context, &auth(&context), &"a".repeat(64), &message,
-        ).unwrap());
+        context.source_binding = Some(
+            cloud_sync_stage_mutation_source_bound(
+                &context,
+                &auth(&context),
+                &"a".repeat(64),
+                &message,
+            )
+            .unwrap(),
+        );
         commit(&context);
         let source = cloud_sync_windows_mutation_send_source(&context, &message).unwrap();
         let mut changed = message.clone();
         changed.sender = Some("mailto:other@example.invalid".to_owned());
         let validation = cloud_sync_validate_prepared_send_source(Some(source), &changed, 0, 1);
-        assert!(cloud_sync_windows_mutation_send_receipt(context.clone(), &message.id, validation).is_err());
+        assert!(
+            cloud_sync_windows_mutation_send_receipt(context.clone(), &message.id, validation)
+                .is_err()
+        );
         let replay = cloud_sync_replay_native_send_receipts(
-            context.storage_directory.clone(), context.account_fingerprint.clone(),
-            context.protected_store_identity.clone(), None,
-        ).await.unwrap();
+            context.storage_directory.clone(),
+            context.account_fingerprint.clone(),
+            context.protected_store_identity.clone(),
+            None,
+        )
+        .await
+        .unwrap();
         assert!(replay.receipts.is_empty());
         assert!(cloud_sync_open_mutation_source_bound(&context).is_ok());
     }
 
     #[test]
     fn tracked_start_timeout_cannot_trigger_legacy_automatic_resubmission() {
-        assert_eq!(cloud_sync_send_start_error(PushError::SendTimedOut, true).to_string(),
-            "cloud_sync_native_send_completion_unknown");
-        assert_eq!(cloud_sync_send_start_error(PushError::SendTimedOut, false).to_string(),
-            "Send timeout; try again");
+        assert_eq!(
+            cloud_sync_send_start_error(PushError::SendTimedOut, true).to_string(),
+            "cloud_sync_native_send_completion_unknown"
+        );
+        assert_eq!(
+            cloud_sync_send_start_error(PushError::SendTimedOut, false).to_string(),
+            "Send timeout; try again"
+        );
         for tracked in [false, true] {
             let expected = PushError::NoValidTargets.to_string();
-            assert_eq!(cloud_sync_send_start_error(PushError::NoValidTargets, tracked).to_string(), expected);
+            assert_eq!(
+                cloud_sync_send_start_error(PushError::NoValidTargets, tracked).to_string(),
+                expected
+            );
             let expected = PushError::SendErr(6005).to_string();
-            assert_eq!(cloud_sync_send_start_error(PushError::SendErr(6005), tracked).to_string(), expected);
+            assert_eq!(
+                cloud_sync_send_start_error(PushError::SendErr(6005), tracked).to_string(),
+                expected
+            );
         }
     }
 
@@ -11945,31 +13094,52 @@ mod cloud_sync_mutation_send_tests {
             sender: Some("mailto:sender@example.invalid".to_owned()),
             conversation: Some(rustpush::ConversationData {
                 participants: vec!["mailto:peer@example.invalid".to_owned()],
-                cv_name: None, sender_guid: None, after_guid: None,
+                cv_name: None,
+                sender_guid: None,
+                after_guid: None,
             }),
             message: if unsend {
-                Message::Unsend(rustpush::UnsendMessage { tuuid: target, edit_part: 2 })
+                Message::Unsend(rustpush::UnsendMessage {
+                    tuuid: target,
+                    edit_part: 2,
+                })
             } else {
                 Message::Edit(rustpush::EditMessage {
-                    tuuid: target, edit_part: 2,
+                    tuuid: target,
+                    edit_part: 2,
                     new_parts: rustpush::MessageParts(vec![rustpush::IndexedMessagePart {
-                        part: rustpush::MessagePart::Text("synthetic edit".to_owned(),
-                            rustpush::TextFormat::Flags(rustpush::TextFlags::default())),
-                        idx: Some(2), ext: None,
+                        part: rustpush::MessagePart::Text(
+                            "synthetic edit".to_owned(),
+                            rustpush::TextFormat::Flags(rustpush::TextFlags::default()),
+                        ),
+                        idx: Some(2),
+                        ext: None,
                     }]),
                 })
             },
-            sent_timestamp: 123, send_delivered: false, target: None,
-            verification_failed: false, certified_context: None,
+            sent_timestamp: 123,
+            send_delivered: false,
+            target: None,
+            verification_failed: false,
+            certified_context: None,
         }
     }
 
-    fn context(directory: &std::path::Path, message: &MessageInst) -> CloudSyncNativeSendReceiptContext {
+    fn context(
+        directory: &std::path::Path,
+        message: &MessageInst,
+    ) -> CloudSyncNativeSendReceiptContext {
         let storage = directory.to_string_lossy().into_owned();
         CloudSyncNativeSendReceiptContext {
-            protected_store_identity: crate::cloud_sync_protector::protected_store_identity(storage.clone()).unwrap(),
-            storage_directory: storage, guid_hash: cloud_sync_local_send_guid_hash(&message.id),
-            account_fingerprint: "A".repeat(43), native_session_id: "N".repeat(43), source_binding: None,
+            protected_store_identity: crate::cloud_sync_protector::protected_store_identity(
+                storage.clone(),
+            )
+            .unwrap(),
+            storage_directory: storage,
+            guid_hash: cloud_sync_local_send_guid_hash(&message.id),
+            account_fingerprint: "A".repeat(43),
+            native_session_id: "N".repeat(43),
+            source_binding: None,
         }
     }
 
@@ -11984,9 +13154,11 @@ mod cloud_sync_mutation_send_tests {
     fn commit(context: &CloudSyncNativeSendReceiptContext) {
         let binding = context.source_binding.as_ref().unwrap();
         crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
-            PathBuf::from(&context.storage_directory), &binding.lease_reference,
+            PathBuf::from(&context.storage_directory),
+            &binding.lease_reference,
             std::slice::from_ref(&binding.protected_reference),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     #[test]
@@ -12003,12 +13175,22 @@ mod cloud_sync_mutation_send_tests {
                 2 => changed.protected_store_identity = format!("obcs2.store.{}", "B".repeat(43)),
                 _ => changed.native_session_id = "B".repeat(43),
             }
-            assert!(cloud_sync_stage_mutation_source_bound(&changed, &auth, &"a".repeat(64), &message).is_err());
+            assert!(cloud_sync_stage_mutation_source_bound(
+                &changed,
+                &auth,
+                &"a".repeat(64),
+                &message
+            )
+            .is_err());
         }
-        context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
-            &context, &auth, &"a".repeat(64), &message,
-        ).unwrap());
-        assert!(cloud_sync_stage_mutation_source_bound(&context, &auth, &"a".repeat(64), &message).is_err());
+        context.source_binding = Some(
+            cloud_sync_stage_mutation_source_bound(&context, &auth, &"a".repeat(64), &message)
+                .unwrap(),
+        );
+        assert!(
+            cloud_sync_stage_mutation_source_bound(&context, &auth, &"a".repeat(64), &message)
+                .is_err()
+        );
         assert!(cloud_sync_send_source(Some(&context), &message).is_err());
         commit(&context);
         assert!(cloud_sync_send_source(Some(&context), &message).is_ok());
@@ -12020,13 +13202,22 @@ mod cloud_sync_mutation_send_tests {
             let directory = tempfile::tempdir().unwrap();
             let message = fixture(unsend);
             let mut context = context(directory.path(), &message);
-            context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
-                &context, &auth(&context), &"a".repeat(64), &message,
-            ).unwrap());
+            context.source_binding = Some(
+                cloud_sync_stage_mutation_source_bound(
+                    &context,
+                    &auth(&context),
+                    &"a".repeat(64),
+                    &message,
+                )
+                .unwrap(),
+            );
             commit(&context);
             let source = cloud_sync_send_source(Some(&context), &message).unwrap();
             let envelope = cloud_sync_open_mutation_source_bound(&context).unwrap();
-            let restored = crate::cloud_sync_ids_mutation_source::open_mutation_source(&envelope).unwrap().message().unwrap();
+            let restored = crate::cloud_sync_ids_mutation_source::open_mutation_source(&envelope)
+                .unwrap()
+                .message()
+                .unwrap();
             assert!(cloud_sync_send_source(Some(&context), &restored).is_ok());
             assert!(cloud_sync_attachment_send_source(Some(&context), &message).is_err());
             assert!(cloud_sync_open_attachment_source_bound(&context, &auth(&context)).is_err());
@@ -12034,43 +13225,77 @@ mod cloud_sync_mutation_send_tests {
             let start = systemtime_to_millis(SystemTime::now());
             prepared.prepare_send(&[message.sender.clone().unwrap()]);
             let finish = systemtime_to_millis(SystemTime::now());
-            let validation = cloud_sync_validate_prepared_send_source(source, &prepared, start, finish);
+            let validation =
+                cloud_sync_validate_prepared_send_source(source, &prepared, start, finish);
             assert_eq!(validation, Ok(Some(prepared.sent_timestamp)));
             let (error, receipt, receipt_error) = cloud_sync_send_confirmation_fields_with_source(
-                Ok(()), Some(context.clone()), &message.id, || Ok(()), validation,
+                Ok(()),
+                Some(context.clone()),
+                &message.id,
+                || Ok(()),
+                validation,
             );
             assert!(error.is_none() && receipt_error.is_none());
             let receipt = receipt.unwrap();
-            assert_eq!(receipt.prepared_sent_timestamp_ms, Some(prepared.sent_timestamp));
-            assert_eq!(receipt.source_binding.unwrap().kind, Some(CloudSyncNativeSendSourceKind::Mutation));
+            assert_eq!(
+                receipt.prepared_sent_timestamp_ms,
+                Some(prepared.sent_timestamp)
+            );
+            assert_eq!(
+                receipt.source_binding.unwrap().kind,
+                Some(CloudSyncNativeSendSourceKind::Mutation)
+            );
             let replay = cloud_sync_replay_native_send_receipts(
-                context.storage_directory.clone(), context.account_fingerprint.clone(),
-                context.protected_store_identity.clone(), None,
-            ).await.unwrap();
+                context.storage_directory.clone(),
+                context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(),
+                None,
+            )
+            .await
+            .unwrap();
             assert_eq!(replay.receipts.len(), 1);
             let receipt = replay.receipts.into_iter().next().unwrap();
-            assert_eq!(receipt.prepared_sent_timestamp_ms, Some(prepared.sent_timestamp));
-            assert_eq!(receipt.source_binding.as_ref().unwrap().kind, Some(CloudSyncNativeSendSourceKind::Mutation));
+            assert_eq!(
+                receipt.prepared_sent_timestamp_ms,
+                Some(prepared.sent_timestamp)
+            );
+            assert_eq!(
+                receipt.source_binding.as_ref().unwrap().kind,
+                Some(CloudSyncNativeSendSourceKind::Mutation)
+            );
             let mut wrong_time = receipt.clone();
             wrong_time.prepared_sent_timestamp_ms = Some(prepared.sent_timestamp + 1);
             assert!(cloud_sync_acknowledge_native_send_receipt(
-                context.storage_directory.clone(), context.account_fingerprint.clone(),
-                context.protected_store_identity.clone(), wrong_time,
-            ).is_err());
+                context.storage_directory.clone(),
+                context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(),
+                wrong_time,
+            )
+            .is_err());
             let mut wrong = receipt.clone();
             wrong.source_binding.as_mut().unwrap().kind = None;
             assert!(cloud_sync_acknowledge_native_send_receipt(
-                context.storage_directory.clone(), context.account_fingerprint.clone(),
-                context.protected_store_identity.clone(), wrong,
-            ).is_err());
+                context.storage_directory.clone(),
+                context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(),
+                wrong,
+            )
+            .is_err());
             cloud_sync_acknowledge_native_send_receipt(
-                context.storage_directory.clone(), context.account_fingerprint.clone(),
-                context.protected_store_identity.clone(), receipt,
-            ).unwrap();
+                context.storage_directory.clone(),
+                context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(),
+                receipt,
+            )
+            .unwrap();
             let replay = cloud_sync_replay_native_send_receipts(
-                context.storage_directory.clone(), context.account_fingerprint.clone(),
-                context.protected_store_identity.clone(), None,
-            ).await.unwrap();
+                context.storage_directory.clone(),
+                context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(),
+                None,
+            )
+            .await
+            .unwrap();
             assert!(replay.receipts.is_empty());
             // Ack releases the receipt, not the original mutation source.
             assert!(cloud_sync_open_mutation_source_bound(&context).is_ok());
@@ -12083,9 +13308,15 @@ mod cloud_sync_mutation_send_tests {
             let directory = tempfile::tempdir().unwrap();
             let message = fixture(unsend);
             let mut context = context(directory.path(), &message);
-            context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
-                &context, &auth(&context), &"a".repeat(64), &message,
-            ).unwrap());
+            context.source_binding = Some(
+                cloud_sync_stage_mutation_source_bound(
+                    &context,
+                    &auth(&context),
+                    &"a".repeat(64),
+                    &message,
+                )
+                .unwrap(),
+            );
             commit(&context);
             let original = cloud_sync_open_mutation_source_bound(&context).unwrap();
             for time in [0, i64::MAX as u64 + 1] {
@@ -12093,20 +13324,36 @@ mod cloud_sync_mutation_send_tests {
                 let mut prepared = message.clone();
                 prepared.prepare_send(&[message.sender.clone().unwrap()]);
                 prepared.sent_timestamp = time;
-                assert_eq!(cloud_sync_validate_prepared_send_source(source, &prepared, time, time),
-                    Err("cloud_sync_native_mutation_prepared_time_invalid"));
+                assert_eq!(
+                    cloud_sync_validate_prepared_send_source(source, &prepared, time, time),
+                    Err("cloud_sync_native_mutation_prepared_time_invalid")
+                );
             }
             for time in [None, Some(0), Some(i64::MAX as u64 + 1)] {
-                let (error, receipt, receipt_error) = cloud_sync_send_confirmation_fields_with_source(
-                    Ok(()), Some(context.clone()), &message.id, || Ok(()), Ok(time),
-                );
+                let (error, receipt, receipt_error) =
+                    cloud_sync_send_confirmation_fields_with_source(
+                        Ok(()),
+                        Some(context.clone()),
+                        &message.id,
+                        || Ok(()),
+                        Ok(time),
+                    );
                 assert!(error.is_none() && receipt.is_none());
-                assert_eq!(receipt_error.as_deref(), Some("cloud_sync_native_mutation_prepared_time_invalid"));
+                assert_eq!(
+                    receipt_error.as_deref(),
+                    Some("cloud_sync_native_mutation_prepared_time_invalid")
+                );
             }
             assert!(cloud_sync_replay_native_send_receipts(
-                context.storage_directory.clone(), context.account_fingerprint.clone(),
-                context.protected_store_identity.clone(), None,
-            ).await.unwrap().receipts.is_empty());
+                context.storage_directory.clone(),
+                context.account_fingerprint.clone(),
+                context.protected_store_identity.clone(),
+                None,
+            )
+            .await
+            .unwrap()
+            .receipts
+            .is_empty());
             // A fixed old time survives both delayed acceptance and cold replay.
             let source = cloud_sync_send_source(Some(&context), &message).unwrap();
             let mut prepared = message.clone();
@@ -12114,15 +13361,31 @@ mod cloud_sync_mutation_send_tests {
             prepared.sent_timestamp = 123;
             let validation = cloud_sync_validate_prepared_send_source(source, &prepared, 120, 130);
             let (_, receipt, error) = cloud_sync_send_confirmation_fields_with_source(
-                Ok(()), Some(context.clone()), &message.id, || Ok(()), validation,
+                Ok(()),
+                Some(context.clone()),
+                &message.id,
+                || Ok(()),
+                validation,
             );
             assert!(error.is_none());
             assert_eq!(receipt.unwrap().prepared_sent_timestamp_ms, Some(123));
-            assert_eq!(cloud_sync_replay_native_send_receipts(
-                context.storage_directory.clone(), context.account_fingerprint.clone(),
-                context.protected_store_identity.clone(), None,
-            ).await.unwrap().receipts[0].prepared_sent_timestamp_ms, Some(123));
-            assert_eq!(cloud_sync_open_mutation_source_bound(&context).unwrap(), original);
+            assert_eq!(
+                cloud_sync_replay_native_send_receipts(
+                    context.storage_directory.clone(),
+                    context.account_fingerprint.clone(),
+                    context.protected_store_identity.clone(),
+                    None,
+                )
+                .await
+                .unwrap()
+                .receipts[0]
+                    .prepared_sent_timestamp_ms,
+                Some(123)
+            );
+            assert_eq!(
+                cloud_sync_open_mutation_source_bound(&context).unwrap(),
+                original
+            );
         }
     }
 
@@ -12131,9 +13394,15 @@ mod cloud_sync_mutation_send_tests {
         let directory = tempfile::tempdir().unwrap();
         let message = fixture(false);
         let mut context = context(directory.path(), &message);
-        context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
-            &context, &auth(&context), &"a".repeat(64), &message,
-        ).unwrap());
+        context.source_binding = Some(
+            cloud_sync_stage_mutation_source_bound(
+                &context,
+                &auth(&context),
+                &"a".repeat(64),
+                &message,
+            )
+            .unwrap(),
+        );
         commit(&context);
         for field in 0..7 {
             let mut wrong = context.clone();
@@ -12152,11 +13421,24 @@ mod cloud_sync_mutation_send_tests {
             let mut changed = message.clone();
             match field {
                 0 => changed.id = "33333333-2222-4abc-8def-555555555555".to_owned(),
-                1 => if let Message::Edit(edit) = &mut changed.message { edit.edit_part += 1; },
-                2 => if let Message::Edit(edit) = &mut changed.message { edit.tuuid = "44444444-2222-4abc-8def-555555555555".to_owned(); },
+                1 => {
+                    if let Message::Edit(edit) = &mut changed.message {
+                        edit.edit_part += 1;
+                    }
+                }
+                2 => {
+                    if let Message::Edit(edit) = &mut changed.message {
+                        edit.tuuid = "44444444-2222-4abc-8def-555555555555".to_owned();
+                    }
+                }
                 3 => changed.message = fixture(true).message,
                 4 => changed.send_delivered = !changed.send_delivered,
-                _ => changed.conversation.as_mut().unwrap().participants.push("mailto:other@example.invalid".to_owned()),
+                _ => changed
+                    .conversation
+                    .as_mut()
+                    .unwrap()
+                    .participants
+                    .push("mailto:other@example.invalid".to_owned()),
             }
             assert!(cloud_sync_send_source(Some(&context), &changed).is_err());
         }
@@ -12167,25 +13449,47 @@ mod cloud_sync_mutation_send_tests {
         let directory = tempfile::tempdir().unwrap();
         let message = fixture(true);
         let mut context = context(directory.path(), &message);
-        context.source_binding = Some(cloud_sync_stage_mutation_source_bound(
-            &context, &auth(&context), &"a".repeat(64), &message,
-        ).unwrap());
+        context.source_binding = Some(
+            cloud_sync_stage_mutation_source_bound(
+                &context,
+                &auth(&context),
+                &"a".repeat(64),
+                &message,
+            )
+            .unwrap(),
+        );
         commit(&context);
         let source = cloud_sync_send_source(Some(&context), &message).unwrap();
         let mut prepared = message.clone();
         let start = systemtime_to_millis(SystemTime::now());
         prepared.prepare_send(&[message.sender.clone().unwrap()]);
         let finish = systemtime_to_millis(SystemTime::now());
-        if let Message::Unsend(unsend) = &mut prepared.message { unsend.edit_part += 1; }
+        if let Message::Unsend(unsend) = &mut prepared.message {
+            unsend.edit_part += 1;
+        }
         let validation = cloud_sync_validate_prepared_send_source(source, &prepared, start, finish);
-        assert_eq!(validation, Err("cloud_sync_native_mutation_prepared_source_changed"));
+        assert_eq!(
+            validation,
+            Err("cloud_sync_native_mutation_prepared_source_changed")
+        );
         let (error, receipt, receipt_error) = cloud_sync_send_confirmation_fields_with_source(
-            Ok(()), Some(context.clone()), &message.id, || Ok(()), validation,
+            Ok(()),
+            Some(context.clone()),
+            &message.id,
+            || Ok(()),
+            validation,
         );
         assert!(error.is_none() && receipt.is_none());
-        assert_eq!(receipt_error.as_deref(), Some("cloud_sync_native_mutation_prepared_source_changed"));
+        assert_eq!(
+            receipt_error.as_deref(),
+            Some("cloud_sync_native_mutation_prepared_source_changed")
+        );
         let (error, receipt, _) = cloud_sync_send_confirmation_fields_with_source(
-            Ok(()), Some(context), &message.id, || Err(PushError::NoValidTargets), Ok(Some(prepared.sent_timestamp)),
+            Ok(()),
+            Some(context),
+            &message.id,
+            || Err(PushError::NoValidTargets),
+            Ok(Some(prepared.sent_timestamp)),
         );
         assert_eq!(error.as_deref(), Some("cloud_sync_native_send_failed"));
         assert!(receipt.is_none());
@@ -12199,7 +13503,10 @@ mod cloud_sync_windows_sender_tests {
     #[tokio::test]
     async fn cloud_sync_windows_sender_waits_for_actual_completion() {
         let (release, wait) = tokio::sync::oneshot::channel();
-        let native = tokio::spawn(async move { wait.await.unwrap(); Ok(()) });
+        let native = tokio::spawn(async move {
+            wait.await.unwrap();
+            Ok(())
+        });
         let completion = tokio::spawn(cloud_sync_windows_finish_send_job(Some(native), || Ok(())));
         tokio::task::yield_now().await;
         assert!(!completion.is_finished());
@@ -12210,7 +13517,11 @@ mod cloud_sync_windows_sender_tests {
     #[tokio::test]
     async fn cloud_sync_windows_sender_failure_never_confirms() {
         let native = tokio::spawn(async { Err(PushError::TokenMissing) });
-        let error = cloud_sync_windows_finish_send_job(Some(native), || panic!("failed job must not confirm")).await.unwrap_err();
+        let error = cloud_sync_windows_finish_send_job(Some(native), || {
+            panic!("failed job must not confirm")
+        })
+        .await
+        .unwrap_err();
         assert_eq!(error.to_string(), "cloud_sync_windows_sender_send_failed");
     }
 
@@ -12218,9 +13529,18 @@ mod cloud_sync_windows_sender_tests {
     async fn cloud_sync_windows_sender_lost_job_is_unknown() {
         let native = tokio::spawn(async { std::future::pending::<Result<(), PushError>>().await });
         native.abort();
-        let error = cloud_sync_windows_finish_send_job(Some(native), || panic!("lost job must not confirm")).await.unwrap_err();
-        assert_eq!(error.to_string(), "cloud_sync_windows_sender_completion_unknown");
-        cloud_sync_windows_finish_send_job(None, || Ok(())).await.unwrap();
+        let error = cloud_sync_windows_finish_send_job(Some(native), || {
+            panic!("lost job must not confirm")
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cloud_sync_windows_sender_completion_unknown"
+        );
+        cloud_sync_windows_finish_send_job(None, || Ok(()))
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -12247,14 +13567,19 @@ mod cloud_sync_windows_sender_tests {
 
     #[tokio::test]
     async fn cloud_sync_windows_completed_job_without_acceptance_never_confirms() {
-        let missing_targets = cloud_sync_windows_finish_send_job(
-            None, || Err(PushError::NoValidTargets),
-        ).await.unwrap_err();
-        assert_eq!(missing_targets.to_string(), "cloud_sync_windows_sender_unconfirmed");
+        let missing_targets =
+            cloud_sync_windows_finish_send_job(None, || Err(PushError::NoValidTargets))
+                .await
+                .unwrap_err();
+        assert_eq!(
+            missing_targets.to_string(),
+            "cloud_sync_windows_sender_unconfirmed"
+        );
         let completed = tokio::spawn(async { Ok(()) });
-        let no_ack = cloud_sync_windows_finish_send_job(
-            Some(completed), || Err(PushError::SendTimedOut),
-        ).await.unwrap_err();
+        let no_ack =
+            cloud_sync_windows_finish_send_job(Some(completed), || Err(PushError::SendTimedOut))
+                .await
+                .unwrap_err();
         assert_eq!(no_ack.to_string(), "cloud_sync_windows_sender_unconfirmed");
     }
 
@@ -12270,9 +13595,16 @@ mod cloud_sync_windows_sender_tests {
             native_session_id: "N".repeat(43),
             source_binding: None,
         };
-        for failure in [PushError::NoValidTargets, PushError::SendTimedOut, PushError::SendErr(6005)] {
+        for failure in [
+            PushError::NoValidTargets,
+            PushError::SendTimedOut,
+            PushError::SendErr(6005),
+        ] {
             let (error, receipt, receipt_error) = cloud_sync_send_confirmation_fields(
-                Ok(()), Some(context.clone()), stable_guid, || Err(failure),
+                Ok(()),
+                Some(context.clone()),
+                stable_guid,
+                || Err(failure),
             );
             assert_eq!(error.as_deref(), Some("cloud_sync_native_send_failed"));
             assert!(receipt.is_none());
@@ -12295,12 +13627,18 @@ mod cloud_sync_windows_sender_tests {
             source_binding: None,
         };
         let (send_error, receipt, receipt_error) = cloud_sync_send_confirmation_fields_with_source(
-            Ok(()), Some(context), guid, || Ok(()),
+            Ok(()),
+            Some(context),
+            guid,
+            || Ok(()),
             Err("cloud_sync_native_attachment_prepared_source_changed"),
         );
         assert!(send_error.is_none());
         assert!(receipt.is_none());
-        assert_eq!(receipt_error.as_deref(), Some("cloud_sync_native_attachment_prepared_source_changed"));
+        assert_eq!(
+            receipt_error.as_deref(),
+            Some("cloud_sync_native_attachment_prepared_source_changed")
+        );
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 
@@ -12314,39 +13652,69 @@ mod cloud_sync_windows_sender_tests {
             sender: Some("mailto:sender@example.invalid".to_owned()),
             conversation: Some(rustpush::ConversationData {
                 participants: vec!["mailto:peer@example.invalid".to_owned()],
-                cv_name: None, sender_guid: None, after_guid: None,
+                cv_name: None,
+                sender_guid: None,
+                after_guid: None,
             }),
             message: Message::Message(rustpush::NormalMessage {
                 parts: rustpush::MessageParts(vec![rustpush::IndexedMessagePart {
                     part: rustpush::MessagePart::Attachment(rustpush::Attachment {
                         a_type: rustpush::AttachmentType::MMCS(rustpush::MMCSFile {
-                            key: vec![7; 32], signature: vec![8; 21],
+                            key: vec![7; 32],
+                            signature: vec![8; 21],
                             object: "synthetic-object".to_owned(),
-                            url: "https://example.invalid/asset".to_owned(), size: 123,
+                            url: "https://example.invalid/asset".to_owned(),
+                            size: 123,
                         }),
-                        part: 0, uti_type: "public.jpeg".to_owned(),
-                        mime: "image/jpeg".to_owned(), name: "synthetic.jpg".to_owned(), iris: false,
-                    }), idx: Some(0), ext: None,
+                        part: 0,
+                        uti_type: "public.jpeg".to_owned(),
+                        mime: "image/jpeg".to_owned(),
+                        name: "synthetic.jpg".to_owned(),
+                        iris: false,
+                    }),
+                    idx: Some(0),
+                    ext: None,
                 }]),
-                effect: None, reply_guid: None, reply_part: None, service: rustpush::MessageType::IMessage,
-                subject: None, app: None, link_meta: None, voice: false, scheduled: None, embedded_profile: None,
+                effect: None,
+                reply_guid: None,
+                reply_part: None,
+                service: rustpush::MessageType::IMessage,
+                subject: None,
+                app: None,
+                link_meta: None,
+                voice: false,
+                scheduled: None,
+                embedded_profile: None,
             }),
-            sent_timestamp: 123, target: None, send_delivered: false,
-            verification_failed: false, certified_context: None,
+            sent_timestamp: 123,
+            target: None,
+            send_delivered: false,
+            verification_failed: false,
+            certified_context: None,
         };
         let stage = crate::cloud_sync_ids_attachment_source::stage_ids_attachment_source(
-            directory.path().to_path_buf(), "A".repeat(43), &"a".repeat(64),
-            &message, &["synthetic-attachment".to_owned()],
-        ).unwrap();
+            directory.path().to_path_buf(),
+            "A".repeat(43),
+            &"a".repeat(64),
+            &message,
+            &["synthetic-attachment".to_owned()],
+        )
+        .unwrap();
         let context = CloudSyncNativeSendReceiptContext {
-            storage_directory: storage.clone(), guid_hash: cloud_sync_local_send_guid_hash(guid),
+            storage_directory: storage.clone(),
+            guid_hash: cloud_sync_local_send_guid_hash(guid),
             account_fingerprint: "A".repeat(43),
-            protected_store_identity: crate::cloud_sync_protector::protected_store_identity(storage.clone()).unwrap(),
+            protected_store_identity: crate::cloud_sync_protector::protected_store_identity(
+                storage.clone(),
+            )
+            .unwrap(),
             native_session_id: "N".repeat(43),
             source_binding: Some(CloudSyncNativeSendSourceBinding {
                 kind: None,
-                source_sha256: "a".repeat(64), protected_reference: stage.protected_reference.clone(),
-                lease_reference: stage.lease_reference.clone(), payload_sha256: stage.payload_sha256.clone(),
+                source_sha256: "a".repeat(64),
+                protected_reference: stage.protected_reference.clone(),
+                lease_reference: stage.lease_reference.clone(),
+                payload_sha256: stage.payload_sha256.clone(),
                 payload_length: stage.payload_length,
             }),
         };
@@ -12359,10 +13727,14 @@ mod cloud_sync_windows_sender_tests {
         assert!(cloud_sync_inspect_attachment_sources_bound(&context, &auth).is_err());
         assert!(cloud_sync_attachment_send_source(Some(&context), &message).is_err());
         crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
-            directory.path().to_path_buf(), &stage.lease_reference,
+            directory.path().to_path_buf(),
+            &stage.lease_reference,
             std::slice::from_ref(&stage.protected_reference),
-        ).unwrap();
-        let (source, guids) = cloud_sync_attachment_send_source(Some(&context), &message).unwrap().unwrap();
+        )
+        .unwrap();
+        let (source, guids) = cloud_sync_attachment_send_source(Some(&context), &message)
+            .unwrap()
+            .unwrap();
         let restored = cloud_sync_restore_attachment_source_bound(&context, &auth).unwrap();
         assert!(cloud_sync_attachment_send_source(Some(&context), &restored).is_ok());
         // The retry inventory resolves the original opaque source GUID to the
@@ -12370,15 +13742,29 @@ mod cloud_sync_windows_sender_tests {
         // read projects for the owned attachment. It never needs a new upload.
         let inventory = cloud_sync_inspect_attachment_sources_bound(&context, &auth).unwrap();
         assert_eq!(inventory.len(), 1);
-        assert_eq!(inventory[0].original_attachment_guid, "synthetic-attachment");
+        assert_eq!(
+            inventory[0].original_attachment_guid,
+            "synthetic-attachment"
+        );
         assert_eq!(inventory[0].reflected_attachment_guid, format!("{guid}_0"));
-        let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(storage.clone()).unwrap();
+        let hasher =
+            crate::cloud_sync_protector::semantic_identifier_hasher(storage.clone()).unwrap();
         let expected_key = hasher.canonical_owned_attachment_key_hash(guid, 0).unwrap();
         assert_eq!(inventory[0].logical_entity_key_hash, expected_key.value());
-        assert_eq!(format!("{:?}", inventory[0]), "CloudSyncAttachmentSourceEntry(redacted)");
-        let replay_inventory = cloud_sync_inspect_attachment_sources_bound(&context, &auth).unwrap();
-        assert_eq!(replay_inventory[0].logical_entity_key_hash, inventory[0].logical_entity_key_hash);
-        assert_eq!(replay_inventory[0].original_attachment_guid, inventory[0].original_attachment_guid);
+        assert_eq!(
+            format!("{:?}", inventory[0]),
+            "CloudSyncAttachmentSourceEntry(redacted)"
+        );
+        let replay_inventory =
+            cloud_sync_inspect_attachment_sources_bound(&context, &auth).unwrap();
+        assert_eq!(
+            replay_inventory[0].logical_entity_key_hash,
+            inventory[0].logical_entity_key_hash
+        );
+        assert_eq!(
+            replay_inventory[0].original_attachment_guid,
+            inventory[0].original_attachment_guid
+        );
         for field in 0..4 {
             let mut wrong = context.clone();
             match field {
@@ -12405,37 +13791,67 @@ mod cloud_sync_windows_sender_tests {
         let start = systemtime_to_millis(SystemTime::now());
         prepared.prepare_send(&["mailto:sender@example.invalid".to_owned()]);
         let end = systemtime_to_millis(SystemTime::now());
-        let validation = crate::cloud_sync_ids_attachment_source::validate_prepared_ids_attachment_source(
-            &source, &prepared, &guids, start, end,
-        ).map(|()| None).map_err(|_| "cloud_sync_native_attachment_prepared_source_changed");
+        let validation =
+            crate::cloud_sync_ids_attachment_source::validate_prepared_ids_attachment_source(
+                &source, &prepared, &guids, start, end,
+            )
+            .map(|()| None)
+            .map_err(|_| "cloud_sync_native_attachment_prepared_source_changed");
         let (error, receipt, receipt_error) = cloud_sync_send_confirmation_fields_with_source(
-            Ok(()), Some(context.clone()), guid, || Ok(()), validation,
+            Ok(()),
+            Some(context.clone()),
+            guid,
+            || Ok(()),
+            validation,
         );
         assert!(error.is_none() && receipt_error.is_none());
         let receipt = receipt.unwrap();
         assert_eq!(receipt.guid_hash, cloud_sync_local_send_guid_hash(guid));
         assert_eq!(receipt.prepared_sent_timestamp_ms, None);
-        assert_eq!(receipt.source_binding.as_ref().unwrap().payload_sha256, stage.payload_sha256);
+        assert_eq!(
+            receipt.source_binding.as_ref().unwrap().payload_sha256,
+            stage.payload_sha256
+        );
         let replay = cloud_sync_replay_native_send_receipts(
-            storage.clone(), context.account_fingerprint.clone(), context.protected_store_identity.clone(), None,
-        ).await.unwrap();
+            storage.clone(),
+            context.account_fingerprint.clone(),
+            context.protected_store_identity.clone(),
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(replay.receipts.len(), 1);
-        assert_eq!(replay.receipts[0].source_binding.as_ref().unwrap().source_sha256, "a".repeat(64));
+        assert_eq!(
+            replay.receipts[0]
+                .source_binding
+                .as_ref()
+                .unwrap()
+                .source_sha256,
+            "a".repeat(64)
+        );
         cloud_sync_acknowledge_native_send_receipt(
-            storage, context.account_fingerprint, context.protected_store_identity, receipt,
-        ).unwrap();
+            storage,
+            context.account_fingerprint,
+            context.protected_store_identity,
+            receipt,
+        )
+        .unwrap();
         // The journal-owned source survives acknowledgement of the IDS receipt.
         let recovered = crate::cloud_sync_ids_attachment_source::open_staged_ids_attachment_source(
-            directory.path().to_path_buf(), "A".repeat(43), &"a".repeat(64), &stage,
-        ).unwrap();
+            directory.path().to_path_buf(),
+            "A".repeat(43),
+            &"a".repeat(64),
+            &stage,
+        )
+        .unwrap();
         assert_eq!(recovered.message_guid, guid);
     }
 
     #[test]
     fn untracked_send_keeps_legacy_completion_semantics() {
-        let result = cloud_sync_send_confirmation_fields(
-            Ok(()), None, "unused", || panic!("untracked send must not require strict proof"),
-        );
+        let result = cloud_sync_send_confirmation_fields(Ok(()), None, "unused", || {
+            panic!("untracked send must not require strict proof")
+        });
         assert!(result.0.is_none() && result.1.is_none() && result.2.is_none());
     }
 
@@ -12672,7 +14088,8 @@ pub async fn make_find_my_phone(
         aps.clone(),
         anisette.clone(),
         provider.clone(),
-    )).await
+    ))
+    .await
 }
 
 pub async fn get_devices(
@@ -12717,7 +14134,8 @@ pub async fn make_find_my_friends(
         aps.clone(),
         anisette.clone(),
         false,
-    )).await?;
+    ))
+    .await?;
     Ok(fmf_client)
 }
 
@@ -14773,24 +16191,57 @@ mod cloud_sync_failure_mapping_tests {
     fn writer_preparation_diagnostics_never_format_private_error_contents() {
         let cases = [
             (PushError::TokenMissing, "token-missing"),
-            (PushError::CloudKitWarmAuthenticationRequired, "warm-auth-required"),
-            (PushError::CloudKitSemanticOperationDenied, "writer-scope-denied"),
-            (PushError::DelegateLoginFailed("private-delegate".into(), 123,
-                "private-response".into()), "delegate-login-failed"),
-            (PushError::AuthError(Value::String("private-token".into())),
-                "authentication-rejected"),
-            (PushError::CloudKeyNotFound { zone: "private-zone".into(), class: "private-class".into() },
-                "pcs-key-missing"),
-            (PushError::CloudKitHttpError { status: 503, retry_after: None }, "http-server"),
+            (
+                PushError::CloudKitWarmAuthenticationRequired,
+                "warm-auth-required",
+            ),
+            (
+                PushError::CloudKitSemanticOperationDenied,
+                "writer-scope-denied",
+            ),
+            (
+                PushError::DelegateLoginFailed(
+                    "private-delegate".into(),
+                    123,
+                    "private-response".into(),
+                ),
+                "delegate-login-failed",
+            ),
+            (
+                PushError::AuthError(Value::String("private-token".into())),
+                "authentication-rejected",
+            ),
+            (
+                PushError::CloudKeyNotFound {
+                    zone: "private-zone".into(),
+                    class: "private-class".into(),
+                },
+                "pcs-key-missing",
+            ),
+            (
+                PushError::CloudKitHttpError {
+                    status: 503,
+                    retry_after: None,
+                },
+                "http-server",
+            ),
         ];
         for (error, expected) in cases {
             assert_eq!(cloud_sync_writer_preparation_failure_code(&error), expected);
             let wrapped = PushError::DoNotRetry(Box::new(PushError::BatchError(Arc::new(error))));
-            assert_eq!(cloud_sync_writer_preparation_failure_code(&wrapped), expected);
+            assert_eq!(
+                cloud_sync_writer_preparation_failure_code(&wrapped),
+                expected
+            );
         }
         let mut deep = PushError::TokenMissing;
-        for _ in 0..8 { deep = PushError::DoNotRetry(Box::new(deep)); }
-        assert_eq!(cloud_sync_writer_preparation_failure_code(&deep), "error-wrapper-limit");
+        for _ in 0..8 {
+            deep = PushError::DoNotRetry(Box::new(deep));
+        }
+        assert_eq!(
+            cloud_sync_writer_preparation_failure_code(&deep),
+            "error-wrapper-limit"
+        );
     }
 
     #[test]
@@ -16043,4 +17494,2261 @@ pub async fn get_sms_targets(
 ) -> anyhow::Result<Vec<PrivateDeviceInfo>> {
     let targets = state.identity.get_sms_targets(&handle, refresh).await?;
     Ok(targets)
+}
+// Conditional MessageEncryptedV3 update preparation seam. See the companion
+// notes on the prepare function for scope and unresolved composer work.
+// ---------------------------------------------------------------------------
+
+/// Accepted utm bound, mirroring the staging lane bound in
+/// cloud_sync_message_update_stage.
+const CLOUD_SYNC_MESSAGE_UPDATE_MAX_UTM_TIME: f64 = 252_423_993_599.0;
+
+/// Domain separator for the restart-stable auth binding pinned into each
+/// staged update. Covers account fingerprint and protected-store identity
+/// only, never the ephemeral native session.
+const CLOUD_SYNC_MESSAGE_UPDATE_AUTH_DOMAIN: &str = "cloud-sync-message-update-auth-v1";
+
+/// Typed input for one conditional message update preparation. Every identity
+/// field is content-free: keyed hashes, opaque protected references, hex
+/// digests, generations, and UUIDs. Message content, ciphertext, clocks,
+/// identifiers, ETags, keys, and raw records never cross this boundary.
+#[derive(Clone)]
+pub struct CloudSyncMessageUpdatePrepareInput {
+    pub expected_logical_entity_key_hash: String,
+    pub expected_server_record_id_hash: String,
+    pub expected_etag_hash: String,
+    pub mutation_context: CloudSyncNativeSendReceiptContext,
+    pub protected_raw_record_reference: String,
+    pub raw_generation: u64,
+    pub mutation_receipt: CloudSyncNativeSendReceipt,
+    pub expected_receipt_binding_sha256: String,
+    pub reflected_snapshot_sha256: String,
+    pub writer_epoch: u64,
+    pub local_operation_id: String,
+    pub http_request_uuid: String,
+    pub apple_operation_uuid: String,
+}
+
+impl std::fmt::Debug for CloudSyncMessageUpdatePrepareInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncMessageUpdatePrepareInput(redacted)")
+    }
+}
+
+/// Content-free staged update plus the safe correlation the journal needs to
+/// adopt it later. Hashes are keyed digests, references are opaque protected
+/// capabilities, and the remaining fields echo caller-supplied correlation.
+#[derive(Clone)]
+pub struct CloudSyncPreparedMessageUpdate {
+    pub protected_reference: String,
+    pub lease_reference: String,
+    pub payload_sha256: String,
+    pub payload_length: u64,
+    pub logical_entity_key_hash: String,
+    pub server_record_id_hash: String,
+    pub local_operation_id: String,
+    pub http_request_uuid: String,
+    pub apple_operation_uuid: String,
+}
+
+impl std::fmt::Debug for CloudSyncPreparedMessageUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncPreparedMessageUpdate(redacted)")
+    }
+}
+
+/// Preparation outcome. Exactly one of the two fields is set. Failures use
+/// the closed outbound safe-code vocabulary and never carry record content.
+pub struct CloudSyncPrepareMessageUpdateResult {
+    pub prepared: Option<CloudSyncPreparedMessageUpdate>,
+    pub failure: Option<CloudSyncOutboundSafeCode>,
+}
+
+impl std::fmt::Debug for CloudSyncPrepareMessageUpdateResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncPrepareMessageUpdateResult(redacted)")
+    }
+}
+
+/// Prepares and stages one conditional MessageEncryptedV3 update from
+/// authoritative native and protected inputs.
+///
+/// This binds one current native auth snapshot: the caller pins the expected
+/// account fingerprint and protected-store identity, the attempt is checked
+/// against the live snapshot before and after the lookup-only writer
+/// preparation, and any drift fails closed. It opens the exact locally
+/// staged mutation source behind the caller-supplied mutation context and
+/// the exact protected predecessor behind the mapped raw-record reference,
+/// derives the keyed Message logical hash from the verbatim target GUID in
+/// that source, and requires it plus the mapped server and ETag hashes to
+/// match. The predecessor record name must also be the deterministic name
+/// for the target GUID, which binds the canonical message GUID without
+/// decrypting the predecessor, and the predecessor PCS prefix is preserved
+/// exactly into a merge, save-semantics-1 request carrying only the new
+/// encrypted msgProto plus an optional new utm clock. The attempt is staged
+/// through cloud_sync_message_update_stage, which re-validates binding and
+/// request shape as defense in depth, and only content-free references,
+/// digests, keyed hashes, and safe correlation are returned.
+pub async fn cloud_sync_prepare_message_update(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    input: CloudSyncMessageUpdatePrepareInput,
+) -> CloudSyncPrepareMessageUpdateResult {
+    let fail = |code: CloudSyncOutboundSafeCode| CloudSyncPrepareMessageUpdateResult {
+        prepared: None,
+        failure: Some(code),
+    };
+    if !is_cloud_sync_keyed_hash(&input.expected_logical_entity_key_hash)
+        || !is_cloud_sync_keyed_hash(&input.expected_server_record_id_hash)
+        || !is_cloud_sync_keyed_hash(&input.expected_etag_hash)
+        || !is_cloud_sync_protected_reference(&input.protected_raw_record_reference)
+        || input.raw_generation == 0
+        || !is_cloud_sync_hex_digest(&input.expected_receipt_binding_sha256)
+        || !is_cloud_sync_hex_digest(&input.reflected_snapshot_sha256)
+    {
+        return fail(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+    let receipt_id_ok = input
+        .mutation_receipt
+        .receipt_id
+        .strip_prefix("obcs2.ids.")
+        .is_some_and(|suffix| {
+            suffix.len() == 43
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        });
+    if !receipt_id_ok || input.mutation_receipt.native_session_id.is_empty() {
+        return fail(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+    match input.mutation_context.source_binding.as_ref() {
+        Some(binding)
+            if binding.kind == Some(CloudSyncNativeSendSourceKind::Mutation)
+                && is_cloud_sync_protected_reference(&binding.protected_reference)
+                && is_cloud_sync_lease_reference(&binding.lease_reference)
+                && is_cloud_sync_hex_digest(&binding.source_sha256)
+                && is_cloud_sync_hex_digest(&binding.payload_sha256) => {}
+        _ => return fail(CloudSyncOutboundSafeCode::InvalidRequest),
+    }
+    if input.mutation_context.storage_directory != storage_directory
+        || input.mutation_context.account_fingerprint != expected_account_fingerprint
+        || input.mutation_context.protected_store_identity != expected_protected_store_identity
+    {
+        return fail(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let auth =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => return fail(CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+        };
+    if auth.account_fingerprint != expected_account_fingerprint
+        || auth.protected_store_identity != expected_protected_store_identity
+    {
+        return fail(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    if cloud_sync_require_source_context_auth(&input.mutation_context, &auth).is_err() {
+        return fail(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let writer_binding = match cloud_messages_client
+        .warm_message_writer_preparation_lookup_only()
+        .await
+    {
+        Ok(binding) => binding,
+        Err(_) => return fail(CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+    };
+    let auth_after =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => return fail(CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth,
+        &auth_after,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) {
+        return fail(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    if cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return fail(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let container_user = writer_binding.container_scoped_user_id().to_owned();
+    let hasher =
+        match crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.clone()) {
+            Ok(hasher) => hasher,
+            Err(_) => return fail(CloudSyncOutboundSafeCode::ProtectedStorage),
+        };
+    // Exact retained positive receipt first: this proves the staged source is
+    // the IDS-accepted mutation, binds the prepared-send time, and re-checks
+    // account, store, and current session. It reopens the same committed
+    // source without consuming it.
+    let (opened, prepared_ms) = match cloud_sync_open_confirmed_mutation_source_bound(
+        &input.mutation_context,
+        &auth_after,
+        &input.mutation_receipt,
+    ) {
+        Ok(opened) => opened,
+        Err(error) => return fail(map_confirmed_mutation_open_error(&error)),
+    };
+    if prepared_ms == 0 || prepared_ms > i64::MAX as u64 {
+        return fail(CloudSyncOutboundSafeCode::MalformedMessage);
+    }
+    let envelope = match cloud_sync_open_mutation_source_bound(&input.mutation_context) {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            let message = error.to_string();
+            if message.contains("receipt_context_invalid") {
+                return fail(CloudSyncOutboundSafeCode::InvalidScope);
+            }
+            if message.contains("source_invalid") {
+                return fail(CloudSyncOutboundSafeCode::MalformedMessage);
+            }
+            return fail(CloudSyncOutboundSafeCode::ProtectedStorage);
+        }
+    };
+    let target_guid = opened.target_guid().to_owned();
+    let target_part = opened.target_part();
+    // The Dart journal pins this exact v2 receipt-binding digest at receipt
+    // time. Recomputing it here from the validated receipt plus the exact
+    // source binding proves the journal row matches native truth; any swap
+    // of receipt, source, session, account, store, or prepared time changes
+    // the digest and fails closed.
+    let computed_receipt_binding = cloud_sync_message_update_receipt_binding(
+        &input.mutation_context,
+        &target_guid,
+        target_part,
+        &input.mutation_receipt,
+        prepared_ms,
+    );
+    if computed_receipt_binding != input.expected_receipt_binding_sha256 {
+        return fail(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
+    let scope = match crate::cloud_sync_native_fetch::CloudNativeProtectionScope::new(
+        auth_after.account_fingerprint.clone(),
+        crate::cloud_sync_native_fetch::CloudNativeStream::Messages,
+    ) {
+        Ok(scope) => scope,
+        Err(_) => return fail(CloudSyncOutboundSafeCode::InvalidScope),
+    };
+    let actual_store =
+        match crate::cloud_sync_protector::protected_store_identity(storage_directory.clone()) {
+            Ok(identity) => identity,
+            Err(_) => return fail(CloudSyncOutboundSafeCode::ProtectedStorage),
+        };
+    if actual_store != expected_protected_store_identity
+        || actual_store != auth_after.protected_store_identity
+    {
+        return fail(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let raw_envelope = match crate::cloud_sync_native_fetch::cloud_sync_unprotect_raw_envelope(
+        PathBuf::from(storage_directory.clone()),
+        &scope,
+        crate::cloud_sync_native_fetch::CloudNativeStream::Messages,
+        input.raw_generation,
+        &input.protected_raw_record_reference,
+    ) {
+        Ok(envelope) => envelope,
+        Err(failure) => {
+            use crate::cloud_sync_native_fetch::CloudNativeSafeCode as NativeCode;
+            match failure.safe_code() {
+                NativeCode::InvalidRequest => {
+                    return fail(CloudSyncOutboundSafeCode::InvalidRequest)
+                }
+                NativeCode::CheckpointContextMismatch => {
+                    return fail(CloudSyncOutboundSafeCode::BindingMismatch)
+                }
+                NativeCode::OversizedRecord | NativeCode::OversizedPage => {
+                    return fail(CloudSyncOutboundSafeCode::OversizedMessage)
+                }
+                NativeCode::MalformedResponse => {
+                    return fail(CloudSyncOutboundSafeCode::MalformedMessage)
+                }
+                _ => return fail(CloudSyncOutboundSafeCode::ProtectedStorage),
+            }
+        }
+    };
+    let raw_bytes = match raw_envelope.raw() {
+        Some(bytes) => bytes.to_vec(),
+        None => return fail(CloudSyncOutboundSafeCode::MalformedMessage),
+    };
+    let predecessor = match cloud_sync_decode_message_update_predecessor(&raw_bytes) {
+        Ok(record) => record,
+        Err(code) => return fail(code),
+    };
+    let record_name = match cloud_sync_message_update_predecessor_name(&predecessor) {
+        Ok(name) => name.to_owned(),
+        Err(code) => return fail(code),
+    };
+    let (fetched, lookup_receipt) = match cloud_messages_client
+        .lookup_message_record_version(&writer_binding, &record_name)
+        .await
+    {
+        Ok(rustpush::cloud_messages::CloudMessageRecordVersionLookup::Found(fetched, receipt)) => {
+            (fetched, receipt)
+        }
+        Ok(rustpush::cloud_messages::CloudMessageRecordVersionLookup::NotFound) => {
+            return fail(CloudSyncOutboundSafeCode::BindingMismatch)
+        }
+        Ok(rustpush::cloud_messages::CloudMessageRecordVersionLookup::Unresolved { .. }) => {
+            return fail(CloudSyncOutboundSafeCode::NativePrepareFailed)
+        }
+        Err(_) => return fail(CloudSyncOutboundSafeCode::NativePrepareFailed),
+    };
+    let remote = match fetched.get_raw_record() {
+        Ok(record) => record.clone(),
+        Err(_) => return fail(CloudSyncOutboundSafeCode::MalformedMessage),
+    };
+    let remote_etag = match cloud_sync_message_update_predecessor_etag(&remote) {
+        Ok(etag) => etag,
+        Err(code) => return fail(code),
+    };
+    if lookup_receipt.record_name() != record_name
+        || lookup_receipt.etag() != remote_etag
+        || !cloud_sync_message_update_predecessor_matches_remote(&predecessor, &remote)
+    {
+        return fail(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
+    let auth_after_lookup =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => return fail(CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth_after,
+        &auth_after_lookup,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) || cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return fail(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let mutation = match opened.message() {
+        Ok(message) => message,
+        Err(error) => return fail(map_cloud_sync_outbound_failure(error)),
+    };
+    let new_encrypted_msg_proto = match cloud_messages_client
+        .rewrite_message_record_msg_proto(&writer_binding, &fetched, |view| {
+            crate::cloud_sync_message_update_compose::compose_message_update(
+                view,
+                &mutation,
+                prepared_ms,
+            )
+        })
+        .await
+    {
+        Ok(ciphertext) => ciphertext,
+        Err(rustpush::cloud_messages::CloudMessageRewriteError::Native(_)) => {
+            return fail(CloudSyncOutboundSafeCode::NativePrepareFailed)
+        }
+        Err(rustpush::cloud_messages::CloudMessageRewriteError::Compose(error)) => {
+            use crate::cloud_sync_message_update_compose::MessageUpdateComposeError as Compose;
+            let code = match error {
+                Compose::UnsupportedMessage => CloudSyncOutboundSafeCode::UnsupportedMessage,
+                Compose::MalformedMessage => CloudSyncOutboundSafeCode::MalformedMessage,
+                Compose::OversizedMessage => CloudSyncOutboundSafeCode::OversizedMessage,
+                Compose::SourceMismatch | Compose::TimestampConflict => {
+                    CloudSyncOutboundSafeCode::BindingMismatch
+                }
+            };
+            return fail(code);
+        }
+    };
+    let auth_after_rewrite =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => return fail(CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth_after_lookup,
+        &auth_after_rewrite,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) || cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return fail(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let request = match cloud_sync_assemble_message_update_request(
+        &remote,
+        &target_guid,
+        target_part,
+        &new_encrypted_msg_proto,
+        None,
+        &input.expected_logical_entity_key_hash,
+        &input.expected_server_record_id_hash,
+        &input.expected_etag_hash,
+        &hasher,
+        &container_user,
+    ) {
+        Ok(request) => request,
+        Err(code) => return fail(code),
+    };
+    let binding = cloud_sync_message_update_binding(
+        &envelope,
+        &auth_after_rewrite.account_fingerprint,
+        &auth_after_rewrite.protected_store_identity,
+        &input,
+    );
+    match crate::cloud_sync_message_update_stage::stage_message_update(
+        PathBuf::from(storage_directory),
+        auth_after_rewrite.account_fingerprint.clone(),
+        binding,
+        &remote,
+        &request,
+    ) {
+        Ok(staged) => CloudSyncPrepareMessageUpdateResult {
+            prepared: Some(CloudSyncPreparedMessageUpdate {
+                protected_reference: staged.protected_reference,
+                lease_reference: staged.lease_reference,
+                payload_sha256: staged.payload_sha256,
+                payload_length: staged.payload_length,
+                logical_entity_key_hash: input.expected_logical_entity_key_hash,
+                server_record_id_hash: input.expected_server_record_id_hash,
+                local_operation_id: input.local_operation_id,
+                http_request_uuid: input.http_request_uuid,
+                apple_operation_uuid: input.apple_operation_uuid,
+            }),
+            failure: None,
+        },
+        Err(failure) => fail(map_cloud_sync_outbound_failure(failure)),
+    }
+}
+
+/// Pure validation and minimal-request assembly for one conditional message
+/// update. Derives the keyed Message logical hash from the verbatim target
+/// GUID, checks the mapped server and ETag hashes, proves the predecessor
+/// record name is the deterministic name for the target GUID (which binds the
+/// canonical message GUID without decrypting the predecessor), preserves the
+/// PCS prefix exactly, and builds a merge, save-semantics-1 request carrying
+/// only the new encrypted msgProto plus an optional new utm clock. Shape
+/// authority stays with the staging lane, which re-validates the returned
+/// request before anything is retained.
+#[allow(clippy::too_many_arguments)]
+fn cloud_sync_assemble_message_update_request(
+    predecessor: &rustpush::cloudkit_proto::Record,
+    target_guid: &str,
+    target_part: u64,
+    new_encrypted_msg_proto: &[u8],
+    new_utm_apple_seconds: Option<f64>,
+    expected_logical_entity_key_hash: &str,
+    expected_server_record_id_hash: &str,
+    expected_etag_hash: &str,
+    hasher: &crate::cloud_sync_semantic_identity::CloudSemanticIdentifierHasher,
+    container_scoped_user_id: &str,
+) -> Result<rustpush::cloudkit_proto::RecordSaveRequest, CloudSyncOutboundSafeCode> {
+    if target_part > u64::from(u32::MAX) {
+        return Err(CloudSyncOutboundSafeCode::UnsupportedMessage);
+    }
+    if !is_cloud_sync_keyed_hash(expected_logical_entity_key_hash)
+        || !is_cloud_sync_keyed_hash(expected_server_record_id_hash)
+        || !is_cloud_sync_keyed_hash(expected_etag_hash)
+    {
+        return Err(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+    let record_name = cloud_sync_message_update_predecessor_name(predecessor)?;
+    let etag = cloud_sync_message_update_predecessor_etag(predecessor)?;
+    let logical = hasher
+        .canonical_entity_key_hash(
+            crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Message,
+            target_guid,
+        )
+        .map_err(|_| CloudSyncOutboundSafeCode::BindingMismatch)?;
+    if logical.value().to_owned() != expected_logical_entity_key_hash {
+        return Err(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
+    if hasher.server_record_id_hash(record_name) != expected_server_record_id_hash {
+        return Err(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
+    let etag_hash = hasher
+        .canonical_etag_hash(etag)
+        .map_err(|_| CloudSyncOutboundSafeCode::BindingMismatch)?;
+    if etag_hash.value().to_owned() != expected_etag_hash {
+        return Err(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
+    crate::cloud_sync_outbound::verify_deterministic_message_record_name(
+        target_guid,
+        container_scoped_user_id,
+        record_name,
+    )
+    .map_err(map_cloud_sync_outbound_failure)?;
+    let pcs_prefix = predecessor
+        .pcs_key
+        .as_deref()
+        .filter(|key| key.len() == 4)
+        .ok_or(CloudSyncOutboundSafeCode::MalformedMessage)?;
+    let previous_bytes = cloud_sync_message_update_predecessor_msg_proto(predecessor)
+        .ok_or(CloudSyncOutboundSafeCode::MalformedMessage)?;
+    if previous_bytes.is_empty() {
+        return Err(CloudSyncOutboundSafeCode::MalformedMessage);
+    }
+    if new_encrypted_msg_proto.is_empty() {
+        return Err(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+    if new_encrypted_msg_proto == previous_bytes {
+        return Err(CloudSyncOutboundSafeCode::MalformedMessage);
+    }
+    if let Some(clock) = new_utm_apple_seconds {
+        if !clock.is_finite() || clock <= 0.0 || clock > CLOUD_SYNC_MESSAGE_UPDATE_MAX_UTM_TIME {
+            return Err(CloudSyncOutboundSafeCode::MalformedMessage);
+        }
+    }
+    let mut fields = Vec::with_capacity(2);
+    fields.push(cloud_sync_message_update_msg_proto_field(
+        new_encrypted_msg_proto,
+    ));
+    if let Some(clock) = new_utm_apple_seconds {
+        fields.push(cloud_sync_message_update_utm_field(clock));
+    }
+    Ok(rustpush::cloudkit_proto::RecordSaveRequest {
+        record: Some(rustpush::cloudkit_proto::Record {
+            record_identifier: predecessor.record_identifier.clone(),
+            r#type: predecessor.r#type.clone(),
+            pcs_key: Some(pcs_prefix.to_vec()),
+            record_field: fields,
+            ..Default::default()
+        }),
+        merge: Some(true),
+        save_semantics: Some(1),
+        etag: predecessor.etag.clone(),
+        ..Default::default()
+    })
+}
+
+/// Reads the predecessor record name. Blank or missing names fail closed so
+/// no hash is ever derived from an empty identifier.
+fn cloud_sync_message_update_predecessor_name(
+    predecessor: &rustpush::cloudkit_proto::Record,
+) -> Result<&str, CloudSyncOutboundSafeCode> {
+    predecessor
+        .record_identifier
+        .as_ref()
+        .and_then(|identifier| identifier.value.as_ref())
+        .and_then(|value| value.name.as_deref())
+        .filter(|name| !name.trim().is_empty() && name.len() <= 4096)
+        .ok_or(CloudSyncOutboundSafeCode::MalformedMessage)
+}
+
+/// Reads the predecessor ETag. Blank or missing tags fail closed so the
+/// conditional precondition can never be built from an empty version.
+fn cloud_sync_message_update_predecessor_etag(
+    predecessor: &rustpush::cloudkit_proto::Record,
+) -> Result<&str, CloudSyncOutboundSafeCode> {
+    predecessor
+        .etag
+        .as_deref()
+        .filter(|etag| !etag.trim().is_empty() && etag.len() <= 4096)
+        .ok_or(CloudSyncOutboundSafeCode::MalformedMessage)
+}
+
+/// Reads the predecessor encrypted msgProto bytes without interpreting them.
+/// Absent payloads stay malformed; emptiness is checked by the caller so the
+/// unchanged-ciphertext rule keeps one authority.
+fn cloud_sync_message_update_predecessor_msg_proto(
+    predecessor: &rustpush::cloudkit_proto::Record,
+) -> Option<&[u8]> {
+    predecessor
+        .record_field
+        .iter()
+        .find(|field| {
+            field
+                .identifier
+                .as_ref()
+                .and_then(|identifier| identifier.name.as_deref())
+                == Some("msgProto")
+        })?
+        .value
+        .as_ref()?
+        .bytes_value
+        .as_deref()
+}
+
+/// Builds the encrypted msgProto field for the minimal merge. Callers supply
+/// opaque ciphertext; this helper never inspects the bytes beyond moving
+/// them into the correctly typed field.
+fn cloud_sync_message_update_msg_proto_field(
+    ciphertext: &[u8],
+) -> rustpush::cloudkit_proto::record::Field {
+    use rustpush::cloudkit_proto::record::field;
+    rustpush::cloudkit_proto::record::Field {
+        identifier: Some(field::Identifier {
+            name: Some("msgProto".to_owned()),
+        }),
+        value: Some(field::Value {
+            r#type: Some(field::value::Type::EncryptedBytesType as i32),
+            is_encrypted: Some(true),
+            bytes_value: Some(ciphertext.to_vec()),
+            ..Default::default()
+        }),
+    }
+}
+
+/// Builds the unencrypted utm clock field for the minimal merge.
+fn cloud_sync_message_update_utm_field(clock: f64) -> rustpush::cloudkit_proto::record::Field {
+    use rustpush::cloudkit_proto::record::field;
+    let mut value = field::Value::default();
+    value.r#type = Some(field::value::Type::DateType as i32);
+    value.date_value.get_or_insert_with(Default::default).time = Some(clock);
+    rustpush::cloudkit_proto::record::Field {
+        identifier: Some(field::Identifier {
+            name: Some("utm".to_owned()),
+        }),
+        value: Some(value),
+    }
+}
+
+/// Decodes raw protected predecessor bytes into a CloudKit record. Only
+/// protobuf shape is checked here; record semantics stay with the assembler
+/// and the staging lane.
+fn cloud_sync_decode_message_update_predecessor(
+    raw: &[u8],
+) -> Result<rustpush::cloudkit_proto::Record, CloudSyncOutboundSafeCode> {
+    if raw.is_empty() {
+        return Err(CloudSyncOutboundSafeCode::MalformedMessage);
+    }
+    <rustpush::cloudkit_proto::Record as prostMessage>::decode(raw)
+        .map_err(|_| CloudSyncOutboundSafeCode::MalformedMessage)
+}
+
+/// Requires the protected reflected predecessor and the fresh lookup to be
+/// the same CloudKit version before any plaintext is opened. Field order is
+/// not semantic, but every field and all update-sensitive metadata must match
+/// exactly. A stale reflection therefore returns to reconciliation instead of
+/// composing against one version and conditionally saving another.
+fn cloud_sync_message_update_predecessor_matches_remote(
+    reflected: &rustpush::cloudkit_proto::Record,
+    remote: &rustpush::cloudkit_proto::Record,
+) -> bool {
+    if reflected.record_identifier != remote.record_identifier
+        || reflected.r#type != remote.r#type
+        || reflected.etag != remote.etag
+        || reflected.pcs_key != remote.pcs_key
+        || reflected.protection_info != remote.protection_info
+        || reflected.record_field.len() != remote.record_field.len()
+    {
+        return false;
+    }
+    fn field_name(field: &rustpush::cloudkit_proto::record::Field) -> Option<&str> {
+        field
+            .identifier
+            .as_ref()
+            .and_then(|identifier| identifier.name.as_deref())
+    }
+    let mut names = HashSet::with_capacity(reflected.record_field.len());
+    for field in &reflected.record_field {
+        let Some(name) = field_name(field).filter(|name| !name.is_empty()) else {
+            return false;
+        };
+        if !names.insert(name) {
+            return false;
+        }
+        let mut matches = remote
+            .record_field
+            .iter()
+            .filter(|candidate| field_name(candidate) == Some(name));
+        if matches.next() != Some(field) || matches.next().is_some() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Lowercase hex SHA-256 used for the native-derived binding digests.
+fn message_update_sha256_hex(data: &[u8]) -> String {
+    Sha256::digest(data)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Restart-stable auth binding: domain-separated hash over account
+/// fingerprint and protected-store identity. The ephemeral session is
+/// deliberately excluded so staged attempts reopen after cold restarts.
+fn message_update_auth_binding_sha256(account_fingerprint: &str, store_identity: &str) -> String {
+    let mut material = Vec::with_capacity(
+        CLOUD_SYNC_MESSAGE_UPDATE_AUTH_DOMAIN.len()
+            + account_fingerprint.len()
+            + store_identity.len()
+            + 2,
+    );
+    material.extend_from_slice(CLOUD_SYNC_MESSAGE_UPDATE_AUTH_DOMAIN.as_bytes());
+    material.push(0);
+    material.extend_from_slice(account_fingerprint.as_bytes());
+    material.push(0);
+    material.extend_from_slice(store_identity.as_bytes());
+    message_update_sha256_hex(&material)
+}
+
+/// Builds the exact staging binding for one prepared update. The mutation
+/// source digest is derived natively from the opened source envelope and the
+/// auth digest from the current account and store identity; the receipt
+/// binding carries the journal digest verified against the exact retained
+/// receipt just above, and the remaining journal-held correlation (snapshot,
+/// epoch, operation and request IDs) is carried through verbatim for later
+/// adoption.
+fn cloud_sync_message_update_binding(
+    mutation_source_envelope: &[u8],
+    account_fingerprint: &str,
+    protected_store_identity: &str,
+    input: &CloudSyncMessageUpdatePrepareInput,
+) -> crate::cloud_sync_message_update_stage::MessageUpdateBinding {
+    crate::cloud_sync_message_update_stage::MessageUpdateBinding {
+        mutation_source_sha256: message_update_sha256_hex(mutation_source_envelope),
+        ids_receipt_binding_sha256: input.expected_receipt_binding_sha256.clone(),
+        reflected_snapshot_sha256: input.reflected_snapshot_sha256.clone(),
+        auth_binding_sha256: message_update_auth_binding_sha256(
+            account_fingerprint,
+            protected_store_identity,
+        ),
+        writer_epoch: input.writer_epoch,
+        local_operation_id: input.local_operation_id.clone(),
+        http_request_uuid: input.http_request_uuid.clone(),
+        apple_operation_uuid: input.apple_operation_uuid.clone(),
+    }
+}
+
+/// Derives the Dart journal v2 receipt-binding digest natively from the
+/// validated receipt plus the exact source binding. The canonical JSON
+/// matches CloudSyncLocalMutationJournal._receiptProof for the timed case:
+/// the v2 domain, account fingerprint, protected-store identity, receipt id,
+/// receipt session, the source binding canonical encoding, and the decimal
+/// prepared-send milliseconds, hashed as lowercase hex SHA-256. The target
+/// GUID hash is re-derived from the verbatim opened target GUID with the
+/// same local-send GUID hash the journal uses, so a swapped target fails the
+/// caller comparison. Historical timeless receipts never reach here: the
+/// confirmed open above rejects a missing prepared time first.
+fn cloud_sync_message_update_receipt_binding(
+    context: &CloudSyncNativeSendReceiptContext,
+    target_guid: &str,
+    target_part: u64,
+    receipt: &CloudSyncNativeSendReceipt,
+    prepared_ms: u64,
+) -> String {
+    let binding = context.source_binding.as_ref();
+    let encoded_source = serde_json::Value::Array(vec![
+        serde_json::Value::from(1),
+        serde_json::Value::from("idsMutationSource"),
+        serde_json::Value::from(context.account_fingerprint.as_str()),
+        serde_json::Value::from(context.protected_store_identity.as_str()),
+        serde_json::Value::from(context.guid_hash.as_str()),
+        serde_json::Value::from(cloud_sync_local_send_guid_hash(target_guid)),
+        serde_json::Value::from(target_part),
+        serde_json::Value::from(
+            binding
+                .map(|value| value.source_sha256.as_str())
+                .unwrap_or(""),
+        ),
+        serde_json::Value::from(
+            binding
+                .map(|value| value.protected_reference.as_str())
+                .unwrap_or(""),
+        ),
+        serde_json::Value::from(
+            binding
+                .map(|value| value.lease_reference.as_str())
+                .unwrap_or(""),
+        ),
+        serde_json::Value::from(
+            binding
+                .map(|value| value.payload_sha256.as_str())
+                .unwrap_or(""),
+        ),
+        serde_json::Value::from(binding.map(|value| value.payload_length).unwrap_or(0)),
+    ]);
+    let encoded_source_text = serde_json::to_string(&encoded_source).unwrap_or_default();
+    let proof = serde_json::Value::Array(vec![
+        serde_json::Value::from("cloud-sync-mutation-ids-receipt-v2"),
+        serde_json::Value::from(context.account_fingerprint.as_str()),
+        serde_json::Value::from(context.protected_store_identity.as_str()),
+        serde_json::Value::from(receipt.receipt_id.as_str()),
+        serde_json::Value::from(receipt.native_session_id.as_str()),
+        serde_json::Value::from(encoded_source_text),
+        serde_json::Value::from(prepared_ms.to_string()),
+    ]);
+    message_update_sha256_hex(&serde_json::to_vec(&proof).unwrap_or_default())
+}
+
+/// Maps confirmed-mutation open failures to the closed safe-code vocabulary.
+/// Receipt content mismatches fail as binding mismatches, retained-receipt
+/// absences as protected storage, and timeless receipts as malformed. The
+/// fixed anyhow literals below carry no record content by construction.
+fn map_confirmed_mutation_open_error(error: &anyhow::Error) -> CloudSyncOutboundSafeCode {
+    let message = error.to_string();
+    if message.contains("receipt_context_invalid") {
+        CloudSyncOutboundSafeCode::InvalidScope
+    } else if message.contains("receipt_changed") {
+        CloudSyncOutboundSafeCode::BindingMismatch
+    } else if message.contains("receipt_time_unavailable") {
+        CloudSyncOutboundSafeCode::MalformedMessage
+    } else if message.contains("receipt_unavailable") {
+        CloudSyncOutboundSafeCode::ProtectedStorage
+    } else if message.contains("source_invalid") {
+        CloudSyncOutboundSafeCode::MalformedMessage
+    } else {
+        CloudSyncOutboundSafeCode::ProtectedStorage
+    }
+}
+
+#[cfg(test)]
+mod cloud_sync_message_update_prepare_tests {
+    use super::*;
+    use crate::cloud_sync_outbound::CloudSyncOutboundFailure as UpdateNativeFailure;
+    use crate::cloud_sync_semantic_identity::CloudSemanticIdentifierHasher;
+    use rustpush::cloudkit_proto::{record, Identifier, RecordIdentifier, RecordZoneIdentifier};
+
+    const UPDATE_TARGET_GUID: &str = "22222222-2222-4222-8222-222222222222";
+    const UPDATE_OTHER_GUID: &str = "33333333-3333-4333-8333-333333333333";
+    const UPDATE_MUTATION_GUID: &str = "11111111-1111-4111-8111-111111111111";
+    const UPDATE_CONTAINER_USER: &str = "container-user-fixture";
+    const UPDATE_ETAG: &str = "fixture-predecessor-etag-01";
+    const UPDATE_ACCOUNT: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const UPDATE_STORE: &str = "obcs2.store.SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS";
+    const UPDATE_PREPARED_MS: u64 = 1789146004000;
+
+    fn update_test_hasher() -> CloudSemanticIdentifierHasher {
+        CloudSemanticIdentifierHasher::new(b"message-update-prepare-test-key-v1").unwrap()
+    }
+
+    fn update_old_bytes() -> Vec<u8> {
+        b"fixture-original-ciphertext-bytes-01".to_vec()
+    }
+
+    fn update_new_bytes() -> Vec<u8> {
+        b"fixture-prepared-ciphertext-bytes-02".to_vec()
+    }
+
+    fn update_record_name() -> String {
+        crate::cloud_sync_outbound::deterministic_message_record_name(
+            UPDATE_TARGET_GUID,
+            UPDATE_CONTAINER_USER,
+        )
+        .expect("fixture guid and user are valid")
+    }
+
+    fn update_hashes(
+        hasher: &CloudSemanticIdentifierHasher,
+        record_name: &str,
+    ) -> (String, String, String) {
+        use crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind;
+        let logical = hasher
+            .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, UPDATE_TARGET_GUID)
+            .expect("fixture guid hashes")
+            .value()
+            .to_owned();
+        let server = hasher.server_record_id_hash(record_name);
+        let etag = hasher
+            .canonical_etag_hash(UPDATE_ETAG)
+            .expect("fixture etag hashes")
+            .value()
+            .to_owned();
+        (logical, server, etag)
+    }
+
+    enum UpdateUtm {
+        Absent,
+        Time(f64),
+        MissingTime,
+    }
+
+    fn update_predecessor(
+        record_name: &str,
+        etag: Option<&str>,
+        pcs_key: Option<Vec<u8>>,
+        msg_proto: Option<&[u8]>,
+        utm: UpdateUtm,
+    ) -> rustpush::cloudkit_proto::Record {
+        let mut fields = Vec::new();
+        if let Some(bytes) = msg_proto {
+            fields.push(record::Field {
+                identifier: Some(record::field::Identifier {
+                    name: Some("msgProto".to_owned()),
+                }),
+                value: Some(record::field::Value {
+                    r#type: Some(record::field::value::Type::EncryptedBytesType as i32),
+                    is_encrypted: Some(true),
+                    bytes_value: Some(bytes.to_vec()),
+                    ..Default::default()
+                }),
+            });
+        }
+        match utm {
+            UpdateUtm::Absent => {}
+            UpdateUtm::Time(time) => {
+                let mut value = record::field::Value::default();
+                value.r#type = Some(record::field::value::Type::DateType as i32);
+                value.date_value.get_or_insert_with(Default::default).time = Some(time);
+                fields.push(record::Field {
+                    identifier: Some(record::field::Identifier {
+                        name: Some("utm".to_owned()),
+                    }),
+                    value: Some(value),
+                });
+            }
+            UpdateUtm::MissingTime => {
+                let mut value = record::field::Value::default();
+                value.r#type = Some(record::field::value::Type::DateType as i32);
+                value.date_value.get_or_insert_with(Default::default);
+                fields.push(record::Field {
+                    identifier: Some(record::field::Identifier {
+                        name: Some("utm".to_owned()),
+                    }),
+                    value: Some(value),
+                });
+            }
+        }
+        rustpush::cloudkit_proto::Record {
+            record_identifier: Some(RecordIdentifier {
+                value: Some(Identifier {
+                    name: Some(record_name.to_owned()),
+                    r#type: Some(1),
+                }),
+                zone_identifier: Some(RecordZoneIdentifier {
+                    value: Some(Identifier {
+                        name: Some("messageManateeZone".to_owned()),
+                        r#type: Some(6),
+                    }),
+                    owner_identifier: Some(Identifier {
+                        name: Some("fixture-owner".to_owned()),
+                        r#type: Some(7),
+                    }),
+                    ..Default::default()
+                }),
+            }),
+            r#type: Some(record::Type {
+                name: Some("MessageEncryptedV3".to_owned()),
+            }),
+            etag: etag.map(str::to_owned),
+            pcs_key,
+            record_field: fields,
+            ..Default::default()
+        }
+    }
+
+    fn update_mutation(target_guid: &str, target_part: u64, unsend: bool) -> rustpush::MessageInst {
+        let message = if unsend {
+            rustpush::Message::Unsend(rustpush::UnsendMessage {
+                tuuid: target_guid.to_owned(),
+                edit_part: target_part,
+            })
+        } else {
+            rustpush::Message::Edit(rustpush::EditMessage {
+                tuuid: target_guid.to_owned(),
+                edit_part: target_part,
+                new_parts: rustpush::MessageParts(vec![rustpush::IndexedMessagePart {
+                    part: rustpush::MessagePart::Text(
+                        "replacement".to_owned(),
+                        rustpush::TextFormat::Flags(rustpush::TextFlags {
+                            bold: false,
+                            italic: false,
+                            underline: false,
+                            strikethrough: false,
+                        }),
+                    ),
+                    idx: Some(0),
+                    ext: None,
+                }]),
+            })
+        };
+        rustpush::MessageInst {
+            id: UPDATE_MUTATION_GUID.to_owned(),
+            sender: Some("mailto:sender@example.test".to_owned()),
+            conversation: Some(rustpush::ConversationData {
+                participants: vec!["mailto:peer@example.test".to_owned()],
+                cv_name: None,
+                sender_guid: None,
+                after_guid: None,
+            }),
+            message,
+            sent_timestamp: 0,
+            send_delivered: false,
+            target: None,
+            verification_failed: false,
+            certified_context: None,
+        }
+    }
+
+    fn update_opened_guid_part(target_guid: &str, target_part: u64, unsend: bool) -> (String, u64) {
+        let message = update_mutation(target_guid, target_part, unsend);
+        let bytes = crate::cloud_sync_ids_mutation_source::encode_mutation_source(&message)
+            .expect("fixture mutation encodes");
+        let opened = crate::cloud_sync_ids_mutation_source::open_mutation_source(&bytes)
+            .expect("fixture mutation opens");
+        (opened.target_guid().to_owned(), opened.target_part())
+    }
+
+    fn update_test_binding() -> crate::cloud_sync_message_update_stage::MessageUpdateBinding {
+        crate::cloud_sync_message_update_stage::MessageUpdateBinding {
+            mutation_source_sha256: "a".repeat(64),
+            ids_receipt_binding_sha256: "b".repeat(64),
+            reflected_snapshot_sha256: "c".repeat(64),
+            auth_binding_sha256: "d".repeat(64),
+            writer_epoch: 3,
+            local_operation_id: "update-test-01".to_owned(),
+            http_request_uuid: "11111111-1111-4111-8111-111111111111".to_owned(),
+            apple_operation_uuid: "22222222-2222-4222-8222-222222222222".to_owned(),
+        }
+    }
+
+    fn update_source_binding() -> CloudSyncNativeSendSourceBinding {
+        CloudSyncNativeSendSourceBinding {
+            kind: Some(CloudSyncNativeSendSourceKind::Mutation),
+            source_sha256: "a".repeat(64),
+            protected_reference: "obcs2.ref.".to_owned() + &"B".repeat(43),
+            lease_reference: "obcs2.lease.".to_owned() + &"b".repeat(32),
+            payload_sha256: "c".repeat(64),
+            payload_length: 512,
+        }
+    }
+
+    fn update_context() -> CloudSyncNativeSendReceiptContext {
+        CloudSyncNativeSendReceiptContext {
+            storage_directory: "store-dir".to_owned(),
+            guid_hash: cloud_sync_local_send_guid_hash(UPDATE_MUTATION_GUID),
+            account_fingerprint: UPDATE_ACCOUNT.to_owned(),
+            protected_store_identity: UPDATE_STORE.to_owned(),
+            native_session_id: "N".repeat(43),
+            source_binding: Some(update_source_binding()),
+        }
+    }
+
+    fn update_receipt() -> CloudSyncNativeSendReceipt {
+        CloudSyncNativeSendReceipt {
+            receipt_id: "obcs2.ids.".to_owned() + &"I".repeat(43),
+            guid_hash: cloud_sync_local_send_guid_hash(UPDATE_MUTATION_GUID),
+            native_session_id: "N".repeat(43),
+            source_binding: Some(update_source_binding()),
+            prepared_sent_timestamp_ms: Some(UPDATE_PREPARED_MS),
+        }
+    }
+
+    fn update_input_fixture() -> CloudSyncMessageUpdatePrepareInput {
+        CloudSyncMessageUpdatePrepareInput {
+            expected_logical_entity_key_hash: "L".repeat(43),
+            expected_server_record_id_hash: "S".repeat(43),
+            expected_etag_hash: "E".repeat(43),
+            mutation_context: update_context(),
+            mutation_receipt: update_receipt(),
+            expected_receipt_binding_sha256: "e".repeat(64),
+            protected_raw_record_reference: "obcs2.ref.".to_owned() + &"R".repeat(43),
+            raw_generation: 7,
+            reflected_snapshot_sha256: "c".repeat(64),
+            writer_epoch: 3,
+            local_operation_id: "update-test-01".to_owned(),
+            http_request_uuid: UPDATE_MUTATION_GUID.to_owned(),
+            apple_operation_uuid: UPDATE_TARGET_GUID.to_owned(),
+        }
+    }
+
+    #[test]
+    fn exact_update_assembles_minimal_conditional_merge() {
+        let hasher = update_test_hasher();
+        let record_name = update_record_name();
+        let (logical, server, etag_hash) = update_hashes(&hasher, &record_name);
+        let predecessor = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Absent,
+        );
+        let (guid, part) = update_opened_guid_part(UPDATE_TARGET_GUID, 0, false);
+        let request = cloud_sync_assemble_message_update_request(
+            &predecessor,
+            &guid,
+            part,
+            &update_new_bytes(),
+            None,
+            &logical,
+            &server,
+            &etag_hash,
+            &hasher,
+            UPDATE_CONTAINER_USER,
+        )
+        .expect("exact update assembles");
+        assert_eq!(request.merge, Some(true));
+        assert_eq!(request.save_semantics, Some(1));
+        assert_eq!(request.etag.as_deref(), Some(UPDATE_ETAG));
+        assert!(request.fields_to_delete_if_exist_on_merge.is_empty());
+        let saved = request.record.as_ref().expect("request record");
+        assert_eq!(saved.record_identifier, predecessor.record_identifier);
+        assert_eq!(saved.r#type, predecessor.r#type);
+        assert_eq!(saved.pcs_key, predecessor.pcs_key);
+        assert!(saved.etag.is_none());
+        assert_eq!(saved.record_field.len(), 1);
+        let field = saved.record_field.first().expect("msgProto field");
+        assert_eq!(
+            field.identifier.as_ref().and_then(|id| id.name.as_deref()),
+            Some("msgProto")
+        );
+        assert_eq!(
+            field
+                .value
+                .as_ref()
+                .and_then(|value| value.bytes_value.as_deref()),
+            Some(update_new_bytes().as_slice())
+        );
+        let clocked = cloud_sync_assemble_message_update_request(
+            &predecessor,
+            &guid,
+            part,
+            &update_new_bytes(),
+            Some(1_720_000_100.0),
+            &logical,
+            &server,
+            &etag_hash,
+            &hasher,
+            UPDATE_CONTAINER_USER,
+        )
+        .expect("clocked update assembles");
+        let clocked_record = clocked.record.as_ref().expect("clocked record");
+        assert_eq!(clocked_record.record_field.len(), 2);
+        let again = cloud_sync_assemble_message_update_request(
+            &predecessor,
+            &guid,
+            part,
+            &update_new_bytes(),
+            None,
+            &logical,
+            &server,
+            &etag_hash,
+            &hasher,
+            UPDATE_CONTAINER_USER,
+        )
+        .expect("replay assembles");
+        assert_eq!(
+            request.encode_to_vec(),
+            again.encode_to_vec(),
+            "identical inputs assemble deterministically"
+        );
+    }
+
+    #[test]
+    fn predecessor_match_is_order_independent_but_version_exact() {
+        let name = update_record_name();
+        let mut reflected = update_predecessor(
+            &name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Time(1_720_000_000.0),
+        );
+        let mut remote = reflected.clone();
+        remote.record_field.reverse();
+        assert!(cloud_sync_message_update_predecessor_matches_remote(
+            &reflected, &remote
+        ));
+
+        remote.etag = Some("new-version".to_owned());
+        assert!(!cloud_sync_message_update_predecessor_matches_remote(
+            &reflected, &remote
+        ));
+        remote.etag = reflected.etag.clone();
+        remote.record_field[0]
+            .value
+            .as_mut()
+            .unwrap()
+            .date_value
+            .as_mut()
+            .unwrap()
+            .time = Some(1_720_000_001.0);
+        assert!(!cloud_sync_message_update_predecessor_matches_remote(
+            &reflected, &remote
+        ));
+
+        reflected
+            .record_field
+            .push(reflected.record_field[0].clone());
+        assert!(!cloud_sync_message_update_predecessor_matches_remote(
+            &reflected, &reflected
+        ));
+    }
+
+    #[test]
+    fn update_rejects_wrong_target_guid_and_logical_hash() {
+        let hasher = update_test_hasher();
+        let record_name = update_record_name();
+        let (logical, server, etag_hash) = update_hashes(&hasher, &record_name);
+        let predecessor = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Absent,
+        );
+        let (wrong_guid, part) = update_opened_guid_part(UPDATE_OTHER_GUID, 0, false);
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &predecessor,
+                &wrong_guid,
+                part,
+                &update_new_bytes(),
+                None,
+                &logical,
+                &server,
+                &etag_hash,
+                &hasher,
+                UPDATE_CONTAINER_USER,
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::BindingMismatch
+        );
+        let (guid, _) = update_opened_guid_part(UPDATE_TARGET_GUID, 0, true);
+        let mut wrong_logical = logical.clone();
+        wrong_logical.replace_range(0..1, "Z");
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &predecessor,
+                &guid,
+                part,
+                &update_new_bytes(),
+                None,
+                &wrong_logical,
+                &server,
+                &etag_hash,
+                &hasher,
+                UPDATE_CONTAINER_USER,
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::BindingMismatch
+        );
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &predecessor,
+                &guid,
+                part,
+                &update_new_bytes(),
+                None,
+                "not-a-hash",
+                &server,
+                &etag_hash,
+                &hasher,
+                UPDATE_CONTAINER_USER,
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::InvalidRequest
+        );
+    }
+
+    #[test]
+    fn update_rejects_wrong_server_record_id_hash_and_name() {
+        let hasher = update_test_hasher();
+        let record_name = update_record_name();
+        let (logical, server, etag_hash) = update_hashes(&hasher, &record_name);
+        let predecessor = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Absent,
+        );
+        let (guid, part) = update_opened_guid_part(UPDATE_TARGET_GUID, 0, false);
+        let mut wrong_server = server.clone();
+        wrong_server.replace_range(0..1, "Z");
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &predecessor,
+                &guid,
+                part,
+                &update_new_bytes(),
+                None,
+                &logical,
+                &wrong_server,
+                &etag_hash,
+                &hasher,
+                UPDATE_CONTAINER_USER,
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::BindingMismatch
+        );
+        let other_name = crate::cloud_sync_outbound::deterministic_message_record_name(
+            UPDATE_OTHER_GUID,
+            UPDATE_CONTAINER_USER,
+        )
+        .expect("other guid names");
+        let other_predecessor = update_predecessor(
+            &other_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Absent,
+        );
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &other_predecessor,
+                &guid,
+                part,
+                &update_new_bytes(),
+                None,
+                &logical,
+                &server,
+                &etag_hash,
+                &hasher,
+                UPDATE_CONTAINER_USER,
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::BindingMismatch
+        );
+        let unnamed = update_predecessor(
+            "",
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Absent,
+        );
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &unnamed,
+                &guid,
+                part,
+                &update_new_bytes(),
+                None,
+                &logical,
+                &server,
+                &etag_hash,
+                &hasher,
+                UPDATE_CONTAINER_USER,
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::MalformedMessage
+        );
+    }
+
+    #[test]
+    fn update_rejects_wrong_or_missing_etag() {
+        let hasher = update_test_hasher();
+        let record_name = update_record_name();
+        let (logical, server, etag_hash) = update_hashes(&hasher, &record_name);
+        let predecessor = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Absent,
+        );
+        let (guid, part) = update_opened_guid_part(UPDATE_TARGET_GUID, 0, false);
+        let mut wrong_etag = etag_hash.clone();
+        wrong_etag.replace_range(0..1, "Z");
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &predecessor,
+                &guid,
+                part,
+                &update_new_bytes(),
+                None,
+                &logical,
+                &server,
+                &wrong_etag,
+                &hasher,
+                UPDATE_CONTAINER_USER,
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::BindingMismatch
+        );
+        for missing in [None, Some(""), Some("   ")] {
+            let without_etag = update_predecessor(
+                &record_name,
+                missing,
+                Some(vec![7, 7, 7, 7]),
+                Some(&update_old_bytes()),
+                UpdateUtm::Absent,
+            );
+            assert_eq!(
+                cloud_sync_assemble_message_update_request(
+                    &without_etag,
+                    &guid,
+                    part,
+                    &update_new_bytes(),
+                    None,
+                    &logical,
+                    &server,
+                    &etag_hash,
+                    &hasher,
+                    UPDATE_CONTAINER_USER,
+                )
+                .unwrap_err(),
+                CloudSyncOutboundSafeCode::MalformedMessage,
+                "missing etag must fail closed"
+            );
+        }
+    }
+
+    #[test]
+    fn update_rejects_unsupported_part_bad_payloads_pcs_and_clocks() {
+        let hasher = update_test_hasher();
+        let record_name = update_record_name();
+        let (logical, server, etag_hash) = update_hashes(&hasher, &record_name);
+        let predecessor = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Absent,
+        );
+        let (guid, _) = update_opened_guid_part(UPDATE_TARGET_GUID, 0, false);
+        let (_, edge_part) = update_opened_guid_part(UPDATE_TARGET_GUID, u64::from(u32::MAX), true);
+        assert_eq!(edge_part, u64::from(u32::MAX));
+        cloud_sync_assemble_message_update_request(
+            &predecessor,
+            &guid,
+            edge_part,
+            &update_new_bytes(),
+            None,
+            &logical,
+            &server,
+            &etag_hash,
+            &hasher,
+            UPDATE_CONTAINER_USER,
+        )
+        .expect("u32-max part stays in the wire domain");
+        let (_, beyond) = update_opened_guid_part(UPDATE_TARGET_GUID, u64::MAX, true);
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &predecessor,
+                &guid,
+                beyond,
+                &update_new_bytes(),
+                None,
+                &logical,
+                &server,
+                &etag_hash,
+                &hasher,
+                UPDATE_CONTAINER_USER,
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::UnsupportedMessage
+        );
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &predecessor,
+                &guid,
+                0,
+                &update_new_bytes(),
+                None,
+                &logical,
+                &server,
+                &etag_hash,
+                &hasher,
+                "",
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::MalformedMessage
+        );
+        let missing_payload = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            None,
+            UpdateUtm::Absent,
+        );
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &missing_payload,
+                &guid,
+                0,
+                &update_new_bytes(),
+                None,
+                &logical,
+                &server,
+                &etag_hash,
+                &hasher,
+                UPDATE_CONTAINER_USER,
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::MalformedMessage
+        );
+        let empty_payload = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(b""),
+            UpdateUtm::Absent,
+        );
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &empty_payload,
+                &guid,
+                0,
+                &update_new_bytes(),
+                None,
+                &logical,
+                &server,
+                &etag_hash,
+                &hasher,
+                UPDATE_CONTAINER_USER,
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::MalformedMessage
+        );
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &predecessor,
+                &guid,
+                0,
+                &[],
+                None,
+                &logical,
+                &server,
+                &etag_hash,
+                &hasher,
+                UPDATE_CONTAINER_USER,
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::InvalidRequest
+        );
+        assert_eq!(
+            cloud_sync_assemble_message_update_request(
+                &predecessor,
+                &guid,
+                0,
+                &update_old_bytes(),
+                None,
+                &logical,
+                &server,
+                &etag_hash,
+                &hasher,
+                UPDATE_CONTAINER_USER,
+            )
+            .unwrap_err(),
+            CloudSyncOutboundSafeCode::MalformedMessage
+        );
+        for clock in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            0.0,
+            -1.0,
+            CLOUD_SYNC_MESSAGE_UPDATE_MAX_UTM_TIME + 1.0,
+        ] {
+            assert_eq!(
+                cloud_sync_assemble_message_update_request(
+                    &predecessor,
+                    &guid,
+                    0,
+                    &update_new_bytes(),
+                    Some(clock),
+                    &logical,
+                    &server,
+                    &etag_hash,
+                    &hasher,
+                    UPDATE_CONTAINER_USER,
+                )
+                .unwrap_err(),
+                CloudSyncOutboundSafeCode::MalformedMessage,
+                "clock {clock:?} must fail closed"
+            );
+        }
+        for pcs in [None, Some(vec![1, 2, 3]), Some(vec![1, 2, 3, 4, 5])] {
+            let rotated = update_predecessor(
+                &record_name,
+                Some(UPDATE_ETAG),
+                pcs,
+                Some(&update_old_bytes()),
+                UpdateUtm::Absent,
+            );
+            assert_eq!(
+                cloud_sync_assemble_message_update_request(
+                    &rotated,
+                    &guid,
+                    0,
+                    &update_new_bytes(),
+                    None,
+                    &logical,
+                    &server,
+                    &etag_hash,
+                    &hasher,
+                    UPDATE_CONTAINER_USER,
+                )
+                .unwrap_err(),
+                CloudSyncOutboundSafeCode::MalformedMessage,
+                "PCS prefix must be preserved exactly"
+            );
+        }
+    }
+
+    #[test]
+    fn staged_update_reopens_exactly_and_rejects_replay_mismatch() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().to_path_buf();
+        let account = UPDATE_ACCOUNT.to_owned();
+        let hasher = update_test_hasher();
+        let record_name = update_record_name();
+        let (logical, server, etag_hash) = update_hashes(&hasher, &record_name);
+        let predecessor = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Absent,
+        );
+        let (guid, part) = update_opened_guid_part(UPDATE_TARGET_GUID, 0, false);
+        let request = cloud_sync_assemble_message_update_request(
+            &predecessor,
+            &guid,
+            part,
+            &update_new_bytes(),
+            None,
+            &logical,
+            &server,
+            &etag_hash,
+            &hasher,
+            UPDATE_CONTAINER_USER,
+        )
+        .expect("fixture assembles");
+        let binding = update_test_binding();
+        let staged = crate::cloud_sync_message_update_stage::stage_message_update(
+            path.clone(),
+            account.clone(),
+            binding.clone(),
+            &predecessor,
+            &request,
+        )
+        .expect("stage");
+        assert!(crate::cloud_sync_message_update_stage::open_message_update(
+            path.clone(),
+            account.clone(),
+            &binding,
+            &staged
+        )
+        .is_err());
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            path.clone(),
+            &staged.lease_reference,
+            std::slice::from_ref(&staged.protected_reference),
+        )
+        .expect("commit");
+        let first = crate::cloud_sync_message_update_stage::open_message_update(
+            path.clone(),
+            account.clone(),
+            &binding,
+            &staged,
+        )
+        .expect("reopen");
+        let second = crate::cloud_sync_message_update_stage::open_message_update(
+            path.clone(),
+            account.clone(),
+            &binding,
+            &staged,
+        )
+        .expect("second reopen");
+        assert_eq!(
+            first.request().encode_to_vec(),
+            second.request().encode_to_vec()
+        );
+        assert_eq!(
+            first.predecessor().encode_to_vec(),
+            predecessor.encode_to_vec()
+        );
+        let other = crate::cloud_sync_message_update_stage::stage_message_update(
+            path.clone(),
+            account.clone(),
+            binding.clone(),
+            &predecessor,
+            &request,
+        )
+        .expect("restage");
+        assert_eq!(staged.payload_sha256, other.payload_sha256);
+        assert_ne!(staged.protected_reference, other.protected_reference);
+        crate::cloud_sync_native_fetch::cloud_sync_commit_protected_page_lease(
+            path.clone(),
+            &other.lease_reference,
+            std::slice::from_ref(&other.protected_reference),
+        )
+        .expect("commit other");
+        let mut tampered = staged.clone();
+        tampered.payload_length += 1;
+        assert!(crate::cloud_sync_message_update_stage::open_message_update(
+            path.clone(),
+            account.clone(),
+            &binding,
+            &tampered
+        )
+        .is_err());
+        let mut bad_binding = binding.clone();
+        bad_binding.writer_epoch += 1;
+        assert_eq!(
+            crate::cloud_sync_message_update_stage::open_message_update(
+                path.clone(),
+                account.clone(),
+                &bad_binding,
+                &staged
+            )
+            .err()
+            .expect("writer epoch drift must be rejected"),
+            UpdateNativeFailure::BindingMismatch
+        );
+    }
+
+    #[test]
+    fn update_rejects_tampered_predecessor_rollback_and_oversize() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().to_path_buf();
+        let account = UPDATE_ACCOUNT.to_owned();
+        let hasher = update_test_hasher();
+        let record_name = update_record_name();
+        let (logical, server, etag_hash) = update_hashes(&hasher, &record_name);
+        let predecessor = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Absent,
+        );
+        let (guid, part) = update_opened_guid_part(UPDATE_TARGET_GUID, 0, false);
+        let malformed_clock = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::MissingTime,
+        );
+        let clocked = cloud_sync_assemble_message_update_request(
+            &malformed_clock,
+            &guid,
+            part,
+            &update_new_bytes(),
+            Some(1_720_000_100.0),
+            &logical,
+            &server,
+            &etag_hash,
+            &hasher,
+            UPDATE_CONTAINER_USER,
+        )
+        .expect("assemble does not inspect stored clocks");
+        assert_eq!(
+            crate::cloud_sync_message_update_stage::stage_message_update(
+                path.clone(),
+                account.clone(),
+                update_test_binding(),
+                &malformed_clock,
+                &clocked,
+            )
+            .err()
+            .expect("malformed predecessor clock must be rejected"),
+            UpdateNativeFailure::MalformedMessage
+        );
+        let rolled_back = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Time(1_720_000_200.0),
+        );
+        let behind = cloud_sync_assemble_message_update_request(
+            &rolled_back,
+            &guid,
+            part,
+            &update_new_bytes(),
+            Some(1_720_000_100.0),
+            &logical,
+            &server,
+            &etag_hash,
+            &hasher,
+            UPDATE_CONTAINER_USER,
+        )
+        .expect("ordering stays with the staging lane");
+        assert_eq!(
+            crate::cloud_sync_message_update_stage::stage_message_update(
+                path.clone(),
+                account.clone(),
+                update_test_binding(),
+                &rolled_back,
+                &behind,
+            )
+            .err()
+            .expect("clock rollback must be rejected"),
+            UpdateNativeFailure::MalformedMessage
+        );
+        let mut wrong_zone = predecessor.clone();
+        wrong_zone
+            .record_identifier
+            .as_mut()
+            .expect("identifier")
+            .zone_identifier
+            .as_mut()
+            .expect("zone")
+            .value
+            .as_mut()
+            .expect("zone value")
+            .name = Some("chatManateeZone".to_owned());
+        let zone_request = cloud_sync_assemble_message_update_request(
+            &wrong_zone,
+            &guid,
+            part,
+            &update_new_bytes(),
+            None,
+            &logical,
+            &server,
+            &etag_hash,
+            &hasher,
+            UPDATE_CONTAINER_USER,
+        )
+        .expect("mapping checks pass before zone shape");
+        assert_eq!(
+            crate::cloud_sync_message_update_stage::stage_message_update(
+                path.clone(),
+                account.clone(),
+                update_test_binding(),
+                &wrong_zone,
+                &zone_request,
+            )
+            .err()
+            .expect("wrong predecessor zone must be rejected"),
+            UpdateNativeFailure::MalformedMessage
+        );
+        let huge = vec![9u8; 4 * 1024 * 1024 + 1];
+        let oversized = cloud_sync_assemble_message_update_request(
+            &predecessor,
+            &guid,
+            part,
+            &huge,
+            None,
+            &logical,
+            &server,
+            &etag_hash,
+            &hasher,
+            UPDATE_CONTAINER_USER,
+        )
+        .expect("size is the staging lane authority");
+        assert_eq!(
+            crate::cloud_sync_message_update_stage::stage_message_update(
+                path,
+                account,
+                update_test_binding(),
+                &predecessor,
+                &oversized,
+            )
+            .err()
+            .expect("oversized update must be rejected"),
+            UpdateNativeFailure::OversizedMessage
+        );
+    }
+
+    #[test]
+    fn update_decode_helper_round_trip() {
+        let record_name = update_record_name();
+        let predecessor = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Absent,
+        );
+        let raw = predecessor.encode_to_vec();
+        let decoded =
+            cloud_sync_decode_message_update_predecessor(&raw).expect("round trip decodes");
+        assert_eq!(decoded.encode_to_vec(), raw);
+        assert_eq!(
+            cloud_sync_decode_message_update_predecessor(b"not-a-record").unwrap_err(),
+            CloudSyncOutboundSafeCode::MalformedMessage
+        );
+        assert_eq!(
+            cloud_sync_decode_message_update_predecessor(b"").unwrap_err(),
+            CloudSyncOutboundSafeCode::MalformedMessage
+        );
+    }
+
+    fn update_proof_inputs() -> (
+        CloudSyncNativeSendReceiptContext,
+        String,
+        u64,
+        CloudSyncNativeSendReceipt,
+        u64,
+    ) {
+        let context = update_context();
+        let (guid, part) = update_opened_guid_part(UPDATE_TARGET_GUID, 0, false);
+        let receipt = update_receipt();
+        (context, guid, part, receipt, UPDATE_PREPARED_MS)
+    }
+
+    #[test]
+    fn update_receipt_binding_matches_journal_v2_canonical_json() {
+        let (context, guid, part, receipt, prepared) = update_proof_inputs();
+        let binding = context.source_binding.as_ref().expect("binding");
+        let target_hash = cloud_sync_local_send_guid_hash(&guid);
+        let inner = format!(
+            "[1,\"idsMutationSource\",\"{}\",\"{}\",\"{}\",\"{}\",{},\"{}\",\"{}\",\"{}\",\"{}\",{}]",
+            UPDATE_ACCOUNT,
+            UPDATE_STORE,
+            context.guid_hash,
+            target_hash,
+            part,
+            binding.source_sha256,
+            binding.protected_reference,
+            binding.lease_reference,
+            binding.payload_sha256,
+            binding.payload_length,
+        );
+        let outer = format!(
+            "[\"cloud-sync-mutation-ids-receipt-v2\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"]",
+            UPDATE_ACCOUNT,
+            UPDATE_STORE,
+            receipt.receipt_id,
+            receipt.native_session_id,
+            inner.replace('"', "\\\""),
+            prepared.to_string(),
+        );
+        let expected = message_update_sha256_hex(outer.as_bytes());
+        assert_eq!(
+            cloud_sync_message_update_receipt_binding(&context, &guid, part, &receipt, prepared),
+            expected,
+            "native digest must match the journal v2 canonical JSON"
+        );
+        assert_eq!(expected.len(), 64);
+        let other_guid = cloud_sync_message_update_receipt_binding(
+            &context,
+            UPDATE_OTHER_GUID,
+            part,
+            &receipt,
+            prepared,
+        );
+        assert_ne!(expected, other_guid, "swapped target must change the proof");
+        let mut other_receipt = receipt.clone();
+        other_receipt.native_session_id = "M".repeat(43);
+        assert_ne!(
+            expected,
+            cloud_sync_message_update_receipt_binding(
+                &context,
+                &guid,
+                part,
+                &other_receipt,
+                prepared
+            ),
+            "swapped session must change the proof"
+        );
+        assert_ne!(
+            expected,
+            cloud_sync_message_update_receipt_binding(
+                &context,
+                &guid,
+                part,
+                &receipt,
+                prepared + 1
+            ),
+            "swapped prepared time must change the proof"
+        );
+        let mut other_context = context.clone();
+        let mut other_binding = binding.clone();
+        other_binding.source_sha256 = "f".repeat(64);
+        other_context.source_binding = Some(other_binding);
+        assert_ne!(
+            expected,
+            cloud_sync_message_update_receipt_binding(
+                &other_context,
+                &guid,
+                part,
+                &receipt,
+                prepared
+            ),
+            "swapped source must change the proof"
+        );
+    }
+
+    #[test]
+    fn update_confirmed_open_mapper_keeps_closed_vocabulary() {
+        assert_eq!(
+            map_confirmed_mutation_open_error(&anyhow::anyhow!(
+                "cloud_sync_native_send_receipt_context_invalid"
+            )),
+            CloudSyncOutboundSafeCode::InvalidScope
+        );
+        assert_eq!(
+            map_confirmed_mutation_open_error(&anyhow::anyhow!(
+                "cloud_sync_native_mutation_receipt_changed"
+            )),
+            CloudSyncOutboundSafeCode::BindingMismatch
+        );
+        assert_eq!(
+            map_confirmed_mutation_open_error(&anyhow::anyhow!(
+                "cloud_sync_native_mutation_receipt_time_unavailable"
+            )),
+            CloudSyncOutboundSafeCode::MalformedMessage
+        );
+        assert_eq!(
+            map_confirmed_mutation_open_error(&anyhow::anyhow!(
+                "cloud_sync_native_mutation_receipt_unavailable"
+            )),
+            CloudSyncOutboundSafeCode::ProtectedStorage
+        );
+        assert_eq!(
+            map_confirmed_mutation_open_error(&anyhow::anyhow!(
+                "cloud_sync_native_mutation_source_invalid"
+            )),
+            CloudSyncOutboundSafeCode::MalformedMessage
+        );
+        assert_eq!(
+            map_confirmed_mutation_open_error(&anyhow::anyhow!(
+                "cloud_sync_native_mutation_source_unavailable"
+            )),
+            CloudSyncOutboundSafeCode::ProtectedStorage
+        );
+        assert_eq!(
+            map_confirmed_mutation_open_error(&anyhow::anyhow!("boom")),
+            CloudSyncOutboundSafeCode::ProtectedStorage
+        );
+    }
+
+    fn update_auth_fixture(session: &str) -> CloudSyncNativeAuthMetadata {
+        CloudSyncNativeAuthMetadata {
+            native_session_id: session.to_owned(),
+            account_fingerprint: UPDATE_ACCOUNT.to_owned(),
+            protected_store_identity: UPDATE_STORE.to_owned(),
+        }
+    }
+
+    #[test]
+    fn update_auth_predicates_and_store_failures_are_fail_closed() {
+        let auth = update_auth_fixture(&"N".repeat(43));
+        assert!(cloud_sync_auth_identity_remains_exact(
+            &auth,
+            &auth,
+            UPDATE_ACCOUNT,
+            &auth.protected_store_identity,
+        ));
+        let mut drifted = update_auth_fixture(&"N".repeat(43));
+        drifted.account_fingerprint = "B".repeat(43);
+        assert!(!cloud_sync_auth_identity_remains_exact(
+            &auth,
+            &drifted,
+            UPDATE_ACCOUNT,
+            &auth.protected_store_identity,
+        ));
+        let mut drifted = update_auth_fixture(&"N".repeat(43));
+        drifted.protected_store_identity = "obcs2.store.".to_owned() + &"T".repeat(43);
+        assert!(!cloud_sync_auth_identity_remains_exact(
+            &auth,
+            &drifted,
+            UPDATE_ACCOUNT,
+            &auth.protected_store_identity,
+        ));
+        let drifted = update_auth_fixture(&"M".repeat(43));
+        assert!(!cloud_sync_auth_identity_remains_exact(
+            &auth,
+            &drifted,
+            UPDATE_ACCOUNT,
+            &auth.protected_store_identity,
+        ));
+        assert!(!cloud_sync_auth_identity_remains_exact(
+            &auth,
+            &auth,
+            &"B".repeat(43),
+            &auth.protected_store_identity,
+        ));
+        let context = CloudSyncNativeSendReceiptContext {
+            storage_directory: "store-dir".to_owned(),
+            guid_hash: "a".repeat(64),
+            account_fingerprint: UPDATE_ACCOUNT.to_owned(),
+            protected_store_identity: auth.protected_store_identity.clone(),
+            native_session_id: auth.native_session_id.clone(),
+            source_binding: None,
+        };
+        assert!(cloud_sync_require_source_context_auth(&context, &auth).is_ok());
+        let drifted_auth = update_auth_fixture(&"M".repeat(43));
+        let error = cloud_sync_require_source_context_auth(&context, &drifted_auth).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cloud_sync_native_send_receipt_context_invalid"
+        );
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().to_path_buf();
+        let hasher = update_test_hasher();
+        let record_name = update_record_name();
+        let (logical, server, etag_hash) = update_hashes(&hasher, &record_name);
+        let predecessor = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Absent,
+        );
+        let (guid, part) = update_opened_guid_part(UPDATE_TARGET_GUID, 0, false);
+        let request = cloud_sync_assemble_message_update_request(
+            &predecessor,
+            &guid,
+            part,
+            &update_new_bytes(),
+            None,
+            &logical,
+            &server,
+            &etag_hash,
+            &hasher,
+            UPDATE_CONTAINER_USER,
+        )
+        .expect("prime assembles");
+        crate::cloud_sync_message_update_stage::stage_message_update(
+            path.clone(),
+            UPDATE_ACCOUNT.to_owned(),
+            update_test_binding(),
+            &predecessor,
+            &request,
+        )
+        .expect("prime primes the protected store");
+        let scope = crate::cloud_sync_native_fetch::CloudNativeProtectionScope::new(
+            UPDATE_ACCOUNT.to_owned(),
+            crate::cloud_sync_native_fetch::CloudNativeStream::Messages,
+        )
+        .expect("scope");
+        let missing = crate::cloud_sync_native_fetch::cloud_sync_unprotect_raw_envelope(
+            path.clone(),
+            &scope,
+            crate::cloud_sync_native_fetch::CloudNativeStream::Messages,
+            7,
+            &("obcs2.ref.".to_owned() + &"Z".repeat(43)),
+        );
+        assert!(missing.is_err());
+        let zero = crate::cloud_sync_native_fetch::cloud_sync_unprotect_raw_envelope(
+            path,
+            &scope,
+            crate::cloud_sync_native_fetch::CloudNativeStream::Messages,
+            0,
+            &("obcs2.ref.".to_owned() + &"Z".repeat(43)),
+        );
+        assert!(matches!(
+            zero.err()
+                .expect("zero native sequence must be rejected")
+                .safe_code(),
+            crate::cloud_sync_native_fetch::CloudNativeSafeCode::InvalidRequest
+        ));
+    }
+
+    #[test]
+    fn update_binding_derives_native_digests_and_echoes_correlation() {
+        let input = update_input_fixture();
+        let envelope = b"fixture-mutation-envelope-bytes";
+        let first = cloud_sync_message_update_binding(
+            envelope,
+            UPDATE_ACCOUNT,
+            "obcs2.store.fixture",
+            &input,
+        );
+        let second = cloud_sync_message_update_binding(
+            envelope,
+            UPDATE_ACCOUNT,
+            "obcs2.store.fixture",
+            &input,
+        );
+        assert_eq!(first.mutation_source_sha256, second.mutation_source_sha256);
+        assert_eq!(first.mutation_source_sha256.len(), 64);
+        assert!(first
+            .mutation_source_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')));
+        assert_eq!(first.auth_binding_sha256, second.auth_binding_sha256);
+        let other = cloud_sync_message_update_binding(
+            b"different-envelope",
+            UPDATE_ACCOUNT,
+            "obcs2.store.fixture",
+            &input,
+        );
+        assert_ne!(first.mutation_source_sha256, other.mutation_source_sha256);
+        let other_store = cloud_sync_message_update_binding(
+            envelope,
+            UPDATE_ACCOUNT,
+            "obcs2.store.other",
+            &input,
+        );
+        assert_ne!(first.auth_binding_sha256, other_store.auth_binding_sha256);
+        assert_eq!(
+            first.ids_receipt_binding_sha256,
+            input.expected_receipt_binding_sha256
+        );
+        assert_eq!(
+            first.reflected_snapshot_sha256,
+            input.reflected_snapshot_sha256
+        );
+        assert_eq!(first.writer_epoch, input.writer_epoch);
+        assert_eq!(first.local_operation_id, input.local_operation_id);
+        assert_eq!(first.http_request_uuid, input.http_request_uuid);
+        assert_eq!(first.apple_operation_uuid, input.apple_operation_uuid);
+    }
+
+    #[test]
+    fn update_prepare_types_and_errors_expose_no_plaintext() {
+        let input = update_input_fixture();
+        let prepared = CloudSyncPreparedMessageUpdate {
+            protected_reference: "obcs2.ref.".to_owned() + &"P".repeat(43),
+            lease_reference: "obcs2.lease.".to_owned() + &"a".repeat(32),
+            payload_sha256: "a".repeat(64),
+            payload_length: 512,
+            logical_entity_key_hash: "L".repeat(43),
+            server_record_id_hash: "S".repeat(43),
+            local_operation_id: input.local_operation_id.clone(),
+            http_request_uuid: input.http_request_uuid.clone(),
+            apple_operation_uuid: input.apple_operation_uuid.clone(),
+        };
+        let result = CloudSyncPrepareMessageUpdateResult {
+            prepared: Some(prepared),
+            failure: None,
+        };
+        assert_eq!(
+            format!("{:?}", input),
+            "CloudSyncMessageUpdatePrepareInput(redacted)"
+        );
+        assert_eq!(
+            format!("{:?}", result),
+            "CloudSyncPrepareMessageUpdateResult(redacted)"
+        );
+        for debug in [
+            format!("{:?}", input),
+            format!("{:?}", result),
+            format!("{:?}", CloudSyncOutboundSafeCode::BindingMismatch),
+            format!("{:?}", CloudSyncOutboundSafeCode::MalformedMessage),
+            format!("{:?}", CloudSyncOutboundSafeCode::InvalidRequest),
+            format!("{:?}", CloudSyncOutboundSafeCode::UnsupportedMessage),
+        ] {
+            assert!(!debug.contains(UPDATE_TARGET_GUID));
+            assert!(!debug.contains(UPDATE_ETAG));
+            assert!(!debug.contains("fixture-prepared-ciphertext"));
+            assert!(!debug.contains("fixture-original-ciphertext"));
+        }
+        let hasher = update_test_hasher();
+        let record_name = update_record_name();
+        let (logical, server, etag_hash) = update_hashes(&hasher, &record_name);
+        let predecessor = update_predecessor(
+            &record_name,
+            Some(UPDATE_ETAG),
+            Some(vec![7, 7, 7, 7]),
+            Some(&update_old_bytes()),
+            UpdateUtm::Absent,
+        );
+        let (guid, part) = update_opened_guid_part(UPDATE_TARGET_GUID, 0, false);
+        let mut wrong = server.clone();
+        wrong.replace_range(0..1, "Z");
+        assert_eq!(
+            format!(
+                "{:?}",
+                cloud_sync_assemble_message_update_request(
+                    &predecessor,
+                    &guid,
+                    part,
+                    &update_new_bytes(),
+                    None,
+                    &logical,
+                    &wrong,
+                    &etag_hash,
+                    &hasher,
+                    UPDATE_CONTAINER_USER,
+                )
+                .unwrap_err()
+            ),
+            "BindingMismatch"
+        );
+    }
 }

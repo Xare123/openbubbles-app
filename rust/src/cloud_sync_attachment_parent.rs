@@ -84,10 +84,10 @@ impl ParentAttributedProjection {
     pub(crate) fn validate_encoded_body(&self, encoded: &[u8]) -> Result<(), Failure> {
         crate::cloud_sync_canonical_converter::validate_source_projected_attributed_body(
             encoded, &self.body,
-        ).map_err(|_| Failure::BindingMismatch)
+        )
+        .map_err(|_| Failure::BindingMismatch)
     }
 }
-
 
 enum RunDraft {
     Text {
@@ -417,14 +417,18 @@ mod tests {
         assert_eq!(projection.links[1].start_utf16, 5);
         assert_eq!(projection.links[0].apple_guid, "at_1_parent-fixture-guid");
         assert_eq!(projection.links[1].apple_guid, "at_7_parent-fixture-guid");
-        projection.validate_encoded_body(&projection.encoded_body).unwrap();
+        projection
+            .validate_encoded_body(&projection.encoded_body)
+            .unwrap();
         let mut reordered = projection.body.clone();
         if let StCollapsedValue::Object { fields, .. } = &mut reordered {
             for field in fields.iter_mut().skip(1) {
                 if let [StCollapsedValue::Object { class, fields }] = field.as_mut_slice() {
                     if class == "NSDictionary" {
-                        let mut entries: Vec<_> = fields[1..].chunks_exact(2)
-                            .map(|pair| pair.to_vec()).collect();
+                        let mut entries: Vec<_> = fields[1..]
+                            .chunks_exact(2)
+                            .map(|pair| pair.to_vec())
+                            .collect();
                         entries.reverse();
                         fields.truncate(1);
                         fields.extend(entries.into_iter().flatten());
@@ -438,19 +442,38 @@ mod tests {
 
         let mut changed = decode_wire(&projection);
         changed.text = "Z😀 B ".to_owned();
-        assert!(projection.validate_encoded_body(&coder_encode_flattened(&[changed.encode()])).is_err());
+        assert!(projection
+            .validate_encoded_body(&coder_encode_flattened(&[changed.encode()]))
+            .is_err());
         let mut changed = decode_wire(&projection);
         changed.ranges[0].0 -= 1; // splitting the source's surrogate pair
-        assert!(projection.validate_encoded_body(&coder_encode_flattened(&[changed.encode()])).is_err());
+        assert!(projection
+            .validate_encoded_body(&coder_encode_flattened(&[changed.encode()]))
+            .is_err());
         let mut changed = decode_wire(&projection);
-        changed.ranges[1].1.0.insert(ATTACH_GUID_KEY.to_owned(), NSString("at_1_other-parent".to_owned()).encode());
-        assert!(projection.validate_encoded_body(&coder_encode_flattened(&[changed.encode()])).is_err());
+        changed.ranges[1].1 .0.insert(
+            ATTACH_GUID_KEY.to_owned(),
+            NSString("at_1_other-parent".to_owned()).encode(),
+        );
+        assert!(projection
+            .validate_encoded_body(&coder_encode_flattened(&[changed.encode()]))
+            .is_err());
         let mut changed = decode_wire(&projection);
-        changed.ranges[0].1.0.insert(BOLD_KEY.to_owned(), NSNumber(1).encode());
-        assert!(projection.validate_encoded_body(&coder_encode_flattened(&[changed.encode()])).is_err());
+        changed.ranges[0]
+            .1
+             .0
+            .insert(BOLD_KEY.to_owned(), NSNumber(1).encode());
+        assert!(projection
+            .validate_encoded_body(&coder_encode_flattened(&[changed.encode()]))
+            .is_err());
         let mut changed = decode_wire(&projection);
-        changed.ranges[0].1.0.insert("unknown-attribute".to_owned(), NSNumber(0).encode());
-        assert!(projection.validate_encoded_body(&coder_encode_flattened(&[changed.encode()])).is_err());
+        changed.ranges[0]
+            .1
+             .0
+            .insert("unknown-attribute".to_owned(), NSNumber(0).encode());
+        assert!(projection
+            .validate_encoded_body(&coder_encode_flattened(&[changed.encode()]))
+            .is_err());
     }
 
     #[test]
@@ -459,17 +482,26 @@ mod tests {
         let projection = project_parent_attributed_body(&source).unwrap();
         for duplicate in [false, true] {
             let mut body = projection.body.clone();
-            let StCollapsedValue::Object { fields, .. } = &mut body else { panic!("fixture body") };
-            let StCollapsedValue::Object { fields: dictionary, .. } = &mut fields[2][0]
-                else { panic!("fixture dictionary") };
+            let StCollapsedValue::Object { fields, .. } = &mut body else {
+                panic!("fixture body")
+            };
+            let StCollapsedValue::Object {
+                fields: dictionary, ..
+            } = &mut fields[2][0]
+            else {
+                panic!("fixture dictionary")
+            };
             if duplicate {
                 dictionary[3] = dictionary[1].clone();
             } else {
-                let StCollapsedValue::Object { fields, .. } = &mut dictionary[1][0]
-                    else { panic!("fixture key") };
+                let StCollapsedValue::Object { fields, .. } = &mut dictionary[1][0] else {
+                    panic!("fixture key")
+                };
                 fields.push(vec![StCollapsedValue::String("hidden-field".to_owned())]);
             }
-            assert!(projection.validate_encoded_body(&coder_encode_flattened(&[body])).is_err());
+            assert!(projection
+                .validate_encoded_body(&coder_encode_flattened(&[body]))
+                .is_err());
         }
     }
 
@@ -478,12 +510,16 @@ mod tests {
         let source = crate::cloud_sync_outbound::attachment_parent_test_support::source();
         let projection = project_parent_attributed_body(&source).unwrap();
         for end in 0..projection.encoded_body.len() {
-            assert!(projection.validate_encoded_body(&projection.encoded_body[..end]).is_err());
+            assert!(projection
+                .validate_encoded_body(&projection.encoded_body[..end])
+                .is_err());
         }
         let mut trailing = projection.encoded_body.clone();
         trailing.push(0);
         assert!(projection.validate_encoded_body(&trailing).is_err());
-        assert!(projection.validate_encoded_body(&vec![0; 1024 * 1024 + 1]).is_err());
+        assert!(projection
+            .validate_encoded_body(&vec![0; 1024 * 1024 + 1])
+            .is_err());
         assert!(projection.validate_encoded_body(&[0x80, 0x01]).is_err());
     }
 

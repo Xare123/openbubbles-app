@@ -1762,8 +1762,11 @@ impl PlatformCloudNativeProtectedStore {
     ) -> Result<(), CloudNativeStoreFailure> {
         let _guard = Self::operation_guard()?;
         self.verified_ids_send_receipt_path(
-            expected, expected_account_fingerprint, expected_protected_store_identity,
-        ).map(|_| ())
+            expected,
+            expected_account_fingerprint,
+            expected_protected_store_identity,
+        )
+        .map(|_| ())
     }
 
     fn acknowledge_ids_send_receipt(
@@ -1785,7 +1788,9 @@ impl PlatformCloudNativeProtectedStore {
             return Ok(());
         }
         let path = self.verified_ids_send_receipt_path(
-            expected, expected_account_fingerprint, expected_protected_store_identity,
+            expected,
+            expected_account_fingerprint,
+            expected_protected_store_identity,
         )?;
         fs::remove_file(&path).map_err(|_| CloudNativeStoreFailure::Io)?;
         Self::sync_directory(&self.ids_send_receipt_directory()?)
@@ -1822,17 +1827,26 @@ impl CloudNativeIdsSendSourceBinding {
     }
 
     fn from_receipt_value(value: &serde_json::Value) -> Result<Self, CloudNativeStoreFailure> {
-        let object = value.as_object().filter(|object| object.len() == 5)
+        let object = value
+            .as_object()
+            .filter(|object| object.len() == 5)
             .ok_or(CloudNativeStoreFailure::InvalidReference)?;
-        let string = |key: &str| object.get(key).and_then(serde_json::Value::as_str)
-            .map(str::to_owned).ok_or(CloudNativeStoreFailure::InvalidReference);
+        let string = |key: &str| {
+            object
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .ok_or(CloudNativeStoreFailure::InvalidReference)
+        };
         let binding = Self {
             kind: CloudNativeIdsSendSourceKind::Attachment,
             source_sha256: string("source_sha256")?,
             protected_reference: string("protected_reference")?,
             lease_reference: string("lease_reference")?,
             payload_sha256: string("payload_sha256")?,
-            payload_length: object.get("payload_length").and_then(serde_json::Value::as_u64)
+            payload_length: object
+                .get("payload_length")
+                .and_then(serde_json::Value::as_u64)
                 .ok_or(CloudNativeStoreFailure::InvalidReference)?,
         };
         binding.validate()?;
@@ -1840,9 +1854,7 @@ impl CloudNativeIdsSendSourceBinding {
     }
 
     fn validate(&self) -> Result<(), CloudNativeStoreFailure> {
-        if !is_hex_digest(&self.source_sha256)
-            || !is_hex_digest(&self.payload_sha256)
-        {
+        if !is_hex_digest(&self.source_sha256) || !is_hex_digest(&self.payload_sha256) {
             return Err(CloudNativeStoreFailure::InvalidReference);
         }
         let protected_token = self
@@ -1859,9 +1871,7 @@ impl CloudNativeIdsSendSourceBinding {
         if lease_token.is_none() {
             return Err(CloudNativeStoreFailure::InvalidReference);
         }
-        if self.payload_length == 0
-            || self.payload_length > MAX_IDS_SEND_SOURCE_PAYLOAD_BYTES
-        {
+        if self.payload_length == 0 || self.payload_length > MAX_IDS_SEND_SOURCE_PAYLOAD_BYTES {
             return Err(CloudNativeStoreFailure::InvalidReference);
         }
         Ok(())
@@ -2021,7 +2031,8 @@ impl CloudNativeIdsSendReceipt {
                     .ok_or(CloudNativeStoreFailure::InvalidReference)?;
                 // v3 is the historical attachment object shape; kind is implicit
                 // via the 5-field source default (Attachment).
-                let source_binding = CloudNativeIdsSendSourceBinding::from_receipt_value(binding_value)?;
+                let source_binding =
+                    CloudNativeIdsSendSourceBinding::from_receipt_value(binding_value)?;
                 let receipt = Self {
                     guid_hash: object
                         .get("guidHash")
@@ -4026,8 +4037,7 @@ fn encode_reset_proof(request: &CloudNativeFetchRequest<'_>) -> String {
             .unwrap_or_default()
             .as_bytes(),
     );
-    let mut encoded =
-        Vec::with_capacity(RESET_PROOF_MAGIC.len() + 2 + 8 + 1 + 1 + 32);
+    let mut encoded = Vec::with_capacity(RESET_PROOF_MAGIC.len() + 2 + 8 + 1 + 1 + 32);
     encoded.extend_from_slice(RESET_PROOF_MAGIC);
     encoded.extend_from_slice(&FORMAT_VERSION.to_be_bytes());
     encoded.extend_from_slice(&request.generation.to_be_bytes());
@@ -4197,9 +4207,7 @@ async fn cloud_sync_fetch_protected_page_with_store(
             None,
         )),
         Ok(Err(error)) => {
-            CloudNativeProtectedFetchOutcome::Failure(protect_reset_failure(
-                store, request, &error,
-            ))
+            CloudNativeProtectedFetchOutcome::Failure(protect_reset_failure(store, request, &error))
         }
         Ok(Ok(page)) => protect_native_page(store, hasher, request, page),
     }
@@ -4242,10 +4250,15 @@ fn windows_feed_probe_request(
     include_self: bool,
 ) -> rustpush::cloudkit::FetchRecordChangesOperation {
     let mut operation = rustpush::cloudkit::FetchRecordChangesOperation::new_with_limit(
-        zone, token, &rustpush::cloudkit::NO_ASSETS, 200,
+        zone,
+        token,
+        &rustpush::cloudkit::NO_ASSETS,
+        200,
     );
     operation.0.newest_first = Some(newest_first);
-    if include_self { operation.0.ignore_calling_device_changes = Some(false); }
+    if include_self {
+        operation.0.ignore_calling_device_changes = Some(false);
+    }
     operation
 }
 
@@ -4262,7 +4275,9 @@ pub(crate) async fn cloud_sync_windows_probe_feed(
     let store = PlatformCloudNativeProtectedStore::new(directory);
     let token = decode_previous_checkpoint(&store, request)
         .map_err(|_| anyhow::anyhow!("cloud_sync_windows_feed_probe_checkpoint_invalid"))?;
-    let container = client.get_cached_container_for_read_authentication(permit).await
+    let container = client
+        .get_cached_container_for_read_authentication(permit)
+        .await
         .map_err(|_| anyhow::anyhow!("cloud_sync_windows_feed_probe_auth_failed"))?;
     let zone = container.private_zone("messageManateeZone".to_owned());
     let mut results = Vec::new();
@@ -4272,16 +4287,22 @@ pub(crate) async fn cloud_sync_windows_probe_feed(
         ("newest_default", None, true, false),
         ("newest_include_self", None, true, true),
     ] {
-        let active = client.get_cached_container_for_read_authentication(permit).await
+        let active = client
+            .get_cached_container_for_read_authentication(permit)
+            .await
             .map_err(|_| anyhow::anyhow!("cloud_sync_windows_feed_probe_auth_failed"))?;
         if !Arc::ptr_eq(&active, &container) {
             return Err(anyhow::anyhow!("cloud_sync_windows_feed_probe_auth_failed"));
         }
         let requested_token = continuation.clone();
-        let operation = windows_feed_probe_request(zone.clone(), continuation, newest, include_self);
-        let response = tokio::time::timeout(FETCH_DEADLINE,
-            container.perform_semantic_read_only(&rustpush::cloudkit::CloudKitSession::new(), operation),
-        ).await;
+        let operation =
+            windows_feed_probe_request(zone.clone(), continuation, newest, include_self);
+        let response = tokio::time::timeout(
+            FETCH_DEADLINE,
+            container
+                .perform_semantic_read_only(&rustpush::cloudkit::CloudKitSession::new(), operation),
+        )
+        .await;
         let (_, response) = match response {
             Ok(Ok(response)) => response,
             _ => {
@@ -4289,17 +4310,30 @@ pub(crate) async fn cloud_sync_windows_probe_feed(
                 continue;
             }
         };
-        let active = client.get_cached_container_for_read_authentication(permit).await
+        let active = client
+            .get_cached_container_for_read_authentication(permit)
+            .await
             .map_err(|_| anyhow::anyhow!("cloud_sync_windows_feed_probe_auth_failed"))?;
         if !Arc::ptr_eq(&active, &container) {
             return Err(anyhow::anyhow!("cloud_sync_windows_feed_probe_auth_failed"));
         }
         if response.change.len() > 200 {
-            return Err(anyhow::anyhow!("cloud_sync_windows_feed_probe_page_oversized"));
+            return Err(anyhow::anyhow!(
+                "cloud_sync_windows_feed_probe_page_oversized"
+            ));
         }
-        let matches = response.change.iter().filter(|change| change.identifier.as_ref()
-            .and_then(|id| id.value.as_ref()).and_then(|value| value.name.as_deref())
-            .is_some_and(|name| hasher.server_record_id_hash(name) == target)).count();
+        let matches = response
+            .change
+            .iter()
+            .filter(|change| {
+                change
+                    .identifier
+                    .as_ref()
+                    .and_then(|id| id.value.as_ref())
+                    .and_then(|value| value.name.as_deref())
+                    .is_some_and(|name| hasher.server_record_id_hash(name) == target)
+            })
+            .count();
         results.push(serde_json::json!({"mode": label, "failed": false,
             "changes": response.change.len(), "target_matches": matches,
             "status": response.status(), "deltas": response.changed_deltas.len(),
@@ -4326,14 +4360,19 @@ mod windows_feed_probe_tests {
         assert_eq!(ordinary.0.ignore_calling_device_changes, None);
         assert_eq!(ordinary.0.newest_first, Some(false));
         assert_eq!(ordinary.0.max_changes, Some(200));
-        assert_eq!(ordinary.0.assets_to_download.unwrap().all_assets, Some(false));
+        assert_eq!(
+            ordinary.0.assets_to_download.unwrap().all_assets,
+            Some(false)
+        );
         let probe = windows_feed_probe_request(Default::default(), None, true, true);
         assert_eq!(probe.0.sync_continuation_token, None);
         assert_eq!(probe.0.ignore_calling_device_changes, Some(false));
         assert_eq!(probe.0.newest_first, Some(true));
-        assert_eq!(probe.0.requested_changes_types, ordinary.0.requested_changes_types);
+        assert_eq!(
+            probe.0.requested_changes_types,
+            ordinary.0.requested_changes_types
+        );
     }
-
 }
 
 pub(crate) async fn cloud_sync_fetch_protected_page(
@@ -4462,8 +4501,13 @@ pub(crate) fn cloud_sync_stage_protected_message_update(
     account_fingerprint: String,
     envelope: String,
 ) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
-    stage_protected_outbound_value(storage_directory, account_fingerprint, envelope,
-        CloudNativeStream::Messages, CloudNativeProtectionPurpose::OutboundMessageUpdate)
+    stage_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        envelope,
+        CloudNativeStream::Messages,
+        CloudNativeProtectionPurpose::OutboundMessageUpdate,
+    )
 }
 
 pub(crate) fn cloud_sync_open_protected_message_update(
@@ -4471,8 +4515,13 @@ pub(crate) fn cloud_sync_open_protected_message_update(
     account_fingerprint: String,
     protected_reference: &str,
 ) -> Result<String, CloudNativeFetchFailure> {
-    cloud_sync_open_protected_outbound_value(storage_directory, account_fingerprint, protected_reference,
-        CloudNativeStream::Messages, CloudNativeProtectionPurpose::OutboundMessageUpdate)
+    cloud_sync_open_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        protected_reference,
+        CloudNativeStream::Messages,
+        CloudNativeProtectionPurpose::OutboundMessageUpdate,
+    )
 }
 
 pub(crate) fn cloud_sync_stage_protected_outbound_chat_envelope(
@@ -4494,8 +4543,13 @@ pub(crate) fn cloud_sync_stage_protected_outbound_attachment_envelope(
     account_fingerprint: String,
     outbound_envelope: String,
 ) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
-    stage_protected_outbound_value(storage_directory, account_fingerprint, outbound_envelope,
-        CloudNativeStream::Attachments, CloudNativeProtectionPurpose::OutboundAttachment)
+    stage_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        outbound_envelope,
+        CloudNativeStream::Attachments,
+        CloudNativeProtectionPurpose::OutboundAttachment,
+    )
 }
 
 pub(crate) fn cloud_sync_stage_protected_attachment_upload_envelope(
@@ -4503,8 +4557,13 @@ pub(crate) fn cloud_sync_stage_protected_attachment_upload_envelope(
     account_fingerprint: String,
     outbound_envelope: String,
 ) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
-    stage_protected_outbound_value(storage_directory, account_fingerprint, outbound_envelope,
-        CloudNativeStream::Attachments, CloudNativeProtectionPurpose::OutboundAttachmentUpload)
+    stage_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        outbound_envelope,
+        CloudNativeStream::Attachments,
+        CloudNativeProtectionPurpose::OutboundAttachmentUpload,
+    )
 }
 
 pub(crate) fn cloud_sync_stage_protected_ids_attachment_source(
@@ -4512,8 +4571,13 @@ pub(crate) fn cloud_sync_stage_protected_ids_attachment_source(
     account_fingerprint: String,
     source_envelope: String,
 ) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
-    stage_protected_outbound_value(storage_directory, account_fingerprint, source_envelope,
-        CloudNativeStream::Messages, CloudNativeProtectionPurpose::IdsAttachmentSource)
+    stage_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        source_envelope,
+        CloudNativeStream::Messages,
+        CloudNativeProtectionPurpose::IdsAttachmentSource,
+    )
 }
 
 pub(crate) fn cloud_sync_open_protected_ids_attachment_source(
@@ -4521,8 +4585,13 @@ pub(crate) fn cloud_sync_open_protected_ids_attachment_source(
     account_fingerprint: String,
     protected_reference: &str,
 ) -> Result<String, CloudNativeFetchFailure> {
-    cloud_sync_open_protected_outbound_value(storage_directory, account_fingerprint, protected_reference,
-        CloudNativeStream::Messages, CloudNativeProtectionPurpose::IdsAttachmentSource)
+    cloud_sync_open_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        protected_reference,
+        CloudNativeStream::Messages,
+        CloudNativeProtectionPurpose::IdsAttachmentSource,
+    )
 }
 
 pub(crate) fn cloud_sync_stage_protected_ids_mutation_source(
@@ -4530,8 +4599,13 @@ pub(crate) fn cloud_sync_stage_protected_ids_mutation_source(
     account_fingerprint: String,
     source_envelope: String,
 ) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
-    stage_protected_outbound_value(storage_directory, account_fingerprint, source_envelope,
-        CloudNativeStream::Messages, CloudNativeProtectionPurpose::IdsMutationSource)
+    stage_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        source_envelope,
+        CloudNativeStream::Messages,
+        CloudNativeProtectionPurpose::IdsMutationSource,
+    )
 }
 
 pub(crate) fn cloud_sync_open_protected_ids_mutation_source(
@@ -4539,8 +4613,13 @@ pub(crate) fn cloud_sync_open_protected_ids_mutation_source(
     account_fingerprint: String,
     protected_reference: &str,
 ) -> Result<String, CloudNativeFetchFailure> {
-    cloud_sync_open_protected_outbound_value(storage_directory, account_fingerprint, protected_reference,
-        CloudNativeStream::Messages, CloudNativeProtectionPurpose::IdsMutationSource)
+    cloud_sync_open_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        protected_reference,
+        CloudNativeStream::Messages,
+        CloudNativeProtectionPurpose::IdsMutationSource,
+    )
 }
 
 fn stage_protected_outbound_value(
@@ -4615,8 +4694,13 @@ pub(crate) fn cloud_sync_open_protected_outbound_attachment(
     account_fingerprint: String,
     protected_reference: &str,
 ) -> Result<String, CloudNativeFetchFailure> {
-    cloud_sync_open_protected_outbound_value(storage_directory, account_fingerprint, protected_reference,
-        CloudNativeStream::Attachments, CloudNativeProtectionPurpose::OutboundAttachment)
+    cloud_sync_open_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        protected_reference,
+        CloudNativeStream::Attachments,
+        CloudNativeProtectionPurpose::OutboundAttachment,
+    )
 }
 
 pub(crate) fn cloud_sync_open_protected_attachment_upload(
@@ -4624,8 +4708,13 @@ pub(crate) fn cloud_sync_open_protected_attachment_upload(
     account_fingerprint: String,
     protected_reference: &str,
 ) -> Result<String, CloudNativeFetchFailure> {
-    cloud_sync_open_protected_outbound_value(storage_directory, account_fingerprint, protected_reference,
-        CloudNativeStream::Attachments, CloudNativeProtectionPurpose::OutboundAttachmentUpload)
+    cloud_sync_open_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        protected_reference,
+        CloudNativeStream::Attachments,
+        CloudNativeProtectionPurpose::OutboundAttachmentUpload,
+    )
 }
 
 pub(crate) fn cloud_sync_persist_ids_send_receipt(
@@ -4670,7 +4759,9 @@ pub(crate) fn cloud_sync_verify_ids_send_receipt(
 ) -> Result<(), CloudNativeFetchFailure> {
     PlatformCloudNativeProtectedStore::new(storage_directory)
         .verify_ids_send_receipt(
-            expected, expected_account_fingerprint, expected_protected_store_identity,
+            expected,
+            expected_account_fingerprint,
+            expected_protected_store_identity,
         )
         .map_err(map_store_failure)
 }
@@ -5597,11 +5688,8 @@ mod tests {
         let prior_reference = format!("obcs2.ref.{prior_token}");
         let request = request(&scope, Some(&prior_reference));
 
-        let failure = protect_reset_failure(
-            &store,
-            &request,
-            &PushError::CloudKitChangeTokenExpired,
-        );
+        let failure =
+            protect_reset_failure(&store, &request, &PushError::CloudKitChangeTokenExpired);
 
         assert_eq!(
             failure.safe_code(),
@@ -5622,11 +5710,7 @@ mod tests {
             Err(CloudNativeStoreFailure::ContextMismatch)
         );
         let protected_plaintext = store
-            .unprotect(
-                &scope,
-                CloudNativeProtectionPurpose::ResetProof,
-                &reference,
-            )
+            .unprotect(&scope, CloudNativeProtectionPurpose::ResetProof, &reference)
             .expect("bound reset proof");
         let decoded = URL_SAFE_NO_PAD
             .decode(protected_plaintext)
@@ -5661,11 +5745,8 @@ mod tests {
         let scope = scope(CloudNativeStream::Messages);
         let request = request(&scope, None);
 
-        let failure = protect_reset_failure(
-            &store,
-            &request,
-            &PushError::CloudKitChangeTokenExpired,
-        );
+        let failure =
+            protect_reset_failure(&store, &request, &PushError::CloudKitChangeTokenExpired);
 
         let reference = CloudCanonicalProtectedReference::new(
             failure
@@ -5675,11 +5756,7 @@ mod tests {
         )
         .expect("canonical reset proof reference");
         let plaintext = store
-            .unprotect(
-                &scope,
-                CloudNativeProtectionPurpose::ResetProof,
-                &reference,
-            )
+            .unprotect(&scope, CloudNativeProtectionPurpose::ResetProof, &reference)
             .expect("unprotect production reset proof");
         let decoded = URL_SAFE_NO_PAD
             .decode(plaintext)
@@ -6514,30 +6591,47 @@ mod tests {
         let receipt = ids_send_receipt_fixture(directory.path(), 'a', 'A', 'N');
         let receipt_id = store.persist_ids_send_receipt(&receipt).unwrap();
         let path = store.ids_send_receipt_path(&receipt_id).unwrap();
-        let mut legacy: serde_json::Value = serde_json::from_str(&receipt.encode().unwrap()).unwrap();
+        let mut legacy: serde_json::Value =
+            serde_json::from_str(&receipt.encode().unwrap()).unwrap();
         legacy["version"] = serde_json::json!(1);
         assert!(CloudNativeIdsSendReceipt::decode(&legacy.to_string()).is_err());
         let scope = CloudNativeProtectionScope::new(
-            receipt.account_fingerprint.clone(), CloudNativeStream::Messages,
-        ).unwrap();
-        let ciphertext = store.protect_one(&scope, &CloudNativePlaintext {
-            purpose: CloudNativeProtectionPurpose::IdsSendReceipt,
-            value: legacy.to_string(),
-        }).unwrap();
+            receipt.account_fingerprint.clone(),
+            CloudNativeStream::Messages,
+        )
+        .unwrap();
+        let ciphertext = store
+            .protect_one(
+                &scope,
+                &CloudNativePlaintext {
+                    purpose: CloudNativeProtectionPurpose::IdsSendReceipt,
+                    value: legacy.to_string(),
+                },
+            )
+            .unwrap();
         fs::write(&path, ciphertext.as_bytes()).unwrap();
-        let page = store.replay_ids_send_receipts(
-            &receipt.account_fingerprint, &receipt.protected_store_identity, None,
-        ).unwrap();
+        let page = store
+            .replay_ids_send_receipts(
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+                None,
+            )
+            .unwrap();
         assert!(page.receipts.is_empty());
         let replay = CloudNativeIdsSendReceiptReplay {
-            receipt_id, guid_hash: receipt.guid_hash.clone(),
+            receipt_id,
+            guid_hash: receipt.guid_hash.clone(),
             native_session_id: receipt.native_session_id.clone(),
             source_binding: None,
             prepared_sent_timestamp_ms: None,
         };
-        assert!(store.acknowledge_ids_send_receipt(
-            &replay, &receipt.account_fingerprint, &receipt.protected_store_identity,
-        ).is_err());
+        assert!(store
+            .acknowledge_ids_send_receipt(
+                &replay,
+                &receipt.account_fingerprint,
+                &receipt.protected_store_identity,
+            )
+            .is_err());
         assert_eq!(fs::read_to_string(path).unwrap(), ciphertext);
     }
 
@@ -6558,11 +6652,7 @@ mod tests {
         };
 
         assert!(store
-            .replay_ids_send_receipts(
-                &"C".repeat(43),
-                &receipt.protected_store_identity,
-                None,
-            )
+            .replay_ids_send_receipts(&"C".repeat(43), &receipt.protected_store_identity, None,)
             .expect("foreign account is hidden")
             .receipts
             .is_empty());
@@ -6669,17 +6759,17 @@ mod tests {
         let directory = tempdir().expect("temp directory");
         let bare = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
         let bare_encoded = bare.encode().expect("encode v2");
-        let bare_value: serde_json::Value =
-            serde_json::from_str(&bare_encoded).expect("parse v2");
+        let bare_value: serde_json::Value = serde_json::from_str(&bare_encoded).expect("parse v2");
         let bare_object = bare_value.as_object().expect("v2 object");
         assert_eq!(bare_object.len(), 5);
         assert_eq!(
-            bare_object.get("version").and_then(serde_json::Value::as_u64),
+            bare_object
+                .get("version")
+                .and_then(serde_json::Value::as_u64),
             Some(2)
         );
         assert!(!bare_object.contains_key("sourceBinding"));
-        let bare_decoded =
-            CloudNativeIdsSendReceipt::decode(&bare_encoded).expect("decode v2");
+        let bare_decoded = CloudNativeIdsSendReceipt::decode(&bare_encoded).expect("decode v2");
         assert_eq!(bare_decoded.source_binding, None);
         assert_eq!(bare_decoded.guid_hash, bare.guid_hash);
 
@@ -6691,12 +6781,13 @@ mod tests {
         let bound_object = bound_value.as_object().expect("v3 object");
         assert_eq!(bound_object.len(), 6);
         assert_eq!(
-            bound_object.get("version").and_then(serde_json::Value::as_u64),
+            bound_object
+                .get("version")
+                .and_then(serde_json::Value::as_u64),
             Some(3)
         );
         assert!(bound_object.contains_key("sourceBinding"));
-        let bound_decoded =
-            CloudNativeIdsSendReceipt::decode(&bound_encoded).expect("decode v3");
+        let bound_decoded = CloudNativeIdsSendReceipt::decode(&bound_encoded).expect("decode v3");
         assert_eq!(bound_decoded.source_binding, bound.source_binding);
         assert_eq!(bound_decoded.guid_hash, bound.guid_hash);
     }
@@ -6707,8 +6798,7 @@ mod tests {
         let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
         receipt.source_binding = Some(ids_send_source_binding_fixture());
         let valid = receipt.encode().expect("valid v3 encodes");
-        let valid_value: serde_json::Value =
-            serde_json::from_str(&valid).expect("valid v3 parses");
+        let valid_value: serde_json::Value = serde_json::from_str(&valid).expect("valid v3 parses");
 
         let mut bad_hash = ids_send_source_binding_fixture();
         bad_hash.source_sha256 = "A".repeat(64);
@@ -6729,8 +6819,12 @@ mod tests {
         let mut v2_with_binding = valid_value.clone();
         v2_with_binding["version"] = serde_json::json!(2);
         assert!(CloudNativeIdsSendReceipt::decode(&v2_with_binding.to_string()).is_err());
-        let mut v3_without_binding: serde_json::Value =
-            serde_json::from_str(&ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R').encode().unwrap()).unwrap();
+        let mut v3_without_binding: serde_json::Value = serde_json::from_str(
+            &ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R')
+                .encode()
+                .unwrap(),
+        )
+        .unwrap();
         v3_without_binding["version"] = serde_json::json!(3);
         assert!(CloudNativeIdsSendReceipt::decode(&v3_without_binding.to_string()).is_err());
         let mut unknown_version = valid_value.clone();
@@ -6745,18 +6839,30 @@ mod tests {
         let mut bad_nested = valid_value.clone();
         bad_nested["sourceBinding"]["payload_length"] = serde_json::json!(0);
         assert!(CloudNativeIdsSendReceipt::decode(&bad_nested.to_string()).is_err());
-        for invalid in [serde_json::Value::Null, serde_json::json!([]), serde_json::json!("binding")] {
+        for invalid in [
+            serde_json::Value::Null,
+            serde_json::json!([]),
+            serde_json::json!("binding"),
+        ] {
             let mut wrong_shape = valid_value.clone();
             wrong_shape["sourceBinding"] = invalid;
             assert!(CloudNativeIdsSendReceipt::decode(&wrong_shape.to_string()).is_err());
         }
-        for invalid in [serde_json::json!(-1), serde_json::json!(1.5), serde_json::json!("123"), serde_json::json!(true)] {
+        for invalid in [
+            serde_json::json!(-1),
+            serde_json::json!(1.5),
+            serde_json::json!("123"),
+            serde_json::json!(true),
+        ] {
             let mut wrong_length = valid_value.clone();
             wrong_length["sourceBinding"]["payload_length"] = invalid;
             assert!(CloudNativeIdsSendReceipt::decode(&wrong_length.to_string()).is_err());
         }
         let mut missing_field = valid_value.clone();
-        missing_field["sourceBinding"].as_object_mut().unwrap().remove("source_sha256");
+        missing_field["sourceBinding"]
+            .as_object_mut()
+            .unwrap()
+            .remove("source_sha256");
         assert!(CloudNativeIdsSendReceipt::decode(&missing_field.to_string()).is_err());
     }
 
@@ -6766,8 +6872,12 @@ mod tests {
         let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
         let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
         receipt.source_binding = Some(ids_send_source_binding_fixture());
-        let first = store.persist_ids_send_receipt(&receipt).expect("persist bound");
-        let second = store.persist_ids_send_receipt(&receipt).expect("persist same source");
+        let first = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist bound");
+        let second = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist same source");
         assert_eq!(first, second);
 
         // Same origin tuple but a different source binding must not overwrite.
@@ -6808,7 +6918,9 @@ mod tests {
         let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
         let mut receipt = ids_send_receipt_fixture(directory.path(), 'f', 'F', 'R');
         receipt.source_binding = Some(ids_send_source_binding_fixture());
-        let receipt_id = store.persist_ids_send_receipt(&receipt).expect("persist bound");
+        let receipt_id = store
+            .persist_ids_send_receipt(&receipt)
+            .expect("persist bound");
         let page = store
             .replay_ids_send_receipts(
                 &receipt.account_fingerprint,
@@ -6875,9 +6987,8 @@ mod tests {
     fn ids_send_source_binding_kind_helpers_cover_both_kinds() {
         let attachment = ids_send_source_binding_fixture();
         assert_eq!(attachment.kind, CloudNativeIdsSendSourceKind::Attachment);
-        let mutation = ids_send_source_binding_fixture_with_kind(
-            CloudNativeIdsSendSourceKind::Mutation,
-        );
+        let mutation =
+            ids_send_source_binding_fixture_with_kind(CloudNativeIdsSendSourceKind::Mutation);
         assert_eq!(mutation.kind, CloudNativeIdsSendSourceKind::Mutation);
         assert_eq!(mutation.source_sha256, attachment.source_sha256);
         assert_eq!(mutation.protected_reference, attachment.protected_reference);
@@ -6904,7 +7015,9 @@ mod tests {
             ]
         );
         assert_eq!(
-            bare_value.get("version").and_then(serde_json::Value::as_u64),
+            bare_value
+                .get("version")
+                .and_then(serde_json::Value::as_u64),
             Some(2)
         );
         // A hardcoded historical v2 payload parses and re-encodes identically.
@@ -6942,7 +7055,9 @@ mod tests {
             ]
         );
         assert_eq!(
-            bound_value.get("version").and_then(serde_json::Value::as_u64),
+            bound_value
+                .get("version")
+                .and_then(serde_json::Value::as_u64),
             Some(3)
         );
         assert!(bound_value.get("sourceKind").is_none());
@@ -7125,9 +7240,8 @@ mod tests {
         );
 
         // Same mutation kind but different source fields is also rejected.
-        let mut other_binding = ids_send_source_binding_fixture_with_kind(
-            CloudNativeIdsSendSourceKind::Mutation,
-        );
+        let mut other_binding =
+            ids_send_source_binding_fixture_with_kind(CloudNativeIdsSendSourceKind::Mutation);
         other_binding.payload_sha256 = "d".repeat(64);
         let substituted = CloudNativeIdsSendReceipt {
             guid_hash: receipt.guid_hash.clone(),
@@ -7153,7 +7267,10 @@ mod tests {
         assert_eq!(replayed.len(), 1);
         assert_eq!(replayed[0].source_binding, receipt.source_binding);
         assert_eq!(
-            replayed[0].source_binding.as_ref().map(|binding| binding.kind),
+            replayed[0]
+                .source_binding
+                .as_ref()
+                .map(|binding| binding.kind),
             Some(CloudNativeIdsSendSourceKind::Mutation)
         );
     }
@@ -7280,10 +7397,7 @@ mod tests {
             Some(1_753_000_000_123)
         );
         let decoded = CloudNativeIdsSendReceipt::decode(&encoded).expect("decode v5");
-        assert_eq!(
-            decoded.prepared_sent_timestamp_ms,
-            Some(1_753_000_000_123)
-        );
+        assert_eq!(decoded.prepared_sent_timestamp_ms, Some(1_753_000_000_123));
         assert_eq!(
             decoded.source_binding.as_ref().map(|binding| binding.kind),
             Some(CloudNativeIdsSendSourceKind::Mutation)
@@ -7312,7 +7426,9 @@ mod tests {
         let bare_value: serde_json::Value =
             serde_json::from_str(&bare.encode().expect("encode v2")).expect("parse v2");
         assert_eq!(
-            bare_value.get("version").and_then(serde_json::Value::as_u64),
+            bare_value
+                .get("version")
+                .and_then(serde_json::Value::as_u64),
             Some(2)
         );
         assert!(bare_value.get("preparedSentTimestampMs").is_none());
@@ -7346,7 +7462,9 @@ mod tests {
         let mutation_value: serde_json::Value =
             serde_json::from_str(&mutation.encode().expect("encode v4")).expect("parse v4");
         assert_eq!(
-            mutation_value.get("version").and_then(serde_json::Value::as_u64),
+            mutation_value
+                .get("version")
+                .and_then(serde_json::Value::as_u64),
             Some(4)
         );
         assert!(mutation_value.get("preparedSentTimestampMs").is_none());
@@ -7367,8 +7485,7 @@ mod tests {
         ));
         receipt.prepared_sent_timestamp_ms = Some(42);
         let valid = receipt.encode().expect("valid v5 encodes");
-        let valid_value: serde_json::Value =
-            serde_json::from_str(&valid).expect("valid v5 parses");
+        let valid_value: serde_json::Value = serde_json::from_str(&valid).expect("valid v5 parses");
         let mut missing = valid_value.clone();
         missing
             .as_object_mut()

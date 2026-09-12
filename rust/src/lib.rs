@@ -101,7 +101,8 @@ pub fn init_logger(path: &Path) {
         let log_spec = desktop_native_logging::log_spec(
             cfg!(target_os = "windows")
                 && std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS").as_deref() == Ok("1"),
-            std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_VERBOSE_NATIVE_LOGS").as_deref() == Ok("1"),
+            std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_VERBOSE_NATIVE_LOGS").as_deref()
+                == Ok("1"),
         );
         #[cfg(target_os = "android")]
         let system = android_logger::AndroidLogger::new(
@@ -192,23 +193,24 @@ mod tests {
 
 pub mod api;
 mod cloud_sync_attachment_materialization;
+mod cloud_sync_attachment_parent;
+mod cloud_sync_attachment_source_file;
+mod cloud_sync_attachment_upload;
+mod cloud_sync_attachment_upload_receipt;
 mod cloud_sync_canonical_converter;
 mod cloud_sync_canonical_dto;
 mod cloud_sync_chat_identity;
-mod cloud_sync_native_fetch;
-mod cloud_sync_outbound;
-mod cloud_sync_outbound_chat;
-mod cloud_sync_outbound_attachment;
 mod cloud_sync_ids_attachment_source;
 mod cloud_sync_ids_mutation_source;
 mod cloud_sync_ids_mutation_stage;
 mod cloud_sync_message_proto_patch;
 mod cloud_sync_message_summary_patch;
+mod cloud_sync_message_update_compose;
 mod cloud_sync_message_update_stage;
-mod cloud_sync_attachment_source_file;
-mod cloud_sync_attachment_upload;
-mod cloud_sync_attachment_upload_receipt;
-mod cloud_sync_attachment_parent;
+mod cloud_sync_native_fetch;
+mod cloud_sync_outbound;
+mod cloud_sync_outbound_attachment;
+mod cloud_sync_outbound_chat;
 mod cloud_sync_protector;
 mod cloud_sync_semantic_decoder;
 mod cloud_sync_semantic_identity;

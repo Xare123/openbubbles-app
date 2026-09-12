@@ -493,28 +493,51 @@ pub(crate) fn validate_source_projected_attributed_body(
     expected: &rustpush::StCollapsedValue,
 ) -> Result<(), CloudCanonicalQuarantineReason> {
     use rustpush::StCollapsedValue as Expected;
-    fn fields(decoder: &BoundedTypedStreamDecoder<'_>, actual: &[BoundedStreamValue],
-        expected: &[Expected], depth: usize) -> Result<(), BoundedStreamFailure>
-    {
-        if actual.len() != expected.len() { return Err(BoundedStreamFailure::Malformed); }
-        for (a, b) in actual.iter().zip(expected) { compare(decoder, a, b, depth)?; }
+    fn fields(
+        decoder: &BoundedTypedStreamDecoder<'_>,
+        actual: &[BoundedStreamValue],
+        expected: &[Expected],
+        depth: usize,
+    ) -> Result<(), BoundedStreamFailure> {
+        if actual.len() != expected.len() {
+            return Err(BoundedStreamFailure::Malformed);
+        }
+        for (a, b) in actual.iter().zip(expected) {
+            compare(decoder, a, b, depth)?;
+        }
         Ok(())
     }
-    fn compare(decoder: &BoundedTypedStreamDecoder<'_>, actual: &BoundedStreamValue,
-        expected: &Expected, depth: usize) -> Result<(), BoundedStreamFailure>
-    {
-        if depth > MAX_TYPED_STREAM_DEPTH { return Err(BoundedStreamFailure::Oversized); }
+    fn compare(
+        decoder: &BoundedTypedStreamDecoder<'_>,
+        actual: &BoundedStreamValue,
+        expected: &Expected,
+        depth: usize,
+    ) -> Result<(), BoundedStreamFailure> {
+        if depth > MAX_TYPED_STREAM_DEPTH {
+            return Err(BoundedStreamFailure::Oversized);
+        }
         match (actual, expected) {
             (BoundedStreamValue::String(a), Expected::String(b)) if a == b => Ok(()),
             (BoundedStreamValue::Int(a, sa), Expected::Int(b, sb)) if a == b && sa == sb => Ok(()),
             (BoundedStreamValue::Object(Some(index)), Expected::CString(b)) => {
-                if matches!(decoder.objects.get(*index), Some(BoundedStreamObject::CString(a)) if a == b) {
+                if matches!(decoder.objects.get(*index), Some(BoundedStreamObject::CString(a)) if a == b)
+                {
                     Ok(())
-                } else { Err(BoundedStreamFailure::Malformed) }
+                } else {
+                    Err(BoundedStreamFailure::Malformed)
+                }
             }
-            (BoundedStreamValue::Object(Some(index)), Expected::Object { class, fields: wanted }) => {
+            (
+                BoundedStreamValue::Object(Some(index)),
+                Expected::Object {
+                    class,
+                    fields: wanted,
+                },
+            ) => {
                 let actual_fields = decoder.object_fields(*index, &[class.as_str()])?;
-                if actual_fields.len() != wanted.len() { return Err(BoundedStreamFailure::Malformed); }
+                if actual_fields.len() != wanted.len() {
+                    return Err(BoundedStreamFailure::Malformed);
+                }
                 if class == "NSDictionary" {
                     // A projected dictionary always has a count followed by
                     // one key/value pair per attribute. Reject duplicate keys
@@ -525,9 +548,13 @@ pub(crate) fn validate_source_projected_attributed_body(
                     fields(decoder, &actual_fields[0], &wanted[0], depth + 1)?;
                     let mut seen = HashSet::new();
                     for pair in actual_fields[1..].chunks_exact(2) {
-                        if pair[0].len() != 1 { return Err(BoundedStreamFailure::Malformed); }
+                        if pair[0].len() != 1 {
+                            return Err(BoundedStreamFailure::Malformed);
+                        }
                         let key = decoder.string_object(&pair[0][0])?;
-                        if !seen.insert(key.clone()) { return Err(BoundedStreamFailure::Malformed); }
+                        if !seen.insert(key.clone()) {
+                            return Err(BoundedStreamFailure::Malformed);
+                        }
                         let expected_pair = wanted[1..].chunks_exact(2).find(|pair| {
                             matches!(&pair[0][0], Expected::Object { class, fields }
                                 if class == "NSString" && matches!(&fields[0][0], Expected::String(v) if v == &key))
@@ -553,7 +580,9 @@ pub(crate) fn validate_source_projected_attributed_body(
             return Err(BoundedStreamFailure::Oversized);
         }
         let (decoder, values) = BoundedTypedStreamDecoder::new(encoded)?.decode()?;
-        if values.len() != 1 { return Err(BoundedStreamFailure::Malformed); }
+        if values.len() != 1 {
+            return Err(BoundedStreamFailure::Malformed);
+        }
         compare(&decoder, &values[0], expected, 0)
     };
     validate().map_err(|error| match error {
@@ -573,6 +602,8 @@ struct DecodedRunAttributes {
     italic: Option<bool>,
     strikethrough: Option<bool>,
     underline: Option<bool>,
+    unknown_attribute: bool,
+    duplicate_attribute: bool,
 }
 
 struct DecodedAttributedContent {
@@ -809,7 +840,11 @@ impl CloudRawRecordPresence {
             .contains(&(outer_field.to_owned(), nested_field.to_owned()))
     }
 
-    pub(crate) fn nested_field(&self, outer_field: &str, nested_field: &str) -> CloudNestedPresence {
+    pub(crate) fn nested_field(
+        &self,
+        outer_field: &str,
+        nested_field: &str,
+    ) -> CloudNestedPresence {
         match self.field(outer_field) {
             CloudRawFieldPresence::Absent => CloudNestedPresence::OuterAbsent,
             CloudRawFieldPresence::PresentWithoutValue => CloudNestedPresence::OuterWithoutValue,
@@ -1183,12 +1218,19 @@ fn decode_attribute_dictionary(
     }
 
     let mut decoded = DecodedRunAttributes::default();
+    let mut seen = HashSet::with_capacity(count);
     for pair in fields[1..].chunks_exact(2) {
         let key = pair
             .first()
             .and_then(|field| field.first())
             .ok_or(BoundedStreamFailure::Malformed)
             .and_then(|value| decoder.string_object(value))?;
+        if !seen.insert(key.clone()) {
+            // Preserve the established inbound projection behavior. Only the
+            // outbound edit grammar below treats duplicate keys as authority-
+            // destroying ambiguity.
+            decoded.duplicate_attribute = true;
+        }
         let value = pair
             .get(1)
             .and_then(|field| field.first())
@@ -1224,10 +1266,112 @@ fn decode_attribute_dictionary(
             // Unknown attributed-string keys remain available through the
             // protected raw envelope. Projecting known text and runs does not
             // authorize logging or discarding that protected source.
-            _ => {}
+            _ => decoded.unknown_attribute = true,
         }
     }
     Ok(decoded)
+}
+
+/// Validates the narrow attributed-body grammar that the first native edit
+/// composer can safely replace. The body must contain exactly one attributed
+/// string whose text matches the protobuf text, whose runs completely cover
+/// that text in UTF-16 units, and whose attributes are limited to part zero
+/// plus the four supported formatting flags. No content is returned or logged.
+pub(crate) fn validate_single_text_attributed_body(
+    raw: &[u8],
+    expected_text: &str,
+    expected_part: u32,
+) -> Result<(), CloudCanonicalQuarantineReason> {
+    let validate = || -> Result<(), BoundedStreamFailure> {
+        if raw.is_empty() || expected_text.is_empty() {
+            return Err(BoundedStreamFailure::Malformed);
+        }
+        let expected_length = u32::try_from(expected_text.encode_utf16().count())
+            .map_err(|_| BoundedStreamFailure::Oversized)?;
+        if expected_length == 0 {
+            return Err(BoundedStreamFailure::Malformed);
+        }
+        let (decoder, values) = BoundedTypedStreamDecoder::new(raw)?.decode()?;
+        if values.len() != 1 {
+            return Err(BoundedStreamFailure::Malformed);
+        }
+        let BoundedStreamValue::Object(Some(object)) = values[0] else {
+            return Err(BoundedStreamFailure::Malformed);
+        };
+        let fields =
+            decoder.object_fields(object, &["NSAttributedString", "NSMutableAttributedString"])?;
+        let text_field = fields
+            .first()
+            .filter(|field| field.len() == 1)
+            .and_then(|field| field.first())
+            .ok_or(BoundedStreamFailure::Malformed)?;
+        if decoder.string_object(text_field)? != expected_text {
+            return Err(BoundedStreamFailure::Malformed);
+        }
+
+        let mut range_cache = HashMap::<u32, DecodedRunAttributes>::new();
+        let mut field_index = 1usize;
+        let mut covered = 0u32;
+        let mut runs = 0usize;
+        while field_index < fields.len() {
+            runs = runs.checked_add(1).ok_or(BoundedStreamFailure::Oversized)?;
+            if runs > MAX_RUNS_PER_BODY {
+                return Err(BoundedStreamFailure::Oversized);
+            }
+            let range = fields
+                .get(field_index)
+                .filter(|field| field.len() == 2)
+                .ok_or(BoundedStreamFailure::Malformed)?;
+            let range_id = match range.first() {
+                Some(BoundedStreamValue::Int(value, true)) => *value,
+                _ => return Err(BoundedStreamFailure::Malformed),
+            };
+            let length = match range.get(1) {
+                Some(BoundedStreamValue::Int(value, false)) if *value > 0 => *value,
+                _ => return Err(BoundedStreamFailure::Malformed),
+            };
+            field_index += 1;
+            let attributes = if let Some(cached) = range_cache.get(&range_id) {
+                cached.clone()
+            } else {
+                let dictionary = fields
+                    .get(field_index)
+                    .filter(|field| field.len() == 1)
+                    .and_then(|field| field.first())
+                    .ok_or(BoundedStreamFailure::Malformed)?;
+                field_index += 1;
+                let decoded = decode_attribute_dictionary(&decoder, dictionary)?;
+                range_cache.insert(range_id, decoded.clone());
+                decoded
+            };
+            if attributes.unknown_attribute
+                || attributes.duplicate_attribute
+                || attributes.attachment_guid.is_some()
+                || attributes.mention.is_some()
+                || attributes.audio_transcript.is_some()
+                || attributes.text_effect.is_some()
+                || attributes
+                    .message_part
+                    .is_some_and(|part| part != expected_part)
+            {
+                return Err(BoundedStreamFailure::Malformed);
+            }
+            covered = covered
+                .checked_add(length)
+                .ok_or(BoundedStreamFailure::Oversized)?;
+            if covered > expected_length {
+                return Err(BoundedStreamFailure::Malformed);
+            }
+        }
+        if runs == 0 || covered != expected_length {
+            return Err(BoundedStreamFailure::Malformed);
+        }
+        Ok(())
+    };
+    validate().map_err(|failure| match failure {
+        BoundedStreamFailure::Malformed => CloudCanonicalQuarantineReason::MalformedAttributedBody,
+        BoundedStreamFailure::Oversized => CloudCanonicalQuarantineReason::OversizedContent,
+    })
 }
 
 fn decode_boolean_number(
@@ -1404,8 +1548,7 @@ fn decode_attributed_content(
                 CloudCanonicalQuarantineReason::MalformedAttributedBody,
             ));
         };
-        let (body, _) =
-            decode_attributed_body_object(context, message_guid, &decoder, object)?;
+        let (body, _) = decode_attributed_body_object(context, message_guid, &decoder, object)?;
         bodies.push(body);
     }
     Ok(DecodedAttributedContent {
@@ -4062,7 +4205,10 @@ mod tests {
         let original_length = original.encode_utf16().count() as u32;
         summary.otr.insert(
             "0".to_owned(),
-            MessageEditRange { lo: 0, le: original_length },
+            MessageEditRange {
+                lo: 0,
+                le: original_length,
+            },
         );
         let mut message = normal_message(Some("short"));
         message.msg_proto.0.attributed_body = Some(plain_encoded_attributed_body("short"));
@@ -4090,46 +4236,90 @@ mod tests {
         let replacement_text = "Short 🎉";
         let original_body = plain_encoded_attributed_body(original_text);
         let replacement_body = plain_encoded_attributed_body(replacement_text);
-        let range = SummaryRange { lo: 0, le: original_text.encode_utf16().count() as u32 };
-        let summary = patch_message_summary(None, SummaryChange::Edit {
-            part: 0,
-            original_body: &original_body,
-            original_timestamp: 779_000_100.25,
-            original_range: range,
-            replacement_body: &replacement_body,
-            replacement_timestamp: 779_000_110.75,
-        }).unwrap();
+        let range = SummaryRange {
+            lo: 0,
+            le: original_text.encode_utf16().count() as u32,
+        };
+        let summary = patch_message_summary(
+            None,
+            SummaryChange::Edit {
+                part: 0,
+                original_body: &original_body,
+                original_timestamp: 779_000_100.25,
+                original_range: range,
+                replacement_body: &replacement_body,
+                replacement_timestamp: 779_000_110.75,
+            },
+        )
+        .unwrap();
         let mut message = normal_message(Some(original_text));
         message.msg_proto.0.attributed_body = Some(original_body);
         let mut original_wire = message.msg_proto.0.encode_to_vec();
         // Future wire field 99 must remain exact through both mutations.
         let unknown = [0x98, 0x06, 0x81, 0x00];
         original_wire.extend_from_slice(&unknown);
-        let edited_wire = patch_message_proto(&original_wire,
-            Some(replacement_text), Some(&replacement_body), &summary).unwrap();
-        assert!(edited_wire.windows(unknown.len()).any(|bytes| bytes == unknown));
+        let edited_wire = patch_message_proto(
+            &original_wire,
+            Some(replacement_text),
+            Some(&replacement_body),
+            &summary,
+        )
+        .unwrap();
+        assert!(edited_wire
+            .windows(unknown.len())
+            .any(|bytes| bytes == unknown));
         message.msg_proto.0 = MessageProto::decode(edited_wire.as_slice()).unwrap();
-        let outcome = convert_message(&context(&hasher, "server-patched-message", None),
-            &message_presence(), &message);
+        let outcome = convert_message(
+            &context(&hasher, "server-patched-message", None),
+            &message_presence(),
+            &message,
+        );
         let payload = message_payload(&outcome);
-        assert_eq!(payload.text().value().map(String::as_str), Some(replacement_text));
+        assert_eq!(
+            payload.text().value().map(String::as_str),
+            Some(replacement_text)
+        );
         assert_eq!(payload.edit_count(), 2);
-        assert_eq!(payload.edits().iter().map(CloudCanonicalMessageEdit::modified_at_millis)
-            .collect::<Vec<_>>(), vec![1_757_307_300_250, 1_757_307_310_750]);
-        assert!(payload.edits().iter().all(|edit| edit.original_range() == Some((0, range.le))));
+        assert_eq!(
+            payload
+                .edits()
+                .iter()
+                .map(CloudCanonicalMessageEdit::modified_at_millis)
+                .collect::<Vec<_>>(),
+            vec![1_757_307_300_250, 1_757_307_310_750]
+        );
+        assert!(payload
+            .edits()
+            .iter()
+            .all(|edit| edit.original_range() == Some((0, range.le))));
 
-        let retracted = patch_message_summary(Some(&summary), SummaryChange::Unsend { part: 0 }).unwrap();
+        let retracted =
+            patch_message_summary(Some(&summary), SummaryChange::Unsend { part: 0 }).unwrap();
         let unsent_wire = patch_message_proto(&edited_wire, None, None, &retracted).unwrap();
-        assert!(unsent_wire.windows(unknown.len()).any(|bytes| bytes == unknown));
-        assert_eq!(patch_message_proto(&unsent_wire, None, None, &retracted).unwrap(), unsent_wire);
+        assert!(unsent_wire
+            .windows(unknown.len())
+            .any(|bytes| bytes == unknown));
+        assert_eq!(
+            patch_message_proto(&unsent_wire, None, None, &retracted).unwrap(),
+            unsent_wire
+        );
         message.msg_proto.0 = MessageProto::decode(unsent_wire.as_slice()).unwrap();
-        assert_eq!(message.msg_proto.0.attributed_body.as_deref(), Some(replacement_body.as_slice()));
-        let outcome = convert_message(&context(&hasher, "server-patched-message", None),
-            &message_presence(), &message);
+        assert_eq!(
+            message.msg_proto.0.attributed_body.as_deref(),
+            Some(replacement_body.as_slice())
+        );
+        let outcome = convert_message(
+            &context(&hasher, "server-patched-message", None),
+            &message_presence(),
+            &message,
+        );
         let payload = message_payload(&outcome);
         assert_eq!(payload.retracted_parts(), &[0]);
         assert_eq!(payload.edit_count(), 2);
-        assert_eq!(payload.text().value().map(String::as_str), Some(replacement_text));
+        assert_eq!(
+            payload.text().value().map(String::as_str),
+            Some(replacement_text)
+        );
     }
 
     #[test]
@@ -4147,8 +4337,12 @@ mod tests {
                 bcg: None,
             }],
         );
-        summary.otr.insert("0".to_owned(), MessageEditRange { lo: 0, le: 6 });
-        summary.otr.insert("1".to_owned(), MessageEditRange { lo: 6, le: 4 });
+        summary
+            .otr
+            .insert("0".to_owned(), MessageEditRange { lo: 0, le: 6 });
+        summary
+            .otr
+            .insert("1".to_owned(), MessageEditRange { lo: 6, le: 4 });
         let mut message = normal_message(Some("prefix tail"));
         message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
         let outcome = convert_message(
@@ -4163,7 +4357,10 @@ mod tests {
 
         summary.otr.insert(
             "0".to_owned(),
-            MessageEditRange { lo: u32::MAX, le: 1 },
+            MessageEditRange {
+                lo: u32::MAX,
+                le: 1,
+            },
         );
         message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
         assert_eq!(
@@ -4182,7 +4379,9 @@ mod tests {
     fn summary_original_ranges_alone_do_not_invent_edit_or_clear_state() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut summary = MessageSummaryInfo::default();
-        summary.otr.insert("0".to_owned(), MessageEditRange { lo: 0, le: 4 });
+        summary
+            .otr
+            .insert("0".to_owned(), MessageEditRange { lo: 0, le: 4 });
         let mut message = normal_message(Some("base"));
         message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
         let outcome = convert_message(
@@ -4198,7 +4397,9 @@ mod tests {
         );
         for invalid_part in ["-1", "01", "4294967296"] {
             summary.otr.clear();
-            summary.otr.insert(invalid_part.to_owned(), MessageEditRange { lo: 0, le: 4 });
+            summary
+                .otr
+                .insert(invalid_part.to_owned(), MessageEditRange { lo: 0, le: 4 });
             message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
             assert_eq!(
                 convert_message(
@@ -4275,7 +4476,10 @@ mod tests {
             validated_edit_timestamp(1_757_307_300_250.0),
             Ok(1_757_307_300_250)
         );
-        assert_eq!(validated_edit_timestamp(779_000_100.0), Ok(1_757_307_300_000));
+        assert_eq!(
+            validated_edit_timestamp(779_000_100.0),
+            Ok(1_757_307_300_000)
+        );
     }
 
     #[test]
@@ -4628,7 +4832,10 @@ mod tests {
                 crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Absent
             );
             assert_eq!(
-                mutation.envelope().protected_raw_envelope_reference().value(),
+                mutation
+                    .envelope()
+                    .protected_raw_envelope_reference()
+                    .value(),
                 "obcs2.fixture.protected"
             );
             assert_eq!(

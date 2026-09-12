@@ -1614,7 +1614,9 @@ mod tests {
             (b"RIFF".as_slice(), "unknown"),
             (b"".as_slice(), "unknown"),
         ] {
-            assert!(attachment_size_evidence(4, 3, header).ends_with(&format!("actual_format={label}")));
+            assert!(
+                attachment_size_evidence(4, 3, header).ends_with(&format!("actual_format={label}"))
+            );
         }
     }
 
