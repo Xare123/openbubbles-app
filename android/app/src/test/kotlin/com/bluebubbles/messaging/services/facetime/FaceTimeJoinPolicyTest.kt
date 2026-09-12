@@ -338,6 +338,44 @@ class FaceTimeJoinPolicyTest {
     }
 
     @Test
+    fun negotiatedTracksWithoutVerifiedInboundMediaDoNotClaimEncryptionProgress() {
+        for (ice in listOf(FaceTimeIceState.CONNECTED, FaceTimeIceState.COMPLETED)) {
+            for ((audio, video) in listOf(1 to 0, 0 to 1, 1 to 1)) {
+                for (bytes in listOf<Long?>(null, 0L, 128L)) {
+                    val evidence = FaceTimeMediaEvidence(ice, audio, video, bytes, true, peerId = 1)
+                    val policy = FaceTimeJoinPolicy()
+                    assertFalse(policy.recordMediaEvidence(evidence).joined)
+                    // A repeated counter is not proof of incoming media either.
+                    assertFalse(policy.recordMediaEvidence(evidence).joined)
+                    assertEquals(
+                        "Waiting for incoming FaceTime audio or video...",
+                        FaceTimeConnectionStatusPolicy.pendingMessage(evidence, policy.completedJoin),
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun stalledMediaAfterJoiningReportsWaitingWithoutChangingAdmissionOrRetryPolicy() {
+        val policy = FaceTimeJoinPolicy()
+        val first = FaceTimeMediaEvidence(FaceTimeIceState.CONNECTED, 1, 1, 128, true, peerId = 1)
+        val second = first.copy(mediaBytes = 256)
+        assertFalse(policy.recordMediaEvidence(first).joined)
+        assertTrue(policy.recordMediaEvidence(second).joined)
+
+        val stalled = policy.recordMediaEvidence(second)
+        assertFalse(stalled.joined)
+        assertTrue(policy.completedJoin)
+        assertFalse(stalled.retry)
+        assertEquals(
+            "Waiting for incoming FaceTime audio or video...",
+            FaceTimeConnectionStatusPolicy.pendingMessage(second, policy.completedJoin),
+        )
+        assertTrue(policy.recordMediaEvidence(second.copy(mediaBytes = 384)).joined)
+    }
+
+    @Test
     fun pendingStatusMakesPostConnectionMediaLossActionable() {
         assertEquals(
             "FaceTime media was interrupted. Tap Rejoin to retry.",

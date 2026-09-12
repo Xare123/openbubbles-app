@@ -145,7 +145,9 @@ internal object FaceTimeConnectionStatusPolicy {
             "FaceTime media was interrupted. Tap Rejoin to retry."
         evidence.hasConnectedIce && !evidence.hasRemoteTrack ->
             "Waiting for FaceTime audio or video..."
-        evidence.hasConnectedIce -> "Securing FaceTime media..."
+        // ICE and negotiated tracks do not identify an encryption-handshake
+        // phase. Admission still waits for advancing inbound media samples.
+        evidence.hasConnectedIce -> "Waiting for incoming FaceTime audio or video..."
         else -> "Connecting FaceTime media..."
     }
 }
