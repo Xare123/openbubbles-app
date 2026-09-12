@@ -680,6 +680,14 @@ that test assumed the repository root while Gradle runs from `android/`. The
 test now resolves app source from repository, Android-project or app-module
 working directories. Requalify the resulting test-only head before installing;
 do not treat this harness-path failure as a CloudKit protocol regression.
+Retry `34716439200` proved the path repair: all 119 Android JVM tests passed,
+along with full Dart, both Rust suites, the protector harness, APK packaging
+and native-library verification. Its only failure was the delayed bridge-drift
+gate. Review of the uploaded generator artifact found exactly two nonfunctional
+normalization differences: four FRB diagnostic comments in generated Dart and
+six generated Rust separator blank lines. The exact reviewed generator outputs
+are now imported. A binding-reproducibility run must prove zero drift on the
+resulting head before installation.
 
 1. Ship the confirmed-create raw-readback repair to Canary, then resume edit
    request 23 without another IDS send. Exact readback must populate the raw
