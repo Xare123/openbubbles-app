@@ -2255,6 +2255,84 @@ Future<List<PrivateDeviceInfo>> getSmsTargets({
   refresh: refresh,
 );
 
+/// Prepares and stages one conditional MessageEncryptedV3 update from
+/// authoritative native and protected inputs.
+///
+/// This binds one current native auth snapshot: the caller pins the expected
+/// account fingerprint and protected-store identity, the attempt is checked
+/// against the live snapshot before and after the lookup-only writer
+/// preparation, and any drift fails closed. It opens the exact locally
+/// staged mutation source behind the caller-supplied mutation context and
+/// the exact protected predecessor behind the mapped raw-record reference,
+/// derives the keyed Message logical hash from the verbatim target GUID in
+/// that source, and requires it plus the mapped server and ETag hashes to
+/// match. The predecessor record name must also be the deterministic name
+/// for the target GUID, which binds the canonical message GUID without
+/// decrypting the predecessor, and the predecessor PCS prefix is preserved
+/// exactly into a merge, save-semantics-1 request carrying only the new
+/// encrypted msgProto plus an optional new utm clock. The attempt is staged
+/// through cloud_sync_message_update_stage, which re-validates binding and
+/// request shape as defense in depth, and only content-free references,
+/// digests, keyed hashes, and safe correlation are returned.
+Future<CloudSyncPrepareMessageUpdateResult> cloudSyncPrepareMessageUpdate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required CloudSyncMessageUpdatePrepareInput input,
+}) => RustLib.instance.api.crateApiApiCloudSyncPrepareMessageUpdate(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  input: input,
+);
+
+/// Reopens one adopted update stage and prepares its exact conditional save.
+/// This performs lookup-only authentication and a fresh predecessor fetch, but
+/// no remote mutation. Any version drift fails closed so a delayed update can
+/// never overwrite a newer server record. The returned record-agnostic handle
+/// uses the same single-use consume and mutation-capability fence as creates.
+Future<CloudSyncPreparedMessageCreateResult>
+cloudSyncPrepareMessageUpdateSubmission({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required String requestUuid,
+  required BigInt requestTimeoutSeconds,
+  required CloudSyncMessageUpdateSubmissionInput input,
+}) => RustLib.instance.api.crateApiApiCloudSyncPrepareMessageUpdateSubmission(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  requestUuid: requestUuid,
+  requestTimeoutSeconds: requestTimeoutSeconds,
+  input: input,
+);
+
+/// Reconciles one conditional MessageEncryptedV3 update without resending IDS
+/// or issuing another CloudKit save. Exact desired state proves commit, the
+/// exact staged predecessor proves the attempt was not applied, and every
+/// other reachable record version is a conflict. Transient lookup failures
+/// remain unresolved so the durable request and protected stage stay retained.
+Future<CloudSyncMessageUpdateReconcileResult> cloudSyncReconcileMessageUpdate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required String requestUuid,
+  required CloudSyncMessageUpdateSubmissionInput input,
+}) => RustLib.instance.api.crateApiApiCloudSyncReconcileMessageUpdate(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  requestUuid: requestUuid,
+  input: input,
+);
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<APSWatcher>>
 abstract class ApsWatcher implements RustOpaqueInterface {}
 
@@ -3407,6 +3485,222 @@ class CloudSyncAttachmentUploadReceiptEvidence {
           serverRecordIdHash == other.serverRecordIdHash;
 }
 
+/// Typed input for one conditional message update preparation. Every identity
+/// field is content-free: keyed hashes, opaque protected references, hex
+/// digests, and generations. Submission-only operation IDs and UUIDs do not
+/// exist yet and are deliberately excluded. Message content, ciphertext, clocks,
+/// identifiers, ETags, keys, and raw records never cross this boundary.
+class CloudSyncMessageUpdatePrepareInput {
+  final String expectedLogicalEntityKeyHash;
+  final String expectedServerRecordIdHash;
+  final String expectedEtagHash;
+  final CloudSyncNativeSendReceiptContext mutationContext;
+  final String protectedRawRecordReference;
+  final BigInt rawGeneration;
+  final CloudSyncNativeSendReceipt mutationReceipt;
+  final String expectedReceiptBindingSha256;
+  final String reflectedSnapshotSha256;
+  final BigInt writerEpoch;
+
+  const CloudSyncMessageUpdatePrepareInput({
+    required this.expectedLogicalEntityKeyHash,
+    required this.expectedServerRecordIdHash,
+    required this.expectedEtagHash,
+    required this.mutationContext,
+    required this.protectedRawRecordReference,
+    required this.rawGeneration,
+    required this.mutationReceipt,
+    required this.expectedReceiptBindingSha256,
+    required this.reflectedSnapshotSha256,
+    required this.writerEpoch,
+  });
+
+  @override
+  int get hashCode =>
+      expectedLogicalEntityKeyHash.hashCode ^
+      expectedServerRecordIdHash.hashCode ^
+      expectedEtagHash.hashCode ^
+      mutationContext.hashCode ^
+      protectedRawRecordReference.hashCode ^
+      rawGeneration.hashCode ^
+      mutationReceipt.hashCode ^
+      expectedReceiptBindingSha256.hashCode ^
+      reflectedSnapshotSha256.hashCode ^
+      writerEpoch.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncMessageUpdatePrepareInput &&
+          runtimeType == other.runtimeType &&
+          expectedLogicalEntityKeyHash == other.expectedLogicalEntityKeyHash &&
+          expectedServerRecordIdHash == other.expectedServerRecordIdHash &&
+          expectedEtagHash == other.expectedEtagHash &&
+          mutationContext == other.mutationContext &&
+          protectedRawRecordReference == other.protectedRawRecordReference &&
+          rawGeneration == other.rawGeneration &&
+          mutationReceipt == other.mutationReceipt &&
+          expectedReceiptBindingSha256 == other.expectedReceiptBindingSha256 &&
+          reflectedSnapshotSha256 == other.reflectedSnapshotSha256 &&
+          writerEpoch == other.writerEpoch;
+}
+
+/// Exact current-record capability produced only after a conditional message
+/// update is proven committed by readback. The protected lease stays pending
+/// until ObjectBox atomically adopts the new raw record and ETag.
+class CloudSyncMessageUpdateReadbackReceipt {
+  final String serverRecordIdHash;
+  final String predecessorEtagHash;
+  final String resultingEtagHash;
+  final String protectedCurrentRawRecordReference;
+  final String protectedCurrentRawRecordLeaseReference;
+  final BigInt rawGeneration;
+
+  const CloudSyncMessageUpdateReadbackReceipt({
+    required this.serverRecordIdHash,
+    required this.predecessorEtagHash,
+    required this.resultingEtagHash,
+    required this.protectedCurrentRawRecordReference,
+    required this.protectedCurrentRawRecordLeaseReference,
+    required this.rawGeneration,
+  });
+
+  @override
+  int get hashCode =>
+      serverRecordIdHash.hashCode ^
+      predecessorEtagHash.hashCode ^
+      resultingEtagHash.hashCode ^
+      protectedCurrentRawRecordReference.hashCode ^
+      protectedCurrentRawRecordLeaseReference.hashCode ^
+      rawGeneration.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncMessageUpdateReadbackReceipt &&
+          runtimeType == other.runtimeType &&
+          serverRecordIdHash == other.serverRecordIdHash &&
+          predecessorEtagHash == other.predecessorEtagHash &&
+          resultingEtagHash == other.resultingEtagHash &&
+          protectedCurrentRawRecordReference ==
+              other.protectedCurrentRawRecordReference &&
+          protectedCurrentRawRecordLeaseReference ==
+              other.protectedCurrentRawRecordLeaseReference &&
+          rawGeneration == other.rawGeneration;
+}
+
+/// Update-only reconciliation result. Create receipts cannot acknowledge this
+/// lane because updates must replace both ETag and protected raw-record state.
+class CloudSyncMessageUpdateReconcileResult {
+  final CloudSyncOutboundReconcileDisposition? disposition;
+  final String? protectedProofReference;
+  final CloudSyncMessageUpdateReadbackReceipt? receipt;
+  final CloudSyncOutboundFailureClass? failureClass;
+  final BigInt? retryAfterSeconds;
+  final CloudSyncOutboundSafeCode? failure;
+
+  const CloudSyncMessageUpdateReconcileResult({
+    this.disposition,
+    this.protectedProofReference,
+    this.receipt,
+    this.failureClass,
+    this.retryAfterSeconds,
+    this.failure,
+  });
+
+  @override
+  int get hashCode =>
+      disposition.hashCode ^
+      protectedProofReference.hashCode ^
+      receipt.hashCode ^
+      failureClass.hashCode ^
+      retryAfterSeconds.hashCode ^
+      failure.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncMessageUpdateReconcileResult &&
+          runtimeType == other.runtimeType &&
+          disposition == other.disposition &&
+          protectedProofReference == other.protectedProofReference &&
+          receipt == other.receipt &&
+          failureClass == other.failureClass &&
+          retryAfterSeconds == other.retryAfterSeconds &&
+          failure == other.failure;
+}
+
+/// Submission-time correlation for one already-adopted conditional update.
+/// The protected stage carries only restart-stable proof; this input adds the
+/// durable outbox operation and Apple operation UUID allocated after atomic
+/// adoption. All identifiers crossing Flutter remain hashes or protected refs.
+class CloudSyncMessageUpdateSubmissionInput {
+  final String localOperationId;
+  final String logicalEntityKeyHash;
+  final String serverRecordIdHash;
+  final String predecessorEtagHash;
+  final String protectedLeaseReference;
+  final String protectedPayloadReference;
+  final String payloadSha256;
+  final String mutationSourceSha256;
+  final String idsReceiptBindingSha256;
+  final String reflectedSnapshotSha256;
+  final BigInt writerEpoch;
+  final BigInt rawGeneration;
+  final String appleOperationUuid;
+
+  const CloudSyncMessageUpdateSubmissionInput({
+    required this.localOperationId,
+    required this.logicalEntityKeyHash,
+    required this.serverRecordIdHash,
+    required this.predecessorEtagHash,
+    required this.protectedLeaseReference,
+    required this.protectedPayloadReference,
+    required this.payloadSha256,
+    required this.mutationSourceSha256,
+    required this.idsReceiptBindingSha256,
+    required this.reflectedSnapshotSha256,
+    required this.writerEpoch,
+    required this.rawGeneration,
+    required this.appleOperationUuid,
+  });
+
+  @override
+  int get hashCode =>
+      localOperationId.hashCode ^
+      logicalEntityKeyHash.hashCode ^
+      serverRecordIdHash.hashCode ^
+      predecessorEtagHash.hashCode ^
+      protectedLeaseReference.hashCode ^
+      protectedPayloadReference.hashCode ^
+      payloadSha256.hashCode ^
+      mutationSourceSha256.hashCode ^
+      idsReceiptBindingSha256.hashCode ^
+      reflectedSnapshotSha256.hashCode ^
+      writerEpoch.hashCode ^
+      rawGeneration.hashCode ^
+      appleOperationUuid.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncMessageUpdateSubmissionInput &&
+          runtimeType == other.runtimeType &&
+          localOperationId == other.localOperationId &&
+          logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          serverRecordIdHash == other.serverRecordIdHash &&
+          predecessorEtagHash == other.predecessorEtagHash &&
+          protectedLeaseReference == other.protectedLeaseReference &&
+          protectedPayloadReference == other.protectedPayloadReference &&
+          payloadSha256 == other.payloadSha256 &&
+          mutationSourceSha256 == other.mutationSourceSha256 &&
+          idsReceiptBindingSha256 == other.idsReceiptBindingSha256 &&
+          reflectedSnapshotSha256 == other.reflectedSnapshotSha256 &&
+          writerEpoch == other.writerEpoch &&
+          rawGeneration == other.rawGeneration &&
+          appleOperationUuid == other.appleOperationUuid;
+}
+
 /// Redacted identity binding for one active Cloud Messages client.
 ///
 /// The raw DSID is read and transformed entirely in Rust. Three derived values
@@ -3732,6 +4026,26 @@ class CloudSyncOutboundSaveOutcome {
           etagHash == other.etagHash;
 }
 
+/// Preparation outcome. Exactly one of the two fields is set. Failures use
+/// the closed outbound safe-code vocabulary and never carry record content.
+class CloudSyncPrepareMessageUpdateResult {
+  final CloudSyncPreparedMessageUpdate? prepared;
+  final CloudSyncOutboundSafeCode? failure;
+
+  const CloudSyncPrepareMessageUpdateResult({this.prepared, this.failure});
+
+  @override
+  int get hashCode => prepared.hashCode ^ failure.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncPrepareMessageUpdateResult &&
+          runtimeType == other.runtimeType &&
+          prepared == other.prepared &&
+          failure == other.failure;
+}
+
 class CloudSyncPreparedAttachmentUploadResult {
   final CloudSyncPreparedAttachmentUploadHandle handle;
   final String handleBindingSha256;
@@ -3841,6 +4155,44 @@ class CloudSyncPreparedMessageCreateResult {
           handle == other.handle &&
           handleBindingSha256 == other.handleBindingSha256 &&
           failure == other.failure;
+}
+
+/// Content-free staged update plus the safe correlation the journal needs to
+/// adopt it later. Hashes are keyed digests, references are opaque protected
+/// capabilities, and the remaining fields echo caller-supplied correlation.
+class CloudSyncPreparedMessageUpdate {
+  final String protectedReference;
+  final String leaseReference;
+  final String payloadSha256;
+  final String logicalEntityKeyHash;
+  final String serverRecordIdHash;
+
+  const CloudSyncPreparedMessageUpdate({
+    required this.protectedReference,
+    required this.leaseReference,
+    required this.payloadSha256,
+    required this.logicalEntityKeyHash,
+    required this.serverRecordIdHash,
+  });
+
+  @override
+  int get hashCode =>
+      protectedReference.hashCode ^
+      leaseReference.hashCode ^
+      payloadSha256.hashCode ^
+      logicalEntityKeyHash.hashCode ^
+      serverRecordIdHash.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncPreparedMessageUpdate &&
+          runtimeType == other.runtimeType &&
+          protectedReference == other.protectedReference &&
+          leaseReference == other.leaseReference &&
+          payloadSha256 == other.payloadSha256 &&
+          logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          serverRecordIdHash == other.serverRecordIdHash;
 }
 
 /// One protected CloudKit change. Every string is either a fixed-format digest

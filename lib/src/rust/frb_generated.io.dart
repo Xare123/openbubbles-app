@@ -1576,6 +1576,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_box_autoadd_cloud_sync_chat_identity_source_input(dynamic raw);
 
   @protected
+  CloudSyncMessageUpdatePrepareInput
+  dco_decode_box_autoadd_cloud_sync_message_update_prepare_input(dynamic raw);
+
+  @protected
+  CloudSyncMessageUpdateReadbackReceipt
+  dco_decode_box_autoadd_cloud_sync_message_update_readback_receipt(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncMessageUpdateSubmissionInput
+  dco_decode_box_autoadd_cloud_sync_message_update_submission_input(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncNativeSendReceipt
   dco_decode_box_autoadd_cloud_sync_native_send_receipt(dynamic raw);
 
@@ -1606,6 +1622,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncPreparedMessageCreateInput
   dco_decode_box_autoadd_cloud_sync_prepared_message_create_input(dynamic raw);
+
+  @protected
+  CloudSyncPreparedMessageUpdate
+  dco_decode_box_autoadd_cloud_sync_prepared_message_update(dynamic raw);
 
   @protected
   CloudSyncProtectedFailure dco_decode_box_autoadd_cloud_sync_protected_failure(
@@ -2083,6 +2103,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_cloud_sync_chat_identity_source_input(dynamic raw);
 
   @protected
+  CloudSyncMessageUpdatePrepareInput
+  dco_decode_cloud_sync_message_update_prepare_input(dynamic raw);
+
+  @protected
+  CloudSyncMessageUpdateReadbackReceipt
+  dco_decode_cloud_sync_message_update_readback_receipt(dynamic raw);
+
+  @protected
+  CloudSyncMessageUpdateReconcileResult
+  dco_decode_cloud_sync_message_update_reconcile_result(dynamic raw);
+
+  @protected
+  CloudSyncMessageUpdateSubmissionInput
+  dco_decode_cloud_sync_message_update_submission_input(dynamic raw);
+
+  @protected
   CloudSyncNativeAuthMetadata dco_decode_cloud_sync_native_auth_metadata(
     dynamic raw,
   );
@@ -2143,6 +2179,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncPrepareMessageUpdateResult
+  dco_decode_cloud_sync_prepare_message_update_result(dynamic raw);
+
+  @protected
   CloudSyncPreparedAttachmentUploadResult
   dco_decode_cloud_sync_prepared_attachment_upload_result(dynamic raw);
 
@@ -2153,6 +2193,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncPreparedMessageCreateResult
   dco_decode_cloud_sync_prepared_message_create_result(dynamic raw);
+
+  @protected
+  CloudSyncPreparedMessageUpdate dco_decode_cloud_sync_prepared_message_update(
+    dynamic raw,
+  );
 
   @protected
   CloudSyncProtectedChange dco_decode_cloud_sync_protected_change(dynamic raw);
@@ -3066,6 +3111,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_opt_box_autoadd_cloud_sync_chat_identity_comparison(dynamic raw);
 
   @protected
+  CloudSyncMessageUpdateReadbackReceipt?
+  dco_decode_opt_box_autoadd_cloud_sync_message_update_readback_receipt(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncNativeSendReceipt?
   dco_decode_opt_box_autoadd_cloud_sync_native_send_receipt(dynamic raw);
 
@@ -3096,6 +3147,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncOutboundSafeCode?
   dco_decode_opt_box_autoadd_cloud_sync_outbound_safe_code(dynamic raw);
+
+  @protected
+  CloudSyncPreparedMessageUpdate?
+  dco_decode_opt_box_autoadd_cloud_sync_prepared_message_update(dynamic raw);
 
   @protected
   CloudSyncProtectedFailure?
@@ -5239,6 +5294,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncMessageUpdatePrepareInput
+  sse_decode_box_autoadd_cloud_sync_message_update_prepare_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncMessageUpdateReadbackReceipt
+  sse_decode_box_autoadd_cloud_sync_message_update_readback_receipt(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncMessageUpdateSubmissionInput
+  sse_decode_box_autoadd_cloud_sync_message_update_submission_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncNativeSendReceipt
   sse_decode_box_autoadd_cloud_sync_native_send_receipt(
     SseDeserializer deserializer,
@@ -5283,6 +5356,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncPreparedMessageCreateInput
   sse_decode_box_autoadd_cloud_sync_prepared_message_create_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncPreparedMessageUpdate
+  sse_decode_box_autoadd_cloud_sync_prepared_message_update(
     SseDeserializer deserializer,
   );
 
@@ -5910,6 +5989,30 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncMessageUpdatePrepareInput
+  sse_decode_cloud_sync_message_update_prepare_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncMessageUpdateReadbackReceipt
+  sse_decode_cloud_sync_message_update_readback_receipt(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncMessageUpdateReconcileResult
+  sse_decode_cloud_sync_message_update_reconcile_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncMessageUpdateSubmissionInput
+  sse_decode_cloud_sync_message_update_submission_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncNativeAuthMetadata sse_decode_cloud_sync_native_auth_metadata(
     SseDeserializer deserializer,
   );
@@ -5976,6 +6079,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncPrepareMessageUpdateResult
+  sse_decode_cloud_sync_prepare_message_update_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncPreparedAttachmentUploadResult
   sse_decode_cloud_sync_prepared_attachment_upload_result(
     SseDeserializer deserializer,
@@ -5990,6 +6099,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncPreparedMessageCreateResult
   sse_decode_cloud_sync_prepared_message_create_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncPreparedMessageUpdate sse_decode_cloud_sync_prepared_message_update(
     SseDeserializer deserializer,
   );
 
@@ -7047,6 +7161,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncMessageUpdateReadbackReceipt?
+  sse_decode_opt_box_autoadd_cloud_sync_message_update_readback_receipt(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncNativeSendReceipt?
   sse_decode_opt_box_autoadd_cloud_sync_native_send_receipt(
     SseDeserializer deserializer,
@@ -7085,6 +7205,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncOutboundSafeCode?
   sse_decode_opt_box_autoadd_cloud_sync_outbound_safe_code(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncPreparedMessageUpdate?
+  sse_decode_opt_box_autoadd_cloud_sync_prepared_message_update(
     SseDeserializer deserializer,
   );
 
@@ -9633,6 +9759,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_message_update_prepare_input(
+    CloudSyncMessageUpdatePrepareInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_sync_message_update_readback_receipt(
+    CloudSyncMessageUpdateReadbackReceipt self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_sync_message_update_submission_input(
+    CloudSyncMessageUpdateSubmissionInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_native_send_receipt(
     CloudSyncNativeSendReceipt self,
     SseSerializer serializer,
@@ -9677,6 +9821,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_cloud_sync_prepared_message_create_input(
     CloudSyncPreparedMessageCreateInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_sync_prepared_message_update(
+    CloudSyncPreparedMessageUpdate self,
     SseSerializer serializer,
   );
 
@@ -10429,6 +10579,30 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_sync_message_update_prepare_input(
+    CloudSyncMessageUpdatePrepareInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_message_update_readback_receipt(
+    CloudSyncMessageUpdateReadbackReceipt self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_message_update_reconcile_result(
+    CloudSyncMessageUpdateReconcileResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_message_update_submission_input(
+    CloudSyncMessageUpdateSubmissionInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_native_auth_metadata(
     CloudSyncNativeAuthMetadata self,
     SseSerializer serializer,
@@ -10507,6 +10681,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_sync_prepare_message_update_result(
+    CloudSyncPrepareMessageUpdateResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_prepared_attachment_upload_result(
     CloudSyncPreparedAttachmentUploadResult self,
     SseSerializer serializer,
@@ -10521,6 +10701,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_prepared_message_create_result(
     CloudSyncPreparedMessageCreateResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_prepared_message_update(
+    CloudSyncPreparedMessageUpdate self,
     SseSerializer serializer,
   );
 
@@ -11782,6 +11968,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_message_update_readback_receipt(
+    CloudSyncMessageUpdateReadbackReceipt? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_cloud_sync_native_send_receipt(
     CloudSyncNativeSendReceipt? self,
     SseSerializer serializer,
@@ -11820,6 +12012,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_cloud_sync_outbound_safe_code(
     CloudSyncOutboundSafeCode? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_prepared_message_update(
+    CloudSyncPreparedMessageUpdate? self,
     SseSerializer serializer,
   );
 
