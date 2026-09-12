@@ -6,7 +6,6 @@
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use prost::Message;
-use rustpush::cloudkit::CloudKitRequestIdentity;
 use rustpush::cloudkit_proto::{record::field::value::Type, Record, RecordSaveRequest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -29,14 +28,14 @@ const MAX_FIELDS: usize = 4096;
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MessageUpdateBinding {
+    pub(crate) logical_entity_key_hash: String,
+    pub(crate) server_record_id_hash: String,
+    pub(crate) predecessor_etag_hash: String,
     pub(crate) mutation_source_sha256: String,
     pub(crate) ids_receipt_binding_sha256: String,
     pub(crate) reflected_snapshot_sha256: String,
     pub(crate) auth_binding_sha256: String,
     pub(crate) writer_epoch: u64,
-    pub(crate) local_operation_id: String,
-    pub(crate) http_request_uuid: String,
-    pub(crate) apple_operation_uuid: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -53,7 +52,6 @@ pub(crate) struct StagedMessageUpdate {
     pub(crate) protected_reference: String,
     pub(crate) lease_reference: String,
     pub(crate) payload_sha256: String,
-    pub(crate) payload_length: u64,
 }
 
 // Deliberately not Debug/Serialize. Raw identifiers, ETags and payloads stay native.
@@ -104,7 +102,6 @@ pub(crate) fn stage_message_update(
         protected_reference: staged.protected_envelope_reference,
         lease_reference: staged.lease_reference,
         payload_sha256: digest(&bytes),
-        payload_length: bytes.len() as u64,
     })
 }
 
@@ -115,10 +112,7 @@ pub(crate) fn open_message_update(
     stage: &StagedMessageUpdate,
 ) -> Result<OpenedMessageUpdate, Failure> {
     validate_binding(expected)?;
-    if !is_digest(&stage.payload_sha256)
-        || stage.payload_length == 0
-        || stage.payload_length > MAX_ENVELOPE_BYTES as u64
-    {
+    if !is_digest(&stage.payload_sha256) {
         return Err(Failure::MalformedMessage);
     }
     cloud_sync_verify_committed_lease_exact(
@@ -134,7 +128,7 @@ pub(crate) fn open_message_update(
     )
     .map_err(|_| Failure::ProtectedStorage)?;
     let bytes = decode_bounded(&encoded, MAX_ENVELOPE_BYTES)?;
-    if bytes.len() as u64 != stage.payload_length || digest(&bytes) != stage.payload_sha256 {
+    if digest(&bytes) != stage.payload_sha256 {
         return Err(Failure::BindingMismatch);
     }
     let envelope: Envelope =
@@ -168,6 +162,12 @@ pub(crate) fn open_message_update(
 }
 
 fn validate_binding(binding: &MessageUpdateBinding) -> Result<(), Failure> {
+    if !is_keyed_hash(&binding.logical_entity_key_hash)
+        || !is_keyed_hash(&binding.server_record_id_hash)
+        || !is_keyed_hash(&binding.predecessor_etag_hash)
+    {
+        return Err(Failure::MalformedMessage);
+    }
     if [
         &binding.mutation_source_sha256,
         &binding.ids_receipt_binding_sha256,
@@ -176,22 +176,17 @@ fn validate_binding(binding: &MessageUpdateBinding) -> Result<(), Failure> {
     ]
     .iter()
     .any(|value| !is_digest(value))
-        || binding.local_operation_id.is_empty()
-        || binding.local_operation_id.len() > 256
-        || !binding
-            .local_operation_id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
-        || binding.http_request_uuid == binding.apple_operation_uuid
     {
         return Err(Failure::MalformedMessage);
     }
-    CloudKitRequestIdentity::new(
-        binding.http_request_uuid.clone(),
-        vec![binding.apple_operation_uuid.clone()],
-    )
-    .map_err(|_| Failure::MalformedMessage)?;
     Ok(())
+}
+
+fn is_keyed_hash(value: &str) -> bool {
+    value.len() == 43
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 /// This lane may replace only encrypted msgProto and the unencrypted update
@@ -441,14 +436,14 @@ mod tests {
 
     fn binding() -> MessageUpdateBinding {
         MessageUpdateBinding {
+            logical_entity_key_hash: "L".repeat(43),
+            server_record_id_hash: "S".repeat(43),
+            predecessor_etag_hash: "E".repeat(43),
             mutation_source_sha256: "a".repeat(64),
             ids_receipt_binding_sha256: "b".repeat(64),
             reflected_snapshot_sha256: "c".repeat(64),
             auth_binding_sha256: "d".repeat(64),
             writer_epoch: 1,
-            local_operation_id: "mutation-test-01".into(),
-            http_request_uuid: "11111111-1111-4111-8111-111111111111".into(),
-            apple_operation_uuid: "22222222-2222-4222-8222-222222222222".into(),
         }
     }
 
@@ -572,14 +567,14 @@ mod tests {
         for mode in 0..8 {
             let mut changed = binding();
             match mode {
-                0 => changed.mutation_source_sha256 = "f".repeat(64),
-                1 => changed.ids_receipt_binding_sha256 = "f".repeat(64),
-                2 => changed.reflected_snapshot_sha256 = "f".repeat(64),
-                3 => changed.auth_binding_sha256 = "f".repeat(64),
-                4 => changed.writer_epoch += 1,
-                5 => changed.local_operation_id.push('2'),
-                6 => changed.http_request_uuid = "33333333-3333-4333-8333-333333333333".into(),
-                _ => changed.apple_operation_uuid = "44444444-4444-4444-8444-444444444444".into(),
+                0 => changed.logical_entity_key_hash = "F".repeat(43),
+                1 => changed.server_record_id_hash = "F".repeat(43),
+                2 => changed.predecessor_etag_hash = "F".repeat(43),
+                3 => changed.mutation_source_sha256 = "f".repeat(64),
+                4 => changed.ids_receipt_binding_sha256 = "f".repeat(64),
+                5 => changed.reflected_snapshot_sha256 = "f".repeat(64),
+                6 => changed.auth_binding_sha256 = "f".repeat(64),
+                _ => changed.writer_epoch += 1,
             }
             assert_eq!(
                 open_message_update(path.clone(), account.clone(), &changed, &stage).err(),
@@ -596,12 +591,11 @@ mod tests {
         )
         .unwrap();
         commit(&path, &other);
-        for mode in 0..4 {
+        for mode in 0..3 {
             let mut changed = stage.clone();
             match mode {
-                0 => changed.payload_length += 1,
-                1 => changed.payload_sha256 = "f".repeat(64),
-                2 => changed.protected_reference = other.protected_reference.clone(),
+                0 => changed.payload_sha256 = "f".repeat(64),
+                1 => changed.protected_reference = other.protected_reference.clone(),
                 _ => changed.lease_reference = other.lease_reference.clone(),
             }
             assert!(
@@ -764,15 +758,16 @@ mod tests {
 
     #[test]
     fn bounded_payload_and_binding_validation_precedes_any_staging() {
-        for mode in 0..6 {
+        for mode in 0..7 {
             let mut changed = binding();
             match mode {
-                0 => changed.mutation_source_sha256 = "A".repeat(64),
-                1 => changed.local_operation_id.clear(),
-                2 => changed.local_operation_id = "not an operation".into(),
-                3 => changed.local_operation_id = "x".repeat(257),
-                4 => changed.http_request_uuid = "bad-uuid".into(),
-                _ => changed.apple_operation_uuid = changed.http_request_uuid.clone(),
+                0 => changed.logical_entity_key_hash.clear(),
+                1 => changed.server_record_id_hash = "!".repeat(43),
+                2 => changed.predecessor_etag_hash = "E".repeat(42),
+                3 => changed.mutation_source_sha256 = "A".repeat(64),
+                4 => changed.ids_receipt_binding_sha256 = "A".repeat(64),
+                5 => changed.reflected_snapshot_sha256 = "A".repeat(64),
+                _ => changed.auth_binding_sha256 = "A".repeat(64),
             }
             assert!(validate_binding(&changed).is_err(), "binding shape {mode}");
         }

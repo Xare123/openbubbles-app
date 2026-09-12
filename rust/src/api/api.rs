@@ -17510,7 +17510,8 @@ const CLOUD_SYNC_MESSAGE_UPDATE_AUTH_DOMAIN: &str = "cloud-sync-message-update-a
 
 /// Typed input for one conditional message update preparation. Every identity
 /// field is content-free: keyed hashes, opaque protected references, hex
-/// digests, generations, and UUIDs. Message content, ciphertext, clocks,
+/// digests, and generations. Submission-only operation IDs and UUIDs do not
+/// exist yet and are deliberately excluded. Message content, ciphertext, clocks,
 /// identifiers, ETags, keys, and raw records never cross this boundary.
 #[derive(Clone)]
 pub struct CloudSyncMessageUpdatePrepareInput {
@@ -17524,9 +17525,6 @@ pub struct CloudSyncMessageUpdatePrepareInput {
     pub expected_receipt_binding_sha256: String,
     pub reflected_snapshot_sha256: String,
     pub writer_epoch: u64,
-    pub local_operation_id: String,
-    pub http_request_uuid: String,
-    pub apple_operation_uuid: String,
 }
 
 impl std::fmt::Debug for CloudSyncMessageUpdatePrepareInput {
@@ -17543,12 +17541,8 @@ pub struct CloudSyncPreparedMessageUpdate {
     pub protected_reference: String,
     pub lease_reference: String,
     pub payload_sha256: String,
-    pub payload_length: u64,
     pub logical_entity_key_hash: String,
     pub server_record_id_hash: String,
-    pub local_operation_id: String,
-    pub http_request_uuid: String,
-    pub apple_operation_uuid: String,
 }
 
 impl std::fmt::Debug for CloudSyncPreparedMessageUpdate {
@@ -17567,6 +17561,32 @@ pub struct CloudSyncPrepareMessageUpdateResult {
 impl std::fmt::Debug for CloudSyncPrepareMessageUpdateResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("CloudSyncPrepareMessageUpdateResult(redacted)")
+    }
+}
+
+/// Submission-time correlation for one already-adopted conditional update.
+/// The protected stage carries only restart-stable proof; this input adds the
+/// durable outbox operation and Apple operation UUID allocated after atomic
+/// adoption. All identifiers crossing Flutter remain hashes or protected refs.
+#[derive(Clone)]
+pub struct CloudSyncMessageUpdateSubmissionInput {
+    pub local_operation_id: String,
+    pub logical_entity_key_hash: String,
+    pub server_record_id_hash: String,
+    pub predecessor_etag_hash: String,
+    pub protected_lease_reference: String,
+    pub protected_payload_reference: String,
+    pub payload_sha256: String,
+    pub mutation_source_sha256: String,
+    pub ids_receipt_binding_sha256: String,
+    pub reflected_snapshot_sha256: String,
+    pub writer_epoch: u64,
+    pub apple_operation_uuid: String,
+}
+
+impl std::fmt::Debug for CloudSyncMessageUpdateSubmissionInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncMessageUpdateSubmissionInput(redacted)")
     }
 }
 
@@ -17920,16 +17940,260 @@ pub async fn cloud_sync_prepare_message_update(
                 protected_reference: staged.protected_reference,
                 lease_reference: staged.lease_reference,
                 payload_sha256: staged.payload_sha256,
-                payload_length: staged.payload_length,
                 logical_entity_key_hash: input.expected_logical_entity_key_hash,
                 server_record_id_hash: input.expected_server_record_id_hash,
-                local_operation_id: input.local_operation_id,
-                http_request_uuid: input.http_request_uuid,
-                apple_operation_uuid: input.apple_operation_uuid,
             }),
             failure: None,
         },
         Err(failure) => fail(map_cloud_sync_outbound_failure(failure)),
+    }
+}
+
+/// Reopens one adopted update stage and prepares its exact conditional save.
+/// This performs lookup-only authentication and a fresh predecessor fetch, but
+/// no remote mutation. Any version drift fails closed so a delayed update can
+/// never overwrite a newer server record. The returned record-agnostic handle
+/// uses the same single-use consume and mutation-capability fence as creates.
+#[allow(clippy::too_many_arguments)]
+pub async fn cloud_sync_prepare_message_update_submission(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    request_uuid: String,
+    request_timeout_seconds: u64,
+    input: CloudSyncMessageUpdateSubmissionInput,
+) -> CloudSyncPreparedMessageCreateResult {
+    if !is_cloud_sync_operation_id(&input.local_operation_id)
+        || !is_cloud_sync_keyed_hash(&input.logical_entity_key_hash)
+        || !is_cloud_sync_keyed_hash(&input.server_record_id_hash)
+        || !is_cloud_sync_keyed_hash(&input.predecessor_etag_hash)
+        || !is_cloud_sync_lease_reference(&input.protected_lease_reference)
+        || !is_cloud_sync_protected_reference(&input.protected_payload_reference)
+        || !is_cloud_sync_hex_digest(&input.payload_sha256)
+        || !is_cloud_sync_hex_digest(&input.mutation_source_sha256)
+        || !is_cloud_sync_hex_digest(&input.ids_receipt_binding_sha256)
+        || !is_cloud_sync_hex_digest(&input.reflected_snapshot_sha256)
+        || input.writer_epoch == 0
+        || request_timeout_seconds == 0
+        || request_timeout_seconds > 300
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+    let request_identity = match rustpush::cloudkit::CloudKitRequestIdentity::new(
+        request_uuid,
+        vec![input.apple_operation_uuid.clone()],
+    ) {
+        Ok(identity) => identity,
+        Err(_) => return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidRequest),
+    };
+    let auth =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+            }
+        };
+    if auth.account_fingerprint != expected_account_fingerprint
+        || auth.protected_store_identity != expected_protected_store_identity
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let expected_binding = crate::cloud_sync_message_update_stage::MessageUpdateBinding {
+        logical_entity_key_hash: input.logical_entity_key_hash.clone(),
+        server_record_id_hash: input.server_record_id_hash.clone(),
+        predecessor_etag_hash: input.predecessor_etag_hash.clone(),
+        mutation_source_sha256: input.mutation_source_sha256.clone(),
+        ids_receipt_binding_sha256: input.ids_receipt_binding_sha256.clone(),
+        reflected_snapshot_sha256: input.reflected_snapshot_sha256.clone(),
+        auth_binding_sha256: message_update_auth_binding_sha256(
+            &auth.account_fingerprint,
+            &auth.protected_store_identity,
+        ),
+        writer_epoch: input.writer_epoch,
+    };
+    let descriptor = crate::cloud_sync_message_update_stage::StagedMessageUpdate {
+        protected_reference: input.protected_payload_reference,
+        lease_reference: input.protected_lease_reference,
+        payload_sha256: input.payload_sha256,
+    };
+    let opened = match crate::cloud_sync_message_update_stage::open_message_update(
+        PathBuf::from(storage_directory.clone()),
+        auth.account_fingerprint.clone(),
+        &expected_binding,
+        &descriptor,
+    ) {
+        Ok(opened) => opened,
+        Err(error) => {
+            return cloud_sync_prepare_failure(map_cloud_sync_outbound_failure(error));
+        }
+    };
+    let record_name = match cloud_sync_message_update_predecessor_name(opened.predecessor()) {
+        Ok(name) => name.to_owned(),
+        Err(code) => return cloud_sync_prepare_failure(code),
+    };
+    let predecessor_etag = match cloud_sync_message_update_predecessor_etag(opened.predecessor()) {
+        Ok(etag) => etag.to_owned(),
+        Err(code) => return cloud_sync_prepare_failure(code),
+    };
+    let hasher =
+        match crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.clone()) {
+            Ok(hasher) => hasher,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::ProtectedStorage)
+            }
+        };
+    let etag_hash = match hasher.canonical_etag_hash(&predecessor_etag) {
+        Ok(hash) => hash,
+        Err(_) => return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch),
+    };
+    if hasher.server_record_id_hash(&record_name) != input.server_record_id_hash
+        || etag_hash.value() != input.predecessor_etag_hash
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
+
+    let writer_binding = match cloud_messages_client
+        .warm_message_writer_preparation_lookup_only()
+        .await
+    {
+        Ok(binding) => binding,
+        Err(_) => {
+            return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+        }
+    };
+    let auth_after_warm =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+            }
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth,
+        &auth_after_warm,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) || cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+
+    let (remote, receipt) = match cloud_messages_client
+        .lookup_message_record_version(&writer_binding, &record_name)
+        .await
+    {
+        Ok(rustpush::cloud_messages::CloudMessageRecordVersionLookup::Found(record, receipt)) => {
+            (record, receipt)
+        }
+        Ok(rustpush::cloud_messages::CloudMessageRecordVersionLookup::NotFound) => {
+            return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch)
+        }
+        Ok(rustpush::cloud_messages::CloudMessageRecordVersionLookup::Unresolved { .. })
+        | Err(_) => {
+            return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativePrepareFailed)
+        }
+    };
+    let remote_raw = match remote.get_raw_record() {
+        Ok(record) => record,
+        Err(_) => return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::MalformedMessage),
+    };
+    if receipt.record_name() != record_name
+        || receipt.etag() != predecessor_etag
+        || !cloud_sync_message_update_predecessor_matches_remote(opened.predecessor(), remote_raw)
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
+    let auth_after_lookup =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+            }
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth_after_warm,
+        &auth_after_lookup,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) || cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+
+    let native_writer_permit =
+        match rustpush::cloudkit_operation_gate::acquire_cloudkit_writer_operation().await {
+            Ok(permit) => permit,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativePrepareFailed)
+            }
+        };
+    let prepared_result = native_writer_permit
+        .run(cloud_messages_client.prepare_message_update_submission(
+            &writer_binding,
+            input.local_operation_id,
+            opened.request().clone(),
+            request_identity,
+            Duration::from_secs(request_timeout_seconds),
+        ))
+        .await;
+    let prepared = match prepared_result {
+        Ok(prepared) => prepared,
+        Err(_) => {
+            return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativePrepareFailed)
+        }
+    };
+    let auth_after_prepare =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+            }
+        };
+    if !cloud_sync_auth_identity_remains_exact(
+        &auth_after_lookup,
+        &auth_after_prepare,
+        &expected_account_fingerprint,
+        &expected_protected_store_identity,
+    ) || cloud_messages_client
+        .validate_writer_preparation_binding(&writer_binding)
+        .await
+        .is_err()
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    let handle_binding_sha256 = cloud_sync_new_prepared_handle_binding_sha256();
+    CloudSyncPreparedMessageCreateResult {
+        handle: Some(CloudSyncPreparedMessageCreateHandle {
+            prepared: tokio::sync::Mutex::new(Some(CloudSyncPreparedMessageCreateOwner::Native {
+                prepared,
+                native_writer_permit,
+                cloud_messages_client: cloud_messages_client.clone(),
+                writer_binding,
+                attachment_parent_group_proofs: vec![],
+            })),
+            storage_directory,
+            expected_account_fingerprint,
+            expected_protected_store_identity,
+            expected_handle_binding_sha256: handle_binding_sha256.clone(),
+            expected_reconciliation_binding_sha256: std::sync::OnceLock::new(),
+        }),
+        handle_binding_sha256: Some(handle_binding_sha256),
+        failure: None,
     }
 }
 
@@ -18201,9 +18465,10 @@ fn message_update_auth_binding_sha256(account_fingerprint: &str, store_identity:
 /// source digest is derived natively from the opened source envelope and the
 /// auth digest from the current account and store identity; the receipt
 /// binding carries the journal digest verified against the exact retained
-/// receipt just above, and the remaining journal-held correlation (snapshot,
-/// epoch, operation and request IDs) is carried through verbatim for later
-/// adoption.
+/// receipt just above, and the remaining restart-stable journal correlation
+/// (snapshot and writer epoch) is carried through verbatim for later adoption.
+/// Durable operation and Apple request IDs do not exist until after ObjectBox
+/// atomically adopts this stage, so they belong to submission preparation.
 fn cloud_sync_message_update_binding(
     mutation_source_envelope: &[u8],
     account_fingerprint: &str,
@@ -18211,6 +18476,9 @@ fn cloud_sync_message_update_binding(
     input: &CloudSyncMessageUpdatePrepareInput,
 ) -> crate::cloud_sync_message_update_stage::MessageUpdateBinding {
     crate::cloud_sync_message_update_stage::MessageUpdateBinding {
+        logical_entity_key_hash: input.expected_logical_entity_key_hash.clone(),
+        server_record_id_hash: input.expected_server_record_id_hash.clone(),
+        predecessor_etag_hash: input.expected_etag_hash.clone(),
         mutation_source_sha256: message_update_sha256_hex(mutation_source_envelope),
         ids_receipt_binding_sha256: input.expected_receipt_binding_sha256.clone(),
         reflected_snapshot_sha256: input.reflected_snapshot_sha256.clone(),
@@ -18219,9 +18487,6 @@ fn cloud_sync_message_update_binding(
             protected_store_identity,
         ),
         writer_epoch: input.writer_epoch,
-        local_operation_id: input.local_operation_id.clone(),
-        http_request_uuid: input.http_request_uuid.clone(),
-        apple_operation_uuid: input.apple_operation_uuid.clone(),
     }
 }
 
@@ -18496,14 +18761,14 @@ mod cloud_sync_message_update_prepare_tests {
 
     fn update_test_binding() -> crate::cloud_sync_message_update_stage::MessageUpdateBinding {
         crate::cloud_sync_message_update_stage::MessageUpdateBinding {
+            logical_entity_key_hash: "L".repeat(43),
+            server_record_id_hash: "S".repeat(43),
+            predecessor_etag_hash: "E".repeat(43),
             mutation_source_sha256: "a".repeat(64),
             ids_receipt_binding_sha256: "b".repeat(64),
             reflected_snapshot_sha256: "c".repeat(64),
             auth_binding_sha256: "d".repeat(64),
             writer_epoch: 3,
-            local_operation_id: "update-test-01".to_owned(),
-            http_request_uuid: "11111111-1111-4111-8111-111111111111".to_owned(),
-            apple_operation_uuid: "22222222-2222-4222-8222-222222222222".to_owned(),
         }
     }
 
@@ -18551,9 +18816,6 @@ mod cloud_sync_message_update_prepare_tests {
             raw_generation: 7,
             reflected_snapshot_sha256: "c".repeat(64),
             writer_epoch: 3,
-            local_operation_id: "update-test-01".to_owned(),
-            http_request_uuid: UPDATE_MUTATION_GUID.to_owned(),
-            apple_operation_uuid: UPDATE_TARGET_GUID.to_owned(),
         }
     }
 
@@ -19173,7 +19435,7 @@ mod cloud_sync_message_update_prepare_tests {
         )
         .expect("commit other");
         let mut tampered = staged.clone();
-        tampered.payload_length += 1;
+        tampered.payload_sha256 = "f".repeat(64);
         assert!(crate::cloud_sync_message_update_stage::open_message_update(
             path.clone(),
             account.clone(),
@@ -19674,24 +19936,31 @@ mod cloud_sync_message_update_prepare_tests {
             input.reflected_snapshot_sha256
         );
         assert_eq!(first.writer_epoch, input.writer_epoch);
-        assert_eq!(first.local_operation_id, input.local_operation_id);
-        assert_eq!(first.http_request_uuid, input.http_request_uuid);
-        assert_eq!(first.apple_operation_uuid, input.apple_operation_uuid);
     }
 
     #[test]
     fn update_prepare_types_and_errors_expose_no_plaintext() {
         let input = update_input_fixture();
+        let submission = CloudSyncMessageUpdateSubmissionInput {
+            local_operation_id: "mutation-test-01".to_owned(),
+            logical_entity_key_hash: "L".repeat(43),
+            server_record_id_hash: "S".repeat(43),
+            predecessor_etag_hash: "E".repeat(43),
+            protected_lease_reference: "obcs2.lease.".to_owned() + &"a".repeat(32),
+            protected_payload_reference: "obcs2.ref.".to_owned() + &"P".repeat(43),
+            payload_sha256: "a".repeat(64),
+            mutation_source_sha256: "b".repeat(64),
+            ids_receipt_binding_sha256: "c".repeat(64),
+            reflected_snapshot_sha256: "d".repeat(64),
+            writer_epoch: 3,
+            apple_operation_uuid: "22222222-2222-4222-8222-222222222222".to_owned(),
+        };
         let prepared = CloudSyncPreparedMessageUpdate {
             protected_reference: "obcs2.ref.".to_owned() + &"P".repeat(43),
             lease_reference: "obcs2.lease.".to_owned() + &"a".repeat(32),
             payload_sha256: "a".repeat(64),
-            payload_length: 512,
             logical_entity_key_hash: "L".repeat(43),
             server_record_id_hash: "S".repeat(43),
-            local_operation_id: input.local_operation_id.clone(),
-            http_request_uuid: input.http_request_uuid.clone(),
-            apple_operation_uuid: input.apple_operation_uuid.clone(),
         };
         let result = CloudSyncPrepareMessageUpdateResult {
             prepared: Some(prepared),
@@ -19705,9 +19974,14 @@ mod cloud_sync_message_update_prepare_tests {
             format!("{:?}", result),
             "CloudSyncPrepareMessageUpdateResult(redacted)"
         );
+        assert_eq!(
+            format!("{:?}", submission),
+            "CloudSyncMessageUpdateSubmissionInput(redacted)"
+        );
         for debug in [
             format!("{:?}", input),
             format!("{:?}", result),
+            format!("{:?}", submission),
             format!("{:?}", CloudSyncOutboundSafeCode::BindingMismatch),
             format!("{:?}", CloudSyncOutboundSafeCode::MalformedMessage),
             format!("{:?}", CloudSyncOutboundSafeCode::InvalidRequest),
