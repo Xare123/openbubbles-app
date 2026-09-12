@@ -300,7 +300,70 @@ fn validate_request(previous: &Record, request: &RecordSaveRequest) -> Result<()
     if !fields.contains("msgProto") {
         return Err(Failure::MalformedMessage);
     }
+    // A staged attempt must actually change the ciphertext. Saving byte-
+    // identical payload bytes would be a no-op write, never a message update.
+    match (
+        message_bytes(previous, "msgProto"),
+        message_bytes(record, "msgProto"),
+    ) {
+        (Some(before), Some(after)) if before == after => {
+            return Err(Failure::MalformedMessage)
+        }
+        _ => {}
+    }
+    // The update clock must not move backwards. Either side may omit the
+    // clock; only two parseable clocks are ordered numerically. Equal clocks
+    // are explicitly allowed.
+    if let (Some(before), Some(after)) = (update_clock(previous), update_clock(record)) {
+        if after < before {
+            return Err(Failure::MalformedMessage);
+        }
+    }
     Ok(())
+}
+
+fn message_bytes<'a>(record: &'a Record, name: &str) -> Option<&'a [u8]> {
+    record
+        .record_field
+        .iter()
+        .find(|field| {
+            field
+                .identifier
+                .as_ref()
+                .and_then(|identifier| identifier.name.as_deref())
+                == Some(name)
+        })?
+        .value
+        .as_ref()?
+        .bytes_value
+        .as_deref()
+}
+
+/// Best-effort numeric view of the unencrypted `utm` update clock.
+/// Returns `None` when the clock is absent or not a finite timestamp, so the
+/// existing optional-field behavior is preserved for those cases. The raw
+/// timestamp is compared directly so fractional values cannot slip backwards
+/// inside one integer second through truncation.
+fn update_clock(record: &Record) -> Option<f64> {
+    let time = record
+        .record_field
+        .iter()
+        .find(|field| {
+            field
+                .identifier
+                .as_ref()
+                .and_then(|identifier| identifier.name.as_deref())
+                == Some("utm")
+        })?
+        .value
+        .as_ref()?
+        .date_value
+        .as_ref()?
+        .time?;
+    if !time.is_finite() {
+        return None;
+    }
+    Some(time)
 }
 
 fn is_digest(value: &str) -> bool {
@@ -690,5 +753,87 @@ mod tests {
             validate_request(&previous, &request).err(),
             Some(Failure::OversizedMessage)
         );
+    }
+
+    fn utm_field(time: f64) -> record::Field {
+        let mut value = record::field::Value::default();
+        value.r#type = Some(Type::DateType as i32);
+        value
+            .date_value
+            .get_or_insert_with(Default::default)
+            .time = Some(time);
+        record::Field {
+            identifier: Some(record::field::Identifier {
+                name: Some("utm".into()),
+            }),
+            value: Some(value),
+        }
+    }
+
+    #[test]
+    fn update_rejects_identical_ciphertext_bytes() {
+        let (previous, request) = fixture();
+        // The prepared fixture changes the bytes, so it stays valid.
+        validate_request(&previous, &request).unwrap();
+        // Replaying the predecessor bytes verbatim is a no-op, never an update.
+        let mut replay = request.clone();
+        replay.record.as_mut().unwrap().record_field[0]
+            .value
+            .as_mut()
+            .unwrap()
+            .bytes_value = previous.record_field[0]
+            .value
+            .as_ref()
+            .unwrap()
+            .bytes_value
+            .clone();
+        assert_eq!(
+            validate_request(&previous, &replay).err(),
+            Some(Failure::MalformedMessage)
+        );
+    }
+
+    #[test]
+    fn update_clock_never_moves_backwards() {
+        let (previous, request) = fixture();
+        // No clocks on either side keeps the existing optional behavior.
+        validate_request(&previous, &request).unwrap();
+
+        let mut before = previous.clone();
+        before.record_field.push(utm_field(1_720_000_000.0));
+
+        // A request clock behind the stored clock is rejected.
+        let mut behind = request.clone();
+        behind
+            .record
+            .as_mut()
+            .unwrap()
+            .record_field
+            .push(utm_field(1_719_999_999.0));
+        assert_eq!(
+            validate_request(&before, &behind).err(),
+            Some(Failure::MalformedMessage)
+        );
+
+        // An equal clock is explicitly allowed.
+        let mut equal = request.clone();
+        equal
+            .record
+            .as_mut()
+            .unwrap()
+            .record_field
+            .push(utm_field(1_720_000_000.0));
+        validate_request(&before, &equal).unwrap();
+
+        // A clock only on the request side is still accepted.
+        validate_request(&previous, &equal).unwrap();
+
+        // A clock only on the stored side is still accepted.
+        validate_request(&before, &request).unwrap();
+
+        // An unparseable stored clock keeps the previous lenient behavior.
+        let mut unparseable = previous.clone();
+        unparseable.record_field.push(utm_field(f64::NAN));
+        validate_request(&unparseable, &behind).unwrap();
     }
 }
