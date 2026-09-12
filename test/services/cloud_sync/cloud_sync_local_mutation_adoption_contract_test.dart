@@ -786,6 +786,45 @@ void main() {
         currentAuth: _auth(),
         stillCurrent: () => true,
       );
+      final recoveredRow = store
+          .box<CloudSyncLocalMutationIntentEntity>()
+          .get(intentId)!;
+      expect(admissionSource.intentId, recoveredRow.id);
+      expect(admissionSource.intentKey, recoveredRow.intentKey);
+      expect(admissionSource.accountFingerprint, recoveredRow.accountFingerprint);
+      expect(admissionSource.writerEpoch, recoveredRow.writerEpoch);
+      expect(admissionSource.localMessageId, recoveredRow.localMessageId);
+      expect(admissionSource.localChatId, recoveredRow.localChatId);
+      expect(admissionSource.mutationGuidHash, recoveredRow.mutationGuidHash);
+      expect(admissionSource.targetGuidHash, recoveredRow.targetGuidHash);
+      expect(admissionSource.targetPart, recoveredRow.targetPart);
+      expect(admissionSource.kind, recoveredRow.kind);
+      expect(admissionSource.sourceSha256, recoveredRow.sourceSha256);
+      expect(
+        admissionSource.targetSnapshotSha256,
+        recoveredRow.targetSnapshotSha256,
+      );
+      expect(
+        admissionSource.protectedSourceBinding,
+        recoveredRow.protectedSourceBinding,
+      );
+      expect(
+        admissionSource.submissionAuthBindingSha256,
+        recoveredRow.submissionAuthBindingSha256,
+      );
+      expect(
+        admissionSource.idsReceiptBindingSha256,
+        recoveredRow.idsReceiptBindingSha256,
+      );
+      expect(
+        admissionSource.reflectedSnapshotSha256,
+        recoveredRow.reflectedSnapshotSha256,
+      );
+      expect(
+        admissionSource.adoptedOperationId,
+        recoveredRow.admittedOperationId,
+      );
+      expect(admissionSource.createdAtMs, recoveredRow.createdAtMs);
       final recovered = admit();
       expect(recovered.operationId, first.operationId);
       expect(store.box<CloudOutboxOperationEntity>().count(), 1);

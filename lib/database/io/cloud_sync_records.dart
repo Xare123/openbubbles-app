@@ -543,6 +543,19 @@ class CloudRecordMapEntity {
   String encryptedServerRecordId;
   String? etagHash;
   String? encryptedRawRecordRef;
+
+  /// Generation used to protect [encryptedRawRecordRef]. This remains after
+  /// lease finalization because the next conditional update must open the raw
+  /// record under the exact generation which produced it.
+  int rawRecordGeneration;
+
+  /// Native lease for a committed conditional-update readback. This lease is
+  /// distinct from the update-stage lease retained by the confirmed outbox
+  /// row. The remaining pending fields bind it to that exact operation until
+  /// both native leases have been finalized.
+  String? protectedReadbackLeaseReference;
+  String? pendingUpdateOperationId;
+  String? pendingUpdatePredecessorEtagHash;
   int updatedAtMs;
 
   CloudRecordMapEntity({
@@ -557,6 +570,10 @@ class CloudRecordMapEntity {
     required this.encryptedServerRecordId,
     this.etagHash,
     this.encryptedRawRecordRef,
+    this.rawRecordGeneration = 0,
+    this.protectedReadbackLeaseReference,
+    this.pendingUpdateOperationId,
+    this.pendingUpdatePredecessorEtagHash,
     required this.updatedAtMs,
   });
 }

@@ -994,7 +994,7 @@ void main() {
     final guard = File(
       'lib/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart',
     ).readAsStringSync();
-    expect(guard, contains('_completeReconciliationAfterExactReadback('));
+    expect(guard, contains('completeReconciliationAfterExactReadback('));
     expect(guard, contains('final reconcile = isChat'));
     expect(guard, contains('binding.reconcileMessageCreate;'));
     expect(guard, contains('CloudKitWriterChatReconciliationBinding'));
@@ -1066,6 +1066,15 @@ void main() {
     final outboundWait = reset.indexOf(
       'await outbound.timeout(_cloudSyncV2OutboundQuiescenceTimeout)',
     );
+    final mutationTimerCancel = reset.indexOf(
+      '_cloudSyncV2MessageUpdateRetryTimer?.cancel();',
+    );
+    final receiptReplayWait = reset.indexOf(
+      'await nativeReceiptReplay.timeout(_cloudSyncV2OutboundQuiescenceTimeout)',
+    );
+    final messageUpdateWait = reset.indexOf(
+      'await messageUpdate.timeout(_cloudSyncV2OutboundQuiescenceTimeout)',
+    );
     final provisioningWait = reset.indexOf(
       'await outboundProvisioning.timeout(',
     );
@@ -1078,6 +1087,9 @@ void main() {
 
     expect(pcsQuiesce, greaterThanOrEqualTo(0));
     expect(quiesce, greaterThan(pcsQuiesce));
+    expect(mutationTimerCancel, greaterThan(quiesce));
+    expect(receiptReplayWait, greaterThan(mutationTimerCancel));
+    expect(messageUpdateWait, greaterThan(receiptReplayWait));
     expect(pcsWait, greaterThan(quiesce));
     expect(awaitPcs, greaterThan(pcsWait));
     expect(semanticWait, greaterThan(awaitPcs));
@@ -1088,6 +1100,7 @@ void main() {
     expect(outboundWait, greaterThan(provisioningWait));
     expect(relayHealthWait, greaterThan(outboundWait));
     expect(destructiveBoundary, greaterThan(relayHealthWait));
+    expect(destructiveBoundary, greaterThan(messageUpdateWait));
     expect(detachState, greaterThan(destructiveBoundary));
     expect(detachState, greaterThan(outboundWait));
     expect(nativeReset, greaterThan(detachState));

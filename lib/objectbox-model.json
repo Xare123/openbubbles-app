@@ -1230,7 +1230,7 @@
     },
     {
       "id": "20:8623084761715763815",
-      "lastPropertyId": "12:7135872154167319448",
+      "lastPropertyId": "16:6705189702470968691",
       "name": "CloudRecordMapEntity",
       "properties": [
         {
@@ -1305,6 +1305,26 @@
           "id": "12:7135872154167319448",
           "name": "generation",
           "type": 6
+        },
+        {
+          "id": "13:4917752363426942810",
+          "name": "rawRecordGeneration",
+          "type": 6
+        },
+        {
+          "id": "14:9155210618372823158",
+          "name": "protectedReadbackLeaseReference",
+          "type": 9
+        },
+        {
+          "id": "15:696951073675200671",
+          "name": "pendingUpdateOperationId",
+          "type": 9
+        },
+        {
+          "id": "16:6705189702470968691",
+          "name": "pendingUpdatePredecessorEtagHash",
+          "type": 9
         }
       ],
       "relations": []

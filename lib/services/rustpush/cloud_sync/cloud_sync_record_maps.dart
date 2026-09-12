@@ -74,7 +74,14 @@ CloudRecordMapEntity? cloudSyncFindRecordMap({
   if (member != null &&
       (member.etagHash != canonical.etagHash ||
           member.encryptedServerRecordId != canonical.encryptedServerRecordId ||
-          member.encryptedRawRecordRef != canonical.encryptedRawRecordRef)) {
+          member.encryptedRawRecordRef != canonical.encryptedRawRecordRef ||
+          member.rawRecordGeneration != canonical.rawRecordGeneration ||
+          member.protectedReadbackLeaseReference !=
+              canonical.protectedReadbackLeaseReference ||
+          member.pendingUpdateOperationId !=
+              canonical.pendingUpdateOperationId ||
+          member.pendingUpdatePredecessorEtagHash !=
+              canonical.pendingUpdatePredecessorEtagHash)) {
     reject();
   }
   return canonical;

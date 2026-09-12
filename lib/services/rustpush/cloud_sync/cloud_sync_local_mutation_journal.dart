@@ -12,6 +12,7 @@ import 'cloud_sync_local_send_journal.dart'
     show CloudSyncNativeReceiptReplayBinding;
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
@@ -97,14 +98,34 @@ final class CloudSyncLocalMutationJournal {
     required bool Function() stillCurrent,
     required DateTime now,
     CloudSyncNativeReceiptReplayBinding? replayBinding,
+  }) =>
+      recordNativeReceiptIntentIfTracked(
+        receipt: receipt,
+        capturedAuth: capturedAuth,
+        stillCurrent: stillCurrent,
+        now: now,
+        replayBinding: replayBinding,
+      ) !=
+      null;
+
+  /// Records one exact positive mutation receipt and returns the journal row
+  /// that owns it. The targeted identifier lets the production callback resume
+  /// reflection without scanning or depending on a standalone Message row for
+  /// the mutation UUID.
+  int? recordNativeReceiptIntentIfTracked({
+    required api.CloudSyncNativeSendReceipt receipt,
+    required CloudSyncNativeAuthSnapshot capturedAuth,
+    required bool Function() stillCurrent,
+    required DateTime now,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) => _store.runInTransaction(TxMode.write, () {
     _requireOwner();
     if (receipt.sourceBinding?.kind !=
         api.CloudSyncNativeSendSourceKind.mutation) {
-      return false;
+      return null;
     }
     final row = _findByGuid(receipt.guidHash);
-    if (row == null) return false;
+    if (row == null) return null;
     recordNativeReceipt(
       intentId: row.id,
       receipt: receipt,
@@ -113,7 +134,25 @@ final class CloudSyncLocalMutationJournal {
       now: now,
       replayBinding: replayBinding,
     );
-    return true;
+    return row.id;
+  });
+
+  /// Reopens only the protected source bound to an already confirmed receipt.
+  /// State 3/4 replays remain valid so a crash between local reflection and the
+  /// conditional update can continue without reconstructing the mutation.
+  CloudSyncLocalMutationSourceBinding readReceiptConfirmedSource({
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireOwner();
+    final row = _read(intentId, originalEpoch: true);
+    final source = validateCloudSyncMutationRow(row);
+    _requireAuth(source, currentAuth, stillCurrent);
+    if (row.state < 2 || row.idsReceiptBindingSha256 == null) {
+      _fail('ids_unconfirmed');
+    }
+    return source;
   });
 
   CloudSyncLocalMutationIntentEntity? _findByGuid(String guidHash) {
@@ -484,6 +523,55 @@ final class CloudSyncLocalMutationJournal {
           currentAuth.nativeSessionId,
         )) {
       _fail('auth_changed');
+    }
+    final target = _target(
+      row.localMessageId,
+      row.targetGuidHash,
+      row.localChatId,
+    );
+    if (_snapshot(target) != row.reflectedSnapshotSha256) {
+      _fail('reflection_changed');
+    }
+    return CloudSyncLocalMutationAdmissionSource._(row);
+  });
+
+  /// Recovers the immutable journal source for one already-adopted update.
+  /// The operation ID is only a lookup key: ownership, auth, local reflection,
+  /// and the complete adoption binding are revalidated by the caller before
+  /// any submission or reconciliation step.
+  CloudSyncLocalMutationAdmissionSource readAdoptedForUpdate({
+    required String operationId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireOwner();
+    if (!_operationId.hasMatch(operationId)) _fail('adoption_missing');
+    final query = _rows
+        .query(
+          CloudSyncLocalMutationIntentEntity_.admittedOperationId.equals(
+            operationId,
+          ),
+        )
+        .build();
+    final CloudSyncLocalMutationIntentEntity? found;
+    try {
+      found = query.findUnique();
+    } finally {
+      query.close();
+    }
+    if (found == null) _fail('adoption_missing');
+    final row = _read(found.id, originalEpoch: true);
+    final source = validateCloudSyncMutationRow(row);
+    _requireAuth(source, currentAuth, stillCurrent);
+    if (row.state != 4 ||
+        row.admittedOperationId != operationId ||
+        row.submissionAuthBindingSha256 !=
+            _authHash(
+              currentAuth.accountFingerprint,
+              currentAuth.protectedStoreIdentity,
+              currentAuth.nativeSessionId,
+            )) {
+      _fail('adoption_changed');
     }
     final target = _target(
       row.localMessageId,
@@ -876,6 +964,7 @@ final class CloudSyncLocalMutationAdmissionSource {
       submissionAuthBindingSha256 = row.submissionAuthBindingSha256!,
       idsReceiptBindingSha256 = row.idsReceiptBindingSha256!,
       reflectedSnapshotSha256 = row.reflectedSnapshotSha256!,
+      adoptedOperationId = row.admittedOperationId,
       createdAtMs = row.createdAtMs;
 
   final int intentId;
@@ -894,7 +983,48 @@ final class CloudSyncLocalMutationAdmissionSource {
   final String submissionAuthBindingSha256;
   final String idsReceiptBindingSha256;
   final String reflectedSnapshotSha256;
+  final String? adoptedOperationId;
   final int createdAtMs;
+
+  CloudSyncLocalMutationSourceBinding decodeProtectedSourceBinding() =>
+      CloudSyncLocalMutationSourceBinding.decode(protectedSourceBinding);
+
+  /// Compares the immutable reflected mutation evidence while deliberately
+  /// ignoring the later outbox-adoption marker. Callers use this to refresh a
+  /// possibly stale source before staging without allowing a different local
+  /// reflection, receipt, owner epoch, or protected source to replace it.
+  bool sameReflectedMutationAs(CloudSyncLocalMutationAdmissionSource other) =>
+      intentId == other.intentId &&
+      intentKey == other.intentKey &&
+      accountFingerprint == other.accountFingerprint &&
+      writerEpoch == other.writerEpoch &&
+      localMessageId == other.localMessageId &&
+      localChatId == other.localChatId &&
+      mutationGuidHash == other.mutationGuidHash &&
+      targetGuidHash == other.targetGuidHash &&
+      targetPart == other.targetPart &&
+      kind == other.kind &&
+      sourceSha256 == other.sourceSha256 &&
+      targetSnapshotSha256 == other.targetSnapshotSha256 &&
+      protectedSourceBinding == other.protectedSourceBinding &&
+      submissionAuthBindingSha256 == other.submissionAuthBindingSha256 &&
+      idsReceiptBindingSha256 == other.idsReceiptBindingSha256 &&
+      reflectedSnapshotSha256 == other.reflectedSnapshotSha256 &&
+      createdAtMs == other.createdAtMs;
+
+  /// Resolve this reflected source to its exact restored CloudKit predecessor.
+  /// The raw target GUID is read only from the pinned local Message row and is
+  /// immediately rebound to this source's one-way digest.
+  CloudSyncMessageMutationPredecessor requirePredecessor({
+    required Store store,
+    required CloudSyncScope messageScope,
+  }) => requireCloudSyncMessageMutationPredecessor(
+    store: store,
+    messageScope: messageScope,
+    localMessageId: localMessageId,
+    localChatId: localChatId,
+    targetGuidHash: targetGuidHash,
+  );
 
   bool _matches(CloudSyncLocalMutationIntentEntity row) =>
       intentId == row.id &&
@@ -913,6 +1043,11 @@ final class CloudSyncLocalMutationAdmissionSource {
       submissionAuthBindingSha256 == row.submissionAuthBindingSha256 &&
       idsReceiptBindingSha256 == row.idsReceiptBindingSha256 &&
       reflectedSnapshotSha256 == row.reflectedSnapshotSha256 &&
+      // A caller may hold the exact pre-adoption snapshot while the first
+      // transaction has already attached the operation ID. The immutable
+      // reflection must still match, and any non-null claimed ID must be exact.
+      (adoptedOperationId == null ||
+          adoptedOperationId == row.admittedOperationId) &&
       createdAtMs == row.createdAtMs;
 
   @override

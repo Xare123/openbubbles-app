@@ -302,8 +302,9 @@ void main() {
     );
     expect(
       RegExp(r'NativeProtectedCloudSyncTransport\(').allMatches(service).length,
-      1,
-      reason: 'no additional runtime read/write compositions',
+      3,
+      reason:
+          'attachment staging, mutation staging, and the receipt-bound conditional update are the only runtime compositions',
     );
 
     expect(

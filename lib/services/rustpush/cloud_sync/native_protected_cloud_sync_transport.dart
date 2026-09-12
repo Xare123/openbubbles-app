@@ -6,8 +6,12 @@ import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 import 'package:bluebubbles/utils/logger/logger.dart';
 
 import 'cloud_operation_identity.dart';
+import 'cloud_sync_local_mutation_journal.dart';
+import 'cloud_sync_local_mutation_source_binding.dart';
+import 'cloud_sync_message_update_transport.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_staging.dart';
+import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_store.dart';
 import 'cloud_sync_transport.dart';
@@ -595,6 +599,50 @@ final class _NativeCloudSyncPreparedSubmission
       _releaseFuture ??= release();
 }
 
+/// Single-record prepared handle for the conditional-update lane.
+///
+/// It reuses the native create-handle owner solely because Rust exposes the
+/// same single-use capability type. The Dart type cannot be consumed through
+/// [CloudSyncWriteTransport].
+final class _NativeCloudSyncPreparedMessageUpdate
+    extends CloudSyncPreparedSubmission {
+  // Named superclass construction keeps the update-only native owner explicit.
+  // ignore: use_super_parameters
+  _NativeCloudSyncPreparedMessageUpdate({
+    required CloudSyncScope scope,
+    required CloudOutboxSubmissionIdentity identity,
+    required CloudSyncProtectedWriteOperation operation,
+    required this.handle,
+    required this.handleBindingSha256,
+    required this.submissionInput,
+  }) : super.fromProtectedPreflight(
+         scope: scope,
+         identity: identity,
+         operations: <CloudSyncProtectedWriteOperation>[operation],
+       ) {
+    if (!_contentDigestPattern.hasMatch(handleBindingSha256) ||
+        submissionInput.localOperationId != operation.operationId ||
+        submissionInput.logicalEntityKeyHash !=
+            operation.logicalEntityKeyHash ||
+        submissionInput.protectedLeaseReference !=
+            operation.protectedLeaseReference ||
+        submissionInput.protectedPayloadReference !=
+            operation.protectedPayloadReference ||
+        submissionInput.payloadSha256 != operation.payloadSha256 ||
+        submissionInput.serverRecordIdHash != operation.serverRecordIdHash) {
+      throw ArgumentError('cloud_sync_native_prepared_update_invalid');
+    }
+  }
+
+  final frb_api.CloudSyncPreparedMessageCreateHandle handle;
+  final String handleBindingSha256;
+  final frb_api.CloudSyncMessageUpdateSubmissionInput submissionInput;
+  Future<bool>? _releaseFuture;
+
+  Future<bool> releaseOnce(Future<bool> Function() release) =>
+      _releaseFuture ??= release();
+}
+
 final class _NativeConfirmedReplayProof
     implements CloudSyncConfirmedReplayProof {
   _NativeConfirmedReplayProof(this._operation, this._protectedLeaseReference);
@@ -623,6 +671,7 @@ final class NativeProtectedCloudSyncTransport
         CloudProtectedPageLeaseTransport,
         CloudSyncOutboundChatStagingTransport,
         CloudSyncOutboundAttachmentParentStagingTransport,
+        CloudSyncMessageUpdateTransport,
         CloudSyncWriteTransport,
         CloudSyncPreparedSubmissionReleaser,
         CloudSyncWriteReceiptFinalizer,
@@ -788,6 +837,15 @@ final class NativeProtectedCloudSyncTransport
     return bindings as NativeProtectedCloudSyncAttachmentParentWriteBindings;
   }
 
+  NativeProtectedCloudSyncMessageUpdateBindings
+  _requireMessageUpdateBindings() {
+    final bindings = _bindings;
+    if (bindings is! NativeProtectedCloudSyncMessageUpdateBindings) {
+      throw _readOnlyFailure();
+    }
+    return bindings as NativeProtectedCloudSyncMessageUpdateBindings;
+  }
+
   NativeProtectedPreparedReleaseBindings _requireReleaseBindings() {
     final bindings = _bindings;
     if (bindings is! NativeProtectedPreparedReleaseBindings) {
@@ -815,6 +873,11 @@ final class NativeProtectedCloudSyncTransport
     // Exact-handle cleanup grants no mutation authority. It must remain
     // possible after the caller loses its interlock fence or admission closes.
     // The caller still joins native settlement before releasing this owner.
+    if (preparedSubmission is _NativeCloudSyncPreparedMessageUpdate) {
+      return preparedSubmission.releaseOnce(
+        () => _releasePreparedHandle(preparedSubmission.handle),
+      );
+    }
     if (preparedSubmission is! _NativeCloudSyncPreparedSubmission) {
       throw ArgumentError('cloud_sync_native_prepared_submission_required');
     }
@@ -1032,6 +1095,349 @@ final class NativeProtectedCloudSyncTransport
   Future<void> rollbackOutboundLease(String leaseReference) {
     _requireV2WriterInterlock();
     return rollbackProtectedPageLease(leaseReference);
+  }
+
+  @override
+  Future<CloudSyncProtectedMessageUpdateStage> stageMessageUpdate(
+    CloudSyncScope scope, {
+    required CloudSyncLocalMutationAdmissionSource source,
+    required CloudSyncMessageMutationPredecessor predecessor,
+    required frb_api.CloudSyncNativeSendReceipt receipt,
+  }) async {
+    _requireV2WriterInterlock();
+    _validateMessageUpdateSource(
+      scope,
+      source: source,
+      predecessor: predecessor,
+      receipt: receipt,
+    );
+    final sourceBinding = _nativeMessageUpdateSourceBinding(source);
+    final mapping = predecessor.recordMapping;
+    final result = await _runProtectedStoreOperation(
+      () => _requireMessageUpdateBindings().prepareMessageUpdate(
+        cloudMessagesClient: _cloudMessagesClient,
+        storageDirectory: _storageDirectory,
+        expectedAccountFingerprint: scope.accountFingerprint,
+        expectedProtectedStoreIdentity: _protectedStoreIdentity,
+        input: frb_api.CloudSyncMessageUpdatePrepareInput(
+          expectedLogicalEntityKeyHash: mapping.logicalEntityKeyHash,
+          expectedServerRecordIdHash: mapping.serverRecordIdHash,
+          expectedEtagHash: mapping.etagHash!,
+          mutationContext: frb_api.CloudSyncNativeSendReceiptContext(
+            storageDirectory: _storageDirectory,
+            guidHash: source.mutationGuidHash,
+            accountFingerprint: scope.accountFingerprint,
+            protectedStoreIdentity: _protectedStoreIdentity,
+            nativeSessionId: receipt.nativeSessionId,
+            sourceBinding: sourceBinding,
+          ),
+          protectedRawRecordReference: mapping.encryptedRawRecordReference!,
+          rawGeneration: BigInt.from(mapping.rawRecordGeneration),
+          mutationReceipt: receipt,
+          expectedReceiptBindingSha256: source.idsReceiptBindingSha256,
+          reflectedSnapshotSha256: source.reflectedSnapshotSha256,
+          writerEpoch: BigInt.from(source.writerEpoch),
+        ),
+      ),
+    );
+    if (result.failure case final failure?) {
+      throw _mapOutboundFailure(failure);
+    }
+    final prepared = result.prepared!;
+    return CloudSyncProtectedMessageUpdateStage(
+      protectedReference: prepared.protectedReference,
+      leaseReference: prepared.leaseReference,
+      payloadSha256: prepared.payloadSha256,
+      logicalEntityKeyHash: prepared.logicalEntityKeyHash,
+      serverRecordIdHash: prepared.serverRecordIdHash,
+    );
+  }
+
+  @override
+  Future<CloudSyncPreparedSubmission> prepareMessageUpdateSubmission(
+    CloudSyncScope scope, {
+    required CloudOutboxSubmissionIdentity submissionIdentity,
+    required CloudOutboxOperation operation,
+    required CloudSyncProtectedWriteOperation protectedOperation,
+    required CloudSyncLocalMutationAdmissionSource source,
+    required CloudSyncMessageMutationPredecessor predecessor,
+  }) async {
+    _requireV2WriterInterlock();
+    _validateMessageUpdateSource(
+      scope,
+      source: source,
+      predecessor: predecessor,
+    );
+    _validateMessageUpdateOperation(
+      scope,
+      operation: operation,
+      predecessor: predecessor,
+      expectedStatus: CloudOutboxStatus.leased,
+      requirePersistedSubmissionIdentity: false,
+    );
+    _validateMessageUpdateProtectedOperation(
+      protectedOperation,
+      operation: operation,
+      predecessor: predecessor,
+    );
+    submissionIdentity.validateOperationIds(<String>[operation.operationId]);
+    final input = _messageUpdateSubmissionInput(
+      operation,
+      submissionIdentity: submissionIdentity,
+      source: source,
+      predecessor: predecessor,
+    );
+    return _runProtectedStoreOperation(() async {
+      final result = await _requireMessageUpdateBindings()
+          .prepareMessageUpdateSubmission(
+            cloudMessagesClient: _cloudMessagesClient,
+            storageDirectory: _storageDirectory,
+            expectedAccountFingerprint: scope.accountFingerprint,
+            expectedProtectedStoreIdentity: _protectedStoreIdentity,
+            requestUuid: submissionIdentity.requestUuid,
+            requestTimeout: const Duration(seconds: 45),
+            input: input,
+          );
+      if (result.failure case final failure?) {
+        throw _mapOutboundFailure(failure);
+      }
+      final handle = result.handle!;
+      if (_nativeAdmissionClosed) {
+        await _releasePreparedHandle(handle);
+        throw _localStorage('protected_store_operation_admission_closed');
+      }
+      try {
+        return _NativeCloudSyncPreparedMessageUpdate(
+          scope: scope,
+          identity: submissionIdentity,
+          operation: protectedOperation,
+          handle: handle,
+          handleBindingSha256: result.handleBindingSha256!,
+          submissionInput: input,
+        );
+      } catch (_) {
+        await _releasePreparedHandle(handle);
+        rethrow;
+      }
+    });
+  }
+
+  @override
+  Future<void> consumePreparedMessageUpdate(
+    CloudSyncScope scope, {
+    required CloudSyncPreparedSubmission preparedSubmission,
+    required CloudOutboxSubmissionIdentity persistedIdentity,
+    required CloudOutboxOperation operation,
+    required CloudSyncProtectedWriteOperation protectedOperation,
+  }) async {
+    _requireV2WriterInterlock();
+    if (preparedSubmission is! _NativeCloudSyncPreparedMessageUpdate) {
+      throw ArgumentError('cloud_sync_native_prepared_update_required');
+    }
+    _validateMessageUpdateOperation(
+      scope,
+      operation: operation,
+      expectedStatus: CloudOutboxStatus.unknownOutcome,
+      requirePersistedSubmissionIdentity: true,
+    );
+    _validateMessageUpdateProtectedOperation(
+      protectedOperation,
+      operation: operation,
+    );
+    persistedIdentity.validateOperationIds(<String>[operation.operationId]);
+    if (persistedIdentity.requestUuid != operation.appleRequestUuid ||
+        persistedIdentity.operationUuids[operation.operationId] !=
+            operation.appleOperationUuid) {
+      throw ArgumentError('cloud_sync_message_update_identity_mismatch');
+    }
+    final currentInput = preparedSubmission.submissionInput;
+    if (currentInput.localOperationId != operation.operationId ||
+        currentInput.appleOperationUuid != operation.appleOperationUuid ||
+        currentInput.protectedLeaseReference !=
+            operation.protectedLeaseReference ||
+        currentInput.protectedPayloadReference !=
+            operation.encryptedPayloadReference ||
+        currentInput.payloadSha256 != operation.payloadSha256 ||
+        currentInput.serverRecordIdHash != operation.serverRecordIdHash) {
+      throw ArgumentError('cloud_sync_message_update_binding_mismatch');
+    }
+    final mutationGuard = _writerMutationGuard;
+    final readCheckpointGeneration = _readCheckpointGeneration;
+    if (mutationGuard == null || readCheckpointGeneration == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.authorization,
+        safeCode: 'cloud_sync_writer_mutation_guard_required',
+      );
+    }
+    final bindings = _requireMessageUpdateBindings();
+    await _runProtectedStoreOperation(() async {
+      try {
+        await mutationGuard.runAuthorized<void>(
+          owner: CloudKitWriterOwner.v2,
+          expectedClient: _cloudMessagesClient,
+          expectedAccountFingerprint: scope.accountFingerprint,
+          preparedHandleBindingSha256: preparedSubmission.handleBindingSha256,
+          reconciliationBindingSha256:
+              cloudKitWriterReconciliationBindingSha256(operation),
+          requireAdmission: _requireMutationAdmission,
+          requireDurableAdmission: () async {
+            _requireMutationAdmission();
+            final generation = await readCheckpointGeneration(scope);
+            _requireMutationAdmission();
+            if (generation <= 0 ||
+                generation != operation.checkpointGeneration) {
+              throw CloudSyncFailure(
+                category: CloudFailureCategory.cancelled,
+                safeCode: 'cloud_sync_outbound_stale_checkpoint_generation',
+              );
+            }
+            preparedSubmission.claimForConsumption(
+              scope,
+              persistedIdentity: persistedIdentity,
+              protectedOperations: <CloudSyncProtectedWriteOperation>[
+                protectedOperation,
+              ],
+            );
+          },
+          action: (capability) async {
+            _requireV2WriterInterlock();
+            final result = await bindings.consumePreparedMessageUpdate(
+              handle: preparedSubmission.handle,
+              mutationCapabilityToken: capability.consumeForNative(),
+            );
+            _requireV2WriterInterlock();
+            if (result.failure case final failure?) {
+              throw _mapOutboundFailure(failure);
+            }
+            if (result.outcomes.length != 1 ||
+                result.outcomes.single.localOperationId !=
+                    operation.operationId ||
+                result.outcomes.single.appleOperationUuid !=
+                    operation.appleOperationUuid) {
+              throw _localStorage(
+                'cloud_sync_message_update_consume_correlation_mismatch',
+              );
+            }
+            // A returned save outcome is not exact update readback. Deliberately
+            // keep the durable fence armed until lookup proves the final ETag
+            // and raw record and the store adopts both protected leases.
+            throw CloudSyncFailure(
+              category: CloudFailureCategory.unknown,
+              safeCode: 'cloud_sync_message_update_reconciliation_required',
+            );
+          },
+        );
+        throw _localStorage('cloud_sync_message_update_fence_not_armed');
+      } on CloudKitWriterAuthorityFailure catch (error) {
+        if (!_isAmbiguousMutationGuardFailure(error.safeCode)) rethrow;
+      }
+    });
+  }
+
+  @override
+  Future<CloudSyncMessageUpdateReconciliation> reconcileMessageUpdate(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+    required CloudSyncLocalMutationAdmissionSource source,
+    required CloudSyncMessageMutationPredecessor predecessor,
+  }) async {
+    _requireV2WriterInterlock();
+    _validateMessageUpdateSource(
+      scope,
+      source: source,
+      predecessor: predecessor,
+    );
+    _validateMessageUpdateOperation(
+      scope,
+      operation: operation,
+      predecessor: predecessor,
+      expectedStatus: CloudOutboxStatus.unknownOutcome,
+      requirePersistedSubmissionIdentity: true,
+    );
+    final mutationGuard = _writerMutationGuard;
+    if (mutationGuard == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.authorization,
+        safeCode: 'cloud_sync_writer_mutation_guard_required',
+      );
+    }
+    final identity = CloudOutboxSubmissionIdentity(
+      requestUuid: operation.appleRequestUuid!,
+      operationUuids: <String, String>{
+        operation.operationId: operation.appleOperationUuid!,
+      },
+    );
+    final input = _messageUpdateSubmissionInput(
+      operation,
+      submissionIdentity: identity,
+      source: source,
+      predecessor: predecessor,
+    );
+    final result = await _runProtectedStoreOperation(() async {
+      await mutationGuard.requireReconciliationAllowed(
+        owner: CloudKitWriterOwner.v2,
+        expectedClient: _cloudMessagesClient,
+        operation: operation,
+      );
+      return _requireMessageUpdateBindings().reconcileMessageUpdate(
+        cloudMessagesClient: _cloudMessagesClient,
+        storageDirectory: _storageDirectory,
+        expectedAccountFingerprint: scope.accountFingerprint,
+        expectedProtectedStoreIdentity: _protectedStoreIdentity,
+        requestUuid: operation.appleRequestUuid!,
+        input: input,
+      );
+    });
+    if (result.failure case final failure?) {
+      throw _mapOutboundFailure(failure);
+    }
+    return switch (result.disposition!) {
+      frb_api.CloudSyncOutboundReconcileDisposition.committed =>
+        CloudSyncMessageUpdateReconciliation.committed(
+          _messageUpdateReadbackReceipt(operation, result.receipt!),
+        ),
+      frb_api.CloudSyncOutboundReconcileDisposition.notApplied =>
+        const CloudSyncMessageUpdateReconciliation.notApplied(),
+      frb_api.CloudSyncOutboundReconcileDisposition.diverged =>
+        const CloudSyncMessageUpdateReconciliation.diverged(),
+      frb_api.CloudSyncOutboundReconcileDisposition.unresolved =>
+        CloudSyncMessageUpdateReconciliation.unresolved(
+          failureCategory: _mapOutboundFailureClass(result.failureClass),
+          retryAfter: _boundedRetryAfter(result.retryAfterSeconds),
+        ),
+    };
+  }
+
+  @override
+  Future<void> completeMessageUpdateReconciliation(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+  }) {
+    _requireV2WriterInterlock();
+    if (operation.status != CloudOutboxStatus.unknownOutcome &&
+        operation.status != CloudOutboxStatus.confirmed) {
+      throw _localStorage('cloud_sync_message_update_completion_invalid');
+    }
+    _validateMessageUpdateOperation(
+      scope,
+      operation: operation,
+      expectedStatus: operation.status,
+      requirePersistedSubmissionIdentity: true,
+    );
+    final mutationGuard = _writerMutationGuard;
+    if (mutationGuard == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.authorization,
+        safeCode: 'cloud_sync_writer_mutation_guard_required',
+      );
+    }
+    return _runProtectedStoreOperation(
+      () => mutationGuard.completeReconciliationAfterExactReadback(
+        owner: CloudKitWriterOwner.v2,
+        expectedClient: _cloudMessagesClient,
+        operation: operation,
+      ),
+    );
   }
 
   @override
@@ -2217,6 +2623,198 @@ final class NativeProtectedCloudSyncTransport
       throw _localStorage('invalid_protected_reference_set');
     }
   }
+
+  void _validateMessageUpdateSource(
+    CloudSyncScope scope, {
+    required CloudSyncLocalMutationAdmissionSource source,
+    required CloudSyncMessageMutationPredecessor predecessor,
+    frb_api.CloudSyncNativeSendReceipt? receipt,
+  }) {
+    _validateOutboundMessageScope(scope);
+    final mapping = predecessor.recordMapping;
+    final expectedBinding = _nativeMessageUpdateSourceBinding(source);
+    if (scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
+        source.accountFingerprint != scope.accountFingerprint ||
+        source.accountFingerprint != mapping.scope.accountFingerprint ||
+        source.writerEpoch <= 0 ||
+        source.localMessageId != predecessor.localMessageId ||
+        source.targetPart != 0 ||
+        !_contentDigestPattern.hasMatch(source.mutationGuidHash) ||
+        !_contentDigestPattern.hasMatch(source.targetGuidHash) ||
+        !_contentDigestPattern.hasMatch(source.sourceSha256) ||
+        !_contentDigestPattern.hasMatch(source.idsReceiptBindingSha256) ||
+        !_contentDigestPattern.hasMatch(source.reflectedSnapshotSha256) ||
+        !_contentDigestPattern.hasMatch(predecessor.canonicalGuidLookupHash) ||
+        !_contentDigestPattern.hasMatch(predecessor.canonicalGuidHash) ||
+        mapping.scope != scope ||
+        mapping.generation <= 0 ||
+        predecessor.generation != mapping.generation ||
+        mapping.rawRecordGeneration != mapping.generation ||
+        mapping.etagHash == null ||
+        !_nativeDigestPattern.hasMatch(mapping.etagHash!) ||
+        mapping.encryptedRawRecordReference == null ||
+        !_protectedReferencePattern.hasMatch(
+          mapping.encryptedRawRecordReference!,
+        ) ||
+        !_protectedReferencePattern.hasMatch(mapping.encryptedServerRecordId) ||
+        !_nativeDigestPattern.hasMatch(mapping.logicalEntityKeyHash) ||
+        !_nativeDigestPattern.hasMatch(mapping.serverRecordIdHash) ||
+        mapping.protectedReadbackLeaseReference != null ||
+        mapping.pendingUpdateOperationId != null ||
+        mapping.pendingUpdatePredecessorEtagHash != null ||
+        (receipt != null &&
+            (receipt.guidHash != source.mutationGuidHash ||
+                !_nativeDigestPattern.hasMatch(receipt.nativeSessionId) ||
+                receipt.sourceBinding != expectedBinding ||
+                receipt.preparedSentTimestampMs == null ||
+                receipt.preparedSentTimestampMs! <= BigInt.zero ||
+                receipt.preparedSentTimestampMs!.bitLength > 63))) {
+      throw _localStorage('cloud_sync_message_update_source_invalid');
+    }
+  }
+
+  frb_api.CloudSyncNativeSendSourceBinding _nativeMessageUpdateSourceBinding(
+    CloudSyncLocalMutationAdmissionSource source,
+  ) {
+    final binding = CloudSyncLocalMutationSourceBinding.decode(
+      source.protectedSourceBinding,
+    );
+    binding.requireOrigin(
+      accountFingerprint: source.accountFingerprint,
+      protectedStoreIdentity: _protectedStoreIdentity,
+      mutationGuidHash: source.mutationGuidHash,
+      targetGuidHash: source.targetGuidHash,
+      targetPart: source.targetPart,
+      sourceSha256: source.sourceSha256,
+    );
+    return frb_api.CloudSyncNativeSendSourceBinding(
+      kind: frb_api.CloudSyncNativeSendSourceKind.mutation,
+      sourceSha256: binding.sourceSha256,
+      protectedReference: binding.protectedReference,
+      leaseReference: binding.leaseReference,
+      payloadSha256: binding.payloadSha256,
+      payloadLength: BigInt.from(binding.payloadLength),
+    );
+  }
+
+  void _validateMessageUpdateOperation(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+    CloudSyncMessageMutationPredecessor? predecessor,
+    required CloudOutboxStatus expectedStatus,
+    required bool requirePersistedSubmissionIdentity,
+  }) {
+    _validateOutboundMessageScope(scope);
+    if (operation.scope != scope ||
+        operation.status != expectedStatus ||
+        operation.action != CloudOutboxAction.save ||
+        operation.payloadVersion != cloudSyncMessageUpdatePayloadVersion ||
+        operation.mutationRevision <= 0 ||
+        operation.checkpointGeneration <= 0 ||
+        operation.dependencyOperationIds.isNotEmpty ||
+        !_outboundOperationIdPattern.hasMatch(operation.operationId) ||
+        !_nativeDigestPattern.hasMatch(operation.logicalEntityKeyHash) ||
+        operation.encryptedPayloadReference == null ||
+        !_protectedReferencePattern.hasMatch(
+          operation.encryptedPayloadReference!,
+        ) ||
+        operation.payloadSha256 == null ||
+        !_contentDigestPattern.hasMatch(operation.payloadSha256!) ||
+        operation.serverRecordIdHash == null ||
+        !_nativeDigestPattern.hasMatch(operation.serverRecordIdHash!) ||
+        operation.protectedLeaseReference == null ||
+        !_leaseReferencePattern.hasMatch(operation.protectedLeaseReference!) ||
+        (requirePersistedSubmissionIdentity &&
+            (operation.appleRequestUuid == null ||
+                operation.appleOperationUuid == null)) ||
+        (!requirePersistedSubmissionIdentity &&
+            (operation.appleRequestUuid != null ||
+                operation.appleOperationUuid != null))) {
+      throw _localStorage('cloud_sync_message_update_operation_invalid');
+    }
+    final expectedOperationId = CloudOperationIdentity.forMutation(
+      scope: scope,
+      logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      action: operation.action,
+      payloadVersion: operation.payloadVersion,
+      mutationRevision: operation.mutationRevision,
+      payloadSha256: operation.payloadSha256,
+    );
+    if (operation.operationId != expectedOperationId) {
+      throw _localStorage('cloud_sync_message_update_operation_invalid');
+    }
+    final mapping = predecessor?.recordMapping;
+    if (predecessor != null &&
+        (predecessor.generation != operation.checkpointGeneration ||
+            mapping!.scope != scope ||
+            mapping.logicalEntityKeyHash != operation.logicalEntityKeyHash ||
+            mapping.serverRecordIdHash != operation.serverRecordIdHash ||
+            mapping.generation != operation.checkpointGeneration)) {
+      throw _localStorage('cloud_sync_message_update_predecessor_changed');
+    }
+  }
+
+  void _validateMessageUpdateProtectedOperation(
+    CloudSyncProtectedWriteOperation protectedOperation, {
+    required CloudOutboxOperation operation,
+    CloudSyncMessageMutationPredecessor? predecessor,
+  }) {
+    if (protectedOperation.operationId != operation.operationId ||
+        protectedOperation.logicalEntityKeyHash !=
+            operation.logicalEntityKeyHash ||
+        protectedOperation.action != operation.action ||
+        protectedOperation.protectedLeaseReference !=
+            operation.protectedLeaseReference ||
+        protectedOperation.protectedPayloadReference !=
+            operation.encryptedPayloadReference ||
+        protectedOperation.payloadSha256 != operation.payloadSha256 ||
+        protectedOperation.serverRecordIdHash != operation.serverRecordIdHash ||
+        (predecessor != null &&
+            protectedOperation.protectedServerRecordIdReference !=
+                predecessor.recordMapping.encryptedServerRecordId)) {
+      throw _localStorage('cloud_sync_message_update_binding_mismatch');
+    }
+  }
+
+  frb_api.CloudSyncMessageUpdateSubmissionInput _messageUpdateSubmissionInput(
+    CloudOutboxOperation operation, {
+    required CloudOutboxSubmissionIdentity submissionIdentity,
+    required CloudSyncLocalMutationAdmissionSource source,
+    required CloudSyncMessageMutationPredecessor predecessor,
+  }) => frb_api.CloudSyncMessageUpdateSubmissionInput(
+    localOperationId: operation.operationId,
+    logicalEntityKeyHash: operation.logicalEntityKeyHash,
+    serverRecordIdHash: operation.serverRecordIdHash!,
+    predecessorEtagHash: predecessor.recordMapping.etagHash!,
+    protectedLeaseReference: operation.protectedLeaseReference!,
+    protectedPayloadReference: operation.encryptedPayloadReference!,
+    payloadSha256: operation.payloadSha256!,
+    mutationSourceSha256: source.sourceSha256,
+    idsReceiptBindingSha256: source.idsReceiptBindingSha256,
+    reflectedSnapshotSha256: source.reflectedSnapshotSha256,
+    writerEpoch: BigInt.from(source.writerEpoch),
+    rawGeneration: BigInt.from(predecessor.recordMapping.rawRecordGeneration),
+    appleOperationUuid:
+        submissionIdentity.operationUuids[operation.operationId]!,
+  );
+
+  CloudMessageUpdateReadbackReceipt _messageUpdateReadbackReceipt(
+    CloudOutboxOperation operation,
+    frb_api.CloudSyncMessageUpdateReadbackReceipt receipt,
+  ) => CloudMessageUpdateReadbackReceipt(
+    operationId: operation.operationId,
+    logicalEntityKeyHash: operation.logicalEntityKeyHash,
+    serverRecordIdHash: receipt.serverRecordIdHash,
+    predecessorEtagHash: receipt.predecessorEtagHash,
+    resultingEtagHash: receipt.resultingEtagHash,
+    protectedCurrentRawRecordReference:
+        receipt.protectedCurrentRawRecordReference,
+    protectedCurrentRawRecordLeaseReference:
+        receipt.protectedCurrentRawRecordLeaseReference,
+    rawGeneration: receipt.rawGeneration.toInt(),
+    appleRequestUuid: operation.appleRequestUuid!,
+    appleOperationUuid: operation.appleOperationUuid!,
+  );
 
   void _validateOutboundMessageScope(CloudSyncScope scope) {
     if (_validateScopeAndStream(scope) != 'messages') {

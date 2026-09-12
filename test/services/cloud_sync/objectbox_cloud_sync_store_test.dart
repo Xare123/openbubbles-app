@@ -6059,6 +6059,431 @@ void main() {
       4,
     );
   });
+
+  group('message update readback durability', () {
+    final scope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: 'messageManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final logicalEntityKeyHash = 'L' * 43;
+    final serverRecordIdHash = 'S' * 43;
+    final predecessorEtagHash = 'E' * 43;
+    final resultingEtagHash = 'F' * 43;
+    final initialRawRecordReference = testProtectedReference('R');
+    final resultingRawRecordReference = testProtectedReference('N');
+    final protectedServerRecordReference = testProtectedReference('S');
+    final protectedPayloadReference = testProtectedReference('P');
+    final updateStageLeaseReference = testProtectedLeaseReference('a');
+    final readbackLeaseReference = testProtectedLeaseReference('b');
+    const liveLeaseId = 'message-update-readback-live-lease';
+    const mutationRevision = 17;
+    final payloadSha256 = 'c' * 64;
+    late final String operationId = CloudOperationIdentity.forMutation(
+      scope: scope,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+      action: CloudOutboxAction.save,
+      payloadVersion: cloudSyncMessageUpdatePayloadVersion,
+      mutationRevision: mutationRevision,
+      payloadSha256: payloadSha256,
+    );
+
+    CloudOutboxSubmissionIdentity submissionIdentity() =>
+        testSubmissionIdentity([operationId]);
+
+    CloudMessageUpdateReadbackReceipt receipt({
+      String? predecessorEtag,
+      String? resultingEtag,
+      String? rawRecordReference,
+      String? rawRecordLeaseReference,
+      int rawGeneration = 1,
+    }) {
+      final submission = submissionIdentity();
+      return CloudMessageUpdateReadbackReceipt(
+        operationId: operationId,
+        logicalEntityKeyHash: logicalEntityKeyHash,
+        serverRecordIdHash: serverRecordIdHash,
+        predecessorEtagHash: predecessorEtag ?? predecessorEtagHash,
+        resultingEtagHash: resultingEtag ?? resultingEtagHash,
+        protectedCurrentRawRecordReference:
+            rawRecordReference ?? resultingRawRecordReference,
+        protectedCurrentRawRecordLeaseReference:
+            rawRecordLeaseReference ?? readbackLeaseReference,
+        rawGeneration: rawGeneration,
+        appleRequestUuid: submission.requestUuid,
+        appleOperationUuid: submission.operationUuids[operationId]!,
+      );
+    }
+
+    Matcher failsWith(String safeCode) => throwsA(
+      isA<CloudSyncFailure>().having(
+        (failure) => failure.safeCode,
+        'safeCode',
+        safeCode,
+      ),
+    );
+
+    Future<void> seedCurrentUpdate() async {
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.generation, 1);
+      final submission = submissionIdentity();
+      objectBox.runInTransaction(TxMode.write, () {
+        objectBox.box<CloudRecordMapEntity>().put(
+          CloudRecordMapEntity(
+            mapKey: cloudSyncCanonicalRecordMapKey(scope, logicalEntityKeyHash),
+            scopeKey: cloudSyncPersistentScopeKey(scope),
+            accountFingerprint: scope.accountFingerprint,
+            zone: scope.zone,
+            logicalEntityKeyHash: logicalEntityKeyHash,
+            serverRecordIdHash: serverRecordIdHash,
+            generation: checkpoint.generation,
+            encryptedServerRecordId: protectedServerRecordReference,
+            etagHash: predecessorEtagHash,
+            encryptedRawRecordRef: initialRawRecordReference,
+            rawRecordGeneration: checkpoint.generation,
+            updatedAtMs: testEpoch.millisecondsSinceEpoch,
+          ),
+        );
+        objectBox.box<CloudOutboxOperationEntity>().put(
+          CloudOutboxOperationEntity(
+            operationId: operationId,
+            scopeKey: cloudSyncPersistentScopeKey(scope),
+            accountFingerprint: scope.accountFingerprint,
+            zone: scope.zone,
+            logicalEntityKeyHash: logicalEntityKeyHash,
+            action: CloudOutboxAction.save.index,
+            dependencyOperationIdsJson: '[]',
+            payloadVersion: cloudSyncMessageUpdatePayloadVersion,
+            mutationRevision: mutationRevision,
+            checkpointGeneration: checkpoint.generation,
+            appleRequestUuid: submission.requestUuid,
+            appleOperationUuid: submission.operationUuids[operationId],
+            encryptedPayloadRef: protectedPayloadReference,
+            payloadSha256: payloadSha256,
+            protectedLeaseReference: updateStageLeaseReference,
+            state: CloudOutboxStatus.unknownOutcome.index,
+            attemptCount: 1,
+            lastErrorCategory: CloudFailureCategory.unknown.name,
+            serverRecordIdHash: serverRecordIdHash,
+            leaseIdHash: sha256
+                .convert(utf8.encode('outbox-lease\u001f$liveLeaseId'))
+                .toString(),
+            leaseExpiresAtMs: testEpoch
+                .add(const Duration(minutes: 5))
+                .millisecondsSinceEpoch,
+            createdAtMs: testEpoch.millisecondsSinceEpoch,
+            updatedAtMs: testEpoch.millisecondsSinceEpoch,
+          ),
+        );
+      });
+    }
+
+    CloudRecordMapEntity currentMapping() =>
+        objectBox.box<CloudRecordMapEntity>().getAll().singleWhere(
+          (row) =>
+              row.mapKey ==
+              cloudSyncCanonicalRecordMapKey(scope, logicalEntityKeyHash),
+        );
+
+    CloudOutboxOperationEntity currentOutbox() => objectBox
+        .box<CloudOutboxOperationEntity>()
+        .getAll()
+        .singleWhere((row) => row.operationId == operationId);
+
+    test('message update readback success retains both leases', () async {
+      await seedCurrentUpdate();
+
+      final committed = await store.commitMessageUpdateReadbackReceipt(
+        scope,
+        leaseId: liveLeaseId,
+        receipt: receipt(),
+        now: testEpoch.add(const Duration(seconds: 1)),
+      );
+
+      final outbox = currentOutbox();
+      expect(outbox.state, CloudOutboxStatus.confirmed.index);
+      expect(outbox.protectedLeaseReference, updateStageLeaseReference);
+      expect(outbox.leaseIdHash, isNull);
+      expect(outbox.leaseExpiresAtMs, 0);
+      final mapping = currentMapping();
+      expect(mapping.etagHash, resultingEtagHash);
+      expect(mapping.encryptedRawRecordRef, resultingRawRecordReference);
+      expect(mapping.rawRecordGeneration, 1);
+      expect(mapping.protectedReadbackLeaseReference, readbackLeaseReference);
+      expect(mapping.pendingUpdateOperationId, operationId);
+      expect(mapping.pendingUpdatePredecessorEtagHash, predecessorEtagHash);
+      expect(
+        committed.confirmedOperation.protectedLeaseReference,
+        updateStageLeaseReference,
+      );
+      expect(
+        committed.recordMapping.protectedReadbackLeaseReference,
+        readbackLeaseReference,
+      );
+      expect(
+        await store.readLiveProtectedOutboundLeaseReferences(maximumCount: 10),
+        {updateStageLeaseReference, readbackLeaseReference},
+      );
+      final liveReferences = await store.readLiveProtectedReferences(
+        maximumCount: 10,
+      );
+      expect(liveReferences.isComplete, isTrue);
+      expect(
+        liveReferences.references,
+        containsAll([
+          protectedPayloadReference,
+          protectedServerRecordReference,
+          resultingRawRecordReference,
+        ]),
+      );
+      expect(
+        liveReferences.references,
+        isNot(contains(initialRawRecordReference)),
+      );
+    });
+
+    test('message update readback recovers both leases after reopen', () async {
+      await seedCurrentUpdate();
+      final committed = await store.commitMessageUpdateReadbackReceipt(
+        scope,
+        leaseId: liveLeaseId,
+        receipt: receipt(),
+        now: testEpoch.add(const Duration(seconds: 1)),
+      );
+
+      await reopen();
+
+      final recovered = (await store.readPendingMessageUpdateReadbacks(
+        scope,
+        maximumCount: 10,
+      )).single;
+      expect(
+        recovered.confirmedOperation.sameDurableSnapshotAs(
+          committed.confirmedOperation,
+        ),
+        isTrue,
+      );
+      expect(
+        recovered.recordMapping.sameDurableSnapshotAs(committed.recordMapping),
+        isTrue,
+      );
+      expect(
+        await store.readLiveProtectedOutboundLeaseReferences(maximumCount: 10),
+        {updateStageLeaseReference, readbackLeaseReference},
+      );
+    });
+
+    test(
+      'message update readback rejects a stale predecessor atomically',
+      () async {
+        await seedCurrentUpdate();
+
+        await expectLater(
+          store.commitMessageUpdateReadbackReceipt(
+            scope,
+            leaseId: liveLeaseId,
+            receipt: receipt(predecessorEtag: 'D' * 43),
+            now: testEpoch.add(const Duration(seconds: 1)),
+          ),
+          failsWith('message_update_readback_predecessor_changed'),
+        );
+
+        expect(currentMapping().etagHash, predecessorEtagHash);
+        expect(
+          currentMapping().encryptedRawRecordRef,
+          initialRawRecordReference,
+        );
+        expect(currentMapping().protectedReadbackLeaseReference, isNull);
+        expect(currentOutbox().state, CloudOutboxStatus.unknownOutcome.index);
+        expect(
+          currentOutbox().protectedLeaseReference,
+          updateStageLeaseReference,
+        );
+      },
+    );
+
+    test(
+      'message update readback distinguishes duplicate and changed receipts',
+      () async {
+        await seedCurrentUpdate();
+        final committed = await store.commitMessageUpdateReadbackReceipt(
+          scope,
+          leaseId: liveLeaseId,
+          receipt: receipt(),
+          now: testEpoch.add(const Duration(seconds: 1)),
+        );
+
+        await expectLater(
+          store.commitMessageUpdateReadbackReceipt(
+            scope,
+            leaseId: liveLeaseId,
+            receipt: receipt(),
+            now: testEpoch.add(const Duration(seconds: 2)),
+          ),
+          failsWith('message_update_readback_receipt_duplicate'),
+        );
+        await expectLater(
+          store.commitMessageUpdateReadbackReceipt(
+            scope,
+            leaseId: liveLeaseId,
+            receipt: receipt(resultingEtag: 'G' * 43),
+            now: testEpoch.add(const Duration(seconds: 2)),
+          ),
+          failsWith('message_update_readback_receipt_changed'),
+        );
+        final recovered = (await store.readPendingMessageUpdateReadbacks(
+          scope,
+          maximumCount: 10,
+        )).single;
+        expect(
+          recovered.confirmedOperation.sameDurableSnapshotAs(
+            committed.confirmedOperation,
+          ),
+          isTrue,
+        );
+        expect(
+          recovered.recordMapping.sameDurableSnapshotAs(
+            committed.recordMapping,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'message update readback rejects raw generation mismatch atomically',
+      () async {
+        await seedCurrentUpdate();
+
+        await expectLater(
+          store.commitMessageUpdateReadbackReceipt(
+            scope,
+            leaseId: liveLeaseId,
+            receipt: receipt(rawGeneration: 2),
+            now: testEpoch.add(const Duration(seconds: 1)),
+          ),
+          failsWith('message_update_readback_predecessor_changed'),
+        );
+
+        expect(currentMapping().rawRecordGeneration, 1);
+        expect(currentMapping().etagHash, predecessorEtagHash);
+        expect(currentMapping().protectedReadbackLeaseReference, isNull);
+        expect(currentOutbox().state, CloudOutboxStatus.unknownOutcome.index);
+      },
+    );
+
+    test(
+      'message update readback rejects lease mismatches atomically',
+      () async {
+        await seedCurrentUpdate();
+
+        await expectLater(
+          store.commitMessageUpdateReadbackReceipt(
+            scope,
+            leaseId: 'different-live-lease',
+            receipt: receipt(),
+            now: testEpoch.add(const Duration(seconds: 1)),
+          ),
+          failsWith('stale_outbox_lease'),
+        );
+        await expectLater(
+          store.commitMessageUpdateReadbackReceipt(
+            scope,
+            leaseId: liveLeaseId,
+            receipt: receipt(
+              rawRecordLeaseReference: updateStageLeaseReference,
+            ),
+            now: testEpoch.add(const Duration(seconds: 1)),
+          ),
+          failsWith('message_update_submission_identity_changed'),
+        );
+
+        expect(currentMapping().etagHash, predecessorEtagHash);
+        expect(currentMapping().protectedReadbackLeaseReference, isNull);
+        expect(currentOutbox().state, CloudOutboxStatus.unknownOutcome.index);
+        expect(
+          currentOutbox().protectedLeaseReference,
+          updateStageLeaseReference,
+        );
+      },
+    );
+
+    test(
+      'message update readback finalizes only the exact joint snapshot',
+      () async {
+        await seedCurrentUpdate();
+        final committed = await store.commitMessageUpdateReadbackReceipt(
+          scope,
+          leaseId: liveLeaseId,
+          receipt: receipt(),
+          now: testEpoch.add(const Duration(seconds: 1)),
+        );
+
+        await expectLater(
+          store.finalizeMessageUpdateReadbackLeases(
+            expectedSnapshot: committed,
+            updateStageLeaseFinalized: true,
+            readbackLeaseFinalized: false,
+          ),
+          failsWith('message_update_native_finalization_incomplete'),
+        );
+        final changedSnapshot = CloudMessageUpdateReadbackCommitSnapshot(
+          confirmedOperation: committed.confirmedOperation.copyWith(
+            attemptCount: committed.confirmedOperation.attemptCount + 1,
+          ),
+          recordMapping: committed.recordMapping,
+        );
+        await expectLater(
+          store.finalizeMessageUpdateReadbackLeases(
+            expectedSnapshot: changedSnapshot,
+            updateStageLeaseFinalized: true,
+            readbackLeaseFinalized: true,
+          ),
+          failsWith('message_update_finalization_snapshot_changed'),
+        );
+
+        await store.finalizeMessageUpdateReadbackLeases(
+          expectedSnapshot: committed,
+          updateStageLeaseFinalized: true,
+          readbackLeaseFinalized: true,
+        );
+
+        final outbox = currentOutbox();
+        expect(outbox.state, CloudOutboxStatus.confirmed.index);
+        expect(outbox.protectedLeaseReference, isNull);
+        final mapping = currentMapping();
+        expect(mapping.etagHash, resultingEtagHash);
+        expect(mapping.encryptedRawRecordRef, resultingRawRecordReference);
+        expect(mapping.rawRecordGeneration, 1);
+        expect(mapping.protectedReadbackLeaseReference, isNull);
+        expect(mapping.pendingUpdateOperationId, isNull);
+        expect(mapping.pendingUpdatePredecessorEtagHash, isNull);
+        expect(
+          await store.readLiveProtectedOutboundLeaseReferences(
+            maximumCount: 10,
+          ),
+          isEmpty,
+        );
+        expect(
+          await store.readPendingMessageUpdateReadbacks(
+            scope,
+            maximumCount: 10,
+          ),
+          isEmpty,
+        );
+        await expectLater(
+          store.finalizeMessageUpdateReadbackLeases(
+            expectedSnapshot: committed,
+            updateStageLeaseFinalized: true,
+            readbackLeaseFinalized: true,
+          ),
+          failsWith('message_update_finalization_snapshot_changed'),
+        );
+      },
+    );
+  });
 }
 
 String _nativeReference(String character) =>

@@ -998,6 +998,73 @@ class CloudOutboxDraft {
   final String? protectedLeaseReference;
 }
 
+/// Content-free receipt for a committed conditional Message update.
+///
+/// Native code proves the remote readback before this value reaches the
+/// durable store. The additional operation and Apple submission identities
+/// bind that native receipt to one already-submitted outbox row without
+/// exposing a record identifier, ETag, message body, or credential.
+final class CloudMessageUpdateReadbackReceipt {
+  CloudMessageUpdateReadbackReceipt({
+    required this.operationId,
+    required this.logicalEntityKeyHash,
+    required this.serverRecordIdHash,
+    required this.predecessorEtagHash,
+    required this.resultingEtagHash,
+    required this.protectedCurrentRawRecordReference,
+    required this.protectedCurrentRawRecordLeaseReference,
+    required this.rawGeneration,
+    required this.appleRequestUuid,
+    required this.appleOperationUuid,
+  }) {
+    if (!RegExp(r'^op1:[0-9a-f]{64}$').hasMatch(operationId)) {
+      throw ArgumentError('cloud_message_update_receipt_operation_invalid');
+    }
+    final keyedHash = RegExp(r'^[A-Za-z0-9_-]{43}$');
+    if (!keyedHash.hasMatch(logicalEntityKeyHash)) {
+      throw ArgumentError('cloud_message_update_receipt_logical_invalid');
+    }
+    if (!keyedHash.hasMatch(serverRecordIdHash)) {
+      throw ArgumentError('cloud_message_update_receipt_server_invalid');
+    }
+    if (!keyedHash.hasMatch(predecessorEtagHash) ||
+        !keyedHash.hasMatch(resultingEtagHash) ||
+        predecessorEtagHash == resultingEtagHash) {
+      throw ArgumentError('cloud_message_update_receipt_etag_invalid');
+    }
+    if (!_isProtectedReference(protectedCurrentRawRecordReference)) {
+      throw ArgumentError('cloud_message_update_receipt_raw_reference_invalid');
+    }
+    if (!_isProtectedLeaseReference(protectedCurrentRawRecordLeaseReference)) {
+      throw ArgumentError('cloud_message_update_receipt_raw_lease_invalid');
+    }
+    if (rawGeneration <= 0) {
+      throw ArgumentError('cloud_message_update_receipt_generation_invalid');
+    }
+    if (!_isCanonicalAppleUuid(appleRequestUuid) ||
+        !_isCanonicalAppleUuid(appleOperationUuid) ||
+        appleRequestUuid == appleOperationUuid) {
+      throw ArgumentError(
+        'cloud_message_update_receipt_submission_identity_invalid',
+      );
+    }
+  }
+
+  final String operationId;
+  final String logicalEntityKeyHash;
+  final String serverRecordIdHash;
+  final String predecessorEtagHash;
+  final String resultingEtagHash;
+  final String protectedCurrentRawRecordReference;
+  final String protectedCurrentRawRecordLeaseReference;
+  final int rawGeneration;
+  final String appleRequestUuid;
+  final String appleOperationUuid;
+
+  @override
+  String toString() => 'CloudMessageUpdateReadbackReceipt(redacted)';
+}
+
 /// Strongly typed receipt for one successful V2 outbound CREATE.
 ///
 /// Every value is an opaque hash or correlation key. No record identifier,
@@ -1199,8 +1266,13 @@ class CloudRecordMapEntry {
     required this.logicalEntityKeyHash,
     required this.serverRecordIdHash,
     required this.encryptedServerRecordId,
+    this.generation = 0,
     this.etagHash,
     this.encryptedRawRecordReference,
+    this.rawRecordGeneration = 0,
+    this.protectedReadbackLeaseReference,
+    this.pendingUpdateOperationId,
+    this.pendingUpdatePredecessorEtagHash,
     required this.updatedAt,
   });
 
@@ -1211,9 +1283,82 @@ class CloudRecordMapEntry {
   /// Protected keystore reference to the Apple record ID. Observers must never
   /// emit the resolved value.
   final String encryptedServerRecordId;
+  final int generation;
   final String? etagHash;
   final String? encryptedRawRecordReference;
+  final int rawRecordGeneration;
+  final String? protectedReadbackLeaseReference;
+  final String? pendingUpdateOperationId;
+  final String? pendingUpdatePredecessorEtagHash;
   final DateTime updatedAt;
+
+  bool sameDurableSnapshotAs(CloudRecordMapEntry other) =>
+      scope == other.scope &&
+      logicalEntityKeyHash == other.logicalEntityKeyHash &&
+      serverRecordIdHash == other.serverRecordIdHash &&
+      encryptedServerRecordId == other.encryptedServerRecordId &&
+      generation == other.generation &&
+      etagHash == other.etagHash &&
+      encryptedRawRecordReference == other.encryptedRawRecordReference &&
+      rawRecordGeneration == other.rawRecordGeneration &&
+      protectedReadbackLeaseReference ==
+          other.protectedReadbackLeaseReference &&
+      pendingUpdateOperationId == other.pendingUpdateOperationId &&
+      pendingUpdatePredecessorEtagHash ==
+          other.pendingUpdatePredecessorEtagHash &&
+      updatedAt.millisecondsSinceEpoch ==
+          other.updatedAt.millisecondsSinceEpoch;
+}
+
+/// Exact durable snapshot returned after a conditional update readback has
+/// replaced the record mapping and confirmed its outbox row. Both protected
+/// leases remain live until this complete snapshot is finalized.
+final class CloudMessageUpdateReadbackCommitSnapshot {
+  CloudMessageUpdateReadbackCommitSnapshot({
+    required this.confirmedOperation,
+    required this.recordMapping,
+  }) {
+    if (confirmedOperation.action != CloudOutboxAction.save ||
+        confirmedOperation.payloadVersion !=
+            cloudSyncMessageUpdatePayloadVersion ||
+        confirmedOperation.status != CloudOutboxStatus.confirmed ||
+        confirmedOperation.protectedLeaseReference == null ||
+        confirmedOperation.appleRequestUuid == null ||
+        confirmedOperation.appleOperationUuid == null ||
+        confirmedOperation.confirmedAt == null ||
+        confirmedOperation.serverRecordIdHash == null ||
+        recordMapping.scope != confirmedOperation.scope ||
+        recordMapping.generation != confirmedOperation.checkpointGeneration ||
+        recordMapping.logicalEntityKeyHash !=
+            confirmedOperation.logicalEntityKeyHash ||
+        recordMapping.serverRecordIdHash !=
+            confirmedOperation.serverRecordIdHash ||
+        recordMapping.rawRecordGeneration <= 0 ||
+        recordMapping.encryptedRawRecordReference == null ||
+        recordMapping.protectedReadbackLeaseReference == null ||
+        confirmedOperation.protectedLeaseReference ==
+            recordMapping.protectedReadbackLeaseReference ||
+        recordMapping.pendingUpdateOperationId !=
+            confirmedOperation.operationId ||
+        recordMapping.pendingUpdatePredecessorEtagHash == null ||
+        recordMapping.etagHash == null ||
+        recordMapping.etagHash ==
+            recordMapping.pendingUpdatePredecessorEtagHash) {
+      throw ArgumentError('cloud_message_update_commit_snapshot_invalid');
+    }
+  }
+
+  final CloudOutboxOperation confirmedOperation;
+  final CloudRecordMapEntry recordMapping;
+
+  String get updateStageLeaseReference =>
+      confirmedOperation.protectedLeaseReference!;
+
+  String get readbackLeaseReference =>
+      recordMapping.protectedReadbackLeaseReference!;
+
+  @override
+  String toString() => 'CloudMessageUpdateReadbackCommitSnapshot(redacted)';
 }
 
 class CloudSyncRunRecord {

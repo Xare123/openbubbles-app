@@ -1473,7 +1473,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(20, 8623084761715763815),
     name: 'CloudRecordMapEntity',
-    lastPropertyId: const obx_int.IdUid(12, 7135872154167319448),
+    lastPropertyId: const obx_int.IdUid(16, 6705189702470968691),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1552,6 +1552,30 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(12, 7135872154167319448),
         name: 'generation',
         type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 4917752363426942810),
+        name: 'rawRecordGeneration',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 9155210618372823158),
+        name: 'protectedReadbackLeaseReference',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 696951073675200671),
+        name: 'pendingUpdateOperationId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 6705189702470968691),
+        name: 'pendingUpdatePredecessorEtagHash',
+        type: 9,
         flags: 0,
       ),
     ],
@@ -5409,7 +5433,19 @@ obx_int.ModelDefinition getObjectBoxModel() {
             ? null
             : fbb.writeString(object.encryptedRawRecordRef!);
         final scopeKeyOffset = fbb.writeString(object.scopeKey);
-        fbb.startTable(13);
+        final protectedReadbackLeaseReferenceOffset =
+            object.protectedReadbackLeaseReference == null
+            ? null
+            : fbb.writeString(object.protectedReadbackLeaseReference!);
+        final pendingUpdateOperationIdOffset =
+            object.pendingUpdateOperationId == null
+            ? null
+            : fbb.writeString(object.pendingUpdateOperationId!);
+        final pendingUpdatePredecessorEtagHashOffset =
+            object.pendingUpdatePredecessorEtagHash == null
+            ? null
+            : fbb.writeString(object.pendingUpdatePredecessorEtagHash!);
+        fbb.startTable(17);
         fbb.addInt64(0, object.id);
         fbb.addOffset(1, mapKeyOffset);
         fbb.addOffset(2, accountFingerprintOffset);
@@ -5422,6 +5458,10 @@ obx_int.ModelDefinition getObjectBoxModel() {
         fbb.addInt64(9, object.updatedAtMs);
         fbb.addOffset(10, scopeKeyOffset);
         fbb.addInt64(11, object.generation);
+        fbb.addInt64(12, object.rawRecordGeneration);
+        fbb.addOffset(13, protectedReadbackLeaseReferenceOffset);
+        fbb.addOffset(14, pendingUpdateOperationIdOffset);
+        fbb.addOffset(15, pendingUpdatePredecessorEtagHashOffset);
         fbb.finish(fbb.endTable());
         return object.id;
       },
@@ -5467,6 +5507,21 @@ obx_int.ModelDefinition getObjectBoxModel() {
         final encryptedRawRecordRefParam = const fb.StringReader(
           asciiOptimization: true,
         ).vTableGetNullable(buffer, rootOffset, 20);
+        final rawRecordGenerationParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          28,
+          0,
+        );
+        final protectedReadbackLeaseReferenceParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 30);
+        final pendingUpdateOperationIdParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 32);
+        final pendingUpdatePredecessorEtagHashParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 34);
         final updatedAtMsParam = const fb.Int64Reader().vTableGet(
           buffer,
           rootOffset,
@@ -5485,6 +5540,11 @@ obx_int.ModelDefinition getObjectBoxModel() {
           encryptedServerRecordId: encryptedServerRecordIdParam,
           etagHash: etagHashParam,
           encryptedRawRecordRef: encryptedRawRecordRefParam,
+          rawRecordGeneration: rawRecordGenerationParam,
+          protectedReadbackLeaseReference: protectedReadbackLeaseReferenceParam,
+          pendingUpdateOperationId: pendingUpdateOperationIdParam,
+          pendingUpdatePredecessorEtagHash:
+              pendingUpdatePredecessorEtagHashParam,
           updatedAtMs: updatedAtMsParam,
         );
 
@@ -8969,6 +9029,30 @@ class CloudRecordMapEntity_ {
   static final generation = obx.QueryIntegerProperty<CloudRecordMapEntity>(
     _entities[11].properties[11],
   );
+
+  /// See [CloudRecordMapEntity.rawRecordGeneration].
+  static final rawRecordGeneration =
+      obx.QueryIntegerProperty<CloudRecordMapEntity>(
+        _entities[11].properties[12],
+      );
+
+  /// See [CloudRecordMapEntity.protectedReadbackLeaseReference].
+  static final protectedReadbackLeaseReference =
+      obx.QueryStringProperty<CloudRecordMapEntity>(
+        _entities[11].properties[13],
+      );
+
+  /// See [CloudRecordMapEntity.pendingUpdateOperationId].
+  static final pendingUpdateOperationId =
+      obx.QueryStringProperty<CloudRecordMapEntity>(
+        _entities[11].properties[14],
+      );
+
+  /// See [CloudRecordMapEntity.pendingUpdatePredecessorEtagHash].
+  static final pendingUpdatePredecessorEtagHash =
+      obx.QueryStringProperty<CloudRecordMapEntity>(
+        _entities[11].properties[15],
+      );
 }
 
 /// [CloudSyncCheckpointEntity] entity fields to define ObjectBox queries.

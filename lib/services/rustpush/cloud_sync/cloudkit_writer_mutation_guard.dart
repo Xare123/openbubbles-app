@@ -78,6 +78,15 @@ abstract interface class CloudKitWriterMutationRunner {
     required CloudOutboxOperation operation,
   });
 
+  /// Releases the durable mutation fence only after the caller has committed
+  /// an exact authoritative readback and completed every protected-lease
+  /// handoff. This method performs no CloudKit request.
+  Future<void> completeReconciliationAfterExactReadback({
+    required CloudKitWriterOwner owner,
+    required Object expectedClient,
+    required CloudOutboxOperation operation,
+  });
+
   Future<CloudUnknownOutcomeResolution> reconcileUnknownOutcome({
     required CloudKitWriterOwner owner,
     required Object expectedClient,
@@ -271,14 +280,17 @@ final class CloudKitWriterMutationGuard
   final String _privateStorageDirectory;
   final CloudSyncNativeAuthBinding _nativeAuthBinding;
   final CloudKitWriterReconciliationBinding? _reconciliationBinding;
+
   /// Resolves only the original journal source for a Message create. The
   /// production caller holds the protected-store exclusion through readback.
   final frb_api.CloudSyncNativeSendReceiptContext? Function(
     CloudOutboxOperation operation,
-  )? readAttachmentParentContext;
+  )?
+  readAttachmentParentContext;
   final Future<frb_api.CloudSyncAttachmentParentGroupProof?> Function(
     CloudOutboxOperation operation,
-  )? readAttachmentParentGroupProof;
+  )?
+  readAttachmentParentGroupProof;
   final ObjectBoxCloudKitWriterAuthority _authority;
   final DateTime Function() _clock;
 
@@ -325,7 +337,9 @@ final class CloudKitWriterMutationGuard
     required CloudSyncAttachmentUploadJournal uploads,
     required int uploadId,
   }) => _reconcileAttachmentUpload(
-    expectedClient: expectedClient, uploads: uploads, uploadId: uploadId,
+    expectedClient: expectedClient,
+    uploads: uploads,
+    uploadId: uploadId,
   );
 
   /// Receipt-only entry before outbox draining. Null means no matching byte
@@ -355,7 +369,8 @@ final class CloudKitWriterMutationGuard
       int? matched;
       final bindings = <String>{};
       for (final id in uploads.readAttemptedForReconciliation(
-          onlyIntentId: onlyIntentId)) {
+        onlyIntentId: onlyIntentId,
+      )) {
         final binding = uploads.reconciliationBindingSha256(id);
         if (!bindings.add(binding)) {
           throw const CloudKitWriterAuthorityFailure(
@@ -370,7 +385,9 @@ final class CloudKitWriterMutationGuard
     final matched = findMatch();
     if (matched == null) return null;
     return _reconcileAttachmentUpload(
-      expectedClient: expectedClient, uploads: uploads, uploadId: matched,
+      expectedClient: expectedClient,
+      uploads: uploads,
+      uploadId: matched,
       expectedFenceEncoding: fence.encoded,
       requireDiscovery: () {
         if (findMatch() != matched) {
@@ -532,8 +549,23 @@ final class CloudKitWriterMutationGuard
     required CloudKitWriterOwner owner,
     required Object expectedClient,
     required CloudOutboxOperation operation,
+  }) => _requireReconciliationAllowed(
+    owner: owner,
+    expectedClient: expectedClient,
+    operation: operation,
+  );
+
+  Future<void> _requireReconciliationAllowed({
+    required CloudKitWriterOwner owner,
+    required Object expectedClient,
+    required CloudOutboxOperation operation,
+    bool allowConfirmedOperation = false,
   }) async {
-    _requireReconciliationOperation(owner, operation);
+    _requireReconciliationOperation(
+      owner,
+      operation,
+      allowConfirmedOperation: allowConfirmedOperation,
+    );
     CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);
     final client = _readActiveClient();
     if (client == null || !identical(client, expectedClient)) {
@@ -587,6 +619,12 @@ final class CloudKitWriterMutationGuard
     required Object expectedClient,
     required CloudOutboxOperation operation,
   }) async {
+    if (operation.scope.zone == 'messageManateeZone' &&
+        operation.payloadVersion == cloudSyncMessageUpdatePayloadVersion) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_create_reconciliation_update_forbidden',
+      );
+    }
     await requireReconciliationAllowed(
       owner: owner,
       expectedClient: expectedClient,
@@ -632,7 +670,8 @@ final class CloudKitWriterMutationGuard
     final groupProof = isChat || isAttachment
         ? null
         : await readAttachmentParentGroupProof?.call(operation);
-    if ((!isChat && !isAttachment &&
+    if ((!isChat &&
+            !isAttachment &&
             parentContext != readAttachmentParentContext?.call(operation)) ||
         (groupProof != null && parentContext == null)) {
       throw const CloudKitWriterAuthorityFailure(
@@ -643,12 +682,16 @@ final class CloudKitWriterMutationGuard
     // authority before using it, without clearing the unknown-outcome fence.
     if (groupProof != null) {
       await requireReconciliationAllowed(
-        owner: owner, expectedClient: expectedClient, operation: operation);
+        owner: owner,
+        expectedClient: expectedClient,
+        operation: operation,
+      );
       final afterProof = await _capture(expectedClient);
       if (!identical(expectedClient, _readActiveClient()) ||
           afterProof.accountFingerprint != identity.accountFingerprint ||
           afterProof.nativeSessionId != identity.nativeSessionId ||
-          afterProof.protectedStoreIdentity != identity.protectedStoreIdentity) {
+          afterProof.protectedStoreIdentity !=
+              identity.protectedStoreIdentity) {
         throw const CloudKitWriterAuthorityFailure(
           'cloudkit_writer_reconciliation_identity_mismatch',
         );
@@ -657,7 +700,8 @@ final class CloudKitWriterMutationGuard
     if (parentContext != null &&
         (parentContext.storageDirectory != _privateStorageDirectory ||
             parentContext.accountFingerprint != identity.accountFingerprint ||
-            parentContext.protectedStoreIdentity != identity.protectedStoreIdentity ||
+            parentContext.protectedStoreIdentity !=
+                identity.protectedStoreIdentity ||
             parentContext.nativeSessionId != identity.nativeSessionId)) {
       throw const CloudKitWriterAuthorityFailure(
         'cloudkit_writer_reconciliation_parent_context_mismatch',
@@ -695,14 +739,14 @@ final class CloudKitWriterMutationGuard
     switch (disposition) {
       case frb_api.CloudSyncOutboundReconcileDisposition.committed:
         final receipt = _requireCommittedCreateReceipt(result, operation);
-        await _completeReconciliationAfterExactReadback(
+        await completeReconciliationAfterExactReadback(
           owner: owner,
           expectedClient: expectedClient,
           operation: operation,
         );
         return CloudUnknownOutcomeResolution.committed(createReceipt: receipt);
       case frb_api.CloudSyncOutboundReconcileDisposition.notApplied:
-        await _completeReconciliationAfterExactReadback(
+        await completeReconciliationAfterExactReadback(
           owner: owner,
           expectedClient: expectedClient,
           operation: operation,
@@ -756,15 +800,17 @@ final class CloudKitWriterMutationGuard
     );
   }
 
-  Future<void> _completeReconciliationAfterExactReadback({
+  @override
+  Future<void> completeReconciliationAfterExactReadback({
     required CloudKitWriterOwner owner,
     required Object expectedClient,
     required CloudOutboxOperation operation,
   }) async {
-    await requireReconciliationAllowed(
+    await _requireReconciliationAllowed(
       owner: owner,
       expectedClient: expectedClient,
       operation: operation,
+      allowConfirmedOperation: true,
     );
     final identity = await _capture(expectedClient);
     if (!identical(expectedClient, _readActiveClient()) ||
@@ -801,30 +847,49 @@ final class CloudKitWriterMutationGuard
 
   void _requireReconciliationOperation(
     CloudKitWriterOwner owner,
-    CloudOutboxOperation operation,
-  ) {
-    final expectedPayloadVersion = switch (operation.scope.zone) {
+    CloudOutboxOperation operation, {
+    bool allowConfirmedOperation = false,
+  }) {
+    final expectedCreatePayloadVersion = switch (operation.scope.zone) {
       'chatManateeZone' => cloudSyncOutboundChatPayloadVersion,
       'attachmentManateeZone' => _cloudKitWriterAttachmentCreatePayloadVersion,
       'messageManateeZone' => cloudSyncOutboundPayloadVersion,
       _ => null,
     };
+    final isMessageUpdate =
+        operation.scope.zone == 'messageManateeZone' &&
+        operation.payloadVersion == cloudSyncMessageUpdatePayloadVersion;
+    final hasExpectedIdentity = isMessageUpdate
+        ? operation.mutationRevision > 0 &&
+              operation.checkpointGeneration > 0 &&
+              operation.operationId ==
+                  CloudOperationIdentity.forMutation(
+                    scope: operation.scope,
+                    logicalEntityKeyHash: operation.logicalEntityKeyHash,
+                    action: operation.action,
+                    payloadVersion: operation.payloadVersion,
+                    mutationRevision: operation.mutationRevision,
+                    payloadSha256: operation.payloadSha256,
+                  )
+        : expectedCreatePayloadVersion != null &&
+              operation.payloadVersion == expectedCreatePayloadVersion &&
+              operation.operationId ==
+                  CloudOperationIdentity.forInitialCreate(
+                    scope: operation.scope,
+                    logicalEntityKeyHash: operation.logicalEntityKeyHash,
+                    payloadVersion: operation.payloadVersion,
+                  );
     if (owner != CloudKitWriterOwner.v2 ||
         operation.scope.container != 'com.apple.messages.cloud' ||
         operation.scope.database != 'private' ||
         operation.scope.streamKind != CloudSyncStreamKind.messages ||
         operation.scope.schemaVersion != 2 ||
         operation.scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
-        operation.status != CloudOutboxStatus.unknownOutcome ||
+        (operation.status != CloudOutboxStatus.unknownOutcome &&
+            !(allowConfirmedOperation &&
+                operation.status == CloudOutboxStatus.confirmed)) ||
         operation.action != CloudOutboxAction.save ||
-        expectedPayloadVersion == null ||
-        operation.payloadVersion != expectedPayloadVersion ||
-        operation.operationId !=
-            CloudOperationIdentity.forInitialCreate(
-              scope: operation.scope,
-              logicalEntityKeyHash: operation.logicalEntityKeyHash,
-              payloadVersion: operation.payloadVersion,
-            ) ||
+        !hasExpectedIdentity ||
         !_cloudKitWriterNativeDigestPattern.hasMatch(
           operation.logicalEntityKeyHash,
         ) ||
@@ -1028,7 +1093,9 @@ final class CloudKitWriterMutationGuard
     if (proof == null) return false;
     try {
       bool matches() {
-        CloudKitOperationInterlock.requireActive(CloudKitOperationKind.v2ReadWrite);
+        CloudKitOperationInterlock.requireActive(
+          CloudKitOperationKind.v2ReadWrite,
+        );
         if (_store.isClosed() ||
             _activeMutation != null ||
             !identical(proof, _unknownMutationForScheduling) ||
@@ -1048,9 +1115,12 @@ final class CloudKitWriterMutationGuard
             fence.scope != proof.permit.scope ||
             fence.owner != CloudKitWriterOwner.v2 ||
             fence.epoch != expectedEpoch ||
-            fence.scope.accountFingerprint != proof.identity.accountFingerprint ||
-            fence.protectedStoreIdentity != proof.identity.protectedStoreIdentity ||
-            uploads.scope.accountFingerprint != fence.scope.accountFingerprint ||
+            fence.scope.accountFingerprint !=
+                proof.identity.accountFingerprint ||
+            fence.protectedStoreIdentity !=
+                proof.identity.protectedStoreIdentity ||
+            uploads.scope.accountFingerprint !=
+                fence.scope.accountFingerprint ||
             uploads.scope.container != fence.scope.container ||
             uploads.scope.database != fence.scope.database) {
           return false;
@@ -1071,7 +1141,8 @@ final class CloudKitWriterMutationGuard
         }
         final source = uploads.readOriginalSource(uploadId);
         return source.accountFingerprint == proof.identity.accountFingerprint &&
-            source.protectedStoreIdentity == proof.identity.protectedStoreIdentity &&
+            source.protectedStoreIdentity ==
+                proof.identity.protectedStoreIdentity &&
             uploads.reconciliationBindingSha256(uploadId) ==
                 fence.reconciliationBindingSha256;
       }
@@ -1080,7 +1151,8 @@ final class CloudKitWriterMutationGuard
       // Lookup-only auth. Recheck all local evidence after this sole await.
       final current = await _capture(expectedClient);
       return current.accountFingerprint == proof.identity.accountFingerprint &&
-          current.protectedStoreIdentity == proof.identity.protectedStoreIdentity &&
+          current.protectedStoreIdentity ==
+              proof.identity.protectedStoreIdentity &&
           current.nativeSessionId == proof.identity.nativeSessionId &&
           matches();
     } catch (_) {
@@ -1260,12 +1332,13 @@ final class CloudKitWriterMutationGuard
       if (identical(_activeMutation, active)) {
         _activeMutation = null;
         if (active.forcedUnknown) {
-          _unknownMutationForScheduling = _CloudKitUnknownMutationSchedulingProof(
-            client: client,
-            identity: before,
-            permit: permit,
-            fenceEncoding: fenceEncoding,
-          );
+          _unknownMutationForScheduling =
+              _CloudKitUnknownMutationSchedulingProof(
+                client: client,
+                identity: before,
+                permit: permit,
+                fenceEncoding: fenceEncoding,
+              );
         }
       }
     }

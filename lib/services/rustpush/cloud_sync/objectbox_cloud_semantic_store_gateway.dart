@@ -2188,10 +2188,10 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     }
     return (_canonicalAdapter as CloudMessageContentTransitionProofAdapter)
         .classifyMessageContentTransition(
-      scope: scope,
-      generation: _context.entry.generation,
-      payload: payload,
-    );
+          scope: scope,
+          generation: _context.entry.generation,
+          payload: payload,
+        );
   }
 
   /// Finds one older APPLIED replay on the same logical message and physical
@@ -2277,14 +2277,16 @@ final class _ObjectBoxCloudSemanticStoreTransaction
               prior.terminalSafeCode != null) ||
           (outcome == _SemanticReplayOutcome.appliedWithConflict &&
               (prior.terminalSafeCode == null ||
-                  !ObjectBoxCloudSemanticStoreGateway._safeCodePattern
-                      .hasMatch(prior.terminalSafeCode!)))) {
+                  !ObjectBoxCloudSemanticStoreGateway._safeCodePattern.hasMatch(
+                    prior.terminalSafeCode!,
+                  )))) {
         continue;
       }
       final priorPayloadSha = prior.payloadSha256;
       if (priorPayloadSha == null ||
-          !ObjectBoxCloudSemanticStoreGateway._lowerHexDigestPattern
-              .hasMatch(priorPayloadSha)) {
+          !ObjectBoxCloudSemanticStoreGateway._lowerHexDigestPattern.hasMatch(
+            priorPayloadSha,
+          )) {
         continue;
       }
       final inboxQuery =
@@ -2328,13 +2330,12 @@ final class _ObjectBoxCloudSemanticStoreTransaction
           row.payloadSha256 != priorPayloadSha ||
           row.encryptedPayloadRef != oldRawRecordReference ||
           row.etagHash != oldEtagHash ||
-          !ObjectBoxCloudSemanticStoreGateway._base64UrlDigestPattern
-              .hasMatch(row.changeIdHash)) {
+          !ObjectBoxCloudSemanticStoreGateway._base64UrlDigestPattern.hasMatch(
+            row.changeIdHash,
+          )) {
         continue;
       }
-      final changeHash = _SemanticTransactionContext._digest(
-        row.changeIdHash,
-      );
+      final changeHash = _SemanticTransactionContext._digest(row.changeIdHash);
       if (prior.changeIdHash != changeHash ||
           prior.replayKey !=
               'semantic-replay4:${_context.scopeGenerationKey}:$changeHash' ||
@@ -2413,7 +2414,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       );
       if ((collision.mapKey != mapKey &&
               (!_chatMembershipProven ||
-                  collision.mapKey != _memberKey(collision.serverRecordIdHash))) ||
+                  collision.mapKey !=
+                      _memberKey(collision.serverRecordIdHash))) ||
           collision.logicalEntityKeyHash != logicalEntityKeyHash) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.conflict,
@@ -2424,6 +2426,14 @@ final class _ObjectBoxCloudSemanticStoreTransaction
 
     final encryptedServerRecordId =
         _context.entry.change.encryptedServerRecordId!;
+    if (existing?.protectedReadbackLeaseReference != null &&
+        (existing!.serverRecordIdHash != _context.entry.change.recordIdHash ||
+            existing.etagHash != _context.entry.change.etagHash ||
+            existing.encryptedRawRecordRef != expectedRawReference)) {
+      throw ObjectBoxCloudSemanticStoreGateway._failure(
+        'message_update_readback_finalization_pending',
+      );
+    }
     if (_chatMembershipProven && existing != null) {
       _putRecordMember(existing);
     }
@@ -2440,6 +2450,12 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         encryptedServerRecordId: encryptedServerRecordId,
         etagHash: _context.entry.change.etagHash,
         encryptedRawRecordRef: expectedRawReference,
+        rawRecordGeneration: _context.entry.generation,
+        protectedReadbackLeaseReference:
+            existing?.protectedReadbackLeaseReference,
+        pendingUpdateOperationId: existing?.pendingUpdateOperationId,
+        pendingUpdatePredecessorEtagHash:
+            existing?.pendingUpdatePredecessorEtagHash,
         updatedAtMs: _updatedAtMs,
       ),
     );
@@ -2534,10 +2550,13 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
       );
     }
-    final priorMap = _findRecordMapByKey(_context.recordMapKey(snapshot.logicalEntityKeyHash));
+    final priorMap = _findRecordMapByKey(
+      _context.recordMapKey(snapshot.logicalEntityKeyHash),
+    );
     if (priorMap != null &&
         (priorMap.serverRecordIdHash != _context.entry.change.recordIdHash ||
-            _findRecordMapByKey(_memberKey(priorMap.serverRecordIdHash)) != null) &&
+            _findRecordMapByKey(_memberKey(priorMap.serverRecordIdHash)) !=
+                null) &&
         _allowDirectChatRecordConvergence &&
         payload is CloudChatEntityPayload &&
         _canonicalAdapter is CloudDirectChatRecordConvergenceProofAdapter &&
@@ -2545,10 +2564,10 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         _findSnapshot(key) != null) {
       (_canonicalAdapter as CloudDirectChatRecordConvergenceProofAdapter)
           .validateDirectChatRecordConvergence(
-        scope: _context.entry.scope,
-        generation: _context.entry.generation,
-        payload: payload,
-      );
+            scope: _context.entry.scope,
+            generation: _context.entry.generation,
+            payload: payload,
+          );
       _chatMembershipProven = true;
     }
     bindRecordIdentity(
@@ -3228,35 +3247,56 @@ final class _ObjectBoxCloudSemanticStoreTransaction
   }
 
   String _memberKey(String recordIdHash) => cloudSyncChatRecordMemberKey(
-    _context.entry.scope, _context.entry.generation, recordIdHash,
+    _context.entry.scope,
+    _context.entry.generation,
+    recordIdHash,
   );
 
   void _putRecordMember(CloudRecordMapEntity source) {
     final key = _memberKey(source.serverRecordIdHash);
     final previous = _findRecordMapByKey(key);
     if (previous != null) {
-      _validateRecordMapScope(previous, source.logicalEntityKeyHash,
-          expectedChange: _context.entry.change);
+      _validateRecordMapScope(
+        previous,
+        source.logicalEntityKeyHash,
+        expectedChange: _context.entry.change,
+      );
     }
-    _recordMaps.put(CloudRecordMapEntity(
-      id: previous?.id ?? 0, mapKey: key, scopeKey: source.scopeKey,
-      accountFingerprint: source.accountFingerprint, zone: source.zone,
-      logicalEntityKeyHash: source.logicalEntityKeyHash,
-      serverRecordIdHash: source.serverRecordIdHash, generation: source.generation,
-      encryptedServerRecordId: source.encryptedServerRecordId,
-      etagHash: source.etagHash, encryptedRawRecordRef: source.encryptedRawRecordRef,
-      updatedAtMs: source.updatedAtMs,
-    ));
+    _recordMaps.put(
+      CloudRecordMapEntity(
+        id: previous?.id ?? 0,
+        mapKey: key,
+        scopeKey: source.scopeKey,
+        accountFingerprint: source.accountFingerprint,
+        zone: source.zone,
+        logicalEntityKeyHash: source.logicalEntityKeyHash,
+        serverRecordIdHash: source.serverRecordIdHash,
+        generation: source.generation,
+        encryptedServerRecordId: source.encryptedServerRecordId,
+        etagHash: source.etagHash,
+        encryptedRawRecordRef: source.encryptedRawRecordRef,
+        rawRecordGeneration: source.rawRecordGeneration,
+        protectedReadbackLeaseReference: source.protectedReadbackLeaseReference,
+        pendingUpdateOperationId: source.pendingUpdateOperationId,
+        pendingUpdatePredecessorEtagHash:
+            source.pendingUpdatePredecessorEtagHash,
+        updatedAtMs: source.updatedAtMs,
+      ),
+    );
   }
 
   List<CloudRecordMapEntity> _findRecordMapsByServerHash(
     String serverRecordIdHash,
   ) {
     final query = _recordMaps
-      .query(
+        .query(
           CloudRecordMapEntity_.scopeKey
               .equals(_context.scopeKey)
-              .and(CloudRecordMapEntity_.generation.equals(_context.entry.generation))
+              .and(
+                CloudRecordMapEntity_.generation.equals(
+                  _context.entry.generation,
+                ),
+              )
               .and(
                 CloudRecordMapEntity_.serverRecordIdHash.equals(
                   serverRecordIdHash,
@@ -3289,9 +3329,11 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     ObjectBoxCloudSemanticStoreGateway._validateProtectedReference(
       entity.encryptedRawRecordRef,
     );
-    final isMember = scope.zone == 'chatManateeZone' &&
+    final isMember =
+        scope.zone == 'chatManateeZone' &&
         entity.mapKey == _memberKey(entity.serverRecordIdHash);
-    if ((entity.mapKey != _context.recordMapKey(logicalEntityKeyHash) && !isMember) ||
+    if ((entity.mapKey != _context.recordMapKey(logicalEntityKeyHash) &&
+            !isMember) ||
         entity.scopeKey != _context.scopeKey ||
         entity.accountFingerprint != scope.accountFingerprint ||
         entity.zone != scope.zone ||
@@ -3479,7 +3521,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         );
       }
       final recordMap = cloudSyncFindRecordMap(
-        store: _canonicalAdapter.store, scope: _context.entry.scope,
+        store: _canonicalAdapter.store,
+        scope: _context.entry.scope,
         generation: _context.entry.generation,
         logicalEntityKeyHash: logicalEntityKeyHash,
         serverRecordIdHash: entity.serverRecordIdHash,
@@ -3494,10 +3537,13 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         logicalEntityKeyHash,
         expectedChange: _context.entry.change,
       );
-      final exactRevision = recordMap.serverRecordIdHash == entity.serverRecordIdHash &&
-          recordMap.encryptedServerRecordId == _context.entry.change.encryptedServerRecordId &&
+      final exactRevision =
+          recordMap.serverRecordIdHash == entity.serverRecordIdHash &&
+          recordMap.encryptedServerRecordId ==
+              _context.entry.change.encryptedServerRecordId &&
           recordMap.etagHash == _context.entry.change.etagHash &&
-          recordMap.encryptedRawRecordRef == _context.entry.change.encryptedPayloadReference;
+          recordMap.encryptedRawRecordRef ==
+              _context.entry.change.encryptedPayloadReference;
       if (!exactRevision && !_hasProvenLaterChatRevision(recordMap, entity)) {
         throw ObjectBoxCloudSemanticStoreGateway._failure(
           'semantic_replay_record_binding_mismatch',
@@ -3526,40 +3572,76 @@ final class _ObjectBoxCloudSemanticStoreTransaction
   ) {
     if (_context.entry.scope.zone != 'chatManateeZone' ||
         map.serverRecordIdHash != historical.serverRecordIdHash ||
-        map.etagHash == null || map.encryptedRawRecordRef == null) {
+        map.etagHash == null ||
+        map.encryptedRawRecordRef == null) {
       return false;
     }
-    final query = (_inbox.query(
-      CloudInboxChangeEntity_.scopeKey.equals(_context.scopeKey)
-          .and(CloudInboxChangeEntity_.generation.equals(_context.entry.generation))
-          .and(CloudInboxChangeEntity_.serverRecordIdHash.equals(map.serverRecordIdHash))
-          .and(CloudInboxChangeEntity_.status.equals(CloudInboxStatus.applied.index))
-          .and(CloudInboxChangeEntity_.etagHash.equals(map.etagHash!))
-          .and(CloudInboxChangeEntity_.encryptedPayloadRef.equals(map.encryptedRawRecordRef!)),
-    )..order(CloudInboxChangeEntity_.fetchSequence, flags: Order.descending))
-        .build()..limit = 1;
+    final query =
+        (_inbox.query(
+              CloudInboxChangeEntity_.scopeKey
+                  .equals(_context.scopeKey)
+                  .and(
+                    CloudInboxChangeEntity_.generation.equals(
+                      _context.entry.generation,
+                    ),
+                  )
+                  .and(
+                    CloudInboxChangeEntity_.serverRecordIdHash.equals(
+                      map.serverRecordIdHash,
+                    ),
+                  )
+                  .and(
+                    CloudInboxChangeEntity_.status.equals(
+                      CloudInboxStatus.applied.index,
+                    ),
+                  )
+                  .and(CloudInboxChangeEntity_.etagHash.equals(map.etagHash!))
+                  .and(
+                    CloudInboxChangeEntity_.encryptedPayloadRef.equals(
+                      map.encryptedRawRecordRef!,
+                    ),
+                  ),
+            )..order(
+              CloudInboxChangeEntity_.fetchSequence,
+              flags: Order.descending,
+            ))
+            .build()
+          ..limit = 1;
     final CloudInboxChangeEntity? row;
     try {
       row = query.findFirst();
     } finally {
       query.close();
     }
-    if (row == null || row.fetchSequence <= historical.inboxSequence ||
-        row.fetchSequence > _checkpointEntity.fetchedSequence || row.isTombstone ||
-        row.changeType != 'save' || row.zone != map.zone ||
-        row.changeKey != ObjectBoxCloudSemanticFence._scopedDigest(
-          _context.entry.scope, 'change', row.changeIdHash) ||
-        !ObjectBoxCloudSemanticStoreGateway._base64UrlDigestPattern.hasMatch(row.changeIdHash) ||
+    if (row == null ||
+        row.fetchSequence <= historical.inboxSequence ||
+        row.fetchSequence > _checkpointEntity.fetchedSequence ||
+        row.isTombstone ||
+        row.changeType != 'save' ||
+        row.zone != map.zone ||
+        row.changeKey !=
+            ObjectBoxCloudSemanticFence._scopedDigest(
+              _context.entry.scope,
+              'change',
+              row.changeIdHash,
+            ) ||
+        !ObjectBoxCloudSemanticStoreGateway._base64UrlDigestPattern.hasMatch(
+          row.changeIdHash,
+        ) ||
         row.payloadSha256 == null ||
-        !ObjectBoxCloudSemanticStoreGateway._lowerHexDigestPattern.hasMatch(row.payloadSha256!) ||
+        !ObjectBoxCloudSemanticStoreGateway._lowerHexDigestPattern.hasMatch(
+          row.payloadSha256!,
+        ) ||
         row.accountFingerprint != map.accountFingerprint ||
         row.encryptedServerRecordId != map.encryptedServerRecordId) {
       return false;
     }
     final changeHash = _SemanticTransactionContext._digest(row.changeIdHash);
-    final expectedKey = 'semantic-replay4:${_context.scopeGenerationKey}:$changeHash';
+    final expectedKey =
+        'semantic-replay4:${_context.scopeGenerationKey}:$changeHash';
     final replayQuery = _replay
-        .query(CloudSemanticReplayEntity_.replayKey.equals(expectedKey)).build();
+        .query(CloudSemanticReplayEntity_.replayKey.equals(expectedKey))
+        .build();
     final CloudSemanticReplayEntity? successor;
     try {
       successor = replayQuery.findUnique();
@@ -3583,13 +3665,18 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         successor.serverRecordIdHash == map.serverRecordIdHash &&
         successor.logicalEntityKeyHash == historical.logicalEntityKeyHash &&
         successor.payloadSha256 == row.payloadSha256 &&
-        successor.protectedPayloadReferenceHash == _SemanticTransactionContext._digest(
-          'semantic-payload-reference\u001f${row.encryptedPayloadRef}') &&
+        successor.protectedPayloadReferenceHash ==
+            _SemanticTransactionContext._digest(
+              'semantic-payload-reference\u001f${row.encryptedPayloadRef}',
+            ) &&
         ((successor.terminalOutcome == _SemanticReplayOutcome.applied.name &&
                 successor.terminalSafeCode == null) ||
-            (successor.terminalOutcome == _SemanticReplayOutcome.appliedWithConflict.name &&
+            (successor.terminalOutcome ==
+                    _SemanticReplayOutcome.appliedWithConflict.name &&
                 successor.terminalSafeCode != null &&
-                ObjectBoxCloudSemanticStoreGateway._safeCodePattern.hasMatch(successor.terminalSafeCode!)));
+                ObjectBoxCloudSemanticStoreGateway._safeCodePattern.hasMatch(
+                  successor.terminalSafeCode!,
+                )));
   }
 
   void _requireActiveChange(String changeId) {

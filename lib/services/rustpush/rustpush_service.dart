@@ -43,7 +43,10 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_android_back
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_composer_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_source_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_source_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_attachment_send_body.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_staging.dart';
@@ -57,6 +60,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_can
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_owner.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_update_executor.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_preflight.dart';
@@ -64,6 +68,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_s
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protocol_evidence.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector_health.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_protected_page_lease_lifecycle.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report.dart';
@@ -147,6 +152,15 @@ typedef _CloudSyncV2LocalSendContext = ({
   List<String>? attachmentGuids,
   bool Function() stillCurrent,
   bool composerPreAdmitted,
+});
+
+typedef _CloudSyncV2LocalMutationContext = ({
+  int intentId,
+  CloudSyncLocalMutationIdentity identity,
+  CloudSyncLocalMutationSourceBinding source,
+  api.MessageInst wire,
+  api.CloudSyncNativeSendReceiptContext nativeReceiptContext,
+  bool Function() stillCurrent,
 });
 
 class FaceTimeIncomingAdmissionResult {
@@ -2119,6 +2133,22 @@ class RustPushBackend implements BackendService {
         conversation: await msgObj.chat.target!.getConversationData(),
         message: api.Message.unsend(
             api.UnsendMessage(tuuid: msgObj.guid!, editPart: part.part)));
+    final cloudMutation = await pushService._prepareCloudSyncV2LocalMutation(
+      target: msgObj,
+      wire: msg,
+    );
+    if (cloudMutation != null) {
+      await sendMsg(cloudMutation.wire, nativeReceiptContext: () {
+        if (!cloudMutation.stillCurrent()) {
+          throw StateError('cloud_sync_local_mutation_auth_changed');
+        }
+        return cloudMutation.nativeReceiptContext;
+      });
+      // The receipt callback performs the only durable local reflection. This
+      // avoids racing an optimistic edit against exact CloudKit predecessor
+      // validation. The callback also refreshes the active conversation UI.
+      return null;
+    }
     await sendMsg(msg);
 
     if (CloudKitWriterOwnership.legacyMutationsEnabled &&
@@ -2150,6 +2180,19 @@ class RustPushBackend implements BackendService {
             tuuid: msgObj.guid!,
             editPart: part,
             newParts: await partsFromBody(text))));
+    final cloudMutation = await pushService._prepareCloudSyncV2LocalMutation(
+      target: msgObj,
+      wire: msg,
+    );
+    if (cloudMutation != null) {
+      await sendMsg(cloudMutation.wire, nativeReceiptContext: () {
+        if (!cloudMutation.stillCurrent()) {
+          throw StateError('cloud_sync_local_mutation_auth_changed');
+        }
+        return cloudMutation.nativeReceiptContext;
+      });
+      return null;
+    }
     await sendMsg(msg);
 
     if (msgObj.ckRecordId != null) {
@@ -6078,18 +6121,33 @@ class RustPushService extends GetxService {
     }
 
     if (push is api.PushMessage_SendConfirm) {
-      var message = Message.findOne(guid: push.uuid);
-      if (message == null) return;
       Logger.info("SendFinished");
+      // Mutation UUIDs do not own standalone Message rows. Consume their
+      // protected receipt before the ordinary send-status lookup so edit and
+      // undo-send confirmations cannot be silently discarded.
+      if (push.error == null &&
+          push.nativeReceiptError == null &&
+          push.nativeReceipt != null) {
+        await _confirmCloudSyncV2NativeSend(
+          push.uuid,
+          nativeReceipt: push.nativeReceipt,
+        );
+      }
+      var message = Message.findOne(guid: push.uuid);
+      if (message == null) {
+        if (push.nativeReceipt?.sourceBinding?.kind ==
+                api.CloudSyncNativeSendSourceKind.mutation &&
+            (push.error != null || push.nativeReceiptError != null)) {
+          Logger.warn(
+            'Cloud Sync V2 mutation confirmation unresolved; retained for replay',
+          );
+        }
+        return;
+      }
       message.sendingServiceId = null;
       message.save(updateSendingServiceId: true);
       if (push.error == null) {
-        if (push.nativeReceiptError == null && push.nativeReceipt != null) {
-          await _confirmCloudSyncV2NativeSend(
-            push.uuid,
-            nativeReceipt: push.nativeReceipt,
-          );
-        } else if (push.nativeReceiptError != null ||
+        if (push.nativeReceiptError != null ||
             CloudSyncLocalSendJournal.hasUnresolvedNativeConfirmation(Database.store, message)) {
           Logger.warn(
             'Cloud Sync V2 send completion not journaled; durable native receipt unavailable',
@@ -7957,6 +8015,9 @@ class RustPushService extends GetxService {
   Future<CloudKitV2WriterProvisioningResult>?
       _cloudSyncV2OutboundProvisioningInFlight;
   Future<Object?>? _cloudSyncV2OutboundInFlight;
+  Future<void>? _cloudSyncV2MessageUpdateInFlight;
+  Timer? _cloudSyncV2MessageUpdateRetryTimer;
+  DateTime? _cloudSyncV2MessageUpdateRetryDueUtc;
   Future<void>? _cloudSyncV2NativeReceiptReplayInFlight;
   String? _cloudSyncV2NativeReceiptReplayScope;
   String? _cloudSyncV2NativeReceiptReplayCursor;
@@ -8081,6 +8142,7 @@ class RustPushService extends GetxService {
         _cloudSyncV2OutboundConfirmation != null ||
         _cloudSyncV2OutboundProvisioningInFlight != null ||
         _cloudSyncV2OutboundInFlight != null ||
+        _cloudSyncV2MessageUpdateInFlight != null ||
         ss.settings.cloudSyncingEnabled.value || isSyncing.value != null ||
         statePath.isEmpty || state?.icloudServices?.cloudMessagesClient == null) {
       return;
@@ -8138,7 +8200,9 @@ class RustPushService extends GetxService {
             if (!stillCurrent() || _cloudSyncV2SemanticPullInFlight != null ||
                 _cloudSyncV2OutboundConfirmation != null ||
                 _cloudSyncV2OutboundProvisioningInFlight != null ||
-                _cloudSyncV2OutboundInFlight != null || isSyncing.value != null) {
+                _cloudSyncV2OutboundInFlight != null ||
+                _cloudSyncV2MessageUpdateInFlight != null ||
+                isSyncing.value != null) {
               throw StateError('cloud_sync_local_send_runtime_unavailable');
             }
           },
@@ -8276,6 +8340,171 @@ class RustPushService extends GetxService {
       Logger.warn('Cloud Sync V2 composer admission failed '
           'code=${cloudSyncV2SafeFailureCode(error)}');
       rethrow;
+    }
+  }
+
+  /// Stages one normal Android edit/unsend into the protected mutation journal
+  /// before IDS can observe it. A successful return is claimed exactly once;
+  /// local reflection and CloudKit admission wait for the native receipt.
+  Future<_CloudSyncV2LocalMutationContext?> _prepareCloudSyncV2LocalMutation({
+    required Message target,
+    required api.MessageInst wire,
+  }) async {
+    if (!CloudKitWriterOwnership.v2MutationsEnabled ||
+        !CloudSyncDevGate.manualOutboundCanaryEnabled ||
+        !_cloudSyncV2CanaryRuntimeAllowed ||
+        !ls.isUiThread ||
+        loggingOut ||
+        ss.settings.cloudSyncingEnabled.value ||
+        isSyncing.value != null ||
+        statePath.isEmpty) {
+      return null;
+    }
+    final identity = CloudSyncLocalMutationIdentity.captureWire(wire);
+    final localMessageId = target.id;
+    if (identity == null || localMessageId == null || localMessageId <= 0) {
+      return null;
+    }
+
+    final expectedState = state;
+    final client = expectedState?.icloudServices?.cloudMessagesClient;
+    if (client == null) {
+      throw StateError('cloud_sync_local_mutation_runtime_unavailable');
+    }
+    final storagePath = statePath;
+    final objectBox = Database.store;
+    bool stillCurrent() => !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+        !objectBox.isClosed() && identical(objectBox, Database.store) &&
+        identical(expectedState, state) &&
+        identical(client, state?.icloudServices?.cloudMessagesClient) &&
+        storagePath == statePath && !ss.settings.cloudSyncingEnabled.value;
+    Future<CloudSyncNativeAuthSnapshot?> captureAuth() async {
+      if (!stillCurrent()) return null;
+      final metadata = await FrbCloudSyncNativeAuthBinding().capture(
+        cloudMessagesClient: client,
+        privateStorageDirectory: storagePath,
+      );
+      if (!stillCurrent()) return null;
+      return CloudSyncNativeAuthSnapshot.fromNative(
+        nativeSessionId: metadata.nativeSessionId,
+        accountFingerprint: metadata.accountFingerprint,
+        protectedStoreIdentity: metadata.protectedStoreIdentity,
+        cloudMessagesClient: client,
+      );
+    }
+
+    final auth = await captureAuth().timeout(const Duration(seconds: 1));
+    if (auth == null || !stillCurrent()) {
+      throw StateError('cloud_sync_local_mutation_auth_changed');
+    }
+    final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
+    final owner = authority.read(
+      CloudKitWriterScope(accountFingerprint: auth.accountFingerprint),
+    );
+    if (owner == null || owner.owner != CloudKitWriterOwner.v2) {
+      throw StateError('cloud_sync_local_mutation_owner_required');
+    }
+    final journal = CloudSyncLocalMutationJournal(
+      store: objectBox, authority: authority, authoritySnapshot: owner,
+    );
+    final cloudStore = ObjectBoxCloudSyncStore(
+      store: objectBox,
+      protector: RustCloudSyncProtector(storageDirectory: storagePath),
+      localMutationJournal: journal,
+    );
+    final interlock = CloudKitOperationInterlock(
+      privateStorageDirectory: storagePath, fenceStore: cloudStore,
+    );
+    final transport = NativeProtectedCloudSyncTransport(
+      cloudMessagesClient: client,
+      storageDirectory: storagePath,
+      protectedStoreIdentity: auth.protectedStoreIdentity,
+    );
+    final authFence = CloudSyncLocalSendAuthFence(
+      expected: auth,
+      capture: () => captureAuth().timeout(const Duration(seconds: 1)),
+      stillCurrent: stillCurrent,
+    );
+    api.CloudSyncNativeSendReceiptContext receiptContext([
+      CloudSyncLocalMutationSourceBinding? source,
+    ]) => api.CloudSyncNativeSendReceiptContext(
+      storageDirectory: storagePath,
+      guidHash: identity.guidHash,
+      accountFingerprint: auth.accountFingerprint,
+      protectedStoreIdentity: auth.protectedStoreIdentity,
+      nativeSessionId: auth.nativeSessionId,
+      sourceBinding: source == null ? null : api.CloudSyncNativeSendSourceBinding(
+        kind: api.CloudSyncNativeSendSourceKind.mutation,
+        sourceSha256: source.sourceSha256,
+        protectedReference: source.protectedReference,
+        leaseReference: source.leaseReference,
+        payloadSha256: source.payloadSha256,
+        payloadLength: BigInt.from(source.payloadLength),
+      ),
+    );
+    try {
+      await CloudProtectedPageLeaseLifecycle(
+        store: cloudStore, transport: transport,
+      ).ensureRecoveredBeforeWrite();
+      final prepared = await CloudSyncLocalMutationSourceStaging(
+        journal: journal,
+        authFence: authFence,
+        capturedAuth: auth,
+        stillCurrent: stillCurrent,
+        exclusion: interlock,
+        transport: transport,
+      ).prepareSubmission(
+        localMessageId: localMessageId,
+        identity: identity,
+        stage: () async {
+          final native = await api.cloudSyncStageIdsMutationSource(
+            cloudMessagesClient: client,
+            context: receiptContext(),
+            localSourceSha256: identity.sourceSha256,
+            message: wire,
+          );
+          if (native.kind != api.CloudSyncNativeSendSourceKind.mutation) {
+            throw StateError('cloud_sync_local_mutation_source_invalid');
+          }
+          return CloudSyncLocalMutationSourceBinding(
+            accountFingerprint: auth.accountFingerprint,
+            protectedStoreIdentity: auth.protectedStoreIdentity,
+            mutationGuidHash: identity.guidHash,
+            targetGuidHash: identity.targetGuidHash,
+            targetPart: identity.targetPart,
+            sourceSha256: native.sourceSha256,
+            protectedReference: native.protectedReference,
+            leaseReference: native.leaseReference,
+            payloadSha256: native.payloadSha256,
+            payloadLength: native.payloadLength.toInt(),
+          );
+        },
+        restore: (source) => api.cloudSyncRestoreIdsMutationSource(
+          cloudMessagesClient: client,
+          context: receiptContext(source),
+        ),
+      );
+      authFence.requireCurrentBinding(auth);
+      journal.requireClaimedSubmission(
+        intentId: prepared.intentId,
+        committedSource: prepared.source,
+        capturedAuth: auth,
+        stillCurrent: stillCurrent,
+      );
+      return (
+        intentId: prepared.intentId,
+        identity: identity,
+        source: prepared.source,
+        wire: prepared.wire,
+        nativeReceiptContext: receiptContext(prepared.source),
+        stillCurrent: stillCurrent,
+      );
+    } catch (error) {
+      Logger.warn('Cloud Sync V2 mutation preparation failed '
+          'code=${cloudSyncV2SafeFailureCode(error)}');
+      rethrow;
+    } finally {
+      await transport.quiesceNativeOperations();
     }
   }
 
@@ -8556,10 +8785,16 @@ class RustPushService extends GetxService {
       // consumer must retain their native receipt, never reclassify/ack it as
       // an attachment origin merely because its reference fields match.
       if (source?.kind == api.CloudSyncNativeSendSourceKind.mutation) {
+        if (_cloudSyncV2MessageUpdateInFlight != null) {
+          _scheduleCloudSyncV2MessageUpdateRetry(const Duration(seconds: 1));
+          return;
+        }
+        final mutationJournal = CloudSyncLocalMutationJournal(
+          store: objectBox, authority: authority, authoritySnapshot: owner,
+        );
+        final int? mutationIntentId;
         try {
-          CloudSyncLocalMutationJournal(
-            store: objectBox, authority: authority, authoritySnapshot: owner,
-          ).recordNativeReceiptIfTracked(
+          mutationIntentId = mutationJournal.recordNativeReceiptIntentIfTracked(
             receipt: nativeReceipt, capturedAuth: auth,
             stillCurrent: confirmationBindingCurrent, now: DateTime.now().toUtc(),
             replayBinding: replayBinding,
@@ -8572,8 +8807,184 @@ class RustPushService extends GetxService {
             rethrow;
           }
           Logger.warn('Cloud Sync V2 mutation receipt retained; confirmation deferred');
+          return;
         }
-        return; // Never use create admission or acknowledge mutation evidence.
+        if (mutationIntentId == null) return;
+
+        final cloudStore = ObjectBoxCloudSyncStore(
+          store: objectBox,
+          protector: RustCloudSyncProtector(storageDirectory: storagePath),
+          localMutationJournal: mutationJournal,
+        );
+        final interlock = CloudKitOperationInterlock(
+          privateStorageDirectory: storagePath, fenceStore: cloudStore,
+        );
+        final bindings = FrbNativeProtectedCloudSyncBindings();
+        final mutationGuard = CloudKitWriterMutationGuard(
+          store: objectBox,
+          readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+          privateStorageDirectory: storagePath,
+          reconciliationBinding: bindings,
+        );
+        final transport = NativeProtectedCloudSyncTransport(
+          cloudMessagesClient: client,
+          storageDirectory: storagePath,
+          protectedStoreIdentity: auth.protectedStoreIdentity,
+          bindings: bindings,
+          writerMutationGuard: mutationGuard,
+          readCheckpointGeneration: (scope) async =>
+              (await cloudStore.readCheckpoint(scope)).generation,
+          retainConfirmedReceiptsForReplay: true,
+        );
+        final authFence = CloudSyncLocalSendAuthFence(
+          expected: auth,
+          capture: captureAuth,
+          stillCurrent: confirmationBindingCurrent,
+        );
+        final lifecycle = CloudProtectedPageLeaseLifecycle(
+          store: cloudStore, transport: transport,
+        );
+        api.CloudSyncNativeSendReceiptContext mutationContext(
+          CloudSyncLocalMutationSourceBinding mutationSource,
+        ) => api.CloudSyncNativeSendReceiptContext(
+          storageDirectory: storagePath,
+          guidHash: mutationSource.mutationGuidHash,
+          accountFingerprint: auth.accountFingerprint,
+          protectedStoreIdentity: auth.protectedStoreIdentity,
+          nativeSessionId: auth.nativeSessionId,
+          sourceBinding: api.CloudSyncNativeSendSourceBinding(
+            kind: api.CloudSyncNativeSendSourceKind.mutation,
+            sourceSha256: mutationSource.sourceSha256,
+            protectedReference: mutationSource.protectedReference,
+            leaseReference: mutationSource.leaseReference,
+            payloadSha256: mutationSource.payloadSha256,
+            payloadLength: BigInt.from(mutationSource.payloadLength),
+            ),
+          );
+        final updateCompletion = Completer<void>();
+        final updateInFlight = updateCompletion.future;
+        _cloudSyncV2MessageUpdateInFlight = updateInFlight;
+        try {
+          await lifecycle.ensureRecoveredBeforeWrite();
+          final mutationSource = mutationJournal.readReceiptConfirmedSource(
+            intentId: mutationIntentId,
+            currentAuth: auth,
+            stillCurrent: confirmationBindingCurrent,
+          );
+          await CloudSyncLocalMutationSourceStaging(
+            journal: mutationJournal,
+            authFence: authFence,
+            capturedAuth: auth,
+            stillCurrent: confirmationBindingCurrent,
+            exclusion: interlock,
+            transport: transport,
+          ).reflectConfirmed(
+            intentId: mutationIntentId,
+            source: mutationSource,
+            receipt: nativeReceipt,
+            replayBinding: replayBinding,
+            restore: (restoredSource) => api.cloudSyncRestoreIdsMutationSource(
+              cloudMessagesClient: client,
+              context: mutationContext(restoredSource),
+            ),
+          );
+
+          final admission = mutationJournal.readReflectedForUpdate(
+            intentId: mutationIntentId,
+            currentAuth: auth,
+            stillCurrent: confirmationBindingCurrent,
+          );
+          final scope = CloudSyncScope(
+            accountFingerprint: auth.accountFingerprint,
+            container: 'com.apple.messages.cloud',
+            database: 'private',
+            zone: 'messageManateeZone',
+            streamKind: CloudSyncStreamKind.messages,
+            schemaVersion: 2,
+            persistenceLane: CloudSyncPersistenceLane.semantic,
+          );
+          final predecessor = admission.requirePredecessor(
+            store: objectBox, messageScope: scope,
+          );
+          final executor = CloudSyncMessageUpdateExecutor(
+            objectBoxStore: objectBox,
+            cloudStore: cloudStore,
+            journal: mutationJournal,
+            transport: transport,
+            preparedSubmissionReleaser: transport,
+            leaseTransport: transport,
+          );
+          late final CloudOutboxOperation admittedOperation;
+          final result = await interlock.runExclusive(
+            kind: CloudKitOperationKind.v2ReadWrite,
+            action: () async {
+              admittedOperation = await executor.admitReflectedUpdate(
+                scope,
+                source: admission,
+                predecessor: predecessor,
+                currentAuth: auth,
+                stillCurrent: confirmationBindingCurrent,
+                receipt: nativeReceipt,
+              );
+              return executor.runOnce(
+                scope,
+                currentAuth: auth,
+                stillCurrent: confirmationBindingCurrent,
+              );
+            },
+          );
+          final exactOperations = (await cloudStore.readOutboxEntries(scope))
+              .where((operation) =>
+                  operation.operationId == admittedOperation.operationId)
+              .toList(growable: false);
+          if (exactOperations.length != 1) {
+            throw StateError('cloud_sync_message_update_adoption_missing');
+          }
+          final exactOperation = exactOperations.single;
+          if (exactOperation.status == CloudOutboxStatus.confirmed) {
+            // The executor only returns after exact server readback has been
+            // committed and both protected readback leases were finalized.
+            // The IDS mutation source and receipt can now be released.
+            try {
+              api.cloudSyncAcknowledgeNativeSendReceipt(
+                storageDirectory: storagePath,
+                expectedAccountFingerprint: auth.accountFingerprint,
+                expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+                receipt: nativeReceipt,
+              );
+            } catch (_) {
+              Logger.warn(
+                'Cloud Sync V2 mutation receipt acknowledgement deferred',
+              );
+              _scheduleCloudSyncV2MessageUpdateRetry(
+                const Duration(seconds: 1),
+              );
+            }
+          } else if (exactOperation.status != CloudOutboxStatus.quarantined) {
+            final now = DateTime.now().toUtc();
+            final eligibleAt = exactOperation.nextEligibleAt;
+            final delay = eligibleAt == null
+                ? const Duration(seconds: 1)
+                : eligibleAt.difference(now);
+            _scheduleCloudSyncV2MessageUpdateRetry(delay);
+          }
+          final reflected = objectBox.box<Message>().get(admission.localMessageId);
+          final reflectedChat = reflected?.chat.target;
+          if (reflected != null && reflectedChat != null && ls.isUiThread) {
+            await ah.handleUpdatedMessage(reflectedChat, reflected, null);
+          }
+          Logger.info('Cloud Sync V2 mutation update pass completed $result');
+        } finally {
+          try {
+            await transport.quiesceNativeOperations();
+          } finally {
+            if (!updateCompletion.isCompleted) updateCompletion.complete();
+            if (identical(_cloudSyncV2MessageUpdateInFlight, updateInFlight)) {
+              _cloudSyncV2MessageUpdateInFlight = null;
+            }
+          }
+        }
+        return; // Never route mutation evidence through create admission.
       }
       receiptSource = source == null ? null : CloudSyncLocalSendSourceBinding(
         accountFingerprint: auth.accountFingerprint,
@@ -8690,6 +9101,41 @@ class RustPushService extends GetxService {
           'code=${cloudSyncV2SafeFailureCode(error)}');
     }
     _queueCloudSyncV2LocalSends(CloudSyncTrigger.localOutbox);
+  }
+
+  void _scheduleCloudSyncV2MessageUpdateRetry(Duration delay) {
+    if (loggingOut ||
+        _cloudSyncV2OutboundQuiescing ||
+        !_cloudSyncV2CanaryRuntimeAllowed ||
+        !_cloudSyncV2DeveloperRuntimeAllowed) {
+      return;
+    }
+    final boundedDelay = Duration(
+      milliseconds: delay.inMilliseconds.clamp(100, 60000).toInt(),
+    );
+    final dueUtc = DateTime.now().toUtc().add(boundedDelay);
+    final existing = _cloudSyncV2MessageUpdateRetryTimer;
+    final existingDue = _cloudSyncV2MessageUpdateRetryDueUtc;
+    if (existing?.isActive == true &&
+        existingDue != null &&
+        !existingDue.isAfter(dueUtc)) {
+      return;
+    }
+    existing?.cancel();
+    late final Timer scheduled;
+    scheduled = Timer(boundedDelay, () {
+      if (!identical(_cloudSyncV2MessageUpdateRetryTimer, scheduled)) return;
+      _cloudSyncV2MessageUpdateRetryTimer = null;
+      _cloudSyncV2MessageUpdateRetryDueUtc = null;
+      if (_cloudSyncV2NativeReceiptReplayInFlight != null ||
+          _cloudSyncV2MessageUpdateInFlight != null) {
+        _scheduleCloudSyncV2MessageUpdateRetry(const Duration(seconds: 1));
+        return;
+      }
+      unawaited(_replayCloudSyncV2NativeSendReceipts());
+    });
+    _cloudSyncV2MessageUpdateRetryTimer = scheduled;
+    _cloudSyncV2MessageUpdateRetryDueUtc = dueUtc;
   }
 
   Future<void> _replayCloudSyncV2NativeSendReceipts() {
@@ -10218,11 +10664,30 @@ class RustPushService extends GetxService {
     _cloudSyncV2PcsPreparationQuiescing = true;
     _cloudSyncV2SemanticPullQuiescing = true;
     _cloudSyncV2OutboundQuiescing = true;
+    _cloudSyncV2MessageUpdateRetryTimer?.cancel();
+    _cloudSyncV2MessageUpdateRetryTimer = null;
+    _cloudSyncV2MessageUpdateRetryDueUtc = null;
     try {
       final localSendRuntime = _cloudSyncV2LocalSendRuntime;
       if (localSendRuntime != null) {
         await localSendRuntime.dispose().timeout(_cloudSyncV2OutboundQuiescenceTimeout);
         _cloudSyncV2LocalSendRuntime = null;
+      }
+      final nativeReceiptReplay = _cloudSyncV2NativeReceiptReplayInFlight;
+      if (nativeReceiptReplay != null) {
+        try {
+          await nativeReceiptReplay.timeout(_cloudSyncV2OutboundQuiescenceTimeout);
+        } on TimeoutException {
+          throw StateError('cloud_sync_native_receipt_replay_quiescence_timeout');
+        }
+      }
+      final messageUpdate = _cloudSyncV2MessageUpdateInFlight;
+      if (messageUpdate != null) {
+        try {
+          await messageUpdate.timeout(_cloudSyncV2OutboundQuiescenceTimeout);
+        } on TimeoutException {
+          throw StateError('cloud_sync_message_update_quiescence_timeout');
+        }
       }
       await shadowOwner?.quiesceForAccountTransition();
       final pcsPreparation = _cloudSyncV2PcsPreparationInFlight;

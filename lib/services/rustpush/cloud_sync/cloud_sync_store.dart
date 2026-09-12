@@ -568,6 +568,38 @@ abstract interface class CloudConfirmedOutboundReceiptStore {
   });
 }
 
+/// Durable conditional-update readback capability.
+///
+/// Native reconciliation happens before this boundary. Implementations must
+/// commit the exact receipt without network or protected-reference resolution,
+/// keep the original update-stage lease and the new mapping-owned readback
+/// lease independently live, and clear them only after the caller confirms
+/// both native finalizations succeeded.
+abstract interface class CloudMessageUpdateReadbackStore {
+  Future<CloudMessageUpdateReadbackCommitSnapshot>
+  commitMessageUpdateReadbackReceipt(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required CloudMessageUpdateReadbackReceipt receipt,
+    required DateTime now,
+  });
+
+  /// Recovers exact committed snapshots whose two native leases still need
+  /// finalization after process death. This read is bounded and never mutates
+  /// ObjectBox or contacts native storage.
+  Future<List<CloudMessageUpdateReadbackCommitSnapshot>>
+  readPendingMessageUpdateReadbacks(
+    CloudSyncScope scope, {
+    required int maximumCount,
+  });
+
+  Future<void> finalizeMessageUpdateReadbackLeases({
+    required CloudMessageUpdateReadbackCommitSnapshot expectedSnapshot,
+    required bool updateStageLeaseFinalized,
+    required bool readbackLeaseFinalized,
+  });
+}
+
 final class CloudProtectedReferenceSnapshot {
   CloudProtectedReferenceSnapshot({
     required Iterable<String> references,

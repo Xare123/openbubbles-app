@@ -75,6 +75,80 @@ void main() {
     );
   });
 
+  test(
+    'mutation predecessor binds the local target to one current raw record',
+    () async {
+      f.db.box<Message>().put(f.parent..isFromMe = true);
+      CloudSyncMessageMutationPredecessor resolve() =>
+          requireCloudSyncMessageMutationPredecessor(
+            store: f.db,
+            messageScope: f.messageScope,
+            localMessageId: f.parentId,
+            localChatId: f.chatId,
+            targetGuidHash: sha256
+                .convert(
+                  utf8.encode(
+                    jsonEncode(<Object?>[
+                      'cloud-sync-local-send-guid-v1',
+                      _parentGuid,
+                    ]),
+                  ),
+                )
+                .toString(),
+          );
+
+      final first = resolve();
+      expect(first.localMessageId, f.parentId);
+      expect(first.generation, f.messageCheckpoint.generation);
+      expect(first.recordMapping.logicalEntityKeyHash, _logical);
+      expect(first.recordMapping.serverRecordIdHash, _record);
+      expect(first.recordMapping.etagHash, _etag);
+      expect(
+        first.recordMapping.rawRecordGeneration,
+        f.messageCheckpoint.generation,
+      );
+      expect(first.toString(), isNot(contains(_parentGuid)));
+
+      await f.reopen();
+      final reopened = resolve();
+      expect(
+        reopened.recordMapping.sameDurableSnapshotAs(first.recordMapping),
+        isTrue,
+      );
+    },
+  );
+
+  test('mutation predecessor rejects drift and unfinished readback', () {
+    f.db.box<Message>().put(f.parent..isFromMe = true);
+    CloudSyncMessageMutationPredecessor resolve({String? targetGuidHash}) =>
+        requireCloudSyncMessageMutationPredecessor(
+          store: f.db,
+          messageScope: f.messageScope,
+          localMessageId: f.parentId,
+          localChatId: f.chatId,
+          targetGuidHash:
+              targetGuidHash ??
+              sha256
+                  .convert(
+                    utf8.encode(
+                      jsonEncode(<Object?>[
+                        'cloud-sync-local-send-guid-v1',
+                        _parentGuid,
+                      ]),
+                    ),
+                  )
+                  .toString(),
+        );
+
+    expect(() => resolve(targetGuidHash: 'f' * 64), _blocked);
+    final mapping = f.mapping
+      ..protectedReadbackLeaseReference = 'obcs2.lease.${'a' * 32}'
+      ..pendingUpdateOperationId = 'op1:${'b' * 64}'
+      ..pendingUpdatePredecessorEtagHash = _etag;
+    f.db.box<CloudRecordMapEntity>().put(mapping);
+    expect(resolve, _blocked);
+  });
+
   test('partial association fields cannot fall through to plaintext', () {
     final malformed = Message(
       guid: '11111111-1111-4111-8111-111111111111',
@@ -381,6 +455,7 @@ final class _Fixture {
         encryptedServerRecordId: 'obcs2.ref.${'R' * 43}',
         etagHash: _etag,
         encryptedRawRecordRef: 'obcs2.ref.${'P' * 43}',
+        rawRecordGeneration: checkpoint.generation,
         updatedAtMs: _now.millisecondsSinceEpoch,
       ),
     );

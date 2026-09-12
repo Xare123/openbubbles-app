@@ -16,6 +16,230 @@ import 'objectbox_canonical_semantic_entity_adapter.dart';
 typedef CloudSyncConfirmedLocalParentReader =
     List<Object>? Function(Message parent);
 
+/// Exact current-generation CloudKit predecessor for one journaled local
+/// edit/unsend. Raw GUIDs remain local to this bounded lookup; the returned
+/// value contains only durable hashes and protected references.
+final class CloudSyncMessageMutationPredecessor {
+  const CloudSyncMessageMutationPredecessor._({
+    required this.localMessageId,
+    required this.generation,
+    required this.canonicalGuidLookupHash,
+    required this.canonicalGuidHash,
+    required this.recordMapping,
+  });
+
+  final int localMessageId;
+  final int generation;
+  final String canonicalGuidLookupHash;
+  final String canonicalGuidHash;
+  final CloudRecordMapEntry recordMapping;
+
+  @override
+  String toString() => 'CloudSyncMessageMutationPredecessor(redacted)';
+}
+
+/// Resolve a reflected mutation to the one exact restored Message record it
+/// may conditionally update.
+///
+/// This is provenance only, never write authority. It re-reads the immutable
+/// local target, proves the journal's target-GUID digest, resolves exactly one
+/// canonical snapshot in the current generation, then requires the exact raw
+/// CloudKit record map and latest applied inbox source to agree. Ambiguity,
+/// tombstones, pending remote changes, stale generations and legacy snapshots
+/// all fail closed.
+CloudSyncMessageMutationPredecessor
+requireCloudSyncMessageMutationPredecessor({
+  required Store store,
+  required CloudSyncScope messageScope,
+  required int localMessageId,
+  required int localChatId,
+  required String targetGuidHash,
+}) {
+  Never reject() => throw CloudSyncFailure(
+    category: CloudFailureCategory.dependency,
+    safeCode: 'cloud_sync_local_mutation_predecessor_not_ready',
+  );
+  if (localMessageId <= 0 ||
+      localChatId <= 0 ||
+      !_sha256Digest.hasMatch(targetGuidHash) ||
+      messageScope.container != 'com.apple.messages.cloud' ||
+      messageScope.database != 'private' ||
+      messageScope.zone != 'messageManateeZone' ||
+      messageScope.streamKind != CloudSyncStreamKind.messages ||
+      messageScope.schemaVersion != cloudSyncSchemaVersion ||
+      messageScope.persistenceLane != CloudSyncPersistenceLane.semantic) {
+    reject();
+  }
+
+  final message = store.box<Message>().get(localMessageId);
+  final canonicalGuid = message?.guid;
+  if (message == null ||
+      canonicalGuid == null ||
+      canonicalGuid.isEmpty ||
+      _localSendGuidHash(canonicalGuid) != targetGuidHash ||
+      message.chat.targetId != localChatId ||
+      message.isFromMe != true ||
+      message.verificationFailed ||
+      message.dateDeleted != null ||
+      message.associatedMessageGuid != null ||
+      message.associatedMessagePart != null ||
+      message.associatedMessageType != null ||
+      message.associatedMessageEmoji != null) {
+    reject();
+  }
+
+  final scopeKey = cloudSyncPersistentScopeKey(messageScope);
+  final checkpoint = _unique(
+    store.box<CloudSyncCheckpointEntity>().query(
+      CloudSyncCheckpointEntity_.checkpointKey.equals(scopeKey),
+    ),
+  );
+  if (checkpoint == null ||
+      checkpoint.checkpointKey != scopeKey ||
+      checkpoint.accountFingerprint != messageScope.accountFingerprint ||
+      checkpoint.container != messageScope.container ||
+      checkpoint.database != messageScope.database ||
+      checkpoint.zone != messageScope.zone ||
+      checkpoint.streamKind != messageScope.streamKind.name ||
+      checkpoint.schemaVersion != messageScope.schemaVersion ||
+      checkpoint.persistenceLane != messageScope.persistenceLane.name ||
+      checkpoint.generation <= 0) {
+    reject();
+  }
+  final generation = checkpoint.generation;
+  final generationKey =
+      'semantic-generation4:${_digest('$scopeKey\u001f$generation')}';
+  final lookupHash = CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+    scope: messageScope,
+    generation: generation,
+    canonicalGuid: canonicalGuid,
+  );
+  final snapshot = _unique(
+    store.box<CloudSemanticSnapshotEntity>().query(
+      CloudSemanticSnapshotEntity_.scopeGenerationKey
+          .equals(generationKey)
+          .and(
+            CloudSemanticSnapshotEntity_.canonicalGuidLookupHash.equals(
+              lookupHash,
+            ),
+          ),
+    ),
+  );
+  if (snapshot == null ||
+      snapshot.snapshotKey !=
+          'semantic-snapshot4:$generationKey:message:${snapshot.logicalEntityKeyHash}' ||
+      snapshot.scopeGenerationKey != generationKey ||
+      snapshot.scopeKey != scopeKey ||
+      snapshot.accountFingerprint != messageScope.accountFingerprint ||
+      snapshot.container != messageScope.container ||
+      snapshot.database != messageScope.database ||
+      snapshot.zone != messageScope.zone ||
+      snapshot.streamKind != messageScope.streamKind.name ||
+      snapshot.schemaVersion != messageScope.schemaVersion ||
+      snapshot.generation != generation ||
+      snapshot.entityKind != CloudEntityKind.message.name ||
+      snapshot.logicalEntityKeyHash.isEmpty ||
+      snapshot.canonicalGuidLookupHash != lookupHash) {
+    reject();
+  }
+  final canonicalHash = CloudCanonicalIdentityDigest.forCanonicalGuid(
+    scope: messageScope,
+    generation: generation,
+    kind: CloudEntityKind.message,
+    logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+    canonicalGuid: canonicalGuid,
+  );
+  if (snapshot.canonicalGuidHash != canonicalHash ||
+      !_sha256Digest.hasMatch(canonicalHash)) {
+    reject();
+  }
+
+  final mapping = cloudSyncFindRecordMap(
+    store: store,
+    scope: messageScope,
+    generation: generation,
+    logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+  );
+  if (mapping == null ||
+      mapping.mapKey !=
+          cloudSyncCanonicalRecordMapKey(
+            messageScope,
+            snapshot.logicalEntityKeyHash,
+          ) ||
+      mapping.scopeKey != scopeKey ||
+      mapping.accountFingerprint != messageScope.accountFingerprint ||
+      mapping.zone != messageScope.zone ||
+      mapping.generation != generation ||
+      mapping.logicalEntityKeyHash != snapshot.logicalEntityKeyHash ||
+      !_nativeDigest.hasMatch(mapping.serverRecordIdHash) ||
+      !_reference.hasMatch(mapping.encryptedServerRecordId) ||
+      !_reference.hasMatch(mapping.encryptedRawRecordRef ?? '') ||
+      !_nativeDigest.hasMatch(mapping.etagHash ?? '') ||
+      mapping.rawRecordGeneration != generation ||
+      mapping.protectedReadbackLeaseReference != null ||
+      mapping.pendingUpdateOperationId != null ||
+      mapping.pendingUpdatePredecessorEtagHash != null ||
+      mapping.etagHash != snapshot.etagHash) {
+    reject();
+  }
+
+  final latestQuery =
+      (store.box<CloudInboxChangeEntity>().query(
+            CloudInboxChangeEntity_.scopeKey
+                .equals(scopeKey)
+                .and(CloudInboxChangeEntity_.generation.equals(generation))
+                .and(
+                  CloudInboxChangeEntity_.serverRecordIdHash.equals(
+                    mapping.serverRecordIdHash,
+                  ),
+                ),
+          )..order(
+            CloudInboxChangeEntity_.fetchSequence,
+            flags: Order.descending,
+          ))
+          .build()
+        ..limit = 1;
+  try {
+    final latest = latestQuery.findFirst();
+    if (latest == null ||
+        latest.scopeKey != scopeKey ||
+        latest.accountFingerprint != messageScope.accountFingerprint ||
+        latest.zone != messageScope.zone ||
+        latest.generation != generation ||
+        latest.status != CloudInboxStatus.applied.index ||
+        latest.isTombstone ||
+        latest.changeType != CloudChangeType.save.name ||
+        latest.etagHash != mapping.etagHash ||
+        latest.encryptedServerRecordId != mapping.encryptedServerRecordId ||
+        latest.encryptedPayloadRef != mapping.encryptedRawRecordRef) {
+      reject();
+    }
+  } finally {
+    latestQuery.close();
+  }
+
+  return CloudSyncMessageMutationPredecessor._(
+    localMessageId: localMessageId,
+    generation: generation,
+    canonicalGuidLookupHash: lookupHash,
+    canonicalGuidHash: canonicalHash,
+    recordMapping: CloudRecordMapEntry(
+      scope: messageScope,
+      logicalEntityKeyHash: mapping.logicalEntityKeyHash,
+      serverRecordIdHash: mapping.serverRecordIdHash,
+      encryptedServerRecordId: mapping.encryptedServerRecordId,
+      generation: mapping.generation,
+      etagHash: mapping.etagHash,
+      encryptedRawRecordReference: mapping.encryptedRawRecordRef,
+      rawRecordGeneration: mapping.rawRecordGeneration,
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(
+        mapping.updatedAtMs,
+        isUtc: true,
+      ),
+    ),
+  );
+}
+
 /// Captures every durable local dependency needed by an outbound Message.
 ///
 /// Plain-text sends retain the exact v1 Chat binding. Reactions additionally
@@ -422,5 +646,12 @@ T? _unique<T>(QueryBuilder<T> builder) {
 
 final _nativeDigest = RegExp(r'^[A-Za-z0-9_-]{43}$');
 final _reference = RegExp(r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$');
+final _sha256Digest = RegExp(r'^[0-9a-f]{64}$');
 
 String _digest(String value) => sha256.convert(utf8.encode(value)).toString();
+
+String _localSendGuidHash(String value) => sha256
+    .convert(
+      utf8.encode(jsonEncode(<Object?>['cloud-sync-local-send-guid-v1', value])),
+    )
+    .toString();

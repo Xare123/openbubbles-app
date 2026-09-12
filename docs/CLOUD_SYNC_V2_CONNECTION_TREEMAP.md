@@ -54,7 +54,8 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 | Item | Current state |
 | --- | --- |
-| App branch | `agent/cloudkit-v2-sms-chat-contract` |
+| App branch | `agent/cloudkit-v2-update-seam` (working tree based on `1e5f154b4`; conditional-update integration is not yet committed or installed) |
+| Conditional-update executor candidate | **TEST-PROVEN:** the retained positive IDS receipt now admits one exact version-checked update operation, preserves the original record identity/ETag and protected source leases, submits once, reconciles unknown outcomes by exact readback, and releases native evidence only after durable confirmation. Retry/restart and teardown retain the native receipt rather than resending IDS. A controlled full CloudKit suite passed **2,848 tests with zero failures** on September 12; targeted analysis has no errors or warnings. Live Pixel and independent-recipient proof remain open. |
 | Conditional-update predecessor | **TEST-PROVEN:** app `c092ef1a7` pins rustpush `90787d3`. Native `lookup_message_record_version` retains decoded CloudKit fields, opaque encrypted payloads and exact identity/ETag without a typed `CloudMessage` roundtrip. The old typed lookup delegates to it; current-container and cached-PCS checks remain. GCE dependency-only `34647348048` passed 305 tests and cleanup; app-native `34647652095` passed 533 tests and exact bridge regeneration. No update/save path is enabled. |
 | Conditional-update staging | **TEST-PROVEN, not enabled:** exact `3260dc506` passed 554 native tests and bridge regeneration in GCE `34650587629`; cleanup completed at 21:52:03Z. Protected staging retains the original predecessor, conditional merge request, ciphertext, ETag and request IDs. Summary patching preserves unknown plist values, singleton history and both supported timestamp formats. A composed test passes edit then unsend through the real message converter without discarding unknown protobuf fields. The first qualification exposed a missing protected-purpose allowlist entry, now fixed. These helpers do not authorize a save. |
 | Conditional-update source proof | **TEST-PROVEN:** exact `8d98a8c56` passed 557 native tests and bridge regeneration in GCE `34651357165`; cleanup completed at 22:01:12Z, with independent instance/runner inventories empty. It reopens a committed mutation source plus its exact encrypted positive IDS receipt, without consuming either. Current login and historical send session are checked separately, permitting cold recovery without resending IDS. Missing, changed or timeless receipts do not supply update authority; legacy evidence remains retained. The preparer and journal/outbox integration remain unconnected. |
@@ -71,44 +72,39 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
 | Production claim | Not yet allowed. |
 
-Next technical gate: prove safe conditional existing-record writes. Read-transition candidate
-`90f98b7eb` passed GCE Dart-only qualification `34594546421`.
-The prior blocking IDS/local subgate passed on exact `c02379430` at 20:46:57Z
-(edit-16) and 20:47:56Z (unsend-18). Next connect the exact confirmed mutation
-source to a durable, version-checked update candidate. Preserve unknown outer
-fields and nested protobuf/plist data; retain the original ETag and candidate
-before submission. Qualify conflict/unknown-outcome readback and restart without
-resending IDS. Do not enable arbitrary existing-record writes from a successful
-local reflection or synthetic roundtrip alone. Independent Apple-device and
-Android end-to-end proof remain separate.
+Next technical gate: qualify the integrated conditional existing-record writer
+on Android and independently verify the recipient-visible result. Read-transition
+candidate `90f98b7eb` passed GCE Dart-only qualification `34594546421`; the prior
+blocking IDS/local subgate passed on exact `c02379430` at 20:46:57Z (edit-16) and
+20:47:56Z (unsend-18). The current working tree now connects that exact confirmed
+source to a separate durable update lane without weakening message-create rules.
 
-Remaining conditional-writer integration, in order:
+Completed in the current working tree:
 
-1. Connect the native confirmed-source opener to the journal's exact retained
-   receipt. The opener now verifies the protected file instead of trusting a
-   replay descriptor; the journal keeps that receipt after local reflection.
-   State 3 alone is not a CloudKit authorization.
-2. Fetch/decrypt the original record version under the existing auth/PCS fences,
-   then compose source-proven protobuf/plist changes. Preserve both Apple-second
-   and legacy Unix-millisecond history dates without rewriting their values.
-3. Atomically adopt the staged update into the existing outbox with its own
-   mutation identity and protected-reference liveness. Do not route it through
-   `cloud_sync_prepare_message_create`, which intentionally admits only creates.
-4. Submit the exact retained conditional request once. Conflict or unknown
-   outcome goes to readback; no new IDS send, replacement ETag or override.
-   Release the original receipt only after verified conditional-write readback.
+1. The native confirmed-source opener is bound to the journal's exact retained
+   receipt. State 3 alone does not authorize a CloudKit update.
+2. The original record version is fetched under existing auth/PCS fences and the
+   source-proven mutation preserves opaque fields, nested data and the original
+   conditional ETag.
+3. The staged update is atomically adopted into its own versioned outbox lane;
+   `cloud_sync_prepare_message_create` remains create-only.
+4. Submission is single-attempt per retained request. Conflict or unknown outcome
+   enters exact readback, never a new IDS send or replacement predecessor.
+5. Restart and teardown retain and replay the native receipt only while the exact
+   operation remains eligible. Native evidence is acknowledged only after durable
+   outbox confirmation and protected-source finalization.
 
-The native preparation seam belongs beside the existing scoped writer lookup
-in `rustpush/src/imessage/cloud_messages.rs`. Use bounded raw-field decryption
-and the original uncompressed protobuf bytes, not `CloudMessage` reserialization.
-The existing generic conditional-save builder can encrypt a minimal `msgProto`
-merge against the fetched ETag; it must not be given a full typed replacement.
-Define and test the causal predecessor/part check before joining these helpers.
-The current Dart transport's `prepareSubmission` is also explicitly create-only
-(`native_protected_cloud_sync_transport.dart`); keep that validation intact and
-add a distinct update route through admission, preparation and readback. Batch
-that integration for one native/Dart qualification rather than enabling helpers
-piecemeal or rebuilding an APK after each private helper.
+Remaining qualification, in order:
+
+1. Produce a signed Canary containing this exact source and verify package/native
+   provenance before installation.
+2. Run one controlled edit and one controlled undo-send against an approved test
+   recipient, then prove exact CloudKit readback and no duplicate IDS send across
+   a restart.
+3. Independently verify recipient or second-client display. Same-client local
+   reflection is not sufficient production evidence.
+4. Exercise one conflict/unknown-outcome recovery on the installed candidate and
+   confirm the original receipt, predecessor and operation identity remain stable.
 
 Preview repair `269620126` and reviewed Find My lane isolation `ee9729ec3`
 passed GCE Dart-only `34597175527`, exact source
