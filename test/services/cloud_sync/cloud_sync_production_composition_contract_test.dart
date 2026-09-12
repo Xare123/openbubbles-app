@@ -52,7 +52,7 @@ void main() {
     );
   });
 
-  test('evidence canary is a distinct read-only Android artifact', () {
+  test('evidence canary is a distinct V2 write-qualified Android artifact', () {
     final workflow = File('.github/workflows/build.yml').readAsStringSync();
     final gradle = File('android/app/build.gradle').readAsStringSync();
     final betaStart = workflow.indexOf(
@@ -71,10 +71,21 @@ void main() {
     );
     expect(betaBuild, isNot(contains('OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE')));
     final canaryBuild = workflow.substring(canaryStart);
-    expect(canaryBuild, isNot(contains('OPENBUBBLES_CLOUDKIT_WRITER_OWNER')));
     expect(
       canaryBuild,
-      isNot(contains('OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY')),
+      contains('--dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2'),
+    );
+    expect(
+      canaryBuild,
+      contains(
+        '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true',
+      ),
+    );
+    expect(
+      canaryBuild,
+      contains(
+        '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME=true',
+      ),
     );
     expect(
       canaryBuild,

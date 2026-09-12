@@ -389,11 +389,10 @@ jobs:
           name: Beta Debug APK (Cloud Sync sampler)
           path: build/app/outputs/flutter-apk/app-beta-debug.apk
 
-      # Separate applicationId for bounded, local-only protocol evidence. The
-      # audited outbound path remains compile-time absent until a remote-
-      # absence proof can prevent duplicate logical messages. Relay hardware is
-      # imported after installation; no relay credential is embedded in this
-      # distributable artifact.
+      # Separate applicationId for bounded CloudKit V2 qualification. V2 owns
+      # the writer only in this Canary artifact; Alpha and Beta remain unable to
+      # select it. Relay hardware is imported after installation and no relay or
+      # CloudKit credential is embedded in the distributable artifact.
       - name: Exclude dotenv asset from the Canary APK
         run: |
           set -euo pipefail
@@ -418,6 +417,9 @@ jobs:
           --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
           --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_ANDROID_BACKGROUND_READ=true
           --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true
+          --dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME=true
           --dart-define=OPENBUBBLES_BUILD_COMMIT=${{ github.sha }}
 
       # Debug APKs otherwise use a runner-generated key that changes between

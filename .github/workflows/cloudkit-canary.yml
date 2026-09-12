@@ -169,6 +169,9 @@ jobs:
           --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
           --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_ANDROID_BACKGROUND_READ=true
           --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true
+          --dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME=true
           --dart-define=OPENBUBBLES_BUILD_COMMIT=${{ github.sha }}
 
       - name: Sign the evidence Canary with its stable key

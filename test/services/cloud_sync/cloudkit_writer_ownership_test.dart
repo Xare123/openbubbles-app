@@ -59,7 +59,7 @@ void main() {
     },
   );
 
-  test('beta canary does not select any CloudKit writer', () {
+  test('beta has no writer while evidence canary selects only V2', () {
     final workflow = File('.github/workflows/build.yml').readAsStringSync();
     final betaStart = workflow.indexOf(
       'Build Beta Debug APK with the Cloud Sync V2 sampler',
@@ -75,7 +75,11 @@ void main() {
     final evidenceBuild = workflow.substring(evidenceStart);
     expect(
       evidenceBuild,
-      isNot(contains('OPENBUBBLES_CLOUDKIT_WRITER_OWNER=')),
+      contains('--dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=v2'),
+    );
+    expect(
+      evidenceBuild,
+      isNot(contains('--dart-define=OPENBUBBLES_CLOUDKIT_WRITER_OWNER=legacy')),
     );
   });
 
