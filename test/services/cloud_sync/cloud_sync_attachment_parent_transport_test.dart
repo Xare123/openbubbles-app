@@ -805,7 +805,8 @@ final class _ParentBindings extends _MessageOnlyBindings
     implements
         NativeProtectedCloudSyncAttachmentParentWriteBindings,
         NativeProtectedCloudSyncChatWriteBindings,
-        NativeProtectedCloudSyncAttachmentWriteBindings {
+        NativeProtectedCloudSyncAttachmentWriteBindings,
+        NativeProtectedCloudSyncMessageCreateReadbackBindings {
   int parentStageCalls = 0;
   int stageCalls = 0;
   int reconcileCalls = 0;
@@ -884,6 +885,33 @@ final class _ParentBindings extends _MessageOnlyBindings
     reconcileCalls++;
     reconcileInput = input;
     return reconcileResult;
+  }
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult>
+  reconcileMessageCreateWithRawReadback({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required int rawGeneration,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) async {
+    reconcileCalls++;
+    reconcileInput = input;
+    return frb_api.CloudSyncOutboundReconcileResult(
+      disposition: reconcileResult.disposition,
+      protectedProofReference: reconcileResult.protectedProofReference,
+      failureClass: reconcileResult.failureClass,
+      retryAfterSeconds: reconcileResult.retryAfterSeconds,
+      serverRecordIdHash: reconcileResult.serverRecordIdHash,
+      etagHash: reconcileResult.etagHash,
+      protectedCurrentRawRecordReference: _reference('R'),
+      protectedCurrentRawRecordLeaseReference: _lease('b'),
+      rawGeneration: BigInt.from(rawGeneration),
+      failure: reconcileResult.failure,
+    );
   }
 
   @override

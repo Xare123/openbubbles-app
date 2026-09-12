@@ -38,6 +38,7 @@ void main() {
     );
     final acknowledge = mutation.indexOf(
       'cloudSyncAcknowledgeNativeSendReceipt(',
+      confirmed,
     );
     expect(run, greaterThanOrEqualTo(0));
     expect(exact, greaterThan(run));

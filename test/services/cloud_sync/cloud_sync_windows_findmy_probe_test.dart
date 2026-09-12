@@ -732,7 +732,7 @@ void main() {
           'Map<String, Object?> cloudSyncV2WindowsHarnessStatusPayload',
         ),
       );
-      expect(body, contains('await api.doFirstTimeInit('));
+      expect(body, contains(RegExp(r'await\s+api\s*\.\s*doFirstTimeInit\(')));
       expect(body, contains('await prepareWindowsFindMyProbeReads('));
       expect(body, contains('runWindowsFindMyProbe('));
       expect(body, contains('reads: reads'));
