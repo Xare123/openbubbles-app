@@ -8,6 +8,7 @@ import 'package:bluebubbles/utils/logger/logger.dart';
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_local_mutation_journal.dart';
 import 'cloud_sync_local_mutation_source_binding.dart';
+import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_message_update_transport.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_staging.dart';
@@ -1132,6 +1133,7 @@ final class NativeProtectedCloudSyncTransport
     CloudSyncScope scope, {
     required CloudSyncLocalMutationAdmissionSource source,
     required CloudSyncMessageMutationPredecessor predecessor,
+    required CloudSyncNativeAuthSnapshot currentAuth,
     required frb_api.CloudSyncNativeSendReceipt receipt,
   }) async {
     _requireV2WriterInterlock();
@@ -1141,6 +1143,11 @@ final class NativeProtectedCloudSyncTransport
       predecessor: predecessor,
       receipt: receipt,
     );
+    if (currentAuth.accountFingerprint != scope.accountFingerprint ||
+        currentAuth.protectedStoreIdentity != _protectedStoreIdentity ||
+        !_nativeDigestPattern.hasMatch(currentAuth.nativeSessionId)) {
+      throw _localStorage('cloud_sync_message_update_auth_invalid');
+    }
     final sourceBinding = _nativeMessageUpdateSourceBinding(source);
     final mapping = predecessor.recordMapping;
     final result = await _runProtectedStoreOperation(
@@ -1158,7 +1165,11 @@ final class NativeProtectedCloudSyncTransport
             guidHash: source.mutationGuidHash,
             accountFingerprint: scope.accountFingerprint,
             protectedStoreIdentity: _protectedStoreIdentity,
-            nativeSessionId: receipt.nativeSessionId,
+            // A replayed receipt intentionally retains the historical IDS
+            // session. CloudKit update preparation must bind its current
+            // authority to the live session while native separately verifies
+            // the exact retained receipt and protected source.
+            nativeSessionId: currentAuth.nativeSessionId,
             sourceBinding: sourceBinding,
           ),
           protectedRawRecordReference: mapping.encryptedRawRecordReference!,
@@ -3322,21 +3333,21 @@ final class NativeProtectedCloudSyncTransport
         operation.operationId,
       );
       final input = frb_api.CloudSyncPreparedMessageCreateInput(
-          localOperationId: operation.operationId,
-          logicalEntityKeyHash: operation.logicalEntityKeyHash,
-          protectedLeaseReference: leaseReference,
-          protectedPayloadReference: payloadReference,
-          payloadSha256: payloadSha256,
-          protectedServerRecordReference: payloadReference,
-          serverRecordIdHash: serverRecordIdHash,
-          appleOperationUuid: operationUuid,
-          attachmentParentContext: parentContext,
-          attachmentParentGroupProof: await _readParentGroupProofForPrepare(
-            scope,
-            operation.operationId,
-            parentContext,
-          ),
-        );
+        localOperationId: operation.operationId,
+        logicalEntityKeyHash: operation.logicalEntityKeyHash,
+        protectedLeaseReference: leaseReference,
+        protectedPayloadReference: payloadReference,
+        payloadSha256: payloadSha256,
+        protectedServerRecordReference: payloadReference,
+        serverRecordIdHash: serverRecordIdHash,
+        appleOperationUuid: operationUuid,
+        attachmentParentContext: parentContext,
+        attachmentParentGroupProof: await _readParentGroupProofForPrepare(
+          scope,
+          operation.operationId,
+          parentContext,
+        ),
+      );
       if (scope.zone == 'chatManateeZone') {
         return _requireChatWriteBindings().reconcileChatCreate(
           cloudMessagesClient: _cloudMessagesClient,

@@ -32,202 +32,260 @@ void main() {
     }
   });
 
-  test(
-    'protected transport is constructed only by reviewed gated compositions',
-    () {
-      final constructors = <String>[];
-      const allowed =
-          'lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
-      const localSource = 'lib/services/rustpush/rustpush_service.dart';
-      const windowsSource = 'lib/cloud_sync_v2_windows_local_write.dart';
+  test('protected transport is constructed only by reviewed gated compositions', () {
+    final constructors = <String>[];
+    const allowed =
+        'lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
+    const localSource = 'lib/services/rustpush/rustpush_service.dart';
+    const windowsSource = 'lib/cloud_sync_v2_windows_local_write.dart';
 
-      for (final entity in Directory('lib').listSync(recursive: true)) {
-        if (entity is! File || !entity.path.endsWith('.dart')) continue;
-        final normalizedPath = entity.path.replaceAll(r'\', '/');
-        if (normalizedPath.endsWith(
-          '/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart',
-        )) {
-          continue;
-        }
-        if (entity.readAsStringSync().contains(
-          'NativeProtectedCloudSyncTransport(',
-        )) {
-          constructors.add(entity.path);
-        }
+    for (final entity in Directory('lib').listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      final normalizedPath = entity.path.replaceAll(r'\', '/');
+      if (normalizedPath.endsWith(
+        '/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart',
+      )) {
+        continue;
       }
+      if (entity.readAsStringSync().contains(
+        'NativeProtectedCloudSyncTransport(',
+      )) {
+        constructors.add(entity.path);
+      }
+    }
 
-      final normalized = constructors
-          .map((path) => path.replaceAll(r'\', '/'))
-          .toList(growable: false);
-      expect(
-        normalized,
-        unorderedEquals([allowed, localSource, windowsSource]),
-        reason:
-            'only reviewed canary adapters and gated local IDS source staging may construct the protected transport',
-      );
+    final normalized = constructors
+        .map((path) => path.replaceAll(r'\', '/'))
+        .toList(growable: false);
+    expect(
+      normalized,
+      unorderedEquals([allowed, localSource, windowsSource]),
+      reason:
+          'only reviewed canary adapters and gated local IDS source staging may construct the protected transport',
+    );
 
-      final adapter = File(allowed).readAsStringSync();
-      final windows = File(windowsSource).readAsStringSync();
-      final windowsRun = windows.substring(windows.indexOf('Future<Map<String, Object?>> run()'));
-      final windowsTransport = windowsRun.indexOf('NativeProtectedCloudSyncTransport(');
-      expect(windowsTransport, greaterThan(0));
-      final windowsGate = windowsRun.substring(0, windowsTransport);
-      for (final gate in ['!Platform.isWindows',
-        '!fs.cloudSyncV2WindowsDevProfileActive',
-        '!CloudSyncDevGate.manualOutboundCanaryEnabled',
-        '!CloudKitWriterOwnership.v2MutationsEnabled',
-        'CloudSyncLocalSendSourceStaging',
-      ]) {
-        // Staging follows construction; platform and build gates precede it.
-        expect(gate == 'CloudSyncLocalSendSourceStaging' ? windowsRun : windowsGate,
-            contains(gate));
-      }
-      final mutationStart = windowsRun.indexOf('Future<Map<String, Object?>> _runMutation(');
-      expect(mutationStart, greaterThan(0));
-      final initialSend = windowsRun.substring(0, mutationStart);
-      final mutationSend = windowsRun.substring(mutationStart);
-      final constructorPattern = RegExp(r'NativeProtectedCloudSyncTransport\(');
-      expect(constructorPattern.allMatches(initialSend).length, 1);
-      expect(constructorPattern.allMatches(mutationSend).length, 1);
-      expect(constructorPattern.allMatches(windows).length, 2);
-      expect(initialSend, contains('if (request.mutationType != null)'));
-      expect(initialSend, contains('return _runMutation('));
-      expect(initialSend.indexOf('return _runMutation('), lessThan(windowsTransport));
-      expect(mutationSend, contains('final staging = CloudSyncLocalMutationSourceStaging('));
-      expect(mutationSend, contains('exclusion: interlock'));
+    final adapter = File(allowed).readAsStringSync();
+    final windows = File(windowsSource).readAsStringSync();
+    final windowsRun = windows.substring(
+      windows.indexOf('Future<Map<String, Object?>> run()'),
+    );
+    final windowsTransport = windowsRun.indexOf(
+      'NativeProtectedCloudSyncTransport(',
+    );
+    expect(windowsTransport, greaterThan(0));
+    final windowsGate = windowsRun.substring(0, windowsTransport);
+    for (final gate in [
+      '!Platform.isWindows',
+      '!fs.cloudSyncV2WindowsDevProfileActive',
+      '!CloudSyncDevGate.manualOutboundCanaryEnabled',
+      '!CloudKitWriterOwnership.v2MutationsEnabled',
+      'CloudSyncLocalSendSourceStaging',
+    ]) {
+      // Staging follows construction; platform and build gates precede it.
       expect(
-        mutationSend,
-        contains('final transport = NativeProtectedCloudSyncTransport('),
+        gate == 'CloudSyncLocalSendSourceStaging' ? windowsRun : windowsGate,
+        contains(gate),
       );
-      expect(mutationSend, contains('transport: transport'));
-      expect(mutationSend, contains('await staging.submitConfirmed('));
-      expect(mutationSend, contains('cloudSyncStageIdsMutationSource('));
-      expect(mutationSend, contains('cloudSyncRestoreIdsMutationSource('));
-      expect(mutationSend, contains('sendMutationConfirmed!(wire, context(source))'));
-      expect(mutationSend, contains('await staging.reflectConfirmed('));
-      expect(mutationSend, contains('if (replay && intent.state >= 1)'));
-      expect(mutationSend, contains('cloud_sync_windows_mutation_retained_receipt_missing'));
-      for (final forbidden in ['sendConfirmed(', 'CloudSyncLocalSendSourceStaging(',
-        'cloudSyncPrepareMessageCreate(']) {
-        expect(mutationSend, isNot(contains(forbidden)));
-      }
-      expect(
-        mutationSend,
-        contains('cloudSyncAcknowledgeNativeSendReceipt('),
-      );
-      expect(windowsRun, contains('await CloudSyncLocalSendSourceStaging('));
-      expect(windowsRun, contains('exclusion: interlock'));
-      expect(windowsRun, contains('cloudSyncStageIdsAttachmentSource('));
-      expect(windowsRun.indexOf('await CloudSyncLocalSendSourceStaging('),
-          lessThan(windowsRun.indexOf('await sendConfirmed(wire)')));
-      for (final forbidden in ['transport.stageOutboundMessage(',
-        'transport.stageOutboundChat(', 'transport.save', 'transport.fetch',
-        'CloudSyncEngine(', 'flushOutbox(']) {
-        expect(windowsRun, isNot(contains(forbidden)));
-      }
+    }
+    final mutationStart = windowsRun.indexOf(
+      'Future<Map<String, Object?>> _runMutation(',
+    );
+    expect(mutationStart, greaterThan(0));
+    final initialSend = windowsRun.substring(0, mutationStart);
+    final mutationSend = windowsRun.substring(mutationStart);
+    final constructorPattern = RegExp(r'NativeProtectedCloudSyncTransport\(');
+    expect(constructorPattern.allMatches(initialSend).length, 1);
+    expect(constructorPattern.allMatches(mutationSend).length, 1);
+    expect(constructorPattern.allMatches(windows).length, 2);
+    expect(initialSend, contains('if (request.mutationType != null)'));
+    expect(initialSend, contains('return _runMutation('));
+    expect(
+      initialSend.indexOf('return _runMutation('),
+      lessThan(windowsTransport),
+    );
+    expect(
+      mutationSend,
+      contains('final staging = CloudSyncLocalMutationSourceStaging('),
+    );
+    expect(mutationSend, contains('exclusion: interlock'));
+    expect(
+      mutationSend,
+      contains('final transport = NativeProtectedCloudSyncTransport('),
+    );
+    expect(mutationSend, contains('transport: transport'));
+    expect(mutationSend, contains('await staging.submitConfirmed('));
+    expect(mutationSend, contains('cloudSyncStageIdsMutationSource('));
+    expect(mutationSend, contains('cloudSyncRestoreIdsMutationSource('));
+    expect(
+      mutationSend,
+      contains('sendMutationConfirmed!(wire, context(source))'),
+    );
+    expect(mutationSend, contains('await staging.reflectConfirmed('));
+    expect(mutationSend, contains('if (replay && intent.state >= 1)'));
+    expect(
+      mutationSend,
+      contains('cloud_sync_windows_mutation_retained_receipt_missing'),
+    );
+    for (final forbidden in [
+      'sendConfirmed(',
+      'CloudSyncLocalSendSourceStaging(',
+      'cloudSyncPrepareMessageCreate(',
+    ]) {
+      expect(mutationSend, isNot(contains(forbidden)));
+    }
+    expect(mutationSend, contains('cloudSyncAcknowledgeNativeSendReceipt('));
+    expect(windowsRun, contains('await CloudSyncLocalSendSourceStaging('));
+    expect(windowsRun, contains('exclusion: interlock'));
+    expect(windowsRun, contains('cloudSyncStageIdsAttachmentSource('));
+    expect(
+      windowsRun.indexOf('await CloudSyncLocalSendSourceStaging('),
+      lessThan(windowsRun.indexOf('await sendConfirmed(wire)')),
+    );
+    for (final forbidden in [
+      'transport.stageOutboundMessage(',
+      'transport.stageOutboundChat(',
+      'transport.save',
+      'transport.fetch',
+      'CloudSyncEngine(',
+      'flushOutbox(',
+    ]) {
+      expect(windowsRun, isNot(contains(forbidden)));
+    }
+    expect(
+      RegExp(r'NativeProtectedCloudSyncTransport\(').allMatches(adapter).length,
+      5,
+      reason:
+          'shadow, semantic pull, local send, local staged observation, and one-text outbound are the only compositions',
+    );
+    expect(adapter, contains('NativeProtectedCloudSyncBindings?'));
+    expect(adapter, isNot(contains('RustCloudSyncTransport(')));
+
+    final shadowStart = adapter.indexOf(
+      'final class CloudSyncProductionSamplerAdapter',
+    );
+    final semanticStart = adapter.indexOf(
+      'final class CloudSyncProductionSemanticPullAdapter',
+    );
+    final outboundStart = adapter.indexOf(
+      'final class CloudSyncProductionOutboundCanaryAdapter',
+    );
+    final localSendStart = adapter.indexOf(
+      'final class CloudSyncProductionLocalSendAdapter',
+    );
+    final stagedStart = adapter.indexOf(
+      'Future<T> cloudSyncObserveStagedChat<T>',
+    );
+    expect(shadowStart, greaterThanOrEqualTo(0));
+    expect(semanticStart, greaterThan(shadowStart));
+    expect(localSendStart, greaterThan(semanticStart));
+    expect(outboundStart, greaterThan(localSendStart));
+    expect(stagedStart, greaterThan(localSendStart));
+    expect(outboundStart, greaterThan(stagedStart));
+    final shadowComposition = adapter.substring(shadowStart, semanticStart);
+    final semanticComposition = adapter.substring(
+      semanticStart,
+      localSendStart,
+    );
+    final localSendComposition = adapter.substring(localSendStart, stagedStart);
+    final stagedComposition = adapter.substring(stagedStart, outboundStart);
+    expect(
+      stagedComposition.indexOf('!CloudSyncDevGate.manualSemanticPullEnabled'),
+      lessThan(stagedComposition.indexOf('NativeProtectedCloudSyncTransport(')),
+    );
+    expect(
+      stagedComposition,
+      contains('await transport.rollbackOutboundLease(staged.leaseReference)'),
+    );
+    expect(stagedComposition, contains('CloudSyncWriteChatIdentitySession('));
+    // Restored credentials are cold in a fresh Windows process. Establish
+    // read authentication under the interlock BEFORE capturing its identity.
+    expect(
+      stagedComposition.indexOf('interlock.runExclusive('),
+      lessThan(
+        stagedComposition.indexOf(
+          'await authBinding.ensureReadAuthentication(',
+        ),
+      ),
+    );
+    expect(
+      stagedComposition.indexOf('await authBinding.ensureReadAuthentication('),
+      lessThan(stagedComposition.indexOf('await authProvider.capture()')),
+    );
+    const lookupPreparation = 'await session.run<void>((_) async {})';
+    expect(stagedComposition, contains(lookupPreparation));
+    expect(
+      stagedComposition.indexOf(lookupPreparation),
+      lessThan(stagedComposition.indexOf('await transport.stageOutboundChat(')),
+    );
+    final recoveryStart = localSendComposition.indexOf(
+      'Future<void> recoverProtectedStore()',
+    );
+    expect(recoveryStart, greaterThan(0));
+    final recoveryEnd = localSendComposition.indexOf(
+      'Future<CloudSyncChatIdentityEvidence?>',
+      recoveryStart,
+    );
+    expect(recoveryEnd, greaterThan(recoveryStart));
+    expect(
+      localSendComposition.substring(recoveryStart, recoveryEnd),
+      contains('await identitySession.run<void>((_) async {})'),
+    );
+    for (final forbidden in [
+      'commitOutboundLease(',
+      'stageOutboundMessage(',
+      'admitProtectedOutbound',
+      'CloudSyncEngine(',
+      'flushOutbox(',
+    ]) {
+      expect(stagedComposition, isNot(contains(forbidden)));
+    }
+    final localTransportStart = localSendComposition.indexOf(
+      'NativeProtectedCloudSyncTransport(',
+    );
+    expect(localTransportStart, greaterThan(0));
+    final localSendGate = localSendComposition.substring(
+      0,
+      localTransportStart,
+    );
+    for (final gate in [
+      '!CloudKitWriterOwnership.v2MutationsEnabled',
+      '!CloudSyncDevGate.manualOutboundCanaryEnabled',
+      '!CloudSyncDevGate.localSendRuntimeEnabled',
+      "throw StateError('cloud_sync_local_send_consumer_disabled')",
+    ]) {
+      expect(localSendGate, contains(gate));
+    }
+    for (final composition in [
+      shadowComposition,
+      semanticComposition,
+      localSendComposition,
+      stagedComposition,
+      adapter.substring(outboundStart),
+    ]) {
       expect(
         RegExp(
           r'NativeProtectedCloudSyncTransport\(',
-        ).allMatches(adapter).length,
-        5,
-        reason:
-            'shadow, semantic pull, local send, local staged observation, and one-text outbound are the only compositions',
+        ).allMatches(composition).length,
+        1,
+        reason: 'each reviewed adapter owns exactly one protected transport',
       );
-      expect(adapter, contains('NativeProtectedCloudSyncBindings?'));
-      expect(adapter, isNot(contains('RustCloudSyncTransport(')));
-
-      final shadowStart = adapter.indexOf(
-        'final class CloudSyncProductionSamplerAdapter',
-      );
-      final semanticStart = adapter.indexOf(
-        'final class CloudSyncProductionSemanticPullAdapter',
-      );
-      final outboundStart = adapter.indexOf(
-        'final class CloudSyncProductionOutboundCanaryAdapter',
-      );
-      final localSendStart = adapter.indexOf(
-        'final class CloudSyncProductionLocalSendAdapter',
-      );
-      final stagedStart = adapter.indexOf('Future<T> cloudSyncObserveStagedChat<T>');
-      expect(shadowStart, greaterThanOrEqualTo(0));
-      expect(semanticStart, greaterThan(shadowStart));
-      expect(localSendStart, greaterThan(semanticStart));
-      expect(outboundStart, greaterThan(localSendStart));
-      expect(stagedStart, greaterThan(localSendStart));
-      expect(outboundStart, greaterThan(stagedStart));
-      final shadowComposition = adapter.substring(shadowStart, semanticStart);
-      final semanticComposition = adapter.substring(semanticStart, localSendStart);
-      final localSendComposition = adapter.substring(localSendStart, stagedStart);
-      final stagedComposition = adapter.substring(stagedStart, outboundStart);
-      expect(stagedComposition.indexOf('!CloudSyncDevGate.manualSemanticPullEnabled'),
-        lessThan(stagedComposition.indexOf('NativeProtectedCloudSyncTransport(')));
-      expect(stagedComposition, contains('await transport.rollbackOutboundLease(staged.leaseReference)'));
-      expect(stagedComposition, contains('CloudSyncWriteChatIdentitySession('));
-      // Restored credentials are cold in a fresh Windows process. Establish
-      // read authentication under the interlock BEFORE capturing its identity.
-      expect(stagedComposition.indexOf('interlock.runExclusive('),
-        lessThan(stagedComposition.indexOf('await authBinding.ensureReadAuthentication(')));
-      expect(stagedComposition.indexOf('await authBinding.ensureReadAuthentication('),
-        lessThan(stagedComposition.indexOf('await authProvider.capture()')));
-      const lookupPreparation = 'await session.run<void>((_) async {})';
-      expect(stagedComposition, contains(lookupPreparation));
-      expect(stagedComposition.indexOf(lookupPreparation),
-        lessThan(stagedComposition.indexOf('await transport.stageOutboundChat(')));
-      final recoveryStart = localSendComposition.indexOf('Future<void> recoverProtectedStore()');
-      expect(recoveryStart, greaterThan(0));
-      final recoveryEnd = localSendComposition.indexOf('Future<CloudSyncChatIdentityEvidence?>', recoveryStart);
-      expect(recoveryEnd, greaterThan(recoveryStart));
-      expect(localSendComposition.substring(recoveryStart, recoveryEnd),
-        contains('await identitySession.run<void>((_) async {})'));
-      for (final forbidden in ['commitOutboundLease(', 'stageOutboundMessage(',
-        'admitProtectedOutbound', 'CloudSyncEngine(', 'flushOutbox(']) {
-        expect(stagedComposition, isNot(contains(forbidden)));
-      }
-      final localTransportStart = localSendComposition.indexOf(
-        'NativeProtectedCloudSyncTransport(',
-      );
-      expect(localTransportStart, greaterThan(0));
-      final localSendGate = localSendComposition.substring(0, localTransportStart);
-      for (final gate in [
-        '!CloudKitWriterOwnership.v2MutationsEnabled',
-        '!CloudSyncDevGate.manualOutboundCanaryEnabled',
-        '!CloudSyncDevGate.localSendRuntimeEnabled',
-        "throw StateError('cloud_sync_local_send_consumer_disabled')",
-      ]) {
-        expect(localSendGate, contains(gate));
-      }
-      for (final composition in [
-        shadowComposition,
-        semanticComposition,
-        localSendComposition,
-        stagedComposition,
-        adapter.substring(outboundStart),
-      ]) {
-        expect(
-          RegExp(r'NativeProtectedCloudSyncTransport\(')
-              .allMatches(composition)
-              .length,
-          1,
-          reason: 'each reviewed adapter owns exactly one protected transport',
-        );
-      }
-      expect(
-        shadowComposition,
-        isNot(contains('nativeWriterPauseToken: pauseToken')),
-        reason: 'the non-projecting shadow diagnostic remains explicitly unbound',
-      );
-      expect(
-        semanticComposition,
-        contains('createRawTransport: (snapshot, scope, pauseToken)'),
-      );
-      expect(
-        semanticComposition,
-        contains('nativeWriterPauseToken: pauseToken'),
-        reason:
-            'semantic protected fetch must carry the exact active writer-pause capability',
-      );
-    },
-  );
+    }
+    expect(
+      shadowComposition,
+      isNot(contains('nativeWriterPauseToken: pauseToken')),
+      reason: 'the non-projecting shadow diagnostic remains explicitly unbound',
+    );
+    expect(
+      semanticComposition,
+      contains('createRawTransport: (snapshot, scope, pauseToken)'),
+    );
+    expect(
+      semanticComposition,
+      contains('nativeWriterPauseToken: pauseToken'),
+      reason:
+          'semantic protected fetch must carry the exact active writer-pause capability',
+    );
+  });
 
   test('runtime transport is restricted to gated local IDS source leases', () {
     final service = File(
@@ -236,11 +294,11 @@ void main() {
     final capture = _section(
       service,
       'Future<_CloudSyncV2LocalSendContext?> _captureCloudSyncV2LocalSend(',
-      'Future<api.CloudSyncNativeSendReceiptContext> _prepareCloudSyncV2AttachmentSource(',
+      'Future<api.CloudSyncNativeSendReceiptContext>',
     );
     final prepare = _section(
       service,
-      'Future<api.CloudSyncNativeSendReceiptContext> _prepareCloudSyncV2AttachmentSource(',
+      'Future<api.CloudSyncNativeSendReceiptContext>',
       'Future<api.MessageInst> _restoreCloudSyncV2AttachmentWire(',
     );
     final send = _section(
@@ -291,7 +349,7 @@ void main() {
         RegExp(
           r'attachmentReceiptContext = localCloudIntent\?\.identity\.isAttachment == true\s*'
           r'\? await pushService\._prepareCloudSyncV2AttachmentSource\('
-          r'\s*localCloudIntent!, message: m, chat: chat, wire: msg,\s*\)\s*: null;',
+          r'\s*localCloudIntent!,\s*message: m,\s*chat: chat,\s*wire: msg,\s*\)\s*: null;',
         ),
       ),
     );
@@ -327,7 +385,7 @@ void main() {
       prepare,
       contains('!identical(client, context.capturedAuth.cloudMessagesClient)'),
     );
-    expect(prepare, contains('guids == null || guids.isEmpty'));
+    expect(prepare, matches(RegExp(r'guids == null \|\|\s*guids\.isEmpty')));
     expect(
       prepare,
       matches(
@@ -342,7 +400,10 @@ void main() {
     );
     expect(prepare, contains('final exclusion = CloudKitOperationInterlock('));
     expect(prepare, contains('CloudSyncLocalSendSourceStaging('));
-    expect(prepare, contains('exclusion: exclusion, transport: transport'));
+    expect(
+      prepare,
+      matches(RegExp(r'exclusion: exclusion,\s*transport: transport')),
+    );
     expect(
       RegExp(r'\btransport\b').allMatches(prepare).length,
       3,
@@ -449,9 +510,7 @@ void main() {
     ).readAsStringSync();
     expect(
       transport,
-      contains(
-        'scope.persistenceLane != CloudSyncPersistenceLane.shadow',
-      ),
+      contains('scope.persistenceLane != CloudSyncPersistenceLane.shadow'),
     );
     expect(
       transport,
@@ -459,55 +518,56 @@ void main() {
     );
     expect(
       transport,
-      contains(
-        'scope.persistenceLane != CloudSyncPersistenceLane.semantic',
-      ),
+      contains('scope.persistenceLane != CloudSyncPersistenceLane.semantic'),
     );
     expect(transport, contains('unsupported_semantic_persistence_lane'));
   });
 
-  test('native semantic fetch acquires and forwards read-authentication permit', () {
-    final api = File('rust/src/api/api.rs').readAsStringSync();
-    final shadowFetchStart = api.indexOf(
-      'pub async fn cloud_sync_fetch_protected_page',
-    );
-    final semanticFetchStart = api.indexOf(
-      'pub async fn cloud_sync_fetch_protected_page_under_writer_pause',
-      shadowFetchStart,
-    );
-    final innerFetchStart = api.indexOf(
-      'async fn cloud_sync_fetch_protected_page_inner',
-      semanticFetchStart,
-    );
-    expect(shadowFetchStart, greaterThanOrEqualTo(0));
-    expect(semanticFetchStart, greaterThan(shadowFetchStart));
-    expect(innerFetchStart, greaterThan(semanticFetchStart));
-    final shadowFetch = api.substring(shadowFetchStart, semanticFetchStart);
-    final semanticFetch = api.substring(semanticFetchStart, innerFetchStart);
-    expect(shadowFetch, isNot(contains('native_writer_pause_token')));
-    expect(shadowFetch, isNot(contains('acquire_cloudkit_read_authentication')));
-    expect(semanticFetch, contains('native_writer_pause_token: u64'));
-    expect(
-      semanticFetch,
-      contains(
-        'acquire_cloudkit_read_authentication(native_writer_pause_token)',
-      ),
-    );
-    expect(semanticFetch, contains('Some(&permit)'));
+  test(
+    'native semantic fetch acquires and forwards read-authentication permit',
+    () {
+      final api = File('rust/src/api/api.rs').readAsStringSync();
+      final shadowFetchStart = api.indexOf(
+        'pub async fn cloud_sync_fetch_protected_page',
+      );
+      final semanticFetchStart = api.indexOf(
+        'pub async fn cloud_sync_fetch_protected_page_under_writer_pause',
+        shadowFetchStart,
+      );
+      final innerFetchStart = api.indexOf(
+        'async fn cloud_sync_fetch_protected_page_inner',
+        semanticFetchStart,
+      );
+      expect(shadowFetchStart, greaterThanOrEqualTo(0));
+      expect(semanticFetchStart, greaterThan(shadowFetchStart));
+      expect(innerFetchStart, greaterThan(semanticFetchStart));
+      final shadowFetch = api.substring(shadowFetchStart, semanticFetchStart);
+      final semanticFetch = api.substring(semanticFetchStart, innerFetchStart);
+      expect(shadowFetch, isNot(contains('native_writer_pause_token')));
+      expect(
+        shadowFetch,
+        isNot(contains('acquire_cloudkit_read_authentication')),
+      );
+      expect(semanticFetch, contains('native_writer_pause_token: u64'));
+      expect(
+        semanticFetch,
+        contains(
+          'acquire_cloudkit_read_authentication(native_writer_pause_token)',
+        ),
+      );
+      expect(semanticFetch, contains('Some(&permit)'));
 
-    final native = File(
-      'rust/src/cloud_sync_native_fetch.rs',
-    ).readAsStringSync();
-    expect(
-      native,
-      contains('.sync_messages_page_for_read_authentication('),
-    );
-    expect(
-      native,
-      contains('.sync_attachments_page_for_read_authentication('),
-    );
-    expect(native, contains('.sync_chats_page_for_read_authentication('));
-  });
+      final native = File(
+        'rust/src/cloud_sync_native_fetch.rs',
+      ).readAsStringSync();
+      expect(native, contains('.sync_messages_page_for_read_authentication('));
+      expect(
+        native,
+        contains('.sync_attachments_page_for_read_authentication('),
+      );
+      expect(native, contains('.sync_chats_page_for_read_authentication('));
+    },
+  );
 }
 
 String _section(String source, String startMarker, String endMarker) {

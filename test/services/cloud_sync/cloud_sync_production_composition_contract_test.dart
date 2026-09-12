@@ -22,10 +22,7 @@ void main() {
       source,
       contains('.watch(triggerImmediately: subtitle == "Empty message")'),
     );
-    expect(
-      source,
-      contains('subtitle == "Empty message"'),
-    );
+    expect(source, contains('subtitle == "Empty message"'));
   });
 
   test('local mutation canaries require the exact Android Canary package', () {
@@ -77,9 +74,7 @@ void main() {
     );
     expect(
       canaryBuild,
-      contains(
-        '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true',
-      ),
+      contains('--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY=true'),
     );
     expect(
       canaryBuild,
@@ -286,71 +281,103 @@ void main() {
     expect(readback, contains('resumeAutomaticUploads: false,'));
   });
 
-  test('new iMessage chat and composer share tracked submission, not two sends', () {
-    final source = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
-    final create = source.substring(
-      source.indexOf('Future<Chat> createChat('),
-      source.indexOf('Future<PlatformFile> downloadAttachment('),
-    );
-    final composer = source.substring(
-      source.indexOf('Future<Message> sendMessage('),
-      source.indexOf('Future<Message> _sendPreparedMessage('),
-    );
-    final shared = source.substring(
-      source.indexOf('Future<Message> _sendPreparedMessage('),
-      source.indexOf('bool supportsFocusStates()'),
-    );
-    final compactCreate = create.replaceAll(RegExp(r'\s+'), ' ');
-    final compactShared = shared.replaceAll(RegExp(r'\s+'), ' ');
-    expect(create, contains('CloudKitWriterOwnership.v2MutationsEnabled'));
-    expect(compactCreate,
-        contains('CloudSyncDevGate.manualOutboundCanaryEnabled && !chat.isRpSms'));
-    final tracked = create.substring(
-      create.indexOf('final pending = createPendingInitialIMessage('),
-      create.indexOf('} else {'),
-    );
-    expect(tracked, contains('createdAt: DateTime.now()'));
-    expect(tracked, contains('await _sendPreparedMessage('));
-    expect(tracked, isNot(contains('sendMsg(')));
-    expect(tracked, isNot(contains('reflectMessageDyn(')));
-    expect(tracked, isNot(contains('forwardIfNessesary(')));
-    expect(create, contains('afterGuid: initialConversation.afterGuid'));
-    expect(create, contains('participants: List.of(initialConversation.participants)'));
-    final legacy = create.substring(create.indexOf('} else {'));
-    expect(legacy, contains('await sendMsg(msg);'));
-    expect(legacy, contains('await pushService.reflectMessageDyn(msg)'));
-    expect(legacy, contains('await newMessage.forwardIfNessesary(chat)'));
-    expect(composer, contains('return _sendPreparedMessage('));
-    expect(composer, isNot(contains('sendMsg(')));
-    expect(compactShared.indexOf('_captureCloudSyncV2LocalSend('),
-        lessThan(compactShared.indexOf('confirmed: false,')));
-    expect(compactShared.indexOf('confirmed: false,'),
-        lessThan(compactShared.indexOf('await sendMsg(')));
-    expect(compactShared, contains('rebuilt.id = stableMessageId;'));
-    expect(compactShared,
-        contains('final originalCloudIntent = localCloudIntent;'));
-    expect(
-      RegExp(r'originalCloudIntent[^;]+stillCurrent\(\)')
-          .allMatches(compactShared),
-      hasLength(2),
-    );
-    expect(
-      compactShared,
-      contains("if (composerPreAdmitted || retryContext.identity.isAttachment) { throw StateError('cloud_sync_local_send_source_changed');"),
-    );
-    expect(compactShared,
-        contains('expectedSourceSha256: retryContext.identity.sourceSha256'));
-    expect(compactShared.indexOf('confirmed: false,'),
-        lessThan(compactShared.indexOf('_prepareCloudSyncV2AttachmentSource(')));
-    expect(compactShared.indexOf('_prepareCloudSyncV2AttachmentSource('),
-        lessThan(compactShared.indexOf('await sendMsg(')));
-    expect(compactShared, contains('attachmentReceiptContext ?? context.nativeReceiptContext'));
-    expect(compactShared, contains('captureAttachmentWire('));
-    expect(compactShared,
-        contains('if (localCloudIntent != null && !backgroundSendPending)'));
-    expect(RegExp(r'await sendMsg\(').allMatches(shared), hasLength(1));
-    expect(RegExp(r'reflectMessageDyn\(').allMatches(shared), hasLength(1));
-  });
+  test(
+    'new iMessage chat and composer share tracked submission, not two sends',
+    () {
+      final source = File(
+        'lib/services/rustpush/rustpush_service.dart',
+      ).readAsStringSync();
+      final create = source.substring(
+        source.indexOf('Future<Chat> createChat('),
+        source.indexOf('Future<PlatformFile> downloadAttachment('),
+      );
+      final composer = source.substring(
+        source.indexOf('Future<Message> sendMessage('),
+        source.indexOf('Future<Message> _sendPreparedMessage('),
+      );
+      final shared = source.substring(
+        source.indexOf('Future<Message> _sendPreparedMessage('),
+        source.indexOf('bool supportsFocusStates()'),
+      );
+      final compactCreate = create.replaceAll(RegExp(r'\s+'), ' ');
+      final compactShared = shared.replaceAll(RegExp(r'\s+'), ' ');
+      expect(create, contains('CloudKitWriterOwnership.v2MutationsEnabled'));
+      expect(
+        compactCreate,
+        contains(
+          'CloudSyncDevGate.manualOutboundCanaryEnabled && !chat.isRpSms',
+        ),
+      );
+      final tracked = create.substring(
+        create.indexOf('final pending = createPendingInitialIMessage('),
+        create.indexOf('} else {'),
+      );
+      expect(tracked, contains('createdAt: DateTime.now()'));
+      expect(tracked, contains('await _sendPreparedMessage('));
+      expect(tracked, isNot(contains('sendMsg(')));
+      expect(tracked, isNot(contains('reflectMessageDyn(')));
+      expect(tracked, isNot(contains('forwardIfNessesary(')));
+      expect(create, contains('afterGuid: initialConversation.afterGuid'));
+      expect(
+        create,
+        contains('participants: List.of(initialConversation.participants)'),
+      );
+      final legacy = create.substring(create.indexOf('} else {'));
+      expect(legacy, contains('await sendMsg(msg);'));
+      expect(legacy, contains('await pushService.reflectMessageDyn(msg)'));
+      expect(legacy, contains('await newMessage.forwardIfNessesary(chat)'));
+      expect(composer, contains('return _sendPreparedMessage('));
+      expect(composer, isNot(contains('sendMsg(')));
+      expect(
+        compactShared.indexOf('_captureCloudSyncV2LocalSend('),
+        lessThan(compactShared.indexOf('confirmed: false,')),
+      );
+      expect(
+        compactShared.indexOf('confirmed: false,'),
+        lessThan(compactShared.indexOf('await sendMsg(')),
+      );
+      expect(compactShared, contains('rebuilt.id = stableMessageId;'));
+      expect(
+        compactShared,
+        contains('final originalCloudIntent = localCloudIntent;'),
+      );
+      expect(
+        RegExp(
+          r'originalCloudIntent[^;]+stillCurrent\(\)',
+        ).allMatches(compactShared),
+        hasLength(2),
+      );
+      expect(
+        compactShared,
+        contains(
+          "if (composerPreAdmitted || retryContext.identity.isAttachment) { throw StateError('cloud_sync_local_send_source_changed');",
+        ),
+      );
+      expect(
+        compactShared,
+        contains('expectedSourceSha256: retryContext.identity.sourceSha256'),
+      );
+      expect(
+        compactShared.indexOf('confirmed: false,'),
+        lessThan(compactShared.indexOf('_prepareCloudSyncV2AttachmentSource(')),
+      );
+      expect(
+        compactShared.indexOf('_prepareCloudSyncV2AttachmentSource('),
+        lessThan(compactShared.indexOf('await sendMsg(')),
+      );
+      expect(
+        compactShared,
+        contains('attachmentReceiptContext ?? context.nativeReceiptContext'),
+      );
+      expect(compactShared, contains('captureAttachmentWire('));
+      expect(
+        compactShared,
+        contains('if (localCloudIntent != null && !backgroundSendPending)'),
+      );
+      expect(RegExp(r'await sendMsg\(').allMatches(shared), hasLength(1));
+      expect(RegExp(r'reflectMessageDyn\(').allMatches(shared), hasLength(1));
+    },
+  );
 
   test('native receipt replay is bound to one exact authenticated runtime', () {
     final source = File(
@@ -372,7 +399,10 @@ void main() {
     expect(replayEnd, greaterThan(replayStart));
     final confirm = source.substring(confirmStart, replayStart);
     final replay = source.substring(replayStart, replayEnd);
-    expect(confirm, contains('CloudSyncNativeReceiptReplayBinding? replayBinding'));
+    expect(
+      confirm,
+      contains('CloudSyncNativeReceiptReplayBinding? replayBinding'),
+    );
     expect(confirm, contains('if (nativeReceipt == null) return;'));
     expect(confirm, contains('replayBinding?.requireCapturedAuth(auth);'));
     expect(confirm, contains('stillCurrent: confirmationBindingCurrent'));
@@ -429,16 +459,17 @@ void main() {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
-    final start = source.indexOf(
-      'Future<void> _confirmCloudSyncV2NativeSend(',
-    );
+    final start = source.indexOf('Future<void> _confirmCloudSyncV2NativeSend(');
     final end = source.indexOf(
       'Future<void> _saveCloudSyncV2LocalSend(',
       start,
     );
     expect(start, greaterThanOrEqualTo(0));
     expect(end, greaterThan(start));
-    final confirmation = source.substring(start, end);
+    final confirmation = source
+        .substring(start, end)
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(' .', '.');
     final terminal = confirmation.indexOf(
       'mutationJournal.markExactReadbackConfirmed(',
     );
@@ -453,10 +484,7 @@ void main() {
     expect(terminal, greaterThanOrEqualTo(0));
     expect(lease, greaterThan(terminal));
     expect(receipt, greaterThan(lease));
-    expect(
-      confirmation,
-      contains('readTerminalSourceForCleanup('),
-    );
+    expect(confirmation, contains('readTerminalSourceForCleanup('));
     for (final stage in [
       'ids_receipt_positive',
       'journal_adopted',
@@ -469,30 +497,34 @@ void main() {
     }
   });
 
-  test('startup recovery serializes receipt replay before stale send failure', () {
-    final source = File(
-      'lib/services/rustpush/rustpush_service.dart',
-    ).readAsStringSync();
-    final start = source.indexOf(
-      'Cloud Sync V2 native send receipt startup replay timed out',
-    );
-    final end = source.indexOf('Logger.info("finishInit")', start);
-    expect(start, greaterThanOrEqualTo(0));
-    expect(end, greaterThan(start));
-    final recovery = source.substring(start, end);
-    expect(
-      source.lastIndexOf(
-        'await _replayCloudSyncV2NativeSendReceipts().timeout(', start,
-      ),
-      greaterThanOrEqualTo(0),
-    );
-    expect(
-      recovery.indexOf('claimUntrackedCrashedSend('),
-      lessThan(recovery.indexOf('await markFailed(')),
-    );
-    expect(recovery, contains('final failed = CloudSyncLocalSendJournal.'));
-    expect(recovery, contains('await markFailed(failed,'));
-  });
+  test(
+    'startup recovery serializes receipt replay before stale send failure',
+    () {
+      final source = File(
+        'lib/services/rustpush/rustpush_service.dart',
+      ).readAsStringSync();
+      final start = source.indexOf(
+        'Cloud Sync V2 native send receipt startup replay timed out',
+      );
+      final end = source.indexOf('Logger.info("finishInit")', start);
+      expect(start, greaterThanOrEqualTo(0));
+      expect(end, greaterThan(start));
+      final recovery = source.substring(start, end);
+      expect(
+        source.lastIndexOf(
+          'await _replayCloudSyncV2NativeSendReceipts().timeout(',
+          start,
+        ),
+        greaterThanOrEqualTo(0),
+      );
+      expect(
+        recovery.indexOf('claimUntrackedCrashedSend('),
+        lessThan(recovery.indexOf('await markFailed(')),
+      );
+      expect(recovery, contains('final failed = CloudSyncLocalSendJournal.'));
+      expect(recovery, contains('await markFailed(failed,'));
+    },
+  );
 
   test('one confirmed action auto-resumes only bounded semantic batches', () {
     final source = File(
@@ -501,10 +533,7 @@ void main() {
     final start = source.indexOf(
       'runCloudSyncV2AutomaticSemanticCatchUpConfirmed()',
     );
-    final end = source.indexOf(
-      '_runCloudSyncV2ManualSemanticPull({',
-      start,
-    );
+    final end = source.indexOf('_runCloudSyncV2ManualSemanticPull({', start);
 
     expect(start, greaterThanOrEqualTo(0));
     expect(end, greaterThan(start));
@@ -681,10 +710,7 @@ void main() {
       'repairCloudSyncChatLatestMessageDates()',
       semanticRun,
     );
-    final chatRefresh = semantic.indexOf(
-      '.init(force: true)',
-      chatOrderRepair,
-    );
+    final chatRefresh = semantic.indexOf('.init(force: true)', chatOrderRepair);
     final semanticPresentation = semantic.indexOf(
       'cloudSyncV2SemanticCanaryPresentation(',
       semanticRun,
@@ -825,15 +851,9 @@ void main() {
       service,
       contains('ss.settings.cloudSyncV2VerboseDiagnosticsEnabled.value'),
     );
-    expect(
-      service,
-      contains('Cloud Sync V2 semantic canary passes='),
-    );
+    expect(service, contains('Cloud Sync V2 semantic canary passes='));
     expect(service, contains(r'fetched=$fetched applied=$applied'));
-    expect(
-      service,
-      contains('Cloud Sync V2 verbose semantic report='),
-    );
+    expect(service, contains('Cloud Sync V2 verbose semantic report='));
   });
 
   test('outbound UI is gated, double-confirmed, and recovery-only', () {
@@ -974,7 +994,8 @@ void main() {
     );
     expect(manualAdapterStart, greaterThanOrEqualTo(0));
     final verifyStart = adapter.indexOf(
-      'verifyConfirmedMessageCreateNoSave(', manualAdapterStart,
+      'verifyConfirmedMessageCreateNoSave(',
+      manualAdapterStart,
     );
     final verifyEnd = adapter.indexOf(');', verifyStart);
     expect(verifyStart, greaterThanOrEqualTo(0));
@@ -1210,7 +1231,12 @@ void main() {
     expect(resetStart, greaterThanOrEqualTo(0));
     expect(resetEnd, greaterThan(resetStart));
 
-    final reset = source.substring(resetStart, resetEnd);
+    final reset = source
+        .substring(resetStart, resetEnd)
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(' .', '.')
+        .replaceAll(RegExp(r'\(\s+'), '(')
+        .replaceAll(RegExp(r'\s+\)'), ')');
     final pcsQuiesce = reset.indexOf(
       '_cloudSyncV2PcsPreparationQuiescing = true;',
     );
@@ -1238,7 +1264,11 @@ void main() {
       '_cloudSyncV2MessageUpdateRetryTimer?.cancel();',
     );
     final receiptReplayWait = reset.indexOf(
-      'await nativeReceiptReplay.timeout(_cloudSyncV2OutboundQuiescenceTimeout)',
+      'await nativeReceiptReplay.timeout(',
+    );
+    final receiptReplayTimeout = reset.indexOf(
+      '_cloudSyncV2OutboundQuiescenceTimeout',
+      receiptReplayWait,
     );
     final messageUpdateWait = reset.indexOf(
       'await messageUpdate.timeout(_cloudSyncV2OutboundQuiescenceTimeout)',
@@ -1257,7 +1287,8 @@ void main() {
     expect(quiesce, greaterThan(pcsQuiesce));
     expect(mutationTimerCancel, greaterThan(quiesce));
     expect(receiptReplayWait, greaterThan(mutationTimerCancel));
-    expect(messageUpdateWait, greaterThan(receiptReplayWait));
+    expect(receiptReplayTimeout, greaterThan(receiptReplayWait));
+    expect(messageUpdateWait, greaterThan(receiptReplayTimeout));
     expect(pcsWait, greaterThan(quiesce));
     expect(awaitPcs, greaterThan(pcsWait));
     expect(semanticWait, greaterThan(awaitPcs));
@@ -1303,11 +1334,15 @@ void main() {
     expect(service, contains('_deferPeerCacheInvalidation();'));
     expect(
       service,
-      contains('Peer cache invalidation deferred while protected CloudKit work is active'),
+      contains(
+        'Peer cache invalidation deferred while protected CloudKit work is active',
+      ),
     );
     expect(
       service,
-      contains('Account repair was not applied. Wait for the active sync to finish'),
+      contains(
+        'Account repair was not applied. Wait for the active sync to finish',
+      ),
     );
     expect(panel, contains('await pushService.clearIdentityCache();'));
     expect(panel, contains('await pushService.reregisterIdentity();'));

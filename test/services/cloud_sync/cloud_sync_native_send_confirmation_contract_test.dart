@@ -23,7 +23,23 @@ void main() {
     expect(mutation, contains('readReceiptConfirmedSource('));
     expect(mutation, contains('.reflectConfirmed('));
     expect(mutation, contains('readReflectedForUpdate('));
+    final reflected = mutation.indexOf('readReflectedForUpdate(');
+    final receiptSource = mutation.indexOf('readReceiptConfirmedSource(');
+    final reflect = mutation.indexOf('.reflectConfirmed(');
+    expect(reflected, greaterThanOrEqualTo(0));
+    expect(receiptSource, greaterThan(reflected));
+    expect(reflect, greaterThan(receiptSource));
+    expect(mutation, contains("'cloud_sync_local_mutation_update_not_ready'"));
     expect(mutation, contains('CloudSyncMessageUpdateExecutor('));
+    expect(mutation, contains('CloudSyncWriteChatIdentitySession('));
+    expect(
+      mutation,
+      contains('await identitySession.run<void>((_) async {});'),
+    );
+    expect(
+      mutation.indexOf('await identitySession.run<void>((_) async {});'),
+      lessThan(mutation.indexOf('await executor.admitReflectedUpdate(')),
+    );
     expect(mutation, contains('await executor.admitReflectedUpdate('));
     expect(mutation, contains('return executor.runOnce('));
     expect(mutation, contains('stillCurrent: confirmationBindingCurrent'));

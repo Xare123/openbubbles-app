@@ -119,7 +119,6 @@ final class CloudSyncLocalMutationJournal {
     required DateTime now,
     CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) => _store.runInTransaction(TxMode.write, () {
-    _requireOwner();
     if (receipt.sourceBinding?.kind !=
         api.CloudSyncNativeSendSourceKind.mutation) {
       return null;
@@ -145,13 +144,16 @@ final class CloudSyncLocalMutationJournal {
     required CloudSyncNativeAuthSnapshot currentAuth,
     required bool Function() stillCurrent,
   }) => _store.runInTransaction(TxMode.read, () {
-    _requireOwner();
-    final row = _read(intentId, originalEpoch: true);
+    final row = _read(intentId);
+    if (row.state >= 4) {
+      _requireRetainedReconciliationOwner(row);
+    } else {
+      _requireOwner();
+      if (row.writerEpoch != _owner.epoch) _fail('owner_changed');
+    }
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, currentAuth, stillCurrent);
-    if (row.state < 2 ||
-        row.state > 4 ||
-        row.idsReceiptBindingSha256 == null) {
+    if (row.state < 2 || row.state > 4 || row.idsReceiptBindingSha256 == null) {
       _fail('ids_unconfirmed');
     }
     return source;
@@ -166,8 +168,13 @@ final class CloudSyncLocalMutationJournal {
     required CloudSyncNativeAuthSnapshot currentAuth,
     required bool Function() stillCurrent,
   }) => _store.runInTransaction(TxMode.read, () {
-    _requireOwner();
-    final row = _read(intentId, originalEpoch: true);
+    final row = _read(intentId);
+    if (row.state == 5) {
+      _requireRetainedReconciliationOwner(row, exactReadbackFinalized: true);
+    } else {
+      _requireOwner();
+      if (row.writerEpoch != _owner.epoch) _fail('owner_changed');
+    }
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, currentAuth, stillCurrent);
     if (row.state != 5) return null;
@@ -333,8 +340,12 @@ final class CloudSyncLocalMutationJournal {
     required DateTime now,
     CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) => _store.runInTransaction(TxMode.write, () {
-    _requireOwner();
     final row = _read(intentId);
+    if (row.state >= 4) {
+      _requireRetainedReconciliationOwner(row);
+    } else {
+      _requireOwner();
+    }
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, capturedAuth, stillCurrent);
     final proof = _receiptProof(
@@ -535,8 +546,13 @@ final class CloudSyncLocalMutationJournal {
     required bool Function() stillCurrent,
     CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) => _store.runInTransaction(TxMode.read, () {
-    _requireOwner();
-    final row = _read(intentId, originalEpoch: true);
+    final row = _read(intentId);
+    if (row.state == 4) {
+      _requireRetainedReconciliationOwner(row);
+    } else {
+      _requireOwner();
+      if (row.writerEpoch != _owner.epoch) _fail('owner_changed');
+    }
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, currentAuth, stillCurrent);
     if ((row.state != 3 && row.state != 4) || row.targetPart != 0) {
@@ -564,7 +580,6 @@ final class CloudSyncLocalMutationJournal {
     required bool Function() stillCurrent,
     CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) => _store.runInTransaction(TxMode.read, () {
-    _requireOwner();
     if (!_operationId.hasMatch(operationId)) _fail('adoption_missing');
     final query = _rows
         .query(
@@ -580,11 +595,11 @@ final class CloudSyncLocalMutationJournal {
       query.close();
     }
     if (found == null) _fail('adoption_missing');
-    final row = _read(found.id, originalEpoch: true);
+    final row = _read(found.id);
+    _requireRetainedReconciliationOwner(row);
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, currentAuth, stillCurrent);
-    if (row.state != 4 ||
-        row.admittedOperationId != operationId) {
+    if (row.state != 4 || row.admittedOperationId != operationId) {
       _fail('adoption_changed');
     }
     _requireSubmissionAuth(
@@ -678,7 +693,6 @@ final class CloudSyncLocalMutationJournal {
     if (!identical(transactionStore, _store)) {
       _fail('adoption_store_mismatch');
     }
-    _requireOwner();
     final query = _rows
         .query(
           CloudSyncLocalMutationIntentEntity_.admittedOperationId.equals(
@@ -694,9 +708,10 @@ final class CloudSyncLocalMutationJournal {
     }
     if (row == null) _fail('adoption_missing');
     validateCloudSyncMutationRow(row);
+    _requireRetainedReconciliationOwner(row);
     if (row.state != 4 ||
         row.accountFingerprint != _owner.scope.accountFingerprint ||
-        row.writerEpoch != _owner.epoch) {
+        row.writerEpoch <= 0) {
       _fail('adoption_changed');
     }
     final target = _target(
@@ -725,8 +740,8 @@ final class CloudSyncLocalMutationJournal {
     required bool Function() stillCurrent,
     required DateTime now,
   }) => _store.runInTransaction(TxMode.write, () {
-    _requireOwner();
-    final row = _read(intentId, originalEpoch: true);
+    final row = _read(intentId);
+    _requireRetainedReconciliationOwner(row, exactReadbackFinalized: true);
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, currentAuth, stillCurrent);
     final operationQuery = _store
@@ -758,7 +773,7 @@ final class CloudSyncLocalMutationJournal {
     if (row.state == 5) return source;
     if (row.state != 4) _fail('terminal_changed');
     if (!stillCurrent()) _fail('auth_changed');
-    _requireOwner();
+    _requireRetainedReconciliationOwner(row, exactReadbackFinalized: true);
     row
       ..state = 5
       ..updatedAtMs = _advanceTime(row, now);
@@ -1003,6 +1018,39 @@ final class CloudSyncLocalMutationJournal {
     // Journaling creates no remote write permit, including when uploads are fenced.
   }
 
+  /// Accepts only the epoch progression produced by one fenced CloudKit
+  /// mutation. This validates recovery evidence for an already-adopted update;
+  /// it never grants authority to stage, adopt, or submit a new mutation.
+  void _requireRetainedReconciliationOwner(
+    CloudSyncLocalMutationIntentEntity row, {
+    bool exactReadbackFinalized = false,
+  }) {
+    if (_owner.owner != CloudKitWriterOwner.v2 ||
+        _owner.epoch <= 0 ||
+        _owner.scope.container != 'com.apple.messages.cloud' ||
+        _owner.scope.database != 'private' ||
+        row.accountFingerprint != _owner.scope.accountFingerprint ||
+        row.writerEpoch <= 0) {
+      _fail('owner_invalid');
+    }
+    final current = _authority.read(_owner.scope);
+    if (current == null ||
+        current.owner != CloudKitWriterOwner.v2 ||
+        current.targetOwner != CloudKitWriterOwner.none ||
+        current.transitionIdHash != null) {
+      _fail('owner_changed');
+    }
+    final epochDelta = current.epoch - row.writerEpoch;
+    final stable =
+        current.state == CloudKitWriterAuthorityState.stable &&
+        (epochDelta == 0 || epochDelta == 2);
+    final fencedUnknown =
+        !exactReadbackFinalized &&
+        current.state == CloudKitWriterAuthorityState.mutationUnknown &&
+        epochDelta == 1;
+    if (!stable && !fencedUnknown) _fail('owner_changed');
+  }
+
   void _requireAuth(
     CloudSyncLocalMutationSourceBinding source,
     CloudSyncNativeAuthSnapshot auth,
@@ -1021,8 +1069,7 @@ final class CloudSyncLocalMutationJournal {
     CloudSyncNativeAuthSnapshot currentAuth,
     CloudSyncNativeReceiptReplayBinding? replayBinding, {
     String failureCode = 'auth_changed',
-  }
-  ) {
+  }) {
     if (replayBinding != null) {
       replayBinding.requireCapturedAuth(currentAuth);
       if (row.state < 2 || row.idsReceiptBindingSha256 == null) {

@@ -331,6 +331,15 @@ void main() {
       ),
     );
     expect(mutation, contains('CloudSyncMessageUpdateExecutor('));
+    expect(mutation, contains('CloudSyncWriteChatIdentitySession('));
+    expect(
+      mutation,
+      contains('await identitySession.run<void>((_) async {});'),
+    );
+    expect(
+      mutation.indexOf('await identitySession.run<void>((_) async {});'),
+      lessThan(mutation.indexOf('await executor.admitReflectedUpdate(')),
+    );
     expect(mutation, contains('await executor.admitReflectedUpdate('));
     expect(mutation, contains('return executor.runOnce('));
     expect(mutation, contains('api.cloudSyncAcknowledgeNativeSendReceipt('));
@@ -344,11 +353,15 @@ void main() {
     );
     expect(
       mutation.indexOf('exactOperation.status == CloudOutboxStatus.confirmed'),
-      lessThan(mutation.lastIndexOf('api.cloudSyncAcknowledgeNativeSendReceipt(')),
+      lessThan(
+        mutation.lastIndexOf('api.cloudSyncAcknowledgeNativeSendReceipt('),
+      ),
     );
     expect(
       mutation.indexOf('journal.markExactReadbackConfirmed('),
-      lessThan(mutation.lastIndexOf('api.cloudSyncAcknowledgeNativeSendReceipt(')),
+      lessThan(
+        mutation.lastIndexOf('api.cloudSyncAcknowledgeNativeSendReceipt('),
+      ),
     );
     expect(
       mutation.indexOf('transport.acknowledgeCommittedPageLease('),

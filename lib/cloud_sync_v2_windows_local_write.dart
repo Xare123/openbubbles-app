@@ -40,6 +40,7 @@ import 'services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart'
 import 'services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_record_maps.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_write_chat_identity_session.dart';
 import 'services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart';
@@ -797,14 +798,33 @@ final class CloudSyncWindowsLocalWrite {
         });
       },
     );
-    final owner = await provisioner.ensureV2Owned(
-      expectedAuth: auth,
-      initialOwnerOnly: true,
+    final writerScope = CloudKitWriterScope(
+      accountFingerprint: auth.accountFingerprint,
     );
+    final retainedOwner = request.mutationType != null && claim.existsSync()
+        ? authority.read(writerScope)
+        : null;
+    final CloudKitWriterAuthoritySnapshot ownerSnapshot;
+    if (retainedOwner != null &&
+        retainedOwner.owner == CloudKitWriterOwner.v2 &&
+        retainedOwner.state == CloudKitWriterAuthorityState.mutationUnknown &&
+        retainedOwner.targetOwner == CloudKitWriterOwner.none &&
+        retainedOwner.transitionIdHash == null) {
+      // A claimed mutation may have crossed the remote edge in an earlier
+      // process. Provisioning correctly refuses an unresolved writer, while
+      // the exact outbox operation and persistent mutation fence below retain
+      // enough evidence to run reconciliation without issuing another send.
+      ownerSnapshot = retainedOwner;
+    } else {
+      ownerSnapshot = (await provisioner.ensureV2Owned(
+        expectedAuth: auth,
+        initialOwnerOnly: true,
+      )).snapshot;
+    }
     final journal = CloudSyncLocalSendJournal(
       store: objectBox,
       authority: authority,
-      authoritySnapshot: owner.snapshot,
+      authoritySnapshot: ownerSnapshot,
     );
     final fence = CloudSyncLocalSendAuthFence(
       expected: auth,
@@ -815,7 +835,7 @@ final class CloudSyncWindowsLocalWrite {
       final mutationJournal = CloudSyncLocalMutationJournal(
         store: objectBox,
         authority: authority,
-        authoritySnapshot: owner.snapshot,
+        authoritySnapshot: ownerSnapshot,
       );
       final mutationStore = ObjectBoxCloudSyncStore(
         store: objectBox,
@@ -829,6 +849,7 @@ final class CloudSyncWindowsLocalWrite {
         client: client,
         store: objectBox,
         auth: auth,
+        authBinding: binding,
         current: current,
         fence: fence,
         interlock: CloudKitOperationInterlock(
@@ -1300,6 +1321,7 @@ final class CloudSyncWindowsLocalWrite {
     required rustlib.ArcCloudMessagesClientDefaultAnisetteProvider client,
     required Store store,
     required CloudSyncNativeAuthSnapshot auth,
+    required CloudSyncNativeAuthBinding authBinding,
     required bool Function() current,
     required CloudSyncLocalSendAuthFence fence,
     required CloudKitOperationInterlock interlock,
@@ -1325,6 +1347,25 @@ final class CloudSyncWindowsLocalWrite {
       readCheckpointGeneration: (scope) async =>
           (await cloudStore.readCheckpoint(scope)).generation,
       retainConfirmedReceiptsForReplay: true,
+    );
+    Future<void> validateMutationIdentity() => fence.run<void>(() {
+      if (!current()) {
+        throw StateError('cloud_sync_windows_write_identity_changed');
+      }
+    }, accountFingerprint: auth.accountFingerprint);
+    final identitySession = CloudSyncWriteChatIdentitySession(
+      exclusion: interlock,
+      nativePause: FrbCloudSyncNativeWriterPause(),
+      validate: validateMutationIdentity,
+      ensureReadAuthentication: () => authBinding.ensureReadAuthentication(
+        cloudMessagesClient: client,
+        privateStorageDirectory: fs.appDocDir.path,
+      ),
+      warmReadAuthentication: (token) =>
+          authBinding.warmReadAuthenticationUnderWriterPause(
+            cloudMessagesClient: client,
+            pauseToken: token,
+          ),
     );
     try {
       final staging = CloudSyncLocalMutationSourceStaging(
@@ -1693,11 +1734,8 @@ final class CloudSyncWindowsLocalWrite {
         stillCurrent: current,
         replayBinding: replayBinding,
       );
-      final pendingCreateReadbacks =
-          await cloudStore.readPendingMessageCreateReadbacks(
-            scope,
-            maximumCount: 16,
-          );
+      final pendingCreateReadbacks = await cloudStore
+          .readPendingMessageCreateReadbacks(scope, maximumCount: 16);
       for (final snapshot in pendingCreateReadbacks) {
         await transport.finalizePendingMessageCreateReadback(
           snapshot,
@@ -1745,6 +1783,12 @@ final class CloudSyncWindowsLocalWrite {
       final result = await interlock.runExclusive(
         kind: CloudKitOperationKind.v2ReadWrite,
         action: () async {
+          // Restored read credentials do not imply warm read-only Messages,
+          // Cuttlefish, or Securityd containers. Writer PCS preparation reads
+          // those existing dependencies, so warm them under the native pause
+          // before staging or reconciling. This performs no IDS mutation and
+          // the pause is released before the writer crosses its remote edge.
+          await identitySession.run<void>((_) async {});
           final adoptedOperationId = admission.adoptedOperationId;
           if (adoptedOperationId == null) {
             if (receipt == null) {

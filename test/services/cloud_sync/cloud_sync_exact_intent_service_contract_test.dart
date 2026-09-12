@@ -20,20 +20,26 @@ void main() {
       expect(start, greaterThan(0));
       expect(end, greaterThan(start));
       final select = source.substring(start, end);
-      expect(select, contains('CloudSyncDevGate.localSendRuntimeEnabled'));
-      expect(select, contains('box<CloudSyncLocalSendIntentEntity>()'));
-      expect(select, isNot(contains('box<Message>()')));
+      final normalized = select
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .replaceAll(' .', '.');
+      expect(normalized, contains('CloudSyncDevGate.localSendRuntimeEnabled'));
+      expect(normalized, contains('box<CloudSyncLocalSendIntentEntity>()'));
+      expect(normalized, isNot(contains('box<Message>()')));
       expect(
-        select,
+        normalized,
         contains('accountFingerprint.equals(auth.accountFingerprint)'),
       );
-      expect(select, contains('writerEpoch.equals(owner.epoch)'));
-      expect(select, contains('createdAtMs, flags: Order.descending'));
-      expect(select, contains('..limit = 1'));
-      expect(select, contains('journal.readExactIntent('));
-      expect(select, contains('adapter.runExactIntent('));
-      expect(select, contains('expectedSourceSha256: source.sourceSha256'));
-      expect(select, isNot(contains('admitMessage(')));
+      expect(
+        normalized,
+        matches(RegExp(r'writerEpoch\.equals\(\s*owner\.epoch\s*,?\s*\)')),
+      );
+      expect(normalized, contains('createdAtMs, flags: Order.descending'));
+      expect(normalized, contains('..limit = 1'));
+      expect(normalized, contains('journal.readExactIntent('));
+      expect(normalized, contains('adapter.runExactIntent('));
+      expect(normalized, contains('expectedSourceSha256: source.sourceSha256'));
+      expect(normalized, isNot(contains('admitMessage(')));
     },
   );
 

@@ -1,6 +1,7 @@
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 
 import 'cloud_sync_local_mutation_journal.dart';
+import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_message_dependency.dart';
 import 'cloud_sync_write_transport.dart';
@@ -99,6 +100,7 @@ abstract interface class CloudSyncMessageUpdateTransport {
     CloudSyncScope scope, {
     required CloudSyncLocalMutationAdmissionSource source,
     required CloudSyncMessageMutationPredecessor predecessor,
+    required CloudSyncNativeAuthSnapshot currentAuth,
     required frb_api.CloudSyncNativeSendReceipt receipt,
   });
 

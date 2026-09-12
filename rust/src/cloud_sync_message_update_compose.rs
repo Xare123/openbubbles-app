@@ -15,6 +15,7 @@ use rustpush::{
     coder_encode_flattened, Message, MessageInst, MessagePart, NSNumber, NSString,
     StCollapsedValue, TextFormat,
 };
+use std::borrow::Cow;
 
 const MAX_TEXT_BYTES: usize = 256 * 1024;
 const APPLE_EPOCH_OFFSET_MILLIS: f64 = 978_307_200_000.0;
@@ -76,13 +77,20 @@ pub(crate) fn compose_message_update(
                 .as_deref()
                 .filter(|text| !text.is_empty())
                 .ok_or(MessageUpdateComposeError::UnsupportedMessage)?;
-            let current_body = proto
-                .attributed_body
-                .as_deref()
-                .filter(|body| !body.is_empty())
-                .ok_or(MessageUpdateComposeError::UnsupportedMessage)?;
+            // V2's first plain-text create slice intentionally emitted text
+            // without an attributed-body archive. A later edit must remain
+            // able to update that exact server predecessor. Missing means
+            // unstyled here; a present but empty or malformed body still
+            // fails closed below rather than being silently replaced.
+            let current_body = match proto.attributed_body.as_deref() {
+                Some(body) => Cow::Borrowed(body),
+                None => Cow::Owned(encode_unstyled_attributed_body(current_text, part)?),
+            };
+            if current_body.is_empty() {
+                return Err(MessageUpdateComposeError::MalformedMessage);
+            }
             crate::cloud_sync_canonical_converter::validate_single_text_attributed_body(
-                current_body,
+                current_body.as_ref(),
                 current_text,
                 part,
             )
@@ -101,7 +109,7 @@ pub(crate) fn compose_message_update(
             let basis = resolve_edit_basis(
                 proto.message_summary_info.as_deref(),
                 part,
-                current_body,
+                current_body.as_ref(),
                 original_timestamp,
                 SummaryRange {
                     lo: 0,
@@ -109,7 +117,7 @@ pub(crate) fn compose_message_update(
                 },
             )
             .map_err(map_summary_error)?;
-            if basis.body != current_body {
+            if basis.body != current_body.as_ref() {
                 return Err(MessageUpdateComposeError::SourceMismatch);
             }
             let summary = patch_message_summary(
@@ -134,6 +142,26 @@ pub(crate) fn compose_message_update(
         }
         _ => Err(MessageUpdateComposeError::UnsupportedMessage),
     }
+}
+
+fn encode_unstyled_attributed_body(
+    text: &str,
+    part: u32,
+) -> Result<Vec<u8>, MessageUpdateComposeError> {
+    let length = u32::try_from(text.encode_utf16().count())
+        .map_err(|_| MessageUpdateComposeError::OversizedMessage)?;
+    if length == 0 {
+        return Err(MessageUpdateComposeError::MalformedMessage);
+    }
+    let value = attributed_body_value(text, &[(length, rustpush::TextFlags::default())], part)?;
+    let encoded = coder_encode_flattened(&[value]);
+    if encoded.is_empty() {
+        return Err(MessageUpdateComposeError::MalformedMessage);
+    }
+    if encoded.len() > MAX_TEXT_BYTES * 4 {
+        return Err(MessageUpdateComposeError::OversizedMessage);
+    }
+    Ok(encoded)
 }
 
 fn encode_replacement_attributed_body(
@@ -391,6 +419,69 @@ mod tests {
                 .unwrap()
                 .len(),
             2
+        );
+    }
+
+    #[test]
+    fn edit_reconstructs_unstyled_body_for_plain_text_v2_create_predecessor() {
+        let original = MessageProto {
+            unk1: 1,
+            text: Some("before".to_owned()),
+            attributed_body: None,
+            ..Default::default()
+        }
+        .encode_to_vec();
+        let request = mutation(Message::Edit(EditMessage {
+            tuuid: "5BC3779B-7898-4A15-A768-2EA04D3ABAA0".to_owned(),
+            edit_part: 0,
+            new_parts: MessageParts(vec![IndexedMessagePart {
+                part: MessagePart::Text(
+                    "after".to_owned(),
+                    TextFormat::Flags(TextFlags::default()),
+                ),
+                idx: Some(0),
+                ext: None,
+            }]),
+        }));
+
+        let updated = compose_message_update(view(&original), &request, PREPARED_UNIX_MILLIS)
+            .expect("plain-text V2 create predecessor remains editable");
+        let decoded = MessageProto::decode(updated.as_slice()).unwrap();
+        assert_eq!(decoded.text.as_deref(), Some("after"));
+        crate::cloud_sync_canonical_converter::validate_single_text_attributed_body(
+            decoded.attributed_body.as_deref().unwrap(),
+            "after",
+            0,
+        )
+        .unwrap();
+        assert!(decoded.message_summary_info.is_some());
+    }
+
+    #[test]
+    fn edit_does_not_replace_present_empty_attributed_body() {
+        let original = MessageProto {
+            unk1: 1,
+            text: Some("before".to_owned()),
+            attributed_body: Some(Vec::new()),
+            ..Default::default()
+        }
+        .encode_to_vec();
+        let request = mutation(Message::Edit(EditMessage {
+            tuuid: "5BC3779B-7898-4A15-A768-2EA04D3ABAA0".to_owned(),
+            edit_part: 0,
+            new_parts: MessageParts(vec![IndexedMessagePart {
+                part: MessagePart::Text(
+                    "after".to_owned(),
+                    TextFormat::Flags(TextFlags::default()),
+                ),
+                idx: Some(0),
+                ext: None,
+            }]),
+        }));
+
+        assert_eq!(
+            compose_message_update(view(&original), &request, PREPARED_UNIX_MILLIS),
+            Err(MessageUpdateComposeError::MalformedMessage)
         );
     }
 

@@ -6218,7 +6218,9 @@ async fn cloud_sync_reconcile_message_create_inner(
         Err(_) => CloudSyncReconcileObservation::UnknownFailure,
     };
     let auth_after_lookup =
-        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await {
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
             Ok(auth) => auth,
             Err(_) => {
                 return cloud_sync_reconcile_failure(
@@ -6272,8 +6274,7 @@ async fn cloud_sync_reconcile_message_create_inner(
             };
             result.protected_current_raw_record_reference =
                 Some(protected.protected_raw_record_reference);
-            result.protected_current_raw_record_lease_reference =
-                Some(protected.lease_reference);
+            result.protected_current_raw_record_lease_reference = Some(protected.lease_reference);
             result.raw_generation = Some(generation);
         }
     }
@@ -17930,15 +17931,18 @@ pub async fn cloud_sync_prepare_message_update(
     if !receipt_id_ok || input.mutation_receipt.native_session_id.is_empty() {
         return fail(CloudSyncOutboundSafeCode::InvalidRequest);
     }
-    match input.mutation_context.source_binding.as_ref() {
+    let mutation_source_sha256 = match input.mutation_context.source_binding.as_ref() {
         Some(binding)
             if binding.kind == Some(CloudSyncNativeSendSourceKind::Mutation)
                 && is_cloud_sync_protected_reference(&binding.protected_reference)
                 && is_cloud_sync_lease_reference(&binding.lease_reference)
                 && is_cloud_sync_hex_digest(&binding.source_sha256)
-                && is_cloud_sync_hex_digest(&binding.payload_sha256) => {}
+                && is_cloud_sync_hex_digest(&binding.payload_sha256) =>
+        {
+            binding.source_sha256.clone()
+        }
         _ => return fail(CloudSyncOutboundSafeCode::InvalidRequest),
-    }
+    };
     if input.mutation_context.storage_directory != storage_directory
         || input.mutation_context.account_fingerprint != expected_account_fingerprint
         || input.mutation_context.protected_store_identity != expected_protected_store_identity
@@ -17950,7 +17954,11 @@ pub async fn cloud_sync_prepare_message_update(
             .await
         {
             Ok(auth) => auth,
-            Err(_) => return fail(CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+            Err(_) => {
+                warn!("Cloud Sync writer preparation failed kind=message-update phase=auth-before");
+                log::logger().flush();
+                return fail(CloudSyncOutboundSafeCode::NativeAuthUnavailable);
+            }
         };
     if auth.account_fingerprint != expected_account_fingerprint
         || auth.protected_store_identity != expected_protected_store_identity
@@ -17965,15 +17973,28 @@ pub async fn cloud_sync_prepare_message_update(
         .await
     {
         Ok(binding) => binding,
-        Err(_) => return fail(CloudSyncOutboundSafeCode::NativeAuthUnavailable),
+        Err(error) => {
+            warn!(
+                "Cloud Sync writer preparation failed kind=message-update phase=writer-warm cause={}",
+                cloud_sync_writer_preparation_failure_code(&error)
+            );
+            log::logger().flush();
+            return fail(CloudSyncOutboundSafeCode::NativeAuthUnavailable);
+        }
     };
-    let auth_after =
-        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
-            .await
-        {
-            Ok(auth) => auth,
-            Err(_) => return fail(CloudSyncOutboundSafeCode::NativeAuthUnavailable),
-        };
+    let auth_after = match cloud_sync_capture_auth_snapshot(
+        cloud_messages_client,
+        storage_directory.clone(),
+    )
+    .await
+    {
+        Ok(auth) => auth,
+        Err(_) => {
+            warn!("Cloud Sync writer preparation failed kind=message-update phase=auth-after-warm");
+            log::logger().flush();
+            return fail(CloudSyncOutboundSafeCode::NativeAuthUnavailable);
+        }
+    };
     if !cloud_sync_auth_identity_remains_exact(
         &auth,
         &auth_after,
@@ -18010,19 +18031,6 @@ pub async fn cloud_sync_prepare_message_update(
     if prepared_ms == 0 || prepared_ms > i64::MAX as u64 {
         return fail(CloudSyncOutboundSafeCode::MalformedMessage);
     }
-    let envelope = match cloud_sync_open_mutation_source_bound(&input.mutation_context) {
-        Ok(envelope) => envelope,
-        Err(error) => {
-            let message = error.to_string();
-            if message.contains("receipt_context_invalid") {
-                return fail(CloudSyncOutboundSafeCode::InvalidScope);
-            }
-            if message.contains("source_invalid") {
-                return fail(CloudSyncOutboundSafeCode::MalformedMessage);
-            }
-            return fail(CloudSyncOutboundSafeCode::ProtectedStorage);
-        }
-    };
     let target_guid = opened.target_guid().to_owned();
     let target_part = opened.target_part();
     // The Dart journal pins this exact v2 receipt-binding digest at receipt
@@ -18210,7 +18218,7 @@ pub async fn cloud_sync_prepare_message_update(
         Err(code) => return fail(code),
     };
     let binding = cloud_sync_message_update_binding(
-        &envelope,
+        &mutation_source_sha256,
         &auth_after_rewrite.account_fingerprint,
         &auth_after_rewrite.protected_store_identity,
         &input,
@@ -18305,7 +18313,10 @@ pub async fn cloud_sync_prepare_message_update_submission(
     ) {
         Ok(opened) => opened,
         Err(error) => {
-            return cloud_sync_prepare_failure(map_cloud_sync_outbound_failure(error));
+            let code = map_cloud_sync_outbound_failure(error);
+            warn!("Cloud Sync message update submission failed phase=stage-open code={code:?}");
+            log::logger().flush();
+            return cloud_sync_prepare_failure(code);
         }
     };
     let record_name = match cloud_sync_message_update_predecessor_name(opened.predecessor()) {
@@ -18325,11 +18336,20 @@ pub async fn cloud_sync_prepare_message_update_submission(
         };
     let etag_hash = match hasher.canonical_etag_hash(&predecessor_etag) {
         Ok(hash) => hash,
-        Err(_) => return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch),
+        Err(_) => {
+            warn!("Cloud Sync message update submission failed phase=etag-hash");
+            log::logger().flush();
+            return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch);
+        }
     };
-    if hasher.server_record_id_hash(&record_name) != input.server_record_id_hash
-        || etag_hash.value() != input.predecessor_etag_hash
-    {
+    let record_hash_matches =
+        hasher.server_record_id_hash(&record_name) == input.server_record_id_hash;
+    let etag_hash_matches = etag_hash.value() == input.predecessor_etag_hash;
+    if !record_hash_matches || !etag_hash_matches {
+        warn!(
+            "Cloud Sync message update submission failed phase=staged-predecessor-binding record={record_hash_matches} etag={etag_hash_matches}"
+        );
+        log::logger().flush();
         return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch);
     }
 
@@ -18372,7 +18392,9 @@ pub async fn cloud_sync_prepare_message_update_submission(
             (record, receipt)
         }
         Ok(rustpush::cloud_messages::CloudMessageRecordVersionLookup::NotFound) => {
-            return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch)
+            warn!("Cloud Sync message update submission failed phase=remote-not-found");
+            log::logger().flush();
+            return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch);
         }
         Ok(rustpush::cloud_messages::CloudMessageRecordVersionLookup::Unresolved { .. })
         | Err(_) => {
@@ -18383,10 +18405,15 @@ pub async fn cloud_sync_prepare_message_update_submission(
         Ok(record) => record,
         Err(_) => return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::MalformedMessage),
     };
-    if receipt.record_name() != record_name
-        || receipt.etag() != predecessor_etag
-        || !cloud_sync_message_update_predecessor_matches_remote(opened.predecessor(), remote_raw)
-    {
+    let receipt_name_matches = receipt.record_name() == record_name;
+    let receipt_etag_matches = receipt.etag() == predecessor_etag;
+    let predecessor_matches =
+        cloud_sync_message_update_predecessor_matches_remote(opened.predecessor(), remote_raw);
+    if !receipt_name_matches || !receipt_etag_matches || !predecessor_matches {
+        warn!(
+            "Cloud Sync message update submission failed phase=remote-predecessor-binding name={receipt_name_matches} etag={receipt_etag_matches} record={predecessor_matches}"
+        );
+        log::logger().flush();
         return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch);
     }
     let auth_after_lookup =
@@ -18980,15 +19007,16 @@ fn message_update_auth_binding_sha256(account_fingerprint: &str, store_identity:
 }
 
 /// Builds the exact staging binding for one prepared update. The mutation
-/// source digest is derived natively from the opened source envelope and the
-/// auth digest from the current account and store identity; the receipt
-/// binding carries the journal digest verified against the exact retained
-/// receipt just above, and the remaining restart-stable journal correlation
-/// (snapshot and writer epoch) is carried through verbatim for later adoption.
+/// source digest is the canonical local source identity already validated by
+/// the protected native source open; the auth digest comes from the current
+/// account and store identity. The receipt binding carries the journal digest
+/// verified against the exact retained receipt just above, and the remaining
+/// restart-stable journal correlation (snapshot and writer epoch) is carried
+/// through verbatim for later adoption.
 /// Durable operation and Apple request IDs do not exist until after ObjectBox
 /// atomically adopts this stage, so they belong to submission preparation.
 fn cloud_sync_message_update_binding(
-    mutation_source_envelope: &[u8],
+    mutation_source_sha256: &str,
     account_fingerprint: &str,
     protected_store_identity: &str,
     input: &CloudSyncMessageUpdatePrepareInput,
@@ -18997,7 +19025,7 @@ fn cloud_sync_message_update_binding(
         logical_entity_key_hash: input.expected_logical_entity_key_hash.clone(),
         server_record_id_hash: input.expected_server_record_id_hash.clone(),
         predecessor_etag_hash: input.expected_etag_hash.clone(),
-        mutation_source_sha256: message_update_sha256_hex(mutation_source_envelope),
+        mutation_source_sha256: mutation_source_sha256.to_owned(),
         ids_receipt_binding_sha256: input.expected_receipt_binding_sha256.clone(),
         reflected_snapshot_sha256: input.reflected_snapshot_sha256.clone(),
         auth_binding_sha256: message_update_auth_binding_sha256(
@@ -20411,37 +20439,40 @@ mod cloud_sync_message_update_prepare_tests {
     }
 
     #[test]
-    fn update_binding_derives_native_digests_and_echoes_correlation() {
+    fn update_binding_carries_validated_source_and_derives_auth_digest() {
         let input = update_input_fixture();
-        let envelope = b"fixture-mutation-envelope-bytes";
+        let source_sha256 = input
+            .mutation_context
+            .source_binding
+            .as_ref()
+            .expect("fixture source binding")
+            .source_sha256
+            .clone();
         let first = cloud_sync_message_update_binding(
-            envelope,
+            &source_sha256,
             UPDATE_ACCOUNT,
             "obcs2.store.fixture",
             &input,
         );
         let second = cloud_sync_message_update_binding(
-            envelope,
+            &source_sha256,
             UPDATE_ACCOUNT,
             "obcs2.store.fixture",
             &input,
         );
         assert_eq!(first.mutation_source_sha256, second.mutation_source_sha256);
-        assert_eq!(first.mutation_source_sha256.len(), 64);
-        assert!(first
-            .mutation_source_sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')));
+        assert_eq!(first.mutation_source_sha256, source_sha256);
         assert_eq!(first.auth_binding_sha256, second.auth_binding_sha256);
+        let other_source = "f".repeat(64);
         let other = cloud_sync_message_update_binding(
-            b"different-envelope",
+            &other_source,
             UPDATE_ACCOUNT,
             "obcs2.store.fixture",
             &input,
         );
         assert_ne!(first.mutation_source_sha256, other.mutation_source_sha256);
         let other_store = cloud_sync_message_update_binding(
-            envelope,
+            &source_sha256,
             UPDATE_ACCOUNT,
             "obcs2.store.other",
             &input,

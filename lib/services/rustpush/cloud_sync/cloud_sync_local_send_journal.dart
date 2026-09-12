@@ -680,7 +680,8 @@ final class CloudSyncLocalSendJournal {
     required Store store,
     required ObjectBoxCloudKitWriterAuthority authority,
     required CloudKitWriterAuthoritySnapshot authoritySnapshot,
-    String Function(int intentId, String? retainedProof)? attachmentParentReadback,
+    String Function(int intentId, String? retainedProof)?
+    attachmentParentReadback,
   }) : _store = store,
        _authority = authority,
        _binding = authoritySnapshot,
@@ -699,7 +700,8 @@ final class CloudSyncLocalSendJournal {
   final Box<Message> _messages;
   // Synchronous inside the caller's Store transaction. Null proof captures
   // the native inventory; nonnull proof must be revalidated, never replaced.
-  final String Function(int intentId, String? retainedProof)? _attachmentParentReadback;
+  final String Function(int intentId, String? retainedProof)?
+  _attachmentParentReadback;
 
   bool isBoundToStore(Store store) => identical(store, _store);
 
@@ -1363,8 +1365,11 @@ final class CloudSyncLocalSendJournal {
     String operationId,
   ) {
     _verifyLocalOwnership();
-    final found = _readUnique(_intents.query(
-      CloudSyncLocalSendIntentEntity_.admittedOperationId.equals(operationId)));
+    final found = _readUnique(
+      _intents.query(
+        CloudSyncLocalSendIntentEntity_.admittedOperationId.equals(operationId),
+      ),
+    );
     if (found == null) return null;
     final intent = _readRetainedIntent(found.id);
     if (intent.state != 2 || intent.admittedOperationId != operationId) {
@@ -1468,11 +1473,12 @@ final class CloudSyncLocalSendJournal {
         intent.sourceSha256 != upload.sourceSha256 ||
         (intent.state != 1 && intent.state != 2) ||
         !_hasConsistentAdoption(intent) ||
-        intent.intentKey != CloudSyncLocalSendIdentity._digest([
-          'cloud-sync-local-send-intent-v1',
-          intent.accountFingerprint,
-          intent.messageGuidHash,
-        ])) {
+        intent.intentKey !=
+            CloudSyncLocalSendIdentity._digest([
+              'cloud-sync-local-send-intent-v1',
+              intent.accountFingerprint,
+              intent.messageGuidHash,
+            ])) {
       throw StateError('cloud_sync_local_send_intent_changed');
     }
     final scope = CloudSyncScope(
@@ -1484,13 +1490,14 @@ final class CloudSyncLocalSendJournal {
       schemaVersion: 2,
       persistenceLane: CloudSyncPersistenceLane.semantic,
     );
-    if (upload.uploadKey != CloudSyncLocalSendIdentity._digest([
-      'cloud-sync-attachment-upload-v1',
-      scope.storageKey,
-      upload.messageGuidHash,
-      upload.sourceSha256,
-      upload.attachmentKeyHash,
-    ])) {
+    if (upload.uploadKey !=
+        CloudSyncLocalSendIdentity._digest([
+          'cloud-sync-attachment-upload-v1',
+          scope.storageKey,
+          upload.messageGuidHash,
+          upload.sourceSha256,
+          upload.attachmentKeyHash,
+        ])) {
       throw StateError('cloud_sync_attachment_upload_binding_changed');
     }
     _requireIdsConfirmation(intent);
@@ -1918,16 +1925,21 @@ final class CloudSyncLocalSendJournal {
                 CloudSyncLocalSendIntentEntity_.accountFingerprint
                     .equals(_binding.scope.accountFingerprint)
                     .and(
-                      CloudSyncLocalSendIntentEntity_.writerEpoch.equals(
-                        _binding.epoch,
-                      ).or(
-                        CloudSyncLocalSendIntentEntity_.writerEpoch
-                            .greaterThan(0)
-                            .and(CloudSyncLocalSendIntentEntity_.writerEpoch
-                                .lessThan(_binding.epoch))
-                            .and(CloudSyncLocalSendIntentEntity_
-                                .protectedSourceBinding.notNull()),
-                      ),
+                      CloudSyncLocalSendIntentEntity_.writerEpoch
+                          .equals(_binding.epoch)
+                          .or(
+                            CloudSyncLocalSendIntentEntity_.writerEpoch
+                                .greaterThan(0)
+                                .and(
+                                  CloudSyncLocalSendIntentEntity_.writerEpoch
+                                      .lessThan(_binding.epoch),
+                                )
+                                .and(
+                                  CloudSyncLocalSendIntentEntity_
+                                      .protectedSourceBinding
+                                      .notNull(),
+                                ),
+                          ),
                     )
                     .and(CloudSyncLocalSendIntentEntity_.state.equals(1))
                     .and(
@@ -2125,9 +2137,13 @@ final class CloudSyncLocalSendJournal {
       dynamic dependency;
       try {
         dependency = jsonDecode(intent.admittedChatBinding ?? 'null');
-      } on FormatException { dependency = null; }
-      if (dependency is! List || dependency.length != 3 ||
-          dependency[0] != 4 || dependency[2] is! String) {
+      } on FormatException {
+        dependency = null;
+      }
+      if (dependency is! List ||
+          dependency.length != 3 ||
+          dependency[0] != 4 ||
+          dependency[2] is! String) {
         throw StateError('cloud_sync_attachment_parent_readback_required');
       }
       requireAttachmentParentReadback(expected, dependency[2] as String);
@@ -2332,6 +2348,21 @@ final class CloudSyncLocalSendJournal {
   }
 
   void _requireCreateAuthority(Store transactionStore, CloudSyncScope scope) {
+    _requireCreateAuthorityScope(transactionStore, scope);
+    _verifyLocalOwnership();
+    final permit = _authority.issuePermit(
+      _binding.scope,
+      expectedOwner: CloudKitWriterOwner.v2,
+    );
+    if (permit.epoch != _binding.epoch) {
+      throw StateError('cloud_sync_local_send_owner_changed');
+    }
+  }
+
+  void _requireCreateAuthorityScope(
+    Store transactionStore,
+    CloudSyncScope scope,
+  ) {
     if (!identical(transactionStore, _store)) {
       throw StateError('cloud_sync_local_send_adoption_store_mismatch');
     }
@@ -2344,12 +2375,46 @@ final class CloudSyncLocalSendJournal {
         scope.persistenceLane != CloudSyncPersistenceLane.semantic) {
       throw StateError('cloud_sync_local_send_scope_invalid');
     }
-    _verifyLocalOwnership();
-    final permit = _authority.issuePermit(
-      _binding.scope,
-      expectedOwner: CloudKitWriterOwner.v2,
-    );
-    if (permit.epoch != _binding.epoch) {
+  }
+
+  /// Read-only authority for an exact, already-reflected mutation parent.
+  ///
+  /// A native update deliberately moves the writer from stable E to
+  /// mutationUnknown E+1 until exact CloudKit readback settles it at stable
+  /// E+2. The immutable reflected mutation binding is the additional proof
+  /// that permits reading an earlier confirmed create during that recovery.
+  /// This never issues a writer permit and is never used by fresh create,
+  /// attachment, reaction, stage, adoption, or submission paths.
+  void _requireReflectedMutationParentReadAuthority(
+    Store transactionStore,
+    CloudSyncScope scope,
+  ) {
+    _requireCreateAuthorityScope(transactionStore, scope);
+    if (_binding.owner != CloudKitWriterOwner.v2 || _binding.epoch <= 0) {
+      throw StateError('cloud_sync_local_send_owner_changed');
+    }
+    final current = _authority.read(_binding.scope);
+    if (current == null ||
+        current.owner != CloudKitWriterOwner.v2 ||
+        current.targetOwner != CloudKitWriterOwner.none ||
+        current.transitionIdHash != null) {
+      throw StateError('cloud_sync_local_send_owner_changed');
+    }
+    final allowed = switch (_binding.state) {
+      CloudKitWriterAuthorityState.stable =>
+        (current.state == CloudKitWriterAuthorityState.stable &&
+                (current.epoch == _binding.epoch ||
+                    current.epoch == _binding.epoch + 2)) ||
+            (current.state == CloudKitWriterAuthorityState.mutationUnknown &&
+                current.epoch == _binding.epoch + 1),
+      CloudKitWriterAuthorityState.mutationUnknown =>
+        (current.state == CloudKitWriterAuthorityState.mutationUnknown &&
+                current.epoch == _binding.epoch) ||
+            (current.state == CloudKitWriterAuthorityState.stable &&
+                current.epoch == _binding.epoch + 1),
+      _ => false,
+    };
+    if (!allowed) {
       throw StateError('cloud_sync_local_send_owner_changed');
     }
   }
@@ -2446,12 +2511,29 @@ final class CloudSyncLocalSendJournal {
   void validateAdoptedOperation(
     Store transactionStore,
     CloudSyncLocalSendAdmissionSource expected,
-    CloudOutboxOperation? operation,
-  ) => _store.runInTransaction(TxMode.read, () {
+    CloudOutboxOperation? operation, {
+    bool reflectedMutationValidated = false,
+  }) => _store.runInTransaction(TxMode.read, () {
     if (!identical(transactionStore, _store)) {
       throw StateError('cloud_sync_local_send_adoption_store_mismatch');
     }
-    _verifyLocalOwnership();
+    if (reflectedMutationValidated) {
+      _requireReflectedMutationParentReadAuthority(
+        transactionStore,
+        operation?.scope ??
+            CloudSyncScope(
+              accountFingerprint: _binding.scope.accountFingerprint,
+              container: _binding.scope.container,
+              database: _binding.scope.database,
+              zone: 'messageManateeZone',
+              streamKind: CloudSyncStreamKind.messages,
+              schemaVersion: cloudSyncSchemaVersion,
+              persistenceLane: CloudSyncPersistenceLane.semantic,
+            ),
+      );
+    } else {
+      _verifyLocalOwnership();
+    }
     final intent = _readRetainedIntent(expected.intentId);
     if (!expected._matches(intent) ||
         intent.state != 2 ||
@@ -2485,8 +2567,10 @@ final class CloudSyncLocalSendJournal {
     _verifyLocalOwnership();
     final intent = _readRetainedIntent(expected.intentId);
     final reader = _attachmentParentReadback;
-    if (!expected._matches(intent) || intent.protectedSourceBinding == null ||
-        reader == null || reader(intent.id, proof) != proof) {
+    if (!expected._matches(intent) ||
+        intent.protectedSourceBinding == null ||
+        reader == null ||
+        reader(intent.id, proof) != proof) {
       throw StateError('cloud_sync_attachment_parent_readback_required');
     }
   }
@@ -2558,10 +2642,14 @@ final class CloudSyncLocalSendJournal {
   List<Object>? readConfirmedParentDependency(
     Store transactionStore,
     CloudSyncScope scope,
-    Message parent,
-    {bool reflectedMutationValidated = false}
-  ) {
-    _requireCreateAuthority(transactionStore, scope);
+    Message parent, {
+    bool reflectedMutationValidated = false,
+  }) {
+    if (reflectedMutationValidated) {
+      _requireReflectedMutationParentReadAuthority(transactionStore, scope);
+    } else {
+      _requireCreateAuthority(transactionStore, scope);
+    }
     final found = _readUnique(
       _intents.query(
         CloudSyncLocalSendIntentEntity_.accountFingerprint
@@ -2960,6 +3048,7 @@ final class CloudSyncLocalSendJournal {
       _store,
       CloudSyncLocalSendAdmissionSource._(intent, null),
       operation,
+      reflectedMutationValidated: reflectedMutationValidated,
     );
     final checkpoint = _readUnique(
       _store.box<CloudSyncCheckpointEntity>().query(
@@ -3004,7 +3093,9 @@ final class CloudSyncLocalSendJournal {
       binding: intent.admittedChatBinding,
       expectedChatId: message.chat.targetId,
       requireAttachmentReadback: (proof) => requireAttachmentParentReadback(
-        CloudSyncLocalSendAdmissionSource._(intent, null), proof),
+        CloudSyncLocalSendAdmissionSource._(intent, null),
+        proof,
+      ),
       readConfirmedLocalParent: (parent) =>
           readConfirmedParentDependency(_store, scope, parent),
     );

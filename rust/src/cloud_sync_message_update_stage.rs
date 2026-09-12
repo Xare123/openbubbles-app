@@ -22,6 +22,7 @@ const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
 // limit. Keep room for the authenticated context, cipher overhead and lease.
 const MAX_ENVELOPE_BYTES: usize = 9 * 1024 * 1024;
 const MAX_FIELDS: usize = 4096;
+const CURRENT_ENVELOPE_VERSION: u32 = 2;
 
 // Content-free exact context. Hashes must come from the native-validated
 // mutation journal, not be inferred from matching message text.
@@ -190,7 +191,7 @@ pub(crate) fn stage_message_update(
     validate_binding(&binding)?;
     validate_request(predecessor, request)?;
     let envelope = Envelope {
-        v: 1,
+        v: CURRENT_ENVELOPE_VERSION,
         binding,
         predecessor_b64: URL_SAFE_NO_PAD.encode(predecessor.encode_to_vec()),
         request_b64: URL_SAFE_NO_PAD.encode(request.encode_to_vec()),
@@ -236,16 +237,48 @@ pub(crate) fn open_message_update(
     .map_err(|_| Failure::ProtectedStorage)?;
     let bytes = decode_bounded(&encoded, MAX_ENVELOPE_BYTES)?;
     if digest(&bytes) != stage.payload_sha256 {
+        log::warn!("Cloud Sync message update stage open failed phase=payload-digest");
+        log::logger().flush();
         return Err(Failure::BindingMismatch);
     }
     let envelope: Envelope =
         serde_json::from_slice(&bytes).map_err(|_| Failure::MalformedMessage)?;
-    if envelope.v != 1
+    if !matches!(envelope.v, 1 | CURRENT_ENVELOPE_VERSION)
         || serde_json::to_vec(&envelope).map_err(|_| Failure::MalformedMessage)? != bytes
     {
         return Err(Failure::MalformedMessage);
     }
-    if &envelope.binding != expected {
+    validate_binding(&envelope.binding)?;
+    let exact_binding = &envelope.binding == expected;
+    // Version 1 used the SHA-256 of the encoded mutation envelope in this
+    // otherwise redundant field. The exact IDS receipt binding already binds
+    // the canonical source digest, protected source, lease and payload. Permit
+    // only that historical source-field difference so an adopted pre-submit
+    // attempt can survive an upgrade without another IDS send. Version 2 and
+    // every other binding field remain exact.
+    let legacy_source_only = envelope.v == 1
+        && envelope.binding.logical_entity_key_hash == expected.logical_entity_key_hash
+        && envelope.binding.server_record_id_hash == expected.server_record_id_hash
+        && envelope.binding.predecessor_etag_hash == expected.predecessor_etag_hash
+        && envelope.binding.ids_receipt_binding_sha256 == expected.ids_receipt_binding_sha256
+        && envelope.binding.reflected_snapshot_sha256 == expected.reflected_snapshot_sha256
+        && envelope.binding.auth_binding_sha256 == expected.auth_binding_sha256
+        && envelope.binding.writer_epoch == expected.writer_epoch
+        && envelope.binding.raw_generation == expected.raw_generation;
+    if !exact_binding && !legacy_source_only {
+        log::warn!(
+            "Cloud Sync message update stage open failed phase=binding logical={} server={} etag={} source={} receipt={} snapshot={} auth={} epoch={} generation={}",
+            envelope.binding.logical_entity_key_hash == expected.logical_entity_key_hash,
+            envelope.binding.server_record_id_hash == expected.server_record_id_hash,
+            envelope.binding.predecessor_etag_hash == expected.predecessor_etag_hash,
+            envelope.binding.mutation_source_sha256 == expected.mutation_source_sha256,
+            envelope.binding.ids_receipt_binding_sha256 == expected.ids_receipt_binding_sha256,
+            envelope.binding.reflected_snapshot_sha256 == expected.reflected_snapshot_sha256,
+            envelope.binding.auth_binding_sha256 == expected.auth_binding_sha256,
+            envelope.binding.writer_epoch == expected.writer_epoch,
+            envelope.binding.raw_generation == expected.raw_generation,
+        );
+        log::logger().flush();
         return Err(Failure::BindingMismatch);
     }
     let predecessor_bytes = decode_bounded(&envelope.predecessor_b64, MAX_RECORD_BYTES)?;
@@ -626,6 +659,36 @@ mod tests {
         .unwrap();
     }
 
+    fn stage_version(
+        path: PathBuf,
+        account: String,
+        version: u32,
+        binding: MessageUpdateBinding,
+        predecessor: &Record,
+        request: &RecordSaveRequest,
+    ) -> StagedMessageUpdate {
+        validate_binding(&binding).unwrap();
+        validate_request(predecessor, request).unwrap();
+        let envelope = Envelope {
+            v: version,
+            binding,
+            predecessor_b64: URL_SAFE_NO_PAD.encode(predecessor.encode_to_vec()),
+            request_b64: URL_SAFE_NO_PAD.encode(request.encode_to_vec()),
+        };
+        let bytes = serde_json::to_vec(&envelope).unwrap();
+        let staged = cloud_sync_stage_protected_message_update(
+            path,
+            account,
+            URL_SAFE_NO_PAD.encode(&bytes),
+        )
+        .unwrap();
+        StagedMessageUpdate {
+            protected_reference: staged.protected_envelope_reference,
+            lease_reference: staged.lease_reference,
+            payload_sha256: digest(&bytes),
+        }
+    }
+
     #[test]
     fn exact_committed_update_reopens_without_reencrypting_or_refreshing_version() {
         let directory = tempfile::tempdir().unwrap();
@@ -714,6 +777,36 @@ mod tests {
                 "descriptor {mode}"
             );
         }
+    }
+
+    #[test]
+    fn legacy_v1_stage_allows_only_the_historical_source_digest_difference() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().to_path_buf();
+        let account = "A".repeat(43);
+        let (previous, request) = fixture();
+        let mut legacy = binding();
+        legacy.mutation_source_sha256 = "f".repeat(64);
+        let stage = stage_version(
+            path.clone(),
+            account.clone(),
+            1,
+            legacy,
+            &previous,
+            &request,
+        );
+        commit(&path, &stage);
+
+        let recovered = open_message_update(path.clone(), account.clone(), &binding(), &stage)
+            .expect("v1 source-digest migration must reopen the adopted stage");
+        assert_eq!(recovered.request().encode_to_vec(), request.encode_to_vec());
+
+        let mut changed_receipt = binding();
+        changed_receipt.ids_receipt_binding_sha256 = "e".repeat(64);
+        assert_eq!(
+            open_message_update(path, account, &changed_receipt, &stage).err(),
+            Some(Failure::BindingMismatch)
+        );
     }
 
     #[test]

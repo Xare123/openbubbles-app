@@ -49,12 +49,50 @@ void main() {
           fixture.scope,
           source: fixture.source,
           predecessor: fixture.predecessor,
+          currentAuth: fixture.auth,
           receipt: fixture.receipt,
         ),
       ),
       throwsA(_cloudFailure('cloud_sync_protected_read_only')),
     );
   });
+
+  test(
+    'cold receipt replay binds update preparation to the current native session',
+    () async {
+      final transport = fixture.buildTransport();
+      final currentAuth = CloudSyncNativeAuthSnapshot.fromNative(
+        nativeSessionId: _token('C'),
+        accountFingerprint: fixture.auth.accountFingerprint,
+        protectedStoreIdentity: fixture.auth.protectedStoreIdentity,
+        cloudMessagesClient: fixture.activeClient,
+      );
+
+      await fixture.runV2(
+        () => transport.stageMessageUpdate(
+          fixture.scope,
+          source: fixture.source,
+          predecessor: fixture.predecessor,
+          currentAuth: currentAuth,
+          receipt: fixture.receipt,
+        ),
+      );
+
+      final input = fixture.bindings.stagedUpdateInput!;
+      expect(
+        input.mutationContext.nativeSessionId,
+        currentAuth.nativeSessionId,
+      );
+      expect(
+        input.mutationReceipt.nativeSessionId,
+        fixture.receipt.nativeSessionId,
+      );
+      expect(
+        input.mutationContext.nativeSessionId,
+        isNot(input.mutationReceipt.nativeSessionId),
+      );
+    },
+  );
 
   test('create prepared submission cannot enter update consume', () async {
     final transport = fixture.buildTransport();
@@ -159,6 +197,7 @@ void main() {
             foreignScope,
             source: fixture.source,
             predecessor: fixture.predecessor,
+            currentAuth: fixture.auth,
             receipt: fixture.receipt,
           ),
         ),
@@ -345,6 +384,78 @@ void main() {
       expect(mapping.protectedReadbackLeaseReference, isNull);
     },
   );
+
+  test(
+    'update executor ignores an unrelated retained sibling tombstone',
+    () async {
+      fixture.retainSeededTombstone('attachmentManateeZone');
+      final transport = _ExecutorTransport(
+        CloudSyncMessageUpdateReconciliationDisposition.committed,
+      );
+      final executor = fixture.buildExecutor(transport);
+
+      final admitted = await executor.admitReflectedUpdate(
+        fixture.scope,
+        source: fixture.source,
+        predecessor: fixture.predecessor,
+        currentAuth: fixture.auth,
+        stillCurrent: () => true,
+        receipt: fixture.receipt,
+      );
+      final result = await executor.runOnce(
+        fixture.scope,
+        currentAuth: fixture.auth,
+        stillCurrent: () => true,
+      );
+
+      expect(result.submitted, 1);
+      expect(result.confirmed, 1);
+      expect(
+        (await fixture.cloudStore.readOutboxEntries(fixture.scope))
+            .singleWhere((entry) => entry.operationId == admitted.operationId)
+            .status,
+        CloudOutboxStatus.confirmed,
+      );
+    },
+  );
+
+  test('update executor rejects a retained tombstone for its record', () async {
+    fixture.retainSeededTombstone('messageManateeZone');
+    final transport = _ExecutorTransport(
+      CloudSyncMessageUpdateReconciliationDisposition.committed,
+    );
+    final executor = fixture.buildExecutor(transport);
+
+    final admitted = await executor.admitReflectedUpdate(
+      fixture.scope,
+      source: fixture.source,
+      predecessor: fixture.predecessor,
+      currentAuth: fixture.auth,
+      stillCurrent: () => true,
+      receipt: fixture.receipt,
+    );
+    await expectLater(
+      executor.runOnce(
+        fixture.scope,
+        currentAuth: fixture.auth,
+        stillCurrent: () => true,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'messages_cloud_tombstone_projection_unavailable',
+        ),
+      ),
+    );
+    expect(transport.stageCalls, 1);
+    expect(
+      (await fixture.cloudStore.readOutboxEntries(fixture.scope))
+          .singleWhere((entry) => entry.operationId == admitted.operationId)
+          .status,
+      CloudOutboxStatus.pending,
+    );
+  });
 
   test(
     'acknowledgement failure happens after durable update finalization',
@@ -843,6 +954,29 @@ final class _Fixture {
         uuidFactory: _UuidSequence().next,
       );
 
+  void retainSeededTombstone(String zone) {
+    final rows = store
+        .box<CloudInboxChangeEntity>()
+        .getAll()
+        .where(
+          (row) =>
+              row.accountFingerprint == scope.accountFingerprint &&
+              row.zone == zone,
+        )
+        .toList(growable: false);
+    if (rows.length != 1) {
+      throw StateError('fixture_seeded_inbox_row_missing');
+    }
+    final row = rows.single
+      ..status = CloudInboxStatus.retainedUnprojected.index
+      ..changeType = CloudChangeType.delete.name
+      ..isTombstone = true
+      ..etagHash = null
+      ..encryptedPayloadRef = null
+      ..payloadSha256 = null;
+    store.box<CloudInboxChangeEntity>().put(row);
+  }
+
   NativeProtectedCloudSyncTransport buildTransport({
     NativeProtectedCloudSyncBindings? bindings,
   }) => NativeProtectedCloudSyncTransport(
@@ -1048,6 +1182,7 @@ final class _ExecutorTransport
     CloudSyncScope scope, {
     required CloudSyncLocalMutationAdmissionSource source,
     required CloudSyncMessageMutationPredecessor predecessor,
+    required CloudSyncNativeAuthSnapshot currentAuth,
     required api.CloudSyncNativeSendReceipt receipt,
   }) async {
     stageCalls++;
@@ -1178,6 +1313,7 @@ final class _Bindings
   int updatePrepareCalls = 0;
   int updateConsumeCalls = 0;
   int updateReconcileCalls = 0;
+  api.CloudSyncMessageUpdatePrepareInput? stagedUpdateInput;
   api.CloudSyncMessageUpdateSubmissionInput? preparedUpdateInput;
 
   @override
@@ -1231,6 +1367,7 @@ final class _Bindings
     required api.CloudSyncMessageUpdatePrepareInput input,
   }) async {
     updateStageCalls++;
+    stagedUpdateInput = input;
     return api.CloudSyncPrepareMessageUpdateResult(
       prepared: api.CloudSyncPreparedMessageUpdate(
         protectedReference: _reference('U'),

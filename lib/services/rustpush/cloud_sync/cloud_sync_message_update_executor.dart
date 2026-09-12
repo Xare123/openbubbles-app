@@ -72,7 +72,9 @@ final class CloudSyncMessageUpdateExecutor {
        _preparedSubmissionReleaser = preparedSubmissionReleaser,
        // ignore: prefer_initializing_formals
        _leaseTransport = leaseTransport,
+       // ignore: prefer_initializing_formals
        _replayBinding = replayBinding,
+       // ignore: prefer_initializing_formals
        _readConfirmedLocalParent = readConfirmedLocalParent,
        _clock = clock ?? (() => DateTime.now().toUtc()),
        _uuidFactory = uuidFactory ?? (() => const Uuid().v4().toUpperCase()) {
@@ -125,6 +127,7 @@ final class CloudSyncMessageUpdateExecutor {
         scope,
         source: refreshedSource,
         predecessor: predecessor,
+        currentAuth: currentAuth,
         receipt: receipt,
       );
       var retainedStage = false;

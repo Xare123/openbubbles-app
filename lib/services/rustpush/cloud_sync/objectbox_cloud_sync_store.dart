@@ -2886,6 +2886,7 @@ class ObjectBoxCloudSyncStore
           throw _storageFailure('checkpoint_pending_page_unresolved');
         }
         if (_localSendJournal == null &&
+            _localMutationJournal == null &&
             _attachmentUploadJournal?.isBoundTo(_store, scope) != true) {
           _requireMessagesCloudAccountProjectionReadyLocked(scope);
         }
@@ -3104,7 +3105,7 @@ class ObjectBoxCloudSyncStore
     return _store.runInTransaction(TxMode.write, () {
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
       _fenceUnsupportedOutboundVersionsLocked(scope, nowMs: nowMs);
-      if (_localSendJournal == null) {
+      if (_localSendJournal == null && _localMutationJournal == null) {
         _requireMessagesCloudAccountProjectionReadyLocked(scope);
       }
       final entities = <String, CloudOutboxOperationEntity>{};
@@ -5219,6 +5220,15 @@ class ObjectBoxCloudSyncStore
         throw _storageFailure('protected_message_update_predecessor_changed');
       }
       journal.validateAdoptedOperation(_store, operation, predecessor);
+      // A conditional update owns one exact, already-mapped CloudKit record.
+      // Unrelated retained history cannot make that record ambiguous, while a
+      // retained deletion of this exact record must still block submission.
+      // The server ETag remains the final concurrency fence for a newer save.
+      _requireMessagesCloudAccountProjectionReadyLocked(
+        scope,
+        allowRetainedForFreshCreate: true,
+        freshRecordIdHash: operation.serverRecordIdHash,
+      );
       return;
     }
     if (_isMessagesCloudSemanticScope(scope) &&

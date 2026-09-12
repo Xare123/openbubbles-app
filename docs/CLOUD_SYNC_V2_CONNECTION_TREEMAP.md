@@ -325,7 +325,7 @@ evidence paths. Causal edit/unsend writes remain a gap, not a passed gate.
 | Write-send provenance | `SOURCE-IMPLEMENTED` | Native positive-acceptance tests pass. Qualify the additive persisted-proof upgrade and dispatch/reconciliation tests. Old deferred/ready intents cannot promote or enter fresh admission without new proof; old adopted pending entries are retained and skipped for new leases. Submission rechecks proof. Exact readback remains allowed and does not retroactively prove IDS acceptance. A fresh v2 native confirmation can requalify the exact unchanged old source without resending it. Automatic uploads remain off pending execution and live proof. |
 | Retained writer queue usability | `TEST-PROVEN` | One journal-bound, read-only classifier covers queue drain, queued Chat observation, and preflight. It exempts only pristine pending creates with proof version 0, exact protected envelope/mapping, current owner/generation, no lease, attempt, Apple UUID or receipt. All rows remain counted and fingerprinted; no upload, acknowledgement, deletion, or proof upgrade occurs. GCE passed the real consumer/admission/store regression with a fresh qualified send beside retained work and reopen without duplicate submission. Apple responses are synthetic in this test; live proof remains. Unknown/retried/leased/malformed rows still block. |
 | Direct reactions | `LIVE-PROVEN` for bounded Windows like-05/remove-like-06 | Positive IDS confirmation, one admission, exact persisted readback and separate-process zero-admission restarts passed. Ordinary Pixel composition and independent Apple-device display remain. |
-| Edits and unsends | Read transition `TEST-PROVEN` for qualified shapes; write `GAP` | Same-record, rotated-tag transitions require exact durable predecessor binding and real canonical identity plus complete compatible body/history proof. The four-suite run passes 296 tests and full-suite GCE passed on `90f98b7eb`. Unsupported multi-body encodings or ambiguous lineage stay retained conflicts. Live-device proof remains. Outbound causal updates and stale-tag reconciliation remain separate gaps. |
+| Edits and unsends | Read transition `TEST-PROVEN`; bounded Windows writes `LIVE-PROVEN`; Pixel gate open | Same-record, rotated-tag transitions require exact durable predecessor binding and real canonical identity plus complete compatible body/history proof. Windows request 21 recovered an unknown edit without another IDS send and reached exact CloudKit confirmation. Fresh-parent request 24 submitted one unsend update and reached one exact confirmation, with zero not-applied, diverged, or unresolved operations. The offline mutation inspector found terminal state 5, positive IDS and reflection markers, exact route/source binding, matching stored display, zero initial-send intents, and an unchanged source database. Unsupported multi-body encodings, ambiguous lineage, chained mutation qualification, ordinary Pixel composition, and independent counterpart display remain open. |
 | Attachment writes | `LIVE-PROVEN` for bounded Windows image 04 admission/readback recovery | Source-bound upload, child readback, parent admission and no-op restart passed overlay `46bc6f027`. Independent recipient/second-client rendering, ordinary Pixel composer convergence, group attachment proof and exact-source Android qualification remain. Upload receipt alone is not record-save proof. |
 | Tombstones and deletion | Closed | Define exact ownership and recoverable semantics before enabling any local or remote delete. |
 | Token expiry | `TEST-PROVEN` | Live expired-token/restart proof remains. The exact-source path requires an authenticated protected reset proof, releases the semantic read boundary, reacquires the destructive-reset interlock and native pause, advances once, reconciles authority after process death, and replays once. |
@@ -1097,3 +1097,38 @@ Explicit `NOT_FOUND` is not permission to recreate a previously known message.
 An older review mentioned a three-file identity scaffold without identifying
 its paths. It was not located in the current checkout and must not be counted
 as implementation. Historical discussion remains in the investigation log.
+
+### September 12 Windows causal-write qualification
+
+Candidate build `7f25691656ef-dirty-ca780901f9c8-local-write` used the retained
+Windows profile and approved test route only. Edit request
+`qualification-20260912-terminal-edit-21` resumed a previously claimed
+positive IDS mutation without another native send. Exact predecessor recovery
+crossed the deliberately narrow stable E -> mutation-unknown E+1 -> stable E+2
+authority transition, reconciled one unknown operation, confirmed one exact
+CloudKit update, and left zero not-applied, diverged, or unresolved operations.
+The production Android restart path now probes the exact reflected mutation
+before trying native receipt restoration, so an already-reflected state-3/4
+intent proceeds to adopted-operation reconciliation instead of re-entering the
+fresh-write reflection path. All other errors remain fail closed.
+
+Unsend request `qualification-20260912-unsend-24` targeted fresh, independently
+confirmed parent request `qualification-20260912-unsend-parent-23`. It attempted
+one native unsend, retained and acknowledged its positive mutation receipt,
+submitted one version-checked CloudKit update, confirmed one exact readback,
+and reported zero recovered, unknown, not-applied, diverged, or unresolved
+operations. Local reflection completed. Read-only inspection of a disposable
+ObjectBox copy found mutation terminal state 5, structurally valid source
+binding, positive IDS and local-reflection markers, matching route and retracted
+display, zero ordinary initial-send intents for the mutation, and no change to
+the retained source database.
+
+Request `qualification-20260912-terminal-unsend-22` was rejected locally before
+claim or network activity because its parent had already been edited. The
+qualification harness still permits only one mutation over a pristine parent;
+it does not weaken initial-create validation to test chained mutations. A
+separate fresh parent was used instead. These results close bounded Windows
+protocol execution for independent edit and unsend. They do not close ordinary
+Pixel UI capture, Android lifecycle/restart behavior, independent recipient
+display, attachment mutation, chained mutations, or the broad regression and
+fresh-Canary gates.
