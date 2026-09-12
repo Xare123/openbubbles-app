@@ -229,13 +229,23 @@ foreach ($requiredText in @(
 foreach ($forbiddenText in @(
     'hard-codes an x86_64 libmpv',
     'flutter build windows',
-    'Compress-Archive',
-    'actions/upload-artifact@'
+    'Compress-Archive'
 )) {
     Assert-True `
         -Condition (-not $validationWorkflow.Contains($forbiddenText)) `
         -Message "Windows validation workflow must not contain '$forbiddenText'"
 }
+
+$windowsValidationJob = [regex]::Match(
+    $validationWorkflow,
+    '(?ms)^  windows:\s.*$'
+)
+Assert-True `
+    -Condition $windowsValidationJob.Success `
+    -Message 'Windows validation workflow must define the Windows build job'
+Assert-True `
+    -Condition (-not $windowsValidationJob.Value.Contains('actions/upload-artifact@')) `
+    -Message 'Windows build job must not upload the blocked runner bundle'
 
 foreach ($workflowSource in @($workflow, $validationWorkflow)) {
     $actionReferences = [regex]::Matches(
