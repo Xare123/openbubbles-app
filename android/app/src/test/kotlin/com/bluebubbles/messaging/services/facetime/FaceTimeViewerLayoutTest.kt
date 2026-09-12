@@ -11,10 +11,19 @@ class FaceTimeViewerLayoutTest {
     private fun Element.attr(name: String): String = getAttributeNS(android, name)
     private fun Element.children(): List<Element> = (0 until childNodes.length)
         .mapNotNull { childNodes.item(it) as? Element }
+    private fun appSource(path: String): File {
+        val workingDirectory = File(System.getProperty("user.dir")).canonicalFile
+        return listOf(
+            File(workingDirectory, "app/$path"),
+            File(workingDirectory, "android/app/$path"),
+            File(workingDirectory, path),
+        ).firstOrNull(File::isFile)
+            ?: error("Unable to locate app source '$path' from $workingDirectory")
+    }
     private fun layout(): Element = DocumentBuilderFactory.newInstance().apply {
         isNamespaceAware = true
         setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-    }.newDocumentBuilder().parse(File("android/app/src/main/res/layout/activity_face_time.xml")).documentElement
+    }.newDocumentBuilder().parse(appSource("src/main/res/layout/activity_face_time.xml")).documentElement
 
     @Test fun portraitUsesSafeBarsAndDoesNotAddTheKeyboardTwice() {
         assertEquals(FaceTimeViewerPadding(0, 28, 0, 24),
@@ -79,9 +88,9 @@ class FaceTimeViewerLayoutTest {
         assertEquals(ids.size, ids.distinct().size)
         assertEquals(1, ids.count { it == "@+id/endCall" })
         assertFalse(ids.contains("@+id/viewerTitle"))
-        val source = File("android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt").readText()
+        val source = appSource("src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt").readText()
         assertTrue(source.contains("binding.connectionStatus.visibility == View.VISIBLE"))
-        val endDrawable = File("android/app/src/main/res/drawable/facetime_viewer_end.xml").readText()
+        val endDrawable = appSource("src/main/res/drawable/facetime_viewer_end.xml").readText()
         assertTrue(endDrawable.contains("<ripple"))
         assertTrue(endDrawable.contains("android:state_enabled=\"false\""))
         assertTrue(endDrawable.contains("#66FF3B30"))

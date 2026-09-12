@@ -669,6 +669,18 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
+Checkpoint `58236f330` passed the complete local CloudSync suite: 2,859 tests,
+one intentional skip and zero failures. Signed-Canary run `34714333139`
+produced the correct package, stable v2 signature and ARM64 Rust/ObjectBox
+libraries. Exact-source GCE run `34714796195` passed binding regeneration, the
+full Dart suite, both Rust suites, the protector harness, APK packaging and
+native-library verification. Its final Android JVM step exposed three
+`FileNotFoundException` failures in the unrelated FaceTime layout test because
+that test assumed the repository root while Gradle runs from `android/`. The
+test now resolves app source from repository, Android-project or app-module
+working directories. Requalify the resulting test-only head before installing;
+do not treat this harness-path failure as a CloudKit protocol regression.
+
 1. Ship the confirmed-create raw-readback repair to Canary, then resume edit
    request 23 without another IDS send. Exact readback must populate the raw
    predecessor map first; the conditional edit may then reconcile and finalize
