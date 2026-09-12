@@ -36,6 +36,7 @@ import com.bluebubbles.messaging.services.rustpush.APNClient
 import com.bluebubbles.messaging.services.rustpush.APNService
 import com.bluebubbles.messaging.utils.getStreamMinVolumeCompat
 import com.google.android.material.math.MathUtils
+import kotlin.math.roundToInt
 
 class FaceTimeActivity : Activity() {
     companion object {
