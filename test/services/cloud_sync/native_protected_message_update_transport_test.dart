@@ -5,6 +5,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_projection.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_update_executor.dart';
@@ -324,7 +325,7 @@ void main() {
 
       expect(result.submitted, 1);
       expect(result.confirmed, 1);
-      expect(transport.committedLeases, [_lease('c')]);
+      expect(transport.committedLeases, [_lease('c'), _lease('e')]);
       expect(transport.acknowledgedLeases, [_lease('c'), _lease('e')]);
       expect(transport.completedStatuses, [CloudOutboxStatus.confirmed]);
       expect(transport.releaseCalls, 1);
@@ -344,6 +345,92 @@ void main() {
       expect(mapping.protectedReadbackLeaseReference, isNull);
     },
   );
+
+  for (final kind in CloudSyncLocalMutationKind.values) {
+    test(
+      '${kind.name} exact readback stays terminal across executor restart',
+      () async {
+        final variant = kind == CloudSyncLocalMutationKind.edit
+            ? fixture
+            : await _Fixture.create(kind: kind);
+        try {
+          final firstTransport = _ExecutorTransport(
+            CloudSyncMessageUpdateReconciliationDisposition.committed,
+          );
+          final firstExecutor = variant.buildExecutor(firstTransport);
+          final admitted = await firstExecutor.admitReflectedUpdate(
+            variant.scope,
+            source: variant.source,
+            predecessor: variant.predecessor,
+            currentAuth: variant.auth,
+            stillCurrent: () => true,
+            receipt: variant.receipt,
+          );
+          final first = await firstExecutor.runOnce(
+            variant.scope,
+            currentAuth: variant.auth,
+            stillCurrent: () => true,
+          );
+
+          expect(first.submitted, 1);
+          expect(first.confirmed, 1);
+          expect(firstTransport.stageCalls, 1);
+          final exactOperation =
+              (await variant.cloudStore.readOutboxEntries(
+                variant.scope,
+              )).singleWhere(
+                (operation) => operation.operationId == admitted.operationId,
+              );
+          final confirmedSource = variant.journal.markExactReadbackConfirmed(
+            intentId: variant.source.intentId,
+            operation: exactOperation,
+            currentAuth: variant.auth,
+            stillCurrent: () => true,
+            now: _time(21),
+          );
+          await firstTransport.acknowledgeCommittedPageLease(
+            confirmedSource.leaseReference,
+          );
+          final journalRow = variant.store
+              .box<CloudSyncLocalMutationIntentEntity>()
+              .getAll()
+              .single;
+          expect(journalRow.state, 5);
+          expect(journalRow.admittedOperationId, admitted.operationId);
+          expect(
+            await variant.cloudStore.readLiveProtectedOutboundLeaseReferences(
+              maximumCount: 100,
+            ),
+            isNot(
+              contains(
+                variant.source.decodeProtectedSourceBinding().leaseReference,
+              ),
+            ),
+          );
+
+          final restartTransport = _ExecutorTransport(
+            CloudSyncMessageUpdateReconciliationDisposition.committed,
+          );
+          final restartExecutor = variant.buildExecutor(restartTransport);
+          final replay = await restartExecutor.runOnce(
+            variant.scope,
+            currentAuth: variant.auth,
+            stillCurrent: () => true,
+          );
+
+          expect(replay.submitted, 0);
+          expect(replay.confirmed, 0);
+          expect(restartTransport.stageCalls, 0);
+          expect(restartTransport.committedLeases, isEmpty);
+          expect(restartTransport.acknowledgedLeases, isEmpty);
+          expect(restartTransport.completedStatuses, isEmpty);
+          expect(restartTransport.releaseCalls, 0);
+        } finally {
+          if (!identical(variant, fixture)) await variant.close();
+        }
+      },
+    );
+  }
 
   test(
     'update executor proves not-applied before returning work to pending',
@@ -442,7 +529,9 @@ final class _Fixture {
     '.openbubbles-cloudkit-writer-mutation-v1.fence',
   );
 
-  static Future<_Fixture> create() async {
+  static Future<_Fixture> create({
+    CloudSyncLocalMutationKind kind = CloudSyncLocalMutationKind.edit,
+  }) async {
     final directory = await Directory.systemTemp.createTemp(
       'openbubbles-message-update-transport-',
     );
@@ -510,9 +599,8 @@ final class _Fixture {
     )..chat.target = chat;
     store.box<Message>().put(target);
 
-    final identity = CloudSyncLocalMutationIdentity.captureWire(
-      _mutationWire(),
-    )!;
+    final wire = _mutationWire(kind);
+    final identity = CloudSyncLocalMutationIdentity.captureWire(wire)!;
     final sourceBinding = CloudSyncLocalMutationSourceBinding(
       accountFingerprint: scope.accountFingerprint,
       protectedStoreIdentity: _storeIdentity,
@@ -560,7 +648,7 @@ final class _Fixture {
       receiptId: 'obcs2.ids.${_token('I')}',
       guidHash: identity.guidHash,
       nativeSessionId: auth.nativeSessionId,
-      preparedSentTimestampMs: BigInt.from(1789146004000),
+      preparedSentTimestampMs: BigInt.from(_time(4).millisecondsSinceEpoch),
       sourceBinding: api.CloudSyncNativeSendSourceBinding(
         kind: api.CloudSyncNativeSendSourceKind.mutation,
         sourceSha256: sourceBinding.sourceSha256,
@@ -577,18 +665,22 @@ final class _Fixture {
       stillCurrent: () => true,
       now: _time(4),
     );
+    final projection = CloudSyncLocalMutationProjection.projectFirst(
+      target: store.box<Message>().get(target.id!)!,
+      wire: wire,
+      source: sourceBinding,
+      preparedSentTimestampMs: receipt.preparedSentTimestampMs!.toInt(),
+    );
     journal.reflectConfirmed(
       intentId: intentId,
       receipt: receipt,
       currentAuth: auth,
       stillCurrent: () => true,
       project: (message, timestamp) => message
-        ..text = 'replacement'
-        ..attributedBody = [AttributedBody.raw('replacement')]
-        ..dateEdited = DateTime.fromMillisecondsSinceEpoch(
-          timestamp,
-          isUtc: true,
-        ),
+        ..text = projection.text
+        ..attributedBody = projection.attributedBody
+        ..messageSummaryInfo = projection.messageSummaryInfo
+        ..dateEdited = projection.dateEdited,
       now: _time(5),
     );
     final source = journal.readReflectedForUpdate(
@@ -1217,40 +1309,48 @@ final class _NoProtector implements CloudSyncProtector {
       sha256.convert(utf8.encode(rawAccountIdentifier)).toString();
 }
 
-api.MessageInst _mutationWire() => api.MessageInst(
-  id: _mutationGuid,
-  sender: 'mailto:me@example.invalid',
-  conversation: api.ConversationData(
-    participants: ['mailto:me@example.invalid', 'mailto:peer@example.invalid'],
-    senderGuid: 'iMessage;-;peer@example.invalid',
-  ),
-  message: const api.Message.edit(
-    api.EditMessage(
-      tuuid: _targetGuid,
-      editPart: 0,
-      newParts: api.MessageParts(
-        field0: [
-          api.IndexedMessagePart(
-            part_: api.MessagePart.text(
-              'replacement',
-              api.TextFormat.flags(
-                api.TextFlags(
-                  bold: false,
-                  italic: false,
-                  underline: false,
-                  strikethrough: false,
+api.MessageInst _mutationWire(CloudSyncLocalMutationKind kind) =>
+    api.MessageInst(
+      id: _mutationGuid,
+      sender: 'mailto:me@example.invalid',
+      conversation: api.ConversationData(
+        participants: [
+          'mailto:me@example.invalid',
+          'mailto:peer@example.invalid',
+        ],
+        senderGuid: 'iMessage;-;peer@example.invalid',
+      ),
+      message: kind == CloudSyncLocalMutationKind.edit
+          ? const api.Message.edit(
+              api.EditMessage(
+                tuuid: _targetGuid,
+                editPart: 0,
+                newParts: api.MessageParts(
+                  field0: [
+                    api.IndexedMessagePart(
+                      part_: api.MessagePart.text(
+                        'replacement',
+                        api.TextFormat.flags(
+                          api.TextFlags(
+                            bold: false,
+                            italic: false,
+                            underline: false,
+                            strikethrough: false,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
+            )
+          : const api.Message.unsend(
+              api.UnsendMessage(tuuid: _targetGuid, editPart: 0),
             ),
-          ),
-        ],
-      ),
-    ),
-  ),
-  sentTimestamp: 0,
-  sendDelivered: true,
-  verificationFailed: false,
-);
+      sentTimestamp: 0,
+      sendDelivered: true,
+      verificationFailed: false,
+    );
 
 CloudOutboxSubmissionIdentity _identity(String operationId) =>
     CloudOutboxSubmissionIdentity(

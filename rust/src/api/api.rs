@@ -3003,6 +3003,11 @@ pub struct CloudSyncOutboundReconcileResult {
     /// Receipt hashes are emitted only for an exact committed readback.
     pub server_record_id_hash: Option<String>,
     pub etag_hash: Option<String>,
+    /// Present only when an exact committed Message create readback was
+    /// explicitly requested for conditional-update predecessor retention.
+    pub protected_current_raw_record_reference: Option<String>,
+    pub protected_current_raw_record_lease_reference: Option<String>,
+    pub raw_generation: Option<u64>,
     pub failure: Option<CloudSyncOutboundSafeCode>,
 }
 
@@ -5737,6 +5742,9 @@ fn cloud_sync_reconcile_failure(
         retry_after_seconds: None,
         server_record_id_hash: None,
         etag_hash: None,
+        protected_current_raw_record_reference: None,
+        protected_current_raw_record_lease_reference: None,
+        raw_generation: None,
         failure: Some(failure),
     }
 }
@@ -5990,6 +5998,9 @@ fn classify_cloud_sync_reconcile_observation(
         retry_after_seconds,
         server_record_id_hash,
         etag_hash,
+        protected_current_raw_record_reference: None,
+        protected_current_raw_record_lease_reference: None,
+        raw_generation: None,
         failure: None,
     }
 }
@@ -6004,6 +6015,57 @@ pub async fn cloud_sync_reconcile_message_create(
     expected_account_fingerprint: String,
     expected_protected_store_identity: String,
     request_uuid: String,
+    input: CloudSyncPreparedMessageCreateInput,
+) -> CloudSyncOutboundReconcileResult {
+    cloud_sync_reconcile_message_create_inner(
+        cloud_messages_client,
+        storage_directory,
+        expected_account_fingerprint,
+        expected_protected_store_identity,
+        request_uuid,
+        None,
+        input,
+    )
+    .await
+}
+
+/// Reconciles one already-confirmed Message create and retains the exact raw
+/// record under a new uncommitted protected lease. The caller must durably
+/// adopt the returned capability before committing or recovering that lease.
+/// This remains a readback-only operation and cannot submit a CloudKit save.
+#[allow(clippy::too_many_arguments)]
+pub async fn cloud_sync_reconcile_message_create_with_raw_readback(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    request_uuid: String,
+    raw_generation: u64,
+    input: CloudSyncPreparedMessageCreateInput,
+) -> CloudSyncOutboundReconcileResult {
+    if raw_generation == 0 {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+    cloud_sync_reconcile_message_create_inner(
+        cloud_messages_client,
+        storage_directory,
+        expected_account_fingerprint,
+        expected_protected_store_identity,
+        request_uuid,
+        Some(raw_generation),
+        input,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cloud_sync_reconcile_message_create_inner(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    request_uuid: String,
+    raw_generation: Option<u64>,
     input: CloudSyncPreparedMessageCreateInput,
 ) -> CloudSyncOutboundReconcileResult {
     if !is_valid_cloud_sync_reconcile_message_create_input(
@@ -6084,12 +6146,32 @@ pub async fn cloud_sync_reconcile_message_create(
                 return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::ProtectedStorage)
             }
         };
-    use rustpush::cloud_messages::CloudMessageRecordLookup;
+    use rustpush::cloud_messages::CloudMessageRecordVersionLookup;
+    let mut committed_raw_record = None;
     let observation = match cloud_messages_client
-        .lookup_message_record(&writer_binding, &server_record_name)
+        .lookup_message_record_version(&writer_binding, &server_record_name)
         .await
     {
-        Ok(CloudMessageRecordLookup::Found(message, receipt)) => {
+        Ok(CloudMessageRecordVersionLookup::Found(record, receipt)) => {
+            let raw_record = match record.get_raw_record() {
+                Ok(record) => record.clone(),
+                Err(_) => {
+                    return cloud_sync_reconcile_failure(
+                        CloudSyncOutboundSafeCode::MalformedMessage,
+                    )
+                }
+            };
+            let message = match cloud_messages_client
+                .decode_message_record_version(&writer_binding, &record)
+                .await
+            {
+                Ok(message) => message,
+                Err(_) => {
+                    return cloud_sync_reconcile_failure(
+                        CloudSyncOutboundSafeCode::NativePrepareFailed,
+                    )
+                }
+            };
             let differences = crate::cloud_sync_outbound::message_readback_differences(
                 &expected_message,
                 &message,
@@ -6112,6 +6194,9 @@ pub async fn cloud_sync_reconcile_message_create(
                     receipt_etag_hash,
                 ) {
                     (Ok(payload_sha256), Ok(etag_hash)) => {
+                        if raw_generation.is_some() {
+                            committed_raw_record = Some(raw_record);
+                        }
                         CloudSyncReconcileObservation::FoundPayloadDigest {
                             payload_sha256,
                             server_record_id_hash: receipt_server_record_id_hash,
@@ -6122,8 +6207,8 @@ pub async fn cloud_sync_reconcile_message_create(
                 }
             }
         }
-        Ok(CloudMessageRecordLookup::NotFound) => CloudSyncReconcileObservation::NotFound,
-        Ok(CloudMessageRecordLookup::Unresolved {
+        Ok(CloudMessageRecordVersionLookup::NotFound) => CloudSyncReconcileObservation::NotFound,
+        Ok(CloudMessageRecordVersionLookup::Unresolved {
             failure_class,
             retry_after,
         }) => CloudSyncReconcileObservation::Unresolved {
@@ -6133,7 +6218,7 @@ pub async fn cloud_sync_reconcile_message_create(
         Err(_) => CloudSyncReconcileObservation::UnknownFailure,
     };
     let auth_after_lookup =
-        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory).await {
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await {
             Ok(auth) => auth,
             Err(_) => {
                 return cloud_sync_reconcile_failure(
@@ -6162,11 +6247,37 @@ pub async fn cloud_sync_reconcile_message_create(
             return cloud_sync_reconcile_failure(code);
         }
     }
-    classify_cloud_sync_reconcile_observation(
+    let mut result = classify_cloud_sync_reconcile_observation(
         observation,
         &input.payload_sha256,
         input.protected_payload_reference,
-    )
+    );
+    if result.disposition == Some(CloudSyncOutboundReconcileDisposition::Committed) {
+        if let Some(generation) = raw_generation {
+            let Some(raw_record) = committed_raw_record else {
+                return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::MalformedMessage);
+            };
+            let protected = match crate::cloud_sync_native_fetch::cloud_sync_stage_protected_message_record_readback(
+                PathBuf::from(storage_directory),
+                auth_after_lookup.account_fingerprint,
+                generation,
+                &raw_record,
+            ) {
+                Ok(protected) => protected,
+                Err(failure) => {
+                    return cloud_sync_reconcile_failure(
+                        map_cloud_sync_update_readback_protection_failure(failure),
+                    )
+                }
+            };
+            result.protected_current_raw_record_reference =
+                Some(protected.protected_raw_record_reference);
+            result.protected_current_raw_record_lease_reference =
+                Some(protected.lease_reference);
+            result.raw_generation = Some(generation);
+        }
+    }
+    result
 }
 
 fn cloud_sync_chat_lookup_observation(
@@ -17071,12 +17182,34 @@ fn two_factor_fresh_login_is_authenticated(state: &LoginState, has_pet: bool) ->
 
 #[cfg(target_os = "windows")]
 fn is_cloud_sync_windows_dev_profile(path: &str) -> bool {
-    canonical_cloudkit_state_directory(&PathBuf::from(path))
-        .ok()
-        .and_then(|directory| {
-            fs::read_to_string(directory.join(".openbubbles-cloud-sync-v2-windows-dev")).ok()
-        })
-        .is_some_and(|marker| marker == "openbubbles-cloud-sync-v2-windows-dev-profile:v1")
+    let Some(directory) = canonical_cloudkit_state_directory(&PathBuf::from(path)).ok() else {
+        return false;
+    };
+    let Some(marker) =
+        fs::read_to_string(directory.join(".openbubbles-cloud-sync-v2-windows-dev")).ok()
+    else {
+        return false;
+    };
+    if marker == "openbubbles-cloud-sync-v2-windows-dev-profile:v1" {
+        return true;
+    }
+    if marker != "openbubbles-cloud-sync-v2-windows-test-host-profile:v1"
+        || std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST").as_deref() != Ok("1")
+    {
+        return false;
+    }
+    let Some(app_data) = std::env::var_os("APPDATA") else {
+        return false;
+    };
+    let expected = PathBuf::from(app_data)
+        .join("OpenBubbles")
+        .join("cloudkit-v2-testhost");
+    let Some(expected) = canonical_cloudkit_state_directory(&expected).ok() else {
+        return false;
+    };
+    directory
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&expected.to_string_lossy())
 }
 
 #[cfg(not(target_os = "windows"))]

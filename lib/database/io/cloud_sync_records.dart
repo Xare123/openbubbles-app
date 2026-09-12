@@ -34,7 +34,8 @@ class CloudSyncLocalMutationIntentEntity {
 
   /// 0 staged, 1 submission claimed (outcome may be unknown),
   /// 2 positive IDS receipt retained, 3 local reflection committed,
-  /// 4 atomically adopted by the conditional-update outbox.
+  /// 4 atomically adopted by the conditional-update outbox, 5 exact CloudKit
+  /// readback committed and retained only as non-authoritative evidence.
   /// No state grants remote CloudKit save authority or automatic IDS retry.
   @Index()
   int state;

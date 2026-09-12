@@ -3,6 +3,8 @@ import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:uuid/uuid.dart';
 
 import 'cloud_sync_local_mutation_journal.dart';
+import 'cloud_sync_local_send_journal.dart'
+    show CloudSyncNativeReceiptReplayBinding;
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_message_update_transport.dart';
 import 'cloud_sync_models.dart';
@@ -55,6 +57,8 @@ final class CloudSyncMessageUpdateExecutor {
     required CloudSyncMessageUpdateTransport transport,
     required CloudSyncPreparedSubmissionReleaser preparedSubmissionReleaser,
     required CloudProtectedPageLeaseTransport leaseTransport,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
+    CloudSyncConfirmedLocalParentReader? readConfirmedLocalParent,
     DateTime Function()? clock,
     String Function()? uuidFactory,
   }) : _objectBoxStore = objectBoxStore,
@@ -68,6 +72,8 @@ final class CloudSyncMessageUpdateExecutor {
        _preparedSubmissionReleaser = preparedSubmissionReleaser,
        // ignore: prefer_initializing_formals
        _leaseTransport = leaseTransport,
+       _replayBinding = replayBinding,
+       _readConfirmedLocalParent = readConfirmedLocalParent,
        _clock = clock ?? (() => DateTime.now().toUtc()),
        _uuidFactory = uuidFactory ?? (() => const Uuid().v4().toUpperCase()) {
     if (!journal.isBoundToStore(objectBoxStore)) {
@@ -81,6 +87,8 @@ final class CloudSyncMessageUpdateExecutor {
   final CloudSyncMessageUpdateTransport _transport;
   final CloudSyncPreparedSubmissionReleaser _preparedSubmissionReleaser;
   final CloudProtectedPageLeaseTransport _leaseTransport;
+  final CloudSyncNativeReceiptReplayBinding? _replayBinding;
+  final CloudSyncConfirmedLocalParentReader? _readConfirmedLocalParent;
   final DateTime Function() _clock;
   final String Function() _uuidFactory;
 
@@ -100,6 +108,7 @@ final class CloudSyncMessageUpdateExecutor {
       intentId: source.intentId,
       currentAuth: currentAuth,
       stillCurrent: stillCurrent,
+      replayBinding: _replayBinding,
     );
     if (!source.sameReflectedMutationAs(refreshedSource)) {
       throw StateError('cloud_sync_message_update_source_changed');
@@ -139,6 +148,7 @@ final class CloudSyncMessageUpdateExecutor {
           source: refreshedSource,
           currentAuth: currentAuth,
           stillCurrent: stillCurrent,
+          replayBinding: _replayBinding,
         );
         retainedStage =
             operation.encryptedPayloadReference == stage.protectedReference &&
@@ -388,6 +398,14 @@ final class CloudSyncMessageUpdateExecutor {
     CloudSyncScope scope,
     CloudMessageUpdateReadbackCommitSnapshot snapshot,
   ) => _leaseTransport.runProtectedStoreExclusive(() async {
+    // Reconciliation stages the exact current raw record under an
+    // uncommitted lease. ObjectBox adopts that reference first; native commit
+    // is the second half of the handoff. Acknowledging the lease without this
+    // commit would discard the predecessor needed by the next edit/unsend.
+    await _leaseTransport.commitProtectedPageLease(
+      snapshot.readbackLeaseReference,
+      <String>{snapshot.recordMapping.encryptedRawRecordReference!},
+    );
     await _leaseTransport.acknowledgeCommittedPageLease(
       snapshot.updateStageLeaseReference,
     );
@@ -422,10 +440,12 @@ final class CloudSyncMessageUpdateExecutor {
       operationId: operation.operationId,
       currentAuth: currentAuth,
       stillCurrent: stillCurrent,
+      replayBinding: _replayBinding,
     );
     final predecessor = source.requirePredecessor(
       store: _objectBoxStore,
       messageScope: scope,
+      readConfirmedLocalParent: _readConfirmedLocalParent,
     );
     _validateAdoptedOperation(operation, predecessor);
     return (source: source, predecessor: predecessor);

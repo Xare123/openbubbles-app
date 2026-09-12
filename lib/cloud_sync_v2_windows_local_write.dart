@@ -18,21 +18,31 @@ import 'services/rustpush/cloud_sync/cloud_sync_local_mutation_source_binding.da
 import 'services/rustpush/cloud_sync/cloud_sync_local_mutation_source_staging.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_models.dart'
-    show CloudSyncSafeCodeFailure, CloudSyncScope, CloudSyncPersistenceLane;
+    show
+        CloudOutboxOperation,
+        CloudOutboxStatus,
+        CloudSyncPersistenceLane,
+        CloudSyncSafeCodeFailure,
+        CloudSyncScope,
+        CloudSyncStreamKind;
 import 'services/rustpush/imessage_reaction_payload.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_group_send_route.dart';
 import 'cloud_sync_v2_windows_write_checkpoint.dart';
 import 'cloud_sync_v2_windows_attachment_fixture.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_attachment_send_body.dart';
+import 'services/rustpush/cloud_sync/cloud_protected_page_lease_lifecycle.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_local_send_source_staging.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_message_update_executor.dart';
 import 'services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart';
 import 'package:uuid/uuid.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_protector.dart';
+import 'services/rustpush/cloud_sync/cloud_sync_record_maps.dart';
 import 'services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
+import 'services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart';
 import 'services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'services/rustpush/cloud_sync/legacy_cloudkit_deletion_intents.dart';
 import 'services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
@@ -687,6 +697,7 @@ final class CloudSyncWindowsLocalWrite {
     final claim = File(
       path.join(directory.path, 'windows-write-${request.id}.json'),
     );
+    final replay = claim.existsSync();
     final client = readClient();
     if (client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
       throw StateError('cloud_sync_windows_write_client_missing');
@@ -801,6 +812,16 @@ final class CloudSyncWindowsLocalWrite {
       stillCurrent: current,
     );
     if (request.mutationType != null) {
+      final mutationJournal = CloudSyncLocalMutationJournal(
+        store: objectBox,
+        authority: authority,
+        authoritySnapshot: owner.snapshot,
+      );
+      final mutationStore = ObjectBoxCloudSyncStore(
+        store: objectBox,
+        protector: RustCloudSyncProtector(storageDirectory: fs.appDocDir.path),
+        localMutationJournal: mutationJournal,
+      );
       return _runMutation(
         request: request,
         claim: claim,
@@ -810,13 +831,13 @@ final class CloudSyncWindowsLocalWrite {
         auth: auth,
         current: current,
         fence: fence,
-        interlock: interlock,
-        createJournal: journal,
-        journal: CloudSyncLocalMutationJournal(
-          store: objectBox,
-          authority: authority,
-          authoritySnapshot: owner.snapshot,
+        interlock: CloudKitOperationInterlock(
+          privateStorageDirectory: fs.appDocDir.path,
+          fenceStore: mutationStore,
         ),
+        cloudStore: mutationStore,
+        createJournal: journal,
+        journal: mutationJournal,
       );
     }
     late Map<String, dynamic> savedClaim;
@@ -1231,8 +1252,34 @@ final class CloudSyncWindowsLocalWrite {
             expectedRecipient: request.recipient,
             expectedSourceSha256: intent.sourceSha256,
           );
+    final settledIntent = objectBox.box<CloudSyncLocalSendIntentEntity>().get(
+      intent.id,
+    );
+    CloudOutboxOperationEntity? settledOperation;
+    final settledOperationId = settledIntent?.admittedOperationId;
+    if (settledOperationId != null) {
+      final settledQuery = objectBox
+          .box<CloudOutboxOperationEntity>()
+          .query(
+            CloudOutboxOperationEntity_.operationId.equals(settledOperationId),
+          )
+          .build();
+      try {
+        settledOperation = settledQuery.findUnique();
+      } finally {
+        settledQuery.close();
+      }
+    }
+    final exactReadbackCommitted =
+        settledIntent?.confirmedReadbackBindingSha256 != null &&
+        settledOperation?.state == CloudOutboxStatus.confirmed.index &&
+        settledOperation?.protectedLeaseReference == null;
     return {
       'native_send_confirmed': true,
+      'native_send_attempted_this_run': !replay,
+      'restart_reconciliation_only': replay,
+      'exact_readback_committed': exactReadbackCommitted,
+      'protected_outbox_lease_finalized': exactReadbackCommitted,
       'admitted': result.admitted,
       'deferred': result.deferred,
       'outbox_blocked': result.outboxBlocked,
@@ -1242,8 +1289,10 @@ final class CloudSyncWindowsLocalWrite {
     };
   }
 
-  /// IDS and receipt-bound local reflection qualification only. No initial
-  /// create admission, CK update or receipt acknowledgement belongs here.
+  /// Bounded receipt-bound mutation qualification. It never enters the initial
+  /// create lane; after local reflection it conditionally updates the exact
+  /// existing Message record and acknowledges IDS evidence only after exact
+  /// CloudKit readback has committed.
   Future<Map<String, Object?>> _runMutation({
     required CloudSyncWindowsWriteRequest request,
     required File claim,
@@ -1254,316 +1303,542 @@ final class CloudSyncWindowsLocalWrite {
     required bool Function() current,
     required CloudSyncLocalSendAuthFence fence,
     required CloudKitOperationInterlock interlock,
+    required ObjectBoxCloudSyncStore cloudStore,
     required CloudSyncLocalSendJournal createJournal,
     required CloudSyncLocalMutationJournal journal,
   }) async {
     final replay = claim.existsSync();
     api.CloudSyncNativeSendReceipt? acceptedReceipt;
-    final staging = CloudSyncLocalMutationSourceStaging(
-      journal: journal,
-      authFence: fence,
-      capturedAuth: auth,
-      stillCurrent: current,
-      exclusion: interlock,
-      transport: NativeProtectedCloudSyncTransport(
-        cloudMessagesClient: client,
-        storageDirectory: fs.appDocDir.path,
-        protectedStoreIdentity: auth.protectedStoreIdentity,
-      ),
+    final bindings = FrbNativeProtectedCloudSyncBindings();
+    final mutationGuard = CloudKitWriterMutationGuard(
+      store: store,
+      readActiveClient: readClient,
+      privateStorageDirectory: fs.appDocDir.path,
+      reconciliationBinding: bindings,
     );
-    late Map<String, dynamic> saved;
-    if (replay) {
-      saved = jsonDecode(await claim.readAsString()) as Map<String, dynamic>;
-      if (saved['version'] != 2 ||
-          saved['purpose'] != 'mutation' ||
-          saved['binding'] != request.binding ||
-          saved['account'] != auth.accountFingerprint ||
-          saved['guid'] is! String) {
-        throw StateError('cloud_sync_windows_write_request_changed');
-      }
-    } else {
-      final previous =
-          jsonDecode(
-                await File(
-                  path.join(
-                    directory.path,
-                    'windows-write-${request.existingChatFromRequestId}.json',
-                  ),
-                ).readAsString(),
-              )
-              as Map<String, dynamic>;
-      Message selectParent() {
-        final parent = cloudSyncWindowsMutationParent(
-          store,
-          previous,
-          request,
-          auth.accountFingerprint,
-        );
-        // Deliberately narrow qualification window, not a claim about Apple's
-        // full product limits. Use a freshly sent approved test message.
-        final created = parent.dateCreated?.toUtc();
-        final age = created == null
-            ? null
-            : DateTime.now().toUtc().difference(created);
-        if (age == null ||
-            age.isNegative ||
-            age > const Duration(seconds: 60)) {
-          throw StateError(
-            'cloud_sync_windows_mutation_fresh_test_parent_required',
-          );
-        }
-        final scope = CloudSyncScope(
-          accountFingerprint: auth.accountFingerprint,
-          container: 'com.apple.messages.cloud',
-          database: 'private',
-          zone: 'messageManateeZone',
-          persistenceLane: CloudSyncPersistenceLane.semantic,
-        );
-        if (createJournal.readConfirmedParentDependency(store, scope, parent) ==
-            null) {
-          throw StateError(
-            'cloud_sync_windows_mutation_parent_readback_required',
-          );
-        }
-        return parent;
-      }
-
-      final parent = await fence.run(selectParent);
-      await fence.run(
-        () => cloudSyncWindowsPreserveWriteCheckpoint(
-          store: store,
-          profile: fs.appDocDir,
-          requestId: request.id,
-          requestBinding: request.binding,
-          accountFingerprint: auth.accountFingerprint,
-        ),
+    final transport = NativeProtectedCloudSyncTransport(
+      cloudMessagesClient: client,
+      storageDirectory: fs.appDocDir.path,
+      protectedStoreIdentity: auth.protectedStoreIdentity,
+      bindings: bindings,
+      writerMutationGuard: mutationGuard,
+      readCheckpointGeneration: (scope) async =>
+          (await cloudStore.readCheckpoint(scope)).generation,
+      retainConfirmedReceiptsForReplay: true,
+    );
+    try {
+      final staging = CloudSyncLocalMutationSourceStaging(
+        journal: journal,
+        authFence: fence,
+        capturedAuth: auth,
+        stillCurrent: current,
+        exclusion: interlock,
+        transport: transport,
       );
-      final wire = await api.newMsg(
-        conversation: api.ConversationData(
-          participants: [
-            'tel:${request.recipient}',
-            'mailto:${request.sender}',
-          ],
-          senderGuid: parent.chat.target!.guid,
-          cvName: parent.chat.target!.apnTitle,
-          afterGuid: parent.guid,
-        ),
-        sender: 'mailto:${request.sender}',
-        message: cloudSyncWindowsMutationPayload(request, parent),
-      );
-      final identity =
-          CloudSyncLocalMutationIdentity.captureWire(wire) ??
-          (throw StateError('cloud_sync_windows_mutation_wire_invalid'));
-      await fence.run(() {
-        if (selectParent().id != parent.id) {
-          throw StateError('cloud_sync_windows_mutation_parent_changed');
-        }
-      });
-      saved = {
-        'version': 2,
-        'purpose': 'mutation',
-        'binding': request.binding,
-        'account': auth.accountFingerprint,
-        'guid': wire.id,
-        'local_message_id': parent.id,
-        'target_guid_hash': identity.targetGuidHash,
-        'source_sha256': identity.sourceSha256,
-      };
-      await claim.create(exclusive: true);
-      await claim.writeAsString(jsonEncode(saved), flush: true);
-      api.CloudSyncNativeSendReceiptContext context([
-        CloudSyncLocalMutationSourceBinding? source,
-      ]) => api.CloudSyncNativeSendReceiptContext(
-        storageDirectory: fs.appDocDir.path,
-        guidHash: identity.guidHash,
-        accountFingerprint: auth.accountFingerprint,
-        protectedStoreIdentity: auth.protectedStoreIdentity,
-        nativeSessionId: auth.nativeSessionId,
-        sourceBinding: source == null
-            ? null
-            : api.CloudSyncNativeSendSourceBinding(
-                kind: api.CloudSyncNativeSendSourceKind.mutation,
-                sourceSha256: source.sourceSha256,
-                protectedReference: source.protectedReference,
-                leaseReference: source.leaseReference,
-                payloadSha256: source.payloadSha256,
-                payloadLength: BigInt.from(source.payloadLength),
-              ),
-      );
-      await reportStage('windows-mutation-preparing-protected-source');
-      await staging.submitConfirmed(
-        localMessageId: parent.id!,
-        identity: identity,
-        stage: () async {
-          final native = await api.cloudSyncStageIdsMutationSource(
-            cloudMessagesClient: client,
-            context: context(),
-            localSourceSha256: identity.sourceSha256,
-            message: wire,
-          );
-          if (native.kind != api.CloudSyncNativeSendSourceKind.mutation) {
-            throw StateError('cloud_sync_windows_mutation_source_invalid');
-          }
-          return CloudSyncLocalMutationSourceBinding(
-            accountFingerprint: auth.accountFingerprint,
-            protectedStoreIdentity: auth.protectedStoreIdentity,
-            mutationGuidHash: identity.guidHash,
-            targetGuidHash: identity.targetGuidHash,
-            targetPart: identity.targetPart,
-            sourceSha256: native.sourceSha256,
-            protectedReference: native.protectedReference,
-            leaseReference: native.leaseReference,
-            payloadSha256: native.payloadSha256,
-            payloadLength: native.payloadLength.toInt(),
-          );
-        },
-        restore: (source) => api.cloudSyncRestoreIdsMutationSource(
-          cloudMessagesClient: client,
-          context: context(source),
-        ),
-        validateBeforeSend: selectParent,
-        send: (wire, source) async {
-          final receipt = await sendMutationConfirmed!(wire, context(source));
-          acceptedReceipt = receipt;
-          return receipt;
-        },
-      );
-    }
-    final guidHash = sha256
-        .convert(
-          utf8.encode(
-            jsonEncode(['cloud-sync-local-send-guid-v1', saved['guid']]),
-          ),
-        )
-        .toString();
-    CloudSyncLocalMutationIntentEntity readIntent() {
-      final query = store
-          .box<CloudSyncLocalMutationIntentEntity>()
-          .query(
-            CloudSyncLocalMutationIntentEntity_.accountFingerprint
-                .equals(auth.accountFingerprint)
-                .and(
-                  CloudSyncLocalMutationIntentEntity_.mutationGuidHash.equals(
-                    guidHash,
-                  ),
-                ),
-          )
-          .build();
-      try {
-        final row = query.findUnique();
-        if (row == null) {
-          throw StateError('cloud_sync_windows_mutation_intent_missing');
-        }
-        validateCloudSyncMutationRow(row);
-        if (row.localMessageId != saved['local_message_id'] ||
-            row.targetGuidHash != saved['target_guid_hash'] ||
-            row.sourceSha256 != saved['source_sha256'] ||
-            row.targetPart != request.mutationPart ||
-            row.kind !=
-                CloudSyncLocalMutationKind.values
-                    .byName(request.mutationType!)
-                    .index) {
+      await CloudProtectedPageLeaseLifecycle(
+        store: cloudStore,
+        transport: transport,
+      ).ensureRecoveredBeforeWrite();
+      late Map<String, dynamic> saved;
+      if (replay) {
+        saved = jsonDecode(await claim.readAsString()) as Map<String, dynamic>;
+        if (saved['version'] != 2 ||
+            saved['purpose'] != 'mutation' ||
+            saved['binding'] != request.binding ||
+            saved['account'] != auth.accountFingerprint ||
+            saved['guid'] is! String) {
           throw StateError('cloud_sync_windows_write_request_changed');
         }
-        return row;
-      } finally {
-        query.close();
-      }
-    }
-
-    var intent = await fence.run(readIntent);
-    CloudSyncNativeReceiptReplayBinding? replayBinding;
-    if (replay && intent.state >= 1) {
-      final binding = CloudSyncNativeReceiptReplayBinding(
-        expectedAuth: auth,
-        expectedState: this,
-        expectedStore: store,
-        expectedClient: client,
-        expectedStoragePath: fs.appDocDir.path,
-        readState: () => this,
-        readStore: () => Database.store,
-        readClient: readClient,
-        readStoragePath: () => fs.appDocDir.path,
-        runtimeCurrent: current,
-      );
-      replayBinding = binding;
-      String? after;
-      final cursors = <String>{};
-      do {
-        await fence.run<void>(binding.requireCurrent);
-        final page = await api.cloudSyncReplayNativeSendReceipts(
-          storageDirectory: fs.appDocDir.path,
-          expectedAccountFingerprint: auth.accountFingerprint,
-          expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
-          afterReceiptId: after,
-        );
-        for (final receipt in page.receipts.where(
-          (r) => r.guidHash == guidHash,
-        )) {
-          await fence.run(
-            () => journal.recordNativeReceipt(
-              intentId: intent.id,
-              receipt: receipt,
-              capturedAuth: auth,
-              stillCurrent: current,
-              now: DateTime.now().toUtc(),
-              replayBinding: binding,
-            ),
+      } else {
+        final previous =
+            jsonDecode(
+                  await File(
+                    path.join(
+                      directory.path,
+                      'windows-write-${request.existingChatFromRequestId}.json',
+                    ),
+                  ).readAsString(),
+                )
+                as Map<String, dynamic>;
+        Message selectParent() {
+          final parent = cloudSyncWindowsMutationParent(
+            store,
+            previous,
+            request,
+            auth.accountFingerprint,
           );
-          if (acceptedReceipt != null && acceptedReceipt != receipt) {
-            throw StateError('cloud_sync_windows_mutation_receipt_changed');
+          // Deliberately narrow qualification window, not a claim about Apple's
+          // full product limits. Five minutes covers isolated harness startup
+          // while still requiring a freshly sent approved test message.
+          final created = parent.dateCreated?.toUtc();
+          final age = created == null
+              ? null
+              : DateTime.now().toUtc().difference(created);
+          if (age == null ||
+              age.isNegative ||
+              age > const Duration(minutes: 5)) {
+            throw StateError(
+              'cloud_sync_windows_mutation_fresh_test_parent_required',
+            );
           }
-          acceptedReceipt = receipt;
-        }
-        after = page.nextCursor;
-        if (after != null && !cursors.add(after)) {
-          throw StateError(
-            'cloud_sync_windows_mutation_receipt_cursor_repeated',
+          final scope = CloudSyncScope(
+            accountFingerprint: auth.accountFingerprint,
+            container: 'com.apple.messages.cloud',
+            database: 'private',
+            zone: 'messageManateeZone',
+            persistenceLane: CloudSyncPersistenceLane.semantic,
           );
+          if (createJournal.readConfirmedParentDependency(
+                store,
+                scope,
+                parent,
+              ) ==
+              null) {
+            throw StateError(
+              'cloud_sync_windows_mutation_parent_readback_required',
+            );
+          }
+          return parent;
         }
-      } while (after != null);
-      intent = await fence.run(readIntent);
-    }
-    if (intent.state < 2) {
-      throw StateError('cloud_sync_windows_mutation_send_unconfirmed_no_retry');
-    }
-    final receipt = acceptedReceipt;
-    if (receipt == null) {
-      throw StateError('cloud_sync_windows_mutation_retained_receipt_missing');
-    }
-    final source = validateCloudSyncMutationRow(intent);
-    await reportStage('windows-mutation-reflecting-confirmed-source');
-    await staging.reflectConfirmed(
-      intentId: intent.id,
-      source: source,
-      receipt: receipt,
-      replayBinding: replayBinding,
-      restore: (originalSource) => api.cloudSyncRestoreIdsMutationSource(
-        cloudMessagesClient: client,
-        context: api.CloudSyncNativeSendReceiptContext(
+
+        final parent = await fence.run(selectParent);
+        await fence.run(
+          () => cloudSyncWindowsPreserveWriteCheckpoint(
+            store: store,
+            profile: fs.appDocDir,
+            requestId: request.id,
+            requestBinding: request.binding,
+            accountFingerprint: auth.accountFingerprint,
+          ),
+        );
+        final wire = await api.newMsg(
+          conversation: api.ConversationData(
+            participants: [
+              'tel:${request.recipient}',
+              'mailto:${request.sender}',
+            ],
+            senderGuid: parent.chat.target!.guid,
+            cvName: parent.chat.target!.apnTitle,
+            afterGuid: parent.guid,
+          ),
+          sender: 'mailto:${request.sender}',
+          message: cloudSyncWindowsMutationPayload(request, parent),
+        );
+        final identity =
+            CloudSyncLocalMutationIdentity.captureWire(wire) ??
+            (throw StateError('cloud_sync_windows_mutation_wire_invalid'));
+        await fence.run(() {
+          if (selectParent().id != parent.id) {
+            throw StateError('cloud_sync_windows_mutation_parent_changed');
+          }
+        });
+        saved = {
+          'version': 2,
+          'purpose': 'mutation',
+          'binding': request.binding,
+          'account': auth.accountFingerprint,
+          'guid': wire.id,
+          'local_message_id': parent.id,
+          'target_guid_hash': identity.targetGuidHash,
+          'source_sha256': identity.sourceSha256,
+        };
+        await claim.create(exclusive: true);
+        await claim.writeAsString(jsonEncode(saved), flush: true);
+        api.CloudSyncNativeSendReceiptContext context([
+          CloudSyncLocalMutationSourceBinding? source,
+        ]) => api.CloudSyncNativeSendReceiptContext(
           storageDirectory: fs.appDocDir.path,
-          guidHash: originalSource.mutationGuidHash,
+          guidHash: identity.guidHash,
           accountFingerprint: auth.accountFingerprint,
           protectedStoreIdentity: auth.protectedStoreIdentity,
           nativeSessionId: auth.nativeSessionId,
-          sourceBinding: api.CloudSyncNativeSendSourceBinding(
-            kind: api.CloudSyncNativeSendSourceKind.mutation,
-            sourceSha256: originalSource.sourceSha256,
-            protectedReference: originalSource.protectedReference,
-            leaseReference: originalSource.leaseReference,
-            payloadSha256: originalSource.payloadSha256,
-            payloadLength: BigInt.from(originalSource.payloadLength),
+          sourceBinding: source == null
+              ? null
+              : api.CloudSyncNativeSendSourceBinding(
+                  kind: api.CloudSyncNativeSendSourceKind.mutation,
+                  sourceSha256: source.sourceSha256,
+                  protectedReference: source.protectedReference,
+                  leaseReference: source.leaseReference,
+                  payloadSha256: source.payloadSha256,
+                  payloadLength: BigInt.from(source.payloadLength),
+                ),
+        );
+        await reportStage('windows-mutation-preparing-protected-source');
+        await staging.submitConfirmed(
+          localMessageId: parent.id!,
+          identity: identity,
+          stage: () async {
+            final native = await api.cloudSyncStageIdsMutationSource(
+              cloudMessagesClient: client,
+              context: context(),
+              localSourceSha256: identity.sourceSha256,
+              message: wire,
+            );
+            if (native.kind != api.CloudSyncNativeSendSourceKind.mutation) {
+              throw StateError('cloud_sync_windows_mutation_source_invalid');
+            }
+            return CloudSyncLocalMutationSourceBinding(
+              accountFingerprint: auth.accountFingerprint,
+              protectedStoreIdentity: auth.protectedStoreIdentity,
+              mutationGuidHash: identity.guidHash,
+              targetGuidHash: identity.targetGuidHash,
+              targetPart: identity.targetPart,
+              sourceSha256: native.sourceSha256,
+              protectedReference: native.protectedReference,
+              leaseReference: native.leaseReference,
+              payloadSha256: native.payloadSha256,
+              payloadLength: native.payloadLength.toInt(),
+            );
+          },
+          restore: (source) => api.cloudSyncRestoreIdsMutationSource(
+            cloudMessagesClient: client,
+            context: context(source),
           ),
-        ),
-      ),
-    );
-    intent = await fence.run(readIntent);
-    return {
-      'native_send_confirmed': true,
-      'mutation_receipt_retained': true,
-      'restart_reconciliation_only': replay,
-      'cloudkit_update_enabled': false,
-      'local_reflection_complete': intent.state == 3,
-    };
+          validateBeforeSend: selectParent,
+          send: (wire, source) async {
+            final receipt = await sendMutationConfirmed!(wire, context(source));
+            acceptedReceipt = receipt;
+            return receipt;
+          },
+        );
+      }
+      final guidHash = sha256
+          .convert(
+            utf8.encode(
+              jsonEncode(['cloud-sync-local-send-guid-v1', saved['guid']]),
+            ),
+          )
+          .toString();
+      CloudSyncLocalMutationIntentEntity readIntent() {
+        final query = store
+            .box<CloudSyncLocalMutationIntentEntity>()
+            .query(
+              CloudSyncLocalMutationIntentEntity_.accountFingerprint
+                  .equals(auth.accountFingerprint)
+                  .and(
+                    CloudSyncLocalMutationIntentEntity_.mutationGuidHash.equals(
+                      guidHash,
+                    ),
+                  ),
+            )
+            .build();
+        try {
+          final row = query.findUnique();
+          if (row == null) {
+            throw StateError('cloud_sync_windows_mutation_intent_missing');
+          }
+          validateCloudSyncMutationRow(row);
+          if (row.localMessageId != saved['local_message_id'] ||
+              row.targetGuidHash != saved['target_guid_hash'] ||
+              row.sourceSha256 != saved['source_sha256'] ||
+              row.targetPart != request.mutationPart ||
+              row.kind !=
+                  CloudSyncLocalMutationKind.values
+                      .byName(request.mutationType!)
+                      .index) {
+            throw StateError('cloud_sync_windows_write_request_changed');
+          }
+          return row;
+        } finally {
+          query.close();
+        }
+      }
+
+      var intent = await fence.run(readIntent);
+      CloudSyncNativeReceiptReplayBinding? replayBinding;
+      if (replay && intent.state >= 1) {
+        final binding = CloudSyncNativeReceiptReplayBinding(
+          expectedAuth: auth,
+          expectedState: this,
+          expectedStore: store,
+          expectedClient: client,
+          expectedStoragePath: fs.appDocDir.path,
+          readState: () => this,
+          readStore: () => Database.store,
+          readClient: readClient,
+          readStoragePath: () => fs.appDocDir.path,
+          runtimeCurrent: current,
+        );
+        replayBinding = binding;
+        String? after;
+        final cursors = <String>{};
+        do {
+          await fence.run<void>(binding.requireCurrent);
+          final page = await api.cloudSyncReplayNativeSendReceipts(
+            storageDirectory: fs.appDocDir.path,
+            expectedAccountFingerprint: auth.accountFingerprint,
+            expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+            afterReceiptId: after,
+          );
+          for (final receipt in page.receipts.where(
+            (r) => r.guidHash == guidHash,
+          )) {
+            await fence.run(
+              () => journal.recordNativeReceipt(
+                intentId: intent.id,
+                receipt: receipt,
+                capturedAuth: auth,
+                stillCurrent: current,
+                now: DateTime.now().toUtc(),
+                replayBinding: binding,
+              ),
+            );
+            if (acceptedReceipt != null && acceptedReceipt != receipt) {
+              throw StateError('cloud_sync_windows_mutation_receipt_changed');
+            }
+            acceptedReceipt = receipt;
+          }
+          after = page.nextCursor;
+          if (after != null && !cursors.add(after)) {
+            throw StateError(
+              'cloud_sync_windows_mutation_receipt_cursor_repeated',
+            );
+          }
+        } while (after != null);
+        intent = await fence.run(readIntent);
+      }
+      if (intent.state < 2) {
+        throw StateError(
+          'cloud_sync_windows_mutation_send_unconfirmed_no_retry',
+        );
+      }
+      final receipt = acceptedReceipt;
+      if (intent.state == 5) {
+        final terminalSource = journal.readTerminalSourceForCleanup(
+          intentId: intent.id,
+          currentAuth: auth,
+          stillCurrent: current,
+        );
+        if (terminalSource == null) {
+          throw StateError('cloud_sync_windows_mutation_terminal_changed');
+        }
+        await transport.acknowledgeCommittedPageLease(
+          terminalSource.leaseReference,
+        );
+        if (receipt != null) {
+          api.cloudSyncAcknowledgeNativeSendReceipt(
+            storageDirectory: fs.appDocDir.path,
+            expectedAccountFingerprint: auth.accountFingerprint,
+            expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+            receipt: receipt,
+          );
+        }
+        return {
+          'native_send_confirmed': true,
+          'mutation_receipt_present': receipt != null,
+          'mutation_receipt_acknowledged': receipt != null,
+          'restart_reconciliation_only': true,
+          'cloudkit_update_enabled': true,
+          'cloudkit_operation_status': CloudOutboxStatus.confirmed.name,
+          'cloudkit_recovered_readbacks': 0,
+          'cloudkit_reconciled_unknown': 0,
+          'cloudkit_submitted': 0,
+          'cloudkit_confirmed': 0,
+          'cloudkit_not_applied': 0,
+          'cloudkit_diverged': 0,
+          'cloudkit_unresolved': 0,
+          'local_reflection_complete': true,
+        };
+      }
+      if (intent.state < 3) {
+        if (receipt == null) {
+          throw StateError(
+            'cloud_sync_windows_mutation_retained_receipt_missing',
+          );
+        }
+        final source = validateCloudSyncMutationRow(intent);
+        await reportStage('windows-mutation-reflecting-confirmed-source');
+        await staging.reflectConfirmed(
+          intentId: intent.id,
+          source: source,
+          receipt: receipt,
+          replayBinding: replayBinding,
+          restore: (originalSource) => api.cloudSyncRestoreIdsMutationSource(
+            cloudMessagesClient: client,
+            context: api.CloudSyncNativeSendReceiptContext(
+              storageDirectory: fs.appDocDir.path,
+              guidHash: originalSource.mutationGuidHash,
+              accountFingerprint: auth.accountFingerprint,
+              protectedStoreIdentity: auth.protectedStoreIdentity,
+              nativeSessionId: auth.nativeSessionId,
+              sourceBinding: api.CloudSyncNativeSendSourceBinding(
+                kind: api.CloudSyncNativeSendSourceKind.mutation,
+                sourceSha256: originalSource.sourceSha256,
+                protectedReference: originalSource.protectedReference,
+                leaseReference: originalSource.leaseReference,
+                payloadSha256: originalSource.payloadSha256,
+                payloadLength: BigInt.from(originalSource.payloadLength),
+              ),
+            ),
+          ),
+        );
+        intent = await fence.run(readIntent);
+      }
+      if (intent.state < 3) {
+        throw StateError('cloud_sync_windows_mutation_reflection_incomplete');
+      }
+
+      final scope = CloudSyncScope(
+        accountFingerprint: auth.accountFingerprint,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'messageManateeZone',
+        streamKind: CloudSyncStreamKind.messages,
+        schemaVersion: 2,
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      final admission = journal.readReflectedForUpdate(
+        intentId: intent.id,
+        currentAuth: auth,
+        stillCurrent: current,
+        replayBinding: replayBinding,
+      );
+      final pendingCreateReadbacks =
+          await cloudStore.readPendingMessageCreateReadbacks(
+            scope,
+            maximumCount: 16,
+          );
+      for (final snapshot in pendingCreateReadbacks) {
+        await transport.finalizePendingMessageCreateReadback(
+          snapshot,
+          finalizeDurableReadback: (expected) =>
+              cloudStore.finalizeMessageCreateReadbackLeases(
+                expectedSnapshot: expected,
+                createSourceLeaseFinalized: true,
+                readbackLeaseFinalized: true,
+              ),
+        );
+      }
+      final predecessor = admission.requirePredecessor(
+        store: store,
+        messageScope: scope,
+        readConfirmedLocalParent: (parent) =>
+            createJournal.readConfirmedParentDependency(
+              store,
+              scope,
+              parent,
+              reflectedMutationValidated: admission.matchesReflectedParent(
+                parent,
+              ),
+            ),
+      );
+      final executor = CloudSyncMessageUpdateExecutor(
+        objectBoxStore: store,
+        cloudStore: cloudStore,
+        journal: journal,
+        transport: transport,
+        preparedSubmissionReleaser: transport,
+        leaseTransport: transport,
+        replayBinding: replayBinding,
+        readConfirmedLocalParent: (parent) =>
+            createJournal.readConfirmedParentDependency(
+              store,
+              scope,
+              parent,
+              reflectedMutationValidated: admission.matchesReflectedParent(
+                parent,
+              ),
+            ),
+      );
+      late final CloudOutboxOperation admittedOperation;
+      await reportStage('windows-mutation-running-cloudkit-update');
+      final result = await interlock.runExclusive(
+        kind: CloudKitOperationKind.v2ReadWrite,
+        action: () async {
+          final adoptedOperationId = admission.adoptedOperationId;
+          if (adoptedOperationId == null) {
+            if (receipt == null) {
+              throw StateError(
+                'cloud_sync_windows_mutation_retained_receipt_missing',
+              );
+            }
+            admittedOperation = await executor.admitReflectedUpdate(
+              scope,
+              source: admission,
+              predecessor: predecessor,
+              currentAuth: auth,
+              stillCurrent: current,
+              receipt: receipt,
+            );
+          } else {
+            final exact = (await cloudStore.readOutboxEntries(scope))
+                .where(
+                  (operation) => operation.operationId == adoptedOperationId,
+                )
+                .toList(growable: false);
+            if (exact.length != 1) {
+              throw StateError('cloud_sync_message_update_adoption_missing');
+            }
+            admittedOperation = exact.single;
+            final mapping = cloudSyncFindRecordMap(
+              store: store,
+              scope: scope,
+              generation: predecessor.generation,
+              logicalEntityKeyHash: admittedOperation.logicalEntityKeyHash,
+              serverRecordIdHash: admittedOperation.serverRecordIdHash,
+            );
+            if (mapping == null) {
+              throw StateError('cloud_sync_message_update_predecessor_missing');
+            }
+            journal.validateAdoptedOperation(store, admittedOperation, mapping);
+          }
+          return executor.runOnce(
+            scope,
+            currentAuth: auth,
+            stillCurrent: current,
+          );
+        },
+      );
+      final exactOperations = (await cloudStore.readOutboxEntries(scope))
+          .where(
+            (operation) =>
+                operation.operationId == admittedOperation.operationId,
+          )
+          .toList(growable: false);
+      if (exactOperations.length != 1) {
+        throw StateError('cloud_sync_message_update_adoption_missing');
+      }
+      final exactOperation = exactOperations.single;
+      var receiptAcknowledged = false;
+      if (exactOperation.status == CloudOutboxStatus.confirmed) {
+        final confirmedSource = journal.markExactReadbackConfirmed(
+          intentId: intent.id,
+          operation: exactOperation,
+          currentAuth: auth,
+          stillCurrent: current,
+          now: DateTime.now().toUtc(),
+        );
+        await transport.acknowledgeCommittedPageLease(
+          confirmedSource.leaseReference,
+        );
+        if (receipt != null) {
+          api.cloudSyncAcknowledgeNativeSendReceipt(
+            storageDirectory: fs.appDocDir.path,
+            expectedAccountFingerprint: auth.accountFingerprint,
+            expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+            receipt: receipt,
+          );
+          receiptAcknowledged = true;
+        }
+      }
+      return {
+        'native_send_confirmed': true,
+        'mutation_receipt_present': receipt != null,
+        'mutation_receipt_acknowledged': receiptAcknowledged,
+        'restart_reconciliation_only': replay,
+        'cloudkit_update_enabled': true,
+        'cloudkit_operation_status': exactOperation.status.name,
+        'cloudkit_recovered_readbacks': result.recoveredReadbacks,
+        'cloudkit_reconciled_unknown': result.reconciledUnknown,
+        'cloudkit_submitted': result.submitted,
+        'cloudkit_confirmed': result.confirmed,
+        'cloudkit_not_applied': result.notApplied,
+        'cloudkit_diverged': result.diverged,
+        'cloudkit_unresolved': result.unresolved,
+        'local_reflection_complete': intent.state >= 3,
+      };
+    } finally {
+      await transport.quiesceNativeOperations();
+    }
   }
 }

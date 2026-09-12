@@ -34,6 +34,8 @@ import 'package:bluebubbles/src/rust/lib.dart' as rustlib;
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
+    show ExternalLibrary;
 import 'package:path/path.dart' as path;
 import 'cloud_sync_v2_windows_local_write.dart';
 import 'cloud_sync_v2_windows_feed_probe.dart';
@@ -69,7 +71,15 @@ Future<void> main(List<String> arguments) async {
   try {
     stage = 'native-library-loading';
     await _writeHarnessStatus(state: 'initializing', stage: stage);
-    await RustLib.init();
+    final testNativeLibrary =
+        Platform.environment['OPENBUBBLES_TEST_NATIVE_LIBRARY'];
+    if (testNativeLibrary == null) {
+      await RustLib.init();
+    } else {
+      await RustLib.init(
+        externalLibrary: ExternalLibrary.open(testNativeLibrary),
+      );
+    }
     stage = 'rust-ready';
     await _writeHarnessStatus(state: 'initializing', stage: stage);
     await fs.init(headless: true);
@@ -86,11 +96,13 @@ Future<void> main(List<String> arguments) async {
     await _writeHarnessStatus(state: 'initializing', stage: stage);
 
     runApp(CloudSyncV2WindowsHarness(operation: operation));
-    doWhenWindowReady(() {
-      appWindow.minSize = const Size(640, 480);
-      appWindow.title = 'Cloud Sync V2 Windows Harness';
-      appWindow.show();
-    });
+    if (Platform.environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] != '1') {
+      doWhenWindowReady(() {
+        appWindow.minSize = const Size(640, 480);
+        appWindow.title = 'Cloud Sync V2 Windows Harness';
+        appWindow.show();
+      });
+    }
     await _writeHarnessStatus(state: 'running', stage: 'ui-started');
   } catch (error, stackTrace) {
     await _writeHarnessStatus(
@@ -107,10 +119,12 @@ Future<void> main(List<String> arguments) async {
 
 /// A bridge load failure occurs before opening the database or Apple session.
 /// Do not infer an authentication failure or forward arbitrary exception text.
-String cloudSyncV2WindowsHarnessStartupFailureCode(String stage, Object error) =>
-    stage == 'native-library-loading'
-        ? 'cloud_sync_windows_native_initialization_failed'
-        : cloudSyncV2SafeFailureCode(error);
+String cloudSyncV2WindowsHarnessStartupFailureCode(
+  String stage,
+  Object error,
+) => stage == 'native-library-loading'
+    ? 'cloud_sync_windows_native_initialization_failed'
+    : cloudSyncV2SafeFailureCode(error);
 
 enum CloudSyncV2WindowsHarnessOperation {
   interactive,
@@ -552,7 +566,8 @@ final class CloudSyncV2WindowsHarnessLaunch {
           }
           operation = argument == 'observe-chat-identity'
               ? CloudSyncV2WindowsHarnessOperation.chatIdentityObservation
-              : CloudSyncV2WindowsHarnessOperation.stagedChatIdentityObservation;
+              : CloudSyncV2WindowsHarnessOperation
+                    .stagedChatIdentityObservation;
           operationSeen = true;
         default:
           if (!argument.startsWith(launchIdArgumentPrefix) ||
@@ -618,34 +633,56 @@ Future<void> _harnessStatusWriteTail = Future<void>.value();
 var _harnessStatusTemporarySequence = 0;
 late final String _harnessLaunchId;
 
+@visibleForTesting
+void configureCloudSyncV2WindowsHarnessTestLaunch(String launchId) {
+  if (Platform.environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] != '1' ||
+      !CloudSyncV2WindowsHarnessLaunch.isValidLaunchId(launchId)) {
+    throw StateError('cloud_sync_windows_dev_test_host_invalid');
+  }
+  _harnessLaunchId = launchId;
+}
+
 Future<void> _runWindowsFindMyProbe() async {
   const build = String.fromEnvironment('OPENBUBBLES_BUILD_COMMIT');
   var stage = 'findmy-probe-preflight';
   Future<void> markStage(String value) {
     stage = value;
-    return _writeHarnessStatus(state: 'initializing', stage: stage)
-        .timeout(const Duration(seconds: 3));
+    return _writeHarnessStatus(
+      state: 'initializing',
+      stage: stage,
+    ).timeout(const Duration(seconds: 3));
   }
+
   try {
-    if (Platform.environment['OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_FINDMY_PROBE'] != '1' ||
+    if (Platform.environment['OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_FINDMY_PROBE'] !=
+            '1' ||
         CloudSyncDevGate.manualOutboundCanaryEnabled ||
         CloudSyncDevGate.localSendRuntimeEnabled ||
-        const String.fromEnvironment('OPENBUBBLES_CLOUDKIT_WRITER_OWNER') == 'v2' ||
+        const String.fromEnvironment('OPENBUBBLES_CLOUDKIT_WRITER_OWNER') ==
+            'v2' ||
         const bool.fromEnvironment(
           'OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_REPLAY_EXCLUDED_CHATS',
         )) {
       throw StateError('findmy_probe_writer_build_rejected');
     }
-    final request = await FindMyProbeRequest.read(fs.appDocDir)
-        .timeout(const Duration(seconds: 2));
+    final request = await FindMyProbeRequest.read(
+      fs.appDocDir,
+    ).timeout(const Duration(seconds: 2));
     await markStage('findmy-probe-native-init');
     await RustLib.init().timeout(const Duration(seconds: 10));
     await markStage('findmy-probe-keystore');
-    await api.doFirstTimeInit(path: fs.appDocDir.path).timeout(const Duration(seconds: 5));
-    final reads = await prepareWindowsFindMyProbeReads(fs.appDocDir, onStage: markStage);
+    await api
+        .doFirstTimeInit(path: fs.appDocDir.path)
+        .timeout(const Duration(seconds: 5));
+    final reads = await prepareWindowsFindMyProbeReads(
+      fs.appDocDir,
+      onStage: markStage,
+    );
     stage = 'findmy-probe-reads';
-    await _writeHarnessStatus(state: 'running', stage: stage)
-        .timeout(const Duration(seconds: 3));
+    await _writeHarnessStatus(
+      state: 'running',
+      stage: stage,
+    ).timeout(const Duration(seconds: 3));
     final report = await runWindowsFindMyProbe(
       launchId: _harnessLaunchId,
       buildIdentifier: build,
@@ -688,7 +725,9 @@ Map<String, Object?> cloudSyncV2WindowsHarnessStatusPayload({
   return <String, Object?>{
     'version': 'cloud-sync-v2-windows-harness-status-v2',
     'launch_id': launchId,
-    'build_identifier': const String.fromEnvironment('OPENBUBBLES_BUILD_COMMIT'),
+    'build_identifier': const String.fromEnvironment(
+      'OPENBUBBLES_BUILD_COMMIT',
+    ),
     'process_id': processId,
     'state': state,
     'stage': stage,
@@ -806,16 +845,21 @@ String _sanitizeHarnessDetail(String value, {int maxLength = 1000}) {
 }
 
 class CloudSyncV2WindowsHarness extends StatefulWidget {
-  const CloudSyncV2WindowsHarness({super.key, required this.operation});
+  const CloudSyncV2WindowsHarness({
+    super.key,
+    required this.operation,
+    this.autoStart = true,
+  });
 
   final CloudSyncV2WindowsHarnessOperation operation;
+  final bool autoStart;
 
   @override
   State<CloudSyncV2WindowsHarness> createState() =>
-      _CloudSyncV2WindowsHarnessState();
+      CloudSyncV2WindowsHarnessState();
 }
 
-class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
+class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
   final List<Object> _sessionHandles = <Object>[];
   final TextEditingController _twoFactorController = TextEditingController();
   Object? _activeClient;
@@ -848,7 +892,16 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
   @override
   void initState() {
     super.initState();
-    Future<void>.microtask(_initialize);
+    if (widget.autoStart) Future<void>.microtask(_initialize);
+  }
+
+  @visibleForTesting
+  Future<void> initializeForTestHost() {
+    if (Platform.environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] != '1' ||
+        widget.autoStart) {
+      throw StateError('cloud_sync_windows_dev_test_host_invalid');
+    }
+    return _initialize();
   }
 
   Future<void> _initialize() async {
@@ -1138,29 +1191,42 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         }
         await _setRuntimeStage('message-feed-probe', state: 'running');
         final result = await cloudSyncWindowsProbeMessageFeed(
-          profile: fs.appDocDir, client: client);
-        await _setRuntimeStage('message-feed-probe-complete', state: 'finished',
-          detail: jsonEncode(result));
+          profile: fs.appDocDir,
+          client: client,
+        );
+        await _setRuntimeStage(
+          'message-feed-probe-complete',
+          state: 'finished',
+          detail: jsonEncode(result),
+        );
     }
   }
 
   Future<void> _runLocalWrite() async {
     if (_busy) return;
-    setState(() { _busy = true; _status = 'Running the explicit Windows write request...'; });
+    setState(() {
+      _busy = true;
+      _status = 'Running the explicit Windows write request...';
+    });
     rustlib.ArcImClient? senderClient;
     try {
       if (!fs.cloudSyncV2WindowsDevProfileActive ||
           !CloudSyncDevGate.manualOutboundCanaryEnabled ||
-          const String.fromEnvironment('OPENBUBBLES_CLOUDKIT_WRITER_OWNER') != 'v2') {
+          const String.fromEnvironment('OPENBUBBLES_CLOUDKIT_WRITER_OWNER') !=
+              'v2') {
         throw StateError('cloud_sync_windows_write_disabled');
       }
       if (!await cloudSyncV2WindowsPrepareWriteAuthentication(
         ensure: () async {
           final client = _activeClient;
-          if (client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+          if (client
+              is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
             throw StateError('cloud_sync_windows_write_client_missing');
           }
-          await _setRuntimeStage('windows-write-read-authentication', state: 'running');
+          await _setRuntimeStage(
+            'windows-write-read-authentication',
+            state: 'running',
+          );
           await FrbCloudSyncNativeAuthBinding().ensureReadAuthentication(
             cloudMessagesClient: client,
             privateStorageDirectory: fs.appDocDir.path,
@@ -1176,87 +1242,148 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       final result = await CloudSyncWindowsLocalWrite(
         readClient: () => _activeClient,
         reportStage: (stage) => _setRuntimeStage(stage, state: 'running'),
-        prepareSender: (sender, recipients, {required refreshAuthentication}) async {
-          final config = _osConfig!;
-          final connection = _connection!;
-          final hardware = api.readHardware(path: fs.appDocDir.path);
-          if (hardware == null) throw StateError('cloud_sync_windows_sender_hardware_unavailable');
-          final identity = api.decodeIdentity(identity: hardware.identity);
-          // Explicit pre-send repair uses the bound GSA session and the same
-          // hardware identity. Do not reuse a terminally rejected IDS user or
-          // delete id.plist first; registerIds persists only after success.
-          var users = refreshAuthentication
-              ? null
-              : api.restoreUsers(path: fs.appDocDir.path);
-          if (users == null || users.isEmpty) {
-            await _setRuntimeStage('windows-write-ids-authentication', state: 'running');
-            final user = await api.cloudSyncWindowsAuthenticateSender(
-              path: fs.appDocDir.path, account: _account!, config: config,
-            );
-            await _setRuntimeStage('windows-write-ids-registration', state: 'running');
-            final registration = await api.registerIds(path: fs.appDocDir.path,
-              config: config, aps: connection, identity: identity, users: [user]);
-            if (registration.$1 == null || registration.$2 != null) {
-              throw StateError('cloud_sync_windows_sender_registration_failed');
-            }
-            users = registration.$1!;
-          }
-          await _setRuntimeStage('windows-write-ids-client', state: 'running');
-          final im = await api.makeImclient(path: fs.appDocDir.path,
-            conn: connection, users: users, identity: identity);
-          senderClient = im;
-          _sessionHandles.addAll([hardware, identity, im]);
-          await _setRuntimeStage('windows-write-registered-sender', state: 'running');
-          if (!(await api.getHandles(state: im)).contains(sender)) {
-            throw StateError('cloud_sync_windows_sender_handle_unregistered');
-          }
-          await _setRuntimeStage('windows-write-recipient-lookup', state: 'running');
-          final available = await api.validateTargets(
-            state: im, targets: recipients, sender: sender,
-          );
-          if (!recipients.every(available.contains)) {
-            throw StateError('cloud_sync_windows_sender_target_unavailable');
-          }
-        },
+        prepareSender:
+            (sender, recipients, {required refreshAuthentication}) async {
+              final config = _osConfig!;
+              final connection = _connection!;
+              final hardware = api.readHardware(path: fs.appDocDir.path);
+              if (hardware == null)
+                throw StateError(
+                  'cloud_sync_windows_sender_hardware_unavailable',
+                );
+              final identity = api.decodeIdentity(identity: hardware.identity);
+              // Explicit pre-send repair uses the bound GSA session and the same
+              // hardware identity. Do not reuse a terminally rejected IDS user or
+              // delete id.plist first; registerIds persists only after success.
+              var users = refreshAuthentication
+                  ? null
+                  : api.restoreUsers(path: fs.appDocDir.path);
+              if (users == null || users.isEmpty) {
+                await _setRuntimeStage(
+                  'windows-write-ids-authentication',
+                  state: 'running',
+                );
+                final user = await api.cloudSyncWindowsAuthenticateSender(
+                  path: fs.appDocDir.path,
+                  account: _account!,
+                  config: config,
+                );
+                await _setRuntimeStage(
+                  'windows-write-ids-registration',
+                  state: 'running',
+                );
+                final registration = await api.registerIds(
+                  path: fs.appDocDir.path,
+                  config: config,
+                  aps: connection,
+                  identity: identity,
+                  users: [user],
+                );
+                if (registration.$1 == null || registration.$2 != null) {
+                  throw StateError(
+                    'cloud_sync_windows_sender_registration_failed',
+                  );
+                }
+                users = registration.$1!;
+              }
+              await _setRuntimeStage(
+                'windows-write-ids-client',
+                state: 'running',
+              );
+              final im = await api.makeImclient(
+                path: fs.appDocDir.path,
+                conn: connection,
+                users: users,
+                identity: identity,
+              );
+              senderClient = im;
+              _sessionHandles.addAll([hardware, identity, im]);
+              await _setRuntimeStage(
+                'windows-write-registered-sender',
+                state: 'running',
+              );
+              if (!(await api.getHandles(state: im)).contains(sender)) {
+                throw StateError(
+                  'cloud_sync_windows_sender_handle_unregistered',
+                );
+              }
+              await _setRuntimeStage(
+                'windows-write-recipient-lookup',
+                state: 'running',
+              );
+              final available = await api.validateTargets(
+                state: im,
+                targets: recipients,
+                sender: sender,
+              );
+              if (!recipients.every(available.contains)) {
+                throw StateError(
+                  'cloud_sync_windows_sender_target_unavailable',
+                );
+              }
+            },
         sendConfirmed: (message) => api.cloudSyncWindowsSendConfirmed(
-          path: fs.appDocDir.path, state: senderClient!, msg: message,
+          path: fs.appDocDir.path,
+          state: senderClient!,
+          msg: message,
         ),
         sendMutationConfirmed: (message, context) {
           final client = _activeClient;
           if (senderClient == null ||
-              client is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+              client
+                  is! rustlib.ArcCloudMessagesClientDefaultAnisetteProvider) {
             throw StateError('cloud_sync_windows_mutation_client_missing');
           }
           return api.cloudSyncWindowsSendMutationConfirmed(
-            state: senderClient!, cloudMessagesClient: client,
-            msg: message, context: context,
+            state: senderClient!,
+            cloudMessagesClient: client,
+            msg: message,
+            context: context,
           );
         },
         uploadAttachment: (file, fixture) async {
           api.Attachment? uploaded;
           await for (final event in api.uploadAttachment(
-            aps: _connection!, path: file.path, mime: fixture.mimeType,
-            uti: fixture.uti, name: fixture.filename,
+            aps: _connection!,
+            path: file.path,
+            mime: fixture.mimeType,
+            uti: fixture.uti,
+            name: fixture.filename,
           )) {
             if (event.attachment != null) {
               if (uploaded != null) {
-                throw StateError('cloud_sync_windows_attachment_upload_ambiguous');
+                throw StateError(
+                  'cloud_sync_windows_attachment_upload_ambiguous',
+                );
               }
               uploaded = event.attachment;
             }
           }
           return uploaded ??
-              (throw StateError('cloud_sync_windows_attachment_upload_unconfirmed'));
+              (throw StateError(
+                'cloud_sync_windows_attachment_upload_unconfirmed',
+              ));
         },
       ).run();
-      await _setRuntimeStage('windows-local-write-pass-complete', state: 'finished',
-        detail: jsonEncode(result));
-      if (mounted) setState(() { _busy = false; _status = 'Write pass complete. See the bounded status report.'; });
+      await _setRuntimeStage(
+        'windows-local-write-pass-complete',
+        state: 'finished',
+        detail: jsonEncode(result),
+      );
+      if (mounted)
+        setState(() {
+          _busy = false;
+          _status = 'Write pass complete. See the bounded status report.';
+        });
     } catch (error, stack) {
       // Do not silently restart authentication or resend on a failed write.
       final code = cloudSyncWindowsWriteFailureCode(error);
-      _showFailure(StateError(code), writeFailureDetail: jsonEncode(
-        cloudSyncWindowsWriteFailureDiagnostic(error, stack)));
+      _showFailure(
+        StateError(code),
+        writeFailureDetail: jsonEncode(
+          cloudSyncWindowsWriteFailureDiagnostic(error, stack),
+        ),
+      );
     }
   }
 
@@ -1630,9 +1757,12 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
   Future<void> _runChatIdentityObservation() async {
     final adapter = _adapter;
     if (_busy || adapter == null) return;
-    final stagedMode = widget.operation ==
+    final stagedMode =
+        widget.operation ==
         CloudSyncV2WindowsHarnessOperation.stagedChatIdentityObservation;
-    final stageName = stagedMode ? 'staged-chat-identity-observation' : 'chat-identity-observation';
+    final stageName = stagedMode
+        ? 'staged-chat-identity-observation'
+        : 'chat-identity-observation';
     _resumeAfterTwoFactor =
         _CloudSyncV2WindowsHarnessResumeOperation.chatIdentityObservation;
     setState(() {
@@ -1659,12 +1789,15 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       // for every call; never reuse an already-disposed native wrapper.
       api.CloudChat candidateForNativeCall() => stagedMode
           ? CloudSyncOutboundChatAdmissionCoordinator.encodeDirectIdentity(
-              originalGuid: identity.groupId, recipient: identity.chatIdentifier,
-              sender: identity.lastAddressedHandle)
+              originalGuid: identity.groupId,
+              recipient: identity.chatIdentifier,
+              sender: identity.lastAddressedHandle,
+            )
           : identity;
       await _setRuntimeStage(stageName, state: 'running');
       Future<Map<String, Object?>> observe(
-        CloudSyncNativeAuthSnapshot auth, Object pauseToken, {
+        CloudSyncNativeAuthSnapshot auth,
+        Object pauseToken, {
         CloudSyncProtectedOutboundStageData? staged,
       }) async {
         final client = auth.cloudMessagesClient;
@@ -1707,18 +1840,23 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                 generation: BigInt.from(readSet.generation),
                 readSetFenceSha256: readSet.fenceSha256,
                 candidate: candidateForNativeCall(),
-                stagedCandidate: staged == null ? null : identity_api.CloudSyncStagedChatIdentityCandidate(
-                  protectedPayloadReference: staged.protectedEnvelopeReference,
-                  payloadSha256: staged.payloadSha256, recordIdHash: staged.serverRecordIdHash,
-                  logicalEntityKeyHash: staged.logicalEntityKeyHash),
+                stagedCandidate: staged == null
+                    ? null
+                    : identity_api.CloudSyncStagedChatIdentityCandidate(
+                        protectedPayloadReference:
+                            staged.protectedEnvelopeReference,
+                        payloadSha256: staged.payloadSha256,
+                        recordIdHash: staged.serverRecordIdHash,
+                        logicalEntityKeyHash: staged.logicalEntityKeyHash,
+                      ),
                 source: identity_api.CloudSyncChatIdentitySourceInput(
                   changeIdHash: source.changeIdHash,
                   recordIdHash: source.recordIdHash,
                   etagHash: source.etagHash,
                   payloadSha256: source.payloadSha256,
-                serverModifiedAtMillis: source.serverModifiedAtMs <= 0
-                    ? null
-                    : source.serverModifiedAtMs,
+                  serverModifiedAtMillis: source.serverModifiedAtMs <= 0
+                      ? null
+                      : source.serverModifiedAtMs,
                   protectedRawEnvelopeReference:
                       source.encryptedPayloadReference,
                 ),
@@ -1740,8 +1878,11 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           }
           candidateBinding = result.candidateBindingHash;
           if (staged != null) {
-            if (!RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(result.stagedCandidateBindingHash ?? '') ||
-                (stagedBinding != null && stagedBinding != result.stagedCandidateBindingHash)) {
+            if (!RegExp(
+                  r'^[A-Za-z0-9_-]{43}$',
+                ).hasMatch(result.stagedCandidateBindingHash ?? '') ||
+                (stagedBinding != null &&
+                    stagedBinding != result.stagedCandidateBindingHash)) {
               throw StateError('cloud_sync_chat_observation_binding_invalid');
             }
             stagedBinding = result.stagedCandidateBindingHash;
@@ -1752,13 +1893,18 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         readSet.requireUnchanged(Database.store);
         return counts;
       }
+
       final Map<String, Object?> counts;
       if (!stagedMode) {
         counts = await adapter.sampler.runConfirmedReadOnlyObservation(observe);
       } else {
-        counts = await cloudSyncObserveStagedChat(readActiveClient: () => _activeClient,
-          privateStorageDirectory: fs.appDocDir.path, candidate: candidateForNativeCall(),
-          observe: (auth, token, staged) => observe(auth, token, staged: staged));
+        counts = await cloudSyncObserveStagedChat(
+          readActiveClient: () => _activeClient,
+          privateStorageDirectory: fs.appDocDir.path,
+          candidate: candidateForNativeCall(),
+          observe: (auth, token, staged) =>
+              observe(auth, token, staged: staged),
+        );
         counts['stage_rolled_back'] = true;
       }
       await _setRuntimeStage(
@@ -1983,7 +2129,6 @@ class _CloudSyncProjectionViewerState
         _errorType = null;
       });
     }
-    await Future<void>.delayed(Duration.zero);
     try {
       final conversations = _cloudSyncV2WindowsReadProjectionConversations();
       if (!mounted) return;

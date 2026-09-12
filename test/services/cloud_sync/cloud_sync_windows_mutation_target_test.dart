@@ -310,7 +310,9 @@ void main() {
       source.indexOf('Future<Map<String, Object?>> _runMutation('),
     );
     expect(mutation, contains('.submitConfirmed('));
-    final harness = File('lib/cloud_sync_v2_windows_harness.dart').readAsStringSync();
+    final harness = File(
+      'lib/cloud_sync_v2_windows_harness.dart',
+    ).readAsStringSync();
     expect(harness, contains('sendMutationConfirmed: (message, context)'));
     expect(harness, contains('api.cloudSyncWindowsSendMutationConfirmed('));
     expect(mutation, contains('createJournal.readConfirmedParentDependency('));
@@ -319,15 +321,43 @@ void main() {
       lessThan(mutation.indexOf('.submitConfirmed(')),
     );
     expect(mutation, contains('CloudSyncNativeReceiptReplayBinding('));
-    expect(mutation, contains("'cloudkit_update_enabled': false"));
+    expect(mutation, contains("'cloudkit_update_enabled': true"));
     expect(mutation, contains('await staging.reflectConfirmed('));
     expect(mutation, contains('final receipt = acceptedReceipt;'));
-    expect(mutation, contains('restore: (originalSource) => api.cloudSyncRestoreIdsMutationSource('));
+    expect(
+      mutation,
+      contains(
+        'restore: (originalSource) => api.cloudSyncRestoreIdsMutationSource(',
+      ),
+    );
+    expect(mutation, contains('CloudSyncMessageUpdateExecutor('));
+    expect(mutation, contains('await executor.admitReflectedUpdate('));
+    expect(mutation, contains('return executor.runOnce('));
+    expect(mutation, contains('api.cloudSyncAcknowledgeNativeSendReceipt('));
+    expect(
+      'api.cloudSyncAcknowledgeNativeSendReceipt('.allMatches(mutation),
+      hasLength(2),
+    );
+    expect(
+      mutation.indexOf('if (intent.state == 5)'),
+      lessThan(mutation.indexOf('api.cloudSyncAcknowledgeNativeSendReceipt(')),
+    );
+    expect(
+      mutation.indexOf('exactOperation.status == CloudOutboxStatus.confirmed'),
+      lessThan(mutation.lastIndexOf('api.cloudSyncAcknowledgeNativeSendReceipt(')),
+    );
+    expect(
+      mutation.indexOf('journal.markExactReadbackConfirmed('),
+      lessThan(mutation.lastIndexOf('api.cloudSyncAcknowledgeNativeSendReceipt(')),
+    );
+    expect(
+      mutation.indexOf('transport.acknowledgeCommittedPageLease('),
+      lessThan(mutation.indexOf('api.cloudSyncAcknowledgeNativeSendReceipt(')),
+    );
     for (final forbidden in [
       'await sendConfirmed(',
       'runExactIntent(',
       'recordNativeSendConfirmation(',
-      'cloudSyncAcknowledgeNativeSendReceipt(',
       'journal.reflectConfirmed(',
     ]) {
       expect(mutation, isNot(contains(forbidden)), reason: forbidden);

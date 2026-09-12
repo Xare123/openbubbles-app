@@ -769,6 +769,85 @@ void main() {
       );
     });
 
+    test(
+      'exact readback terminalizes mutation and releases both GC roots',
+      () async {
+        final operation = admit();
+        final confirmedAt = _time(30);
+        final entity = store.box<CloudOutboxOperationEntity>().getAll().single
+          ..state = CloudOutboxStatus.confirmed.index
+          ..protectedLeaseReference = null
+          ..confirmedAtMs = confirmedAt.millisecondsSinceEpoch
+          ..updatedAtMs = confirmedAt.millisecondsSinceEpoch;
+        store.box<CloudOutboxOperationEntity>().put(entity);
+        final confirmed = operation.copyWith(
+          status: CloudOutboxStatus.confirmed,
+          confirmedAt: confirmedAt,
+          clearProtectedLeaseReference: true,
+        );
+
+        final terminalSource = journal.markExactReadbackConfirmed(
+          intentId: intentId,
+          operation: confirmed,
+          currentAuth: _auth(),
+          stillCurrent: () => true,
+          now: _time(31),
+        );
+        expect(terminalSource.encode(), source.encode());
+        expect(
+          store.box<CloudSyncLocalMutationIntentEntity>().get(intentId)!.state,
+          5,
+        );
+        expect(
+          journal.readTerminalSourceForCleanup(
+            intentId: intentId,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          )?.encode(),
+          source.encode(),
+        );
+        expect(
+          () => journal.readReflectedForUpdate(
+            intentId: intentId,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          ),
+          throwsA(_mutationFailure('update_not_ready')),
+        );
+        expect(
+          () => journal.readReceiptConfirmedSource(
+            intentId: intentId,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+          ),
+          throwsA(_mutationFailure('ids_unconfirmed')),
+        );
+        expect(
+          await cloudStore.readLiveProtectedOutboundLeaseReferences(
+            maximumCount: 100,
+          ),
+          isNot(contains(source.leaseReference)),
+        );
+        expect(
+          (await cloudStore.readLiveProtectedReferences(maximumCount: 100))
+              .references,
+          isNot(contains(source.protectedReference)),
+        );
+
+        await reopen();
+        expect(
+          journal.markExactReadbackConfirmed(
+            intentId: intentId,
+            operation: confirmed,
+            currentAuth: _auth(),
+            stillCurrent: () => true,
+            now: _time(32),
+          ).encode(),
+          source.encode(),
+        );
+      },
+    );
+
     test('identical retry and restart recover the same operation', () async {
       final first = admit();
       expect(admit().operationId, first.operationId);

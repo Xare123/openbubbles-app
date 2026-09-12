@@ -1090,6 +1090,22 @@ final class CloudSyncProductionLocalSendAdapter {
 
     Future<bool> drainExisting() async {
       await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
+      final pendingCreateReadbacks =
+          await durable.readPendingMessageCreateReadbacks(
+            scope,
+            maximumCount: 16,
+          );
+      for (final snapshot in pendingCreateReadbacks) {
+        await transport.finalizePendingMessageCreateReadback(
+          snapshot,
+          finalizeDurableReadback: (expected) =>
+              durable.finalizeMessageCreateReadbackLeases(
+                expectedSnapshot: expected,
+                createSourceLeaseFinalized: true,
+                readbackLeaseFinalized: true,
+              ),
+        );
+      }
       if (!await recoverCloudSyncLocalSendUploadFence(
         recoverProtectedStore: recoverProtectedStore,
         reconcileUpload: () => transport.runProtectedStoreExclusive(() =>
@@ -1166,13 +1182,33 @@ final class CloudSyncProductionLocalSendAdapter {
             ? await transport.verifyConfirmedAttachmentCreateNoSave(target, operation: operation)
             : await transport.verifyConfirmedMessageCreateNoSave(target, operation: operation);
         if (selection != null) await validateSelection();
-        await transport.releaseConfirmedReplayReceipt(
-          target, operation: operation, proof: proof,
-          clearDurableAdoptionMarker: () =>
-              durable.clearConfirmedProtectedOutboundLeaseReference(
-                expectedOperation: operation,
-                recordVerifiedLocalSendReadback: true),
-        );
+        if (target.zone == 'messageManateeZone') {
+          await transport.releaseConfirmedMessageReplayReceipt(
+            target,
+            operation: operation,
+            proof: proof,
+            adoptDurableReadback: (receipt) =>
+                durable.commitConfirmedMessageCreateReadback(
+                  expectedOperation: operation,
+                  receipt: receipt,
+                  now: DateTime.now().toUtc(),
+                ),
+            finalizeDurableReadback: (snapshot) =>
+                durable.finalizeMessageCreateReadbackLeases(
+                  expectedSnapshot: snapshot,
+                  createSourceLeaseFinalized: true,
+                  readbackLeaseFinalized: true,
+                ),
+          );
+        } else {
+          await transport.releaseConfirmedReplayReceipt(
+            target, operation: operation, proof: proof,
+            clearDurableAdoptionMarker: () =>
+                durable.clearConfirmedProtectedOutboundLeaseReference(
+                  expectedOperation: operation,
+                  recordVerifiedLocalSendReadback: true),
+          );
+        }
         },
       );
       if (!settled) return false;
@@ -1667,14 +1703,21 @@ final class CloudSyncProductionOutboundCanaryAdapter {
               operation: operation,
             ),
             finalize: (operation, proof) =>
-                transport.releaseConfirmedReplayReceipt(
+                transport.releaseConfirmedMessageReplayReceipt(
                   scope,
                   operation: operation,
                   proof: proof,
-                  clearDurableAdoptionMarker: () => replayStore
-                      .clearConfirmedProtectedOutboundLeaseReference(
+                  adoptDurableReadback: (receipt) => replayStore
+                      .commitConfirmedMessageCreateReadback(
                         expectedOperation: operation,
-                        recordVerifiedLocalSendReadback: true,
+                        receipt: receipt,
+                        now: DateTime.now().toUtc(),
+                      ),
+                  finalizeDurableReadback: (snapshot) => replayStore
+                      .finalizeMessageCreateReadbackLeases(
+                        expectedSnapshot: snapshot,
+                        createSourceLeaseFinalized: true,
+                        readbackLeaseFinalized: true,
                       ),
                 ),
             quiesce: transport.quiesceNativeOperations,

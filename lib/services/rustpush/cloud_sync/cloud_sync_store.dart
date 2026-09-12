@@ -600,6 +600,30 @@ abstract interface class CloudMessageUpdateReadbackStore {
   });
 }
 
+/// Crash-safe handoff for the exact raw record retained by a confirmed Message
+/// create readback. Implementations adopt both native leases before either is
+/// finalized and expose pending snapshots for no-network restart recovery.
+abstract interface class CloudMessageCreateReadbackStore {
+  Future<CloudMessageCreateReadbackCommitSnapshot>
+  commitConfirmedMessageCreateReadback({
+    required CloudOutboxOperation expectedOperation,
+    required CloudOutboxCreateReceipt receipt,
+    required DateTime now,
+  });
+
+  Future<List<CloudMessageCreateReadbackCommitSnapshot>>
+  readPendingMessageCreateReadbacks(
+    CloudSyncScope scope, {
+    required int maximumCount,
+  });
+
+  Future<void> finalizeMessageCreateReadbackLeases({
+    required CloudMessageCreateReadbackCommitSnapshot expectedSnapshot,
+    required bool createSourceLeaseFinalized,
+    required bool readbackLeaseFinalized,
+  });
+}
+
 final class CloudProtectedReferenceSnapshot {
   CloudProtectedReferenceSnapshot({
     required Iterable<String> references,

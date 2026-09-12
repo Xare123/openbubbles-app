@@ -2928,6 +2928,9 @@ void main() {
         protectedProofReference: operation.encryptedPayloadReference,
         serverRecordIdHash: _hash('S'),
         etagHash: _hash('E'),
+        protectedCurrentRawRecordReference: _reference('R'),
+        protectedCurrentRawRecordLeaseReference: _lease('b'),
+        rawGeneration: BigInt.one,
       );
 
       await runV2(
@@ -3327,6 +3330,9 @@ void main() {
         protectedProofReference: operation.encryptedPayloadReference,
         serverRecordIdHash: _hash('S'),
         etagHash: _hash('E'),
+        protectedCurrentRawRecordReference: _reference('R'),
+        protectedCurrentRawRecordLeaseReference: _lease('b'),
+        rawGeneration: BigInt.one,
       );
 
       final proof = await runV2(
@@ -3367,6 +3373,9 @@ void main() {
       protectedProofReference: operation.encryptedPayloadReference,
       serverRecordIdHash: _hash('S'),
       etagHash: _hash('E'),
+      protectedCurrentRawRecordReference: _reference('R'),
+      protectedCurrentRawRecordLeaseReference: _lease('b'),
+      rawGeneration: BigInt.one,
     );
     final proof = await runV2(
       () => transport.verifyConfirmedMessageCreateNoSave(
@@ -3408,6 +3417,9 @@ void main() {
         protectedProofReference: operation.encryptedPayloadReference,
         serverRecordIdHash: _hash('S'),
         etagHash: _hash('E'),
+        protectedCurrentRawRecordReference: _reference('R'),
+        protectedCurrentRawRecordLeaseReference: _lease('b'),
+        rawGeneration: BigInt.one,
       );
       final proof = await runV2(
         () => transport.verifyConfirmedMessageCreateNoSave(
@@ -3453,6 +3465,146 @@ void main() {
       expect(bindings.acknowledgedLeases, isEmpty);
     },
   );
+
+  test(
+    'Message create replay adopts raw readback before finalizing both leases',
+    () async {
+      final operation = _unknownOutcomeOperation(
+        scope,
+        status: CloudOutboxStatus.confirmed,
+      ).copyWith(confirmedAt: DateTime.utc(2026, 9, 12));
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: operation.encryptedPayloadReference,
+        serverRecordIdHash: _hash('S'),
+        etagHash: _hash('E'),
+        protectedCurrentRawRecordReference: _reference('R'),
+        protectedCurrentRawRecordLeaseReference: _lease('b'),
+        rawGeneration: BigInt.one,
+      );
+      final proof = await runV2(
+        () => transport.verifyConfirmedMessageCreateNoSave(
+          scope,
+          operation: operation,
+        ),
+      );
+      final events = <String>[];
+      bindings.beforeOperation = (operationName) async {
+        events.add('native:$operationName');
+      };
+      final snapshot = CloudMessageCreateReadbackCommitSnapshot(
+        confirmedOperation: operation,
+        recordMapping: CloudRecordMapEntry(
+          scope: scope,
+          logicalEntityKeyHash: operation.logicalEntityKeyHash,
+          serverRecordIdHash: operation.serverRecordIdHash!,
+          encryptedServerRecordId: _reference('S'),
+          generation: operation.checkpointGeneration,
+          etagHash: _hash('E'),
+          encryptedRawRecordReference: _reference('R'),
+          rawRecordGeneration: operation.checkpointGeneration,
+          protectedReadbackLeaseReference: _lease('b'),
+          pendingUpdateOperationId: operation.operationId,
+          pendingUpdatePredecessorEtagHash: _hash('E'),
+          updatedAt: DateTime.utc(2026, 9, 12),
+        ),
+      );
+
+      await runV2(
+        () => transport.releaseConfirmedMessageReplayReceipt(
+          scope,
+          operation: operation,
+          proof: proof,
+          adoptDurableReadback: (receipt) async {
+            events.add('durable-adopt');
+            expect(receipt.protectedCurrentRawRecordReference, _reference('R'));
+            expect(
+              receipt.protectedCurrentRawRecordLeaseReference,
+              _lease('b'),
+            );
+            return snapshot;
+          },
+          finalizeDurableReadback: (committed) async {
+            events.add('durable-finalize');
+            expect(committed, same(snapshot));
+          },
+        ),
+      );
+
+      expect(events, [
+        'durable-adopt',
+        'native:commit',
+        'native:acknowledge',
+        'native:acknowledge',
+        'durable-finalize',
+      ]);
+      expect(bindings.commitCalls, 1);
+      expect(bindings.committedLeaseReference, _lease('b'));
+      expect(bindings.retainedReferences, [_reference('R')]);
+      expect(bindings.acknowledgedLeases, [_lease('a'), _lease('b')]);
+    },
+  );
+
+  test('Message create replay rejects a changed durable adoption', () async {
+    final operation = _unknownOutcomeOperation(
+      scope,
+      status: CloudOutboxStatus.confirmed,
+    ).copyWith(confirmedAt: DateTime.utc(2026, 9, 12));
+    bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+      protectedProofReference: operation.encryptedPayloadReference,
+      serverRecordIdHash: _hash('S'),
+      etagHash: _hash('E'),
+      protectedCurrentRawRecordReference: _reference('R'),
+      protectedCurrentRawRecordLeaseReference: _lease('b'),
+      rawGeneration: BigInt.one,
+    );
+    final proof = await runV2(
+      () => transport.verifyConfirmedMessageCreateNoSave(
+        scope,
+        operation: operation,
+      ),
+    );
+    final changedSnapshot = CloudMessageCreateReadbackCommitSnapshot(
+      confirmedOperation: operation,
+      recordMapping: CloudRecordMapEntry(
+        scope: scope,
+        logicalEntityKeyHash: operation.logicalEntityKeyHash,
+        serverRecordIdHash: operation.serverRecordIdHash!,
+        encryptedServerRecordId: _reference('S'),
+        generation: operation.checkpointGeneration,
+        etagHash: _hash('E'),
+        encryptedRawRecordReference: _reference('Q'),
+        rawRecordGeneration: operation.checkpointGeneration,
+        protectedReadbackLeaseReference: _lease('b'),
+        pendingUpdateOperationId: operation.operationId,
+        pendingUpdatePredecessorEtagHash: _hash('E'),
+        updatedAt: DateTime.utc(2026, 9, 12),
+      ),
+    );
+
+    await expectLater(
+      runV2(
+        () => transport.releaseConfirmedMessageReplayReceipt(
+          scope,
+          operation: operation,
+          proof: proof,
+          adoptDurableReadback: (_) async => changedSnapshot,
+          finalizeDurableReadback: (_) async =>
+              fail('changed adoption must not be finalized'),
+        ),
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'cloud_sync_message_create_adoption_changed',
+        ),
+      ),
+    );
+    expect(bindings.commitCalls, 0);
+    expect(bindings.acknowledgedLeases, isEmpty);
+  });
 
   test(
     'outbound stage rejects independently swapped protected references',
@@ -4371,6 +4523,7 @@ final class _FakeBindings
     implements
         NativeProtectedCloudSyncBindings,
         NativeProtectedCloudSyncWriteBindings,
+        NativeProtectedCloudSyncMessageCreateReadbackBindings,
         CloudKitWriterReconciliationBinding {
   NativeProtectedFetchResult fetchResult = const NativeProtectedFetchResult();
   NativeProtectedRecoveryResult recoveryResult =
@@ -4555,6 +4708,28 @@ final class _FakeBindings
     required frb_api.CloudSyncPreparedMessageCreateInput input,
   }) async {
     await _before('reconcileOutbound');
+    reconcileCalls++;
+    reconcileCloudMessagesClient = cloudMessagesClient;
+    reconcileStorageDirectory = storageDirectory;
+    reconcileExpectedAccountFingerprint = expectedAccountFingerprint;
+    reconcileExpectedProtectedStoreIdentity = expectedProtectedStoreIdentity;
+    reconcileRequestUuid = requestUuid;
+    reconcileInput = input;
+    return reconcileResult;
+  }
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult>
+  reconcileMessageCreateWithRawReadback({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required int rawGeneration,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) async {
+    await _before('reconcileOutboundRaw');
     reconcileCalls++;
     reconcileCloudMessagesClient = cloudMessagesClient;
     reconcileStorageDirectory = storageDirectory;

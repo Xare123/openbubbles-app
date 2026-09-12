@@ -1077,6 +1077,9 @@ class CloudOutboxCreateReceipt {
     required this.logicalEntityKeyHash,
     required this.serverRecordIdHash,
     required this.etagHash,
+    this.protectedCurrentRawRecordReference,
+    this.protectedCurrentRawRecordLeaseReference,
+    this.rawGeneration,
   }) {
     final operationIdMatch = _operationIdPattern.matchAsPrefix(operationId);
     if (operationIdMatch == null ||
@@ -1094,15 +1097,45 @@ class CloudOutboxCreateReceipt {
     if (!_nativeDigestPattern.hasMatch(etagHash)) {
       throw ArgumentError('cloud_outbox_create_receipt_etag_invalid');
     }
+    final hasRawReference = protectedCurrentRawRecordReference != null;
+    final hasRawLease = protectedCurrentRawRecordLeaseReference != null;
+    final hasRawGeneration = rawGeneration != null;
+    if (hasRawReference != hasRawLease ||
+        hasRawReference != hasRawGeneration) {
+      throw ArgumentError(
+        'cloud_outbox_create_receipt_raw_capability_incomplete',
+      );
+    }
+    if (hasRawReference &&
+        (!_protectedReferencePattern.hasMatch(
+              protectedCurrentRawRecordReference!,
+            ) ||
+            !_leaseReferencePattern.hasMatch(
+              protectedCurrentRawRecordLeaseReference!,
+            ) ||
+            rawGeneration! <= 0)) {
+      throw ArgumentError(
+        'cloud_outbox_create_receipt_raw_capability_invalid',
+      );
+    }
   }
 
   static final RegExp _operationIdPattern = RegExp(r'op1:[0-9a-f]{64}');
   static final RegExp _nativeDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
+  static final RegExp _protectedReferencePattern = RegExp(
+    r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$',
+  );
+  static final RegExp _leaseReferencePattern = RegExp(
+    r'^obcs2\.lease\.[0-9a-f]{32}$',
+  );
 
   final String operationId;
   final String logicalEntityKeyHash;
   final String serverRecordIdHash;
   final String etagHash;
+  final String? protectedCurrentRawRecordReference;
+  final String? protectedCurrentRawRecordLeaseReference;
+  final int? rawGeneration;
 
   @override
   String toString() => 'CloudOutboxCreateReceipt(redacted)';
@@ -1359,6 +1392,59 @@ final class CloudMessageUpdateReadbackCommitSnapshot {
 
   @override
   String toString() => 'CloudMessageUpdateReadbackCommitSnapshot(redacted)';
+}
+
+/// Exact durable snapshot returned after a confirmed Message create readback
+/// has attached the lossless current raw record to its record map. The create
+/// source lease and new readback lease remain independently live until native
+/// finalization succeeds for both.
+final class CloudMessageCreateReadbackCommitSnapshot {
+  CloudMessageCreateReadbackCommitSnapshot({
+    required this.confirmedOperation,
+    required this.recordMapping,
+  }) {
+    if (confirmedOperation.scope.zone != 'messageManateeZone' ||
+        confirmedOperation.action != CloudOutboxAction.save ||
+        confirmedOperation.payloadVersion != cloudSyncOutboundPayloadVersion ||
+        confirmedOperation.status != CloudOutboxStatus.confirmed ||
+        confirmedOperation.protectedLeaseReference == null ||
+        confirmedOperation.appleRequestUuid == null ||
+        confirmedOperation.appleOperationUuid == null ||
+        confirmedOperation.confirmedAt == null ||
+        confirmedOperation.serverRecordIdHash == null ||
+        recordMapping.scope != confirmedOperation.scope ||
+        recordMapping.generation != confirmedOperation.checkpointGeneration ||
+        recordMapping.logicalEntityKeyHash !=
+            confirmedOperation.logicalEntityKeyHash ||
+        recordMapping.serverRecordIdHash !=
+            confirmedOperation.serverRecordIdHash ||
+        recordMapping.rawRecordGeneration !=
+            confirmedOperation.checkpointGeneration ||
+        recordMapping.encryptedRawRecordReference == null ||
+        recordMapping.protectedReadbackLeaseReference == null ||
+        confirmedOperation.protectedLeaseReference ==
+            recordMapping.protectedReadbackLeaseReference ||
+        recordMapping.pendingUpdateOperationId !=
+            confirmedOperation.operationId ||
+        recordMapping.pendingUpdatePredecessorEtagHash == null ||
+        recordMapping.etagHash == null ||
+        recordMapping.pendingUpdatePredecessorEtagHash !=
+            recordMapping.etagHash) {
+      throw ArgumentError('cloud_message_create_commit_snapshot_invalid');
+    }
+  }
+
+  final CloudOutboxOperation confirmedOperation;
+  final CloudRecordMapEntry recordMapping;
+
+  String get createSourceLeaseReference =>
+      confirmedOperation.protectedLeaseReference!;
+
+  String get readbackLeaseReference =>
+      recordMapping.protectedReadbackLeaseReference!;
+
+  @override
+  String toString() => 'CloudMessageCreateReadbackCommitSnapshot(redacted)';
 }
 
 class CloudSyncRunRecord {

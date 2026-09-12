@@ -54,8 +54,9 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 | Item | Current state |
 | --- | --- |
-| App branch | `agent/cloudkit-v2-update-seam` (working tree based on `1e5f154b4`; conditional-update integration is not yet committed or installed) |
-| Conditional-update executor candidate | **TEST-PROVEN:** the retained positive IDS receipt now admits one exact version-checked update operation, preserves the original record identity/ETag and protected source leases, submits once, reconciles unknown outcomes by exact readback, and releases native evidence only after durable confirmation. Retry/restart and teardown retain the native receipt rather than resending IDS. A controlled full CloudKit suite passed **2,848 tests with zero failures** on September 12; targeted analysis has no errors or warnings. Review then found the existing Canary workflow was still compiled read-only, so the candidate now explicitly selects V2 ownership, the outbound canary, and the local-send runtime only for the isolated Canary application ID. Live Pixel and independent-recipient proof remain open. |
+| App branch | `agent/cloudkit-v2-update-seam` (working tree based on `dd3d3be1b`; the confirmed-create raw-readback repair is not yet committed or installed) |
+| Conditional-update executor candidate | **TEST-PROVEN, SIGNED CANARY READY:** the retained positive IDS receipt now admits one exact version-checked update operation, preserves the original record identity/ETag and protected source leases, submits once, reconciles unknown outcomes by exact readback, and releases native evidence only after durable confirmation. Retry/restart and teardown retain the native receipt rather than resending IDS. A controlled full CloudKit suite passed **2,848 tests with zero failures** on September 12; targeted analysis has no errors or warnings. Review then found the existing Canary workflow was still compiled read-only, so exact source `dd3d3be1b` now explicitly selects V2 ownership, the outbound canary, and the local-send runtime only for the isolated Canary application ID. GitHub run `34700082731` built, stable-signed and verified the ARM64 APK in 19m58s. Downloaded SHA-256: `d69d8dcafe4978cacdb3b682bffbdf872267e5b81da87fe8c63201ac9930ca7e`; signer SHA-256: `0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79`. Live Pixel and independent-recipient proof remain open. |
+| Confirmed-create raw predecessor retention | **TEST-PROVEN, not installed:** live request 20 proved a real Message create and exact restart readback. Edit request 23 then exposed the missing capability: the confirmed create map kept its ETag but discarded the exact raw record, so the conditional writer correctly refused to reconstruct a predecessor and did not resend IDS. The repair performs a no-save exact readback, stages that same fetched raw record under a separate protected lease, adopts it atomically in ObjectBox, commits the raw lease, acknowledges both source/readback leases, and clears durable finalization markers last. Create and update pending states are explicitly distinguished by equal versus changed ETags. Crash/reopen and changed-snapshot tests pass; current focused totals are 99 transport, 116 ObjectBox, and 11 edit/unsend tests, with no analyzer findings in changed files. A new signed Canary and live reconciliation-only retry of request 23 remain. |
 | Conditional-update predecessor | **TEST-PROVEN:** app `c092ef1a7` pins rustpush `90787d3`. Native `lookup_message_record_version` retains decoded CloudKit fields, opaque encrypted payloads and exact identity/ETag without a typed `CloudMessage` roundtrip. The old typed lookup delegates to it; current-container and cached-PCS checks remain. GCE dependency-only `34647348048` passed 305 tests and cleanup; app-native `34647652095` passed 533 tests and exact bridge regeneration. No update/save path is enabled. |
 | Conditional-update staging | **TEST-PROVEN, not enabled:** exact `3260dc506` passed 554 native tests and bridge regeneration in GCE `34650587629`; cleanup completed at 21:52:03Z. Protected staging retains the original predecessor, conditional merge request, ciphertext, ETag and request IDs. Summary patching preserves unknown plist values, singleton history and both supported timestamp formats. A composed test passes edit then unsend through the real message converter without discarding unknown protobuf fields. The first qualification exposed a missing protected-purpose allowlist entry, now fixed. These helpers do not authorize a save. |
 | Conditional-update source proof | **TEST-PROVEN:** exact `8d98a8c56` passed 557 native tests and bridge regeneration in GCE `34651357165`; cleanup completed at 22:01:12Z, with independent instance/runner inventories empty. It reopens a committed mutation source plus its exact encrypted positive IDS receipt, without consuming either. Current login and historical send session are checked separately, permitting cold recovery without resending IDS. Missing, changed or timeless receipts do not supply update authority; legacy evidence remains retained. The preparer and journal/outbox integration remain unconnected. |
@@ -96,11 +97,12 @@ Completed in the current working tree:
 
 Remaining qualification, in order:
 
-1. Produce a signed Canary containing this exact source and verify package/native
-   provenance before installation.
-2. Run one controlled edit and one controlled undo-send against an approved test
-   recipient, then prove exact CloudKit readback and no duplicate IDS send across
-   a restart.
+1. Build and independently verify a signed Canary containing the confirmed-create
+   raw-readback repair. The previously verified `34700082731` APK does not contain
+   this repair.
+2. Retry existing edit request 23 in reconciliation-only mode. Prove the retained
+   create gains its exact raw predecessor, the edit reaches exact CloudKit
+   readback, and no duplicate IDS mutation is sent across restart.
 3. Independently verify recipient or second-client display. Same-client local
    reflection is not sufficient production evidence.
 4. Exercise one conflict/unknown-outcome recovery on the installed candidate and
@@ -667,7 +669,12 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Qualify the combined attachment and cold-start-auth source on Android and
+1. Ship the confirmed-create raw-readback repair to Canary, then resume edit
+   request 23 without another IDS send. Exact readback must populate the raw
+   predecessor map first; the conditional edit may then reconcile and finalize
+   both protected leases across restart. A same-client local reflection is not
+   sufficient evidence.
+2. Qualify the combined attachment and cold-start-auth source on Android and
    independently verify the written attachment through a second client.
    Windows overlay `46bc6f027` completed exact image 04 parent admission and a
    separate-process restart with no new admission or blocked work; read-only
@@ -676,26 +683,26 @@ CloudKit readback or independent Apple-device display.
    inspector to manufacture proof. Preserve the original source and attempt across writer
    epochs; absent receipts never authorize blind reupload. Also prove source
    staging remains usable during long reads, not merely lossless on contention.
-2. Preserve qualified Windows direct request `qualification-20260910-03` and
+3. Preserve qualified Windows direct request `qualification-20260910-03` and
    its proof. No additional direct send is needed merely to recheck that result.
    The exact restored-group route is implemented/tested, but no group with the
    approved two test recipients exists in the retained Windows profile. Restore
    or create that approved conversation before live group qualification. Never
    substitute another personal group.
-3. Windows direct reaction add/remove and no-op restarts now pass. Continue
+4. Windows direct reaction add/remove and no-op restarts now pass. Continue
    attachment/causal-write qualification, preserving exact readback, recovery and
    independent Apple-device display as separate gates. Implement group creation,
    group reactions and supported edits/unsends, not just restored plaintext.
-4. Qualify lifecycle P0 before automatic sync: expired-token reset must advance
+5. Qualify lifecycle P0 before automatic sync: expired-token reset must advance
    exactly once and replay once; a second reset signal must stop. Process death
    must recover prepared or unknown authority without losing old evidence.
    Same-generation authentication may refresh once; account replacement must
    preserve evidence and fail closed.
-5. The durable Android metadata entrypoint is under lifecycle repair after a
+6. The durable Android metadata entrypoint is under lifecycle repair after a
    concrete ready-handshake counterexample. Requalify it and prove background, lock,
    APNs, reconnect, process restart, bounded retry, and stale-identity behavior
    on Pixel before considering production enablement.
-6. Run lifecycle soak and produce one release-candidate report that proves
+7. Run lifecycle soak and produce one release-candidate report that proves
    identity stability, token continuity, zero duplicate writes, and honest
    retained counts. Complete attachment writes, reactions, edits/unsends, and
    supported group/deletion semantics for the full production goal. Keep each

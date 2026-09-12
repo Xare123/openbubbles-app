@@ -384,6 +384,89 @@ void main() {
       'replayBinding.requireCurrent();'.allMatches(replay).length,
       greaterThanOrEqualTo(3),
     );
+    expect(replay, contains('(!ls.isUiThread && !mcs.background)'));
+  });
+
+  test('V2 mutation ownership cannot escape to an IDS-only fallback', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final start = source.indexOf(
+      'Future<_CloudSyncV2LocalMutationContext?> '
+      '_prepareCloudSyncV2LocalMutation({',
+    );
+    final end = source.indexOf(
+      'Future<_CloudSyncV2LocalSendContext?> _captureCloudSyncV2LocalSend({',
+      start,
+    );
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final method = source.substring(start, end);
+    final ownershipPrologue = method.substring(
+      0,
+      method.indexOf('final identity ='),
+    );
+    expect(
+      'return null;'.allMatches(ownershipPrologue),
+      hasLength(1),
+      reason: 'only a non-V2 writer may select the legacy mutation path',
+    );
+    expect(
+      method,
+      contains('if (!CloudKitWriterOwnership.v2MutationsEnabled)'),
+    );
+    expect(
+      method,
+      contains("throw StateError('cloud_sync_local_mutation_deferred')"),
+    );
+    expect(
+      method,
+      contains("throw StateError('cloud_sync_local_mutation_source_invalid')"),
+    );
+  });
+
+  test('confirmed mutation readback retires source before receipt', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final start = source.indexOf(
+      'Future<void> _confirmCloudSyncV2NativeSend(',
+    );
+    final end = source.indexOf(
+      'Future<void> _saveCloudSyncV2LocalSend(',
+      start,
+    );
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final confirmation = source.substring(start, end);
+    final terminal = confirmation.indexOf(
+      'mutationJournal.markExactReadbackConfirmed(',
+    );
+    final lease = confirmation.indexOf(
+      'transport.acknowledgeCommittedPageLease(',
+      terminal,
+    );
+    final receipt = confirmation.indexOf(
+      'api.cloudSyncAcknowledgeNativeSendReceipt(',
+      lease,
+    );
+    expect(terminal, greaterThanOrEqualTo(0));
+    expect(lease, greaterThan(terminal));
+    expect(receipt, greaterThan(lease));
+    expect(
+      confirmation,
+      contains('readTerminalSourceForCleanup('),
+    );
+    for (final stage in [
+      'ids_receipt_positive',
+      'journal_adopted',
+      'conditional_submit_started',
+      'exact_readback_committed',
+      'source_lease_finalized',
+      'ids_receipt_acknowledged',
+    ]) {
+      expect(confirmation, contains('stage=$stage'), reason: stage);
+    }
   });
 
   test('startup recovery serializes receipt replay before stale send failure', () {
@@ -863,6 +946,9 @@ void main() {
     expect(adapter, contains('retainConfirmedReceiptsForReplay: true'));
     expect(adapter, contains('Future<void> finalizeConfirmedReplayProof'));
     expect(adapter, contains('required CloudSyncConfirmedReplayProof proof'));
+    expect(adapter, contains('releaseConfirmedMessageReplayReceipt'));
+    expect(adapter, contains('commitConfirmedMessageCreateReadback'));
+    expect(adapter, contains('finalizeMessageCreateReadbackLeases'));
     expect(adapter, contains('releaseConfirmedReplayReceipt'));
     expect(adapter, contains('clearConfirmedProtectedOutboundLeaseReference'));
     expect(adapter, contains('proof: proof'));
@@ -882,25 +968,53 @@ void main() {
     expect(verificationCall, contains('scope'));
     expect(verificationCall, contains('operation: operation'));
 
-    expect(adapter, contains('clearDurableAdoptionMarker: () =>'));
+    expect(adapter, contains('adoptDurableReadback: (receipt) =>'));
+    expect(adapter, contains('finalizeDurableReadback: (snapshot) =>'));
 
     final native = File(
       'lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart',
     ).readAsStringSync();
     final releaseStart = native.indexOf(
-      'Future<void> releaseConfirmedReplayReceipt(',
+      'Future<void> releaseConfirmedMessageReplayReceipt(',
     );
-    final durableClearStart = native.indexOf(
-      'await clearDurableAdoptionMarker();',
+    final durableAdoptionStart = native.indexOf(
+      'final snapshot = await adoptDurableReadback(proof.receipt);',
       releaseStart,
     );
-    final nativeAcknowledgeStart = native.indexOf(
-      '_bindings.acknowledgeCommittedPageLease(',
+    final finalizePendingStart = native.indexOf(
+      'await finalizePendingMessageCreateReadback(',
       releaseStart,
     );
     expect(releaseStart, greaterThanOrEqualTo(0));
-    expect(durableClearStart, greaterThan(releaseStart));
-    expect(nativeAcknowledgeStart, greaterThan(durableClearStart));
+    expect(durableAdoptionStart, greaterThan(releaseStart));
+    expect(finalizePendingStart, greaterThan(durableAdoptionStart));
+
+    final restartFinalizeStart = native.indexOf(
+      'Future<void> finalizePendingMessageCreateReadback(',
+      finalizePendingStart,
+    );
+    final nativeCommitStart = native.indexOf(
+      'await commitProtectedPageLease(',
+      restartFinalizeStart,
+    );
+    final sourceAcknowledgeStart = native.indexOf(
+      'await acknowledgeCommittedPageLease('
+      'snapshot.createSourceLeaseReference);',
+      nativeCommitStart,
+    );
+    final readbackAcknowledgeStart = native.indexOf(
+      'await acknowledgeCommittedPageLease(snapshot.readbackLeaseReference);',
+      sourceAcknowledgeStart,
+    );
+    final durableFinalizeStart = native.indexOf(
+      'await finalizeDurableReadback(snapshot);',
+      readbackAcknowledgeStart,
+    );
+    expect(restartFinalizeStart, greaterThan(finalizePendingStart));
+    expect(nativeCommitStart, greaterThan(restartFinalizeStart));
+    expect(sourceAcknowledgeStart, greaterThan(nativeCommitStart));
+    expect(readbackAcknowledgeStart, greaterThan(sourceAcknowledgeStart));
+    expect(durableFinalizeStart, greaterThan(readbackAcknowledgeStart));
   });
 
   test('ambiguous recovery is structurally isolated from every write lane', () {

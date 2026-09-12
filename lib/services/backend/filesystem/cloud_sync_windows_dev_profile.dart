@@ -13,9 +13,20 @@ abstract final class CloudSyncWindowsDevProfile {
   );
 
   static const String directoryName = 'cloudkit-v2-dev';
+  static const String testHostDirectoryName = 'cloudkit-v2-testhost';
   static const String markerFileName = '.openbubbles-cloud-sync-v2-windows-dev';
   static const String markerContents =
       'openbubbles-cloud-sync-v2-windows-dev-profile:v1';
+  static const String testHostMarkerContents =
+      'openbubbles-cloud-sync-v2-windows-test-host-profile:v1';
+  static const bool testHostCompileEnabled = bool.fromEnvironment(
+    'OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_TEST_HOST_PROFILE',
+    defaultValue: false,
+  );
+
+  static bool get _testHostActive =>
+      testHostCompileEnabled &&
+      Platform.environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] == '1';
 
   static Directory expectedDirectory({Map<String, String>? environment}) {
     final windows = path.windows;
@@ -24,7 +35,13 @@ abstract final class CloudSyncWindowsDevProfile {
       throw StateError('cloud_sync_windows_dev_appdata_unavailable');
     }
     return Directory(
-      windows.normalize(windows.join(appData, 'OpenBubbles', directoryName)),
+      windows.normalize(
+        windows.join(
+          appData,
+          'OpenBubbles',
+          _testHostActive ? testHostDirectoryName : directoryName,
+        ),
+      ),
     );
   }
 
@@ -70,9 +87,12 @@ abstract final class CloudSyncWindowsDevProfile {
         path.join(resolvedDirectory, markerFileName),
       );
       final resolvedMarker = path.normalize(marker.resolveSymbolicLinksSync());
+      final expectedContents = _testHostActive
+          ? testHostMarkerContents
+          : markerContents;
       return marker.existsSync() &&
           expectedMarker.toLowerCase() == resolvedMarker.toLowerCase() &&
-          marker.readAsStringSync() == markerContents;
+          marker.readAsStringSync() == expectedContents;
     } catch (_) {
       return false;
     }

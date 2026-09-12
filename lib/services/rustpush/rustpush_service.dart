@@ -8345,25 +8345,30 @@ class RustPushService extends GetxService {
 
   /// Stages one normal Android edit/unsend into the protected mutation journal
   /// before IDS can observe it. A successful return is claimed exactly once;
-  /// local reflection and CloudKit admission wait for the native receipt.
+  /// local reflection and CloudKit admission wait for the native receipt. Null
+  /// means this build is owned by the legacy writer. Once V2 owns mutations,
+  /// temporary runtime unavailability fails before IDS instead of escaping to
+  /// an IDS-only mutation that CloudKit can never reconcile.
   Future<_CloudSyncV2LocalMutationContext?> _prepareCloudSyncV2LocalMutation({
     required Message target,
     required api.MessageInst wire,
   }) async {
-    if (!CloudKitWriterOwnership.v2MutationsEnabled ||
-        !CloudSyncDevGate.manualOutboundCanaryEnabled ||
+    if (!CloudKitWriterOwnership.v2MutationsEnabled) {
+      return null;
+    }
+    if (!CloudSyncDevGate.manualOutboundCanaryEnabled ||
         !_cloudSyncV2CanaryRuntimeAllowed ||
         !ls.isUiThread ||
         loggingOut ||
         ss.settings.cloudSyncingEnabled.value ||
         isSyncing.value != null ||
         statePath.isEmpty) {
-      return null;
+      throw StateError('cloud_sync_local_mutation_deferred');
     }
     final identity = CloudSyncLocalMutationIdentity.captureWire(wire);
     final localMessageId = target.id;
     if (identity == null || localMessageId == null || localMessageId <= 0) {
-      return null;
+      throw StateError('cloud_sync_local_mutation_source_invalid');
     }
 
     final expectedState = state;
@@ -8810,6 +8815,15 @@ class RustPushService extends GetxService {
           return;
         }
         if (mutationIntentId == null) return;
+        final mutationReceiptCorrelation = _diagnosticHash(
+          '${auth.accountFingerprint}\u001f${nativeReceipt.guidHash}',
+        );
+        final mutationProcessGeneration = _diagnosticHash(auth.nativeSessionId);
+        Logger.info(
+          'Cloud Sync V2 mutation stage=ids_receipt_positive '
+          'correlation=$mutationReceiptCorrelation '
+          'process=$mutationProcessGeneration attempt=0',
+        );
 
         final cloudStore = ObjectBoxCloudSyncStore(
           store: objectBox,
@@ -8866,6 +8880,29 @@ class RustPushService extends GetxService {
         _cloudSyncV2MessageUpdateInFlight = updateInFlight;
         try {
           await lifecycle.ensureRecoveredBeforeWrite();
+          final terminalSource =
+              mutationJournal.readTerminalSourceForCleanup(
+            intentId: mutationIntentId,
+            currentAuth: auth,
+            stillCurrent: confirmationBindingCurrent,
+          );
+          if (terminalSource != null) {
+            await transport.acknowledgeCommittedPageLease(
+              terminalSource.leaseReference,
+            );
+            api.cloudSyncAcknowledgeNativeSendReceipt(
+              storageDirectory: storagePath,
+              expectedAccountFingerprint: auth.accountFingerprint,
+              expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
+              receipt: nativeReceipt,
+            );
+            Logger.info(
+              'Cloud Sync V2 mutation stage=terminal_cleanup_complete '
+              'correlation=$mutationReceiptCorrelation '
+              'process=$mutationProcessGeneration attempt=0',
+            );
+            return;
+          }
           final mutationSource = mutationJournal.readReceiptConfirmedSource(
             intentId: mutationIntentId,
             currentAuth: auth,
@@ -8893,6 +8930,7 @@ class RustPushService extends GetxService {
             intentId: mutationIntentId,
             currentAuth: auth,
             stillCurrent: confirmationBindingCurrent,
+            replayBinding: replayBinding,
           );
           final scope = CloudSyncScope(
             accountFingerprint: auth.accountFingerprint,
@@ -8903,8 +8941,33 @@ class RustPushService extends GetxService {
             schemaVersion: 2,
             persistenceLane: CloudSyncPersistenceLane.semantic,
           );
+          final pendingCreateReadbacks =
+              await cloudStore.readPendingMessageCreateReadbacks(
+                scope,
+                maximumCount: 16,
+              );
+          for (final snapshot in pendingCreateReadbacks) {
+            await transport.finalizePendingMessageCreateReadback(
+              snapshot,
+              finalizeDurableReadback: (expected) =>
+                  cloudStore.finalizeMessageCreateReadbackLeases(
+                    expectedSnapshot: expected,
+                    createSourceLeaseFinalized: true,
+                    readbackLeaseFinalized: true,
+                  ),
+            );
+          }
           final predecessor = admission.requirePredecessor(
-            store: objectBox, messageScope: scope,
+            store: objectBox,
+            messageScope: scope,
+            readConfirmedLocalParent: (parent) =>
+                journal.readConfirmedParentDependency(
+                  objectBox,
+                  scope,
+                  parent,
+                  reflectedMutationValidated:
+                      admission.matchesReflectedParent(parent),
+                ),
           );
           final executor = CloudSyncMessageUpdateExecutor(
             objectBoxStore: objectBox,
@@ -8913,6 +8976,15 @@ class RustPushService extends GetxService {
             transport: transport,
             preparedSubmissionReleaser: transport,
             leaseTransport: transport,
+            replayBinding: replayBinding,
+            readConfirmedLocalParent: (parent) =>
+                journal.readConfirmedParentDependency(
+                  objectBox,
+                  scope,
+                  parent,
+                  reflectedMutationValidated:
+                      admission.matchesReflectedParent(parent),
+                ),
           );
           late final CloudOutboxOperation admittedOperation;
           final result = await interlock.runExclusive(
@@ -8925,6 +8997,18 @@ class RustPushService extends GetxService {
                 currentAuth: auth,
                 stillCurrent: confirmationBindingCurrent,
                 receipt: nativeReceipt,
+              );
+              Logger.info(
+                'Cloud Sync V2 mutation stage=journal_adopted '
+                'correlation=${_diagnosticHash(admittedOperation.operationId)} '
+                'process=$mutationProcessGeneration '
+                'attempt=${admittedOperation.attemptCount}',
+              );
+              Logger.info(
+                'Cloud Sync V2 mutation stage=conditional_submit_started '
+                'correlation=${_diagnosticHash(admittedOperation.operationId)} '
+                'process=$mutationProcessGeneration '
+                'attempt=${admittedOperation.attemptCount + 1}',
               );
               return executor.runOnce(
                 scope,
@@ -8946,11 +9030,43 @@ class RustPushService extends GetxService {
             // committed and both protected readback leases were finalized.
             // The IDS mutation source and receipt can now be released.
             try {
+              final confirmedSource =
+                  mutationJournal.markExactReadbackConfirmed(
+                intentId: mutationIntentId,
+                operation: exactOperation,
+                currentAuth: auth,
+                stillCurrent: confirmationBindingCurrent,
+                now: DateTime.now().toUtc(),
+              );
+              final operationCorrelation = _diagnosticHash(
+                exactOperation.operationId,
+              );
+              Logger.info(
+                'Cloud Sync V2 mutation stage=exact_readback_committed '
+                'correlation=$operationCorrelation '
+                'process=$mutationProcessGeneration '
+                'attempt=${exactOperation.attemptCount}',
+              );
+              await transport.acknowledgeCommittedPageLease(
+                confirmedSource.leaseReference,
+              );
+              Logger.info(
+                'Cloud Sync V2 mutation stage=source_lease_finalized '
+                'correlation=$operationCorrelation '
+                'process=$mutationProcessGeneration '
+                'attempt=${exactOperation.attemptCount}',
+              );
               api.cloudSyncAcknowledgeNativeSendReceipt(
                 storageDirectory: storagePath,
                 expectedAccountFingerprint: auth.accountFingerprint,
                 expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
                 receipt: nativeReceipt,
+              );
+              Logger.info(
+                'Cloud Sync V2 mutation stage=ids_receipt_acknowledged '
+                'correlation=$operationCorrelation '
+                'process=$mutationProcessGeneration '
+                'attempt=${exactOperation.attemptCount}',
               );
             } catch (_) {
               Logger.warn(
@@ -9168,7 +9284,7 @@ class RustPushService extends GetxService {
         !CloudSyncDevGate.manualOutboundCanaryEnabled ||
         !_cloudSyncV2CanaryRuntimeAllowed ||
         !_cloudSyncV2DeveloperRuntimeAllowed ||
-        !ls.isUiThread ||
+        (!ls.isUiThread && !mcs.background) ||
         loggingOut ||
         _cloudSyncV2OutboundQuiescing ||
         statePath.isEmpty) {

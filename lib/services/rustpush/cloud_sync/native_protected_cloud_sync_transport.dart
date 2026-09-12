@@ -384,6 +384,22 @@ abstract interface class NativeProtectedCloudSyncWriteBindings {
   });
 }
 
+/// Readback-only capability that retains the exact raw Message record after a
+/// confirmed create. Kept separate so ordinary create bindings and test fakes
+/// do not accidentally acquire this stronger protected-storage authority.
+abstract interface class NativeProtectedCloudSyncMessageCreateReadbackBindings {
+  Future<frb_api.CloudSyncOutboundReconcileResult>
+  reconcileMessageCreateWithRawReadback({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required int rawGeneration,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  });
+}
+
 /// Explicit update-only authority for an already-adopted conditional Message
 /// update.
 ///
@@ -645,10 +661,15 @@ final class _NativeCloudSyncPreparedMessageUpdate
 
 final class _NativeConfirmedReplayProof
     implements CloudSyncConfirmedReplayProof {
-  _NativeConfirmedReplayProof(this._operation, this._protectedLeaseReference);
+  _NativeConfirmedReplayProof(
+    this._operation,
+    this._protectedLeaseReference,
+    this.receipt,
+  );
 
   final CloudOutboxOperation _operation;
   final String _protectedLeaseReference;
+  final CloudOutboxCreateReceipt receipt;
   bool consumed = false;
 
   bool binds(CloudOutboxOperation operation) =>
@@ -809,6 +830,15 @@ final class NativeProtectedCloudSyncTransport
       throw _readOnlyFailure();
     }
     return bindings as NativeProtectedCloudSyncWriteBindings;
+  }
+
+  NativeProtectedCloudSyncMessageCreateReadbackBindings
+  _requireMessageCreateReadbackBindings() {
+    final bindings = _bindings;
+    if (bindings is! NativeProtectedCloudSyncMessageCreateReadbackBindings) {
+      throw _readOnlyFailure();
+    }
+    return bindings as NativeProtectedCloudSyncMessageCreateReadbackBindings;
   }
 
   NativeProtectedCloudSyncChatWriteBindings _requireChatWriteBindings() {
@@ -3081,9 +3111,17 @@ final class NativeProtectedCloudSyncTransport
     );
     switch (resolution.disposition) {
       case CloudUnknownOutcomeDisposition.committed:
+        final receipt = resolution.createReceipt;
+        if (receipt == null) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.unknown,
+            safeCode: 'cloud_sync_outbound_replay_receipt_invalid',
+          );
+        }
         return _NativeConfirmedReplayProof(
           operation,
           operation.protectedLeaseReference!,
+          receipt,
         );
       case CloudUnknownOutcomeDisposition.notApplied:
         throw CloudSyncFailure(
@@ -3169,6 +3207,68 @@ final class NativeProtectedCloudSyncTransport
     }
   }
 
+  /// Adopts and finalizes the exact raw Message record returned by a confirmed
+  /// create replay. The proof is consumed before durable adoption, and both
+  /// native leases remain recoverable until the final ObjectBox transaction.
+  Future<void> releaseConfirmedMessageReplayReceipt(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+    required CloudSyncConfirmedReplayProof proof,
+    required Future<CloudMessageCreateReadbackCommitSnapshot> Function(
+      CloudOutboxCreateReceipt receipt,
+    )
+    adoptDurableReadback,
+    required Future<void> Function(
+      CloudMessageCreateReadbackCommitSnapshot snapshot,
+    )
+    finalizeDurableReadback,
+  }) async {
+    _requireV2WriterInterlock();
+    if (proof is! _NativeConfirmedReplayProof ||
+        proof.consumed ||
+        !proof.binds(operation) ||
+        operation.scope != scope ||
+        scope.zone != 'messageManateeZone' ||
+        proof.receipt.protectedCurrentRawRecordReference == null ||
+        proof.receipt.protectedCurrentRawRecordLeaseReference == null ||
+        proof.receipt.rawGeneration != operation.checkpointGeneration) {
+      throw _localStorage('cloud_sync_message_create_replay_proof_invalid');
+    }
+    proof.consumed = true;
+    final snapshot = await adoptDurableReadback(proof.receipt);
+    if (!snapshot.confirmedOperation.sameDurableSnapshotAs(operation) ||
+        snapshot.recordMapping.encryptedRawRecordReference !=
+            proof.receipt.protectedCurrentRawRecordReference ||
+        snapshot.recordMapping.protectedReadbackLeaseReference !=
+            proof.receipt.protectedCurrentRawRecordLeaseReference ||
+        snapshot.recordMapping.rawRecordGeneration !=
+            proof.receipt.rawGeneration) {
+      throw _localStorage('cloud_sync_message_create_adoption_changed');
+    }
+    await finalizePendingMessageCreateReadback(
+      snapshot,
+      finalizeDurableReadback: finalizeDurableReadback,
+    );
+  }
+
+  /// Completes a previously adopted create readback without network access.
+  /// Native commit and acknowledgements are idempotent, so restart recovery
+  /// may safely repeat any step whose durable final marker was not written.
+  Future<void> finalizePendingMessageCreateReadback(
+    CloudMessageCreateReadbackCommitSnapshot snapshot, {
+    required Future<void> Function(
+      CloudMessageCreateReadbackCommitSnapshot snapshot,
+    )
+    finalizeDurableReadback,
+  }) => runProtectedStoreExclusive(() async {
+    await commitProtectedPageLease(snapshot.readbackLeaseReference, <String>{
+      snapshot.recordMapping.encryptedRawRecordReference!,
+    });
+    await acknowledgeCommittedPageLease(snapshot.createSourceLeaseReference);
+    await acknowledgeCommittedPageLease(snapshot.readbackLeaseReference);
+    await finalizeDurableReadback(snapshot);
+  });
+
   Future<CloudUnknownOutcomeResolution> _reconcileCreateOutcome(
     CloudSyncScope scope, {
     required CloudOutboxOperation operation,
@@ -3178,11 +3278,6 @@ final class NativeProtectedCloudSyncTransport
   }) async {
     _requireV2WriterInterlock();
     final payloadVersion = _outboundCreatePayloadVersion(scope);
-    final reconcile = scope.zone == 'chatManateeZone'
-        ? _requireChatWriteBindings().reconcileChatCreate
-        : scope.zone == 'attachmentManateeZone'
-        ? _requireAttachmentWriteBindings().reconcileAttachmentCreate
-        : _requireWriteBindings().reconcileMessageCreate;
     final payloadReference = operation.encryptedPayloadReference;
     final payloadSha256 = operation.payloadSha256;
     final serverRecordIdHash = operation.serverRecordIdHash;
@@ -3225,13 +3320,7 @@ final class NativeProtectedCloudSyncTransport
         scope,
         operation.operationId,
       );
-      return reconcile(
-        cloudMessagesClient: _cloudMessagesClient,
-        storageDirectory: _storageDirectory,
-        expectedAccountFingerprint: scope.accountFingerprint,
-        expectedProtectedStoreIdentity: _protectedStoreIdentity,
-        requestUuid: requestUuid,
-        input: frb_api.CloudSyncPreparedMessageCreateInput(
+      final input = frb_api.CloudSyncPreparedMessageCreateInput(
           localOperationId: operation.operationId,
           logicalEntityKeyHash: operation.logicalEntityKeyHash,
           protectedLeaseReference: leaseReference,
@@ -3246,7 +3335,46 @@ final class NativeProtectedCloudSyncTransport
             operation.operationId,
             parentContext,
           ),
-        ),
+        );
+      if (scope.zone == 'chatManateeZone') {
+        return _requireChatWriteBindings().reconcileChatCreate(
+          cloudMessagesClient: _cloudMessagesClient,
+          storageDirectory: _storageDirectory,
+          expectedAccountFingerprint: scope.accountFingerprint,
+          expectedProtectedStoreIdentity: _protectedStoreIdentity,
+          requestUuid: requestUuid,
+          input: input,
+        );
+      }
+      if (scope.zone == 'attachmentManateeZone') {
+        return _requireAttachmentWriteBindings().reconcileAttachmentCreate(
+          cloudMessagesClient: _cloudMessagesClient,
+          storageDirectory: _storageDirectory,
+          expectedAccountFingerprint: scope.accountFingerprint,
+          expectedProtectedStoreIdentity: _protectedStoreIdentity,
+          requestUuid: requestUuid,
+          input: input,
+        );
+      }
+      if (expectedStatus == CloudOutboxStatus.confirmed) {
+        return _requireMessageCreateReadbackBindings()
+            .reconcileMessageCreateWithRawReadback(
+              cloudMessagesClient: _cloudMessagesClient,
+              storageDirectory: _storageDirectory,
+              expectedAccountFingerprint: scope.accountFingerprint,
+              expectedProtectedStoreIdentity: _protectedStoreIdentity,
+              requestUuid: requestUuid,
+              rawGeneration: operation.checkpointGeneration,
+              input: input,
+            );
+      }
+      return _requireWriteBindings().reconcileMessageCreate(
+        cloudMessagesClient: _cloudMessagesClient,
+        storageDirectory: _storageDirectory,
+        expectedAccountFingerprint: scope.accountFingerprint,
+        expectedProtectedStoreIdentity: _protectedStoreIdentity,
+        requestUuid: requestUuid,
+        input: input,
       );
     });
     final disposition = _requireOutboundReconcileDisposition(
@@ -3289,11 +3417,24 @@ final class NativeProtectedCloudSyncTransport
   ) {
     final serverRecordIdHash = result.serverRecordIdHash;
     final etagHash = result.etagHash;
+    final rawReference = result.protectedCurrentRawRecordReference;
+    final rawLeaseReference = result.protectedCurrentRawRecordLeaseReference;
+    final rawGeneration = result.rawGeneration?.toInt();
+    final rawCapabilityExpected =
+        operation.scope.zone == 'messageManateeZone' &&
+        operation.status == CloudOutboxStatus.confirmed;
     if (serverRecordIdHash == null ||
         etagHash == null ||
         !_nativeDigestPattern.hasMatch(serverRecordIdHash) ||
         !_nativeDigestPattern.hasMatch(etagHash) ||
-        !_nativeDigestPattern.hasMatch(operation.logicalEntityKeyHash)) {
+        !_nativeDigestPattern.hasMatch(operation.logicalEntityKeyHash) ||
+        (rawCapabilityExpected &&
+            (rawReference == null ||
+                !_protectedReferencePattern.hasMatch(rawReference) ||
+                rawLeaseReference == null ||
+                !_leaseReferencePattern.hasMatch(rawLeaseReference) ||
+                rawGeneration == null ||
+                rawGeneration != operation.checkpointGeneration))) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.unknown,
         safeCode: 'cloud_sync_outbound_replay_receipt_invalid',
@@ -3311,6 +3452,9 @@ final class NativeProtectedCloudSyncTransport
         logicalEntityKeyHash: operation.logicalEntityKeyHash,
         serverRecordIdHash: serverRecordIdHash,
         etagHash: etagHash,
+        protectedCurrentRawRecordReference: rawReference,
+        protectedCurrentRawRecordLeaseReference: rawLeaseReference,
+        rawGeneration: rawGeneration,
       ),
     );
   }
@@ -3332,6 +3476,7 @@ final class FrbNativeProtectedCloudSyncBindings
     implements
         NativeProtectedCloudSyncBindings,
         NativeProtectedCloudSyncWriteBindings,
+        NativeProtectedCloudSyncMessageCreateReadbackBindings,
         NativeProtectedCloudSyncMessageUpdateBindings,
         CloudKitWriterChatReconciliationBinding,
         NativeProtectedCloudSyncChatWriteBindings,
@@ -3403,6 +3548,26 @@ final class FrbNativeProtectedCloudSyncBindings
     expectedAccountFingerprint: expectedAccountFingerprint,
     expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
     requestUuid: requestUuid,
+    input: input,
+  );
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult>
+  reconcileMessageCreateWithRawReadback({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required int rawGeneration,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) => _api.crateApiApiCloudSyncReconcileMessageCreateWithRawReadback(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    storageDirectory: storageDirectory,
+    expectedAccountFingerprint: expectedAccountFingerprint,
+    expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+    requestUuid: requestUuid,
+    rawGeneration: BigInt.from(rawGeneration),
     input: input,
   );
 

@@ -43,6 +43,7 @@ class ObjectBoxCloudSyncStore
         CloudProtectedPageLeaseAdoptionStore,
         CloudProtectedOutboundLeaseAdoptionStore,
         CloudConfirmedOutboundReceiptStore,
+        CloudMessageCreateReadbackStore,
         CloudMessageUpdateReadbackStore {
   ObjectBoxCloudSyncStore({
     required Store store,
@@ -607,22 +608,29 @@ class ObjectBoxCloudSyncStore
       } finally {
         sources.close();
       }
-      final mutations = _store.box<CloudSyncLocalMutationIntentEntity>();
-      if (mutations.count() > maximumCount) {
-        throw _storageFailure(
-          'protected_outbound_lease_recovery_bound_exceeded',
-        );
-      }
-      for (final mutation in mutations.getAll()) {
-        references.add(validateCloudSyncMutationRow(mutation).leaseReference);
-        if (references.length > maximumCount) {
+      final mutations = _store
+          .box<CloudSyncLocalMutationIntentEntity>()
+          .query(CloudSyncLocalMutationIntentEntity_.state.notEquals(5))
+          .build();
+      try {
+        if (mutations.count() > maximumCount) {
           throw _storageFailure(
             'protected_outbound_lease_recovery_bound_exceeded',
           );
         }
+        for (final mutation in mutations.find()) {
+          references.add(validateCloudSyncMutationRow(mutation).leaseReference);
+          if (references.length > maximumCount) {
+            throw _storageFailure(
+              'protected_outbound_lease_recovery_bound_exceeded',
+            );
+          }
+        }
+      } finally {
+        mutations.close();
       }
       for (final mapping in _recordMaps.getAll()) {
-        _validatePendingMessageUpdateMappingLease(mapping);
+        _validatePendingMessageReadbackMappingLease(mapping);
         final reference = mapping.protectedReadbackLeaseReference;
         if (reference == null) continue;
         references.add(reference);
@@ -751,6 +759,12 @@ class ObjectBoxCloudSyncStore
       throw ArgumentError.value(maximumCount, 'maximumCount');
     }
     final captured = _store.runInTransaction(TxMode.read, () {
+      final activeMutationQuery = _store
+          .box<CloudSyncLocalMutationIntentEntity>()
+          .query(CloudSyncLocalMutationIntentEntity_.state.notEquals(5))
+          .build();
+      final activeMutationCount = activeMutationQuery.count();
+      activeMutationQuery.close();
       final upperBound =
           (_checkpoints.count() * 2) +
           (_inbox.count() * 3) +
@@ -758,7 +772,7 @@ class ObjectBoxCloudSyncStore
           (_recordMaps.count() * 2) +
           _writerAuthorities.count() +
           _store.box<CloudSyncLocalSendIntentEntity>().count() +
-          _store.box<CloudSyncLocalMutationIntentEntity>().count() +
+          activeMutationCount +
           (_store.box<CloudAttachmentUploadEntity>().count() * 2) +
           (_attachmentMaterializations.count() * 4);
       if (upperBound > maximumCount) {
@@ -814,7 +828,7 @@ class ObjectBoxCloudSyncStore
         (entry) {
           capture(entry.encryptedServerRecordId);
           capture(entry.encryptedRawRecordRef);
-          _validatePendingMessageUpdateMappingLease(entry);
+          _validatePendingMessageReadbackMappingLease(entry);
         },
       );
       scanPaged(
@@ -842,7 +856,9 @@ class ObjectBoxCloudSyncStore
         (intent) => capture(_localSendSource(intent)?.protectedReference),
       );
       scanPaged(
-        (_store.box<CloudSyncLocalMutationIntentEntity>().query()
+        (_store.box<CloudSyncLocalMutationIntentEntity>().query(
+              CloudSyncLocalMutationIntentEntity_.state.notEquals(5),
+            )
               ..order(CloudSyncLocalMutationIntentEntity_.id))
             .build(),
         (intent) =>
@@ -1825,6 +1841,7 @@ class ObjectBoxCloudSyncStore
     required CloudSyncLocalMutationAdmissionSource source,
     required CloudSyncNativeAuthSnapshot currentAuth,
     required bool Function() stillCurrent,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) {
     if (!journal.isBoundToStore(_store) ||
         draft.scope.container != _messagesCloudContainer ||
@@ -1910,6 +1927,7 @@ class ObjectBoxCloudSyncStore
         source,
         currentAuth: currentAuth,
         stillCurrent: stillCurrent,
+        replayBinding: replayBinding,
       );
       if (adoptedId != null) {
         final existingEntity = _findOutboxByOperationIdLocked(adoptedId);
@@ -1933,6 +1951,7 @@ class ObjectBoxCloudSyncStore
           currentAuth: currentAuth,
           stillCurrent: stillCurrent,
           now: draft.createdAt,
+          replayBinding: replayBinding,
         );
         return existing;
       }
@@ -1984,6 +2003,7 @@ class ObjectBoxCloudSyncStore
         currentAuth: currentAuth,
         stillCurrent: stillCurrent,
         now: draft.createdAt,
+        replayBinding: replayBinding,
       );
       checkpoint
         ..mutationRevisionCounter = revision
@@ -3640,6 +3660,236 @@ class ObjectBoxCloudSyncStore
   }
 
   @override
+  Future<CloudMessageCreateReadbackCommitSnapshot>
+  commitConfirmedMessageCreateReadback({
+    required CloudOutboxOperation expectedOperation,
+    required CloudOutboxCreateReceipt receipt,
+    required DateTime now,
+  }) async {
+    final scope = expectedOperation.scope;
+    final rawReference = receipt.protectedCurrentRawRecordReference;
+    final readbackLease = receipt.protectedCurrentRawRecordLeaseReference;
+    final rawGeneration = receipt.rawGeneration;
+    if (!_isMessagesCloudSemanticScope(scope) ||
+        scope.zone != 'messageManateeZone' ||
+        !now.isUtc ||
+        now.millisecondsSinceEpoch <= 0 ||
+        receipt.operationId != expectedOperation.operationId ||
+        receipt.logicalEntityKeyHash !=
+            expectedOperation.logicalEntityKeyHash ||
+        receipt.serverRecordIdHash != expectedOperation.serverRecordIdHash ||
+        rawReference == null ||
+        !_isNativeProtectedReference(rawReference) ||
+        readbackLease == null ||
+        !_isProtectedPageLease(readbackLease) ||
+        rawGeneration == null ||
+        rawGeneration != expectedOperation.checkpointGeneration ||
+        expectedOperation.protectedLeaseReference == readbackLease) {
+      throw _storageFailure('message_create_readback_commit_invalid');
+    }
+    _requireConfirmedReceiptReleaseCandidate(expectedOperation);
+    final nowMs = now.millisecondsSinceEpoch;
+    return _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+      if (checkpoint == null ||
+          checkpoint.generation != expectedOperation.checkpointGeneration ||
+          checkpoint.generation != rawGeneration) {
+        throw _storageFailure('stale_outbox_generation');
+      }
+      final entity = _findOutboxByOperationIdLocked(
+        expectedOperation.operationId,
+      );
+      if (entity == null || entity.scopeKey != _scopeKey(scope)) {
+        throw _storageFailure('message_create_readback_snapshot_changed');
+      }
+      final currentOperation = _outboxFromEntity(scope, entity);
+      if (!currentOperation.sameDurableSnapshotAs(expectedOperation)) {
+        throw _storageFailure('message_create_readback_snapshot_changed');
+      }
+      final mapping = cloudSyncFindRecordMap(
+        store: _store,
+        scope: scope,
+        generation: checkpoint.generation,
+        logicalEntityKeyHash: receipt.logicalEntityKeyHash,
+        serverRecordIdHash: receipt.serverRecordIdHash,
+      );
+      if (mapping == null ||
+          mapping.mapKey !=
+              cloudSyncCanonicalRecordMapKey(
+                scope,
+                receipt.logicalEntityKeyHash,
+              ) ||
+          mapping.scopeKey != _scopeKey(scope) ||
+          mapping.accountFingerprint != scope.accountFingerprint ||
+          mapping.zone != scope.zone ||
+          mapping.generation != checkpoint.generation ||
+          mapping.logicalEntityKeyHash != receipt.logicalEntityKeyHash ||
+          mapping.serverRecordIdHash != receipt.serverRecordIdHash ||
+          !_isNativeProtectedReference(mapping.encryptedServerRecordId) ||
+          mapping.etagHash != receipt.etagHash) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'message_create_readback_mapping_changed',
+        );
+      }
+      if (mapping.protectedReadbackLeaseReference != null ||
+          mapping.pendingUpdateOperationId != null ||
+          mapping.pendingUpdatePredecessorEtagHash != null) {
+        throw _storageFailure('message_create_readback_already_pending');
+      }
+
+      mapping
+        ..encryptedRawRecordRef = rawReference
+        ..rawRecordGeneration = rawGeneration
+        ..protectedReadbackLeaseReference = readbackLease
+        ..pendingUpdateOperationId = receipt.operationId
+        // Equal current/pending etags identify a create readback. Conditional
+        // updates deliberately require these values to differ.
+        ..pendingUpdatePredecessorEtagHash = receipt.etagHash
+        ..updatedAtMs = nowMs;
+      _putRecordMapAndMirrorLocked(scope, mapping);
+      final mapped = _recordMapEntryFromEntity(scope, mapping);
+      return CloudMessageCreateReadbackCommitSnapshot(
+        confirmedOperation: currentOperation,
+        recordMapping: mapped,
+      );
+    });
+  }
+
+  @override
+  Future<void> finalizeMessageCreateReadbackLeases({
+    required CloudMessageCreateReadbackCommitSnapshot expectedSnapshot,
+    required bool createSourceLeaseFinalized,
+    required bool readbackLeaseFinalized,
+  }) async {
+    if (!createSourceLeaseFinalized || !readbackLeaseFinalized) {
+      throw _storageFailure('message_create_native_finalization_incomplete');
+    }
+    final expectedOperation = expectedSnapshot.confirmedOperation;
+    final expectedMapping = expectedSnapshot.recordMapping;
+    final scope = expectedOperation.scope;
+    if (!_isMessagesCloudSemanticScope(scope) ||
+        scope.zone != 'messageManateeZone') {
+      throw _storageFailure('message_create_finalization_scope_invalid');
+    }
+    _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+      if (checkpoint == null ||
+          checkpoint.generation != expectedOperation.checkpointGeneration ||
+          checkpoint.generation != expectedMapping.generation) {
+        throw _storageFailure('stale_outbox_generation');
+      }
+      final entity = _findOutboxByOperationIdLocked(
+        expectedOperation.operationId,
+      );
+      if (entity == null || entity.scopeKey != _scopeKey(scope)) {
+        throw _storageFailure('message_create_finalization_snapshot_changed');
+      }
+      final currentOperation = _outboxFromEntity(scope, entity);
+      if (!currentOperation.sameDurableSnapshotAs(expectedOperation)) {
+        throw _storageFailure('message_create_finalization_snapshot_changed');
+      }
+      final mapping = cloudSyncFindRecordMap(
+        store: _store,
+        scope: scope,
+        generation: checkpoint.generation,
+        logicalEntityKeyHash: expectedMapping.logicalEntityKeyHash,
+        serverRecordIdHash: expectedMapping.serverRecordIdHash,
+      );
+      if (mapping == null) {
+        throw _storageFailure('message_create_finalization_snapshot_changed');
+      }
+      _validatePendingMessageCreateMappingLease(mapping);
+      final currentMapping = _recordMapEntryFromEntity(scope, mapping);
+      if (!currentMapping.sameDurableSnapshotAs(expectedMapping) ||
+          mapping.pendingUpdateOperationId != expectedOperation.operationId) {
+        throw _storageFailure('message_create_finalization_snapshot_changed');
+      }
+      final journal = _localSendJournal;
+      if (journal == null) {
+        final intentQuery = _store
+            .box<CloudSyncLocalSendIntentEntity>()
+            .query(
+              CloudSyncLocalSendIntentEntity_.admittedOperationId.equals(
+                currentOperation.operationId,
+              ),
+            )
+            .build();
+        try {
+          if (intentQuery.count() != 0) {
+            throw StateError('cloud_sync_local_send_journal_required');
+          }
+        } finally {
+          intentQuery.close();
+        }
+      } else {
+        journal.recordConfirmedReadbackInTransaction(
+          _store,
+          currentOperation,
+        );
+      }
+      entity.protectedLeaseReference = null;
+      mapping
+        ..protectedReadbackLeaseReference = null
+        ..pendingUpdateOperationId = null
+        ..pendingUpdatePredecessorEtagHash = null;
+      _outbox.put(entity);
+      _putRecordMapAndMirrorLocked(scope, mapping);
+    });
+  }
+
+  @override
+  Future<List<CloudMessageCreateReadbackCommitSnapshot>>
+  readPendingMessageCreateReadbacks(
+    CloudSyncScope scope, {
+    required int maximumCount,
+  }) async {
+    if (!_isMessagesCloudSemanticScope(scope) ||
+        scope.zone != 'messageManateeZone' ||
+        maximumCount <= 0 ||
+        maximumCount > 4096) {
+      throw _storageFailure('message_create_readback_inventory_invalid');
+    }
+    return _store.runInTransaction(TxMode.read, () {
+      final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+      if (checkpoint == null) {
+        return const <CloudMessageCreateReadbackCommitSnapshot>[];
+      }
+      final snapshots = <CloudMessageCreateReadbackCommitSnapshot>[];
+      for (final mapping in _pendingMessageReadbackMappings(
+        scope,
+        checkpoint.generation,
+      )) {
+        final entity = _findPendingMessageReadbackOutboxLocked(scope, mapping);
+        if (entity.payloadVersion == cloudSyncMessageUpdatePayloadVersion) {
+          continue;
+        }
+        if (entity.payloadVersion != cloudSyncOutboundPayloadVersion) {
+          throw _storageFailure('message_create_readback_inventory_corrupt');
+        }
+        _validatePendingMessageCreateMappingLease(mapping);
+        snapshots.add(
+          CloudMessageCreateReadbackCommitSnapshot(
+            confirmedOperation: _outboxFromEntity(scope, entity),
+            recordMapping: _recordMapEntryFromEntity(scope, mapping),
+          ),
+        );
+        if (snapshots.length > maximumCount) {
+          throw _storageFailure(
+            'message_create_readback_inventory_bound_exceeded',
+          );
+        }
+      }
+      snapshots.sort(
+        (left, right) => left.confirmedOperation.mutationRevision.compareTo(
+          right.confirmedOperation.mutationRevision,
+        ),
+      );
+      return List.unmodifiable(snapshots);
+    });
+  }
+
+  @override
   Future<List<CloudMessageUpdateReadbackCommitSnapshot>>
   readPendingMessageUpdateReadbacks(
     CloudSyncScope scope, {
@@ -3656,35 +3906,30 @@ class ObjectBoxCloudSyncStore
       if (checkpoint == null) {
         return const <CloudMessageUpdateReadbackCommitSnapshot>[];
       }
-      final mappings = _findRecordMapsForScopeLocked(scope)
-          .where(
-            (mapping) =>
-                mapping.generation == checkpoint.generation &&
-                (mapping.protectedReadbackLeaseReference != null ||
-                    mapping.pendingUpdateOperationId != null ||
-                    mapping.pendingUpdatePredecessorEtagHash != null),
-          )
-          .toList(growable: false);
-      if (mappings.length > maximumCount) {
-        throw _storageFailure(
-          'message_update_readback_inventory_bound_exceeded',
-        );
-      }
       final snapshots = <CloudMessageUpdateReadbackCommitSnapshot>[];
-      for (final mapping in mappings) {
-        _validatePendingMessageUpdateMappingLease(mapping);
-        final entity = _findOutboxByOperationIdLocked(
-          mapping.pendingUpdateOperationId!,
-        );
-        if (entity == null || entity.scopeKey != _scopeKey(scope)) {
+      for (final mapping in _pendingMessageReadbackMappings(
+        scope,
+        checkpoint.generation,
+      )) {
+        final entity = _findPendingMessageReadbackOutboxLocked(scope, mapping);
+        if (entity.payloadVersion == cloudSyncOutboundPayloadVersion) {
+          continue;
+        }
+        if (entity.payloadVersion != cloudSyncMessageUpdatePayloadVersion) {
           throw _storageFailure('message_update_readback_inventory_corrupt');
         }
+        _validatePendingMessageUpdateMappingLease(mapping);
         snapshots.add(
           CloudMessageUpdateReadbackCommitSnapshot(
             confirmedOperation: _outboxFromEntity(scope, entity),
             recordMapping: _recordMapEntryFromEntity(scope, mapping),
           ),
         );
+        if (snapshots.length > maximumCount) {
+          throw _storageFailure(
+            'message_update_readback_inventory_bound_exceeded',
+          );
+        }
       }
       snapshots.sort(
         (left, right) => left.confirmedOperation.mutationRevision.compareTo(
@@ -4045,7 +4290,7 @@ class ObjectBoxCloudSyncStore
         throw _storageFailure('record_map_pending_update_import_forbidden');
       }
       if (existing?.protectedReadbackLeaseReference != null) {
-        _validatePendingMessageUpdateMappingLease(existing!);
+        _validatePendingMessageReadbackMappingLease(existing!);
         if (existing.serverRecordIdHash != entry.serverRecordIdHash ||
             existing.etagHash != entry.etagHash ||
             existing.encryptedRawRecordRef !=
@@ -4826,7 +5071,7 @@ class ObjectBoxCloudSyncStore
     CloudSyncScope scope,
     CloudRecordMapEntity row,
   ) {
-    _validatePendingMessageUpdateMappingLease(row);
+    _validatePendingMessageReadbackMappingLease(row);
     _recordMaps.put(row);
     if (scope.zone != 'chatManateeZone') return;
     final canonicalKey = cloudSyncCanonicalRecordMapKey(
@@ -5723,6 +5968,72 @@ class ObjectBoxCloudSyncStore
 
   bool _isContentDigest(String value) =>
       RegExp(r'^[a-f0-9]{64}$').hasMatch(value);
+
+  List<CloudRecordMapEntity> _pendingMessageReadbackMappings(
+    CloudSyncScope scope,
+    int generation,
+  ) => _findRecordMapsForScopeLocked(scope)
+      .where(
+        (mapping) =>
+            mapping.generation == generation &&
+            (mapping.protectedReadbackLeaseReference != null ||
+                mapping.pendingUpdateOperationId != null ||
+                mapping.pendingUpdatePredecessorEtagHash != null),
+      )
+      .toList(growable: false);
+
+  void _validatePendingMessageReadbackMappingLease(
+    CloudRecordMapEntity mapping,
+  ) {
+    final lease = mapping.protectedReadbackLeaseReference;
+    final operationId = mapping.pendingUpdateOperationId;
+    final recordedEtag = mapping.pendingUpdatePredecessorEtagHash;
+    if (lease == null && operationId == null && recordedEtag == null) {
+      return;
+    }
+    if (mapping.etagHash != null && mapping.etagHash == recordedEtag) {
+      _validatePendingMessageCreateMappingLease(mapping);
+      return;
+    }
+    _validatePendingMessageUpdateMappingLease(mapping);
+  }
+
+  CloudOutboxOperationEntity _findPendingMessageReadbackOutboxLocked(
+    CloudSyncScope scope,
+    CloudRecordMapEntity mapping,
+  ) {
+    final operationId = mapping.pendingUpdateOperationId;
+    if (operationId == null) {
+      throw _storageFailure('message_readback_inventory_corrupt');
+    }
+    final entity = _findOutboxByOperationIdLocked(operationId);
+    if (entity == null || entity.scopeKey != _scopeKey(scope)) {
+      throw _storageFailure('message_readback_inventory_corrupt');
+    }
+    return entity;
+  }
+
+  void _validatePendingMessageCreateMappingLease(
+    CloudRecordMapEntity mapping,
+  ) {
+    final lease = mapping.protectedReadbackLeaseReference;
+    final operationId = mapping.pendingUpdateOperationId;
+    final currentEtag = mapping.etagHash;
+    final recordedEtag = mapping.pendingUpdatePredecessorEtagHash;
+    if (lease == null ||
+        !_isProtectedPageLease(lease) ||
+        operationId == null ||
+        !RegExp(r'^op1:[0-9a-f]{64}$').hasMatch(operationId) ||
+        currentEtag == null ||
+        !_isNativeDigest(currentEtag) ||
+        recordedEtag == null ||
+        recordedEtag != currentEtag ||
+        mapping.encryptedRawRecordRef == null ||
+        !_isNativeProtectedReference(mapping.encryptedRawRecordRef!) ||
+        _recordMapRawGeneration(mapping) <= 0) {
+      throw _storageFailure('message_create_readback_mapping_corrupt');
+    }
+  }
 
   void _validatePendingMessageUpdateMappingLease(CloudRecordMapEntity mapping) {
     final lease = mapping.protectedReadbackLeaseReference;

@@ -118,6 +118,73 @@ void main() {
     },
   );
 
+  test(
+    'mutation predecessor accepts one exact confirmed local readback',
+    () {
+      f.db.box<Message>().put(f.parent..isFromMe = true);
+      final checkpoint = f.messageCheckpoint;
+      final scopeKey = cloudSyncPersistentScopeKey(f.messageScope);
+      final lookupHash = CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+        scope: f.messageScope,
+        generation: checkpoint.generation,
+        canonicalGuid: _parentGuid,
+      );
+      final canonicalHash = CloudCanonicalIdentityDigest.forCanonicalGuid(
+        scope: f.messageScope,
+        generation: checkpoint.generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: _logical,
+        canonicalGuid: _parentGuid,
+      );
+      final proof = <Object>[
+        2,
+        scopeKey,
+        checkpoint.generation,
+        f.parentId,
+        lookupHash,
+        canonicalHash,
+        _logical,
+        _record,
+        23,
+        'a' * 64,
+      ];
+      f.db.box<CloudSemanticSnapshotEntity>().removeAll();
+      f.db.box<CloudInboxChangeEntity>().removeAll();
+
+      CloudSyncMessageMutationPredecessor resolve(List<Object>? candidate) =>
+          requireCloudSyncMessageMutationPredecessor(
+            store: f.db,
+            messageScope: f.messageScope,
+            localMessageId: f.parentId,
+            localChatId: f.chatId,
+            targetGuidHash: sha256
+                .convert(
+                  utf8.encode(
+                    jsonEncode(<Object?>[
+                      'cloud-sync-local-send-guid-v1',
+                      _parentGuid,
+                    ]),
+                  ),
+                )
+                .toString(),
+            readConfirmedLocalParent: (_) => candidate,
+          );
+
+      final resolved = resolve(proof);
+      expect(resolved.localMessageId, f.parentId);
+      expect(resolved.canonicalGuidLookupHash, lookupHash);
+      expect(resolved.canonicalGuidHash, canonicalHash);
+      expect(resolved.recordMapping.logicalEntityKeyHash, _logical);
+      expect(resolved.recordMapping.serverRecordIdHash, _record);
+
+      final changedRecord = List<Object>.from(proof)..[7] = 'N' * 43;
+      expect(() => resolve(changedRecord), _blocked);
+      final changedReadback = List<Object>.from(proof)..[9] = 'not-a-digest';
+      expect(() => resolve(changedReadback), _blocked);
+      expect(() => resolve(null), _blocked);
+    },
+  );
+
   test('mutation predecessor rejects drift and unfinished readback', () {
     f.db.box<Message>().put(f.parent..isFromMe = true);
     CloudSyncMessageMutationPredecessor resolve({String? targetGuidHash}) =>

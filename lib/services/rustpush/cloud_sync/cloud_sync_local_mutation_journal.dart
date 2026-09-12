@@ -149,8 +149,33 @@ final class CloudSyncLocalMutationJournal {
     final row = _read(intentId, originalEpoch: true);
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, currentAuth, stillCurrent);
-    if (row.state < 2 || row.idsReceiptBindingSha256 == null) {
+    if (row.state < 2 ||
+        row.state > 4 ||
+        row.idsReceiptBindingSha256 == null) {
       _fail('ids_unconfirmed');
+    }
+    return source;
+  });
+
+  /// Returns the exact protected source for a mutation whose conditional
+  /// CloudKit update already reached exact readback. State 5 is cleanup-only:
+  /// it can release the committed source lease and IDS receipt, but it can
+  /// never reflect, adopt, submit, or reconcile the mutation again.
+  CloudSyncLocalMutationSourceBinding? readTerminalSourceForCleanup({
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireOwner();
+    final row = _read(intentId, originalEpoch: true);
+    final source = validateCloudSyncMutationRow(row);
+    _requireAuth(source, currentAuth, stillCurrent);
+    if (row.state != 5) return null;
+    if (row.idsReceiptBindingSha256 == null ||
+        row.reflectedSnapshotSha256 == null ||
+        row.admittedOperationId == null ||
+        row.admittedBindingSha256 == null) {
+      _fail('terminal_changed');
     }
     return source;
   });
@@ -508,6 +533,7 @@ final class CloudSyncLocalMutationJournal {
     required int intentId,
     required CloudSyncNativeAuthSnapshot currentAuth,
     required bool Function() stillCurrent,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) => _store.runInTransaction(TxMode.read, () {
     _requireOwner();
     final row = _read(intentId, originalEpoch: true);
@@ -516,14 +542,7 @@ final class CloudSyncLocalMutationJournal {
     if ((row.state != 3 && row.state != 4) || row.targetPart != 0) {
       _fail('update_not_ready');
     }
-    if (row.submissionAuthBindingSha256 !=
-        _authHash(
-          currentAuth.accountFingerprint,
-          currentAuth.protectedStoreIdentity,
-          currentAuth.nativeSessionId,
-        )) {
-      _fail('auth_changed');
-    }
+    _requireSubmissionAuth(row, currentAuth, replayBinding);
     final target = _target(
       row.localMessageId,
       row.targetGuidHash,
@@ -543,6 +562,7 @@ final class CloudSyncLocalMutationJournal {
     required String operationId,
     required CloudSyncNativeAuthSnapshot currentAuth,
     required bool Function() stillCurrent,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) => _store.runInTransaction(TxMode.read, () {
     _requireOwner();
     if (!_operationId.hasMatch(operationId)) _fail('adoption_missing');
@@ -564,15 +584,15 @@ final class CloudSyncLocalMutationJournal {
     final source = validateCloudSyncMutationRow(row);
     _requireAuth(source, currentAuth, stillCurrent);
     if (row.state != 4 ||
-        row.admittedOperationId != operationId ||
-        row.submissionAuthBindingSha256 !=
-            _authHash(
-              currentAuth.accountFingerprint,
-              currentAuth.protectedStoreIdentity,
-              currentAuth.nativeSessionId,
-            )) {
+        row.admittedOperationId != operationId) {
       _fail('adoption_changed');
     }
+    _requireSubmissionAuth(
+      row,
+      currentAuth,
+      replayBinding,
+      failureCode: 'adoption_changed',
+    );
     final target = _target(
       row.localMessageId,
       row.targetGuidHash,
@@ -592,12 +612,14 @@ final class CloudSyncLocalMutationJournal {
     CloudSyncLocalMutationAdmissionSource expected, {
     required CloudSyncNativeAuthSnapshot currentAuth,
     required bool Function() stillCurrent,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) {
     final row = _requireUpdateSource(
       transactionStore,
       expected,
       currentAuth: currentAuth,
       stillCurrent: stillCurrent,
+      replayBinding: replayBinding,
     );
     return row.state == 4 ? row.admittedOperationId : null;
   }
@@ -614,12 +636,14 @@ final class CloudSyncLocalMutationJournal {
     required CloudSyncNativeAuthSnapshot currentAuth,
     required bool Function() stillCurrent,
     required DateTime now,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) {
     final row = _requireUpdateSource(
       transactionStore,
       expected,
       currentAuth: currentAuth,
       stillCurrent: stillCurrent,
+      replayBinding: replayBinding,
     );
     _requireUpdateOperation(row, operation, predecessor);
     final binding = _updateAdoptionBinding(row, operation, predecessor);
@@ -690,11 +714,64 @@ final class CloudSyncLocalMutationJournal {
     }
   }
 
+  /// Retires this journal as a source of write authority only after its exact
+  /// adopted operation has committed server readback. The opaque source
+  /// binding remains as content-free correlation evidence, while state 5 is
+  /// excluded from protected-reference and lease liveness by the store.
+  CloudSyncLocalMutationSourceBinding markExactReadbackConfirmed({
+    required int intentId,
+    required CloudOutboxOperation operation,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+    required DateTime now,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _requireOwner();
+    final row = _read(intentId, originalEpoch: true);
+    final source = validateCloudSyncMutationRow(row);
+    _requireAuth(source, currentAuth, stillCurrent);
+    final operationQuery = _store
+        .box<CloudOutboxOperationEntity>()
+        .query(
+          CloudOutboxOperationEntity_.operationId.equals(operation.operationId),
+        )
+        .build();
+    final CloudOutboxOperationEntity? persistedOperation;
+    try {
+      persistedOperation = operationQuery.findUnique();
+    } finally {
+      operationQuery.close();
+    }
+    if (row.admittedOperationId != operation.operationId ||
+        row.admittedBindingSha256 == null ||
+        operation.scope.accountFingerprint != row.accountFingerprint ||
+        operation.status != CloudOutboxStatus.confirmed ||
+        operation.confirmedAt == null ||
+        operation.protectedLeaseReference != null ||
+        persistedOperation == null ||
+        persistedOperation.state != CloudOutboxStatus.confirmed.index ||
+        persistedOperation.protectedLeaseReference != null ||
+        persistedOperation.confirmedAtMs !=
+            operation.confirmedAt!.millisecondsSinceEpoch ||
+        persistedOperation.attemptCount != operation.attemptCount) {
+      _fail('terminal_changed');
+    }
+    if (row.state == 5) return source;
+    if (row.state != 4) _fail('terminal_changed');
+    if (!stillCurrent()) _fail('auth_changed');
+    _requireOwner();
+    row
+      ..state = 5
+      ..updatedAtMs = _advanceTime(row, now);
+    _rows.put(row);
+    return source;
+  });
+
   CloudSyncLocalMutationIntentEntity _requireUpdateSource(
     Store transactionStore,
     CloudSyncLocalMutationAdmissionSource expected, {
     required CloudSyncNativeAuthSnapshot currentAuth,
     required bool Function() stillCurrent,
+    CloudSyncNativeReceiptReplayBinding? replayBinding,
   }) {
     if (!identical(transactionStore, _store)) {
       _fail('adoption_store_mismatch');
@@ -705,15 +782,15 @@ final class CloudSyncLocalMutationJournal {
     _requireAuth(source, currentAuth, stillCurrent);
     if (!expected._matches(row) ||
         (row.state != 3 && row.state != 4) ||
-        row.targetPart != 0 ||
-        row.submissionAuthBindingSha256 !=
-            _authHash(
-              currentAuth.accountFingerprint,
-              currentAuth.protectedStoreIdentity,
-              currentAuth.nativeSessionId,
-            )) {
+        row.targetPart != 0) {
       _fail('adoption_changed');
     }
+    _requireSubmissionAuth(
+      row,
+      currentAuth,
+      replayBinding,
+      failureCode: 'adoption_changed',
+    );
     final target = _target(
       row.localMessageId,
       row.targetGuidHash,
@@ -939,6 +1016,30 @@ final class CloudSyncLocalMutationJournal {
     }
   }
 
+  void _requireSubmissionAuth(
+    CloudSyncLocalMutationIntentEntity row,
+    CloudSyncNativeAuthSnapshot currentAuth,
+    CloudSyncNativeReceiptReplayBinding? replayBinding, {
+    String failureCode = 'auth_changed',
+  }
+  ) {
+    if (replayBinding != null) {
+      replayBinding.requireCapturedAuth(currentAuth);
+      if (row.state < 2 || row.idsReceiptBindingSha256 == null) {
+        _fail(failureCode);
+      }
+      return;
+    }
+    if (row.submissionAuthBindingSha256 !=
+        _authHash(
+          currentAuth.accountFingerprint,
+          currentAuth.protectedStoreIdentity,
+          currentAuth.nativeSessionId,
+        )) {
+      _fail(failureCode);
+    }
+  }
+
   @override
   String toString() => 'CloudSyncLocalMutationJournal(redacted)';
 }
@@ -989,6 +1090,21 @@ final class CloudSyncLocalMutationAdmissionSource {
   CloudSyncLocalMutationSourceBinding decodeProtectedSourceBinding() =>
       CloudSyncLocalMutationSourceBinding.decode(protectedSourceBinding);
 
+  /// The create journal may retain the parent record proof after this exact
+  /// receipt-confirmed mutation changes the local body. Stable identity and the
+  /// complete reflected snapshot must still match this immutable admission.
+  bool matchesReflectedParent(Message parent) {
+    final guid = parent.guid;
+    return parent.id == localMessageId &&
+        parent.chat.targetId == localChatId &&
+        guid != null &&
+        _guidHash(guid) == targetGuidHash &&
+        parent.isFromMe == true &&
+        !parent.verificationFailed &&
+        parent.dateDeleted == null &&
+        _snapshot(parent) == reflectedSnapshotSha256;
+  }
+
   /// Compares the immutable reflected mutation evidence while deliberately
   /// ignoring the later outbox-adoption marker. Callers use this to refresh a
   /// possibly stale source before staging without allowing a different local
@@ -1018,12 +1134,14 @@ final class CloudSyncLocalMutationAdmissionSource {
   CloudSyncMessageMutationPredecessor requirePredecessor({
     required Store store,
     required CloudSyncScope messageScope,
+    CloudSyncConfirmedLocalParentReader? readConfirmedLocalParent,
   }) => requireCloudSyncMessageMutationPredecessor(
     store: store,
     messageScope: messageScope,
     localMessageId: localMessageId,
     localChatId: localChatId,
     targetGuidHash: targetGuidHash,
+    readConfirmedLocalParent: readConfirmedLocalParent,
   );
 
   bool _matches(CloudSyncLocalMutationIntentEntity row) =>
@@ -1054,9 +1172,9 @@ final class CloudSyncLocalMutationAdmissionSource {
   String toString() => 'CloudSyncLocalMutationAdmissionSource(redacted)';
 }
 
-/// Shared by journal and *both* native GC roots. Every retained row, account and
-/// state owns its original source/lease, even after local reflection. No generic
-/// terminal flag is permission to reclaim the bytes or native acceptance receipt.
+/// Shared by journal and both native GC roots. States 0 through 4 own the
+/// original source and lease. State 5 is exact-readback evidence only and is
+/// deliberately excluded from protected-reference liveness by the store.
 CloudSyncLocalMutationSourceBinding validateCloudSyncMutationRow(
   CloudSyncLocalMutationIntentEntity row,
 ) {
@@ -1067,7 +1185,7 @@ CloudSyncLocalMutationSourceBinding validateCloudSyncMutationRow(
       row.kind < 0 ||
       row.kind > 1 ||
       row.state < 0 ||
-      row.state > 4 ||
+      row.state > 5 ||
       row.createdAtMs <= 0 ||
       row.updatedAtMs < row.createdAtMs ||
       !_hash.hasMatch(row.targetSnapshotSha256) ||

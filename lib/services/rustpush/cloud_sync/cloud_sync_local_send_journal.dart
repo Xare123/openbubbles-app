@@ -2559,6 +2559,7 @@ final class CloudSyncLocalSendJournal {
     Store transactionStore,
     CloudSyncScope scope,
     Message parent,
+    {bool reflectedMutationValidated = false}
   ) {
     _requireCreateAuthority(transactionStore, scope);
     final found = _readUnique(
@@ -2625,7 +2626,10 @@ final class CloudSyncLocalSendJournal {
         chatBinding[0] != 1) {
       throw StateError('cloud_sync_local_send_parent_not_ready');
     }
-    final validated = _validatedExactAdoptedMessage(intent);
+    final validated = _validatedExactAdoptedMessage(
+      intent,
+      reflectedMutationValidated: reflectedMutationValidated,
+    );
     if (validated.id != parent.id ||
         validated.guid != parent.guid ||
         validated.associatedMessageGuid != null ||
@@ -2888,7 +2892,10 @@ final class CloudSyncLocalSendJournal {
   /// First prove the original envelope and Chat ownership. Only then inspect
   /// an unpersisted copy with CloudKit bookkeeping removed. All source-capture
   /// rules still apply, including user edits, routes, attachments and deletion.
-  Message _validatedExactAdoptedMessage(CloudSyncLocalSendIntentEntity intent) {
+  Message _validatedExactAdoptedMessage(
+    CloudSyncLocalSendIntentEntity intent, {
+    bool reflectedMutationValidated = false,
+  }) {
     final scope = CloudSyncScope(
       accountFingerprint: intent.accountFingerprint,
       container: _binding.scope.container,
@@ -3003,10 +3010,37 @@ final class CloudSyncLocalSendJournal {
     );
     // ObjectBox reads return independent objects. Do not round-trip toMap:
     // it omits fields that capture must continue rejecting. Never put this view.
-    final view = _messages.get(intent.localMessageId)!
-      ..ckRecordId = null
-      ..ckSyncState = false;
-    _validateMessageIdentity(intent, view);
+    final view = _messages.get(intent.localMessageId)!;
+    if (reflectedMutationValidated) {
+      final chat = view.chat.target;
+      final guid = view.guid;
+      if (view.id != intent.localMessageId ||
+          guid == null ||
+          CloudSyncLocalSendIdentity._digest([
+                'cloud-sync-local-send-guid-v1',
+                guid,
+              ]) !=
+              intent.messageGuidHash ||
+          view.isFromMe != true ||
+          view.verificationFailed ||
+          view.temp ||
+          view.error != 0 ||
+          view.stagingGuid != null ||
+          view.dateDeleted != null ||
+          view.dateScheduled != null ||
+          chat == null ||
+          chat.isRpSms ||
+          chat.isRoutingStub) {
+        throw StateError('cloud_sync_local_send_source_changed');
+      }
+    } else {
+      // ObjectBox reads return independent objects. Do not round-trip toMap:
+      // it omits fields that capture must continue rejecting. Never put this view.
+      view
+        ..ckRecordId = null
+        ..ckSyncState = false;
+      _validateMessageIdentity(intent, view);
+    }
     return message;
   }
 

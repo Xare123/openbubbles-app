@@ -272,35 +272,74 @@ function Resolve-HarnessBuildIdentifier {
         'pubspec.yaml',
         'pubspec.lock'
     )
-    $status = @(& git -C $Repository status --porcelain=v1 -- @sourcePaths)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not inspect the harness source state."
-    }
-    if ($status.Count -eq 0) {
-        return $commit
+    # Do not recurse through submodule status. A nested optional submodule can
+    # have unavailable worktree metadata even though the source used by this
+    # build is valid. Fingerprint each reviewed source repository explicitly so
+    # dirty rustpush files still affect the receipt without depending on that
+    # nested metadata.
+    $sourceScopes = @(
+        [pscustomobject]@{
+            Root = $Repository
+            Label = 'app'
+            Paths = $sourcePaths
+        }
+    )
+    foreach ($relativeRoot in @('rustpush', 'rustpush\apple-private-apis')) {
+        $root = Join-Path $Repository $relativeRoot
+        if (Test-Path -LiteralPath (Join-Path $root '.git')) {
+            $sourceScopes += [pscustomobject]@{
+                Root = $root
+                Label = $relativeRoot.Replace('\', '/')
+                Paths = @('.')
+            }
+        }
     }
 
-    $diff = @(
-        & git -C $Repository -c core.safecrlf=false diff `
-            --submodule=diff --binary --no-ext-diff HEAD -- @sourcePaths 2>$null
-    )
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not fingerprint the modified harness source."
-    }
-    $untracked = @(
-        & git -C $Repository ls-files --others --exclude-standard -- @sourcePaths
-    ) | Sort-Object
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not fingerprint untracked harness source."
-    }
-    $untrackedBlobs = foreach ($relativePath in $untracked) {
-        $blob = (& git -C $Repository hash-object -- $relativePath).Trim()
-        if ($LASTEXITCODE -ne 0 -or $blob -notmatch '^[0-9a-f]{40,64}$') {
-            throw "Could not fingerprint an untracked harness source file."
+    $dirty = $false
+    $materialParts = @()
+    foreach ($scope in $sourceScopes) {
+        $scopePaths = @($scope.Paths)
+        $status = @(
+            & git -C $scope.Root status --porcelain=v1 `
+                --ignore-submodules=dirty -- @scopePaths
+        )
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not inspect the harness source state."
         }
-        "$relativePath=$blob"
+        if ($status.Count -eq 0) { continue }
+        $dirty = $true
+
+        $diff = @(
+            & git -C $scope.Root -c core.safecrlf=false diff `
+                --ignore-submodules=dirty --binary --no-ext-diff HEAD -- `
+                @scopePaths 2>$null
+        )
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not fingerprint the modified harness source."
+        }
+        $materialParts += "scope=$($scope.Label)"
+        $materialParts += $status
+        $materialParts += $diff
+
+        $untracked = @(
+            & git -C $scope.Root ls-files --others --exclude-standard -- `
+                @scopePaths
+        ) | Sort-Object
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not fingerprint untracked harness source."
+        }
+        foreach ($relativePath in $untracked) {
+            $blob = (& git -C $scope.Root hash-object -- $relativePath).Trim()
+            if ($LASTEXITCODE -ne 0 -or $blob -notmatch '^[0-9a-f]{40,64}$') {
+                throw "Could not fingerprint an untracked harness source file."
+            }
+            $materialParts += "$($scope.Label)/$relativePath=$blob"
+        }
     }
-    $material = ($diff -join "`n") + "`n" + ($untrackedBlobs -join "`n")
+    if (-not $dirty) {
+        return $commit
+    }
+    $material = $materialParts -join "`n"
     $fingerprint = Get-Sha256Hex -Value $material
     return "$commit-dirty-$($fingerprint.Substring(0, 12))"
 }
