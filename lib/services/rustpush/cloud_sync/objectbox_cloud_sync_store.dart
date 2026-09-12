@@ -3032,10 +3032,11 @@ class ObjectBoxCloudSyncStore
       final leased = <CloudOutboxOperation>[];
       for (final entity in eligible) {
         if (leased.length == limit) break;
-        // Unknown outcome means the prior network result is unresolved, not
-        // that its source proof may be skipped. Recovery must retain the exact
-        // journal/outbox/predecessor triangle before granting another lease.
-        _requireOperationProjectionReadyLocked(scope, entity);
+        // Unknown outcome means the prior network result may already have
+        // reached Apple. Reconciliation must remain available even if the
+        // local projection or restored-chat proof changed after submission.
+        // The exact persisted request, operation and predecessor identities
+        // are revalidated by the reconciliation path before any resolution.
         entity
           ..state = _outboxStatusToInt(CloudOutboxStatus.unknownOutcome)
           ..leaseIdHash = leaseIdHash
