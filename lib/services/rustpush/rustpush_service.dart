@@ -69,6 +69,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protocol_evi
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector_health.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_protected_page_lease_lifecycle.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_write_chat_identity_session.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report.dart';
@@ -8747,9 +8748,10 @@ class RustPushService extends GetxService {
     bool confirmationBindingCurrent() =>
         stillCurrent() && (replayBinding?.isCurrent ?? true);
     replayBinding?.requireCurrent();
+    final nativeAuthBinding = FrbCloudSyncNativeAuthBinding();
     Future<CloudSyncNativeAuthSnapshot?> captureAuth() async {
       if (!stillCurrent()) return null;
-      final metadata = await FrbCloudSyncNativeAuthBinding().capture(
+      final metadata = await nativeAuthBinding.capture(
         cloudMessagesClient: client, privateStorageDirectory: storagePath,
       ).timeout(const Duration(seconds: 1));
       if (!stillCurrent()) return null;
@@ -8833,6 +8835,32 @@ class RustPushService extends GetxService {
         final interlock = CloudKitOperationInterlock(
           privateStorageDirectory: storagePath, fenceStore: cloudStore,
         );
+        Future<void> validateMutationIdentity() async {
+          if (!confirmationBindingCurrent()) {
+            throw StateError('cloud_sync_local_send_identity_changed');
+          }
+          final currentAuth = await captureAuth();
+          if (!auth.sameIdentity(currentAuth) ||
+              !confirmationBindingCurrent()) {
+            throw StateError('cloud_sync_local_send_identity_changed');
+          }
+        }
+
+        final identitySession = CloudSyncWriteChatIdentitySession(
+          exclusion: interlock,
+          nativePause: FrbCloudSyncNativeWriterPause(),
+          validate: validateMutationIdentity,
+          ensureReadAuthentication: () =>
+              nativeAuthBinding.ensureReadAuthentication(
+                cloudMessagesClient: client,
+                privateStorageDirectory: storagePath,
+              ),
+          warmReadAuthentication: (token) =>
+              nativeAuthBinding.warmReadAuthenticationUnderWriterPause(
+                cloudMessagesClient: client,
+                pauseToken: token,
+              ),
+        );
         final bindings = FrbNativeProtectedCloudSyncBindings();
         final mutationGuard = CloudKitWriterMutationGuard(
           store: objectBox,
@@ -8903,35 +8931,54 @@ class RustPushService extends GetxService {
             );
             return;
           }
-          final mutationSource = mutationJournal.readReceiptConfirmedSource(
-            intentId: mutationIntentId,
-            currentAuth: auth,
-            stillCurrent: confirmationBindingCurrent,
-          );
-          await CloudSyncLocalMutationSourceStaging(
-            journal: mutationJournal,
-            authFence: authFence,
-            capturedAuth: auth,
-            stillCurrent: confirmationBindingCurrent,
-            exclusion: interlock,
-            transport: transport,
-          ).reflectConfirmed(
-            intentId: mutationIntentId,
-            source: mutationSource,
-            receipt: nativeReceipt,
-            replayBinding: replayBinding,
-            restore: (restoredSource) => api.cloudSyncRestoreIdsMutationSource(
-              cloudMessagesClient: client,
-              context: mutationContext(restoredSource),
-            ),
-          );
-
-          final admission = mutationJournal.readReflectedForUpdate(
-            intentId: mutationIntentId,
-            currentAuth: auth,
-            stillCurrent: confirmationBindingCurrent,
-            replayBinding: replayBinding,
-          );
+          CloudSyncLocalMutationAdmissionSource? admission;
+          try {
+            // State 3/4 already contains the exact atomic local reflection.
+            // A restart at state 4 must proceed directly to adopted-operation
+            // reconciliation; restoring and reflecting again would re-enter a
+            // fresh-write-only authority path while mutationUnknown is armed.
+            admission = mutationJournal.readReflectedForUpdate(
+              intentId: mutationIntentId,
+              currentAuth: auth,
+              stillCurrent: confirmationBindingCurrent,
+              replayBinding: replayBinding,
+            );
+          } on StateError catch (error) {
+            if (error.message != 'cloud_sync_local_mutation_update_not_ready') {
+              rethrow;
+            }
+          }
+          if (admission == null) {
+            final mutationSource = mutationJournal.readReceiptConfirmedSource(
+              intentId: mutationIntentId,
+              currentAuth: auth,
+              stillCurrent: confirmationBindingCurrent,
+            );
+            await CloudSyncLocalMutationSourceStaging(
+              journal: mutationJournal,
+              authFence: authFence,
+              capturedAuth: auth,
+              stillCurrent: confirmationBindingCurrent,
+              exclusion: interlock,
+              transport: transport,
+            ).reflectConfirmed(
+              intentId: mutationIntentId,
+              source: mutationSource,
+              receipt: nativeReceipt,
+              replayBinding: replayBinding,
+              restore: (restoredSource) => api.cloudSyncRestoreIdsMutationSource(
+                cloudMessagesClient: client,
+                context: mutationContext(restoredSource),
+              ),
+            );
+            admission = mutationJournal.readReflectedForUpdate(
+              intentId: mutationIntentId,
+              currentAuth: auth,
+              stillCurrent: confirmationBindingCurrent,
+              replayBinding: replayBinding,
+            );
+          }
+          final admitted = admission;
           final scope = CloudSyncScope(
             accountFingerprint: auth.accountFingerprint,
             container: 'com.apple.messages.cloud',
@@ -8957,7 +9004,7 @@ class RustPushService extends GetxService {
                   ),
             );
           }
-          final predecessor = admission.requirePredecessor(
+          final predecessor = admitted.requirePredecessor(
             store: objectBox,
             messageScope: scope,
             readConfirmedLocalParent: (parent) =>
@@ -8966,7 +9013,7 @@ class RustPushService extends GetxService {
                   scope,
                   parent,
                   reflectedMutationValidated:
-                      admission.matchesReflectedParent(parent),
+                      admitted.matchesReflectedParent(parent),
                 ),
           );
           final executor = CloudSyncMessageUpdateExecutor(
@@ -8983,16 +9030,21 @@ class RustPushService extends GetxService {
                   scope,
                   parent,
                   reflectedMutationValidated:
-                      admission.matchesReflectedParent(parent),
+                      admitted.matchesReflectedParent(parent),
                 ),
           );
           late final CloudOutboxOperation admittedOperation;
           final result = await interlock.runExclusive(
             kind: CloudKitOperationKind.v2ReadWrite,
             action: () async {
+              // A restored credential generation can authenticate snapshots
+              // while its lookup-only CloudKit containers are still cold.
+              // Warm those read dependencies under the native writer pause
+              // before native writer preparation; no IDS send is repeated.
+              await identitySession.run<void>((_) async {});
               admittedOperation = await executor.admitReflectedUpdate(
                 scope,
-                source: admission,
+                source: admitted,
                 predecessor: predecessor,
                 currentAuth: auth,
                 stillCurrent: confirmationBindingCurrent,
@@ -9084,7 +9136,7 @@ class RustPushService extends GetxService {
                 : eligibleAt.difference(now);
             _scheduleCloudSyncV2MessageUpdateRetry(delay);
           }
-          final reflected = objectBox.box<Message>().get(admission.localMessageId);
+          final reflected = objectBox.box<Message>().get(admitted.localMessageId);
           final reflectedChat = reflected?.chat.target;
           if (reflected != null && reflectedChat != null && ls.isUiThread) {
             await ah.handleUpdatedMessage(reflectedChat, reflected, null);
