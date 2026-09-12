@@ -1090,22 +1090,11 @@ final class CloudSyncProductionLocalSendAdapter {
 
     Future<bool> drainExisting() async {
       await fence.run(() {}, accountFingerprint: scope.accountFingerprint);
-      final pendingCreateReadbacks =
-          await durable.readPendingMessageCreateReadbacks(
-            scope,
-            maximumCount: 16,
-          );
-      for (final snapshot in pendingCreateReadbacks) {
-        await transport.finalizePendingMessageCreateReadback(
-          snapshot,
-          finalizeDurableReadback: (expected) =>
-              durable.finalizeMessageCreateReadbackLeases(
-                expectedSnapshot: expected,
-                createSourceLeaseFinalized: true,
-                readbackLeaseFinalized: true,
-              ),
-        );
-      }
+      await _recoverPendingMessageCreateReadbacks(
+        scope: scope,
+        durableStore: durable,
+        transport: transport,
+      );
       if (!await recoverCloudSyncLocalSendUploadFence(
         recoverProtectedStore: recoverProtectedStore,
         reconcileUpload: () => transport.runProtectedStoreExclusive(() =>
@@ -1196,8 +1185,8 @@ final class CloudSyncProductionLocalSendAdapter {
             finalizeDurableReadback: (snapshot) =>
                 durable.finalizeMessageCreateReadbackLeases(
                   expectedSnapshot: snapshot,
-                  createSourceLeaseFinalized: true,
-                  readbackLeaseFinalized: true,
+                  createSourceLeaseCommitted: true,
+                  readbackLeaseCommitted: true,
                 ),
           );
         } else {
@@ -1698,6 +1687,13 @@ final class CloudSyncProductionOutboundCanaryAdapter {
           return _ProductionConfirmedReplayCanarySession(
             scope: scope,
             readOutbox: () => durableStore.readOutboxEntries(scope),
+            recoverPending: (operation) =>
+                _recoverPendingMessageCreateReadbacks(
+                  scope: scope,
+                  durableStore: replayStore,
+                  transport: transport,
+                  expectedOperation: operation,
+                ),
             verify: (operation) => transport.verifyConfirmedMessageCreateNoSave(
               scope,
               operation: operation,
@@ -1716,8 +1712,8 @@ final class CloudSyncProductionOutboundCanaryAdapter {
                   finalizeDurableReadback: (snapshot) => replayStore
                       .finalizeMessageCreateReadbackLeases(
                         expectedSnapshot: snapshot,
-                        createSourceLeaseFinalized: true,
-                        readbackLeaseFinalized: true,
+                        createSourceLeaseCommitted: true,
+                        readbackLeaseCommitted: true,
                       ),
                 ),
             quiesce: transport.quiesceNativeOperations,
@@ -1851,6 +1847,32 @@ final class CloudSyncProductionOutboundCanaryAdapter {
     reconcile: reconcile,
     quiesce: quiesce,
   );
+
+  @visibleForTesting
+  static CloudSyncOutboundCanaryReplaySession
+  createConfirmedReplaySessionForTest({
+    required CloudSyncScope scope,
+    required Future<List<CloudOutboxOperation>> Function() readOutbox,
+    required Future<bool> Function(CloudOutboxOperation operation)
+    recoverPending,
+    required Future<CloudSyncConfirmedReplayProof> Function(
+      CloudOutboxOperation operation,
+    )
+    verify,
+    required Future<void> Function(
+      CloudOutboxOperation operation,
+      CloudSyncConfirmedReplayProof proof,
+    )
+    finalize,
+    required Future<void> Function() quiesce,
+  }) => _ProductionConfirmedReplayCanarySession(
+    scope: scope,
+    readOutbox: readOutbox,
+    recoverPending: recoverPending,
+    verify: verify,
+    finalize: finalize,
+    quiesce: quiesce,
+  );
 }
 
 typedef _CanaryOutboxRead = Future<List<CloudOutboxOperation>> Function();
@@ -1887,6 +1909,8 @@ typedef _CanaryVerifyReplay =
     Future<CloudSyncConfirmedReplayProof> Function(
       CloudOutboxOperation operation,
     );
+typedef _CanaryRecoverReplay =
+    Future<bool> Function(CloudOutboxOperation operation);
 typedef _CanaryFinalizeReplay =
     Future<void> Function(
       CloudOutboxOperation operation,
@@ -2119,16 +2143,19 @@ final class _ProductionConfirmedReplayCanarySession
   const _ProductionConfirmedReplayCanarySession({
     required this.scope,
     required _CanaryOutboxRead readOutbox,
+    required _CanaryRecoverReplay recoverPending,
     required _CanaryVerifyReplay verify,
     required _CanaryFinalizeReplay finalize,
     required _CanaryQuiesce quiesce,
   }) : _readOutbox = readOutbox,
+       _recoverPending = recoverPending,
        _verify = verify,
        _finalize = finalize,
        _quiesce = quiesce;
 
   final CloudSyncScope scope;
   final _CanaryOutboxRead _readOutbox;
+  final _CanaryRecoverReplay _recoverPending;
   final _CanaryVerifyReplay _verify;
   final _CanaryFinalizeReplay _finalize;
   final _CanaryQuiesce _quiesce;
@@ -2136,19 +2163,72 @@ final class _ProductionConfirmedReplayCanarySession
   @override
   Future<CloudSyncConfirmedReplayProof> verifyConfirmedNoSave({
     required CloudOutboxOperation operation,
-  }) => _verify(operation);
+  }) async {
+    if (await _recoverPending(operation)) {
+      return _RecoveredConfirmedReplayProof(operation);
+    }
+    return _verify(operation);
+  }
 
   @override
   Future<void> finalizeConfirmedReplayProof({
     required CloudOutboxOperation operation,
     required CloudSyncConfirmedReplayProof proof,
-  }) => _finalize(operation, proof);
+  }) async {
+    if (proof is _RecoveredConfirmedReplayProof) {
+      if (!proof.operation.sameDurableSnapshotAs(operation)) {
+        throw StateError('cloud_sync_confirmed_replay_recovery_proof_invalid');
+      }
+      return;
+    }
+    await _finalize(operation, proof);
+  }
 
   @override
   Future<List<CloudOutboxOperation>> readOutbox() => _readOutbox();
 
   @override
   Future<void> quiesce() => _quiesce();
+}
+
+final class _RecoveredConfirmedReplayProof
+    implements CloudSyncConfirmedReplayProof {
+  const _RecoveredConfirmedReplayProof(this.operation);
+
+  final CloudOutboxOperation operation;
+}
+
+Future<bool> _recoverPendingMessageCreateReadbacks({
+  required CloudSyncScope scope,
+  required CloudMessageCreateReadbackStore durableStore,
+  required NativeProtectedCloudSyncTransport transport,
+  CloudOutboxOperation? expectedOperation,
+}) async {
+  final pending = await durableStore.readPendingMessageCreateReadbacks(
+    scope,
+    maximumCount: 16,
+  );
+  var recoveredExpectedOperation = false;
+  for (final snapshot in pending) {
+    final operation = snapshot.confirmedOperation;
+    if (expectedOperation != null) {
+      if (operation.operationId != expectedOperation.operationId) continue;
+      if (!operation.sameDurableSnapshotAs(expectedOperation)) {
+        throw StateError('cloud_sync_confirmed_replay_recovery_snapshot_changed');
+      }
+    }
+    await transport.finalizePendingMessageCreateReadback(
+      snapshot,
+      finalizeDurableReadback: (expected) =>
+          durableStore.finalizeMessageCreateReadbackLeases(
+            expectedSnapshot: expected,
+            createSourceLeaseCommitted: true,
+            readbackLeaseCommitted: true,
+          ),
+    );
+    if (expectedOperation != null) recoveredExpectedOperation = true;
+  }
+  return recoveredExpectedOperation;
 }
 
 /// Captures a client-bound snapshot and rejects replacement races.

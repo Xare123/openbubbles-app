@@ -3603,10 +3603,10 @@ class ObjectBoxCloudSyncStore
   @override
   Future<void> finalizeMessageUpdateReadbackLeases({
     required CloudMessageUpdateReadbackCommitSnapshot expectedSnapshot,
-    required bool updateStageLeaseFinalized,
-    required bool readbackLeaseFinalized,
+    required bool updateStageLeaseCommitted,
+    required bool readbackLeaseCommitted,
   }) async {
-    if (!updateStageLeaseFinalized || !readbackLeaseFinalized) {
+    if (!updateStageLeaseCommitted || !readbackLeaseCommitted) {
       throw _storageFailure('message_update_native_finalization_incomplete');
     }
     final expectedOperation = expectedSnapshot.confirmedOperation;
@@ -3759,10 +3759,10 @@ class ObjectBoxCloudSyncStore
   @override
   Future<void> finalizeMessageCreateReadbackLeases({
     required CloudMessageCreateReadbackCommitSnapshot expectedSnapshot,
-    required bool createSourceLeaseFinalized,
-    required bool readbackLeaseFinalized,
+    required bool createSourceLeaseCommitted,
+    required bool readbackLeaseCommitted,
   }) async {
-    if (!createSourceLeaseFinalized || !readbackLeaseFinalized) {
+    if (!createSourceLeaseCommitted || !readbackLeaseCommitted) {
       throw _storageFailure('message_create_native_finalization_incomplete');
     }
     final expectedOperation = expectedSnapshot.confirmedOperation;

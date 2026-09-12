@@ -406,23 +406,24 @@ final class CloudSyncMessageUpdateExecutor {
       snapshot.readbackLeaseReference,
       <String>{snapshot.recordMapping.encryptedRawRecordReference!},
     );
-    await _leaseTransport.acknowledgeCommittedPageLease(
-      snapshot.updateStageLeaseReference,
-    );
-    await _leaseTransport.acknowledgeCommittedPageLease(
-      snapshot.readbackLeaseReference,
-    );
     // Clear the mutation fence while the protected-store exclusion is still
-    // held, but before clearing durable recovery markers. A crash here simply
-    // repeats two idempotent acknowledgements and this no-network fence release.
+    // held, then clear durable ownership before deleting either native receipt.
+    // A crash at either boundary leaves enough durable evidence to resume
+    // without another mutation or another remote readback.
     await _transport.completeMessageUpdateReconciliation(
       scope,
       operation: snapshot.confirmedOperation,
     );
     await _cloudStore.finalizeMessageUpdateReadbackLeases(
       expectedSnapshot: snapshot,
-      updateStageLeaseFinalized: true,
-      readbackLeaseFinalized: true,
+      updateStageLeaseCommitted: true,
+      readbackLeaseCommitted: true,
+    );
+    await _leaseTransport.acknowledgeCommittedPageLease(
+      snapshot.updateStageLeaseReference,
+    );
+    await _leaseTransport.acknowledgeCommittedPageLease(
+      snapshot.readbackLeaseReference,
     );
   });
 

@@ -129,6 +129,51 @@ void main() {
     },
   );
 
+  test(
+    'confirmed replay completes an adopted local readback without another remote fetch',
+    () async {
+      final scope = testScope(
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      final operation = testOutboxOperation(scope, 41).copyWith(
+        status: CloudOutboxStatus.confirmed,
+        confirmedAt: DateTime.utc(2026, 9, 12),
+      );
+      var recoverCalls = 0;
+      var verifyCalls = 0;
+      var finalizeCalls = 0;
+      final session = CloudSyncProductionOutboundCanaryAdapter
+          .createConfirmedReplaySessionForTest(
+            scope: scope,
+            readOutbox: () async => <CloudOutboxOperation>[operation],
+            recoverPending: (candidate) async {
+              recoverCalls++;
+              expect(candidate.sameDurableSnapshotAs(operation), isTrue);
+              return true;
+            },
+            verify: (_) async {
+              verifyCalls++;
+              return const _TestConfirmedReplayProof();
+            },
+            finalize: (_, _) async {
+              finalizeCalls++;
+            },
+            quiesce: () async {},
+          );
+
+      final proof = await session.verifyConfirmedNoSave(operation: operation);
+      await session.finalizeConfirmedReplayProof(
+        operation: operation,
+        proof: proof,
+      );
+
+      expect(recoverCalls, 1);
+      expect(verifyCalls, 0);
+      expect(finalizeCalls, 0);
+      expect(await session.readOutbox(), <CloudOutboxOperation>[operation]);
+    },
+  );
+
   late Directory temporaryDirectory;
   late CloudKitOperationInterlock interlock;
 
@@ -1298,3 +1343,8 @@ CloudOutboxCreateReceipt _receiptFor(CloudOutboxOperation operation) =>
       serverRecordIdHash: _digest('S'),
       etagHash: _receiptEtagHash,
     );
+
+final class _TestConfirmedReplayProof
+    implements CloudSyncConfirmedReplayProof {
+  const _TestConfirmedReplayProof();
+}

@@ -573,8 +573,9 @@ abstract interface class CloudConfirmedOutboundReceiptStore {
 /// Native reconciliation happens before this boundary. Implementations must
 /// commit the exact receipt without network or protected-reference resolution,
 /// keep the original update-stage lease and the new mapping-owned readback
-/// lease independently live, and clear them only after the caller confirms
-/// both native finalizations succeeded.
+  /// lease independently live, and clear them only after the caller confirms
+  /// both native commits succeeded. Native receipt acknowledgement happens
+  /// after this durable transaction so a crash cannot strand either lease.
 abstract interface class CloudMessageUpdateReadbackStore {
   Future<CloudMessageUpdateReadbackCommitSnapshot>
   commitMessageUpdateReadbackReceipt(
@@ -595,8 +596,8 @@ abstract interface class CloudMessageUpdateReadbackStore {
 
   Future<void> finalizeMessageUpdateReadbackLeases({
     required CloudMessageUpdateReadbackCommitSnapshot expectedSnapshot,
-    required bool updateStageLeaseFinalized,
-    required bool readbackLeaseFinalized,
+    required bool updateStageLeaseCommitted,
+    required bool readbackLeaseCommitted,
   });
 }
 
@@ -619,8 +620,8 @@ abstract interface class CloudMessageCreateReadbackStore {
 
   Future<void> finalizeMessageCreateReadbackLeases({
     required CloudMessageCreateReadbackCommitSnapshot expectedSnapshot,
-    required bool createSourceLeaseFinalized,
-    required bool readbackLeaseFinalized,
+    required bool createSourceLeaseCommitted,
+    required bool readbackLeaseCommitted,
   });
 }
 

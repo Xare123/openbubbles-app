@@ -1704,8 +1704,8 @@ final class CloudSyncWindowsLocalWrite {
           finalizeDurableReadback: (expected) =>
               cloudStore.finalizeMessageCreateReadbackLeases(
                 expectedSnapshot: expected,
-                createSourceLeaseFinalized: true,
-                readbackLeaseFinalized: true,
+                createSourceLeaseCommitted: true,
+                readbackLeaseCommitted: true,
               ),
         );
       }

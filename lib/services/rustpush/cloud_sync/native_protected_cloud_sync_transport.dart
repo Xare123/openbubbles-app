@@ -3252,8 +3252,9 @@ final class NativeProtectedCloudSyncTransport
   }
 
   /// Completes a previously adopted create readback without network access.
-  /// Native commit and acknowledgements are idempotent, so restart recovery
-  /// may safely repeat any step whose durable final marker was not written.
+  /// Native commit is idempotent while its committed receipt exists. Durable
+  /// ownership must be finalized before either receipt is acknowledged so a
+  /// crash can always resume from a manifest or committed receipt.
   Future<void> finalizePendingMessageCreateReadback(
     CloudMessageCreateReadbackCommitSnapshot snapshot, {
     required Future<void> Function(
@@ -3264,9 +3265,9 @@ final class NativeProtectedCloudSyncTransport
     await commitProtectedPageLease(snapshot.readbackLeaseReference, <String>{
       snapshot.recordMapping.encryptedRawRecordReference!,
     });
+    await finalizeDurableReadback(snapshot);
     await acknowledgeCommittedPageLease(snapshot.createSourceLeaseReference);
     await acknowledgeCommittedPageLease(snapshot.readbackLeaseReference);
-    await finalizeDurableReadback(snapshot);
   });
 
   Future<CloudUnknownOutcomeResolution> _reconcileCreateOutcome(

@@ -3527,6 +3527,7 @@ void main() {
           finalizeDurableReadback: (committed) async {
             events.add('durable-finalize');
             expect(committed, same(snapshot));
+            expect(bindings.acknowledgedLeases, isEmpty);
           },
         ),
       );
@@ -3534,9 +3535,9 @@ void main() {
       expect(events, [
         'durable-adopt',
         'native:commit',
-        'native:acknowledge',
-        'native:acknowledge',
         'durable-finalize',
+        'native:acknowledge',
+        'native:acknowledge',
       ]);
       expect(bindings.commitCalls, 1);
       expect(bindings.committedLeaseReference, _lease('b'));

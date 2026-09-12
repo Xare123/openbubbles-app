@@ -954,6 +954,21 @@ void main() {
     expect(adapter, contains('proof: proof'));
     expect(manual, contains('finalizeConfirmedReplayProof'));
     expect(adapter, contains('verifyConfirmedMessageCreateNoSave('));
+    expect(adapter, contains('_recoverPendingMessageCreateReadbacks('));
+    final replaySessionStart = adapter.indexOf(
+      'final class _ProductionConfirmedReplayCanarySession',
+    );
+    final localRecoveryStart = adapter.indexOf(
+      'if (await _recoverPending(operation))',
+      replaySessionStart,
+    );
+    final remoteVerificationStart = adapter.indexOf(
+      'return _verify(operation);',
+      localRecoveryStart,
+    );
+    expect(replaySessionStart, greaterThanOrEqualTo(0));
+    expect(localRecoveryStart, greaterThan(replaySessionStart));
+    expect(remoteVerificationStart, greaterThan(localRecoveryStart));
     final manualAdapterStart = adapter.indexOf(
       'final class CloudSyncProductionOutboundCanaryAdapter',
     );
@@ -997,24 +1012,52 @@ void main() {
       'await commitProtectedPageLease(',
       restartFinalizeStart,
     );
+    final durableFinalizeStart = native.indexOf(
+      'await finalizeDurableReadback(snapshot);',
+      nativeCommitStart,
+    );
     final sourceAcknowledgeStart = native.indexOf(
       'await acknowledgeCommittedPageLease('
       'snapshot.createSourceLeaseReference);',
-      nativeCommitStart,
+      durableFinalizeStart,
     );
     final readbackAcknowledgeStart = native.indexOf(
       'await acknowledgeCommittedPageLease(snapshot.readbackLeaseReference);',
       sourceAcknowledgeStart,
     );
-    final durableFinalizeStart = native.indexOf(
-      'await finalizeDurableReadback(snapshot);',
-      readbackAcknowledgeStart,
-    );
     expect(restartFinalizeStart, greaterThan(finalizePendingStart));
     expect(nativeCommitStart, greaterThan(restartFinalizeStart));
-    expect(sourceAcknowledgeStart, greaterThan(nativeCommitStart));
+    expect(durableFinalizeStart, greaterThan(nativeCommitStart));
+    expect(sourceAcknowledgeStart, greaterThan(durableFinalizeStart));
     expect(readbackAcknowledgeStart, greaterThan(sourceAcknowledgeStart));
-    expect(durableFinalizeStart, greaterThan(readbackAcknowledgeStart));
+
+    final updateExecutor = File(
+      'lib/services/rustpush/cloud_sync/cloud_sync_message_update_executor.dart',
+    ).readAsStringSync();
+    final updateFinalizeStart = updateExecutor.indexOf(
+      'Future<void> _finalizeCommittedReadback(',
+    );
+    final updateCommitStart = updateExecutor.indexOf(
+      'await _leaseTransport.commitProtectedPageLease(',
+      updateFinalizeStart,
+    );
+    final fenceReleaseStart = updateExecutor.indexOf(
+      'await _transport.completeMessageUpdateReconciliation(',
+      updateCommitStart,
+    );
+    final updateDurableFinalizeStart = updateExecutor.indexOf(
+      'await _cloudStore.finalizeMessageUpdateReadbackLeases(',
+      fenceReleaseStart,
+    );
+    final updateAcknowledgeStart = updateExecutor.indexOf(
+      'await _leaseTransport.acknowledgeCommittedPageLease(',
+      updateDurableFinalizeStart,
+    );
+    expect(updateFinalizeStart, greaterThanOrEqualTo(0));
+    expect(updateCommitStart, greaterThan(updateFinalizeStart));
+    expect(fenceReleaseStart, greaterThan(updateCommitStart));
+    expect(updateDurableFinalizeStart, greaterThan(fenceReleaseStart));
+    expect(updateAcknowledgeStart, greaterThan(updateDurableFinalizeStart));
   });
 
   test('ambiguous recovery is structurally isolated from every write lane', () {

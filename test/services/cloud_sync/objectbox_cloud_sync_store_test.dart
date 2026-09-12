@@ -6234,8 +6234,8 @@ void main() {
         await expectLater(
           store.finalizeMessageCreateReadbackLeases(
             expectedSnapshot: recovered,
-            createSourceLeaseFinalized: true,
-            readbackLeaseFinalized: false,
+            createSourceLeaseCommitted: true,
+            readbackLeaseCommitted: false,
           ),
           failsWith('message_create_native_finalization_incomplete'),
         );
@@ -6248,16 +6248,16 @@ void main() {
         await expectLater(
           store.finalizeMessageCreateReadbackLeases(
             expectedSnapshot: changedSnapshot,
-            createSourceLeaseFinalized: true,
-            readbackLeaseFinalized: true,
+            createSourceLeaseCommitted: true,
+            readbackLeaseCommitted: true,
           ),
           failsWith('message_create_finalization_snapshot_changed'),
         );
 
         await store.finalizeMessageCreateReadbackLeases(
           expectedSnapshot: recovered,
-          createSourceLeaseFinalized: true,
-          readbackLeaseFinalized: true,
+          createSourceLeaseCommitted: true,
+          readbackLeaseCommitted: true,
         );
         final finalizedOperation = (await store.readOutboxEntries(scope)).single;
         expect(finalizedOperation.protectedLeaseReference, isNull);
@@ -6657,8 +6657,8 @@ void main() {
         await expectLater(
           store.finalizeMessageUpdateReadbackLeases(
             expectedSnapshot: committed,
-            updateStageLeaseFinalized: true,
-            readbackLeaseFinalized: false,
+            updateStageLeaseCommitted: true,
+            readbackLeaseCommitted: false,
           ),
           failsWith('message_update_native_finalization_incomplete'),
         );
@@ -6671,16 +6671,16 @@ void main() {
         await expectLater(
           store.finalizeMessageUpdateReadbackLeases(
             expectedSnapshot: changedSnapshot,
-            updateStageLeaseFinalized: true,
-            readbackLeaseFinalized: true,
+            updateStageLeaseCommitted: true,
+            readbackLeaseCommitted: true,
           ),
           failsWith('message_update_finalization_snapshot_changed'),
         );
 
         await store.finalizeMessageUpdateReadbackLeases(
           expectedSnapshot: committed,
-          updateStageLeaseFinalized: true,
-          readbackLeaseFinalized: true,
+          updateStageLeaseCommitted: true,
+          readbackLeaseCommitted: true,
         );
 
         final outbox = currentOutbox();
@@ -6709,8 +6709,8 @@ void main() {
         await expectLater(
           store.finalizeMessageUpdateReadbackLeases(
             expectedSnapshot: committed,
-            updateStageLeaseFinalized: true,
-            readbackLeaseFinalized: true,
+            updateStageLeaseCommitted: true,
+            readbackLeaseCommitted: true,
           ),
           failsWith('message_update_finalization_snapshot_changed'),
         );

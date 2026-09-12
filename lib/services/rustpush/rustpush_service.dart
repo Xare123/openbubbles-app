@@ -8952,8 +8952,8 @@ class RustPushService extends GetxService {
               finalizeDurableReadback: (expected) =>
                   cloudStore.finalizeMessageCreateReadbackLeases(
                     expectedSnapshot: expected,
-                    createSourceLeaseFinalized: true,
-                    readbackLeaseFinalized: true,
+                    createSourceLeaseCommitted: true,
+                    readbackLeaseCommitted: true,
                   ),
             );
           }

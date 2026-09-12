@@ -346,6 +346,66 @@ void main() {
     },
   );
 
+  test(
+    'acknowledgement failure happens after durable update finalization',
+    () async {
+      final transport = _ExecutorTransport(
+        CloudSyncMessageUpdateReconciliationDisposition.committed,
+        failAcknowledgement: true,
+      );
+      final executor = fixture.buildExecutor(transport);
+      final admitted = await executor.admitReflectedUpdate(
+        fixture.scope,
+        source: fixture.source,
+        predecessor: fixture.predecessor,
+        currentAuth: fixture.auth,
+        stillCurrent: () => true,
+        receipt: fixture.receipt,
+      );
+
+      await expectLater(
+        executor.runOnce(
+          fixture.scope,
+          currentAuth: fixture.auth,
+          stillCurrent: () => true,
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(transport.completedStatuses, <CloudOutboxStatus>[
+        CloudOutboxStatus.confirmed,
+      ]);
+      final stored = (await fixture.cloudStore.readOutboxEntries(
+        fixture.scope,
+      )).singleWhere((entry) => entry.operationId == admitted.operationId);
+      expect(stored.status, CloudOutboxStatus.confirmed);
+      expect(stored.protectedLeaseReference, isNull);
+      final mapping = await fixture.cloudStore.readRecordMap(
+        fixture.scope,
+        logicalEntityKeyHash: admitted.logicalEntityKeyHash,
+        generation: admitted.checkpointGeneration,
+        serverRecordIdHash: admitted.serverRecordIdHash,
+      );
+      expect(mapping!.encryptedRawRecordReference, _reference('V'));
+      expect(mapping.protectedReadbackLeaseReference, isNull);
+      expect(transport.acknowledgedLeases, <String>[_lease('c')]);
+
+      final restartTransport = _ExecutorTransport(
+        CloudSyncMessageUpdateReconciliationDisposition.committed,
+      );
+      final restart = await fixture
+          .buildExecutor(restartTransport)
+          .runOnce(
+            fixture.scope,
+            currentAuth: fixture.auth,
+            stillCurrent: () => true,
+          );
+      expect(restart.submitted, 0);
+      expect(restartTransport.committedLeases, isEmpty);
+      expect(restartTransport.acknowledgedLeases, isEmpty);
+    },
+  );
+
   for (final kind in CloudSyncLocalMutationKind.values) {
     test(
       '${kind.name} exact readback stays terminal across executor restart',
@@ -965,9 +1025,10 @@ final class _ExecutorTransport
         CloudSyncMessageUpdateTransport,
         CloudSyncPreparedSubmissionReleaser,
         CloudProtectedPageLeaseTransport {
-  _ExecutorTransport(this.disposition);
+  _ExecutorTransport(this.disposition, {this.failAcknowledgement = false});
 
   final CloudSyncMessageUpdateReconciliationDisposition disposition;
+  final bool failAcknowledgement;
   int stageCalls = 0;
   int releaseCalls = 0;
   final List<String> committedLeases = <String>[];
@@ -1079,8 +1140,12 @@ final class _ExecutorTransport
   ) async => committedLeases.add(leaseReference);
 
   @override
-  Future<void> acknowledgeCommittedPageLease(String leaseReference) async =>
-      acknowledgedLeases.add(leaseReference);
+  Future<void> acknowledgeCommittedPageLease(String leaseReference) async {
+    acknowledgedLeases.add(leaseReference);
+    if (failAcknowledgement) {
+      throw StateError('simulated_acknowledgement_failure');
+    }
+  }
 
   @override
   Future<void> rollbackProtectedPageLease(String leaseReference) async =>
