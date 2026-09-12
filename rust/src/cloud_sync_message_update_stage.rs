@@ -285,7 +285,7 @@ fn validate_request(previous: &Record, request: &RecordSaveRequest) -> Result<()
                     .as_ref()
                     .and_then(|d| d.time)
                     .ok_or(Failure::MalformedMessage)?;
-                if !time.is_finite() || time <= 0.0 || time > 252_423_993_599.0 {
+                if !time.is_finite() || time <= 0.0 || time > MAX_UTM_TIME {
                     return Err(Failure::MalformedMessage);
                 }
                 expected_value.r#type = Some(Type::DateType as i32);
@@ -302,19 +302,23 @@ fn validate_request(previous: &Record, request: &RecordSaveRequest) -> Result<()
     }
     // A staged attempt must actually change the ciphertext. Saving byte-
     // identical payload bytes would be a no-op write, never a message update.
-    match (
-        message_bytes(previous, "msgProto"),
-        message_bytes(record, "msgProto"),
-    ) {
-        (Some(before), Some(after)) if before == after => {
-            return Err(Failure::MalformedMessage)
-        }
-        _ => {}
+    // A missing or empty predecessor payload is malformed, never treated as
+    // absent to skip this comparison.
+    let before = message_bytes(previous, "msgProto").ok_or(Failure::MalformedMessage)?;
+    if before.is_empty() {
+        return Err(Failure::MalformedMessage);
     }
-    // The update clock must not move backwards. Either side may omit the
-    // clock; only two parseable clocks are ordered numerically. Equal clocks
-    // are explicitly allowed.
-    if let (Some(before), Some(after)) = (update_clock(previous), update_clock(record)) {
+    let after = message_bytes(record, "msgProto").ok_or(Failure::MalformedMessage)?;
+    if before == after {
+        return Err(Failure::MalformedMessage);
+    }
+    // The update clock must not move backwards. A present predecessor clock
+    // must be a finite in-range timestamp; a malformed stored clock is
+    // rejected instead of treated as absent. Either side may omit the clock;
+    // only two parseable clocks are ordered numerically. Equal clocks are
+    // explicitly allowed.
+    let stored_clock = validated_predecessor_clock(previous)?;
+    if let (Some(before), Some(after)) = (stored_clock, update_clock(record)) {
         if after < before {
             return Err(Failure::MalformedMessage);
         }
@@ -339,11 +343,43 @@ fn message_bytes<'a>(record: &'a Record, name: &str) -> Option<&'a [u8]> {
         .as_deref()
 }
 
-/// Best-effort numeric view of the unencrypted `utm` update clock.
-/// Returns `None` when the clock is absent or not a finite timestamp, so the
-/// existing optional-field behavior is preserved for those cases. The raw
-/// timestamp is compared directly so fractional values cannot slip backwards
-/// inside one integer second through truncation.
+/// Accepted `utm` bound shared by the request shape check and the stored
+/// predecessor check.
+const MAX_UTM_TIME: f64 = 252_423_993_599.0;
+
+/// Fail-closed numeric view of the stored predecessor `utm` clock.
+/// Returns `Ok(None)` only when the predecessor omits the clock entirely.
+/// A present predecessor clock must carry a finite in-range timestamp;
+/// non-finite, missing, or out-of-range stored clocks are rejected instead
+/// of being treated as absent.
+fn validated_predecessor_clock(previous: &Record) -> Result<Option<f64>, Failure> {
+    let field = previous.record_field.iter().find(|field| {
+        field
+            .identifier
+            .as_ref()
+            .and_then(|identifier| identifier.name.as_deref())
+            == Some("utm")
+    });
+    let Some(field) = field else {
+        return Ok(None);
+    };
+    let time = field
+        .value
+        .as_ref()
+        .and_then(|value| value.date_value.as_ref())
+        .and_then(|date| date.time);
+    match time {
+        Some(time) if time.is_finite() && time > 0.0 && time <= MAX_UTM_TIME => Ok(Some(time)),
+        _ => Err(Failure::MalformedMessage),
+    }
+}
+
+/// Best-effort numeric view of the unencrypted `utm` update clock on the
+/// request side. Returns `None` when the clock is absent; a malformed
+/// request clock is already rejected by the request shape check above, so
+/// only absence reaches the comparison. The raw timestamp is compared
+/// directly so fractional values cannot slip backwards inside one integer
+/// second through truncation.
 fn update_clock(record: &Record) -> Option<f64> {
     let time = record
         .record_field
@@ -770,6 +806,17 @@ mod tests {
         }
     }
 
+    fn utm_field_without_time() -> record::Field {
+        let mut value = record::field::Value::default();
+        value.r#type = Some(Type::DateType as i32);
+        record::Field {
+            identifier: Some(record::field::Identifier {
+                name: Some("utm".into()),
+            }),
+            value: Some(value),
+        }
+    }
+
     #[test]
     fn update_rejects_identical_ciphertext_bytes() {
         let (previous, request) = fixture();
@@ -831,9 +878,70 @@ mod tests {
         // A clock only on the stored side is still accepted.
         validate_request(&before, &request).unwrap();
 
-        // An unparseable stored clock keeps the previous lenient behavior.
+        // A non-finite stored clock is malformed, never treated as absent.
         let mut unparseable = previous.clone();
         unparseable.record_field.push(utm_field(f64::NAN));
-        validate_request(&unparseable, &behind).unwrap();
+        assert_eq!(
+            validate_request(&unparseable, &behind).err(),
+            Some(Failure::MalformedMessage)
+        );
+    }
+
+    #[test]
+    fn update_rejects_out_of_range_predecessor_clock() {
+        let (previous, request) = fixture();
+        for time in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            0.0,
+            -1.0,
+            MAX_UTM_TIME + 1.0,
+        ] {
+            let mut malformed = previous.clone();
+            malformed.record_field.push(utm_field(time));
+            assert_eq!(
+                validate_request(&malformed, &request).err(),
+                Some(Failure::MalformedMessage),
+                "predecessor clock {time:?} must be rejected"
+            );
+        }
+        // A predecessor clock with no timestamp is malformed, not absent.
+        let mut missing = previous.clone();
+        missing.record_field.push(utm_field_without_time());
+        assert_eq!(
+            validate_request(&missing, &request).err(),
+            Some(Failure::MalformedMessage)
+        );
+    }
+
+    #[test]
+    fn update_rejects_missing_or_empty_predecessor_ciphertext() {
+        let (previous, request) = fixture();
+        // A predecessor without the payload field stays malformed.
+        let mut missing = previous.clone();
+        missing.record_field.remove(0);
+        assert_eq!(
+            validate_request(&missing, &request).err(),
+            Some(Failure::MalformedMessage)
+        );
+        // An empty predecessor payload is malformed, never skipped.
+        let mut empty = previous.clone();
+        empty.record_field[0].value.as_mut().unwrap().bytes_value = Some(vec![]);
+        assert_eq!(
+            validate_request(&empty, &request).err(),
+            Some(Failure::MalformedMessage)
+        );
+        // A predecessor payload without bytes is malformed, never skipped.
+        let mut unparseable = previous.clone();
+        unparseable.record_field[0]
+            .value
+            .as_mut()
+            .unwrap()
+            .bytes_value = None;
+        assert_eq!(
+            validate_request(&unparseable, &request).err(),
+            Some(Failure::MalformedMessage)
+        );
     }
 }
