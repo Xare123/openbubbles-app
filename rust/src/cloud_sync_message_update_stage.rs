@@ -36,6 +36,7 @@ pub(crate) struct MessageUpdateBinding {
     pub(crate) reflected_snapshot_sha256: String,
     pub(crate) auth_binding_sha256: String,
     pub(crate) writer_epoch: u64,
+    pub(crate) raw_generation: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -61,6 +62,13 @@ pub(crate) struct OpenedMessageUpdate {
     binding: MessageUpdateBinding,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MessageUpdateReadbackState {
+    Committed,
+    NotApplied,
+    Diverged,
+}
+
 impl OpenedMessageUpdate {
     pub(crate) fn predecessor(&self) -> &Record {
         &self.predecessor
@@ -71,6 +79,105 @@ impl OpenedMessageUpdate {
     pub(crate) fn binding(&self) -> &MessageUpdateBinding {
         &self.binding
     }
+
+    /// Field-order-independent comparison against the immutable conditional
+    /// update. CloudKit's server-owned metadata may change, but the record
+    /// identity, type, PCS metadata and full application field set may not.
+    pub(crate) fn classify_readback(&self, remote: &Record) -> MessageUpdateReadbackState {
+        if predecessor_matches_remote(&self.predecessor, remote) {
+            return MessageUpdateReadbackState::NotApplied;
+        }
+        let Some(request_record) = self.request.record.as_ref() else {
+            return MessageUpdateReadbackState::Diverged;
+        };
+        if self.predecessor.record_identifier != remote.record_identifier
+            || self.predecessor.r#type != remote.r#type
+            || self.predecessor.pcs_key != remote.pcs_key
+            || self.predecessor.protection_info != remote.protection_info
+            || remote
+                .etag
+                .as_deref()
+                .is_none_or(|etag| etag.trim().is_empty())
+            || remote.etag == self.predecessor.etag
+        {
+            return MessageUpdateReadbackState::Diverged;
+        }
+        let mut expected_names = HashSet::new();
+        for predecessor_field in &self.predecessor.record_field {
+            let Some(name) = field_name(predecessor_field) else {
+                return MessageUpdateReadbackState::Diverged;
+            };
+            if !expected_names.insert(name) {
+                return MessageUpdateReadbackState::Diverged;
+            }
+            let desired =
+                exact_field(&request_record.record_field, name).unwrap_or(predecessor_field);
+            if exact_field(&remote.record_field, name) != Some(desired) {
+                return MessageUpdateReadbackState::Diverged;
+            }
+        }
+        for requested_field in &request_record.record_field {
+            let Some(name) = field_name(requested_field) else {
+                return MessageUpdateReadbackState::Diverged;
+            };
+            if expected_names.insert(name)
+                && exact_field(&remote.record_field, name) != Some(requested_field)
+            {
+                return MessageUpdateReadbackState::Diverged;
+            }
+        }
+        let mut remote_names = HashSet::new();
+        if remote.record_field.len() != expected_names.len()
+            || remote
+                .record_field
+                .iter()
+                .any(|field| field_name(field).is_none_or(|name| !remote_names.insert(name)))
+        {
+            return MessageUpdateReadbackState::Diverged;
+        }
+        MessageUpdateReadbackState::Committed
+    }
+}
+
+fn field_name(field: &rustpush::cloudkit_proto::record::Field) -> Option<&str> {
+    field
+        .identifier
+        .as_ref()
+        .and_then(|identifier| identifier.name.as_deref())
+        .filter(|name| !name.is_empty())
+}
+
+fn exact_field<'a>(
+    fields: &'a [rustpush::cloudkit_proto::record::Field],
+    name: &str,
+) -> Option<&'a rustpush::cloudkit_proto::record::Field> {
+    let mut matches = fields
+        .iter()
+        .filter(|candidate| field_name(candidate) == Some(name));
+    let found = matches.next()?;
+    matches.next().is_none().then_some(found)
+}
+
+pub(crate) fn predecessor_matches_remote(reflected: &Record, remote: &Record) -> bool {
+    if reflected.record_identifier != remote.record_identifier
+        || reflected.r#type != remote.r#type
+        || reflected.etag != remote.etag
+        || reflected.pcs_key != remote.pcs_key
+        || reflected.protection_info != remote.protection_info
+        || reflected.record_field.len() != remote.record_field.len()
+    {
+        return false;
+    }
+    let mut names = HashSet::with_capacity(reflected.record_field.len());
+    for field in &reflected.record_field {
+        let Some(name) = field_name(field) else {
+            return false;
+        };
+        if !names.insert(name) || exact_field(&remote.record_field, name) != Some(field) {
+            return false;
+        }
+    }
+    true
 }
 
 pub(crate) fn stage_message_update(
@@ -176,6 +283,8 @@ fn validate_binding(binding: &MessageUpdateBinding) -> Result<(), Failure> {
     ]
     .iter()
     .any(|value| !is_digest(value))
+        || binding.writer_epoch == 0
+        || binding.raw_generation == 0
     {
         return Err(Failure::MalformedMessage);
     }
@@ -444,6 +553,7 @@ mod tests {
             reflected_snapshot_sha256: "c".repeat(64),
             auth_binding_sha256: "d".repeat(64),
             writer_epoch: 1,
+            raw_generation: 7,
         }
     }
 
@@ -564,7 +674,7 @@ mod tests {
         .unwrap();
         commit(&path, &stage);
         assert!(open_message_update(path.clone(), "B".repeat(43), &binding(), &stage).is_err());
-        for mode in 0..8 {
+        for mode in 0..9 {
             let mut changed = binding();
             match mode {
                 0 => changed.logical_entity_key_hash = "F".repeat(43),
@@ -574,7 +684,8 @@ mod tests {
                 4 => changed.ids_receipt_binding_sha256 = "f".repeat(64),
                 5 => changed.reflected_snapshot_sha256 = "f".repeat(64),
                 6 => changed.auth_binding_sha256 = "f".repeat(64),
-                _ => changed.writer_epoch += 1,
+                7 => changed.writer_epoch += 1,
+                _ => changed.raw_generation += 1,
             }
             assert_eq!(
                 open_message_update(path.clone(), account.clone(), &changed, &stage).err(),
@@ -935,5 +1046,99 @@ mod tests {
             validate_request(&unparseable, &request).err(),
             Some(Failure::MalformedMessage)
         );
+    }
+
+    #[test]
+    fn readback_distinguishes_exact_predecessor_from_exact_commit() {
+        let (previous, request) = fixture();
+        let opened = OpenedMessageUpdate {
+            predecessor: previous.clone(),
+            request: request.clone(),
+            binding: binding(),
+        };
+        let mut unchanged = previous.clone();
+        unchanged.record_field.reverse();
+        assert_eq!(
+            opened.classify_readback(&unchanged),
+            MessageUpdateReadbackState::NotApplied
+        );
+
+        let mut committed = previous.clone();
+        committed.etag = Some("synthetic-committed-version".into());
+        committed.record_field[0] = request.record.as_ref().unwrap().record_field[0].clone();
+        committed.record_field.reverse();
+        assert_eq!(
+            opened.classify_readback(&committed),
+            MessageUpdateReadbackState::Committed
+        );
+
+        let mut clocked_request = request;
+        clocked_request
+            .record
+            .as_mut()
+            .unwrap()
+            .record_field
+            .push(utm_field(1_720_000_100.0));
+        let clocked = OpenedMessageUpdate {
+            predecessor: previous.clone(),
+            request: clocked_request.clone(),
+            binding: binding(),
+        };
+        let mut clocked_remote = committed;
+        clocked_remote
+            .record_field
+            .push(clocked_request.record.unwrap().record_field[1].clone());
+        assert_eq!(
+            clocked.classify_readback(&clocked_remote),
+            MessageUpdateReadbackState::Committed
+        );
+    }
+
+    #[test]
+    fn readback_treats_every_mixed_or_third_version_as_diverged() {
+        let (previous, request) = fixture();
+        let opened = OpenedMessageUpdate {
+            predecessor: previous.clone(),
+            request: request.clone(),
+            binding: binding(),
+        };
+
+        let mut cases = Vec::new();
+        let mut new_payload_old_etag = previous.clone();
+        new_payload_old_etag.record_field[0] =
+            request.record.as_ref().unwrap().record_field[0].clone();
+        cases.push(new_payload_old_etag);
+
+        let mut old_payload_new_etag = previous.clone();
+        old_payload_new_etag.etag = Some("synthetic-third-version".into());
+        cases.push(old_payload_new_etag);
+
+        let mut changed_opaque_field = previous.clone();
+        changed_opaque_field.etag = Some("synthetic-third-version".into());
+        changed_opaque_field.record_field[0] =
+            request.record.as_ref().unwrap().record_field[0].clone();
+        changed_opaque_field.record_field[1] = field("future-field", b"changed");
+        cases.push(changed_opaque_field);
+
+        let mut extra_field = previous.clone();
+        extra_field.etag = Some("synthetic-third-version".into());
+        extra_field.record_field[0] = request.record.unwrap().record_field[0].clone();
+        extra_field
+            .record_field
+            .push(field("unexpected", b"opaque"));
+        cases.push(extra_field);
+
+        let mut rotated_pcs = previous;
+        rotated_pcs.etag = Some("synthetic-third-version".into());
+        rotated_pcs.pcs_key = Some(vec![9, 9, 9, 9]);
+        cases.push(rotated_pcs);
+
+        for (index, remote) in cases.iter().enumerate() {
+            assert_eq!(
+                opened.classify_readback(remote),
+                MessageUpdateReadbackState::Diverged,
+                "readback case {index}"
+            );
+        }
     }
 }

@@ -19,6 +19,7 @@ use std::{
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use prost::Message;
 use rustpush::{
     cloud_messages::{
         CloudMessageRecordKind, CloudMessageRecordPage, CloudMessageRecordPageChange,
@@ -4425,6 +4426,122 @@ pub(crate) fn cloud_sync_unprotect_raw_envelope(
     decode_raw_envelope(&encoded, generation, stream)
 }
 
+/// One newly fetched CloudKit record retained under an uncommitted protected
+/// lease. The local journal must adopt the reference before committing the
+/// lease, or roll the lease back.
+pub(crate) struct CloudNativeProtectedRecordReadback {
+    pub(crate) protected_raw_record_reference: String,
+    pub(crate) lease_reference: String,
+}
+
+/// Protects one exact Message record returned by a decisive update readback.
+/// Raw identifiers, ETags and encrypted fields remain native-only.
+pub(crate) fn cloud_sync_stage_protected_message_record_readback(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    generation: u64,
+    record: &rustpush::cloudkit_proto::Record,
+) -> Result<CloudNativeProtectedRecordReadback, CloudNativeFetchFailure> {
+    if generation == 0 {
+        return Err(CloudNativeFetchFailure::new(
+            CloudNativeFailureCategory::LocalStorage,
+            CloudNativeSafeCode::InvalidRequest,
+            None,
+        ));
+    }
+    let record_name = record
+        .record_identifier
+        .as_ref()
+        .and_then(|identifier| identifier.value.as_ref())
+        .and_then(|value| value.name.as_deref())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            CloudNativeFetchFailure::new(
+                CloudNativeFailureCategory::MalformedRecord,
+                CloudNativeSafeCode::MalformedResponse,
+                None,
+            )
+        })?;
+    let record_type = record
+        .r#type
+        .as_ref()
+        .and_then(|value| value.name.as_deref())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            CloudNativeFetchFailure::new(
+                CloudNativeFailureCategory::MalformedRecord,
+                CloudNativeSafeCode::MalformedResponse,
+                None,
+            )
+        })?;
+    let etag = record
+        .etag
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            CloudNativeFetchFailure::new(
+                CloudNativeFailureCategory::MalformedRecord,
+                CloudNativeSafeCode::MalformedResponse,
+                None,
+            )
+        })?;
+    let raw = record.encode_to_vec();
+    if raw.is_empty() || raw.len() > MAX_RAW_RECORD_BYTES {
+        return Err(CloudNativeFetchFailure::new(
+            CloudNativeFailureCategory::MalformedRecord,
+            CloudNativeSafeCode::OversizedRecord,
+            None,
+        ));
+    }
+    let change = CloudMessageRecordPageChange {
+        record_name: Some(record_name.to_owned()),
+        record_type: Some(record_type.to_owned()),
+        change_type: Some(1),
+        system_fields: Some(CloudMessageRecordSystemFields {
+            etag: Some(etag.to_owned()),
+            created_at: record
+                .time_statistics
+                .as_ref()
+                .and_then(|statistics| statistics.creation.as_ref())
+                .and_then(|date| date.time),
+            modified_at: record
+                .time_statistics
+                .as_ref()
+                .and_then(|statistics| statistics.modification.as_ref())
+                .and_then(|date| date.time),
+            permission: record.permission,
+        }),
+        encrypted_record: Some(raw.clone()),
+        tombstone_payload: None,
+        kind: CloudMessageRecordKind::EncryptedUpsert,
+    };
+    let scope = CloudNativeProtectionScope::new(account_fingerprint, CloudNativeStream::Messages)?;
+    let encoded =
+        encode_raw_envelope(generation, CloudNativeStream::Messages, &change, &raw, true)?;
+    let store = PlatformCloudNativeProtectedStore::new(storage_directory);
+    let batch = store
+        .protect_batch(
+            &scope,
+            &[CloudNativePlaintext {
+                purpose: CloudNativeProtectionPurpose::RawRecord,
+                value: encoded,
+            }],
+        )
+        .map_err(map_store_failure)?;
+    if batch.references.len() != 1 {
+        let _ = store.rollback_lease(&batch.lease);
+        return Err(CloudNativeFetchFailure::new(
+            CloudNativeFailureCategory::LocalStorage,
+            CloudNativeSafeCode::ProtectionFailed,
+            None,
+        ));
+    }
+    Ok(CloudNativeProtectedRecordReadback {
+        protected_raw_record_reference: batch.references[0].value().to_owned(),
+        lease_reference: batch.lease.value().to_owned(),
+    })
+}
+
 /// Called only after the local ObjectBox journal transaction has adopted every
 /// reference in the page.
 pub(crate) fn cloud_sync_commit_protected_page(
@@ -5648,6 +5765,68 @@ mod tests {
                 .and_then(|record_type| record_type.name.as_deref()),
             Some("Message")
         );
+    }
+
+    #[test]
+    fn decisive_update_readback_stages_exact_raw_record_under_one_lease() {
+        use rustpush::cloudkit_proto::{
+            record, Identifier, RecordIdentifier, RecordZoneIdentifier,
+        };
+
+        let directory = tempdir().expect("temporary protected store");
+        let account = "A".repeat(43);
+        let record = rustpush::cloudkit_proto::Record {
+            record_identifier: Some(RecordIdentifier {
+                value: Some(Identifier {
+                    name: Some("message-readback-record".to_owned()),
+                    r#type: Some(1),
+                }),
+                zone_identifier: Some(RecordZoneIdentifier {
+                    value: Some(Identifier {
+                        name: Some("messageManateeZone".to_owned()),
+                        r#type: Some(6),
+                    }),
+                    owner_identifier: Some(Identifier {
+                        name: Some("record-owner".to_owned()),
+                        r#type: Some(7),
+                    }),
+                    ..Default::default()
+                }),
+            }),
+            r#type: Some(record::Type {
+                name: Some("MessageEncryptedV3".to_owned()),
+            }),
+            etag: Some("readback-etag".to_owned()),
+            permission: Some(1),
+            ..Default::default()
+        };
+        let raw = record.encode_to_vec();
+        let staged = cloud_sync_stage_protected_message_record_readback(
+            directory.path().to_path_buf(),
+            account.clone(),
+            7,
+            &record,
+        )
+        .expect("stage readback");
+        let scope =
+            CloudNativeProtectionScope::new(account, CloudNativeStream::Messages).expect("scope");
+        let opened = cloud_sync_unprotect_raw_envelope(
+            directory.path().to_path_buf(),
+            &scope,
+            CloudNativeStream::Messages,
+            7,
+            &staged.protected_raw_record_reference,
+        )
+        .expect("open staged readback");
+        assert_eq!(opened.record_name(), Some("message-readback-record"));
+        assert_eq!(opened.record_type(), Some("MessageEncryptedV3"));
+        assert_eq!(opened.etag(), Some("readback-etag"));
+        assert_eq!(opened.raw(), Some(raw.as_slice()));
+        cloud_sync_rollback_protected_page_lease(
+            directory.path().to_path_buf(),
+            &staged.lease_reference,
+        )
+        .expect("rollback readback lease");
     }
 
     #[test]
