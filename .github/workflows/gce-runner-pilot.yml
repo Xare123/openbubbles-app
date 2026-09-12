@@ -93,7 +93,7 @@ env:
   AUTOMATIC_UPLOADS: ${{ inputs.automatic_uploads || false }}
   RUNNER_LANE: ${{ inputs.runner_lane || 'primary' }}
   SOURCE_REF: ${{ inputs.source_ref || github.sha }}
-  TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-sms-chat-contract
+  TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-update-seam
 
 jobs:
   create-runner:
