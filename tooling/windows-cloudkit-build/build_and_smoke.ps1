@@ -128,12 +128,13 @@ $nativeDiagnosticCases = @(
 $nativeExtensionScope = 'cloud_sync_extension_payload::tests::'
 $nativeConverterScope = 'cloud_sync_canonical_converter::tests::'
 $nativeDtoScope = 'cloud_sync_canonical_dto::tests::'
-$nativeExtensionMinimum = 22
+$nativeExtensionMinimum = 24
 $nativeConverterMinimum = 78
 $nativeDtoMinimum = 23
 $nativeExtensionSpotCases = @(
     'cloud_sync_extension_payload::tests::generated_json_has_exact_version_one_wire_contract_and_roundtrips',
     'cloud_sync_extension_payload::tests::minimum_balloon_is_metadata_not_base_only_success'
+    'cloud_sync_extension_payload::tests::session_metadata_has_closed_versions_and_separate_wire_identity'
 )
 $nativeConverterSpotCases = @(
     'cloud_sync_canonical_converter::tests::extension_archive_projects_renderer_metadata_with_base_message',
@@ -207,6 +208,7 @@ $requiredFiles = @(
     'rust/src/api/api.rs',
     'test/fixtures/cloud_sync/cloudkit_repair_digest_golden_v1.tsv',
     'test/fixtures/cloud_sync/extension_metadata_digest_v1.json',
+    'test/fixtures/cloud_sync/extension_session_digest_v2.json',
     'test/fixtures/cloud_sync/.gitattributes',
     'rust/src/frb_generated.rs',
     'lib/src/rust/frb_generated.dart',
@@ -342,6 +344,11 @@ $sourceInputPaths = @(
     'lib/services/rustpush/cloud_sync/cloudkit_repair_content_digest.dart',
     'lib/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart',
     'lib/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart',
+    'lib/services/rustpush/cloud_sync/objectbox_cloud_semantic_store_gateway.dart',
+    'lib/services/rustpush/cloud_sync/transient_cloud_canonical_identity_registry.dart',
+    'lib/services/rustpush/cloud_sync/cloudkit_quarantine_repair.dart',
+    'lib/services/ui/extension_service.dart',
+    'test/services/ui/extension_service_cache_test.dart',
     'test/services/cloud_sync/objectbox_canonical_semantic_entity_adapter_test.dart',
     'test/services/cloud_sync/rust_cloud_semantic_decoder_test.dart',
     'test/services/cloud_sync/cloud_sync_local_send_encoder_test.dart',
@@ -351,6 +358,7 @@ $sourceInputPaths = @(
     'test/services/cloud_sync/cloud_sync_extension_test_fixture.dart',
     'test/fixtures/cloud_sync/cloudkit_repair_digest_golden_v1.tsv',
     'test/fixtures/cloud_sync/extension_metadata_digest_v1.json',
+    'test/fixtures/cloud_sync/extension_session_digest_v2.json',
     'test/fixtures/cloud_sync/.gitattributes',
     'test/services/cloud_sync/cloudkit_repair_content_digest_golden_test.dart'
 )
@@ -511,6 +519,11 @@ try {
         'test/services/cloud_sync/cloud_sync_prepared_extension_test.dart',
         'test/services/cloud_sync/cloud_sync_extension_integration_test.dart',
         'test/services/cloud_sync/cloudkit_repair_content_digest_golden_test.dart',
+        'test/services/cloud_sync/cloud_inbox_applier_test.dart',
+        'test/services/cloud_sync/objectbox_cloud_semantic_store_gateway_test.dart',
+        'test/services/cloud_sync/cloudkit_quarantine_repair_test.dart',
+        'test/services/cloud_sync/transient_cloud_canonical_identity_registry_test.dart',
+        'test/services/ui/extension_service_cache_test.dart',
         'test/services/cloud_sync/objectbox_canonical_semantic_entity_adapter_test.dart',
         'test/services/cloud_sync/rust_cloud_semantic_decoder_test.dart'
     )
