@@ -137,6 +137,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   CloudSyncSemanticRetryWait? retryWait,
   CloudSyncClock? clock,
   CloudSyncObserverFactory? observerFactory,
+  CloudSyncProgressSink? progress,
   CloudSyncSemanticSessionScheduler? scheduleSession,
   CloudSyncProtectedResetCoordinator? coordinateProtectedReset,
   CloudSyncPendingResetRecovery? recoverPendingReset,
@@ -163,6 +164,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   retryWaitOverrideForTest: retryWait,
   clockOverrideForTest: clock,
   observerFactory: observerFactory,
+  progress: progress,
   scheduleSession: scheduleSession,
   coordinateProtectedReset: coordinateProtectedReset,
   recoverPendingReset: recoverPendingReset,
@@ -292,6 +294,75 @@ void main() {
   tearDown(() {
     privateStorageDirectory.deleteSync(recursive: true);
   });
+
+  test(
+    'foreground pause persists a complete safe pass and releases native pause',
+    () async {
+      final pause = _RecordingNativeWriterPause();
+      final stores = <String, InMemoryCloudSyncStore>{};
+      final phases = _ProgressSink();
+      final fetchedZones = <String>[];
+      late CloudSyncManualSemanticPullSampler sampler;
+      sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: pause,
+        progress: phases,
+        createStore: (scope) async =>
+            stores.putIfAbsent(scope.zone, InMemoryCloudSyncStore.new),
+        createInboxApplier: (_, _, _) async => FakeCloudInboxApplier(),
+        createRawTransport: (_, scope, _) async {
+          final transport = FakeCloudSyncTransport();
+          transport.fetchHandler =
+              (scope, previousToken, generation, limit) async {
+                fetchedZones.add(scope.zone);
+                sampler.cancelActiveCatchUp();
+                return CloudFetchBatch(
+                  scope: scope,
+                  changes: const [],
+                  batchId: 'empty-${scope.zone}',
+                  generation: generation,
+                  nextToken: previousToken,
+                  hasMore: false,
+                );
+              };
+          return transport;
+        },
+      );
+      var persisted = 0;
+      await expectLater(
+        sampler.runConfirmedCatchUpAndPersist(
+          finishActiveRemotePassOnCancel: true,
+          persistReport: (report) async {
+            expect(report.safeToContinueDrain, isTrue);
+            persisted++;
+            return 'saved';
+          },
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'code',
+            'cloud_sync_semantic_drain_cancelled',
+          ),
+        ),
+      );
+      expect(fetchedZones, CloudSyncManualSemanticPullSampler.zones);
+      expect(persisted, 1);
+      expect(pause.resumeCalls, 1);
+      expect(sampler.isActive, isFalse);
+      expect(
+        phases.phases,
+        containsAllInOrder([
+          CloudSyncProgressPhase.authentication,
+          CloudSyncProgressPhase.pcs,
+          CloudSyncProgressPhase.replaying,
+        ]),
+      );
+    },
+  );
 
   test('settled outbox admission respects the report count boundary', () {
     final fingerprint = 'a' * 64;
@@ -3670,6 +3741,17 @@ final class _ReadOnlyTombstoneFakeCloudInboxApplier
         ? const CloudInboxApplyResult.tombstoneReadOnlyAcknowledged()
         : const CloudInboxApplyResult.applied();
   }
+}
+
+class _ProgressSink implements CloudSyncProgressSink {
+  final phases = <CloudSyncProgressPhase>[];
+  @override
+  void activity(CloudSyncProgressPhase phase, [String? zone]) {
+    phases.add(phase);
+  }
+
+  @override
+  void projectionWindow(int examined, int applied) {}
 }
 
 final class _RecordingNativeWriterPause implements CloudSyncNativeWriterPause {

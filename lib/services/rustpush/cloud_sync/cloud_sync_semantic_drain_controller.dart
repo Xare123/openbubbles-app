@@ -78,15 +78,26 @@ final class CloudSyncSemanticDrainController {
     required CloudSyncSemanticPullReportFileWriter reportWriter,
     int maximumPasses = defaultMaximumPasses,
     bool sweepRetainedAtHead = true,
+    void Function(CloudSyncSemanticPullReport)? onPersistedReport,
+    bool finishActiveRemotePassOnCancel = false,
   }) {
+    Future<Object> persist(CloudSyncSemanticPullReport report) async {
+      final reference = await reportWriter.write(report);
+      try {
+        onPersistedReport?.call(report);
+      } catch (_) {}
+      return reference;
+    }
+
     return CloudSyncSemanticDrainController(
-      persistReport: reportWriter.write,
+      persistReport: persist,
       maximumPasses: maximumPasses,
       runSession: (action) => sampler.runConfirmedSession(action),
       runCatchUp: () => sampler.runConfirmedCatchUpAndPersist(
-        persistReport: reportWriter.write,
+        persistReport: persist,
         maximumRemotePasses: maximumPasses,
         sweepRetainedAtHead: sweepRetainedAtHead,
+        finishActiveRemotePassOnCancel: finishActiveRemotePassOnCancel,
       ),
       cancelCatchUp: sampler.cancelActiveCatchUp,
     );

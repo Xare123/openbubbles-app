@@ -1363,6 +1363,7 @@ class CloudSyncEngine {
       while (true) {
         await _renewCoordinatorLeaseOrThrow();
         try {
+          _emit(CloudSyncEventType.fetchStarted, at: _clock());
           batch = await _transport
               .fetchChanges(
                 scope,
@@ -1678,6 +1679,7 @@ class CloudSyncEngine {
     required int maximumEntries,
     required bool emitEvent,
   }) async {
+    _emit(CloudSyncEventType.inboxApplyStarted, at: _clock());
     var counters = const CloudSyncRunCounters();
     var processedEntries = 0;
     CloudFailureCategory? blockingFailureCategory;

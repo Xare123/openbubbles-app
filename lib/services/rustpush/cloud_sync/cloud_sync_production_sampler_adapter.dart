@@ -521,6 +521,7 @@ final class CloudSyncProductionSemanticPullAdapter {
     required String architecture,
     required String buildCommit,
     CloudSyncObserverFactory? observerFactory,
+    CloudSyncProgressSink? progress,
     RustCloudSyncProtectionBindings? protectionBindings,
     NativeProtectedCloudSyncBindings? transportBindings,
     RustCloudSemanticDecodeBindings? semanticDecodeBindings,
@@ -560,6 +561,7 @@ final class CloudSyncProductionSemanticPullAdapter {
       nativeWriterPause: activeNativeWriterPause,
     );
     sampler = CloudSyncManualSemanticPullSampler(
+      progress: progress,
       readPreflight: readPreflight,
       ensureAuthSnapshot: authProvider.ensureReadAuthenticationUnderInterlock,
       prepareAuthSnapshot:

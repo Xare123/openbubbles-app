@@ -130,6 +130,7 @@ final class CloudSyncManualSemanticPullSampler {
     required this.architecture,
     required this.buildCommit,
     this._observerFactory,
+    this.progress,
     this._readDiagnosticCounts,
     CloudSyncSemanticSessionScheduler? scheduleSession,
     bool? compileGateOverrideForTest,
@@ -194,6 +195,15 @@ final class CloudSyncManualSemanticPullSampler {
   final String architecture;
   final String buildCommit;
   final CloudSyncObserverFactory? _observerFactory;
+  final CloudSyncProgressSink? progress;
+
+  // Presentation must not interrupt a protected session or its release path.
+  void _activity(CloudSyncProgressPhase phase, [String? zone]) {
+    try {
+      progress?.activity(phase, zone);
+    } catch (_) {}
+  }
+
   final CloudSyncSemanticDiagnosticSnapshotReader? _readDiagnosticCounts;
   final Duration _fetchTimeout;
   final CloudSyncSemanticRetryWait _retryWait;
@@ -205,6 +215,7 @@ final class CloudSyncManualSemanticPullSampler {
   bool _active = false;
   bool _nativePauseUncertain = false;
   CloudSyncCancellationToken? _activeCatchUpCancellation;
+  bool _finishActiveRemotePassOnCancel = false;
 
   bool get isActive => _active;
 
@@ -259,6 +270,7 @@ final class CloudSyncManualSemanticPullSampler {
     int maximumRemotePasses = maximumConfirmedRemotePasses,
     int projectionBatchSize = retainedProjectionSweepBatchSize,
     bool sweepRetainedAtHead = true,
+    bool finishActiveRemotePassOnCancel = false,
   }) async {
     if (maximumRemotePasses < 1 ||
         maximumRemotePasses > maximumConfirmedRemotePasses) {
@@ -273,6 +285,7 @@ final class CloudSyncManualSemanticPullSampler {
     _active = true;
     final cancellationToken = CloudSyncCancellationToken();
     _activeCatchUpCancellation = cancellationToken;
+    _finishActiveRemotePassOnCancel = finishActiveRemotePassOnCancel;
     var completedRemotePasses = 0;
     var retries = 0;
     var cumulativeWait = Duration.zero;
@@ -340,6 +353,7 @@ final class CloudSyncManualSemanticPullSampler {
           retries++;
           cumulativeWait += delay;
           retryFence = failure.fence;
+          _activity(CloudSyncProgressPhase.waiting);
           await _retryWait(delay, cancellationToken);
           _throwIfCancelled(cancellationToken);
         } on _CloudSyncSemanticResetInterruption catch (failure) {
@@ -360,6 +374,7 @@ final class CloudSyncManualSemanticPullSampler {
     } finally {
       if (identical(_activeCatchUpCancellation, cancellationToken)) {
         _activeCatchUpCancellation = null;
+        _finishActiveRemotePassOnCancel = false;
       }
       if (!_nativePauseUncertain) _active = false;
     }
@@ -399,6 +414,9 @@ final class CloudSyncManualSemanticPullSampler {
         }
         throw StateError('cloud_sync_semantic_drain_unsafe_report');
       }
+      // User pause finishes and persists the current remote pass. Do not hide
+      // a failed safety report behind a successful pause disposition.
+      _throwIfCancelled(cancellationToken);
       if (!report.allZonesObservedEmptyTerminalRead) {
         if (pass == maximumRemotePasses) {
           return (
@@ -507,14 +525,17 @@ final class CloudSyncManualSemanticPullSampler {
   Future<T> _executeConfirmedSessionWithContext<T>(
     Future<T> Function(_CloudSyncConfirmedSessionContext session) action, {
     CloudSyncCancellationToken? cancellationToken,
-  }) => _scheduleSession<T>(() async {
-    // Cancellation may occur while waiting behind a media operation.
-    if (cancellationToken != null) _throwIfCancelled(cancellationToken);
-    return _executeAdmittedSessionWithContext(
-      action,
-      cancellationToken: cancellationToken,
-    );
-  });
+  }) {
+    _activity(CloudSyncProgressPhase.waiting);
+    return _scheduleSession<T>(() async {
+      // Cancellation may occur while waiting behind a media operation.
+      if (cancellationToken != null) _throwIfCancelled(cancellationToken);
+      return _executeAdmittedSessionWithContext(
+        action,
+        cancellationToken: cancellationToken,
+      );
+    });
+  }
 
   static Future<T> _runSessionImmediately<T>(Future<T> Function() action) =>
       action();
@@ -535,6 +556,7 @@ final class CloudSyncManualSemanticPullSampler {
           ) {
             var completedPass = false;
             try {
+              _activity(CloudSyncProgressPhase.authentication);
               final ensuredAuth = await _ensureAuthSnapshot();
               if (ensuredAuth == null) throw StateError('account_unavailable');
               late final Object pauseToken;
@@ -562,7 +584,9 @@ final class CloudSyncManualSemanticPullSampler {
                     final report = await _runConfirmedUnderInterlock(
                       pauseToken,
                       ensuredAuth,
-                      cancellationToken,
+                      _finishActiveRemotePassOnCancel
+                          ? null
+                          : cancellationToken,
                     );
                     completedPass = true;
                     return report;
@@ -629,6 +653,7 @@ final class CloudSyncManualSemanticPullSampler {
     final before = await _readPreflight();
     _validatePreflight(before);
     await _requireSameAuth(ensuredAuth);
+    _activity(CloudSyncProgressPhase.pcs);
     final auth = await _prepareAuthSnapshot(pauseToken, ensuredAuth);
     if (auth == null) throw StateError('account_unavailable');
     if (!ensuredAuth.sameIdentity(auth)) {
@@ -655,6 +680,7 @@ final class CloudSyncManualSemanticPullSampler {
         pauseToken,
       );
       final config = _config();
+      _activity(CloudSyncProgressPhase.replaying, zone);
       await _repairAppliedProjections(
         auth: auth,
         scope: scope,
@@ -876,6 +902,12 @@ final class CloudSyncManualSemanticPullSampler {
           state.retained += result.retained;
           state.elapsedMilliseconds += windowStopwatch.elapsedMilliseconds;
           state.cursor = result.lastExaminedSequence;
+          try {
+            this.progress?.projectionWindow(
+              result.examined,
+              result.reprojected,
+            );
+          } catch (_) {}
           roundReprojected += result.reprojected;
           roundRetained += result.retained;
           for (final entry in diagnostics.entries) {
@@ -943,6 +975,7 @@ final class CloudSyncManualSemanticPullSampler {
     }
     late final CloudRetainedProjectionWindowResult result;
     try {
+      _activity(CloudSyncProgressPhase.replaying, bound.scope.zone);
       result = await (inboxApplier as CloudRetainedProjectionWindowReprocessor)
           .reprojectRetainedSaveWindow(
             scope: bound.scope,
@@ -997,6 +1030,7 @@ final class CloudSyncManualSemanticPullSampler {
       throw StateError('account_changed');
     }
     await _validateProjectionProofState(proof);
+    _activity(CloudSyncProgressPhase.pcs);
     final prepared = await _prepareAuthSnapshot(
       session.pauseToken,
       session.ensuredAuth,

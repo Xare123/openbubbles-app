@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/posterkit.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/profile_scaffold.dart';
+import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_progress_card.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/registration_repair_dialog.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/theming/avatar/avatar_crop.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dart';
@@ -500,6 +501,14 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                       ) : const SizedBox.shrink()),
                     ]
                 ),
+                if (pushService.cloudSyncV2ProgressVisible)
+                  SettingsSection(backgroundColor: tileColor, children: [
+                    CloudSyncProgressCard(
+                      progress: pushService.cloudSyncV2Progress,
+                      isAvailable: () => pushService.cloudSyncV2ManualSemanticPullAvailable,
+                      onStart: pushService.startCloudSyncV2Progress,
+                    ),
+                  ]),
                 SettingsHeader(
                     iosSubtitle: iosSubtitle,
                     materialSubtitle: materialSubtitle,

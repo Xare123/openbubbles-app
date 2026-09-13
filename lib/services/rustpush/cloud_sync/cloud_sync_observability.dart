@@ -1,10 +1,31 @@
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_models.dart';
 
+enum CloudSyncProgressPhase {
+  idle,
+  waiting,
+  authentication,
+  pcs,
+  fetching,
+  replaying,
+  pausing,
+  paused,
+  remoteHead,
+  error,
+}
+
+/// Optional content-free presentation sink; never a source of sync authority.
+abstract interface class CloudSyncProgressSink {
+  void activity(CloudSyncProgressPhase phase, [String? zone]);
+  void projectionWindow(int examined, int applied);
+}
+
 enum CloudSyncEventType {
   runStarted,
   runSkipped,
+  fetchStarted,
   fetchCompleted,
+  inboxApplyStarted,
   inboxApplied,
   outboxFlushed,
   authenticationRefreshed,

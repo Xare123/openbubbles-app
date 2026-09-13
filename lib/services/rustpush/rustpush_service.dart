@@ -62,6 +62,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shado
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_update_executor.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_preflight.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
@@ -962,7 +964,7 @@ class RustPushBackend implements BackendService {
           throw StateError('cloud_sync_attachment_source_changed');
         }
       },
-      action: download,
+      action: () => pushService.cloudSyncV2Progress.materialize(download),
     );
   }
 
@@ -8006,6 +8008,7 @@ class RustPushService extends GetxService {
   bool _cloudSyncV2PcsPreparationQuiescing = false;
   Future<CloudSyncSemanticDrainResult>? _cloudSyncV2SemanticPullInFlight;
   final _cloudSyncV2AttachmentGate = CloudAttachmentSyncGate();
+  final cloudSyncV2Progress = CloudSyncProgress();
   bool _cloudSyncV2SemanticPullQuiescing = false;
   static const int _cloudSyncV2AutomaticCatchUpMaximumBatches = 8;
   static const Duration _cloudSyncV2AutomaticCatchUpYield =
@@ -9755,6 +9758,25 @@ class RustPushService extends GetxService {
         abi == ffi.Abi.windowsX64;
   }
 
+  // Normal settings placement does not bypass rollout or developer safety gates.
+  bool get cloudSyncV2ProgressVisible =>
+      CloudSyncDevGate.manualSemanticPullEnabled && _cloudSyncV2CanaryRuntimeAllowed;
+
+  Future<void> startCloudSyncV2Progress(CloudSyncSpeed speed) =>
+      cloudSyncV2Progress.start(speed, () async {
+        final result = await runCloudSyncV2AutomaticSemanticCatchUpConfirmed(
+          progress: cloudSyncV2Progress,
+        );
+        // Match the existing confirmed catch-up UI's local list refresh.
+        try {
+          await repairCloudSyncChatLatestMessageDates();
+          await chats.init(force: true);
+        } catch (_) {
+          cloudSyncV2Progress.refreshFailed = true;
+        }
+        return result;
+      });
+
   /// Content-free lifecycle state for the removable canary ADB controller.
   /// (CANARY_ADB_HOOK: remove with canary ADB control.)
   bool get cloudSyncV2CanaryAdbSemanticPullActive =>
@@ -9827,7 +9849,7 @@ class RustPushService extends GetxService {
   /// A hard batch cap prevents an endless foreground operation if a server
   /// repeatedly returns non-terminal history.
   Future<CloudSyncSemanticDrainResult>
-  runCloudSyncV2AutomaticSemanticCatchUpConfirmed() {
+  runCloudSyncV2AutomaticSemanticCatchUpConfirmed({CloudSyncProgress? progress}) {
     if (!CloudSyncDevGate.manualSemanticPullEnabled) {
       throw StateError('cloud_sync_semantic_pull_disabled');
     }
@@ -9851,6 +9873,7 @@ class RustPushService extends GetxService {
 
     final future = _runCloudSyncV2AutomaticSemanticCatchUp(
       expectedCloudMessagesClient: expectedCloudMessagesClient,
+      progress: progress,
     );
     _cloudSyncV2SemanticPullInFlight = future;
     return future.whenComplete(() {
@@ -9991,11 +10014,15 @@ class RustPushService extends GetxService {
   Future<CloudSyncSemanticDrainResult>
   _runCloudSyncV2AutomaticSemanticCatchUp({
     required Object expectedCloudMessagesClient,
+    CloudSyncProgress? progress,
   }) async {
     var totalPasses = 0;
+    final maximumBatches = progress?.speed.maximumBatches ??
+        _cloudSyncV2AutomaticCatchUpMaximumBatches;
     for (var batch = 1;
-        batch <= _cloudSyncV2AutomaticCatchUpMaximumBatches;
+        batch <= maximumBatches;
         batch++) {
+      progress?.checkPause();
       if (_cloudSyncV2SemanticPullQuiescing || loggingOut) {
         throw StateError('cloud_sync_semantic_pull_quiescing');
       }
@@ -10008,7 +10035,9 @@ class RustPushService extends GetxService {
 
       final result = await _runCloudSyncV2ManualSemanticPull(
         maximumPasses: CloudSyncSemanticDrainController.defaultMaximumPasses,
+        progress: progress,
       );
+      if (progress != null) progress.batches = batch;
       totalPasses += result.passes;
       final combined = CloudSyncSemanticDrainResult(
         passes: totalPasses,
@@ -10027,7 +10056,7 @@ class RustPushService extends GetxService {
         );
         return combined;
       }
-      if (batch == _cloudSyncV2AutomaticCatchUpMaximumBatches) {
+      if (batch == maximumBatches) {
         Logger.info(
           "Cloud Sync V2 automatic catch-up paused at safety cap "
           "batches=$batch passes=$totalPasses",
@@ -10043,6 +10072,7 @@ class RustPushService extends GetxService {
   _runCloudSyncV2ManualSemanticPull({
     required int maximumPasses,
     bool allowAndroidBackgroundIsolate = false,
+    CloudSyncProgress? progress,
   }) {
     final expectedClient = state?.icloudServices?.cloudMessagesClient;
     final expectedStorage = statePath;
@@ -10055,6 +10085,7 @@ class RustPushService extends GetxService {
       expectedClient: expectedClient,
       expectedStorage: expectedStorage,
       allowAndroidBackgroundIsolate: allowAndroidBackgroundIsolate,
+      progress: progress,
     );
   }
 
@@ -10080,6 +10111,7 @@ class RustPushService extends GetxService {
     required Object? expectedClient,
     required String expectedStorage,
     bool allowAndroidBackgroundIsolate = false,
+    CloudSyncProgress? progress,
   }) async {
     if (statePath.isEmpty || !Directory(statePath).existsSync()) {
       throw StateError('cloud_sync_private_storage_unavailable');
@@ -10113,7 +10145,9 @@ class RustPushService extends GetxService {
         protectorSentinelValid:
             CloudSyncProtectorHealthProbe(protector: protector).read,
       );
+      final evidenceFactory = _cloudSyncV2EvidenceObserverFactory();
       final adapter = CloudSyncProductionSemanticPullAdapter(
+        progress: progress,
         scheduleSession: <T>(Future<T> Function() action) =>
             _cloudSyncV2AttachmentGate.run<T>(
           validate: () => _validateCloudSyncV2QueuedRead(
@@ -10129,7 +10163,9 @@ class RustPushService extends GetxService {
         platform: Platform.operatingSystem,
         architecture: ffi.Abi.current().toString(),
         buildCommit: _cloudSyncV2BuildIdentifier(),
-        observerFactory: _cloudSyncV2EvidenceObserverFactory(),
+        observerFactory: progress == null ? evidenceFactory : (scope) async =>
+            CloudSyncProgressObserver(progress, scope.zone,
+              await evidenceFactory(scope)),
         verboseDiagnosticsEnabled: () =>
             ss.settings.developerEnabled.value &&
             ss.settings.cloudSyncV2VerboseDiagnosticsEnabled.value,
@@ -10142,11 +10178,17 @@ class RustPushService extends GetxService {
         sampler: adapter.sampler,
         reportWriter: reportWriter,
         maximumPasses: maximumPasses,
+        onPersistedReport: progress?.report,
+        finishActiveRemotePassOnCancel: progress != null,
         // A metadata wake must not redo a many-minute exhaustive repair of
         // unchanged retained history. Explicit user catch-up keeps that sweep.
         sweepRetainedAtHead: !allowAndroidBackgroundIsolate,
       );
       try {
+        progress?.checkPause();
+        if (progress != null) {
+          progress.cancelWindow = () { unawaited(controller.dispose()); };
+        }
         final result = await controller.drainConfirmedAndPersist(
           executionBudget: allowAndroidBackgroundIsolate
               ? CloudSyncAndroidBackgroundPolicy.executionBudget
@@ -10193,6 +10235,7 @@ class RustPushService extends GetxService {
         return result;
       } finally {
         await controller.dispose();
+        if (progress != null) progress.cancelWindow = null;
       }
     } finally {
       chats.restoring = restoringBeforeSemanticPull;
