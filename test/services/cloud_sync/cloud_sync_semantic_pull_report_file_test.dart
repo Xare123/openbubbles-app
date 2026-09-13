@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_read_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -982,26 +983,73 @@ void main() {
     }
   });
 
-  test('rejects non-four page limits and fetched counters above 200', () async {
-    final writer = CloudSyncSemanticPullReportFileWriter(
-      privateReportDirectory: reports.path,
-      trustedStorageRoot: root.path,
-    );
-    for (final candidate in [
-      _report(DateTime.utc(2026, 8, 29, 1, 2, 3), pageLimit: 1),
-      _report(
-        DateTime.utc(2026, 8, 29, 1, 2, 4),
-        pageLimit: 4,
-        changeLimit: 50,
-        chatFetched: 201,
-      ),
-    ]) {
-      await expectLater(
-        writer.write(candidate),
-        throwsA(isA<CloudSyncSemanticPullReportFileException>()),
+  test(
+    'default writer rejects other budgets and fetched counters above 200',
+    () async {
+      final writer = CloudSyncSemanticPullReportFileWriter(
+        privateReportDirectory: reports.path,
+        trustedStorageRoot: root.path,
       );
-    }
-  });
+      for (final candidate in [
+        _report(DateTime.utc(2026, 8, 29, 1, 2, 3), pageLimit: 1),
+        _report(
+          DateTime.utc(2026, 8, 29, 1, 2, 4),
+          pageLimit: 4,
+          changeLimit: 50,
+          chatFetched: 201,
+        ),
+      ]) {
+        await expectLater(
+          writer.write(candidate),
+          throwsA(isA<CloudSyncSemanticPullReportFileException>()),
+        );
+      }
+    },
+  );
+
+  test(
+    'Regular writer persists actual limits and rejects excess work',
+    () async {
+      final writer = CloudSyncSemanticPullReportFileWriter(
+        privateReportDirectory: reports.path,
+        trustedStorageRoot: root.path,
+        readBudget: CloudSyncReadBudget.regular,
+      );
+      CloudSyncSemanticPullReport candidate({
+        int pages = 1,
+        int fetched = 50,
+        int applied = 82,
+      }) => _report(
+        DateTime.utc(2026, 9, 13),
+        pageLimit: pages,
+        zoneReports: [
+          _cleanZone(
+            'chats',
+            fetched: fetched,
+            applied: applied,
+            observedEmptyTerminalRead: false,
+          ),
+          _cleanZone('messages'),
+          _cleanZone('attachments'),
+        ],
+      );
+      final file = await writer.write(candidate());
+      final json =
+          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      expect(json['pageLimit'], 1);
+      expect((json['zones'] as List).first['applied'], 82);
+      for (final invalid in [
+        candidate(pages: 4),
+        candidate(fetched: 51),
+        candidate(applied: 83),
+      ]) {
+        await expectLater(
+          writer.write(invalid),
+          throwsA(isA<CloudSyncSemanticPullReportFileException>()),
+        );
+      }
+    },
+  );
 
   test('bounds local work counters at 350', () async {
     final writer = CloudSyncSemanticPullReportFileWriter(

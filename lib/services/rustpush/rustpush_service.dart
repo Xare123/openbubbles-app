@@ -63,6 +63,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_update_executor.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_read_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_pcs_operation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
@@ -10075,7 +10076,8 @@ class RustPushService extends GetxService {
       }
 
       final result = await _runCloudSyncV2ManualSemanticPull(
-        maximumPasses: CloudSyncSemanticDrainController.defaultMaximumPasses,
+        maximumPasses: progress?.speed.passesPerBatch ??
+            CloudSyncSemanticDrainController.defaultMaximumPasses,
         progress: progress,
       );
       if (progress != null) progress.batches = batch;
@@ -10104,7 +10106,8 @@ class RustPushService extends GetxService {
         );
         return combined;
       }
-      await Future<void>.delayed(_cloudSyncV2AutomaticCatchUpYield);
+      await Future<void>.delayed(progress?.speed.pauseBetweenBatches ??
+          _cloudSyncV2AutomaticCatchUpYield);
     }
     throw StateError('cloud_sync_semantic_remote_pass_limit_unreachable');
   }
@@ -10189,6 +10192,7 @@ class RustPushService extends GetxService {
       final evidenceFactory = _cloudSyncV2EvidenceObserverFactory();
       final adapter = CloudSyncProductionSemanticPullAdapter(
         progress: progress,
+        readBudget: progress?.speed.readBudget ?? CloudSyncReadBudget.standard,
         scheduleSession: <T>(Future<T> Function() action) =>
             _cloudSyncV2AttachmentGate.run<T>(
           validate: () => _validateCloudSyncV2QueuedRead(
@@ -10214,6 +10218,7 @@ class RustPushService extends GetxService {
       final reportWriter = CloudSyncSemanticPullReportFileWriter(
         privateReportDirectory: join(statePath, 'cloud-sync-v2', 'reports'),
         trustedStorageRoot: statePath,
+        readBudget: progress?.speed.readBudget ?? CloudSyncReadBudget.standard,
       );
       final controller = CloudSyncSemanticDrainController.production(
         sampler: adapter.sampler,

@@ -31,8 +31,8 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
       builder: (context) => AlertDialog(
         title: const Text('Use Turbo sync?'),
         content: const Text(
-          'Turbo can slow your phone, make it hot, and drain the battery. '
-          'It allows up to 16 foreground batches instead of 8. Each batch keeps the same safe limits. '
+          'Turbo uses larger chunks and can slow your phone, make it hot, and drain the battery. '
+          'Regular uses smaller chunks with more frequent opportunities for other work. '
           'Background sync and media downloads are unchanged.',
         ),
         actions: [
@@ -113,7 +113,8 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
               contentPadding: EdgeInsets.zero,
               title: const Text('Turbo'),
               subtitle: const Text(
-                'Regular is the default. Turbo can slow, heat, and drain your phone.',
+                'Regular is the default: smaller chunks with more frequent opportunities for other work. '
+                'Turbo uses larger chunks and may slow your phone, heat it up, and drain the battery.',
               ),
               value: p.active
                   ? p.speed == CloudSyncSpeed.turbo

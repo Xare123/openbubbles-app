@@ -34,6 +34,7 @@ import 'cloud_sync_manual_semantic_pull_sampler.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_observability.dart';
+import 'cloud_sync_read_budget.dart';
 import 'cloud_sync_store.dart';
 import 'native_protected_cloud_sync_transport.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
@@ -522,6 +523,7 @@ final class CloudSyncProductionSemanticPullAdapter {
     required String buildCommit,
     CloudSyncObserverFactory? observerFactory,
     CloudSyncProgressSink? progress,
+    CloudSyncReadBudget readBudget = CloudSyncReadBudget.standard,
     RustCloudSyncProtectionBindings? protectionBindings,
     NativeProtectedCloudSyncBindings? transportBindings,
     RustCloudSemanticDecodeBindings? semanticDecodeBindings,
@@ -562,6 +564,7 @@ final class CloudSyncProductionSemanticPullAdapter {
     );
     sampler = CloudSyncManualSemanticPullSampler(
       progress: progress,
+      readBudget: readBudget,
       readPreflight: readPreflight,
       ensureAuthSnapshot: authProvider.ensureReadAuthenticationUnderInterlock,
       prepareAuthSnapshot:

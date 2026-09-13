@@ -7,6 +7,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_seman
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_read_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
@@ -16,6 +17,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -141,6 +143,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   CloudSyncClock? clock,
   CloudSyncObserverFactory? observerFactory,
   CloudSyncProgressSink? progress,
+  CloudSyncReadBudget readBudget = CloudSyncReadBudget.standard,
   CloudSyncSemanticSessionScheduler? scheduleSession,
   CloudSyncProtectedResetCoordinator? coordinateProtectedReset,
   CloudSyncPendingResetRecovery? recoverPendingReset,
@@ -168,6 +171,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   clockOverrideForTest: clock,
   observerFactory: observerFactory,
   progress: progress,
+  readBudget: readBudget,
   scheduleSession: scheduleSession,
   coordinateProtectedReset: coordinateProtectedReset,
   recoverPendingReset: recoverPendingReset,
@@ -3170,6 +3174,130 @@ void main() {
         messageScope,
         leaseFence: replacementLease!,
       );
+    },
+  );
+
+  test(
+    'smaller foreground sessions release and resume exact cursors with debt',
+    () async {
+      const zones = CloudSyncManualSemanticPullSampler.zones;
+      final stores = {for (final zone in zones) zone: InMemoryCloudSyncStore()};
+      for (final zone in zones) {
+        await _seedRetainedSaves(
+          stores[zone]!,
+          _semanticScope(zone),
+          count: 200,
+        );
+      }
+      final fenceStore = InMemoryCloudSyncStore();
+      final pause = _RecordingNativeWriterPause();
+      final tokens = {for (final zone in zones) zone: <String?>[]};
+      final replayLimits = <int>[];
+      final reports = <CloudSyncSemanticPullReport>[];
+      CloudSyncManualSemanticPullSampler makeSampler(
+        CloudSyncReadBudget budget,
+      ) => _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        readBudget: budget,
+        operationFenceStore: fenceStore,
+        nativeWriterPause: pause,
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async => stores[scope.zone]!,
+        createRawTransport: (auth, scope, pauseToken) async {
+          final transport = FakeCloudSyncTransport();
+          transport.fetchHandler = (scope, previous, generation, limit) async {
+            tokens[scope.zone]!.add(previous);
+            expect(limit, 50);
+            final page = previous!.startsWith('page-')
+                ? int.parse(previous.substring(5)) + 1
+                : 1;
+            return CloudFetchBatch(
+              scope: scope,
+              changes: List.generate(
+                limit,
+                (i) => _change('fresh-${scope.zone}-$page-$i'),
+              ),
+              batchId: 'fresh-${scope.zone}-$page',
+              generation: generation,
+              nextToken: 'page-$page',
+              hasMore: true,
+            );
+          };
+          return transport;
+        },
+        createInboxApplier: (_, scope, generation) async =>
+            _RetainedProjectionFakeApplier(
+              onReproject: (_, _, _, limit) async {
+                replayLimits.add(limit);
+                return CloudRetainedProjectionResult(
+                  examined: limit,
+                  reprojected: 0,
+                  retained: limit,
+                  hasRemaining: true,
+                );
+              },
+            ),
+      );
+      final budgets = [
+        CloudSyncReadBudget.regular,
+        CloudSyncReadBudget.standard,
+      ];
+      for (var i = 0; i < budgets.length; i++) {
+        final writer = CloudSyncSemanticPullReportFileWriter(
+          privateReportDirectory: '${privateStorageDirectory.path}/reports',
+          trustedStorageRoot: privateStorageDirectory.path,
+          readBudget: budgets[i],
+        );
+        final result = await makeSampler(budgets[i])
+            .runConfirmedCatchUpAndPersist(
+              maximumRemotePasses: 1,
+              persistReport: (report) async {
+                reports.add(report);
+                return writer.write(report);
+              },
+            );
+        expect(result.reachedRemotePassLimit, isTrue);
+        expect(result.remoteDrained, isFalse);
+        expect(result.projectionReport, isNull);
+        expect(result.lastRemoteReport.pageLimit, budgets[i].pagesPerPass);
+        expect(
+          result.lastRemoteReport.zones.map((z) => z.fetched),
+          List.filled(3, budgets[i].freshEntriesPerPass),
+        );
+        expect(pause.pauseCalls, i + 1);
+        expect(pause.resumeCalls, i + 1);
+        await CloudKitOperationInterlock(
+          privateStorageDirectory: privateStorageDirectory.path,
+          fenceStore: fenceStore,
+        ).runExclusive(
+          kind: CloudKitOperationKind.identityMaintenance,
+          action: () async {},
+        );
+      }
+      expect(reports, hasLength(2));
+      expect(replayLimits, [32, 32, 32, 150, 150, 150]);
+      for (final zone in zones) {
+        expect(tokens[zone], [
+          'seed-retained-token-$zone',
+          'page-1',
+          'page-2',
+          'page-3',
+          'page-4',
+        ]);
+        final checkpoint = await stores[zone]!.readCheckpoint(
+          _semanticScope(zone),
+        );
+        expect(checkpoint.fetchedToken, 'page-5');
+        expect(checkpoint.fetchedSequence, 450);
+        expect(checkpoint.pendingBatchId, isNull);
+        expect(
+          await stores[zone]!.readRetainedUnprojectedInboxCount(
+            _semanticScope(zone),
+          ),
+          200,
+        );
+      }
     },
   );
 

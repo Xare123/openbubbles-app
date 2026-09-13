@@ -71,6 +71,7 @@ void main() {
     await tester.pumpWidget(
       host(p, (speed) {
         starts++;
+        expect(speed, CloudSyncSpeed.regular);
         return p.startPrepared(
           speed,
           validate: () {},
@@ -110,11 +111,27 @@ void main() {
           started = speed;
         }),
       );
+      expect(
+        find.textContaining('Regular is the default: smaller chunks'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('more frequent opportunities for other work'),
+        findsOneWidget,
+      );
       await tester.ensureVisible(find.byType(SwitchListTile));
       await tester.tap(find.byType(SwitchListTile));
       await tester.pumpAndSettle();
       expect(find.text('Use Turbo sync?'), findsOneWidget);
       expect(find.textContaining('make it hot'), findsOneWidget);
+      final warning = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.textContaining('Turbo uses larger chunks'),
+      );
+      expect(warning, findsOneWidget);
+      expect(tester.widget<Text>(warning).data, contains('drain the battery'));
+      expect(tester.widget<Text>(warning).data, contains('slow your phone'));
+      expect(find.textContaining('instead of 8'), findsNothing);
       expect(started, isNull);
       await tester.tap(find.text('Keep Regular'));
       await tester.pumpAndSettle();

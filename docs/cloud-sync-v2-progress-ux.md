@@ -8,6 +8,10 @@ timestamp: 2026-09-12
 
 # Scope
 
+Integration update: source `9d33235fc` passed full GCE qualification and produced
+a signed Canary in run `34732301245`. It is not installed. The subsequent pacing
+repair below needs its own exact-source qualification and Pixel validation.
+
 Code audited against `883f001868ac64a160c20018b2fb46e3aedb029e`; isolated branch rebased cleanly onto documentation-only `af5d746f71dc5081fceba60645fe86a2024a7007`. Adds an account settings card, not a new sync engine or an authorization expansion. No app version bump: this is an isolated source change, not a packaged release.
 
 The card is available in the normal profile settings on an explicitly semantic-enabled Canary build. Developer Mode, authenticated client, supported ABI, foreground isolate, preflight, identity, writer pause, and operation interlock checks remain required. Ordinary production/Alpha rollout is not enabled by this change.
@@ -15,7 +19,18 @@ The card is available in the normal profile settings on an explicitly semantic-e
 # Behavior
 
 - Start / resume explicitly calls `prepareCloudSyncV2PcsConfirmed`, then the existing read-only automatic catch-up entry point. The sampler's authentication warming alone does not join the existing keychain clique. Apple may require device-password verification through the existing prompt. Canceling that prompt, pausing, account replacement, or teardown prevents a read. Duplicate starts join one service-owned run; page navigation does not cancel preparation or catch-up. This wrapper never wakes the upload writer.
-- Regular keeps the existing maximum of eight foreground batches. Turbo requires a heat, battery, and responsiveness warning, and permits sixteen. Both retain sixteen passes per batch and the existing four pages per zone, record limits, lease durations, retries, native quiescence, and projection sweep limits. Background calls never receive the foreground progress object or Turbo budget.
+- Regular uses one pass per session, one page of at most 50 fresh records and at
+  most 32 retained replay attempts per zone, then yields 250 ms after releasing
+  the protected session. Turbo uses 16 passes per session, four pages and 150
+  replay attempts per zone, with the existing 1 ms inter-session yield. Maximum
+  sessions are 512 Regular and 16 Turbo, preserving the earlier fresh-record
+  caps of 25,600 and 51,200 per zone. These are volume limits, not expected totals
+  or a speed guarantee. Leases, retries, native settlement and the at-head sweep
+  are unchanged. Background and older developer entry points keep their budgets.
+- The report writer receives the same immutable budget as the sampler. It checks
+  the selected page count and bounds fresh versus total local work separately:
+  Regular permits 50 fetched and 82 applied/work records per zone/pass. Default
+  developer probes still require the original four-page report contract.
 - Authentication, PCS, zone fetch, replay, queued/retry wait, pausing, paused/capped, remote head, unresolved projection, and fixed-code failure states are distinct. Progress cannot authorize a request or advance a checkpoint.
 - No percentage is invented. CloudKit history has no stable total and sparse fetch sequences are not row counts. Exact counters identify journaled pages, newly inserted journal records by zone, completed batches, and retained sweep row visits/projections. Repeat visits are labeled. Backlog counters come from the last persisted report, not an invented initial zero.
 - Media is on demand and separate. The existing serialized attachment download action reports active/completed/failed attempts without changing its limits, cancellation, identity validation, or scheduling. Remote head never claims all bodies are downloaded.
@@ -46,4 +61,20 @@ PCS/lifecycle revision adds focused coverage in `cloud_sync_prepared_progress_te
 
 Follow-up safety review of `474ea753a`: **324 tests passed** in the same eleven-file expanded suite (`build/sync-progress-safety-regression-final.log`). Added never-settling PCS feedback, late completion/error, retained exclusion, restart-only UI, and lifecycle races across evidence flush, report persistence, and native release. The release-failure test exposed an interlock-release gap, corrected with poison before callback unwind. Earlier local runs also caught a test fixture's missing async modifier and a mistyped suite filename; the final suite has no failures. Targeted Dart analysis has zero errors or warnings, with five pre-existing style infos in `rustpush_service.dart` (`build/sync-progress-safety-analyze-final.log`). Base remains `af5d746f7`; no further rebase needed.
 
-No APK built, installed, or distributed. No Pixel operation, live authentication, PCS network call, CloudKit transport, or credentials used. Native performance, foreground lifetime under Android OS suspension, thermal impact, accessibility with real TalkBack, and authenticated end-to-end progress still require separately authorized device validation. The existing safety rollout remains a release gate.
+Those original agent tests used no APK, Pixel, live authentication, PCS network
+call, CloudKit transport or credentials. The parent subsequently built and signed
+9d33235fc as recorded above. Pixel throughput, thermal impact, accessibility and
+authenticated end-to-end progress remain unverified. New pacing regression tests
+exercise the real sampler and report-file writer: a small session releases the
+interlock, resumes exact cursors under a larger budget, and preserves every held
+record without running an exhaustive sweep before remote head. A fixture initially
+claimed an empty terminal read while fetching 50 records; it was corrected rather
+than weakening the terminal-read validator.
+
+Integrated pacing qualification: 199 tests passed across progress model/widget,
+prepared PCS, sampler, report-file writer, drain, production composition, media
+gate and Android background composition. Targeted analysis returned no errors or
+warnings, with five existing service style infos. The local widget render was
+inspected for legibility; this does not replace the Pixel performance/UX gate.
+Both scoped agents were reviewed and closed; no dedicated worktrees or caches
+were created. Session transcripts remain because supported deletion is unavailable.

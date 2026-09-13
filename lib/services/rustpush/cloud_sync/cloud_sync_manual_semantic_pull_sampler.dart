@@ -6,6 +6,7 @@ import 'cloud_sync_engine.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_observability.dart';
+import 'cloud_sync_read_budget.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_semantic_pull_report.dart';
 import 'cloud_sync_shadow_transport.dart';
@@ -131,6 +132,7 @@ final class CloudSyncManualSemanticPullSampler {
     required this.buildCommit,
     this._observerFactory,
     this.progress,
+    this.readBudget = CloudSyncReadBudget.standard,
     this._readDiagnosticCounts,
     CloudSyncSemanticSessionScheduler? scheduleSession,
     bool? compileGateOverrideForTest,
@@ -150,6 +152,7 @@ final class CloudSyncManualSemanticPullSampler {
        _enabled =
            compileGateOverrideForTest ??
            CloudSyncDevGate.manualSemanticPullEnabled {
+    readBudget.validate();
     if (_fetchTimeout <= Duration.zero ||
         _fetchTimeout > _maximumFetchTimeout) {
       throw ArgumentError.value(fetchTimeoutOverrideForTest);
@@ -196,6 +199,7 @@ final class CloudSyncManualSemanticPullSampler {
   final String buildCommit;
   final CloudSyncObserverFactory? _observerFactory;
   final CloudSyncProgressSink? progress;
+  final CloudSyncReadBudget readBudget;
 
   // Presentation must not interrupt a protected session or its release path.
   void _activity(CloudSyncProgressPhase phase, [String? zone]) {
@@ -804,7 +808,7 @@ final class CloudSyncManualSemanticPullSampler {
       platform: platform,
       architecture: architecture,
       buildCommit: buildCommit,
-      pageLimit: pageLimit,
+      pageLimit: readBudget.pagesPerPass,
       changeLimit: changeLimit,
       outboxCountBefore: before.outboxCount,
       outboxCountAfter: after.outboxCount,
@@ -1153,7 +1157,7 @@ final class CloudSyncManualSemanticPullSampler {
       platform: platform,
       architecture: architecture,
       buildCommit: buildCommit,
-      pageLimit: pageLimit,
+      pageLimit: readBudget.pagesPerPass,
       changeLimit: changeLimit,
       outboxCountBefore: before.outboxCount,
       outboxCountAfter: after.outboxCount,
@@ -1445,10 +1449,10 @@ final class CloudSyncManualSemanticPullSampler {
 
   CloudSyncEngineConfig _config() => CloudSyncEngineConfig(
     maximumBatchSize: changeLimit,
-    maximumFetchPagesPerRun: pageLimit,
+    maximumFetchPagesPerRun: readBudget.pagesPerPass,
     maximumInboxEntriesPerRun:
-        pageLimit * changeLimit + retainedProjectionAllowance,
-    minimumInboxEntriesReservedForFetch: pageLimit * changeLimit,
+        readBudget.freshEntriesPerPass + readBudget.retainedReplayEntries,
+    minimumInboxEntriesReservedForFetch: readBudget.freshEntriesPerPass,
     maximumOutboxBatchesPerRun: 1,
     fetchOperationTimeout: _fetchTimeout,
     allowManualPullBackoffOverride: true,

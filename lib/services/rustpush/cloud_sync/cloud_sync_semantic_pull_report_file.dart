@@ -5,6 +5,7 @@ import 'package:path/path.dart' as path;
 import 'package:universal_io/io.dart';
 
 import 'cloud_sync_semantic_pull_report.dart';
+import 'cloud_sync_read_budget.dart';
 
 /// Persists one typed, content-free semantic Canary report atomically.
 final class CloudSyncSemanticPullReportFileWriter {
@@ -12,8 +13,10 @@ final class CloudSyncSemanticPullReportFileWriter {
     required String privateReportDirectory,
     required String trustedStorageRoot,
     this.maximumRetainedReports = 20,
+    this.readBudget = CloudSyncReadBudget.standard,
   }) : _directory = Directory(privateReportDirectory).absolute,
        _trustedStorageRoot = Directory(trustedStorageRoot).absolute {
+    readBudget.validate();
     if (maximumRetainedReports < 1 || maximumRetainedReports > 100) {
       throw ArgumentError.value(maximumRetainedReports);
     }
@@ -50,6 +53,7 @@ final class CloudSyncSemanticPullReportFileWriter {
   final Directory _directory;
   final Directory _trustedStorageRoot;
   final int maximumRetainedReports;
+  final CloudSyncReadBudget readBudget;
 
   Future<File> write(CloudSyncSemanticPullReport report) async {
     final failure = _contractFailure(report);
@@ -146,7 +150,7 @@ final class CloudSyncSemanticPullReportFileWriter {
         'cloud_sync_semantic_report_metadata_invalid',
       );
     }
-    if (report.pageLimit != 4 ||
+    if (report.pageLimit != readBudget.pagesPerPass ||
         report.changeLimit != 50 ||
         report.outboxCountBefore < 0 ||
         report.outboxCountBefore > maximumDiagnosticCount ||
@@ -165,12 +169,10 @@ final class CloudSyncSemanticPullReportFileWriter {
       );
     }
     final maximumZoneRecords = report.pageLimit * report.changeLimit;
-    // Normal semantic runs may examine one bounded retained-projection window
-    // before consuming their complete four-page remote-fetch allowance. Both
-    // lanes share the report counters, so bound total local work separately
-    // from the unchanged remote fetched-record ceiling.
+    // The writer and sampler use the same selected budget. Retained replay and
+    // new fetches share local work counters but have separate admission limits.
     final maximumZoneWorkRecords =
-        maximumZoneRecords + maximumZoneRecords - report.changeLimit;
+        maximumZoneRecords + readBudget.retainedReplayEntries;
     for (final zone in report.zones) {
       final projectionSweep =
           report.mode == CloudSyncSemanticReportMode.retainedProjectionSweep;

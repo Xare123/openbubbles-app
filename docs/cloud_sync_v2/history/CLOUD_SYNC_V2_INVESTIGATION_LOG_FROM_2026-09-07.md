@@ -3139,3 +3139,465 @@ This is a chronological evidence log. It does not override the
   evidence through exact readback, finalizes protected leases before receipt
   acknowledgement, and emits content-free correlated stage markers. Pixel
   edit/unsend and independent-recipient display remain release gates.
+
+## 2026-09-12, current-state consolidation
+
+The following sections were moved verbatim from the treemap, preserving
+source-specific evidence and obsolete next steps. The current treemap overrides
+these historical instructions. No qualification evidence was deleted.
+
+## Current candidate
+
+| Item | Current state |
+| --- | --- |
+| App branch | `agent/cloudkit-v2-update-seam` at exact committed source `883f001868ac64a160c20018b2fb46e3aedb029e`. Generated bridge output is reproducible. The checkout has only unrelated generated desktop-plugin drift; do not fold it into the candidate. |
+| Conditional-update executor candidate | **TEST-PROVEN and installed, not independently display-proven:** the retained positive IDS receipt admits one exact version-checked update, preserves the original record identity/ETag, submits once, and reconciles only by exact readback. The repaired order commits native evidence, clears the mutation fence, finalizes ObjectBox, and acknowledges receipts last. Current source also fails closed before IDS when V2 owns mutations but runtime preparation is unavailable, and retains terminal source evidence until exact readback cleanup. A September 12 rerun of the confirmation/adoption/update cohort passed 39 tests with one intentional native-live skip. |
+| Confirmed-create raw predecessor retention | **TEST-PROVEN, not installed:** live request 20 proved a real Message create and exact restart readback. Edit request 23 exposed that its map retained the ETag but not the exact raw record. The repair performs one no-save exact readback, adopts its raw capability in ObjectBox, commits the native readback lease, finalizes ObjectBox, then acknowledges the source and readback receipts. Manual confirmed replay now resumes an already-adopted readback locally before any new remote fetch, preventing duplicate leases and `message_create_readback_already_pending`. Create and update pending states remain distinguished by equal versus changed ETags. |
+| Conditional-update predecessor | **TEST-PROVEN:** app `c092ef1a7` pins rustpush `90787d3`. Native `lookup_message_record_version` retains decoded CloudKit fields, opaque encrypted payloads and exact identity/ETag without a typed `CloudMessage` roundtrip. The old typed lookup delegates to it; current-container and cached-PCS checks remain. GCE dependency-only `34647348048` passed 305 tests and cleanup; app-native `34647652095` passed 533 tests and exact bridge regeneration. No update/save path is enabled. |
+| Conditional-update staging | **TEST-PROVEN, not enabled:** exact `3260dc506` passed 554 native tests and bridge regeneration in GCE `34650587629`; cleanup completed at 21:52:03Z. Protected staging retains the original predecessor, conditional merge request, ciphertext, ETag and request IDs. Summary patching preserves unknown plist values, singleton history and both supported timestamp formats. A composed test passes edit then unsend through the real message converter without discarding unknown protobuf fields. The first qualification exposed a missing protected-purpose allowlist entry, now fixed. These helpers do not authorize a save. |
+| Conditional-update source proof | **TEST-PROVEN:** exact `8d98a8c56` passed 557 native tests and bridge regeneration in GCE `34651357165`; cleanup completed at 22:01:12Z, with independent instance/runner inventories empty. It reopens a committed mutation source plus its exact encrypted positive IDS receipt, without consuming either. Current login and historical send session are checked separately, permitting cold recovery without resending IDS. Missing, changed or timeless receipts do not supply update authority; legacy evidence remains retained. The preparer and journal/outbox integration remain unconnected. |
+| Edited-then-unsent readback | **TEST-PROVEN:** `5bb07dcdf` removes the reader's mutual-exclusion rule for edited/retracted part IDs. Both existing producers retain that history on unsend; the DTO and projection already support it. Timestamp/body/part validation remains. All 136 focused Dart tests passed, including real ObjectBox reopen and stale replay without resurrection. GCE `34648004825` passed 534 native tests and exact bridge regeneration; no Apple-device or APK proof yet. |
+| September 11 mutation candidate | **LIVE-PROVEN on Windows, IDS/local scope only:** `c02379430` with dependency `98cc67a` passed fresh edit-16 and unsend-18, each with positive IDS acknowledgment, retained native receipt, local reflection and a separate-process reconciliation without resending. Both parent messages passed CloudKit save/readback. Copied-DB inspection confirmed state 3, exact stored display and zero initial-send intents for each mutation; source DB unchanged. Existing-record CloudKit updates remain disabled, and independent recipient display is unverified. Old edit-08 stays unknown and must never be resent. |
+| Installed Android candidate | Signed exact source `883f001868ac64a160c20018b2fb46e3aedb029e`, installed in place on Canary September 12 at 17:57:09 Pacific with its stable package/signature and existing data preserved. Authentication is ready, legacy sync is off, the V2 outbox remains `0 -> 0`, and the user observed real chats/messages progressively appear during the active semantic catch-up. Completed content-free slices advanced from 1-2 projected Messages to 247 and then 198 per slice as parent dependencies resolved. The run remains active; this is positive progressive-read evidence, not a terminal drain or lifecycle qualification. Alpha is untouched. |
+| Qualified source, not installed | Read-transition `90f98b7eb` passed 296 focused tests, targeted analysis, and GCE `34594546421`: 3,147 Dart tests plus 14 outbox and 3 evidence-output cases. Cleanup completed at 11:44:17Z; independent VM/runner inventories were empty. It includes replay repair `fd60a8a20` and background patch `0bb67d2c4`, which avoids repeating exhaustive retained-history sweeps on routine metadata wakes. No APK or Pixel runtime proof for these patches yet. |
+| Windows candidate | Imported `c02379430` from `34642902373`: 39 focused tests, 51 packaged-DLL codec cases, 78 verified bundle files, native load and isolated invalid-launch smoke passed. Protected profile hashes stayed unchanged during import. Dependency run `34642902143` passed 299 tests; app-native `34642902097` passed 524 tests and exact bridge regeneration. All cleanup completed. A read-only pass renewed the missing auth cache before live writes; no reset or new code was needed. The follow-up preflight repair is test-proven only, not in this imported runtime. |
+| Current full qualification | Exact source `883f00186` passed the full Build workflow `34727839709`, including the Dart suite, diagnostic scan, FaceTime replay tests, all 119 Android JVM tests, APK packaging/native-library checks, stable Canary signing, and artifact upload. Rust bridge workflow `34727839730` reproduced bindings and passed both Rust suites plus protector tests. Windows workflow `34727839757` passed x64 checks and ARM64 bootstrap/public-binary gates. These CI results contain no live Apple-account proof; the separately installed Canary supplies the live read evidence above. |
+| Qualification | GCE `34485566441` passed 2,566 Dart tests plus 14 semantic outbox and 3 evidence-output cases on exact source `7df4fced8`, including the new real ObjectBox manual-selection tests. Cleanup succeeded and both VM and registration inventories were empty. This dart-only run did not build an APK or native Windows binary. Earlier full signed qualification `34444190598` covers installed code `e060bcb41`, not the new patches. Native base `35551340c` passed 377 app Rust and 260 rustpush tests. Live ordinary-send/save/readback remains separate. |
+| Main change | Direct and restored-group plaintext admission, IDS receipt recovery, protected reset proof, crash-safe generation rebootstrap, bounded replay, manual read/write gates, and a Canary-only durable Android metadata wake are wired with automatic uploads off. The wake stores only the exact semantic-scope hash, revalidates the live account and safety state in Dart, and cannot invoke the outbound writer. |
+| Dependency | App `2fd0da2a3` pins `aff6379`, including the reviewed FaceTime remote-target guard and default-off bounded Find My diagnostics. GCE `34589003289` passed 287 dependency tests; cleanup completed at 10:32:58Z. No sidecar runtime success is claimed and no APK includes them yet. Writer fix `d201fb5` adds the exact attachment zone; IDS-proof base `f2e8ea3` still requires status 0 for every intended recipient. |
+| Prior-source qualification | GCE run `34437410835` fully succeeded for exact source `75440cafc`: full Dart suite, 373 app Rust tests, 253 rustpush tests, 34 protector tests, bridge drift checks, APK/native-library verification, Android JVM tests, trusted signing, and cleanup. This APK lacks the new positive-acknowledgment repair and is not a write-qualified release candidate. Older `fc132e5f8` also has the headless ready-handshake deadlock. |
+| Android release proof | The signed `ad822f37c` APK was installed in place with Canary data preserved and Alpha untouched. Its live read-only pull drained the remote head in one pass and finished without an unsafe failure. The final local sweep completed Chats with the exact 476-row durable backlog, kept remote save/delete disabled, and kept outbox `0 -> 0`. Messages and Attachments remain honestly degraded with 1,893 and 1,693 blocking saves respectively. |
+| Production claim | Not yet allowed. |
+
+Next technical gate: qualify the integrated conditional existing-record writer
+on Android and independently verify the recipient-visible result. Read-transition
+candidate `90f98b7eb` passed GCE Dart-only qualification `34594546421`; the prior
+blocking IDS/local subgate passed on exact `c02379430` at 20:46:57Z (edit-16) and
+20:47:56Z (unsend-18). The current working tree now connects that exact confirmed
+source to a separate durable update lane without weakening message-create rules.
+
+Completed in the current working tree:
+
+1. The native confirmed-source opener is bound to the journal's exact retained
+   receipt. State 3 alone does not authorize a CloudKit update.
+2. The original record version is fetched under existing auth/PCS fences and the
+   source-proven mutation preserves opaque fields, nested data and the original
+   conditional ETag.
+3. The staged update is atomically adopted into its own versioned outbox lane;
+   `cloud_sync_prepare_message_create` remains create-only.
+4. Submission is single-attempt per retained request. Conflict or unknown outcome
+   enters exact readback, never a new IDS send or replacement predecessor.
+5. Restart and teardown retain and replay the native receipt only while the exact
+   operation remains eligible. Native evidence is acknowledged only after durable
+   outbox confirmation and protected-source finalization.
+
+Remaining qualification, in order:
+
+1. Commit the crash-recovery repair, run exact-source full GCE qualification, then
+   build and independently verify a signed Canary. APKs from `34700082731` and
+   `34712211230` are superseded and must not be installed.
+2. Retry existing edit request 23 in reconciliation-only mode. Prove the retained
+   create gains its exact raw predecessor, the edit reaches exact CloudKit
+   readback, and no duplicate IDS mutation is sent across restart.
+3. Independently verify recipient or second-client display. Same-client local
+   reflection is not sufficient production evidence.
+4. Exercise one conflict/unknown-outcome recovery on the installed candidate and
+   confirm the original receipt, predecessor and operation identity remain stable.
+
+Preview repair `269620126` and reviewed Find My lane isolation `ee9729ec3`
+passed GCE Dart-only `34597175527`, exact source
+`ee9729ec32fc132b386e4cbd42e608424968dbec`: 3,167 Dart tests plus 14 outbox
+and 3 evidence-output cases. The test step took 4m30s; cleanup completed at
+12:18:21Z and independent VM/runner inventories were empty. Both writer flags
+were off; no APK, signing, or native compilation was requested.
+The real inbox merge and ObjectBox test now applies an edit, rejects an
+unproved changed body, preserves current text on an older replay and applies
+an unsend after reopen. The four focused suites pass 296 tests. Full-suite GCE
+qualification passed; installed-device proof remains separate. The original memory
+regressions now opt in explicitly to the proof capability; the real-store
+test, not those fakes, demonstrates the combined path.
+
+Next device gate: finish normal Canary authentication, then exercise the
+combined signed Android source and independently verify
+written content on the recipient/second-client side. Runtime parent admission,
+separate-process no-op write restart and two cold read-only launches now pass.
+The same client has not ingested the written Message; absence of a self-echo
+does not invalidate exact record readback or prove cross-device visibility.
+The offline v4 inspector lacks the real retained-child proof reader and must
+remain diagnostic-only, not become another mandatory rewrite. Restored groups,
+Android reactions and independent Apple-device visibility remain separate requirements.
+The September 10 offline Windows inventory found **zero** chats with exactly
+the two approved test recipients. Do not select another personal group. The
+new request-v3 route binds the entire member set and exact restored group GUID;
+its journal/adapter selection passed local qualification (174 focused tests,
+including exact adopted-group selection after database reopen). This does not create
+groups or bypass the existing protected semantic dependency. Live group proof
+needs the approved conversation restored/created first. Direct-reaction work
+and attachment integration can proceed independently of that prerequisite.
+Current private request `qualification-20260911-unsend-18` completed receipt-only
+restart. Edit-16 and unsend-18 both have persisted local state 3; their parents
+15/17 have exact CloudKit readback proof. Old edit-08 remains claimed without a
+receipt and must never be resent. Parent-11 failed before claim during auth
+preflight and remains unclaimed. Prior plaintext, attachment, reaction and all
+mutation evidence remain preserved. Qualified runtime:
+`../windows-cloudkit-qualified-c02379430`. The read-only renewal guard incorrectly
+required byte-identical `hw_info.plist`: `setup_push` reencrypts the retained
+identity and saves APS state on connection. This is not an account-reset signal;
+future guards must compare stable identity/configuration, not randomized ciphertext.
+Older runtimes and receipts remain rollback material.
+
+### Current attachment-write boundary
+
+```text
+committed original IDS source
+  -> source-derived attachment inventory
+  -> retained upload plans (one original randomized plan per child)
+  -> durable byte-upload result
+  -> Attachment record save and exact readback
+  -> parent Message admission, save and exact readback
+```
+
+| Boundary | Evidence / next gate |
+| --- | --- |
+| Canonical identity | Native upload, final record and readback use the same owned `(message, part)` key as ingestion. Do not rekey older retained plans. |
+| Native direct parent | Source `787869904`, GCE `34544585837`: **484 Rust tests passed**. Included in later native qualification below. |
+| App integration | Candidate connects plan reuse, upload execution, ordered record drain and parent admission. A versioned journal proof requires every source-derived child to pass readback. Save acknowledgments and generic receipt cleanup cannot stand in for readback. |
+| Local qualification | Combined admission/journal/dependency/transport/composition suite: 278 passed. Timeout/reconciliation/transport subset: 42 passed after parent review. These overlap and do not establish live-account behavior. |
+| Timeout correction | Release tracked preparation before draining record saves. Otherwise a save timeout can quiesce the outer operation that is waiting on that save. A dedicated sequencing test covers this boundary. |
+| Group attachments | Native `d5b31d5b9`, GCE `34547723829`: 490 Rust tests passed; only generated-interface drift failed. Artifact `10179880441` was hash-verified and imported; VM/runner inventories empty. Exact restored group binding is pinned before staging and after awaits. Local transport passed 15 tests, admission 73; no live group-attachment proof. |
+| Recovery | Original source, epoch and attempt IDs remain immutable. Under current stable authority, the coordinator reuses existing plans and stages only missing entries from the original native inventory. A newly ambiguous upload may schedule only its own receipt-first next pass after native quiescence, exact fence/attempt verification and unchanged identity. Parent's composed guard/consumer test proves the missing-receipt pass creates no outbox entry or second upload. Combined qualification: **936 tests passed across 28 suites**, including fixed-inventory interruption/reopen and historical upgrades; full Dart CI passed below. Live runtime remains unqualified. |
+| Full-suite checkpoint | Source `0ff8e5595`, GCE `34555255259`: **3,016 Dart tests, 14 semantic-outbox contract cases and 3 evidence-output cases passed**. The three previous fixture/constructor-contract failures were repaired and rechecked. Cleanup completed at 02:47:11Z on September 11; independent VM/runner inventories were empty. No APK, native compilation, signing or live account access occurred in this dart-only run. |
+| Windows baseline | Historical source `0ff8e5595`, Windows run `34555641336`: 30 focused Dart tests, 51 actual Rust-DLL codec tests, ARM64 load and invalid-launch marker passed. Parent verified 78 bundle files. This baseline predates the attachment-request and durable-source-lookup repairs; it is retained rollback evidence, not the active runtime. |
+| Durable source lookup | Review found that `validateReadyForCreate` reloads a Message with an empty transient `attachments` list. The executor now selects its exact persisted `dbAttachments` relation instead, retaining exactly-one original/reflected GUID matching. Eight database-reopen regressions cover both aliases, ambiguity, unrelated rows and forbidden transient/global fallback. Exact source `3ebcc81c9` passed 3,042 Dart tests plus 14 outbox and 3 evidence-output cases in GCE `34557585998`; cleanup and independent empty VM/runner inventories verified. Live attachment proof remains open. |
+| Windows attachment input | Explicit request v4 adds synthetic `text-v1` and `png-v1` files only, no arbitrary user-file upload. Claim, original descriptor, protected source staging, positive IDS confirmation and the existing exact-intent production adapter remain required. Previous request-v1/v2/v3 bindings are unchanged. Interrupted IDS confirmation stays unconfirmed, not resendable. |
+| Live attachment failure | Native `62221f9` passed preparation and byte upload on September 11. Read-only inspection after the 06:11:34Z failure found one exact IDS-confirmed message, one adopted upload and one matching pending Attachment create with attempt count zero. The `invalid_checkpoint` failure is before record save, not a rejected login or failed IDS send. Request and claim remain unchanged. |
+| Diagnostic repair | `1d9de8629` preserves fixed native failures through FRB. Native fix `62221f9` passed 493 app Rust tests in GCE `34567150925`, 276 dependency tests on test-only successor `c206428a3`, and Windows run `34567152272`. All GCE cleanup succeeded; independent VM/runner inventories were empty. |
+| Upload recovery roots | `readLiveProtectedOutboundLeaseReferences` included upload leases, but `readLiveProtectedReferences` omitted plan/result bytes. Five ObjectBox reopen cases failed before the 13-line repair `db27373d9`; 184 related tests passed afterward. Qualified overlay `17818cd3d` moved the exact retained child from pending to confirmed without the previous `invalid_checkpoint`. The remaining parent-admission receipt failure was repaired below; do not clear or regenerate the retained source. |
+| Released result receipt | App `436c61bbb`: the upload result lease is also the final-save receipt. Verified child readback clears the outbox adoption marker and acknowledges that native receipt. Recovery incorrectly demanded it again from the immutable upload row. Recovery now reuses the exact child-readback predicate before excluding only that retired receipt; original plan, payload/result references and upload history remain live. The restart regression failed before repair; 276 targeted tests passed afterward, including 20 incomplete/mismatched proof cases. Overlay `46bc6f027` passed real parent admission and a separate-process no-op restart. Missing or mismatched receipts still fail closed. |
+
+Protected bytes and receipt-adoption markers are different liveness sets.
+Readback releases the shared result receipt, not the encrypted result payload.
+Do not delete upload history, suppress all missing leases, or infer release from
+a generic terminal state. See the current investigation log for exact traces.
+
+Prepared-handle lifecycle correction: a failed native consume can retain its
+unconsumed owner and writer permit. Waiting for futures alone cannot release
+that permit. Native `590cf25bb` adds idempotent owner release without changing
+files, fences or protected leases. GCE `34548927310` passed **493 Rust tests**;
+only generated bridge drift failed. Artifact `10180257648` was hash-verified
+and imported; VM and runner inventories were empty after cleanup. Dart
+engine/transport cleanup passed the 125-test release/admission/adapter cohort,
+including 20 focused release cases for late preparation, both heartbeat losses,
+returned failure, thrown failure and consumed success. Release does not cancel
+an owner already taken by consume. The combined 868-test checkpoint passed;
+the full-suite result above and live attachment write/recovery remain release gates.
+
+An ambiguous MMCS upload still cannot be blindly replayed. Original CloudKit
+UUIDs do not prove MMCS request idempotency, and chunk deduplication is not
+asset-completion recovery. Retain unknown attempts. Durable native completed
+receipts recover lost Dart responses, not network outcomes without a receipt.
+
+Detailed prior source SHAs, bridge artifacts, test counts and failed-run evidence
+are retained in the [current investigation log](cloud_sync_v2/history/CLOUD_SYNC_V2_INVESTIGATION_LOG_FROM_2026-09-07.md).
+GCE cleanup for `34544585837` succeeded; independent inventories showed no
+instances or runner registrations. Apple credentials and stores remain local.
+
+The first September 10 attempt failed on retained IDS credentials before send.
+Explicit request-bound sender authentication from the same retained GSA session
+then succeeded on `6abbeede2`. It did not reset onboarding or clear CloudKit
+state. `setup_push` rewrites saved APS connection material, so the full hardware
+file hash is not a hardware-identity comparison. The OS-config fingerprint and
+immutable request claim stayed unchanged across the subsequent restart.
+
+Retained Windows exact-source qualification: app `6abbeede2`, rustpush `f33dcac`, pilot
+`a2680baac`. GCE app Rust `34497413348` passed 380 tests and rustpush
+`34497413071` passed 261. Both cleanup jobs passed; independent inventories
+showed zero VMs and zero runner registrations. Neither run built an APK or
+accessed Apple credentials. Windows `34497409120` attempt 2 passed in 24m17s
+(Flutter compile 945.8s), following one package-download failure before compile.
+All 78 bundle files were verified before extraction. Local signing preserved
+the vendor ObjectBox DLL, native load/unload passed, and the invalid-launch
+marker was observed with zero dummy-profile files. No PC policy was changed.
+
+Offline inspection of the retained September 7 test on a disposable database
+copy confirmed one canonical legible message with a valid source binding, but
+IDS proof remains version 0 and the exact-readback marker is absent. The
+retained confirmed outbox row alone is not full write proof. Source database,
+request and claim stayed unchanged; the temporary database copy was removed.
+The new September 10 request independently passed all these checks with IDS
+version 2, valid source binding, legible text, exact-readback marker and released
+receipt. Restart kept those proofs and one canonical message with zero new
+admissions. This closes that bounded Windows gate, not full production parity.
+
+Keep native compilation isolated: the local signed `slab` build script remains
+blocked by App Control error 4551. No security policy was changed. Targeted
+Dart tests work with the matching ObjectBox library on PATH. The approved
+cloud budget is $200 through September 15; Apple credentials and message stores
+remain local. [Build runbook](WINDOWS_HOST_BUILD_ENVIRONMENT.md) contains setup
+and import boundaries; the investigation log retains failed-run evidence.
+
+Historical installed Canary came from full signed GCE run `34444190598`, app source
+`3dc614c9eced02b49f130a2752ce531d9e6aec7a` (code `e060bcb41`): build,
+GitHub-hosted signing, and cleanup jobs all succeeded. The signature-verified
+APK was installed in place on Canary at 2026-09-09 23:43:18 Pacific; Alpha's
+package snapshot and Canary's UID/data directory/first-install time were
+preserved. Host preflight verifies artifact identity, not the running Dart
+build: that earlier observation left `sourceCommitDeviceVerified` false. The
+current signed `f860966d5` installation and runtime proof supersede this baseline.
+
+Earlier live observation, 2026-09-10 05:43-05:50 Pacific: two user-triggered
+plaintext sends received native confirmations which were journaled. The test
+conversation rendered the edited message and the subsequent unsend notice.
+This qualifies that local live-send/UI boundary only. No exact CloudKit
+save/readback, restart, or independent-device edit/unsend proof was obtained.
+The conversation-list preview still displayed the retracted message's text,
+an observed stale-preview defect now repaired locally: previews honor retracted
+parts without deleting retained text; normal and pinned tiles recompute on
+same-record updates even when dateEdited is unchanged. The five-suite cohort
+passes 48 tests, including real mounted widgets/ObjectBox updates and preserved
+history. Reinstating the old same-ID gate makes that widget test fail. Full
+cloud qualification and installation of this preview patch remain pending.
+A semantic pull remained active during the original observation and was not
+restarted. See the current investigation log for timestamps and private
+evidence paths. Causal edit/unsend writes remain a gap, not a passed gate.
+
+### What the candidate includes
+
+- Native and Dart compute the same deterministic group-routing digest from the
+  canonical group, current raw group ID, service/style, group version, and
+  normalized participants.
+- Both sides use UTF-8 byte ordering. Exact `urn:biz:<UUID>` participants are
+  retained; arbitrary schemes remain rejected.
+- Older applied groups can receive a missing digest only through protected
+  null-to-non-null projection repair with an otherwise exact snapshot match.
+- Restored, nonprovisional group plaintext uses opaque dependency binding tag
+  3. It binds generation, owner, aliases, server record, ETag/raw reference,
+  latest applied save, and routing digest.
+- Direct tag-1 and reaction tag-2 encoders and bindings remain unchanged.
+- Provisional group creation, group reactions, group-state mutations, remote
+  deletion, and update merge remain closed.
+- Exact out-of-scope chat satellites and retained tombstones no longer make a
+  valid physical-retention result fail the whole Chats zone.
+- Retained message and attachment blockers are counted separately from the
+  larger physical backlog. The current live blocker is therefore 3,586 saves,
+  not all 10,108 retained rows.
+- Content-free Windows inspection proved all 189 native `msgProto` field-2
+  wire mismatches are classes 4-7, whose Apple schemas use int64 rather than
+  the ordinary message string. The same inspection found five class-3 system
+  events. The decoder base `12035ec0c` validates all five variant schemas and retains
+  them as `UnsupportedMessageType`; it does not invent projection semantics.
+- Existing-history write deferrals report fixed counts for local-chat, snapshot,
+  alias, prior-origin, record-map, and tombstone conflicts. The classifier is
+  observational only and does not authorize adoption or alter failure precedence.
+- Canary ADB control is package-scoped, challenge-confirmed, and read-only by
+  default. Host parsing accounts for Android SharedPreferences key prefixes and
+  harmless Windows PowerShell native-stderr promotion.
+- Receipt discovery keeps only a bounded candidate window in memory and reads at
+  most 64 receipts per replay page. Its cursor advances past invalid receipts,
+  while leaving later valid receipts discoverable on subsequent pages.
+- Startup receipt replay completes before stale-send normalization. The
+  ObjectBox startup claim then retains native-confirmation work and clears only
+  sends that are proven untracked in the same transaction.
+- Canary can register one exact, content-free semantic-scope hash with Android
+  WorkManager. Foreground, headless APNs, and network hints coalesce into a
+  metadata-only read. The native waiter is bounded to five attempts and eight
+  minutes; Flutter-engine readiness is cancellable and bounded to one minute.
+  The repaired Dart drain requests cooperative cancellation after five minutes
+  and awaits protected quiescence. A native timeout does not prove Dart stopped.
+  Engine leases survive waiter cancellation until Dart replies; delayed teardown
+  rechecks exact engine identity, active calls, and the idle generation on Main.
+  Alpha, Beta, production, media-prefetch, and every outbound lane remain closed.
+
+
+## Scope and current evidence
+
+| Capability | Status | Remaining proof or work |
+| --- | --- | --- |
+| Chat and message history | `LIVE-PROVEN` for restored readable history | Qualify sustained incremental sync, restart, and account lifecycle on the release candidate. |
+| Reactions on read | `LIVE-PROVEN` for representative records | Continue retaining unavailable parents; qualify current candidate on Pixel. |
+| Photos and videos on read | `SOURCE-IMPLEMENTED` after prior live proof | Current source resolves generic and UTI-only image/video records consistently across profile and message surfaces. Pixel must prove HEIC, video, and tap-to-open behavior; GIF data remains preserved but profile animation is not a release requirement. |
+| Documents and plugin payloads | `TEST-PROVEN` | Supported documents remain visible, unknown opaque files remain available, and only the exact `.pluginPayloadAttachment` suffix is hidden from profile media/documents without deleting its row. Pixel UI proof remains. |
+| Direct plaintext create | `LIVE-PROVEN` for bounded Windows request `qualification-20260910-03` | Positive IDS version 2, exact-readback marker, one canonical legible message and restart with zero new admissions passed. Independent Apple-device display and ordinary Pixel composer convergence remain open. |
+| Restored-group plaintext create | `SOURCE-IMPLEMENTED` and exact-source qualified | Perform one authorized live group test with pinned route/binding plus exact readback/restart proof. Provisional group creation remains closed. |
+| Write-send provenance | `SOURCE-IMPLEMENTED` | Native positive-acceptance tests pass. Qualify the additive persisted-proof upgrade and dispatch/reconciliation tests. Old deferred/ready intents cannot promote or enter fresh admission without new proof; old adopted pending entries are retained and skipped for new leases. Submission rechecks proof. Exact readback remains allowed and does not retroactively prove IDS acceptance. A fresh v2 native confirmation can requalify the exact unchanged old source without resending it. Automatic uploads remain off pending execution and live proof. |
+| Retained writer queue usability | `TEST-PROVEN` | One journal-bound, read-only classifier covers queue drain, queued Chat observation, and preflight. It exempts only pristine pending creates with proof version 0, exact protected envelope/mapping, current owner/generation, no lease, attempt, Apple UUID or receipt. All rows remain counted and fingerprinted; no upload, acknowledgement, deletion, or proof upgrade occurs. GCE passed the real consumer/admission/store regression with a fresh qualified send beside retained work and reopen without duplicate submission. Apple responses are synthetic in this test; live proof remains. Unknown/retried/leased/malformed rows still block. |
+| Direct reactions | `LIVE-PROVEN` for bounded Windows like-05/remove-like-06 | Positive IDS confirmation, one admission, exact persisted readback and separate-process zero-admission restarts passed. Ordinary Pixel composition and independent Apple-device display remain. |
+| Edits and unsends | Read transition `TEST-PROVEN`; bounded Windows writes `LIVE-PROVEN`; Pixel gate open | Same-record, rotated-tag transitions require exact durable predecessor binding and real canonical identity plus complete compatible body/history proof. Windows request 21 recovered an unknown edit without another IDS send and reached exact CloudKit confirmation. Fresh-parent request 24 submitted one unsend update and reached one exact confirmation, with zero not-applied, diverged, or unresolved operations. The offline mutation inspector found terminal state 5, positive IDS and reflection markers, exact route/source binding, matching stored display, zero initial-send intents, and an unchanged source database. Unsupported multi-body encodings, ambiguous lineage, chained mutation qualification, ordinary Pixel composition, and independent counterpart display remain open. |
+| Attachment writes | `LIVE-PROVEN` for bounded Windows image 04 admission/readback recovery | Source-bound upload, child readback, parent admission and no-op restart passed overlay `46bc6f027`. Independent recipient/second-client rendering, ordinary Pixel composer convergence, group attachment proof and exact-source Android qualification remain. Upload receipt alone is not record-save proof. |
+| Tombstones and deletion | Closed | Define exact ownership and recoverable semantics before enabling any local or remote delete. |
+| Token expiry | `TEST-PROVEN` | Live expired-token/restart proof remains. The exact-source path requires an authenticated protected reset proof, releases the semantic read boundary, reacquires the destructive-reset interlock and native pause, advances once, reconciles authority after process death, and replays once. |
+| Android background catch-up | `IN REPAIR` | The ready-handshake/lifecycle repair is qualified in installed `f860966d5`. Live evidence then exposed a no-progress exhaustive projection sweep. The next patch keeps routine metadata bounded, avoids retrying solely for retained projection debt, and preserves deep repair, scope/reset/cancellation gates and truthful partial reports. 129 focused tests pass; combined exact-source qualification and Pixel lifecycle proof remain. |
+| SMS, MMS, and RCS | Out of scope | Do not add them to this CloudKit V2 release path. |
+
+
+## Release gates
+
+### Candidate qualification
+
+- [x] Reset-proof base `7df608af7` passed the full exact-source suite and
+  signed-APK path in GCE run `34407071539`, with automatic uploads off.
+- [x] Current app code `0b86a6465` reproduced bindings and passed 2,522 Dart,
+  359 app Rust, 226 rustpush, 34 protector, and 14 semantic-outbox contract
+  tests in run `34414062044`.
+- [x] The `0b86a6465` Canary contains every required ARM64 native library and
+  is signed on the existing trusted GitHub-hosted signing path.
+- [x] Run `34414062044` deleted its VM and deregistered its runner; independent
+  inventories confirmed zero remaining runners and zero GCE instances.
+- [x] Exact source `fc132e5f8` reproduced 2,542 Dart, 359 app Rust, 226
+  rustpush, 34 protector, 14 semantic-outbox, and 3 evidence-output cases in
+  run `34423632222`; bindings reproduced and the signed ARM64 Canary contains
+  every required native library. Runner and VM inventories both returned zero.
+
+### Read qualification
+
+- [x] Representative chats and readable messages project on Canary.
+- [x] Representative reactions and media metadata project without deleting
+  unavailable evidence.
+- [ ] A cold-start candidate executes authentication, pause, three-zone warm,
+  fetch, decode, journal, projection, and token promotion in one process.
+  Windows `f90226831` completed this path after repair `b432b9e8a`; the
+  corresponding Android release candidate remains unqualified.
+- [ ] A second pull is idempotent and reports fetched, retained, and projected
+  counts separately.
+  Windows fresh-process repeat passed with fetched=0, applied=0, retained=6654
+  and settled outbox unchanged; retain the Pixel gate separately.
+- [ ] Restart, background/lock, account replacement, and expired-token paths
+  preserve evidence and fail closed.
+
+### Write qualification
+
+- [x] Source `6abbeede2` direct plaintext request `qualification-20260910-03`
+  has positive IDS version-2 confirmation, a persisted exact-readback marker,
+  one canonical legible message, and restart with zero new admissions. The
+  earlier pre-repair failure and September 7 weaker proof remain historical
+  counterexamples, not substitutes for this fresh observation.
+- [x] Host-controlled Pixel prepare/run/verify tooling exercises the existing
+  exact-intent production path across fresh Canary processes, rejects candidate
+  drift, redacts arbitrary failures, and requires automatic uploads off. Live
+  execution against Apple remains below.
+- [ ] Confirmed direct replay proves zero saves and independent Apple-device
+  display for the release candidate.
+- [ ] Restored-group plaintext passes exact-source tests, one authorized live
+  group create, exact readback, restart, and independent display.
+- [ ] Direct reactions pass live save/readback/restart and independent display.
+- [ ] Ordinary composer queue admission atomically commits the first durable
+  outgoing Message and state-0 local-send intent. Native IDS success is durably
+  recorded before `SendConfirm`; restart recovery promotes it to state 3 and
+  acknowledges that receipt only after the ObjectBox commit. Protected staging
+  then atomically adopts the intent into the outbox and converges automatically.
+- [ ] Attachment write, edits, unsends, and supported tombstone semantics each
+  receive an implemented and verified causal/recovery path before full release.
+
+### Production qualification
+
+- [ ] One signed Canary survives foreground/background, lock, reconnect,
+  process restart, and account repair without duplicate sends or lost tokens.
+- [ ] Current retained backlog is zero or every retained category has an
+  explicit non-destructive repair or honest unavailable state.
+- [ ] User-visible status distinguishes remote ingestion, projection, media
+  materialization, live delivery, and write reconciliation.
+- [ ] Scope documentation names supported operations precisely. Initial text
+  creation must not be advertised as complete Messages parity.
+
+
+## Current critical path
+
+Checkpoint `58236f330` passed the complete local CloudSync suite: 2,859 tests,
+one intentional skip and zero failures. Signed-Canary run `34714333139`
+produced the correct package, stable v2 signature and ARM64 Rust/ObjectBox
+libraries. Exact-source GCE run `34714796195` passed binding regeneration, the
+full Dart suite, both Rust suites, the protector harness, APK packaging and
+native-library verification. Its final Android JVM step exposed three
+`FileNotFoundException` failures in the unrelated FaceTime layout test because
+that test assumed the repository root while Gradle runs from `android/`. The
+test now resolves app source from repository, Android-project or app-module
+working directories. Requalify the resulting test-only head before installing;
+do not treat this harness-path failure as a CloudKit protocol regression.
+Retry `34716439200` proved the path repair: all 119 Android JVM tests passed,
+along with full Dart, both Rust suites, the protector harness, APK packaging
+and native-library verification. Its only failure was the delayed bridge-drift
+gate. Review of the uploaded generator artifact found exactly two nonfunctional
+normalization differences: four FRB diagnostic comments in generated Dart and
+six generated Rust separator blank lines. The exact reviewed generator outputs
+are now imported. A binding-reproducibility run must prove zero drift on the
+resulting head before installation.
+
+1. Ship the confirmed-create raw-readback repair to Canary, then resume edit
+   request 23 without another IDS send. Exact readback must populate the raw
+   predecessor map first; the conditional edit may then reconcile and finalize
+   both protected leases across restart. A same-client local reflection is not
+   sufficient evidence.
+2. Qualify the combined attachment and cold-start-auth source on Android and
+   independently verify the written attachment through a second client.
+   Windows overlay `46bc6f027` completed exact image 04 parent admission and a
+   separate-process restart with no new admission or blocked work; read-only
+   `f90226831` completed two cold reads without a reset. Do not demand that the
+   writer's incremental cursor self-echo its record, or weaken the offline
+   inspector to manufacture proof. Preserve the original source and attempt across writer
+   epochs; absent receipts never authorize blind reupload. Also prove source
+   staging remains usable during long reads, not merely lossless on contention.
+3. Preserve qualified Windows direct request `qualification-20260910-03` and
+   its proof. No additional direct send is needed merely to recheck that result.
+   The exact restored-group route is implemented/tested, but no group with the
+   approved two test recipients exists in the retained Windows profile. Restore
+   or create that approved conversation before live group qualification. Never
+   substitute another personal group.
+4. Windows direct reaction add/remove and no-op restarts now pass. Continue
+   attachment/causal-write qualification, preserving exact readback, recovery and
+   independent Apple-device display as separate gates. Implement group creation,
+   group reactions and supported edits/unsends, not just restored plaintext.
+5. Qualify lifecycle P0 before automatic sync: expired-token reset must advance
+   exactly once and replay once; a second reset signal must stop. Process death
+   must recover prepared or unknown authority without losing old evidence.
+   Same-generation authentication may refresh once; account replacement must
+   preserve evidence and fail closed.
+6. The durable Android metadata entrypoint is under lifecycle repair after a
+   concrete ready-handshake counterexample. Requalify it and prove background, lock,
+   APNs, reconnect, process restart, bounded retry, and stale-identity behavior
+   on Pixel before considering production enablement.
+7. Run lifecycle soak and produce one release-candidate report that proves
+   identity stability, token continuity, zero duplicate writes, and honest
+   retained counts. Complete attachment writes, reactions, edits/unsends, and
+   supported group/deletion semantics for the full production goal. Keep each
+   unqualified operation disabled during development, not excluded from completion.
+
+## Next falsification test
+
+Image 04 is already claimed and IDS-confirmed. Windows parent admission and
+separate-process write restart pass. App `b432b9e8a` fixes a real cold-read
+failure: reset recovery captured native identity before read authentication
+had restored its identifiers. Authentication now runs under the semantic-read
+interlock, which releases before reset recovery takes its own lock. The exact
+identity/reset predicates remain intact. All 126 targeted tests passed and
+read-only overlay `f90226831` completed two separate-process reads.
+
+Those reads preserve 6,654 old retained entries, including out-of-scope services,
+with no new Message ingestion for image 04. This is not a new send failure.
+The next useful proof is independent client visibility, not repeated empty
+self-reads or another inspector implementation. Disposable-copy inspection
+still honestly cannot certify v4 source/readback without its child-proof
+callback. Do not send another image, weaken child readback, clear credentials,
+reset cursors, or use the older `5e9a532be` APK as containing the cold fix.
+
+The isolated Windows direct test and restart passed; do not repeat the claimed
+request. Source inventory, canonical read/write identity and parent UTF-16 body
+passed GCE `34541849568`; executor adversarial tests and the real persistent
+guard passed locally. Windows attachment admission and restart are evidence
+for overlay `46bc6f027`, not Android proof. Combined Android source `f860966d5`
+is now signed and installed; its batched device session is in progress. Independent
+Apple-device display remains separate; component tests cannot replace it.
+When the approved group is present, falsify exact selection, acceptance by every
+intended target, group encoding, readback and restart without resending. Preserve
+the direct claim. The inspector must distinguish readable text, positive IDS
+confirmation and exact-readback proof.
+Then qualify the ready/lease/budget repair with Android behavioral tests and
+an exact-source signed APK. Do not install `fc132e5f8` as background-qualified.
+Use one batched Pixel session: cold read, idempotent
+second read, background/lock/APNs/reconnect, expired-token/restart recovery, and
+the authorized direct process-death write test. The write must recover state 3,
+adopt exactly one
+protected outbox operation, obtain exact CloudKit readback and independent
+Apple-device display, and create zero duplicate local or remote records.
+Automatic uploads remain disabled during this proof.
+Existing-history adoption remains a separate write gate; diagnostic counts
+cannot authorize or perform adoption.

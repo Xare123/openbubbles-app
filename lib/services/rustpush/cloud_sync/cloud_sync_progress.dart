@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 
 import 'cloud_sync_observability.dart';
+import 'cloud_sync_read_budget.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_semantic_drain_controller.dart';
 import 'cloud_sync_semantic_pull_report.dart';
@@ -11,8 +12,19 @@ export 'cloud_sync_observability.dart' show CloudSyncProgressPhase;
 enum CloudSyncSpeed { regular, turbo }
 
 extension CloudSyncSpeedBudget on CloudSyncSpeed {
-  // Foreground continuation only. Never changes page, lease, retry or worker limits.
-  int get maximumBatches => this == CloudSyncSpeed.regular ? 8 : 16;
+  // Foreground work sizing only. Lease, retry and worker limits stay unchanged.
+  CloudSyncReadBudget get readBudget => this == CloudSyncSpeed.regular
+      ? CloudSyncReadBudget.regular
+      : CloudSyncReadBudget.standard;
+
+  int get passesPerBatch => this == CloudSyncSpeed.regular ? 1 : 16;
+
+  // Preserve the per-zone fresh-record caps despite smaller Regular sessions.
+  int get maximumBatches => this == CloudSyncSpeed.regular ? 512 : 16;
+
+  Duration get pauseBetweenBatches => this == CloudSyncSpeed.regular
+      ? const Duration(milliseconds: 250)
+      : const Duration(milliseconds: 1);
 }
 
 /// In-memory presentation only. Durable checkpoints, never these counters, own resume.
