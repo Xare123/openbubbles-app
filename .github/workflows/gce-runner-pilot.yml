@@ -536,7 +536,7 @@ jobs:
         continue-on-error: true
         if: ${{ env.VALIDATION_MODE == 'full' }}
         shell: bash
-        run: cargo test --manifest-path rust/cloud_sync_protector_harness/Cargo.toml
+        run: cargo test --locked --manifest-path rust/cloud_sync_protector_harness/Cargo.toml
 
       # Collect independent suite failures in one run, but never package a
       # failed qualification. `outcome` retains failures hidden by the step's
@@ -572,7 +572,30 @@ jobs:
               fi
             fi
           fi
+          SELECTED_SUITES_FAILURE="$failed" python3 - <<'PY' > "$RUNNER_TEMP/validation-outcomes.json"
+          import json, os
+          fields = {
+              "dart": "DART_TEST_OUTCOME", "app_rust": "APP_RUST_TEST_OUTCOME",
+              "rustpush": "RUSTPUSH_TEST_OUTCOME", "protector": "PROTECTOR_TEST_OUTCOME",
+              "automatic_uploads": "AUTOMATIC_UPLOAD_TEST_OUTCOME",
+          }
+          print(json.dumps({
+              "schema": 1, "source": os.environ["SOURCE_REF"],
+              "validation_mode": os.environ["VALIDATION_MODE"],
+              "selected_suites_passed": os.environ["SELECTED_SUITES_FAILURE"] == "0",
+              "suites": {name: os.environ.get(key) or "missing" for name, key in fields.items()},
+          }, sort_keys=True))
+          PY
           exit "$failed"
+
+      - name: Preserve actual selected-suite outcomes
+        if: ${{ always() && (env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'dart-only') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: GCE actual test outcomes (${{ env.VALIDATION_MODE }})
+          path: ${{ runner.temp }}/validation-outcomes.json
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload regenerated bridge bindings
         if: ${{ always() && (env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' || env.VALIDATION_MODE == 'app-rust-only') }}

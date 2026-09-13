@@ -129,7 +129,7 @@ $nativeDiagnosticCases = @(
 $nativeExtensionScope = 'cloud_sync_extension_payload::tests::'
 $nativeConverterScope = 'cloud_sync_canonical_converter::tests::'
 $nativeDtoScope = 'cloud_sync_canonical_dto::tests::'
-$nativeExtensionMinimum = 28
+$nativeExtensionMinimum = 29
 $nativeConverterMinimum = 79
 $nativeDtoMinimum = 24
 $nativeExtensionSpotCases = @(
@@ -140,6 +140,7 @@ $nativeExtensionSpotCases = @(
     'cloud_sync_extension_payload::tests::live_layout_shape_does_not_expose_archive_values'
     'cloud_sync_extension_payload::tests::direct_live_layout_data_matches_wrapper_and_keeps_the_same_limit'
     'cloud_sync_extension_payload::tests::direct_icon_data_still_requires_valid_bounded_gzip'
+    'cloud_sync_extension_payload::tests::recognized_raw_icon_bytes_are_preserved_without_a_gzip_roundtrip'
 )
 $nativeConverterSpotCases = @(
     'cloud_sync_canonical_converter::tests::extension_archive_projects_renderer_metadata_with_base_message',
@@ -336,6 +337,14 @@ foreach ($name in @(
 }
 
 $sourceInputPaths = @(
+    'rust/src/cloud_sync_extension_metadata.rs',
+    'rust/cloud_sync_protector_harness/Cargo.toml',
+    'rust/cloud_sync_protector_harness/Cargo.lock',
+    'rust/cloud_sync_protector_harness/src/lib.rs',
+    'lib/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart',
+    'lib/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart',
+    'test/services/cloud_sync/cloud_sync_safe_failure_test.dart',
+    'test/services/cloud_sync/cloud_sync_semantic_diagnostics_test.dart',
     'lib/cloud_sync_v2_windows_local_write.dart',
     'lib/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart',
     'test/services/cloud_sync/cloud_sync_local_mutation_journal_test.dart',
@@ -525,6 +534,8 @@ try {
     }
 
     $dartTests = @(
+        'test/services/cloud_sync/cloud_sync_safe_failure_test.dart',
+        'test/services/cloud_sync/cloud_sync_semantic_diagnostics_test.dart',
         'test/services/cloud_sync/cloud_sync_local_mutation_journal_test.dart',
         'test/services/cloud_sync/cloud_sync_local_mutation_projection_test.dart',
         'test/services/cloud_sync/cloud_sync_windows_mutation_target_test.dart',
