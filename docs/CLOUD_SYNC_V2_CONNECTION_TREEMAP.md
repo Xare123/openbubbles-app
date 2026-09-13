@@ -64,7 +64,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Logging repair | Logger lifetime and explicit Find My target are qualified in native 3496034e3. Awaiting `doFirstTimeInit` in the Windows hosts fixes startup ordering. Native Find My init/refresh diagnostics now show absent `locations`, not a coordinate-join failure. |
 | Latest qualified native | Run 34744744122 passed `b2797dd07fdeffd01c1705dbf184dbf3b15eac22` via pilot `f110e2562`: seven compose, four exact diagnostic/logger and 51 packaged-DLL codec cases. Parent verified/signed DLL `e2bdf775b8f9b9327c1a8278a034628f4efb382cbe2e2a9afe1f9aec2164f30a`, reran 51 cases under unchanged App Control, and observed real retained-shape diagnostics. This older ABI cannot be used with the new extension bindings. |
 | Current native qualification | Windows run 34762729315 passed source `3496034e3b41c2bfc862e75f975e62c266336cce` using pilot `02fc8e810`. All 141 selected Rust tests and 51 packaged-DLL codec tests passed. Parent verified 33 source inputs, 12 test logs, archive and three ARM64 PEs, signed DLL `bf1507c72421fed903dcaffcbe863a001d0d59bd2c04e20b8ce8befe6345147e`, and reran 51 codec tests with App Control enabled. |
-| Active session qualification | Windows run 34766997568 builds source `e4affda67d3d10a2af51526a3bfcce6fa81cdbbe` using pilot `2343e13f96b7d362e875be23b82185eeed5f6fac`. Fresh source validation passed; native build/test is not yet qualified. Import/sign separately only after the declared tests pass. Do not treat the retained 3496034e3 DLL as containing session support. |
+| Session qualification follow-up | Windows run 34766997568 compiled the candidate and passed the Dart suite, 24 extension tests and 77 converter tests. One source-boundary assertion failed because the new debug call was in the private converter. Diagnostic moved into the bounded decoder helper; original converter logging restriction retained. Revised native qualification is required before live use. |
 | Next integration | Extension metadata transport/projector is qualified for its supported schema. Next is session-aware association handling; type 2 cannot be admitted as a standalone message. Current live tests below distinguish overall read progress from the still-blocked seven-record sample. |
 | Fast Windows loop | Current Dart plus the verified native DLL opens the retained projection in 8.65 seconds. The stale Windows relay ticket was updated to the Pixel's working ticket after proving the same physical relay and preserving Windows installation IDs/keys. A real read then completed in about 31 seconds and exposed a quarantined own-edit echo. |
 | Current merge repair | Real native-source/copy qualification passed the bounded production recovery and normal applier, preserving local history. Live Windows report `obcs2-semantic-1789278811033254.json` applied two pending messages; fresh-process repeat `1789278895014946` fetched/applied zero, with no conflict. Both observed empty terminal reads in all zones and kept outbox 15 -> 15 with remote writes disabled. Full native-crate qualification remains. |
@@ -441,10 +441,14 @@ cache-invalidation cases; shared digest vectors. Static analysis has no issues.
 Session context is not yet native-qualified or exercised against retained data.
 The new cache watch is lazy, store-bound and disposed on close.
 
-Open convergence requirement: an earlier asset-changing update arriving after a
-newer inherited update needs explicit repair/re-render qualification. Chronological
-chain and future-sibling exclusion tests do not prove that case. Keep production
-readiness open. Both Muse workers are closed; all unique work is preserved.
+Convergence source implemented: scoped projection markers distinguish inherited
+content from owned media and bind its rendered-content digest. A late update
+repairs later inherited rows in paged reads inside the original transaction,
+stopping at the next own-media row. Source records, snapshots, payload metadata,
+and attachment backlinks remain unchanged. Four local tests cover late arrival,
+own-media stop, independently changed content, and a 260-row chain including
+rollback on a late-page conflict. Native/live qualification remains outstanding.
+All Muse workers are closed; unique code, logs and rollback material are preserved.
 
 ## Existing-history adoption evidence gate
 

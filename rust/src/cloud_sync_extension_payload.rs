@@ -319,6 +319,18 @@ pub fn decode_extension_payload(
     payload: &[u8],
     bundle_id: &str,
 ) -> Result<ExtensionPayloadMetadata> {
+    let result = decode_extension_payload_inner(payload, bundle_id);
+    if let Err(failure) = &result {
+        log::debug!(target: "rust_lib_bluebubbles::cloud_sync_transient_bridge",
+            "CloudKit V2 extension metadata decode failed reason={failure:?}");
+    }
+    result
+}
+
+fn decode_extension_payload_inner(
+    payload: &[u8],
+    bundle_id: &str,
+) -> Result<ExtensionPayloadMetadata> {
     validate_bundle_id(bundle_id)?;
     validate_binary(payload)?;
     let archive = Value::from_reader(Cursor::new(payload)).map_err(|_| Failure::Malformed)?;

@@ -3803,3 +3803,22 @@ cannot authorize or perform adoption.
 - Remaining: native qualification/live decode and convergence when an earlier
   asset update arrives after a newer inherited row. The tested chronological
   behavior is not declared complete. No new Pixel installation or remote write.
+
+### September 13 derived-session convergence
+
+- Native run 34766997568 compiled the library/test executable and passed the Dart
+  suite, 24 extension tests and 77 converter tests. The remaining failure was a
+  source contract requiring the converter's single fixed logging site. Parent
+  moved the new fixed-enum debug diagnostic into the bounded extension decoder
+  helper and retained the original private-converter restriction.
+- Added atomic downstream repair for late assets. Only scoped, durably owned
+  inherited rows with unchanged derived-content digests can be updated. Paging
+  bounds memory; a new own-media row stops propagation. Raw cloud records and
+  attachment owners are untouched.
+- Four focused tests passed: late arrival without manual replay, stopping at own
+  media, preserving independent local changes, and 260 descendants with full
+  rollback when a conflict occurs beyond the first page. A generic Map key type
+  initially failed ObjectBox serialization; explicit string-keyed maps fixed it.
+- Muse test worker drifted into unrelated reads and was closed without changes;
+  parent wrote and verified the regression tests. No live account test used the
+  unqualified session candidate.

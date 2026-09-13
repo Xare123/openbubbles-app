@@ -6299,6 +6299,108 @@ void main() {
     );
   }
 
+  void registerV2Update(String key, String guid) {
+    resolver.put(scope: scope, generation: generation, kind: CloudEntityKind.message,
+      logicalEntityKeyHash: key, canonicalGuid: guid);
+    _seedExactOwnershipProof(store, scope: scope, generation: generation,
+      kind: CloudEntityKind.message, logicalEntityKeyHash: key, canonicalGuid: guid);
+  }
+
+  void applyV2Asset(ObjectBoxCanonicalSemanticEntityAdapter adapter, {
+    String? hash, String guid = 'v2-update-guid', int seconds = 1,
+    String text = 'Earlier asset', String asset = 'late-asset',
+  }) {
+    final prepared = CloudSyncPreparedExtension.parse(extensionTestV2Json(
+      role: 'update', sessionGuid: 'v2-base-guid', sessionLogicalKeyHash: 'A' * 43),
+      expectedParentBundleId: extensionTestBundle);
+    final key = hash ?? 'B' * 43;
+    adapter.applyEntity(scope: scope, generation: generation,
+      payload: _messagePayload(logicalEntityKeyHash: key, canonicalGuid: guid,
+        chatIdentifier: 'iMessage;-;extension-chat', createdAt: testEpoch.add(Duration(seconds: seconds)),
+        body: text, balloonBundleId: extensionTestBundle,
+        decodedExtensionPayload: prepared.canonicalUtf8, preparedExtension: prepared,
+        attributedBodies: [CloudSemanticAttributedBody(text: text, runs: [CloudSemanticTextRun(
+          startUtf16: 0, lengthUtf16: text.length, messagePart: 0,
+          attachmentCanonicalGuid: asset, attachmentLogicalKeyHash: 'asset-key',
+          mentionHandle: null, audioTranscript: null, textEffect: null,
+          bold: null, italic: null, strikethrough: null, underline: null)])],
+        knownFlags: _messageFlags(fromMe: false)),
+      snapshot: _snapshot(CloudEntityKind.message, key, parentLogicalKeyHash: 'A' * 43));
+  }
+
+  test('v2 convergence late asset repairs inherited future without replay', () {
+    seedV2SessionIdentities();
+    registerV2Update('C' * 43, 'future-guid');
+    final adapter = v2Adapter();
+    applyV2Base(adapter);
+    applyV2Update(adapter, updateHash: 'C' * 43, updateGuid: 'future-guid',
+      createdAt: testEpoch.add(const Duration(seconds: 2)));
+    store.runInTransaction(TxMode.write, () => applyV2Asset(adapter));
+    final future = store.box<Message>().getAll().singleWhere((m) => m.guid == 'future-guid');
+    final owner = store.box<Message>().getAll().singleWhere((m) => m.guid == 'v2-update-guid');
+    final attachmentId = store.box<Attachment>().put(Attachment(guid: 'late-asset')..message.targetId = owner.id!);
+    expect(future.text, 'Earlier asset');
+    expect(future.attributedBody.single.runs.single.attributes?.attachmentGuid, 'late-asset');
+    expect(future.payloadData?.appData?.single.appName, 'Synthetic App');
+    expect(future.dbAttachments, isEmpty);
+    expect(store.box<Attachment>().get(attachmentId)!.message.targetId, owner.id);
+  });
+
+  test('v2 convergence stops at next own-media update', () {
+    seedV2SessionIdentities();
+    registerV2Update('C' * 43, 'future-own');
+    registerV2Update('D' * 43, 'future-inherited');
+    final adapter = v2Adapter();
+    applyV2Base(adapter);
+    applyV2Asset(adapter, hash: 'C' * 43, guid: 'future-own', seconds: 3,
+      text: 'Own future asset', asset: 'own-asset');
+    applyV2Update(adapter, updateHash: 'D' * 43, updateGuid: 'future-inherited',
+      createdAt: testEpoch.add(const Duration(seconds: 4)));
+    store.runInTransaction(TxMode.write, () => applyV2Asset(adapter));
+    for (final guid in ['future-own', 'future-inherited']) {
+      final row = store.box<Message>().getAll().singleWhere((m) => m.guid == guid);
+      expect(row.text, 'Own future asset');
+      expect(row.attributedBody.single.runs.single.attributes?.attachmentGuid, 'own-asset');
+    }
+  });
+
+  test('v2 convergence rolls back when inherited content was locally changed', () {
+    seedV2SessionIdentities();
+    registerV2Update('C' * 43, 'future-guid');
+    final adapter = v2Adapter();
+    applyV2Base(adapter);
+    applyV2Update(adapter, updateHash: 'C' * 43, updateGuid: 'future-guid',
+      createdAt: testEpoch.add(const Duration(seconds: 2)));
+    final changed = store.box<Message>().getAll().singleWhere((m) => m.guid == 'future-guid')..text = 'Local change';
+    store.box<Message>().put(changed);
+    expect(() => store.runInTransaction(TxMode.write, () => applyV2Asset(adapter)),
+      throwsA(predicate<CloudSyncFailure>((e) => e.safeCode == 'canonical_extension_descendant_content_conflict')));
+    expect(store.box<Message>().getAll().where((m) => m.guid == 'v2-update-guid'), isEmpty);
+    expect(store.box<Message>().get(changed.id!)!.text, 'Local change');
+  });
+
+  test('v2 convergence pages long chains and rolls back a later-page conflict', () {
+    seedV2SessionIdentities();
+    final adapter = v2Adapter();
+    applyV2Base(adapter);
+    for (var i = 0; i < 260; i++) {
+      final key = base64UrlEncode(sha256.convert(utf8.encode('future-$i')).bytes).replaceAll('=', '');
+      registerV2Update(key, 'future-$i');
+      applyV2Update(adapter, updateHash: key, updateGuid: 'future-$i',
+        createdAt: testEpoch.add(Duration(seconds: i + 2)));
+    }
+    store.runInTransaction(TxMode.write, () => applyV2Asset(adapter));
+    Message row(String guid) => store.box<Message>().getAll().singleWhere((m) => m.guid == guid);
+    expect(row('future-0').text, 'Earlier asset');
+    expect(row('future-259').text, 'Earlier asset');
+    store.box<Message>().put(row('future-259')..text = 'Local late-page change');
+    expect(() => store.runInTransaction(TxMode.write, () => applyV2Asset(adapter, text: 'New source')),
+      throwsA(predicate<CloudSyncFailure>((e) => e.safeCode == 'canonical_extension_descendant_content_conflict')));
+    expect(row('v2-update-guid').text, 'Earlier asset');
+    expect(row('future-0').text, 'Earlier asset');
+    expect(row('future-259').text, 'Local late-page change');
+  });
+
   test('v2 extension session base sets amk GUID from its own context', () {
     seedV2SessionIdentities();
     final adapter = v2Adapter();
@@ -6608,9 +6710,8 @@ void main() {
       // that future sibling. Equal-ms base/update still carries the explicit
       // causal root link (nanoseconds truncate), so only a strictly future
       // base is rejected.
-      // NOT covered: an earlier asset-changing update arriving after a newer
-      // update was already projected still needs convergence repair coverage.
-      // Out-of-order repair is intentionally not implemented here.
+      // Late asset propagation and rollback are covered separately by the
+      // v2 convergence tests above; this case isolates chronological selection.
       seedV2SessionIdentities();
       final adapter = v2Adapter();
       applyV2Base(adapter);

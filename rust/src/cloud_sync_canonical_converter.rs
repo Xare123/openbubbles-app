@@ -2807,11 +2807,7 @@ fn decode_message_extension(
     if bundle_id == URL_BALLOON_PROVIDER {
         return Ok(CloudCanonicalField::Absent);
     }
-    let metadata = decode_extension_payload(bytes, bundle_id).map_err(|failure| {
-        log::debug!(target: "rust_lib_bluebubbles::cloud_sync_transient_bridge",
-            "CloudKit V2 extension metadata decode failed reason={failure:?}");
-        unsupported()
-    })?;
+    let metadata = decode_extension_payload(bytes, bundle_id).map_err(|_| unsupported())?;
     let json = match session {
         Some(context) => serialize_session_metadata_json(&metadata, context),
         None => serialize_generated_metadata_json(&metadata),
@@ -6801,7 +6797,7 @@ mod tests {
     }
 
     #[test]
-    fn source_remains_private_and_unwired() {
+    fn converter_keeps_private_typed_boundary_and_fixed_diagnostics() {
         let source = concat!(
             include_str!("cloud_sync_canonical_converter.rs"),
             include_str!("cloud_sync_canonical_dto.rs")

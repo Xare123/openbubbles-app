@@ -16,6 +16,8 @@ import 'objectbox_cloud_semantic_store_gateway.dart';
 
 typedef _ProvenChatOwner = ({Chat chat, String logicalEntityKeyHash});
 
+const _extensionProjectionKey = 'cloudkit_v2_extension_projection';
+
 enum _MessageChatRouteKind { direct, group, bare }
 
 /// Immutable, content-free account and rebootstrap fence supplied by the
@@ -1783,6 +1785,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
           message.payloadData = null;
           message.hasApplePayloadData = false;
           message.amkSessionId = null;
+          message.metadata?.remove(_extensionProjectionKey);
         }
         break;
       case CloudSemanticFieldState.value:
@@ -1795,6 +1798,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         message.payloadData = null;
         message.hasApplePayloadData = false;
         message.amkSessionId = null;
+        message.metadata?.remove(_extensionProjectionKey);
     }
 
     switch (replaceEditContent
@@ -1886,11 +1890,91 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     }
 
     _applyMessageSummary(message, payload, replaceEdits: replaceEditContent);
+    if (session != null && replaceEditContent) {
+      message.metadata ??= <String, dynamic>{};
+      message.metadata![_extensionProjectionKey] = {
+        'version': 1,
+        'scope': _scopeGenerationKey(scope, generation),
+        'logical_key': payload.logicalEntityKeyHash,
+        'inherits_content': session.role == CloudSyncExtensionSessionRole.update &&
+            !payload.attributedBodies.any((body) => body.runs.any((run) => run.attachmentCanonicalGuid != null)),
+        'content_digest': _extensionRenderedContentDigest(message),
+      };
+    }
     _messages.put(message);
+    if (session != null && replaceEditContent) {
+      _repairExtensionDescendants(scope, generation, message);
+    }
     if (updateCloudSyncChatLatestMessageDate(chat, message.dateCreated!)) {
       _chats.put(chat, mode: PutMode.update);
     }
     return CloudCanonicalSemanticMutationReceipt.committed;
+  }
+
+  String _extensionRenderedContentDigest(Message message) =>
+      sha256.convert(utf8.encode(jsonEncode([message.text, message.dbAttributedBody,
+        message.hasAttachments]))).toString();
+
+  /// A late asset update changes derived presentation, not the later records'
+  /// protected payloads or semantic receipts. Apply this in the same transaction
+  /// as the new source row, and stop at the next row with its own media.
+  void _repairExtensionDescendants(CloudSyncScope scope, int generation, Message source) {
+    if (source.amkSessionId == null || source.dateCreated == null || source.chat.targetId <= 0) return;
+    var cursorTime = source.dateCreated!.millisecondsSinceEpoch;
+    var cursorId = 0;
+    var firstPage = true;
+    DateTime? previousTime;
+    while (true) {
+      final after = firstPage
+          ? Message_.dateCreated.greaterThan(cursorTime)
+          : Message_.dateCreated.greaterThan(cursorTime).or(
+              Message_.dateCreated.equals(cursorTime).and(Message_.id.greaterThan(cursorId)));
+      final query = (_messages.query(Message_.amkSessionId.equals(source.amkSessionId!)
+          .and(Message_.chat.equals(source.chat.targetId)).and(after))
+        ..order(Message_.dateCreated)..order(Message_.id)).build()..limit = 128;
+      late final List<Message> candidates;
+      try { candidates = query.find(); } finally { query.close(); }
+      if (candidates.isEmpty) return;
+      firstPage = false;
+      final changes = <Message>[];
+      var reachedOwnContent = false;
+      for (final next in candidates) {
+        final marker = next.metadata?[_extensionProjectionKey];
+        if (marker is! Map || marker['version'] != 1 ||
+            marker['scope'] != _scopeGenerationKey(scope, generation) ||
+            marker['logical_key'] is! String || marker['inherits_content'] is! bool ||
+            next.guid == null || next.dateDeleted != null ||
+            next.balloonBundleId != source.balloonBundleId ||
+            next.payloadData?.appData?.length != 1) {
+          throw CloudSyncFailure(category: CloudFailureCategory.dependency,
+            safeCode: 'canonical_extension_descendant_unproven');
+        }
+        _requireCanonicalIdentityOwnership(scope: scope, generation: generation,
+          kind: CloudEntityKind.message, logicalEntityKeyHash: marker['logical_key'] as String,
+          canonicalGuid: next.guid!);
+        if (marker['inherits_content'] == false) { reachedOwnContent = true; break; }
+        if (previousTime == next.dateCreated ||
+            marker['content_digest'] != _extensionRenderedContentDigest(next) ||
+            next.messageSummaryInfo.any((history) => history.editedContent.isNotEmpty || history.retractedParts.isNotEmpty)) {
+          throw CloudSyncFailure(category: CloudFailureCategory.dependency,
+            safeCode: 'canonical_extension_descendant_content_conflict');
+        }
+        previousTime = next.dateCreated;
+        next.text = source.text;
+        next.dbAttributedBody = source.dbAttributedBody;
+        next.hasAttachments = source.hasAttachments;
+        next.metadata![_extensionProjectionKey] = <String, dynamic>{...Map<String, dynamic>.from(marker),
+          'content_digest': _extensionRenderedContentDigest(next)};
+        changes.add(next);
+      }
+      if (changes.isNotEmpty) {
+        _messages.putMany(changes, mode: PutMode.update);
+        _diagnosticRecorder?.call('canonical_extension_descendants_repaired');
+      }
+      if (reachedOwnContent || candidates.length < 128) return;
+      cursorTime = candidates.last.dateCreated!.millisecondsSinceEpoch;
+      cursorId = candidates.last.id!;
+    }
   }
 
   CloudCanonicalSemanticMutationReceipt _applyReactionUpsert({
