@@ -3923,3 +3923,11 @@ cannot authorize or perform adoption.
 - Private provenance: artifacts/windows-native-34770635736/local-qualification.json,
   build-evidence/windows-chain-20260913 and windows-chain-echo-20260913. No Pixel
   install, personal-message deletion, identity reset, or main-repository PR.
+- Committed candidate e5547e8c7 and dispatched Windows run 34772982148 with
+  pilot a3724ebd0. Job 103765852345 passed exact-source validation and is active.
+  Qualification now explicitly includes the chain proof tests and new native
+  reply DTO/converter cases. Native changes are not yet live-qualified.
+- Pre-handoff: docs reconciled, child shutdown verified, no local app/test/Cargo
+  process remains, completed request unsend-34 retained for reconciliation-only
+  restart, C: 76.15 GiB free. No protected artifacts removed. Supported session
+  deletion remains unavailable; closed transcripts are retained, not erased.
