@@ -15,6 +15,9 @@ param(
     [ValidateSet('local-write', 'read-only')]
     [string] $BuildVariant,
 
+    [ValidateSet('harness', 'native-test-host')]
+    [string] $ArtifactMode = 'harness',
+
     [Parameter(Mandatory)]
     [string] $OutputRoot,
 
@@ -80,6 +83,25 @@ function Get-CommandText {
     return ((& $FilePath @Arguments 2>&1 | Out-String).Trim())
 }
 
+function Assert-NativeTestResults {
+    param([string] $OutputText, [string[]] $ExpectedNames)
+    foreach ($case in $ExpectedNames) {
+        if ($OutputText -notmatch ("(?m)^test " + [regex]::Escape($case) + ' \.\.\. ok\r?$')) {
+            throw "Required native regression test did not pass: $case"
+        }
+    }
+    if ($ExpectedNames.Count -eq 0 -or $OutputText -notmatch (
+        'test result: ok\. ' + $ExpectedNames.Count + ' passed; 0 failed; 0 ignored;'
+    )) {
+        throw 'Native test selection was empty, incomplete, skipped, or unsuccessful.'
+    }
+}
+
+$nativeDiagnosticCases = @(
+    'cloud_sync_transient_bridge::tests::message_required_masks_distinguish_absent_and_without_value',
+    'cloud_sync_transient_bridge::tests::message_extension_diagnostics_never_return_provider_values'
+)
+
 $source = (Resolve-Path -LiteralPath $SourceRoot -ErrorAction Stop).Path
 $sourceItem = Get-Item -LiteralPath $source -Force
 if (-not $sourceItem.PSIsContainer -or
@@ -95,6 +117,11 @@ $status = @(& git -C $source status --porcelain=v1)
 if ($LASTEXITCODE -ne 0 -or $status.Count -ne 0) {
     throw 'Reviewed source checkout must be clean before build preparation.'
 }
+$submodules = @(& git -C $source submodule status --recursive)
+if ($LASTEXITCODE -ne 0 -or @($submodules | Where-Object { $_ -match '^[+\-U]' }).Count -ne 0) {
+    throw 'Source submodules must be initialized at their recorded commits.'
+}
+$sourceTree = Get-CommandText -FilePath git -Arguments @('-C', $source, 'rev-parse', 'HEAD^{tree}')
 
 $requiredFiles = @(
     'lib/cloud_sync_v2_windows_harness.dart',
@@ -106,11 +133,26 @@ $requiredFiles = @(
     'tooling/windows/test_run_cloud_sync_v2_auth_probe.ps1',
     'test/services/cloud_sync/cloud_sync_v2_windows_harness_test.dart',
     'test/services/cloud_sync/cloud_sync_windows_dev_profile_test.dart',
-    'test/services/cloud_sync/cloud_sync_windows_local_write_test.dart'
+    'test/services/cloud_sync/cloud_sync_windows_local_write_test.dart',
+    'test/services/cloud_sync/cloud_sync_local_send_encoder_test.dart',
+    'test/services/cloud_sync/objectbox_own_writer_precision_recovery_test.dart',
+    'rust/src/cloud_sync_message_update_compose.rs',
+    'rust/src/cloud_sync_transient_bridge.rs',
+    'rust/src/frb_generated.rs',
+    'lib/src/rust/frb_generated.dart',
+    'lib/src/rust/frb_generated.io.dart'
 )
 foreach ($relative in $requiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $relative) -PathType Leaf)) {
         throw "Reviewed source is missing required fast-loop input: $relative"
+    }
+}
+if ($ArtifactMode -eq 'native-test-host') {
+    $diagnosticSource = Get-Content -LiteralPath (Join-Path $source 'rust/src/cloud_sync_transient_bridge.rs') -Raw
+    foreach ($case in $nativeDiagnosticCases) {
+        if (-not $diagnosticSource.Contains('fn ' + ($case -split '::')[-1] + '(')) {
+            throw "Reviewed source lacks the pending diagnostic regression: $case. Commit it before dispatch."
+        }
     }
 }
 
@@ -190,7 +232,8 @@ foreach ($name in @(
     'OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY',
     'OPENBUBBLES_CLOUDKIT_WRITER_OWNER',
     'OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_REPLAY_EXCLUDED_CHATS',
-    'OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME'
+    'OPENBUBBLES_CLOUD_SYNC_V2_LOCAL_SEND_RUNTIME',
+    'OPENBUBBLES_RUN_LIVE_WINDOWS_HARNESS'
 )) {
     if (-not [string]::IsNullOrWhiteSpace(
         [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -199,11 +242,26 @@ foreach ($name in @(
     }
 }
 
+$sourceInputPaths = @(
+    'rust/Cargo.toml', 'rust/Cargo.lock', 'pubspec.lock',
+    'rust/src/frb_generated.rs', 'rust/src/frb_generated.io.rs',
+    'lib/src/rust/api/api.dart', 'lib/src/rust/frb_generated.dart', 'lib/src/rust/frb_generated.io.dart',
+    'rust/src/api/api.rs', 'rust/src/cloud_sync_message_update_compose.rs',
+    'rust/src/cloud_sync_message_update_stage.rs',
+    'rust/src/cloud_sync_transient_bridge.rs',
+    'test/services/cloud_sync/cloud_sync_local_send_encoder_test.dart',
+    'test/services/cloud_sync/objectbox_own_writer_precision_recovery_test.dart'
+)
+$sourceInputs = @(foreach ($relative in $sourceInputPaths) {
+    [ordered]@{ path = $relative; sha256 = (Get-FileHash -LiteralPath (Join-Path $source $relative) -Algorithm SHA256).Hash.ToLowerInvariant() }
+})
+
 if ($ValidateOnly) {
     [pscustomobject]@{
         result = 'validated'
         source_commit = $actualCommit
         build_variant = $BuildVariant
+        artifact_mode = $ArtifactMode
         harness_media_graph_excluded = $true
         invalid_launch_precedes_profile_and_native_init = $true
         automatic_send_runtime_absent = $true
@@ -283,6 +341,18 @@ $buildEnvironment = @{
     CARGO_PROFILE_DEV_INCREMENTAL = 'false'
     CARGOKIT_TARGET_TEMP_DIR_OVERRIDE = (Join-Path $env:RUNNER_TEMP 'cloudkit-cargokit-arm64')
 }
+if ($ArtifactMode -eq 'native-test-host') {
+    # One fresh job-local target directory shared by the DLL and Rust tests.
+    # Never borrow a retained binary/cache or invoke the local signing wrapper.
+    $buildEnvironment['CARGO_TARGET_DIR'] = Join-Path $env:RUNNER_TEMP 'cloudkit-native-arm64'
+    $buildEnvironment['RUSTFLAGS'] = ' '
+    $buildEnvironment['CARGO_PROFILE_TEST_DEBUG'] = '0'
+    $buildEnvironment['CARGO_PROFILE_TEST_INCREMENTAL'] = 'false'
+    foreach ($name in @('CARGO_ENCODED_RUSTFLAGS', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER',
+        'CC', 'CXX', 'AR', 'LD', 'RANLIB', 'CFLAGS', 'CXXFLAGS')) {
+        $buildEnvironment[$name] = $null
+    }
+}
 foreach ($name in $buildEnvironment.Keys) {
     $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
@@ -291,6 +361,11 @@ $buildLog = Join-Path $output 'flutter-build.log'
 $testLog = Join-Path $output 'contract-tests.log'
 $dartTestLog = Join-Path $output 'dart-windows-tests.log'
 $nativeCodecTestLog = Join-Path $output 'native-codec-tests.log'
+$nativeComposeBuildLog = Join-Path $output 'native-compose-build.log'
+$nativeComposeTestLog = Join-Path $output 'native-compose-tests.log'
+$nativeDiagnosticTestLog = Join-Path $output 'native-diagnostic-tests.log'
+$nativeTestExecutable = $null
+$nativeComposeResult = 'not-run'
 # Current source adds three attachment-header cases to the original 48:
 # 50 mock-capable tests plus the one native-only legacy encoder comparison.
 # Keep the full-file native gate exact, including the newly integrated path.
@@ -298,7 +373,11 @@ $expectedNativeCodecTests = 51
 Push-Location $source
 try {
     foreach ($name in $buildEnvironment.Keys) {
-        [Environment]::SetEnvironmentVariable($name, $buildEnvironment[$name], 'Process')
+        if ($null -eq $buildEnvironment[$name]) {
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+        } else {
+            [Environment]::SetEnvironmentVariable($name, $buildEnvironment[$name], 'Process')
+        }
     }
 
     Invoke-Checked -FilePath $flutter -ArgumentList @('config', '--enable-windows-desktop')
@@ -318,12 +397,36 @@ try {
     $dartTests = @(
         'test/services/cloud_sync/cloud_sync_v2_windows_harness_test.dart',
         'test/services/cloud_sync/cloud_sync_windows_dev_profile_test.dart',
-        'test/services/cloud_sync/cloud_sync_windows_local_write_test.dart'
+        'test/services/cloud_sync/cloud_sync_windows_local_write_test.dart',
+        'test/services/cloud_sync/objectbox_own_writer_precision_recovery_test.dart'
     )
     & $flutter test --no-pub @dartTests 2>&1 |
         Tee-Object -FilePath $dartTestLog
     if ($LASTEXITCODE -ne 0) { throw 'Focused Windows CloudKit Dart tests failed.' }
 
+    if ($ArtifactMode -eq 'native-test-host') {
+        $cargoArguments = @('--manifest-path', 'rust/Cargo.toml', '--locked',
+            '--target', 'aarch64-pc-windows-msvc', '--lib')
+        & cargo build @cargoArguments 2>&1 | Tee-Object -FilePath $buildLog
+        if ($LASTEXITCODE -ne 0) { throw 'Native ARM64 DLL build failed.' }
+        # Keep the test executable and its hash separate from the cdylib proof.
+        & cargo test @cargoArguments --no-run --message-format=json 2>&1 |
+            Tee-Object -FilePath $nativeComposeBuildLog
+        if ($LASTEXITCODE -ne 0) { throw 'Native compose test compilation failed.' }
+        $testExecutables = @(Get-Content -LiteralPath $nativeComposeBuildLog | ForEach-Object {
+            try { $event = $_ | ConvertFrom-Json -ErrorAction Stop } catch { return }
+            if ($event.reason -eq 'compiler-artifact' -and $event.target.name -eq 'rust_lib_bluebubbles' -and
+                $event.profile.test -and $event.executable) { $event.executable }
+        })
+        if ($testExecutables.Count -ne 1) { throw 'Expected exactly one native test executable.' }
+        $nativeTestExecutable = $testExecutables[0]
+        $expectedTestParent = Join-Path $env:CARGO_TARGET_DIR 'aarch64-pc-windows-msvc/debug/deps'
+        if ([IO.Path]::GetDirectoryName($nativeTestExecutable) -ne [IO.Path]::GetFullPath($expectedTestParent) -or
+            (Get-PEMachine $nativeTestExecutable) -ne 'ARM64') {
+            throw 'Native test executable does not belong to this ARM64 build.'
+        }
+        $builtBundle = Join-Path $env:CARGO_TARGET_DIR 'aarch64-pc-windows-msvc/debug'
+    } else {
     $buildArguments = @(
         'build', 'windows', '--debug', '--no-pub',
         '--target', 'lib/cloud_sync_v2_windows_harness.dart',
@@ -338,6 +441,8 @@ try {
     }
     & $flutter @buildArguments 2>&1 | Tee-Object -FilePath $buildLog
     if ($LASTEXITCODE -ne 0) { throw 'Windows CloudKit harness build failed.' }
+    $builtBundle = Join-Path $source 'build/windows/arm64/runner/Debug'
+    }
     Invoke-Checked -FilePath 'git' -ArgumentList @('diff', '--exit-code', '--', 'pubspec.lock', 'rust/Cargo.lock')
 }
 finally {
@@ -352,10 +457,11 @@ finally {
     }
 }
 
-$builtBundle = Join-Path $source 'build/windows/arm64/runner/Debug'
 $runner = Join-Path $builtBundle 'bluebubbles_app.exe'
 $rustLibrary = Join-Path $builtBundle 'rust_lib_bluebubbles.dll'
-foreach ($required in @($runner, $rustLibrary)) {
+$requiredBinaries = @($rustLibrary)
+if ($ArtifactMode -eq 'harness') { $requiredBinaries += $runner }
+foreach ($required in $requiredBinaries) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Build did not produce required executable content: $required"
     }
@@ -363,18 +469,60 @@ foreach ($required in @($runner, $rustLibrary)) {
 
 $bundle = Join-Path $output 'bundle'
 New-Item -ItemType Directory -Path $bundle | Out-Null
-Copy-Item -Path (Join-Path $builtBundle '*') -Destination $bundle -Recurse
+if ($ArtifactMode -eq 'native-test-host') {
+    Copy-Item -LiteralPath $rustLibrary -Destination $bundle
+    Copy-Item -LiteralPath $nativeTestExecutable -Destination (Join-Path $bundle 'native-compose-tests.exe')
+    $objectBox = $env:OPENBUBBLES_BUILD_OBJECTBOX_DLL
+    if (-not $objectBox -or -not (Test-Path -LiteralPath $objectBox -PathType Leaf)) {
+        throw 'The workflow-pinned ObjectBox runtime is unavailable.'
+    }
+    Copy-Item -LiteralPath $objectBox -Destination (Join-Path $bundle 'objectbox.dll')
+} else {
+    Copy-Item -Path (Join-Path $builtBundle '*') -Destination $bundle -Recurse
+}
 $runner = Join-Path $bundle 'bluebubbles_app.exe'
 $rustLibrary = Join-Path $bundle 'rust_lib_bluebubbles.dll'
+# Keep the vendor DLL byte-for-byte identical in both artifact modes.
+& {
+    . (Join-Path $source 'tooling/windows/run_cloud_sync_v2_dev.ps1') -FunctionsOnlyForTest
+    Assert-HarnessObjectBoxRuntime -RunnerDirectory $bundle
+}
 
 $peFiles = @(Get-ChildItem -LiteralPath $bundle -File -Recurse |
     Where-Object { $_.Extension.ToLowerInvariant() -in @('.exe', '.dll') })
-if ($peFiles.Count -lt 4) { throw 'Packaged harness contains too few PE runtime files.' }
+$minimumPEFiles = if ($ArtifactMode -eq 'harness') { 4 } else { 3 }
+if ($peFiles.Count -lt $minimumPEFiles) { throw 'Packaged output contains too few PE runtime files.' }
 foreach ($file in $peFiles) {
     $machine = Get-PEMachine -Path $file.FullName
     if ($machine -ne 'ARM64') {
         throw "Packaged harness has a non-ARM64 PE file: $($file.Name) ($machine)"
     }
+}
+
+if ($ArtifactMode -eq 'native-test-host') {
+    & (Join-Path $bundle 'native-compose-tests.exe') 'cloud_sync_message_update_compose::tests::' --test-threads=4 --format=pretty 2>&1 |
+        Tee-Object -FilePath $nativeComposeTestLog
+    if ($LASTEXITCODE -ne 0) { throw 'Native timestamp/compose tests failed.' }
+    $composeResults = Get-Content -LiteralPath $nativeComposeTestLog -Raw
+    $composeCases = @(
+        'authored_edit_milliseconds_survive_apple_seconds_roundtrip',
+        'original_timestamp_keeps_its_containing_millisecond',
+        'edit_updates_text_body_and_summary_while_preserving_unknown_proto_fields',
+        'edit_reconstructs_unstyled_body_for_plain_text_v2_create_predecessor',
+        'edit_does_not_replace_present_empty_attributed_body',
+        'unsend_retains_text_and_body_and_adds_retracted_part',
+        'edit_rejects_nonzero_part_and_timestamp_that_does_not_follow_predecessor'
+    ) | ForEach-Object { "cloud_sync_message_update_compose::tests::$_" }
+    Assert-NativeTestResults -OutputText $composeResults -ExpectedNames $composeCases
+    foreach ($case in $nativeDiagnosticCases) {
+        # --exact prevents a renamed/missing filter from silently passing zero tests.
+        $caseOutput = & (Join-Path $bundle 'native-compose-tests.exe') $case --exact --test-threads=1 --format=pretty 2>&1
+        $caseExit = $LASTEXITCODE
+        $caseOutput | Tee-Object -FilePath $nativeDiagnosticTestLog -Append
+        if ($caseExit -ne 0) { throw "Native diagnostic test failed: $case" }
+        Assert-NativeTestResults -OutputText ($caseOutput -join "`n") -ExpectedNames @($case)
+    }
+    $nativeComposeResult = 'passed'
 }
 
 $nativeHandle = [System.Runtime.InteropServices.NativeLibrary]::Load($rustLibrary)
@@ -432,6 +580,9 @@ finally {
     }
 }
 
+$smokeMarkerSeen = $false
+$expectedSmokeMarker = 'cloud_sync_windows_dev_launch_id_invalid'
+if ($ArtifactMode -eq 'harness') {
 $smokeRoot = Join-Path $env:RUNNER_TEMP (
     'cloudkit-executable-smoke-' + [guid]::NewGuid().ToString('N')
 )
@@ -489,6 +640,7 @@ $smokeFiles = @(Get-ChildItem -LiteralPath $smokeRoot -File -Recurse -ErrorActio
 if ($smokeFiles.Count -ne 0) {
     throw 'Invalid-launch smoke wrote application or profile state.'
 }
+}
 
 $forbiddenBundleFiles = @(Get-ChildItem -LiteralPath $bundle -File -Recurse |
     Where-Object {
@@ -499,6 +651,11 @@ if ($forbiddenBundleFiles.Count -ne 0) {
 }
 
 $bundlePrefixLength = $bundle.TrimEnd('\', '/').Length + 1
+foreach ($inputFile in $sourceInputs) {
+    $hash = (Get-FileHash -LiteralPath (Join-Path $source $inputFile.path) -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($hash -cne $inputFile.sha256) { throw "Build/test source input changed: $($inputFile.path)" }
+}
+Invoke-Checked -FilePath git -ArgumentList @('-C', $source, 'diff', '--exit-code', '--', 'rust', 'lib', 'test', 'pubspec.lock')
 $fileInventory = @(Get-ChildItem -LiteralPath $bundle -File -Recurse |
     Sort-Object FullName |
     ForEach-Object {
@@ -509,15 +666,22 @@ $fileInventory = @(Get-ChildItem -LiteralPath $bundle -File -Recurse |
             pe_machine = if ($_.Extension.ToLowerInvariant() -in @('.exe', '.dll')) {
                 Get-PEMachine -Path $_.FullName
             } else { $null }
+            authenticode_status = if ($_.Extension.ToLowerInvariant() -in @('.exe', '.dll')) {
+                (Get-AuthenticodeSignature -LiteralPath $_.FullName).Status.ToString()
+            } else { $null }
         }
     })
 
 $manifestPath = Join-Path $output 'provenance.json'
 $provenance = [ordered]@{
-    schema_version = 1
-    purpose = 'windows-cloudkit-fast-loop-engineering-bundle'
+    schema_version = 2
+    purpose = "windows-cloudkit-fast-loop-$ArtifactMode"
     source_commit = $actualCommit
+    source_tree = $sourceTree
+    submodule_commits = $submodules
     sidecar_commit = $SidecarCommit
+    github_run_id = $env:GITHUB_RUN_ID
+    github_run_attempt = $env:GITHUB_RUN_ATTEMPT
     created_utc = [DateTime]::UtcNow.ToString('o')
     runner = [ordered]@{
         image_os = $env:ImageOS
@@ -531,14 +695,15 @@ $provenance = [ordered]@{
         cmake = Get-CommandText -FilePath 'cmake' -Arguments @('--version')
     }
     build = [ordered]@{
-        target = 'lib/cloud_sync_v2_windows_harness.dart'
+        target = if ($ArtifactMode -eq 'harness') { 'lib/cloud_sync_v2_windows_harness.dart' } else { 'rust/Cargo.toml --lib; flutter test' }
+        artifact_mode = $ArtifactMode
         configuration = 'debug'
         architecture = 'arm64'
         variant = $BuildVariant
-        build_identifier = $buildIdentifier
+        build_identifier = if ($ArtifactMode -eq 'harness') { $buildIdentifier } else { $null }
         native_media_graph_excluded = $true
         signing_applied = $false
-        writer_defines_present = ($BuildVariant -eq 'local-write')
+        writer_defines_present = ($ArtifactMode -eq 'harness' -and $BuildVariant -eq 'local-write')
         automatic_send_runtime_present = $false
     }
     verification = [ordered]@{
@@ -546,6 +711,14 @@ $provenance = [ordered]@{
         focused_dart_tests = 'passed'
         all_pe_files_arm64 = $true
         rust_bridge_load_unload = 'passed'
+        native_timestamp_compose_tests = $nativeComposeResult
+        native_timestamp_compose_expected_count = 7
+        native_content_free_diagnostic_tests = [ordered]@{
+            result = $nativeComposeResult
+            expected_names = $nativeDiagnosticCases
+            expected_test_count = 2
+            executable = if ($ArtifactMode -eq 'native-test-host') { 'bundle/native-compose-tests.exe' } else { $null }
+        }
         native_local_write_encoder_tests = [ordered]@{
             result = 'passed'
             native_library = 'bundle/rust_lib_bluebubbles.dll'
@@ -553,7 +726,7 @@ $provenance = [ordered]@{
             expected_test_count = $expectedNativeCodecTests
             full_file_run = $true
         }
-        invalid_launch_diagnostic = [ordered]@{
+        invalid_launch_diagnostic = if ($ArtifactMode -eq 'harness') { [ordered]@{
             operation = 'invalid-launch-id'
             network_or_auth_requested = $false
             expected_dart_marker = $expectedSmokeMarker
@@ -561,9 +734,20 @@ $provenance = [ordered]@{
             process_terminated_if_still_running = $true
             profile_state_written = $false
             proof_status = if ($smokeMarkerSeen) { 'observed' } else { 'not-captured' }
-        }
+        } } else { [ordered]@{ proof_status = 'not-run-no-gui-assembly' } }
         account_profile_or_database_in_bundle = $false
     }
+    qualification = [ordered]@{
+        cloud_artifact_signing = 'not-applied'
+        local_policy_load = 'not-tested'
+        gui_assembly_receipt = 'not-issued'
+        retained_native_base_reused = $false
+        live_cloudkit_tested = $false
+    }
+    source_inputs = $sourceInputs
+    test_logs = @(Get-ChildItem -LiteralPath $output -Filter '*.log' -File | ForEach-Object {
+        [ordered]@{ path = $_.Name; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+    })
     files = $fileInventory
 }
 [System.IO.File]::WriteAllText(
@@ -572,7 +756,7 @@ $provenance = [ordered]@{
     [System.Text.UTF8Encoding]::new($false)
 )
 
-$archive = Join-Path $output "windows-cloudkit-fast-loop-arm64-$BuildVariant-$actualCommit.zip"
+$archive = Join-Path $output "windows-cloudkit-fast-loop-arm64-$ArtifactMode-$BuildVariant-$actualCommit.zip"
 Compress-Archive -Path (Join-Path $bundle '*') -DestinationPath $archive
 $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 $hashPath = "$archive.sha256"
@@ -586,7 +770,8 @@ $hashPath = "$archive.sha256"
     result = 'passed'
     source_commit = $actualCommit
     build_variant = $BuildVariant
-    build_identifier = $buildIdentifier
+    artifact_mode = $ArtifactMode
+    build_identifier = if ($ArtifactMode -eq 'harness') { $buildIdentifier } else { $null }
     bundle = $archive
     bundle_sha256 = $archiveHash
     provenance = $manifestPath
