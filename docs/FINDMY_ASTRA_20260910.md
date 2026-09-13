@@ -34,19 +34,24 @@ Private aggregate evidence:
 | Roster | `2a760d5c97d34b89ac3e6f26ccccf338` | 1 person, 0 locations, 0 FMIP devices |
 | Selected person | `b883750254d74f09b5c975570c6be4a6` | Exact sole entry matched; fresh selected response still lacked location |
 | Logger-fixed native repeat | `ab1225a716454ee482b1762eaa78e3dd` | 1 person, 0 locations, 0 FMIP devices; protected-profile checks passed |
+| Awaited native initialization | `2ca02f9e0f1f41f7bb4e299eff227386` | Same aggregate result; native diagnostics show FMF init and refresh omit the `locations` field |
 
 The latest tested native DLL is SHA256
-`e2bdf775b8f9b9327c1a8278a034628f4efb382cbe2e2a9afe1f9aec2164f30a`,
-source `b2797dd07fdeffd01c1705dbf184dbf3b15eac22`, run 34744744122.
+`bf1507c72421fed903dcaffcbe863a001d0d59bd2c04e20b8ce8befe6345147e`,
+source `3496034e3b41c2bfc862e75f975e62c266336cce`, run 34762729315.
 The earlier two probes used retained source `7f2569165`.
 Each private `qualification.json` separately records the actual host/probe/bridge
 hashes. An uncommitted host must not be described as contained in its base SHA.
 
 No old full-app receipt was relabeled. The new Windows native-only build is a
-separate CloudKit qualification, not proof of a Find My fix. The current source
-corrects the restricted logger to target `findmy_diagnostic` explicitly. The
-qualified DLL predates that correction, so native shape/join evidence is still
-pending. Do not infer a secure-protocol failure from absent diagnostic lines.
+separate CloudKit qualification, not proof of a Find My fix. The current DLL
+includes the restricted `findmy_diagnostic` target. Awaiting `doFirstTimeInit`
+in the test host restored native diagnostic output. Observed FMF initialization
+returned `following: Array(1), locations: Absent`; refresh returned both fields
+absent while retaining the contact. No coordinate join was attempted. This
+narrows investigation to request/response handling but does not prove a secure
+protocol failure or sharing change. Selected aggregate results are also empty,
+but no selected raw-shape line is claimed.
 
 ## Run the existing loop
 
@@ -91,7 +96,7 @@ invariants passed. The corrected chain was reproduced in a synthetic real-SDK te
 
 | Path | What is established | Next evidence |
 | --- | --- | --- |
-| People | Native `last_location` is filled only from matching legacy `locations[].id`. The UI does not suppress it using sharing flags. Secure/fallback capability fields have no behavior in this implementation. | Distinguish absent/null/unmatched legacy locations from an alternate secure response, using value-free native shape/join diagnostics. Do not guess or force legacy downgrade. |
+| People | Native `last_location` is filled only from matching legacy `locations[].id`. Real init/refresh responses omit `locations`; this is not a failed coordinate join. Secure/fallback capability fields have no behavior in this implementation. | Compare the requested service/context and authorized response variants against a known working path. Do not infer consent or force a protocol downgrade. |
 | Devices | Final refreshed `content` decoded to an empty list. | Compare initialization and refresh counts plus allowlisted response status/context, not just the final list. |
 | Items | Inventory/position sync acquires the global native writer permit and may save alignment records. Active semantic reads pause that gate; V2 ownership alone is not a permanent prohibition. | Confirm same-process pause/resume and Items stage, then qualify a reviewed normal Items workflow. |
 

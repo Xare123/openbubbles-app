@@ -14,7 +14,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
 import 'package:flutter_test/flutter_test.dart';
 
 const nativeSha =
-    'e2bdf775b8f9b9327c1a8278a034628f4efb382cbe2e2a9afe1f9aec2164f30a';
+    'bf1507c72421fed903dcaffcbe863a001d0d59bd2c04e20b8ce8befe6345147e';
 const liveEnable = 'OPENBUBBLES_RUN_FINDMY_WINDOWS_LIVE';
 const solePersonEnable = 'OPENBUBBLES_FINDMY_SELECT_SOLE_PERSON';
 
@@ -303,7 +303,7 @@ void main() {
         bridgeInitialized = true;
         output['abi_verified'] = true;
         stage = 'keystore';
-        api.doFirstTimeInit(path: profile.path);
+        await api.doFirstTimeInit(path: profile.path);
         stage = 'hardware';
         final hardware = api.readHardware(path: profile.path);
         if (hardware == null) throw StateError('retained_hardware_required');

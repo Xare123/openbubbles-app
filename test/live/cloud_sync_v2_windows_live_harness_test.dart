@@ -56,7 +56,7 @@ void main() {
     rustInitialized = true;
     await fs.init(headless: true);
     await Logger.init();
-    api.doFirstTimeInit(path: fs.appDocDir.path);
+    await api.doFirstTimeInit(path: fs.appDocDir.path);
     await Database.init(cloudSyncV2Harness: true);
     databaseOpen = true;
   });

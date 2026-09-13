@@ -11,28 +11,28 @@ timestamp: 2026-09-13
 
 ## Fastest current Dart loop, September 12
 
-Current handoff (September 13): Windows native-only run 34744744122 is qualified
-for source `b2797dd07`. Its separate signed directory is
-`C:\Codex\OpenBubblesReview\artifacts\windows-native-34744744122\signed`;
-DLL SHA256 `e2bdf775b8f9b9327c1a8278a034628f4efb382cbe2e2a9afe1f9aec2164f30a`.
+Current handoff (September 13): Windows native-only run 34762729315 is qualified
+for source `3496034e3`. Its separate signed directory is
+`C:\Codex\OpenBubblesReview\artifacts\windows-native-34762729315\signed`;
+DLL SHA256 `bf1507c72421fed903dcaffcbe863a001d0d59bd2c04e20b8ce8befe6345147e`.
 All 51 packaged-DLL codec tests passed locally with App Control enabled, and
 the actual loaded module path was verified. The original GUI/runtime was not
 replaced. Archive, unsigned/signed lineage and source-EOL comparison evidence
 are in the adjacent `local-qualification.json` and `provenance.json`.
 
-That DLL includes the logger-handle repair and produced real retained-record
-diagnostics. Earlier source `ea757e188` also proved an ordinary text send/edit
-and exact readback. The current candidate adds `extensionMetadataJson` to the
-native contract and therefore requires a newly built matching DLL. Bridge run
-34761004976 generated the bindings and compiled the library successfully; its
-test build found ambiguous types in the new synthetic fixture, now corrected
-in source. Do not interpret generation/library success as passing native tests.
+That DLL includes the logger-handle repair and `extensionMetadataJson` contract.
+It passed 141 selected native tests and the shared extension digest vector.
+Live read report obcs2-semantic-1789312307027272.json applied four retained records
+and kept outbox 17 -> 17. The seven sampled extension/association blockers remain.
+Earlier source `ea757e188` proved an ordinary text send/edit and exact readback.
+Bridge run 34761004976 generated the matching bindings; its synthetic test fixture
+error was corrected before successful Windows qualification.
 
 Use the cloud workflow for binding changes: local generation invokes Cargo
 expansion and a full native dependency build. The local attempt stopped on
 missing clang. Import the seven generated artifact files together, verify both
 FRB normalization guards, and qualify the coherent source in the Windows lane.
-Pilot `203bea75e` adds extension, converter, DTO, digest, system-event and Dart
+Pilot `02fc8e810` adds extension, converter, DTO, digest, system-event and Dart
 projector/decoder tests using the same native test executable.
 
 After qualification, verify test cases and hashes, stage/sign separately, rerun

@@ -12,13 +12,13 @@ import plistlib
 import re
 import stat
 
-DLL_SHA256 = "e2bdf775b8f9b9327c1a8278a034628f4efb382cbe2e2a9afe1f9aec2164f30a"
+DLL_SHA256 = "bf1507c72421fed903dcaffcbe863a001d0d59bd2c04e20b8ce8befe6345147e"
 ANISETTE_ENDPOINT = "https://ani.sidestore.io"
 MARKER = "openbubbles-cloud-sync-v2-windows-dev-profile:v1"
 SOURCE_PINS = {
-    "lib/src/rust/frb_generated.dart": "c717a3842e92f04c21242003cb25c176693ef9b53f14abc4da719174b776d6ab",
+    "lib/src/rust/frb_generated.dart": "62326885bac629277b265c021d72166cd06ce55c5129e3335bf910089878d3b0",
     "lib/src/rust/frb_generated.io.dart": "380a2dff2358a0d2ab8661c0faa38ad0e22d9c2644a709c7e38fd7e592170923",
-    "lib/src/rust/api/api.dart": "ad1ea015c59c768aa7870e70300de2d9ae81eb4767bda3948390cd45059810a1",
+    "lib/src/rust/api/api.dart": "f44d618a5678f94a0eaff46164d185ce80f0ca12530ce8d2eb6265dc5d0018a4",
     "lib/cloud_sync_v2_windows_findmy_probe.dart": "fa24e14eecd102bff39c7161c0625edd8cee6ca0ea3a7ef7d27528d7a940ca4a",
 }
 

@@ -3759,3 +3759,29 @@ cannot authorize or perform adoption.
 - Pilot 02fc8e810 qualifies the actual native extension/converter/DTO/digest/
   system-event scopes and Dart projector/decoder using one shared compile.
   Both Muse workers are closed; no session/worktree/evidence deletion performed.
+
+### September 13 live qualification and session-association boundary
+
+- Windows 34762729315 passed in 23m21s. Source 3496034e3 and pilot 02fc8e810:
+  141 selected native tests, 51 packaged-library codec tests; local signed copy
+  passed another 51 codec cases under App Control. Artifact provenance is in
+  `artifacts/windows-native-34762729315/local-qualification.json` privately.
+- A 37-record non-projecting inspection preserved durable state. The seven
+  sampled extension failures now expose five sticker-deferred and two unknown
+  association failures; none of those seven is proved restored. The earlier
+  blanket extension check had hidden these later conditions.
+- Parent and Muse traced native type 2 to extension-session updates, type 4000
+  to meta updates and type 1000 to no-balloon extensions. Type 2 must preserve
+  amk session/base inheritance. No promotion or diagnostic-only rebuild was
+  accepted. The agent's design findings were reviewed and the agent closed.
+- Normal run report obcs2-semantic-1789312307027272.json applied four retained
+  message records, fetched zero, reached empty terminal reads in all streams
+  and kept outbox 17 -> 17. Total retained is 6650. No claim that all four are
+  distinct newly restored messages or that the new metadata parser caused them.
+- Find My host must await native initialization. After fixing it, launch
+  2ca02f9e0f1f41f7bb4e299eff227386 recorded real FMF init/refresh responses with
+  absent locations fields, one following entry and no coordinate join. Profile
+  invariants/cleanup passed. No sharing settings or Items initialization changed.
+- Nested rustpush has pre-existing formatting edits. Relevant Find My diagnostic
+  and extension live-path differences reviewed here were formatting-only; retain
+  all uncommitted submodule work and compare the pinned commit when qualifying.
