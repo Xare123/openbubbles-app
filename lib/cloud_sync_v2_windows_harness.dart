@@ -979,6 +979,19 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
     return _adapter!.sampler.runConfirmedReadOnlyObservation(action);
   }
 
+  @visibleForTesting
+  Future<T> observeChatParentsForTestHost<T>(
+    Future<T> Function(CloudSyncNativeAuthSnapshot, Object) action,
+  ) {
+    if (Platform.environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] != '1' ||
+        Platform.environment['OPENBUBBLES_INSPECT_CHAT_PARENTS'] != '1' ||
+        widget.autoStart || _busy || _adapter == null ||
+        widget.operation != CloudSyncV2WindowsHarnessOperation.interactive) {
+      throw StateError('cloud_sync_windows_dev_test_host_invalid');
+    }
+    return _adapter!.sampler.runConfirmedReadOnlyObservation(action);
+  }
+
   /// One opt-in authentication diagnostic after a failed read. Uses the normal
   /// quota read to expose the error family hidden by the native refresh wrapper.
   /// Never returns account data, token values, response bodies or quota values.

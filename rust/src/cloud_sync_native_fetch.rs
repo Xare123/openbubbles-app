@@ -4088,17 +4088,44 @@ fn protect_reset_failure(
     failure
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CloudNativeFetchPurpose {
+    Existing,
+    Chat1Discovery,
+}
+
+fn fetch_scope_allowed(
+    purpose: CloudNativeFetchPurpose,
+    stream: CloudNativeStream,
+    has_read_permit: bool,
+) -> bool {
+    match purpose {
+        CloudNativeFetchPurpose::Chat1Discovery => {
+            has_read_permit && stream == CloudNativeStream::Chat1
+        }
+        CloudNativeFetchPurpose::Existing => {
+            !has_read_permit
+                || matches!(stream, CloudNativeStream::Chats | CloudNativeStream::Messages | CloudNativeStream::Attachments)
+        }
+    }
+}
+
+fn fetch_limits_allowed(purpose: CloudNativeFetchPurpose, maximum_changes: u32, generation: u64) -> bool {
+    maximum_changes > 0
+        && maximum_changes as usize <= MAX_CHANGES_PER_PAGE
+        && generation > 0
+        && (purpose != CloudNativeFetchPurpose::Chat1Discovery || maximum_changes <= 50)
+}
+
 async fn cloud_sync_fetch_protected_page_with_store(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     read_authentication_permit: Option<&CloudKitReadAuthenticationPermit<'_>>,
     hasher: &CloudSemanticIdentifierHasher,
     store: &dyn CloudNativeProtectedStore,
     request: &CloudNativeFetchRequest<'_>,
+    purpose: CloudNativeFetchPurpose,
 ) -> CloudNativeProtectedFetchOutcome {
-    if request.maximum_changes == 0
-        || request.maximum_changes as usize > MAX_CHANGES_PER_PAGE
-        || request.generation == 0
-    {
+    if !fetch_limits_allowed(purpose, request.maximum_changes, request.generation) {
         return CloudNativeProtectedFetchOutcome::Failure(CloudNativeFetchFailure::new(
             CloudNativeFailureCategory::MalformedRecord,
             CloudNativeSafeCode::InvalidRequest,
@@ -4108,12 +4135,7 @@ async fn cloud_sync_fetch_protected_page_with_store(
     if let Err(failure) = request.scope.validate_for_stream(request.stream) {
         return CloudNativeProtectedFetchOutcome::Failure(failure);
     }
-    if read_authentication_permit.is_some()
-        && !matches!(
-            request.stream,
-            CloudNativeStream::Chats | CloudNativeStream::Messages | CloudNativeStream::Attachments
-        )
-    {
+    if !fetch_scope_allowed(purpose, request.stream, read_authentication_permit.is_some()) {
         return CloudNativeProtectedFetchOutcome::Failure(CloudNativeFetchFailure::new(
             CloudNativeFailureCategory::MalformedRecord,
             CloudNativeSafeCode::InvalidScope,
@@ -4154,11 +4176,21 @@ async fn cloud_sync_fetch_protected_page_with_store(
                     )
                     .await
             }
+            (CloudNativeStream::Chat1, Some(permit)) => {
+                // This arm is reachable only through the explicit raw-only
+                // discovery entry. It never enables Chat1 semantic decode.
+                cloud_messages_client
+                    .sync_chat1_discovery_page_for_read_authentication(
+                        permit,
+                        continuation_token,
+                        Some(request.maximum_changes),
+                    )
+                    .await
+            }
             (
                 CloudNativeStream::MessageUpdate
                 | CloudNativeStream::RecoverableMessageDelete
-                | CloudNativeStream::ScheduledMessage
-                | CloudNativeStream::Chat1,
+                | CloudNativeStream::ScheduledMessage,
                 Some(_),
             ) => unreachable!("permit-bound semantic stream was rejected before fetch"),
             (CloudNativeStream::Chats, None) => {
@@ -4390,6 +4422,28 @@ pub(crate) async fn cloud_sync_fetch_protected_page(
         hasher,
         &store,
         request,
+        CloudNativeFetchPurpose::Existing,
+    )
+    .await
+}
+
+/// Separate, bounded discovery surface. Returns only protected raw envelopes;
+/// the normal semantic fetch and decoder keep rejecting auxiliary streams.
+pub(crate) async fn cloud_sync_fetch_protected_chat1_discovery(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    permit: &CloudKitReadAuthenticationPermit<'_>,
+    storage_directory: PathBuf,
+    hasher: &CloudSemanticIdentifierHasher,
+    request: &CloudNativeFetchRequest<'_>,
+) -> CloudNativeProtectedFetchOutcome {
+    let store = PlatformCloudNativeProtectedStore::new(storage_directory);
+    cloud_sync_fetch_protected_page_with_store(
+        cloud_messages_client,
+        Some(permit),
+        hasher,
+        &store,
+        request,
+        CloudNativeFetchPurpose::Chat1Discovery,
     )
     .await
 }
@@ -5363,6 +5417,37 @@ mod tests {
         }
         assert_eq!(CloudNativeStream::parse("futureZone"), None);
         assert_eq!(CloudNativeStream::from_tag(8), None);
+    }
+
+    #[test]
+    fn chat1_discovery_is_disjoint_from_semantic_fetch_and_requires_permit() {
+        let streams = [CloudNativeStream::Chats, CloudNativeStream::Messages,
+            CloudNativeStream::Attachments, CloudNativeStream::MessageUpdate,
+            CloudNativeStream::RecoverableMessageDelete, CloudNativeStream::ScheduledMessage,
+            CloudNativeStream::Chat1];
+        for stream in streams {
+            let semantic = matches!(stream, CloudNativeStream::Chats |
+                CloudNativeStream::Messages | CloudNativeStream::Attachments);
+            assert_eq!(fetch_scope_allowed(CloudNativeFetchPurpose::Existing, stream, true), semantic);
+            // Preserve the original explicit raw sampler; it is not the new
+            // permit-bound discovery entry and must not be used as its fallback.
+            assert!(fetch_scope_allowed(CloudNativeFetchPurpose::Existing, stream, false));
+            assert_eq!(fetch_scope_allowed(CloudNativeFetchPurpose::Chat1Discovery, stream, true),
+                stream == CloudNativeStream::Chat1);
+            assert!(!fetch_scope_allowed(CloudNativeFetchPurpose::Chat1Discovery, stream, false));
+        }
+    }
+
+    #[test]
+    fn chat1_discovery_has_a_smaller_page_budget_without_weakening_existing_limits() {
+        for (maximum, generation, expected) in [(0, 1, false), (1, 0, false),
+            (1, 1, true), (50, 1, true), (51, 1, false), (200, 1, false),
+            (201, 1, false), (u32::MAX, 1, false)] {
+            assert_eq!(fetch_limits_allowed(CloudNativeFetchPurpose::Chat1Discovery, maximum, generation), expected);
+        }
+        assert!(fetch_limits_allowed(CloudNativeFetchPurpose::Existing, 200, 1));
+        assert!(!fetch_limits_allowed(CloudNativeFetchPurpose::Existing, 201, 1));
+        assert!(!fetch_limits_allowed(CloudNativeFetchPurpose::Existing, 1, 0));
     }
 
     fn change(name: &str, raw: Vec<u8>) -> CloudMessageRecordPageChange {

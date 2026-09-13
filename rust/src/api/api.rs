@@ -7427,6 +7427,7 @@ pub async fn cloud_sync_fetch_protected_page(
         generation,
         previous_checkpoint_reference,
         maximum_changes,
+        false,
     )
     .await
 }
@@ -7467,6 +7468,55 @@ pub async fn cloud_sync_fetch_protected_page_under_writer_pause(
         generation,
         previous_checkpoint_reference,
         maximum_changes,
+        false,
+    )
+    .await
+}
+
+/// Explicit raw-only discovery of the existing auxiliary Chat1 zone. This
+/// uses the same protected lease lifecycle as semantic fetch, but never
+/// admits an auxiliary record to semantic decoding or writes CloudKit data.
+#[allow(clippy::too_many_arguments)]
+pub async fn cloud_sync_fetch_protected_chat1_discovery_under_writer_pause(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    native_writer_pause_token: u64,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    generation: u64,
+    previous_checkpoint_reference: Option<String>,
+    maximum_changes: u32,
+) -> CloudSyncProtectedFetchResult {
+    if maximum_changes == 0 || maximum_changes > 50 || generation == 0 {
+        return CloudSyncProtectedFetchResult {
+            page: None,
+            failure: Some(local_cloud_sync_protected_failure(
+                CloudSyncProtectedFailureCategory::MalformedRecord,
+                CloudSyncProtectedSafeCode::InvalidRequest,
+            )),
+        };
+    }
+    let permit = match acquire_cloudkit_read_authentication(native_writer_pause_token) {
+        Ok(permit) => permit,
+        Err(_) => {
+            return CloudSyncProtectedFetchResult {
+                page: None,
+                failure: Some(local_cloud_sync_protected_failure(
+                    CloudSyncProtectedFailureCategory::Authorization,
+                    CloudSyncProtectedSafeCode::ReadAuthenticationScope,
+                )),
+            };
+        }
+    };
+    cloud_sync_fetch_protected_page_inner(
+        cloud_messages_client,
+        Some(&permit),
+        storage_directory,
+        expected_account_fingerprint,
+        "chat1ManateeZone".to_owned(),
+        generation,
+        previous_checkpoint_reference,
+        maximum_changes,
+        true,
     )
     .await
 }
@@ -7481,6 +7531,7 @@ async fn cloud_sync_fetch_protected_page_inner(
     generation: u64,
     previous_checkpoint_reference: Option<String>,
     maximum_changes: u32,
+    chat1_discovery: bool,
 ) -> CloudSyncProtectedFetchResult {
     use crate::cloud_sync_native_fetch::{
         CloudNativeFetchRequest, CloudNativeProtectedFetchOutcome, CloudNativeProtectionScope,
@@ -7554,15 +7605,26 @@ async fn cloud_sync_fetch_protected_page_inner(
         previous_checkpoint_reference.as_deref(),
         maximum_changes,
     );
-    match crate::cloud_sync_native_fetch::cloud_sync_fetch_protected_page(
-        cloud_messages_client,
-        read_authentication_permit,
-        PathBuf::from(storage_directory),
-        &hasher,
-        &request,
-    )
-    .await
-    {
+    let outcome = if chat1_discovery {
+        let Some(permit) = read_authentication_permit else {
+            return CloudSyncProtectedFetchResult {
+                page: None,
+                failure: Some(local_cloud_sync_protected_failure(
+                    CloudSyncProtectedFailureCategory::Authorization,
+                    CloudSyncProtectedSafeCode::ReadAuthenticationScope,
+                )),
+            };
+        };
+        crate::cloud_sync_native_fetch::cloud_sync_fetch_protected_chat1_discovery(
+            cloud_messages_client, permit, PathBuf::from(storage_directory), &hasher, &request,
+        ).await
+    } else {
+        crate::cloud_sync_native_fetch::cloud_sync_fetch_protected_page(
+            cloud_messages_client, read_authentication_permit,
+            PathBuf::from(storage_directory), &hasher, &request,
+        ).await
+    };
+    match outcome {
         CloudNativeProtectedFetchOutcome::Page(page) => CloudSyncProtectedFetchResult {
             page: Some(map_cloud_sync_protected_page(&page)),
             failure: None,

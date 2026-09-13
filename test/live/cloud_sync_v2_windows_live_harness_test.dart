@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
 import 'cloud_sync_edit_echo_verification.dart';
+import 'cloud_sync_parent_coverage.dart';
 
 void main() {
   final enabled =
@@ -81,6 +82,7 @@ void main() {
         'probe-message-feed',
         'inspect-edit-conflict',
         'inspect-retained',
+        'inspect-chat-parents',
       };
       expect(operation, isIn(allowedOperations));
       final harnessKey = GlobalKey<harness.CloudSyncV2WindowsHarnessState>();
@@ -95,6 +97,8 @@ void main() {
                     'inspect-edit-conflict' =>
                       candidate == harness.CloudSyncV2WindowsHarnessOperation.interactive,
                     'inspect-retained' =>
+                      candidate == harness.CloudSyncV2WindowsHarnessOperation.interactive,
+                    'inspect-chat-parents' =>
                       candidate == harness.CloudSyncV2WindowsHarnessOperation.interactive,
                     'view-projection' =>
                       candidate ==
@@ -155,6 +159,14 @@ void main() {
       if (Platform.environment['OPENBUBBLES_INSPECT_RETAINED'] == '1') {
         final observed = await tester.runAsync(() => harnessKey.currentState!.inspectRetainedForTestHost());
         debugPrint('windows_retained_observation=${jsonEncode(observed)}');
+        expect(observed?['durable_state_unchanged'], isTrue);
+      }
+      if (Platform.environment['OPENBUBBLES_INSPECT_CHAT_PARENTS'] == '1') {
+        expect(operation, 'inspect-chat-parents');
+        final observed = await tester.runAsync(() => harnessKey.currentState!.observeChatParentsForTestHost(
+          (auth, pause) => observeCachedParentCoverage(store: Database.store,
+              profile: profile, auth: auth, pauseToken: pause as BigInt)));
+        debugPrint('windows_parent_coverage=${jsonEncode(observed)}');
         expect(observed?['durable_state_unchanged'], isTrue);
       }
       if (Platform.environment['OPENBUBBLES_INSPECT_EDIT_CONFLICT'] == '1') {

@@ -526,7 +526,7 @@ void main() {
   test(
     'native semantic fetch acquires and forwards read-authentication permit',
     () {
-      final api = File('rust/src/api/api.rs').readAsStringSync();
+      final api = File('rust/src/api/api.rs').readAsStringSync().replaceAll('\r\n', '\n');
       final shadowFetchStart = api.indexOf(
         'pub async fn cloud_sync_fetch_protected_page',
       );
@@ -534,15 +534,15 @@ void main() {
         'pub async fn cloud_sync_fetch_protected_page_under_writer_pause',
         shadowFetchStart,
       );
-      final innerFetchStart = api.indexOf(
-        'async fn cloud_sync_fetch_protected_page_inner',
+      final discoveryFetchStart = api.indexOf(
+        'pub async fn cloud_sync_fetch_protected_chat1_discovery_under_writer_pause',
         semanticFetchStart,
       );
       expect(shadowFetchStart, greaterThanOrEqualTo(0));
       expect(semanticFetchStart, greaterThan(shadowFetchStart));
-      expect(innerFetchStart, greaterThan(semanticFetchStart));
+      expect(discoveryFetchStart, greaterThan(semanticFetchStart));
       final shadowFetch = api.substring(shadowFetchStart, semanticFetchStart);
-      final semanticFetch = api.substring(semanticFetchStart, innerFetchStart);
+      final semanticFetch = api.substring(semanticFetchStart, discoveryFetchStart);
       expect(shadowFetch, isNot(contains('native_writer_pause_token')));
       expect(
         shadowFetch,
@@ -556,6 +556,7 @@ void main() {
         ),
       );
       expect(semanticFetch, contains('Some(&permit)'));
+      expect(semanticFetch, contains('maximum_changes,\n        false,'));
 
       final native = File(
         'rust/src/cloud_sync_native_fetch.rs',
@@ -568,6 +569,31 @@ void main() {
       expect(native, contains('.sync_chats_page_for_read_authentication('));
     },
   );
+
+  test('Chat1 discovery is an explicit bounded protected surface, not semantic admission', () {
+    final api = File('rust/src/api/api.rs').readAsStringSync().replaceAll('\r\n', '\n');
+    final discovery = _section(api,
+      'pub async fn cloud_sync_fetch_protected_chat1_discovery_under_writer_pause',
+      'async fn cloud_sync_fetch_protected_page_inner');
+    expect(discovery, contains('maximum_changes > 50'));
+    expect(discovery, contains('generation == 0'));
+    expect(discovery, contains('acquire_cloudkit_read_authentication(native_writer_pause_token)'));
+    expect(discovery, contains('Some(&permit)'));
+    expect(discovery, contains('"chat1ManateeZone".to_owned()'));
+    expect(discovery, isNot(contains('stream: String')));
+    expect(discovery, contains('maximum_changes,\n        true,'));
+    expect(discovery, isNot(contains('cloud_sync_fetch_raw_page')));
+    final native = File('rust/src/cloud_sync_native_fetch.rs').readAsStringSync();
+    final oldEntry = _section(native,
+      'pub(crate) async fn cloud_sync_fetch_protected_page(',
+      'pub(crate) async fn cloud_sync_fetch_protected_chat1_discovery(');
+    expect(oldEntry, contains('CloudNativeFetchPurpose::Existing'));
+    expect(oldEntry, isNot(contains('CloudNativeFetchPurpose::Chat1Discovery')));
+    expect(native, contains('.sync_chat1_discovery_page_for_read_authentication('));
+    final decoder = File('rust/src/cloud_sync_transient_bridge.rs').readAsStringSync();
+    expect(decoder, contains('CloudNativeStream::Chat1 => {'));
+    expect(decoder, contains('decoder_failure_at("unsupported_stream")'));
+  });
 }
 
 String _section(String source, String startMarker, String endMarker) {

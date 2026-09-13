@@ -4154,3 +4154,72 @@ cannot authorize or perform adoption.
   Both Muse workers are closed and verified absent; no local app/test/native
   build process remains. Windows 34782347926 is the only active qualification
   job. Keep the goal active and qualify live repaired dates after its artifact.
+
+### September 13 exact attachment-date replay qualified
+
+- Windows 34782347926 succeeded on 4e7121a18 / pilot 5fd8d03fe. Imported artifact
+  10326285636; parent verified 53 inputs, 12 logs, three ARM64 PEs and hashes.
+  Cloud: 153 selected native, 658 Dart, 51 actual-DLL codec tests. Local signed
+  runtime passed 51 codec and 25 harness tests, with original vendor ObjectBox
+  and unchanged App Control. Signing/provenance is recorded in the private
+  windows-native-34782347926/local-qualification.json.
+- Non-projecting repeat matched all eight prior record HMACs, preserved durable
+  state, and changed each date failure to ready with a valid Unix-millisecond
+  date and one existing local parent. Proof is private
+  windows-attachment-date-comparison-20260913.json under build-evidence.
+- Normal drain f8b70cf784874ca3b023670d606499e3 completed in 3m28s. Remote report
+  1789335099312100 observed empty streams; local report 1789335274615314 applied
+  86 Attachment records. Retained total 6252 (94/5046/1112); outbox 21 -> 21;
+  remote saves/deletes off. No new messages were applied by this replay.
+- Hash-verified before/after copies under windows-attachment-dates-20260913
+  passed test/live/cloud_sync_attachment_date_replay_test.dart. Each of the
+  eight selected prior malformed sources is uniquely identified in the before
+  copy, applied afterward, retains its exact change/etag/generation/payload, and
+  has a matching canonical snapshot, parent link and resolvable production
+  download source. This is not a file-byte-download or Pixel rendering claim.
+- Muse source review distinguishes current legacy repair from upstream history.
+  Current legacy searches/refetches authoritative CloudChat parents, not guessed
+  Message-derived rosters. V2's existing native Chat observer serves outbound
+  direct-candidate disjointness, not raw inbound chatId lookup. A bounded cache
+  correlation can use existing protected decoding without invoking that writer
+  path. No parent synthesis or unsafe lookup was implemented from this review.
+
+### September 13 parent coverage and separate raw discovery candidate
+
+- Non-projecting cached coverage read 794 current-generation Chat records:
+  700 decoded, 81 latest tombstones and 13 out-of-scope. It was not capped.
+  Eight distinct missing Message routes found no match against decoded Chat
+  identities, alias hashes or legacy normalization. Four applied controls
+  correctly found proven parents, verifying the comparison. No durable sync or
+  canonical state changed. Missing samples are five bare UUIDs, two direct
+  phone routes and one direct email route. This does not prove remote absence
+  or intentional deletion; raw record IDs/undecrypted auxiliary sources remain
+  outside this comparison. Private evidence: windows-parent-coverage-20260913.json.
+- Parent independently verified published upstream message.dart at
+  eed1b6332efbb17adbf5ebfa2263ad770169f75e, lines 1100-1115: applyFromCloud returns
+  without saving when its parent lookup fails. That method does not synthesize
+  a chat. Caller-loop behavior was not independently established here. Our
+  current local legacy refetch/repair helper is a later modification, not proof
+  of original upstream behavior.
+- Auxiliary raw sampling includes chat1ManateeZone in older source, but the
+  active permit-bound protected fetch rejects all auxiliary streams. The
+  unbound raw API is not an acceptable substitute. No auxiliary live query was
+  performed, and no claim is made that the missing parents are there.
+- Implemented a distinct protected Chat1 discovery API, fixed zone and 50-row
+  cap, with a private purpose gate. Existing semantic fetch retains its three
+  allowed streams; Chat1 discovery requires a permit, and semantic decoding of
+  auxiliary streams remains rejected. Shared protection/lease handling is
+  reused, not replaced. Added policy-matrix/budget tests and source contracts.
+- Muse wrote only the rustpush raw-only wrapper and its structural test. Parent
+  reviewed the cached bound-container/lookup-only path and kept the existing
+  semantic-wrapper forbid list. Dependency c4dd64b5afc086e87d508fed04090f8cd0abc555
+  is pushed to fork branch agent/cloudkit-chat1-discovery. An initial shorthand
+  refspec failed from detached HEAD; the full refs/heads target succeeded.
+  Other pre-existing rustpush changes were not included.
+- Local source-contract/harness suites passed 31 tests; Rust syntax parsing
+  passed. Native tests, new FRB generation and live discovery are pending. The
+  published API is new, so all generated bridge files must be imported together
+  and paired with a newly qualified DLL. No partial binding/native substitution.
+  Worker reviewed and closed; shared work/evidence retained, session deletion
+  unsupported. No Pixel install, new message send, account reset or cloud-data
+  mutation occurred in this investigation.

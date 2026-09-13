@@ -11,10 +11,10 @@ timestamp: 2026-09-13
 
 ## Fastest current Dart loop, September 13
 
-Current handoff: Windows native-only run 34779665447 is qualified
-for source `fccca0bb5`. Its separate signed directory is
-`C:\Codex\OpenBubblesReview\artifacts\windows-native-34779665447\signed`;
-DLL SHA256 `501f40e89d6268d52cd7e678a21b669d8952ca18c0421fba31ed1d0b2bb90e3f`.
+Current handoff: Windows native-only run 34782347926 is qualified
+for source `4e7121a18`. Its separate signed directory is
+`C:\Codex\OpenBubblesReview\artifacts\windows-native-34782347926\signed`;
+DLL SHA256 `80f97298fad435f53b30cd4dc2b0479e3f350fb47136e644673b3a052d08b3c8`.
 All 51 packaged-DLL codec tests passed locally with App Control enabled, and
 the actual loaded module path was verified. The original GUI/runtime was not
 replaced. Archive, unsigned/signed lineage and source-EOL comparison evidence
@@ -22,13 +22,17 @@ are in the adjacent `local-qualification.json` and `provenance.json`.
 
 That DLL includes the logger-handle repair, `extensionMetadataJson` contract and
 v2 session context, multipart replies and direct-data archive fields. It passed
-151 selected native tests and 658 Dart tests. Five sampled raw-JPEG icons now
+153 selected native tests and 658 Dart tests. Five sampled raw-JPEG icons now
 decode; replay/sweep added 14 extension-message rows and one attachment record,
 with separate display metadata instead of treating placeholder base text as prose.
 The earlier e5547e8c7 drain restored 284 distinct messages (278 replies) and
 applied 11 attachment records. Shared-contract extraction and raw-icon routing
-are in this DLL. Attachment-date repair 4e7121a18 is a newer, unqualified native
-candidate; never substitute it into this runtime's provenance.
+are in this DLL. Attachment-date repair 4e7121a18 is now also live-qualified:
+eight exact failures became ready, and a normal replay applied 86 attachments.
+Copied-source tests verify the eight samples' canonical parent links and
+production download-source resolution. No file-byte or Pixel display claim.
+The pending Chat1 discovery API requires regenerated bindings and a new matching
+DLL. Do not run this old runtime against those new bindings after import.
 The Find My launcher remains pinned
 to its separately qualified 3496034e3 runtime until deliberately updated.
 
