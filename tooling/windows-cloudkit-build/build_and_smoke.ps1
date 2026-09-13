@@ -99,7 +99,9 @@ function Assert-NativeTestResults {
 
 $nativeDiagnosticCases = @(
     'cloud_sync_transient_bridge::tests::message_required_masks_distinguish_absent_and_without_value',
-    'cloud_sync_transient_bridge::tests::message_extension_diagnostics_never_return_provider_values'
+    'cloud_sync_transient_bridge::tests::message_extension_diagnostics_never_return_provider_values',
+    'tests::native_logger_handle_outlives_initialization',
+    'desktop_native_logging::tests::findmy_probe_cannot_enable_broad_native_debug'
 )
 
 $source = (Resolve-Path -LiteralPath $SourceRoot -ErrorAction Stop).Path
@@ -148,8 +150,11 @@ foreach ($relative in $requiredFiles) {
     }
 }
 if ($ArtifactMode -eq 'native-test-host') {
-    $diagnosticSource = Get-Content -LiteralPath (Join-Path $source 'rust/src/cloud_sync_transient_bridge.rs') -Raw
     foreach ($case in $nativeDiagnosticCases) {
+        $relativeSource = if ($case.StartsWith('tests::')) { 'rust/src/lib.rs' }
+            elseif ($case.StartsWith('desktop_native_logging::')) { 'rust/src/desktop_native_logging.rs' }
+            else { 'rust/src/cloud_sync_transient_bridge.rs' }
+        $diagnosticSource = Get-Content -LiteralPath (Join-Path $source $relativeSource) -Raw
         if (-not $diagnosticSource.Contains('fn ' + ($case -split '::')[-1] + '(')) {
             throw "Reviewed source lacks the pending diagnostic regression: $case. Commit it before dispatch."
         }
@@ -243,6 +248,7 @@ foreach ($name in @(
 }
 
 $sourceInputPaths = @(
+    'rust/src/lib.rs', 'rust/src/desktop_native_logging.rs',
     'rust/Cargo.toml', 'rust/Cargo.lock', 'pubspec.lock',
     'rust/src/frb_generated.rs', 'rust/src/frb_generated.io.rs',
     'lib/src/rust/api/api.dart', 'lib/src/rust/frb_generated.dart', 'lib/src/rust/frb_generated.io.dart',
@@ -345,6 +351,7 @@ if ($ArtifactMode -eq 'native-test-host') {
     # One fresh job-local target directory shared by the DLL and Rust tests.
     # Never borrow a retained binary/cache or invoke the local signing wrapper.
     $buildEnvironment['CARGO_TARGET_DIR'] = Join-Path $env:RUNNER_TEMP 'cloudkit-native-arm64'
+    $buildEnvironment['OPENBUBBLES_FINDMY_VERBOSE_DIAGNOSTICS'] = 'true'
     $buildEnvironment['RUSTFLAGS'] = ' '
     $buildEnvironment['CARGO_PROFILE_TEST_DEBUG'] = '0'
     $buildEnvironment['CARGO_PROFILE_TEST_INCREMENTAL'] = 'false'
@@ -703,6 +710,7 @@ $provenance = [ordered]@{
         build_identifier = if ($ArtifactMode -eq 'harness') { $buildIdentifier } else { $null }
         native_media_graph_excluded = $true
         signing_applied = $false
+        findmy_value_free_diagnostics_compiled = ($ArtifactMode -eq 'native-test-host')
         writer_defines_present = ($ArtifactMode -eq 'harness' -and $BuildVariant -eq 'local-write')
         automatic_send_runtime_present = $false
     }
@@ -716,7 +724,7 @@ $provenance = [ordered]@{
         native_content_free_diagnostic_tests = [ordered]@{
             result = $nativeComposeResult
             expected_names = $nativeDiagnosticCases
-            expected_test_count = 2
+            expected_test_count = $nativeDiagnosticCases.Count
             executable = if ($ArtifactMode -eq 'native-test-host') { 'bundle/native-compose-tests.exe' } else { $null }
         }
         native_local_write_encoder_tests = [ordered]@{

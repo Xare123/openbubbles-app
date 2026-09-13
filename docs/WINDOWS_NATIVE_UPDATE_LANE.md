@@ -90,6 +90,15 @@ GUI path; it is not the new nine-case native regression qualification.
 
 # Parent review and dispatch
 
+September 13 logging follow-up: native mode additionally executes the isolated
+logger-lifetime test and the Find My restricted-log-spec test. It compiles the
+existing bounded `OPENBUBBLES_FINDMY_VERBOSE_DIAGNOSTICS=true` switch, recorded in
+provenance. Source-input hashes now include `rust/src/lib.rs` and
+`rust/src/desktop_native_logging.rs`. This is a diagnostic engineering build,
+not a claim that People/Items retrieval works. It adds no live request or credential
+to CI. Four exact diagnostic/logger cases are required in this follow-up; the
+earlier seven-compose/two-diagnostic qualification remains historical evidence.
+
 Only the Windows workflow, its existing `build_and_smoke.ps1`, and this document
 belong to this patch. Preserve the pilot's pre-existing deleted
 `.dart_tool/build/fcd1995bc647fb959e82ea360c6c2c9a/asset_graph.json`; do not stage it.
