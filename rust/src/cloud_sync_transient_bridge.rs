@@ -2659,6 +2659,17 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
             ) {
                 let (absent, without_value) = message_required_presence_masks(&presence);
                 let proto = &message.msg_proto.0;
+                let association_shape = match proto.associated_message_guid.as_deref() {
+                    None => "absent",
+                    Some("") => "empty",
+                    Some(value) if value.starts_with("p:") => "part_prefixed",
+                    Some(value) if value.starts_with("bp:") => "bubble_prefixed",
+                    Some(value) if !value.contains(':') && !value.contains('/') => "bare",
+                    Some(_) => "structured_other",
+                };
+                debug!("CloudKit V2 retained association type={:?} reference_shape={association_shape} range_location_present={} range_length_present={}",
+                    proto.associated_message_type, proto.associated_message_range_location.is_some(),
+                    proto.associated_message_range_length.is_some());
                 // Only booleans, fixed enums and a nine-bit field mask. No
                 // bundle identifier, body, reply target, account or raw record.
                 debug!("CloudKit V2 transient message retained_shape absent_mask={absent:03x} without_value_mask={without_value:03x} guid_empty={} chat_empty={} sender_empty={} from_me={} body_present={} attributed_present={} extension_class={} reply_present={} outcome={converted:?}",

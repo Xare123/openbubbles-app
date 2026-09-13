@@ -1849,7 +1849,7 @@ final class ObjectBoxCloudSemanticStoreGateway
     CloudSemanticSnapshot snapshot,
   ) {
     final expectedParent = switch (payload) {
-      CloudMessageEntityPayload value => value.replyParentLogicalKeyHash,
+      CloudMessageEntityPayload value => value.semanticParentLogicalKeyHash,
       CloudReactionEntityPayload value => value.parentLogicalKeyHash,
       CloudAttachmentEntityPayload value => value.ownerLogicalKeyHash,
       _ => null,
@@ -3386,7 +3386,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     CloudSemanticSnapshot snapshot,
   ) {
     final expectedParent = switch (payload) {
-      CloudMessageEntityPayload value => value.replyParentLogicalKeyHash,
+      CloudMessageEntityPayload value => value.semanticParentLogicalKeyHash,
       CloudAttachmentEntityPayload value => value.ownerLogicalKeyHash,
       CloudReactionEntityPayload value => value.parentLogicalKeyHash,
       CloudGroupPhotoEntityPayload value => value.ownerLogicalKeyHash,
@@ -3407,8 +3407,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     }
     final (CloudEntityKind, String)? requiredParent = switch (payload) {
       CloudMessageEntityPayload value
-          when value.replyParentLogicalKeyHash != null =>
-        (CloudEntityKind.message, value.replyParentLogicalKeyHash!),
+          when value.semanticParentLogicalKeyHash != null =>
+        (CloudEntityKind.message, value.semanticParentLogicalKeyHash!),
       CloudMessageEntityPayload _ => null,
       CloudAttachmentEntityPayload value
           when value.ownerLogicalKeyHash != null =>

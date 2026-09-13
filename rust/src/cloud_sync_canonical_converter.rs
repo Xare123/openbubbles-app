@@ -2595,6 +2595,7 @@ fn build_association(
     context: &CloudCanonicalConversionContext<'_>,
     message_type: i64,
     proto: &MessageProto,
+    extension_session: Option<&crate::cloud_sync_extension_payload::ExtensionSessionContext>,
 ) -> Result<
     (
         CloudCanonicalMessageAssociation,
@@ -2652,6 +2653,18 @@ fn build_association(
         ));
     }
     if associated_type == 2 {
+        if let Some(session) = extension_session {
+            if session.role == crate::cloud_sync_extension_payload::ExtensionSessionRole::Update {
+                return Ok((
+                    CloudCanonicalMessageAssociation::None,
+                    CloudCanonicalEntityKind::Message,
+                    Some(
+                        CloudCanonicalHash::new(session.session_logical_key_hash.clone())
+                            .map_err(validation_quarantine)?,
+                    ),
+                ));
+            }
+        }
         return Err(CloudCanonicalConversionOutcome::Deferred(
             CloudCanonicalDeferredReason::UnsupportedSticker,
         ));
@@ -2771,9 +2784,11 @@ fn reject_unsupported_message_content(
 fn decode_message_extension(
     proto: &MessageProto,
     is_reaction: bool,
+    session: Option<&crate::cloud_sync_extension_payload::ExtensionSessionContext>,
 ) -> Result<CloudCanonicalField<Vec<u8>>, CloudCanonicalConversionOutcome> {
     use crate::cloud_sync_extension_payload::{
         decode_extension_payload, serialize_generated_metadata_json,
+        serialize_session_metadata_json,
     };
     let Some(bytes) = proto.payload_data.as_deref() else {
         return Ok(CloudCanonicalField::Absent);
@@ -2792,9 +2807,76 @@ fn decode_message_extension(
     if bundle_id == URL_BALLOON_PROVIDER {
         return Ok(CloudCanonicalField::Absent);
     }
-    let metadata = decode_extension_payload(bytes, bundle_id).map_err(|_| unsupported())?;
-    let json = serialize_generated_metadata_json(&metadata).map_err(|_| unsupported())?;
+    let metadata = decode_extension_payload(bytes, bundle_id).map_err(|failure| {
+        log::debug!(target: "rust_lib_bluebubbles::cloud_sync_transient_bridge",
+            "CloudKit V2 extension metadata decode failed reason={failure:?}");
+        unsupported()
+    })?;
+    let json = match session {
+        Some(context) => serialize_session_metadata_json(&metadata, context),
+        None => serialize_generated_metadata_json(&metadata),
+    }
+    .map_err(|_| unsupported())?;
     Ok(CloudCanonicalField::Value(json))
+}
+
+fn message_extension_session(
+    context: &CloudCanonicalConversionContext<'_>,
+    message: &CloudMessage,
+) -> Result<
+    Option<crate::cloud_sync_extension_payload::ExtensionSessionContext>,
+    CloudCanonicalConversionOutcome,
+> {
+    use crate::cloud_sync_extension_payload::{
+        validate_session_context, ExtensionSessionContext, ExtensionSessionRole,
+    };
+    let proto = &message.msg_proto.0;
+    let unsupported = || {
+        CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::UnsupportedExtensionPayload,
+        )
+    };
+    // A type-2 update must carry a decodable app balloon and a bare wire session
+    // reference. The internal balloon UUID is a different identifier.
+    let eligible = proto.payload_data.is_some()
+        && proto
+            .balloon_bundle_id
+            .as_deref()
+            .is_some_and(|id| id != URL_BALLOON_PROVIDER);
+    if !eligible {
+        return Ok(None);
+    }
+    let (role, guid) = match proto.associated_message_type {
+        None | Some(0) if proto.associated_message_guid.is_none() => {
+            (ExtensionSessionRole::Base, message.guid.as_str())
+        }
+        Some(2) => {
+            let guid = proto
+                .associated_message_guid
+                .as_deref()
+                .ok_or_else(unsupported)?;
+            let range = (
+                proto.associated_message_range_location,
+                proto.associated_message_range_length,
+            );
+            if guid == message.guid || !matches!(range, (None, None) | (Some(0), Some(0))) {
+                return Err(unsupported());
+            }
+            (ExtensionSessionRole::Update, guid)
+        }
+        _ => return Ok(None),
+    };
+    let hash = context
+        .hasher
+        .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, guid)
+        .map_err(validation_quarantine)?;
+    let session = ExtensionSessionContext {
+        role,
+        session_guid: guid.to_owned(),
+        session_logical_key_hash: hash.value().to_owned(),
+    };
+    validate_session_context(&session).map_err(|_| unsupported())?;
+    Ok(Some(session))
 }
 
 pub(crate) fn convert_message(
@@ -2880,8 +2962,12 @@ pub(crate) fn convert_message(
     if let Some(outcome) = reject_unsupported_message_content(proto_4, service) {
         return outcome;
     }
+    let extension_session = match message_extension_session(context, message) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
     let (association, entity_kind, association_parent_hash) =
-        match build_association(context, message.r#type, proto) {
+        match build_association(context, message.r#type, proto, extension_session.as_ref()) {
             Ok(value) => value,
             Err(outcome) => return outcome,
         };
@@ -2889,7 +2975,12 @@ pub(crate) fn convert_message(
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
-    if association.is_reaction() && reply.is_some() {
+    if (association.is_reaction()
+        || extension_session.as_ref().is_some_and(|s| {
+            s.role == crate::cloud_sync_extension_payload::ExtensionSessionRole::Update
+        }))
+        && reply.is_some()
+    {
         return CloudCanonicalConversionOutcome::Quarantined(
             CloudCanonicalQuarantineReason::AmbiguousReply,
         );
@@ -3015,8 +3106,11 @@ pub(crate) fn convert_message(
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
-    let decoded_extension_payload = match decode_message_extension(proto, association.is_reaction())
-    {
+    let decoded_extension_payload = match decode_message_extension(
+        proto,
+        association.is_reaction(),
+        extension_session.as_ref(),
+    ) {
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
@@ -4923,7 +5017,6 @@ mod tests {
 
     #[test]
     fn extension_archive_projects_renderer_metadata_with_base_message() {
-        use crate::cloud_sync_extension_payload::parse_generated_metadata_json;
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let root = PlistValue::Dictionary(
             [
@@ -4967,15 +5060,54 @@ mod tests {
             payload.text().value().map(String::as_str),
             Some("base text")
         );
-        let metadata =
-            parse_generated_metadata_json(payload.decoded_extension_payload().value().unwrap())
-                .unwrap();
+        let metadata = crate::cloud_sync_extension_payload::parse_projection_metadata_json(
+            payload.decoded_extension_payload().value().unwrap(),
+        )
+        .unwrap();
+        let (metadata, session) = metadata;
+        assert!(session.is_some());
         assert_eq!(metadata.name, "Synthetic app");
         assert_eq!(metadata.bundle_id, "com.example.synthetic");
         assert_eq!(metadata.balloon.url, "app:synthetic");
         assert_eq!(message.msg_proto.0.payload_data.as_ref(), Some(&bytes));
+        let mut update = message.clone();
+        update.guid = "update-guid".to_owned();
+        update.msg_proto.0.associated_message_type = Some(2);
+        update.msg_proto.0.associated_message_guid = Some(message.guid.clone());
+        let update_outcome = convert_message(
+            &context(&hasher, "server-update", None),
+            &message_presence(),
+            &update,
+        );
+        let update_payload = message_payload(&update_outcome);
+        let (_, context_meta) =
+            crate::cloud_sync_extension_payload::parse_projection_metadata_json(
+                update_payload.decoded_extension_payload().value().unwrap(),
+            )
+            .unwrap();
+        let context_meta = context_meta.unwrap();
+        assert!(
+            context_meta.role == crate::cloud_sync_extension_payload::ExtensionSessionRole::Update
+        );
+        assert_eq!(context_meta.session_guid, message.guid);
         assert!(matches!(
-            decode_message_extension(&message.msg_proto.0, true),
+            update_payload.association(),
+            CloudCanonicalMessageAssociation::None
+        ));
+        assert!(update_payload.reply().is_none());
+        for malformed in ["p:0/base-guid", "", "update-guid"] {
+            update.msg_proto.0.associated_message_guid = Some(malformed.into());
+            assert!(matches!(
+                convert_message(
+                    &context(&hasher, "server-bad-update", None),
+                    &message_presence(),
+                    &update
+                ),
+                CloudCanonicalConversionOutcome::Deferred(_)
+            ));
+        }
+        assert!(matches!(
+            decode_message_extension(&message.msg_proto.0, true, None),
             Err(CloudCanonicalConversionOutcome::Deferred(
                 CloudCanonicalDeferredReason::UnsupportedExtensionPayload
             ))

@@ -431,4 +431,252 @@ void main() {
     value['metadata']['name'] = r'"quoted" \\ {[,]}, "version":2';
     expect(_parse(value).metadata.name, value['metadata']['name']);
   });
+
+  test('v1 stays valid with null sessionContext and rejects wire context', () {
+    final v1 = _parse(_fixture());
+    expect(v1.sessionContext, isNull);
+    for (final context in [
+      null,
+      <String, dynamic>{},
+      {
+        'role': 'base',
+        'session_guid': 'opaque-id-1',
+        'session_logical_key_hash': 'A' * 43,
+      },
+    ]) {
+      final value = _fixture();
+      value['context'] = context;
+      expect(() => _parse(value), _failure);
+    }
+  });
+
+  test('v2 base and update preserve exact bytes without mutating payload', () {
+    String wireGuid = 'Opaque_CANONICAL-123_abc';
+    String wireHash = 'A' * 43;
+    Map<String, dynamic> v2(String role) => {
+      'version': 2,
+      'metadata': _fixture()['metadata'],
+      'context': {
+        'role': role,
+        'session_guid': wireGuid,
+        'session_logical_key_hash': wireHash,
+      },
+    };
+    for (final role in ['base', 'update']) {
+      final source = jsonEncode(v2(role));
+      final prepared = CloudSyncPreparedExtension.parse(
+        source,
+        expectedParentBundleId: _bundle,
+      );
+      expect(prepared.canonicalUtf8, utf8.encode(source));
+      expect(
+        prepared.sessionContext!.role,
+        role == 'base'
+            ? CloudSyncExtensionSessionRole.base
+            : CloudSyncExtensionSessionRole.update,
+      );
+      expect(prepared.sessionContext!.sessionGuid, wireGuid);
+      expect(prepared.sessionContext!.sessionLogicalKeyHash, wireHash);
+      // Archive-internal balloon session stays distinct from wire session_guid.
+      expect(prepared.metadata.balloon.session, _uuid);
+      expect(prepared.metadata.balloon.session, isNot(wireGuid));
+      final data = prepared.toPayloadData();
+      expect(data.appData!.single.session, _uuid);
+      expect(data.toJson()['appData'].single['session'], _uuid);
+    }
+    final v1data = _parse(_fixture()).toPayloadData().toJson();
+    final v2base = CloudSyncPreparedExtension.parse(
+      jsonEncode(v2('base')),
+      expectedParentBundleId: _bundle,
+    ).toPayloadData().toJson();
+    expect(v2base, v1data);
+  });
+
+  test('v2 requires exact top and context keys without extras', () {
+    Map<String, dynamic> v2() => {
+      'version': 2,
+      'metadata': _fixture()['metadata'],
+      'context': <String, dynamic>{
+        'role': 'base',
+        'session_guid': 'opaque-id-1',
+        'session_logical_key_hash': 'A' * 43,
+      },
+    };
+    for (final key in ['version', 'metadata', 'context']) {
+      final value = v2()..remove(key);
+      expect(
+        () => CloudSyncPreparedExtension.parse(
+          jsonEncode(value),
+          expectedParentBundleId: _bundle,
+        ),
+        _failure,
+        reason: 'missing $key',
+      );
+    }
+    final extraTop = v2()..['future_field'] = null;
+    expect(
+      () => CloudSyncPreparedExtension.parse(
+        jsonEncode(extraTop),
+        expectedParentBundleId: _bundle,
+      ),
+      _failure,
+    );
+    for (final key in ['role', 'session_guid', 'session_logical_key_hash']) {
+      final value = v2();
+      (value['context'] as Map<String, dynamic>).remove(key);
+      expect(
+        () => CloudSyncPreparedExtension.parse(
+          jsonEncode(value),
+          expectedParentBundleId: _bundle,
+        ),
+        _failure,
+        reason: 'missing context $key',
+      );
+    }
+    final extraContext = v2();
+    (extraContext['context'] as Map<String, dynamic>)['future_field'] = null;
+    expect(
+      () => CloudSyncPreparedExtension.parse(
+        jsonEncode(extraContext),
+        expectedParentBundleId: _bundle,
+      ),
+      _failure,
+    );
+    for (final bad in [null, true, 1, '', <Object?>[], 'context']) {
+      final value = v2();
+      value['context'] = bad;
+      expect(
+        () => CloudSyncPreparedExtension.parse(
+          jsonEncode(value),
+          expectedParentBundleId: _bundle,
+        ),
+        _failure,
+      );
+    }
+    for (final role in [null, 1, 1.0, true, '', 'BASE', 'Base', 'admin', 'none']) {
+      final value = v2();
+      (value['context'] as Map<String, dynamic>)['role'] = role;
+      expect(
+        () => CloudSyncPreparedExtension.parse(
+          jsonEncode(value),
+          expectedParentBundleId: _bundle,
+        ),
+        _failure,
+        reason: 'role $role',
+      );
+    }
+  });
+
+  test('v2 rejects duplicate keys and non-integer versions', () {
+    final base = jsonEncode({
+      'version': 2,
+      'metadata': _fixture()['metadata'],
+      'context': {
+        'role': 'update',
+        'session_guid': 'opaque-id-1',
+        'session_logical_key_hash': 'A' * 43,
+      },
+    });
+    for (final invalid in [
+      base.replaceFirst('"version":2', '"version":2,"version":2'),
+      base.replaceFirst('"role":"update"', '"role":"base","role":"update"'),
+      base.replaceFirst(
+        '"session_guid"',
+        '"session_guid":"other","session_guid"',
+      ),
+      base.replaceFirst('"version":2', r'"vers\u0069on":2,"version":2'),
+      base.replaceFirst('"version":2', '"version":2.0'),
+      base.replaceFirst('"version":2', '"version":"2"'),
+      base.replaceFirst('"version":2', '"version":1.0'),
+      base.replaceFirst('"version":2', '"version":3'),
+    ]) {
+      expect(
+        () => CloudSyncPreparedExtension.parse(
+          invalid,
+          expectedParentBundleId: _bundle,
+        ),
+        _failure,
+      );
+    }
+  });
+
+  test('v2 session_guid is opaque bounded text without coercion', () {
+    CloudSyncPreparedExtension parseGuid(Object? guid) {
+      final value = {
+        'version': 2,
+        'metadata': _fixture()['metadata'],
+        'context': {
+          'role': 'base',
+          'session_guid': guid,
+          'session_logical_key_hash': 'A' * 43,
+        },
+      };
+      return CloudSyncPreparedExtension.parse(
+        jsonEncode(value),
+        expectedParentBundleId: _bundle,
+      );
+    }
+
+    expect(parseGuid('Opaque_CANONICAL-123_abc').sessionContext!.sessionGuid,
+        'Opaque_CANONICAL-123_abc');
+    expect(parseGuid('  spaced  ').sessionContext!.sessionGuid, '  spaced  ');
+    expect(parseGuid('a' * 16384).sessionContext!.sessionGuid, hasLength(16384));
+    for (final guid in [
+      null,
+      1,
+      1.0,
+      true,
+      [],
+      {},
+      '',
+      'has:colon',
+      'has/slash',
+      'bad\nidentifier',
+      'bad\u007f',
+      'bad\u0085',
+      'a' * 16385,
+      '\ud800',
+    ]) {
+      expect(() => parseGuid(guid), _failure, reason: 'guid $guid');
+    }
+  });
+
+  test('v2 session hash is exactly 43 URL-safe chars', () {
+    CloudSyncPreparedExtension parseHash(Object? hash) {
+      final value = {
+        'version': 2,
+        'metadata': _fixture()['metadata'],
+        'context': {
+          'role': 'update',
+          'session_guid': 'opaque-id-1',
+          'session_logical_key_hash': hash,
+        },
+      };
+      return CloudSyncPreparedExtension.parse(
+        jsonEncode(value),
+        expectedParentBundleId: _bundle,
+      );
+    }
+
+    expect(
+      parseHash('A' * 41 + '-_').sessionContext!.sessionLogicalKeyHash,
+      'A' * 41 + '-_',
+    );
+    for (final hash in [
+      null,
+      1,
+      true,
+      '',
+      'A' * 42,
+      'A' * 44,
+      'A' * 42 + '+',
+      'A' * 42 + '/',
+      'A' * 42 + '=',
+      'A' * 42 + ' ',
+      'A' * 42 + '\n',
+      'é' * 43,
+    ]) {
+      expect(() => parseHash(hash), _failure);
+    }
+  });
 }

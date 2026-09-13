@@ -1,2 +1,3 @@
 # Byte-exact cross-language digest input, including its final newline.
 extension_metadata_digest_v1.json text eol=lf
+extension_session_digest_v2.json text eol=lf

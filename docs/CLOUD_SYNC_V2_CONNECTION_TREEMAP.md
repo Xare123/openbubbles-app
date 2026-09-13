@@ -426,14 +426,24 @@ observed Pixel pull was incomplete.
   ordinary message conversion. It restores no message by itself; all five targeted
   system-event tests passed in Windows run 34762729315.
 
-Next coordinated change: distinguish native extension base/session-update context
-without using tapback/reply parent fields. The existing live path inherits body
-and assets from the session base and groups updates via `amkSessionId`. The
-archive-internal balloon UUID is not automatically the wire session reference.
-Preserve unknown update/meta semantics; do not turn these into standalone messages.
-Native helper, Dart session mapping and exact-scope dependency proof must be reviewed
-together. Add bounded numeric/shape diagnostics in the same batch to identify actual
-type values behind the current aggregate labels. No diagnostic-only rebuild planned.
+Current session candidate: closed v2 JSON context carries base/update role, wire
+session GUID and keyed logical identity; v1 remains accepted. No generated-bridge
+change is needed. Native type 2 is admitted only with a valid app balloon/session;
+type 4000/meta and 1000/no-balloon remain retained. The semantic parent represents
+the exact session base, independent from tapback/reply fields. The projector proves
+base/predecessor ownership and chat/provider agreement, copies attributed references
+without moving attachment backlinks, and groups rows with `amkSessionId`.
+
+Local tests pass: 247 retry/gateway/quarantine/registry/decoder; 31 metadata parser;
+149 adapter before the final equal-time case; nine targeted session cases; eight
+cache-invalidation cases; shared digest vectors. Static analysis has no issues.
+Session context is not yet native-qualified or exercised against retained data.
+The new cache watch is lazy, store-bound and disposed on close.
+
+Open convergence requirement: an earlier asset-changing update arriving after a
+newer inherited update needs explicit repair/re-render qualification. Chronological
+chain and future-sibling exclusion tests do not prove that case. Keep production
+readiness open. Both Muse workers are closed; all unique work is preserved.
 
 ## Existing-history adoption evidence gate
 

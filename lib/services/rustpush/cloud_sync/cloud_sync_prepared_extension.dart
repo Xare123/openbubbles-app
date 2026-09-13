@@ -13,7 +13,7 @@ final class CloudSyncPreparedExtensionFailure implements Exception {
   String toString() => 'CloudSyncPreparedExtensionFailure: invalid metadata';
 }
 
-/// Prepare the native v1 UTF-8 JSON STRING before opening a DB transaction.
+/// Prepare the native v1/v2 UTF-8 JSON STRING before opening a DB transaction.
 /// This does not decode keyed archives, fetch URLs, or initialize services.
 /// Original transport bytes are separate from the immutable renderer POD.
 final class CloudSyncPreparedExtension {
@@ -21,8 +21,13 @@ final class CloudSyncPreparedExtension {
   static const maxStringBytes = 16 * 1024;
   static const maxBundleIdBytes = 1024;
   static const maxIconBytes = 1024 * 1024;
+  static const maxSessionGuidBytes = 16 * 1024;
 
-  CloudSyncPreparedExtension._(this.metadata, this.canonicalUtf8);
+  CloudSyncPreparedExtension._(
+    this.metadata,
+    this.canonicalUtf8,
+    this.sessionContext,
+  );
 
   final CloudSyncExtensionMetadata metadata;
 
@@ -30,6 +35,12 @@ final class CloudSyncPreparedExtension {
   /// order and escapes. Hash these bytes, not jsonEncode(metadata). This is
   /// not the original protected record/archive, which the parent must retain.
   final Uint8List canonicalUtf8;
+
+  /// Wire session binding for v2 only; null for v1. Distinct from the
+  /// archive-internal metadata.balloon.session UUID preserved in metadata.
+  /// toPayloadData() never copies this; the parent core validates base vs own
+  /// GUID and update vs base identity.
+  final CloudSyncExtensionSessionContext? sessionContext;
 
   factory CloudSyncPreparedExtension.parse(
     String json, {
@@ -39,8 +50,44 @@ final class CloudSyncPreparedExtension {
       _checkText(json, maxJsonBytes);
       _checkBundle(expectedParentBundleId);
       _preflight(json);
-      final root = _object(jsonDecode(json), const ['version', 'metadata']);
-      if (root['version'] is! int || root['version'] != 1) _invalid();
+      final decoded = jsonDecode(json);
+      if (decoded is! Map<String, dynamic>) _invalid();
+      final int version;
+      {
+        final rawVersion = decoded['version'];
+        if (rawVersion is! int) _invalid();
+        version = rawVersion;
+      }
+      // Closed shapes: v1 {version, metadata}; v2 {version, metadata, context}.
+      // v1 rejects context even when null; v2 requires all three top keys.
+      final Map<String, dynamic> root;
+      CloudSyncExtensionSessionContext? sessionContext;
+      if (version == 1) {
+        root = _object(decoded, const ['version', 'metadata']);
+      } else if (version == 2) {
+        root = _object(decoded, const ['version', 'metadata', 'context']);
+        final context = _object(root['context'], const [
+          'role',
+          'session_guid',
+          'session_logical_key_hash',
+        ]);
+        final CloudSyncExtensionSessionRole role;
+        final Object? rawRole = context['role'];
+        if (rawRole == 'base') {
+          role = CloudSyncExtensionSessionRole.base;
+        } else if (rawRole == 'update') {
+          role = CloudSyncExtensionSessionRole.update;
+        } else {
+          _invalid();
+        }
+        sessionContext = CloudSyncExtensionSessionContext._(
+          role,
+          _sessionGuid(context['session_guid']),
+          _sessionKeyHash(context['session_logical_key_hash']),
+        );
+      } else {
+        _invalid();
+      }
       final value = _object(root['metadata'], const [
         'name',
         'app_id',
@@ -116,6 +163,7 @@ final class CloudSyncPreparedExtension {
           ),
         ),
         Uint8List.fromList(utf8.encode(json)).asUnmodifiableView(),
+        sessionContext,
       );
     } on FormatException {
       // Never propagate the decoder's source excerpt or input-derived details.
@@ -126,6 +174,7 @@ final class CloudSyncPreparedExtension {
   /// Allocates fresh legacy models, copying only appToData's known fields.
   /// Do not call their service-backed bundleId/icon/isSupported getters here.
   /// Parent integration must persist metadata.bundleId separately.
+  /// Never copies sessionContext: no session binding mutation/services here.
   PayloadData toPayloadData() {
     final balloon = metadata.balloon;
     final layout = balloon.layout;
@@ -154,6 +203,25 @@ final class CloudSyncPreparedExtension {
       ],
     );
   }
+}
+
+/// Closed wire roles for v2 context. Unknown roles are rejected.
+enum CloudSyncExtensionSessionRole { base, update }
+
+/// Immutable v2 wire session binding. sessionGuid is an opaque canonical ID
+/// (not a strict UUID): nonempty, bounded 16 KiB UTF-8, no control chars,
+/// no ':' or '/', spelling preserved without coercion or normalization.
+/// sessionLogicalKeyHash is the exact 43-char ASCII URL-safe external digest
+/// shape. Never log raw IDs; failures stay content-free.
+final class CloudSyncExtensionSessionContext {
+  const CloudSyncExtensionSessionContext._(
+    this.role,
+    this.sessionGuid,
+    this.sessionLogicalKeyHash,
+  );
+  final CloudSyncExtensionSessionRole role;
+  final String sessionGuid;
+  final String sessionLogicalKeyHash;
 }
 
 final class CloudSyncExtensionMetadata {
@@ -209,6 +277,8 @@ final _uuid = RegExp(
   r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
 );
 
+final _keyHash = RegExp(r'^[A-Za-z0-9_-]{43}$');
+
 Map<String, dynamic> _object(Object? value, List<String> keys) {
   if (value is! Map<String, dynamic> ||
       value.length != keys.length ||
@@ -225,6 +295,23 @@ String _text(Object? value) {
 }
 
 String? _optionalText(Object? value) => value == null ? null : _text(value);
+
+String _sessionGuid(Object? value) {
+  if (value is! String) _invalid();
+  _checkText(value, CloudSyncPreparedExtension.maxSessionGuidBytes);
+  if (value.isEmpty ||
+      value.contains(':') ||
+      value.contains('/') ||
+      value.runes.any((r) => r <= 0x1f || (r >= 0x7f && r <= 0x9f))) {
+    _invalid();
+  }
+  return value;
+}
+
+String _sessionKeyHash(Object? value) {
+  if (value is! String || !_keyHash.hasMatch(value)) _invalid();
+  return value;
+}
 
 void _checkBundle(String value) {
   _checkText(value, CloudSyncPreparedExtension.maxBundleIdBytes);
@@ -257,7 +344,8 @@ void _checkText(String value, int limit) {
 
 /// Bound nesting before jsonDecode, and reject duplicate keys (including
 /// escaped aliases) before the standard decoder can overwrite them. Full
-/// syntax validation remains jsonDecode's responsibility. v1 needs depth 4.
+/// syntax validation remains jsonDecode's responsibility. Depth 4 covers v1
+/// and v2 (v2 context nests only to depth 2).
 void _preflight(String json) {
   final containers = <int>[];
   final keys = <Set<String>?>[];

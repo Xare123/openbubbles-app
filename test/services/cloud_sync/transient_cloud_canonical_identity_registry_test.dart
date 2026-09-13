@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_prepared_extension.dart';
+import 'cloud_sync_extension_test_fixture.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
@@ -104,6 +108,30 @@ CloudChatEntityPayload _chat() {
 }
 
 void main() {
+  test('session update binds only its scoped base dependency and releases it', () {
+    final value = jsonDecode(extensionTestJson()) as Map<String, dynamic>;
+    value['version'] = 2;
+    value['context'] = {'role':'update','session_guid':'base-guid','session_logical_key_hash':'A' * 43};
+    final prepared = CloudSyncPreparedExtension.parse(jsonEncode(value), expectedParentBundleId: extensionTestBundle);
+    final payload = CloudMessageEntityPayload(
+      logicalEntityKeyHash: 'B' * 43, canonicalGuid: 'update-guid', chatAliasKeyHash: 'chat-key',
+      chatIdentifier: 'chat', body: 'body', senderHandle: 'sender',
+      balloonBundleIdState: CloudSemanticFieldState.value, balloonBundleId: extensionTestBundle,
+      decodedExtensionPayloadState: CloudSemanticFieldState.value,
+      decodedExtensionPayload: prepared.canonicalUtf8, preparedExtension: prepared);
+    final registry = TransientCloudCanonicalIdentityRegistry();
+    final lease = registry.bind(CloudDecodedMutation.upsert(scope:_scopeA,generation:7,
+      changeId:'extension-change',payload:payload,snapshot:CloudSemanticSnapshot(
+        kind:CloudEntityKind.message,logicalEntityKeyHash:'B' * 43,parentLogicalKeyHash:'A' * 43)));
+    expect(registry.resolveCanonicalGuid(scope:_scopeA,generation:7,kind:CloudEntityKind.message,
+      logicalEntityKeyHash:'A' * 43),'base-guid');
+    expect(registry.resolveCanonicalGuid(scope:_scopeB,generation:7,kind:CloudEntityKind.message,
+      logicalEntityKeyHash:'A' * 43),isNull);
+    lease.release();
+    expect(registry.resolveCanonicalGuid(scope:_scopeA,generation:7,kind:CloudEntityKind.message,
+      logicalEntityKeyHash:'A' * 43),isNull);
+  });
+
   test('binds message, reply, and association parent identities', () {
     final registry = TransientCloudCanonicalIdentityRegistry();
     final lease = registry.bind(

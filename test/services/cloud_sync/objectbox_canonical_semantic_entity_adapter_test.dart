@@ -6169,6 +6169,611 @@ void main() {
     expect(message.hasApplePayloadData, isTrue);
   });
 
+  // v2 extension session grouping. The legacy 'message-hash' is not a valid
+  // v2 digest, so the base uses a 43-char URL-safe hash and the first update
+  // uses a different one. The wire session GUID is the base canonical GUID.
+  void seedV2SessionIdentities() {
+    seedExtensionChat();
+    resolver
+      ..put(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: 'A' * 43,
+        canonicalGuid: 'v2-base-guid',
+      )
+      ..put(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: 'B' * 43,
+        canonicalGuid: 'v2-update-guid',
+      );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: 'A' * 43,
+      canonicalGuid: 'v2-base-guid',
+    );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: 'B' * 43,
+      canonicalGuid: 'v2-update-guid',
+    );
+  }
+
+  ObjectBoxCanonicalSemanticEntityAdapter v2Adapter() => _newAdapter(
+    store: store,
+    activeScopeProvider: () => activeScope,
+    resolver: resolver,
+    semanticApplyEnabled: true,
+    allowMessageUpserts: true,
+  );
+
+  int applyV2Base(
+    ObjectBoxCanonicalSemanticEntityAdapter adapter, {
+    String bundleId = extensionTestBundle,
+  }) {
+    final prepared = CloudSyncPreparedExtension.parse(
+      extensionTestV2Json(
+        role: 'base',
+        sessionGuid: 'v2-base-guid',
+        sessionLogicalKeyHash: 'A' * 43,
+        bundleId: bundleId,
+      ),
+      expectedParentBundleId: bundleId,
+    );
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: 'A' * 43,
+          canonicalGuid: 'v2-base-guid',
+          chatIdentifier: 'iMessage;-;extension-chat',
+          createdAt: testEpoch,
+          body: 'Base text',
+          balloonBundleId: bundleId,
+          decodedExtensionPayload: prepared.canonicalUtf8,
+          preparedExtension: prepared,
+          knownFlags: _messageFlags(fromMe: false),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, 'A' * 43),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    return store
+        .box<Message>()
+        .getAll()
+        .singleWhere((message) => message.guid == 'v2-base-guid')
+        .id!;
+  }
+
+  void applyV2Update(
+    ObjectBoxCanonicalSemanticEntityAdapter adapter, {
+    String chatIdentifier = 'iMessage;-;extension-chat',
+    DateTime? createdAt,
+    String? updateHash,
+    String? updateGuid,
+  }) {
+    final hash = updateHash ?? 'B' * 43;
+    final guid = updateGuid ?? 'v2-update-guid';
+    final prepared = CloudSyncPreparedExtension.parse(
+      extensionTestV2Json(
+        role: 'update',
+        sessionGuid: 'v2-base-guid',
+        sessionLogicalKeyHash: 'A' * 43,
+      ),
+      expectedParentBundleId: extensionTestBundle,
+    );
+    final payload = _messagePayload(
+      logicalEntityKeyHash: hash,
+      canonicalGuid: guid,
+      chatIdentifier: chatIdentifier,
+      createdAt: createdAt ?? testEpoch.add(const Duration(seconds: 1)),
+      body: null,
+      bodyState: CloudSemanticFieldState.absent,
+      balloonBundleId: extensionTestBundle,
+      decodedExtensionPayload: prepared.canonicalUtf8,
+      preparedExtension: prepared,
+      knownFlags: _messageFlags(fromMe: false),
+    );
+    expect(payload.semanticParentLogicalKeyHash, 'A' * 43);
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: payload,
+        snapshot: _snapshot(
+          CloudEntityKind.message,
+          hash,
+          parentLogicalKeyHash: payload.semanticParentLogicalKeyHash,
+        ),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+  }
+
+  test('v2 extension session base sets amk GUID from its own context', () {
+    seedV2SessionIdentities();
+    final adapter = v2Adapter();
+    final prepared = CloudSyncPreparedExtension.parse(
+      extensionTestV2Json(
+        role: 'base',
+        sessionGuid: 'v2-base-guid',
+        sessionLogicalKeyHash: 'A' * 43,
+      ),
+      expectedParentBundleId: extensionTestBundle,
+    );
+    expect(prepared.sessionContext!.role, CloudSyncExtensionSessionRole.base);
+    final payload = _messagePayload(
+      logicalEntityKeyHash: 'A' * 43,
+      canonicalGuid: 'v2-base-guid',
+      chatIdentifier: 'iMessage;-;extension-chat',
+      createdAt: testEpoch,
+      body: 'Base text',
+      balloonBundleId: extensionTestBundle,
+      decodedExtensionPayload: prepared.canonicalUtf8,
+      preparedExtension: prepared,
+      knownFlags: _messageFlags(fromMe: false),
+    );
+    expect(payload.semanticParentLogicalKeyHash, isNull);
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: payload,
+        snapshot: _snapshot(CloudEntityKind.message, 'A' * 43),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    final base = store.box<Message>().getAll().single;
+    expect(base.guid, 'v2-base-guid');
+    expect(base.amkSessionId, 'v2-base-guid');
+    expect(base.text, 'Base text');
+  });
+
+  test(
+    'v2 extension session update inherits text without moving attachment',
+    () {
+      seedV2SessionIdentities();
+      final adapter = v2Adapter();
+      final basePrepared = CloudSyncPreparedExtension.parse(
+        extensionTestV2Json(
+          role: 'base',
+          sessionGuid: 'v2-base-guid',
+          sessionLogicalKeyHash: 'A' * 43,
+        ),
+        expectedParentBundleId: extensionTestBundle,
+      );
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: _messagePayload(
+            logicalEntityKeyHash: 'A' * 43,
+            canonicalGuid: 'v2-base-guid',
+            chatIdentifier: 'iMessage;-;extension-chat',
+            createdAt: testEpoch,
+            body: 'Base text',
+            attributedBodies: [
+              CloudSemanticAttributedBody(
+                text: 'Base text',
+                runs: [
+                  CloudSemanticTextRun(
+                    startUtf16: 0,
+                    lengthUtf16: 9,
+                    messagePart: 0,
+                    attachmentCanonicalGuid: 'v2-attach-1',
+                    attachmentLogicalKeyHash: 'v2-attach-hash',
+                    mentionHandle: null,
+                    audioTranscript: null,
+                    textEffect: null,
+                    bold: null,
+                    italic: null,
+                    strikethrough: null,
+                    underline: null,
+                  ),
+                ],
+              ),
+            ],
+            balloonBundleId: extensionTestBundle,
+            decodedExtensionPayload: basePrepared.canonicalUtf8,
+            preparedExtension: basePrepared,
+            knownFlags: _messageFlags(fromMe: false),
+          ),
+          snapshot: _snapshot(CloudEntityKind.message, 'A' * 43),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+      final baseId = store
+          .box<Message>()
+          .getAll()
+          .singleWhere((message) => message.guid == 'v2-base-guid')
+          .id!;
+      expect(store.box<Message>().get(baseId)!.hasAttachments, isTrue);
+      final attachmentId = store.box<Attachment>().put(
+        Attachment(guid: 'v2-attach-1')..message.targetId = baseId,
+      );
+      applyV2Update(adapter);
+      final messages = store.box<Message>().getAll();
+      expect(messages, hasLength(2));
+      final update = messages.singleWhere(
+        (message) => message.guid == 'v2-update-guid',
+      );
+      expect(update.amkSessionId, 'v2-base-guid');
+      expect(update.text, 'Base text');
+      expect(update.hasAttachments, isTrue);
+      expect(
+        store.box<Attachment>().get(attachmentId)!.message.targetId,
+        baseId,
+      );
+      expect(store.box<Message>().get(baseId)!.amkSessionId, 'v2-base-guid');
+    },
+  );
+
+  test('v2 extension session update replay is idempotent', () {
+    seedV2SessionIdentities();
+    final adapter = v2Adapter();
+    applyV2Base(adapter);
+    applyV2Update(adapter);
+    applyV2Update(adapter);
+    final messages = store.box<Message>().getAll();
+    expect(messages, hasLength(2));
+    final update = messages.singleWhere(
+      (message) => message.guid == 'v2-update-guid',
+    );
+    expect(update.amkSessionId, 'v2-base-guid');
+    expect(update.text, 'Base text');
+    expect(store.box<Message>().getAll().length, 2);
+  });
+
+  test(
+    'v2 extension session chained update inherits through latest proven prior',
+    () {
+      seedV2SessionIdentities();
+      resolver.put(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: 'C' * 43,
+        canonicalGuid: 'v2-update2-guid',
+      );
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: 'C' * 43,
+        canonicalGuid: 'v2-update2-guid',
+      );
+      final adapter = v2Adapter();
+      applyV2Base(adapter);
+      applyV2Update(adapter);
+      applyV2Update(
+        adapter,
+        createdAt: testEpoch.add(const Duration(seconds: 2)),
+        updateHash: 'C' * 43,
+        updateGuid: 'v2-update2-guid',
+      );
+      final messages = store.box<Message>().getAll();
+      expect(messages, hasLength(3));
+      final second = messages.singleWhere(
+        (message) => message.guid == 'v2-update2-guid',
+      );
+      expect(second.amkSessionId, 'v2-base-guid');
+      expect(second.text, 'Base text');
+      expect(second.hasAttachments, isFalse);
+    },
+  );
+
+  test('v2 extension session update stays non-reaction and non-reply', () {
+    seedV2SessionIdentities();
+    final adapter = v2Adapter();
+    applyV2Base(adapter);
+    applyV2Update(adapter);
+    final update = store
+        .box<Message>()
+        .getAll()
+        .singleWhere((message) => message.guid == 'v2-update-guid');
+    expect(update.associatedMessageGuid, isNull);
+    expect(update.associatedMessageType, isNull);
+    expect(update.threadOriginatorGuid, isNull);
+  });
+
+  test('v2 extension session rejects missing base without mutation', () {
+    seedV2SessionIdentities();
+    final adapter = v2Adapter();
+    final prepared = CloudSyncPreparedExtension.parse(
+      extensionTestV2Json(
+        role: 'update',
+        sessionGuid: 'v2-base-guid',
+        sessionLogicalKeyHash: 'A' * 43,
+      ),
+      expectedParentBundleId: extensionTestBundle,
+    );
+    final payload = _messagePayload(
+      logicalEntityKeyHash: 'B' * 43,
+      canonicalGuid: 'v2-update-guid',
+      chatIdentifier: 'iMessage;-;extension-chat',
+      createdAt: testEpoch.add(const Duration(seconds: 1)),
+      body: null,
+      bodyState: CloudSemanticFieldState.absent,
+      balloonBundleId: extensionTestBundle,
+      decodedExtensionPayload: prepared.canonicalUtf8,
+      preparedExtension: prepared,
+      knownFlags: _messageFlags(fromMe: false),
+    );
+    expect(
+      () => store.runInTransaction(TxMode.write, () {
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: payload,
+          snapshot: _snapshot(
+            CloudEntityKind.message,
+            'B' * 43,
+            parentLogicalKeyHash: payload.semanticParentLogicalKeyHash,
+          ),
+        );
+      }),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) =>
+              failure.safeCode ==
+                  'canonical_extension_session_base_unavailable' &&
+              failure.category == CloudFailureCategory.dependency,
+        ),
+      ),
+    );
+    expect(store.box<Message>().count(), 0);
+    expect(store.box<Handle>().count(), 0);
+  });
+
+  test('v2 extension session rejects cross-chat base without mutation', () {
+    seedV2SessionIdentities();
+    final otherChatId = store.box<Chat>().put(
+      Chat(
+        guid: 'other-chat-guid',
+        chatIdentifier: 'iMessage;-;other-chat',
+        style: 45,
+      ),
+    );
+    resolver.put(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: 'other-chat-hash',
+      canonicalGuid: 'other-chat-guid',
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: 'other-chat-hash',
+      canonicalGuid: 'other-chat-guid',
+      chatIdentifier: 'iMessage;-;other-chat',
+      chatId: otherChatId,
+    );
+    final adapter = v2Adapter();
+    applyV2Base(adapter);
+    expect(
+      () => store.runInTransaction(TxMode.write, () {
+        applyV2Update(adapter, chatIdentifier: 'iMessage;-;other-chat');
+      }),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) =>
+              failure.safeCode ==
+                  'canonical_extension_session_base_unavailable',
+        ),
+      ),
+    );
+    final messages = store.box<Message>().getAll();
+    expect(messages.single.guid, 'v2-base-guid');
+  });
+
+  test('v2 extension session rejects wrong-provider base without mutation', () {
+    seedV2SessionIdentities();
+    final adapter = v2Adapter();
+    applyV2Base(adapter, bundleId: 'com.example.other');
+    expect(
+      () => store.runInTransaction(TxMode.write, () {
+        applyV2Update(adapter);
+      }),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) =>
+              failure.safeCode ==
+                  'canonical_extension_session_base_unavailable',
+        ),
+      ),
+    );
+    final messages = store.box<Message>().getAll();
+    expect(messages.single.guid, 'v2-base-guid');
+    expect(messages.single.balloonBundleId, 'com.example.other');
+  });
+
+  test(
+    'v2 extension session excludes future sibling and accepts equal-ms update',
+    () {
+      // Chronological session ordering: the predecessor query keeps only
+      // rows with dateCreated lessThan the incoming createdAt, so an update
+      // arriving after a newer sibling was projected must not inherit from
+      // that future sibling. Equal-ms base/update still carries the explicit
+      // causal root link (nanoseconds truncate), so only a strictly future
+      // base is rejected.
+      // NOT covered: an earlier asset-changing update arriving after a newer
+      // update was already projected still needs convergence repair coverage.
+      // Out-of-order repair is intentionally not implemented here.
+      seedV2SessionIdentities();
+      final adapter = v2Adapter();
+      applyV2Base(adapter);
+      // Future sibling projected first: it carries a new asset, so it keeps
+      // its own attributed text instead of inheriting the base text. That
+      // makes a wrong inheritance visible below.
+      final futurePrepared = CloudSyncPreparedExtension.parse(
+        extensionTestV2Json(
+          role: 'update',
+          sessionGuid: 'v2-base-guid',
+          sessionLogicalKeyHash: 'A' * 43,
+        ),
+        expectedParentBundleId: extensionTestBundle,
+      );
+      final futurePayload = _messagePayload(
+        logicalEntityKeyHash: 'B' * 43,
+        canonicalGuid: 'v2-update-guid',
+        chatIdentifier: 'iMessage;-;extension-chat',
+        createdAt: testEpoch.add(const Duration(seconds: 1)),
+        body: null,
+        bodyState: CloudSemanticFieldState.absent,
+        attributedBodies: [
+          CloudSemanticAttributedBody(
+            text: 'future',
+            runs: [
+              CloudSemanticTextRun(
+                startUtf16: 0,
+                lengthUtf16: 6,
+                messagePart: 0,
+                attachmentCanonicalGuid: 'v2-future-attach',
+                attachmentLogicalKeyHash: 'v2-future-attach-hash',
+                mentionHandle: null,
+                audioTranscript: null,
+                textEffect: null,
+                bold: null,
+                italic: null,
+                strikethrough: null,
+                underline: null,
+              ),
+            ],
+          ),
+        ],
+        balloonBundleId: extensionTestBundle,
+        decodedExtensionPayload: futurePrepared.canonicalUtf8,
+        preparedExtension: futurePrepared,
+        knownFlags: _messageFlags(fromMe: false),
+      );
+      expect(
+        adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: futurePayload,
+          snapshot: _snapshot(
+            CloudEntityKind.message,
+            'B' * 43,
+            parentLogicalKeyHash: futurePayload.semanticParentLogicalKeyHash,
+          ),
+        ),
+        CloudCanonicalSemanticMutationReceipt.committed,
+      );
+      expect(
+        store
+            .box<Message>()
+            .getAll()
+            .singleWhere((message) => message.guid == 'v2-update-guid')
+            .text,
+        'future',
+      );
+      // Earlier update at the exact base millisecond: lessThan excludes the
+      // future sibling, so it inherits from the base, and the equal-ms root
+      // link is accepted.
+      resolver.put(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: 'C' * 43,
+        canonicalGuid: 'v2-equal-guid',
+      );
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: 'C' * 43,
+        canonicalGuid: 'v2-equal-guid',
+      );
+      applyV2Update(
+        adapter,
+        createdAt: testEpoch,
+        updateHash: 'C' * 43,
+        updateGuid: 'v2-equal-guid',
+      );
+      final equalUpdate = store
+          .box<Message>()
+          .getAll()
+          .singleWhere((message) => message.guid == 'v2-equal-guid');
+      expect(equalUpdate.amkSessionId, 'v2-base-guid');
+      expect(equalUpdate.text, 'Base text');
+      // Invalid future base: an update older than its base root is rejected.
+      resolver.put(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: 'D' * 43,
+        canonicalGuid: 'v2-stale-guid',
+      );
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: 'D' * 43,
+        canonicalGuid: 'v2-stale-guid',
+      );
+      final stalePrepared = CloudSyncPreparedExtension.parse(
+        extensionTestV2Json(
+          role: 'update',
+          sessionGuid: 'v2-base-guid',
+          sessionLogicalKeyHash: 'A' * 43,
+        ),
+        expectedParentBundleId: extensionTestBundle,
+      );
+      final stalePayload = _messagePayload(
+        logicalEntityKeyHash: 'D' * 43,
+        canonicalGuid: 'v2-stale-guid',
+        chatIdentifier: 'iMessage;-;extension-chat',
+        createdAt: testEpoch.subtract(const Duration(seconds: 1)),
+        body: null,
+        bodyState: CloudSemanticFieldState.absent,
+        balloonBundleId: extensionTestBundle,
+        decodedExtensionPayload: stalePrepared.canonicalUtf8,
+        preparedExtension: stalePrepared,
+        knownFlags: _messageFlags(fromMe: false),
+      );
+      expect(
+        () => store.runInTransaction(TxMode.write, () {
+          adapter.applyEntity(
+            scope: scope,
+            generation: generation,
+            payload: stalePayload,
+            snapshot: _snapshot(
+              CloudEntityKind.message,
+              'D' * 43,
+              parentLogicalKeyHash: stalePayload.semanticParentLogicalKeyHash,
+            ),
+          );
+        }),
+        throwsA(
+          predicate<CloudSyncFailure>(
+            (failure) =>
+                failure.safeCode ==
+                    'canonical_extension_session_base_unavailable' &&
+                failure.category == CloudFailureCategory.dependency,
+          ),
+        ),
+      );
+      expect(
+        store.box<Message>().getAll().map((message) => message.guid),
+        unorderedEquals(['v2-base-guid', 'v2-update-guid', 'v2-equal-guid']),
+      );
+    },
+  );
+
   test(
     'creates and idempotently attaches a reaction to its bare parent GUID',
     () {

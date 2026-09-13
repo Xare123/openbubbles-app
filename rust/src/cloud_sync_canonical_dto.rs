@@ -1364,6 +1364,8 @@ pub(crate) struct CloudCanonicalMessagePayload {
     attributed_bodies: CloudCanonicalField<Vec<CloudCanonicalAttributedBody>>,
     balloon_bundle_id: CloudCanonicalField<String>,
     decoded_extension_payload: CloudCanonicalField<Vec<u8>>,
+    extension_session: Option<crate::cloud_sync_extension_payload::ExtensionSessionContext>,
+    extension_parent_hash: Option<CloudCanonicalHash>,
     effect: CloudCanonicalField<String>,
     read_at_millis: CloudCanonicalField<i64>,
     delivered_at_millis: CloudCanonicalField<i64>,
@@ -1443,13 +1445,36 @@ impl CloudCanonicalMessagePayload {
         validate_optional_identifier(&balloon_bundle_id)?;
         validate_optional_identifier(&effect)?;
         validate_optional_text(&associated_emoji)?;
+        let mut extension_session = None;
+        let mut extension_parent_hash = None;
         if let CloudCanonicalField::Value(bytes) = &decoded_extension_payload {
-            let metadata =
-                crate::cloud_sync_extension_payload::parse_generated_metadata_json(bytes)
+            let (metadata, session) =
+                crate::cloud_sync_extension_payload::parse_projection_metadata_json(bytes)
                     .map_err(|_| CloudCanonicalValidationFailure::InvalidPayload)?;
             if balloon_bundle_id.value() != Some(&metadata.bundle_id) || association.is_reaction() {
                 return Err(CloudCanonicalValidationFailure::InvalidPayload);
             }
+            if let Some(context) = &session {
+                use crate::cloud_sync_extension_payload::ExtensionSessionRole;
+                if !matches!(association, CloudCanonicalMessageAssociation::None) {
+                    return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                }
+                match context.role {
+                    ExtensionSessionRole::Base if context.session_guid != guid => {
+                        return Err(CloudCanonicalValidationFailure::InvalidPayload)
+                    }
+                    ExtensionSessionRole::Update => {
+                        if context.session_guid == guid || reply.is_some() {
+                            return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                        }
+                        extension_parent_hash = Some(CloudCanonicalHash::new(
+                            context.session_logical_key_hash.clone(),
+                        )?);
+                    }
+                    _ => {}
+                }
+            }
+            extension_session = session;
         }
         if decoded_extension_payload
             .value()
@@ -1577,6 +1602,8 @@ impl CloudCanonicalMessagePayload {
             attributed_bodies,
             balloon_bundle_id,
             decoded_extension_payload,
+            extension_session,
+            extension_parent_hash,
             effect,
             read_at_millis,
             delivered_at_millis,
@@ -1594,11 +1621,14 @@ impl CloudCanonicalMessagePayload {
     }
 
     fn parent_hash(&self) -> Option<&CloudCanonicalHash> {
-        self.association.parent_hash().or_else(|| {
-            self.reply
-                .as_ref()
-                .map(CloudCanonicalReplyReference::parent_hash)
-        })
+        self.extension_parent_hash
+            .as_ref()
+            .or_else(|| self.association.parent_hash())
+            .or_else(|| {
+                self.reply
+                    .as_ref()
+                    .map(CloudCanonicalReplyReference::parent_hash)
+            })
     }
 
     pub(crate) fn text_state(&self) -> CloudCanonicalFieldState {
@@ -2028,6 +2058,17 @@ impl CloudCanonicalMutation {
                     return Err(CloudCanonicalValidationFailure::InvalidPayload);
                 }
                 snapshot.validate_for_envelope(&envelope)?;
+                if let CloudCanonicalPayload::Message(message) = payload {
+                    if let Some(session) = &message.extension_session {
+                        if session.role
+                            == crate::cloud_sync_extension_payload::ExtensionSessionRole::Base
+                            && session.session_logical_key_hash
+                                != envelope.logical_entity_key_hash.value()
+                        {
+                            return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                        }
+                    }
+                }
             }
             CloudCanonicalMutationKind::Tombstone => {
                 let tombstone = tombstone

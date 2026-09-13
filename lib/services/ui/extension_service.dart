@@ -1,10 +1,9 @@
 
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:bluebubbles/database/database.dart';
-import 'package:bluebubbles/helpers/types/constants.dart';
-import 'package:bluebubbles/main.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -71,17 +70,92 @@ ExtensionService es = Get.isRegistered<ExtensionService>() ? Get.find<ExtensionS
 
 class ExtensionService extends GetxService {
 
+  ExtensionService({
+    Box<Message> Function()? messageBoxProvider,
+    Store Function()? storeProvider,
+  })  : _messageBoxProvider = messageBoxProvider ?? (() => Database.messages),
+        _storeProvider = storeProvider ?? (() => Database.store);
+
+  final Box<Message> Function() _messageBoxProvider;
+  final Store Function() _storeProvider;
+
+  StreamSubscription<void>? _messageWatch;
+  Store? _watchedStore;
+  bool _closed = false;
+
+  Box<Message> get _messageBox => _messageBoxProvider();
+
+  Store? _currentStore() {
+    try {
+      return _storeProvider();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _detachMessageWatch() {
+    final sub = _messageWatch;
+    _messageWatch = null;
+    _watchedStore = null;
+    if (sub != null) unawaited(sub.cancel());
+    // Never serve heads cached from a detached or replaced store.
+    amkToLatest.clear();
+  }
+
+  /// Lazily observes committed Message changes and drops cached session heads.
+  /// Returns the observed store, or null when no usable store is available.
+  /// The listener only clears [amkToLatest]; the next [getLatest] re-queries
+  /// just that session (limit 3, newest first). No queries, network, or
+  /// service initialization happen on the observer callback.
+  Store? _ensureMessageWatch() {
+    final current = _closed ? null : _currentStore();
+    if (current == null || current.isClosed()) {
+      _detachMessageWatch();
+      return null;
+    }
+    if (identical(current, _watchedStore) && _messageWatch != null) {
+      return current;
+    }
+    _detachMessageWatch();
+    _watchedStore = current;
+    try {
+      final watched = current;
+      _messageWatch = watched.watch<Message>().listen((_) {
+        // Ignore events that arrive after a rebind or close.
+        if (!identical(_watchedStore, watched)) return;
+        amkToLatest.clear();
+      });
+    } catch (_) {
+      _detachMessageWatch();
+      return null;
+    }
+    return current;
+  }
+
+  @override
+  void onClose() {
+    _closed = true;
+    _detachMessageWatch();
+    super.onClose();
+  }
+
   List<App> cachedStatus = [];
 
   Map<String, List<String?>> amkToLatest = {};
   List<String> suppressingSessions = [];
 
   List<String?> getLatest(String amk) {
+    if (_closed) {
+      throw StateError('ExtensionService is closed');
+    }
+    if (_ensureMessageWatch() == null) {
+      throw StateError('Message store unavailable');
+    }
     if (amkToLatest.containsKey(amk)) {
       return amkToLatest[amk]!;
     }
 
-    final query = (Database.messages.query(Message_.amkSessionId.equals(amk))
+    final query = (_messageBox.query(Message_.amkSessionId.equals(amk))
             ..order(Message_.dateCreated, flags: Order.descending))
           .build();
           query.limit = 3;

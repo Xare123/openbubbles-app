@@ -528,7 +528,9 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     final payload = _payloadFromFrb(result.entityKind!, result.payload!);
     if (snapshot.kind != _entityKindFromFrb(result.entityKind!) ||
         snapshot.kind != payload.kind ||
-        snapshot.logicalEntityKeyHash != payload.logicalEntityKeyHash) {
+        snapshot.logicalEntityKeyHash != payload.logicalEntityKeyHash ||
+        (payload is CloudMessageEntityPayload && payload.extensionSession != null &&
+            snapshot.parentLogicalKeyHash != payload.semanticParentLogicalKeyHash)) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.conflict,
         safeCode: CloudSyncV2DecoderSafeFailureCodes.payloadIdentityMismatch,

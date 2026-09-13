@@ -119,6 +119,89 @@ struct MetadataEnvelope<T> {
     metadata: T,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ExtensionSessionRole {
+    Base,
+    Update,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExtensionSessionContext {
+    pub role: ExtensionSessionRole,
+    pub session_guid: String,
+    pub session_logical_key_hash: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionMetadataEnvelope<T, C> {
+    version: u8,
+    metadata: T,
+    context: C,
+}
+
+pub(crate) fn validate_session_context(context: &ExtensionSessionContext) -> Result<()> {
+    let guid = &context.session_guid;
+    if guid.is_empty()
+        || guid.len() > MAX_STRING_BYTES
+        || guid.chars().any(|c| c.is_control() || c == ':' || c == '/')
+        || context.session_logical_key_hash.len() != 43
+        || !context
+            .session_logical_key_hash
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err(Failure::Malformed);
+    }
+    Ok(())
+}
+
+pub(crate) fn serialize_session_metadata_json(
+    metadata: &ExtensionPayloadMetadata,
+    context: &ExtensionSessionContext,
+) -> Result<Vec<u8>> {
+    validate_metadata(metadata)?;
+    validate_session_context(context)?;
+    let bytes = serde_json::to_vec(&SessionMetadataEnvelope {
+        version: 2,
+        metadata,
+        context,
+    })
+    .map_err(|_| Failure::Malformed)?;
+    if bytes.len() > MAX_JSON_BYTES {
+        return Err(Failure::LimitExceeded);
+    }
+    Ok(bytes)
+}
+
+/// Both schemas are closed; a v1 payload cannot smuggle a context, including null.
+pub(crate) fn parse_projection_metadata_json(
+    bytes: &[u8],
+) -> Result<(ExtensionPayloadMetadata, Option<ExtensionSessionContext>)> {
+    if bytes.len() > MAX_JSON_BYTES {
+        return Err(Failure::LimitExceeded);
+    }
+    if let Ok(envelope) =
+        serde_json::from_slice::<MetadataEnvelope<ExtensionPayloadMetadata>>(bytes)
+    {
+        if envelope.version != 1 {
+            return Err(Failure::UnsupportedEncoding);
+        }
+        validate_metadata(&envelope.metadata)?;
+        return Ok((envelope.metadata, None));
+    }
+    let envelope: SessionMetadataEnvelope<ExtensionPayloadMetadata, ExtensionSessionContext> =
+        serde_json::from_slice(bytes).map_err(|_| Failure::Malformed)?;
+    if envelope.version != 2 {
+        return Err(Failure::UnsupportedEncoding);
+    }
+    validate_metadata(&envelope.metadata)?;
+    validate_session_context(&envelope.context)?;
+    Ok((envelope.metadata, Some(envelope.context)))
+}
+
 // deserialize_with deliberately makes absent Option fields errors, not nulls.
 fn required_option<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
     d: D,
@@ -758,6 +841,66 @@ mod tests {
     }
     fn archive_result(archive: &Value) -> Result<ExtensionPayloadMetadata> {
         decode_extension_payload(&encode(archive), "com.example.synthetic")
+    }
+
+    #[test]
+    fn session_metadata_has_closed_versions_and_separate_wire_identity() {
+        let metadata = decode(balloon()).unwrap();
+        for role in [ExtensionSessionRole::Base, ExtensionSessionRole::Update] {
+            let context = ExtensionSessionContext {
+                role,
+                session_guid: "wire-base-guid".into(),
+                session_logical_key_hash: "A".repeat(43),
+            };
+            let bytes = serialize_session_metadata_json(&metadata, &context).unwrap();
+            let (parsed, session) = parse_projection_metadata_json(&bytes).unwrap();
+            assert_eq!(parsed, metadata);
+            assert!(session.as_ref() == Some(&context));
+            assert!(parsed.balloon.session.is_none());
+            assert!(parse_generated_metadata_json(&bytes).is_err());
+            let mut raw: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            raw["version"] = serde_json::json!(1);
+            assert!(parse_projection_metadata_json(&serde_json::to_vec(&raw).unwrap()).is_err());
+            raw["version"] = serde_json::json!(2);
+            for field in ["role", "session_guid", "session_logical_key_hash"] {
+                let mut missing = raw.clone();
+                missing["context"].as_object_mut().unwrap().remove(field);
+                assert!(
+                    parse_projection_metadata_json(&serde_json::to_vec(&missing).unwrap()).is_err()
+                );
+            }
+            for bad in [
+                serde_json::Value::Null,
+                serde_json::json!({}),
+                serde_json::json!("opaque"),
+            ] {
+                let mut invalid = raw.clone();
+                invalid["context"] = bad;
+                assert!(
+                    parse_projection_metadata_json(&serde_json::to_vec(&invalid).unwrap()).is_err()
+                );
+            }
+        }
+        let v1 = serialize_generated_metadata_json(&metadata).unwrap();
+        assert!(parse_projection_metadata_json(&v1).unwrap().1.is_none());
+    }
+
+    #[test]
+    fn session_context_rejects_invalid_wire_identity_and_digest() {
+        let mut context = ExtensionSessionContext {
+            role: ExtensionSessionRole::Update,
+            session_guid: "base-guid".into(),
+            session_logical_key_hash: "A".repeat(43),
+        };
+        for guid in ["", "p:0/base", "bp:base", "base\n", "base\u{85}"] {
+            context.session_guid = guid.into();
+            assert!(validate_session_context(&context).is_err());
+        }
+        context.session_guid = "base-guid".into();
+        for hash in ["A".repeat(42), "A".repeat(44), "!".repeat(43)] {
+            context.session_logical_key_hash = hash;
+            assert!(validate_session_context(&context).is_err());
+        }
     }
 
     #[test]

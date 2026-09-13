@@ -290,6 +290,18 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
           throw ArgumentError('cloud_message_prepared_extension_binding_invalid');
         }
       }
+      final session = preparedExtension!.sessionContext;
+      if (session != null) {
+        final isBase = session.role == CloudSyncExtensionSessionRole.base;
+        if (associationKind != CloudSemanticAssociationKind.none ||
+            (isBase && (session.sessionGuid != canonicalGuid ||
+                session.sessionLogicalKeyHash != logicalEntityKeyHash)) ||
+            (!isBase && (session.sessionGuid == canonicalGuid ||
+                session.sessionLogicalKeyHash == logicalEntityKeyHash ||
+                replyParentCanonicalGuid != null))) {
+          throw ArgumentError('cloud_message_extension_session_binding_invalid');
+        }
+      }
     }
     if ((associationKind == CloudSemanticAssociationKind.reactionAdd ||
             associationKind == CloudSemanticAssociationKind.reactionRemove) &&
@@ -351,6 +363,12 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
   final Uint8List? decodedExtensionPayload;
   /// Validated renderer metadata bound to the exact immutable digest bytes.
   final CloudSyncPreparedExtension? preparedExtension;
+  CloudSyncExtensionSessionContext? get extensionSession => preparedExtension?.sessionContext;
+  String? get extensionParentCanonicalGuid =>
+      extensionSession?.role == CloudSyncExtensionSessionRole.update ? extensionSession!.sessionGuid : null;
+  String? get extensionParentLogicalKeyHash =>
+      extensionSession?.role == CloudSyncExtensionSessionRole.update ? extensionSession!.sessionLogicalKeyHash : null;
+  String? get semanticParentLogicalKeyHash => extensionParentLogicalKeyHash ?? replyParentLogicalKeyHash;
   final CloudSemanticFieldState effectState;
   final String? effect;
   final CloudSemanticFieldState readAtState;

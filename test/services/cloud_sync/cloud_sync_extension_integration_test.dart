@@ -15,9 +15,11 @@ CloudMessageEntityPayload _payload({
   CloudSemanticFieldState bundleState = CloudSemanticFieldState.value,
   String? bundle = extensionTestBundle,
   CloudSemanticAssociationKind association = CloudSemanticAssociationKind.none,
+  String logicalKey = 'message-hash',
+  String guid = 'message-guid',
 }) => CloudMessageEntityPayload(
-  logicalEntityKeyHash: 'message-hash',
-  canonicalGuid: 'message-guid',
+  logicalEntityKeyHash: logicalKey,
+  canonicalGuid: guid,
   chatAliasKeyHash: 'chat-hash',
   chatIdentifier: 'iMessage;-;chat',
   body: 'body',
@@ -54,6 +56,29 @@ void main() {
       () => _payload(prepared: prepared, bytes: different),
       throwsArgumentError,
     );
+  });
+
+  test('v2 session context binds base identity and a distinct update dependency', () {
+    final hash = 'A' * 43;
+    CloudSyncPreparedExtension session(String role, String guid, String key) {
+      final value = jsonDecode(json) as Map<String, dynamic>;
+      value['version'] = 2;
+      value['context'] = {'role': role, 'session_guid': guid, 'session_logical_key_hash': key};
+      return CloudSyncPreparedExtension.parse(jsonEncode(value), expectedParentBundleId: extensionTestBundle);
+    }
+    final base = session('base', 'message-guid', hash);
+    final payload = _payload(prepared: base, bytes: base.canonicalUtf8, logicalKey: hash);
+    expect(payload.semanticParentLogicalKeyHash, isNull);
+    expect(() => _payload(prepared: base, bytes: base.canonicalUtf8), throwsArgumentError);
+    expect(() => _payload(prepared: base, bytes: base.canonicalUtf8, logicalKey: hash, guid: 'other'), throwsArgumentError);
+    final update = session('update', 'base-guid', hash);
+    final next = _payload(prepared: update, bytes: update.canonicalUtf8, logicalKey: 'B' * 43);
+    expect(next.extensionParentCanonicalGuid, 'base-guid');
+    expect(next.semanticParentLogicalKeyHash, hash);
+    expect(next.replyParentCanonicalGuid, isNull);
+    expect(next.associationKind, CloudSemanticAssociationKind.none);
+    expect(() => _payload(prepared: update, bytes: update.canonicalUtf8, logicalKey: hash), throwsArgumentError);
+    expect(() => _payload(prepared: update, bytes: update.canonicalUtf8, guid: 'base-guid'), throwsArgumentError);
   });
 
   test('prepared value requires matching balloon value and no reaction', () {

@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'cloud_inbox_applier.dart';
 import 'cloud_merge_policy.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_prepared_extension.dart';
 import 'cloud_attachment_provenance.dart';
 import 'cloud_sync_chat_presentation_repair.dart';
 import 'cloud_sync_outbound_chat_origin.dart';
@@ -382,7 +383,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   }) {
     _requireActiveScope(scope, generation);
     final payloadParentLogicalKeyHash = switch (payload) {
-      CloudMessageEntityPayload value => value.replyParentLogicalKeyHash,
+      CloudMessageEntityPayload value => value.semanticParentLogicalKeyHash,
       CloudReactionEntityPayload value => value.parentLogicalKeyHash,
       CloudAttachmentEntityPayload value => value.ownerLogicalKeyHash,
       _ => null,
@@ -517,6 +518,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
             message.dateCreated!.toUtc() != createdAt.toUtc() ||
             message.isFromMe == null ||
             message.isFromMe != flags.fromMe ||
+            (value.extensionSession != null && message.amkSessionId != null &&
+                message.amkSessionId != value.extensionSession!.sessionGuid) ||
             message.associatedMessageGuid != null ||
             message.associatedMessagePart != null ||
             message.associatedMessageType != null ||
@@ -1629,12 +1632,74 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     );
 
     final flags = payload.knownFlags!;
+    // Session grouping is independent of reaction/reply targeting. Resolve the
+    // exact protected base before creating any sender/message rows.
+    final session = payload.extensionSession;
+    Message? sessionSource;
+    Message? sessionBase;
+    if (session?.role == CloudSyncExtensionSessionRole.update) {
+      final parentGuid = _requireResolvedGuid(
+        scope: scope, generation: generation, kind: CloudEntityKind.message,
+        logicalEntityKeyHash: session!.sessionLogicalKeyHash,
+        payloadCanonicalGuid: session.sessionGuid,
+      );
+      sessionBase = _findMessage(parentGuid);
+      if (sessionBase == null || sessionBase.chat.targetId != chat.id ||
+          sessionBase.dateDeleted != null || sessionBase.dateCreated == null ||
+          sessionBase.dateCreated!.isAfter(payload.createdAt!) ||
+          sessionBase.balloonBundleId != payload.balloonBundleId ||
+          sessionBase.payloadData?.appData?.length != 1 ||
+          (sessionBase.amkSessionId != null && sessionBase.amkSessionId != session.sessionGuid)) {
+        throw CloudSyncFailure(category: CloudFailureCategory.dependency,
+          safeCode: 'canonical_extension_session_base_unavailable');
+      }
+      sessionSource = sessionBase;
+      // Match the existing renderer's chronological session ordering. Never
+      // inherit content from a future update or another chat/account.
+      final query = (_messages.query(Message_.amkSessionId.equals(session.sessionGuid)
+          .and(Message_.chat.equals(chat.id!))
+          .and(Message_.dateCreated.lessThan(payload.createdAt!.millisecondsSinceEpoch)))
+        ..order(Message_.dateCreated, flags: Order.descending)).build()..limit = 2;
+      try {
+        final previous = query.find();
+        if (previous.isNotEmpty && previous.first.guid != sessionBase.guid) {
+          final source = previous.first;
+          if (source.guid == null || source.dateDeleted != null ||
+              source.balloonBundleId != payload.balloonBundleId ||
+              source.payloadData?.appData?.length != 1 ||
+              (previous.length == 2 && previous[1].dateCreated == source.dateCreated)) {
+            throw CloudSyncFailure(category: CloudFailureCategory.dependency,
+              safeCode: 'canonical_extension_session_predecessor_unavailable');
+          }
+          final lookup = CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+            scope: scope, generation: generation, canonicalGuid: source.guid!);
+          final proofQuery = _snapshots.query(CloudSemanticSnapshotEntity_.scopeGenerationKey
+              .equals(_scopeGenerationKey(scope, generation))
+              .and(CloudSemanticSnapshotEntity_.canonicalGuidLookupHash.equals(lookup))).build()..limit = 2;
+          try {
+            final proofs = proofQuery.find();
+            if (proofs.length != 1 || proofs.single.entityKind != CloudEntityKind.message.name) {
+              throw CloudSyncFailure(category: CloudFailureCategory.dependency,
+                safeCode: 'canonical_extension_session_predecessor_unproven');
+            }
+            _requireCanonicalIdentityOwnership(scope: scope, generation: generation,
+              kind: CloudEntityKind.message, logicalEntityKeyHash: proofs.single.logicalEntityKeyHash,
+              canonicalGuid: source.guid!);
+          } finally { proofQuery.close(); }
+          sessionSource = source;
+        }
+      } finally { query.close(); }
+    }
     final sender = _resolveMessageSender(
       payload.senderHandle,
       flags.fromMe,
       service,
     );
     var message = _findMessage(guid);
+    if (message?.amkSessionId != null && session != null && message!.amkSessionId != session.sessionGuid) {
+      throw CloudSyncFailure(category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_extension_session_identity_conflict');
+    }
     if (message != null) {
       if (message.chat.targetId != 0 && message.chat.targetId != chat.id) {
         throw CloudSyncFailure(
@@ -1717,6 +1782,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
             (message.payloadData != null || message.hasApplePayloadData)) {
           message.payloadData = null;
           message.hasApplePayloadData = false;
+          message.amkSessionId = null;
         }
         break;
       case CloudSemanticFieldState.value:
@@ -1728,6 +1794,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       case CloudSemanticFieldState.explicitClear:
         message.payloadData = null;
         message.hasApplePayloadData = false;
+        message.amkSessionId = null;
     }
 
     switch (replaceEditContent
@@ -1749,6 +1816,30 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         }
       case CloudSemanticFieldState.explicitClear:
         message.attributedBody = [];
+    }
+
+    if (session != null && replaceEditContent) {
+      message.amkSessionId = session.sessionGuid;
+      if (sessionSource != null) {
+        // The relationship remains owned by the original attachment message.
+        // Copy attributed references, never move Attachment.message backlinks.
+        final carriesNewAsset = payload.attributedBodies.any((body) =>
+            body.runs.any((run) => run.attachmentCanonicalGuid != null));
+        if (!carriesNewAsset) {
+          if (sessionSource.attributedBody.isEmpty &&
+              (sessionSource.text == null || sessionSource.text!.isEmpty)) {
+            throw CloudSyncFailure(category: CloudFailureCategory.dependency,
+              safeCode: 'canonical_extension_session_content_unavailable');
+          }
+          message.text = sessionSource.text;
+          message.dbAttributedBody = sessionSource.dbAttributedBody;
+          message.hasAttachments = sessionSource.hasAttachments;
+        }
+        if (sessionBase!.amkSessionId == null) {
+          sessionBase.amkSessionId = session.sessionGuid;
+          _messages.put(sessionBase, mode: PutMode.update);
+        }
+      }
     }
     // Attachment records can arrive before a later replay of their owner.
     // Until attachment tombstones are enabled, a message's confirmed
@@ -2422,6 +2513,11 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
           logicalEntityKeyHash: value.logicalEntityKeyHash,
           canonicalGuid: value.canonicalGuid,
         );
+        if (value.extensionParentLogicalKeyHash != null) {
+          add(kind: CloudEntityKind.message,
+            logicalEntityKeyHash: value.extensionParentLogicalKeyHash!,
+            canonicalGuid: value.extensionParentCanonicalGuid!);
+        }
         if (value.replyParentLogicalKeyHash != null) {
           add(
             kind: CloudEntityKind.message,

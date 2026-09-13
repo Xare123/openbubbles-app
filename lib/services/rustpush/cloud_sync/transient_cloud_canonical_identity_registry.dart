@@ -64,6 +64,9 @@ final class TransientCloudCanonicalIdentityRegistry
           value.logicalEntityKeyHash,
           value.canonicalGuid,
         );
+        if (value.extensionParentLogicalKeyHash != null) {
+          add(CloudEntityKind.message, value.extensionParentLogicalKeyHash!, value.extensionParentCanonicalGuid!);
+        }
         if (value.replyParentLogicalKeyHash != null) {
           add(
             CloudEntityKind.message,

@@ -139,6 +139,12 @@ Map<String, String> _vectors() => <String, String>{
       expectedParentBundleId: 'com.example.synthetic',
     )),
   ),
+  'extension-session': CloudKitV2CanonicalRepairDigest.forPayload(
+    _basicMessage(prepared: CloudSyncPreparedExtension.parse(
+      File('test/fixtures/cloud_sync/extension_session_digest_v2.json').readAsStringSync(),
+      expectedParentBundleId: 'com.example.synthetic',
+    )),
+  ),
 };
 
 const _flags = CloudSemanticKnownMessageFlags(

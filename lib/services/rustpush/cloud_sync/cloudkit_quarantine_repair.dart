@@ -1872,7 +1872,7 @@ final class CloudKitV2QuarantineRepairGateway {
       throw _failure('quarantine_repair_decoded_shape_invalid');
     }
     final payloadParent = switch (payload) {
-      CloudMessageEntityPayload value => value.replyParentLogicalKeyHash,
+      CloudMessageEntityPayload value => value.semanticParentLogicalKeyHash,
       CloudReactionEntityPayload value => value.parentLogicalKeyHash,
       _ => null,
     };

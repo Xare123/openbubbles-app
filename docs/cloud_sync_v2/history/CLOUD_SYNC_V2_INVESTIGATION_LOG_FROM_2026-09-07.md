@@ -3785,3 +3785,21 @@ cannot authorize or perform adoption.
 - Nested rustpush has pre-existing formatting edits. Relevant Find My diagnostic
   and extension live-path differences reviewed here were formatting-only; retain
   all uncommitted submodule work and compare the pinned commit when qualifying.
+
+### September 13 session-aware candidate
+
+- Implemented closed v2 metadata context inside the existing string bridge. It
+  carries the wire session identity separately from the archive's balloon UUID.
+  Native conversion creates a semantic base dependency for validated type 2;
+  type 4000 and 1000 remain retained. No ObjectBox entity or generated ABI change.
+- Projector resolves base and chronological predecessor with exact durable scope
+  ownership, same chat/provider and timestamp bounds; inherits attributed references
+  without moving attachment ownership. Grouping uses existing amkSessionId.
+- Muse contributed parser/tests, adapter fixtures and lazy message-cache invalidation.
+  Parent reviewed/refined lifecycle, tested actual callbacks and fixed an async test
+  expectation that inspected an old cache before its change notification arrived.
+- 247 broader transaction/decoder tests passed, plus 31 parser, 149 adapter, nine
+  targeted session, eight cache tests and the expanded fixed digest corpus.
+- Remaining: native qualification/live decode and convergence when an earlier
+  asset update arrives after a newer inherited row. The tested chronological
+  behavior is not declared complete. No new Pixel installation or remote write.

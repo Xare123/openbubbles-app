@@ -127,6 +127,28 @@ void main() {
       safeCode: 'decoder_reaction_shape_unsupported');
   });
 
+  test('session update requires the same dependency in payload and snapshot', () async {
+    final entry = _entry();
+    final value = jsonDecode(extensionTestJson()) as Map<String, dynamic>;
+    value['version'] = 2;
+    value['context'] = {'role':'update', 'session_guid':'base-guid', 'session_logical_key_hash':_chatHash};
+    bindings.result = _readyMessage(entry, payload: frb.CloudSyncTransientPayload(
+      message: _messagePayload(balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
+        balloonBundleId: extensionTestBundle, extensionMetadataJson: jsonEncode(value)),
+    ));
+    final decoded = await decoder().decode(entry);
+    final payload = decoded.payload! as CloudMessageEntityPayload;
+    expect(payload.semanticParentLogicalKeyHash, decoded.snapshot!.parentLogicalKeyHash);
+    expect(payload.extensionParentCanonicalGuid, 'base-guid');
+    expect(payload.replyParentCanonicalGuid, isNull);
+    value['context']['session_logical_key_hash'] = 'Z' * 43;
+    bindings.result = _readyMessage(entry, payload: frb.CloudSyncTransientPayload(
+      message: _messagePayload(balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
+        balloonBundleId: extensionTestBundle, extensionMetadataJson: jsonEncode(value)),
+    ));
+    await _expectFailure(decoder().decode(entry), CloudFailureCategory.conflict);
+  });
+
   test(
     'rejects a forged ready SMS payload without typed native proof',
     () async {
