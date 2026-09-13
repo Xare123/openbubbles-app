@@ -1,93 +1,109 @@
 ---
-type: Implementation Report
-title: Find My bounded projection repair
-description: Source-proven stale-row and missing-address fixes, with native service gates still open.
-tags: [findmy, regression, windows]
-timestamp: 2026-09-11T00:00:00-07:00
+type: build_runbook
+title: Find My current diagnosis and Windows test loop
+description: Verified live evidence, exact safe invocation, and remaining People, Devices, and Items gates.
+tags: [findmy, windows, diagnostics, recovery]
+timestamp: 2026-09-13
 ---
 
-# Result
+# Current result
 
-Bounded Dart repair on app `6c1a1c6e4b01b71b516e9df87a1cc3aef57cf0dd`.
-No Rust/submodule, generated bridge, authentication, sharing, or CloudKit changes.
-No live profile, account, device, call, location probe, or private capture access.
-This is not proof that the wife's location or missing items now work end-to-end.
+Find My is **not production-qualified**. The Windows test loop works and now
+provides real account evidence without an APK rebuild.
 
-## Proven defects fixed
+- The user confirms the sole selected person still shares their location.
+  Both roster and selected-person reads returned that entry, but no native
+  location. Do not interpret `optedNotToShare` or `tkPermission` as proof that she
+  stopped sharing; the fields' directional meaning is not established here.
+- FMIP initialization/refresh completed and the final decoded device list was
+  empty. This does not test AirTags or prove the separate Items inventory is empty.
+- Items were deliberately not invoked: their ordinary initialization can perform
+  CloudKit alignment writes and requires its own reviewed test.
+- Both successful probes verified the FRB runtime handshake, existing DLL signature,
+  unchanged protected-profile invariants, and confirmed exit of every admitted
+  test process. No sharing change, sound, message, logout, or reset occurred.
 
-- People responses without accepted handles reused the entire last-good person.
-  This discarded fresh coordinates and could retain old coordinates after an
-  explicit missing-location response. Now only the handle for that same native
-  person ID is reused; every returned record is freshly projected.
-- Correction (2026-09-11): the earlier flag-derived location suppression was
-  unsupported. `optedNotToShare` has no established directional permission
-  meaning in the inspected source. Upstream displays native `lastLocation`
-  directly. The review patch restores that behavior; explicit native null still
-  clears the prior projected location. No remote sharing permission is changed.
-- People and accessory rows with valid coordinates but no geocoded address
-  incorrectly said `No location found`. They now say `Location available`.
-  Absent/invalid coordinates still say `No location found`, even with an old address.
+## Evidence and source binding
 
-## Full path and current limits
+Private aggregate evidence:
+`C:\Codex\OpenBubblesReview\build-evidence\findmy-windows-live-20260913`.
 
-| Section | Data path | What remains unresolved |
+| Pass | Launch | Result |
 | --- | --- | --- |
-| People | FMF `first/initClient` / refresh / selection, Rust `FindMyFriendsStateUpdate` merge, bridge `Follow`, `requestPeople`, projection, valid/unknown buckets | Corrected Dart stale-row path. No real response establishes whether this account currently receives coordinates or fails decoding/auth. |
-| Devices / cloud AirPods | FMIP init/refresh, `FindMyPhoneStateUpdate.content`, bridge `FoundDevice`, `refreshCloudDevices`, shared display list | No evidence of whole-list rendering loss. Rows without latitude are present in the collapsed Unknown Location section. Service/parser result needs live probe. |
-| AirTags / encrypted Items | keychain clique + `fmfd`, `getBeaconItems`, `sync_item_positions`, BeaconStore records and encrypted location reports, `DartBeacon`, shared display list | Not a read-only workflow: sync holds a CloudKit writer permit and can save alignment records. Missing service/keychain, fetch/decode, and absent reports remain distinct possibilities. Not invoked. |
+| Roster | `2a760d5c97d34b89ac3e6f26ccccf338` | 1 person, 0 locations, 0 FMIP devices |
+| Selected person | `b883750254d74f09b5c975570c6be4a6` | Exact sole entry matched; fresh selected response still lacked location |
 
-Prior source checked read-only: `findmy-password-sidecar` commit `085681570`
-and `openbubbles-findmy` commit `4e42f3520`. Neither was blindly cherry-picked.
-Base already includes independent section refresh, selected-result publication,
-live-merge/marker fixes, and neutral missing-location wording. Current scoped
-history confirms the original probe scaffold was rejected and replaced with
-actual native callbacks; it still explicitly excludes Items.
+The tested native DLL is the retained qualified read implementation, SHA256
+`6c85d27e7f1dbe8d92aac7c7292f1b5676cb6911c4fd67fd7802ced8c627140e`.
+Native reference source: `7f2569165`; current test-host base: `ea757e188`.
+Each private `qualification.json` separately records the actual host/probe/bridge
+hashes. An uncommitted host must not be described as contained in its base SHA.
 
-## Validation
+No old full-app receipt was relabeled. The new Windows native-only build is a
+separate CloudKit qualification, not proof of a Find My fix.
 
-Historical results below predate the flag-suppression correction. The earlier
-synthetic 'revocation' cases did not establish Apple field semantics and are
-replaced in the separate review patch. Passing mocks never proved consent or
-end-to-end behavior.
+## Run the existing loop
 
-- 32 passing tests: `findmy_projection_regression_test.dart` (9 new cases),
-  `findmy_refresh_test.dart`, `findmy_people_refresh_test.dart`.
-- 15 additional passing tests: `findmy_live_merge_test.dart`,
-  `findmy_play_sound_test.dart`. No actual sound or network operation is run.
-- Targeted helper/test analysis: no issues. Page-inclusive analysis: no errors,
-  3 existing warnings and 19 existing deprecation infos, left untouched.
-- `git diff --check` passed.
-- First test setup lacked package graph metadata; first page test compile lacked
-  the detached telephony submodule. Referenced existing SDK/pub cache/telephony
-  source read-only through ignored local package metadata; no dependency copies.
-  Rerun passed. No Cargo/native/full app build was run.
+Use PowerShell 7 in the current feature checkout. Keep the Windows app closed;
+the launcher owns the same profile mutex as the CloudKit host. Do not run these
+two live workflows concurrently.
 
-These are synthetic regression and compile checks, not Apple response parsing,
-native end-to-end success, or rendered live UI proof.
+```powershell
+$previousFindMyEnable = $env:OPENBUBBLES_RUN_FINDMY_WINDOWS_LIVE
+try {
+    $env:OPENBUBBLES_RUN_FINDMY_WINDOWS_LIVE = '1'
+    & .\tooling\windows\run_findmy_windows_live.ps1 -EnableLive -SelectSolePerson
+} finally {
+    $env:OPENBUBBLES_RUN_FINDMY_WINDOWS_LIVE = $previousFindMyEnable
+}
+```
 
-## Exact parent-owned live gate
+`-SelectSolePerson` selects only an exact singleton from a fresh roster, in memory.
+An explicit existing selector takes precedence. Zero/multiple/invalid/cached rows
+never select the first result. The roster is reused, not fetched twice.
 
-1. Finish/release the current Windows profile operation. Do not run concurrently.
-2. Qualify a separate same-source **read-only** Windows variant through the parent
-   CI lane. The qualified `local-write` variant is rejected by both the launcher
-   receipt/build-ID contract and Dart preflight. Do not relabel its receipt or
-   loosen the writer checks. No build was dispatched by this agent.
-3. From the matching qualified checkout run
-   `tooling/windows/run_cloud_sync_v2_dev.ps1 -FindMyProbe -SkipBuild`.
-   Parent may use the private `windows-findmy-probe-request.json` with version 1
-   and `selectedHandle` for the already-shared person; do not disclose the value.
-4. Return only report `devices`, `people`, and `selected` aggregate counts,
-   location presence/age buckets, selected-match boolean, explicit native sharing
-   flags and finite failure category/HTTP status. No coordinates, handles or tokens.
-   A decode failure requires a follow-up redacted key/type shape from that exact
-   failed response before changing serde parsing. Do not dump raw responses.
-5. A successful read still needs actual UI verification with this Dart patch:
-   known handle-less rows update, native null clears the map marker, valid
-   ungeocoded rows show location availability. Unknown new identities remain
-   skipped as before; this patch does not invent a handle or restore absent data.
-6. Items require a separately reviewed truly read-only adapter or an explicitly
-   authorized normal-app workflow. Existing `getBeaconItems` is NOT that adapter.
+Files:
+- `test/live/findmy_windows_live_test.dart`: bounded native bootstrap and test.
+- `test/live/findmy_windows_sole_person_test.dart`: selection regressions.
+- `tooling/windows/run_findmy_windows_live.ps1`: artifact, mutex, and process guard.
+- `tooling/windows/findmy_windows_preflight.py`: private retained-state checks.
+- `lib/cloud_sync_v2_windows_findmy_probe.dart`: shared aggregate orchestration.
 
-The actual account-level blocker is not yet established. Do not label absent
-coordinates as lack of consent, nor claim this projection repair restores a
-location the service did not return.
+Standard APS local persistence and normal authentication/Anisette renewal on the
+existing service are authorized. This is not a claim that bootstrap is mutation-free.
+Missing retained account/keys, identity replacement, interactive sign-in, CloudKit
+sync, Items sync, IDS registration, ringing, sharing changes, and resets stay out
+of this host. Native/test raw output is discarded; only bounded aggregates escape.
+
+The SDK process chain includes `dartvm.exe` and `dartaotruntime.exe`. The launcher
+tracks their exact SDK paths and process ancestry before admitting the exact
+`flutter_tester.exe`. Do not weaken this to a ready PID or basename check.
+The first failed attempt never reached native service access; cleanup and profile
+invariants passed. The corrected chain was reproduced in a synthetic real-SDK test.
+
+## Actual unresolved boundaries
+
+| Path | What is established | Next evidence |
+| --- | --- | --- |
+| People | Native `last_location` is filled only from matching legacy `locations[].id`. The UI does not suppress it using sharing flags. Secure/fallback capability fields have no behavior in this implementation. | Distinguish absent/null/unmatched legacy locations from an alternate secure response, using value-free native shape/join diagnostics. Do not guess or force legacy downgrade. |
+| Devices | Final refreshed `content` decoded to an empty list. | Compare initialization and refresh counts plus allowlisted response status/context, not just the final list. |
+| Items | Inventory/position sync acquires the global native writer permit and may save alignment records. Active semantic reads pause that gate; V2 ownership alone is not a permanent prohibition. | Confirm same-process pause/resume and Items stage, then qualify a reviewed normal Items workflow. |
+
+Secure-location keys elsewhere in the source belong to Beacon/Items. They are not
+proof that secure People decoding exists. No protocol fallback is authorized by
+an empty location or by a successful HTTP response alone.
+
+## Qualification and handoff
+
+After the selected-detail enhancement: 37 Dart tests passed, 1 live test skipped;
+11 Python preflight tests and synthetic launcher/cleanup checks passed. Parent
+also reproduced and fixed a stale report reason: successful selected reads were
+still labeled `safe_authenticated_session_unavailable`. The updated test fails
+before the correction and passes afterward. Source pins were updated for that
+reviewed aggregate-only change.
+
+Full Android UI, real continuously updating coordinates, and Items remain open.
+Do not ask the user to reconfigure sharing based on these incomplete results.
+
+The verbatim older investigation and superseded guard discussions are preserved
+in [Find My history](history/FINDMY_ASTRA_HISTORY_20260910_20260913.md).

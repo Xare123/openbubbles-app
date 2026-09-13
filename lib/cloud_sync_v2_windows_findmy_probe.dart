@@ -396,7 +396,10 @@ Future<Map<String, Object?>> runWindowsFindMyProbe({
         selected['selected_match'] = true;
         await readSection(
           () => reads.selectFriend(id),
-          (value) => selected = {...selected, ...value},
+          (value) {
+            selected = {...selected, ...value};
+            if (value['state'] == 'observed') selected.remove('reason');
+          },
           (rows) {
             final matches = rows.where((row) => row.id == id).toList();
             return {

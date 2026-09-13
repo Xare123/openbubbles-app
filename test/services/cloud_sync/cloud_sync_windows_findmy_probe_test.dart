@@ -157,6 +157,8 @@ void main() {
       );
       expect(calls.last, 'select');
       expect(section(report, 'selected')['location_found'], true);
+      expect(section(report, 'selected')['reason'], isNull,
+        reason: 'A completed read must not retain a stale authentication reason');
       expect(windowsFindMyProbeTerminal(report), (
         'finished',
         'findmy-probe-complete',
