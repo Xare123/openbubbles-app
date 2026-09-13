@@ -3103,3 +3103,39 @@ This is a chronological evidence log. It does not override the
   adoption, then exact conditional submission/conflict/readback. The new helpers
   alone do not establish live CloudKit edits/unsends. Alpha, Canary, the Windows
   runtime, account credentials and messages were untouched during this work.
+
+## 2026-09-12, exact-source Canary progressively projected live history
+
+- Exact committed source `883f001868ac64a160c20018b2fb46e3aedb029e`
+  passed Build workflow `34727839709`, Rust bridge workflow `34727839730`,
+  and Windows validation `34727839757`. The Build workflow included the full
+  Dart suite, diagnostic scan, FaceTime replay, all 119 Android JVM tests,
+  APK/native-library verification, stable Canary signing, and artifact upload.
+  CI used no Apple account or message data.
+- The signed Canary was installed in place at 17:57:09 Pacific. Package
+  `com.bluebubbles.messaging.cloudkitcanary` reported version `1.15.0`
+  (`20002227`) and retained its stable signature and existing app data. The
+  running semantic reports identify the same exact build commit.
+- Live preflight remained healthy throughout the observed run: setup and auth
+  ready, legacy sync off, coordinator active, and semantic outbox empty. The
+  phone stayed awake while plugged in. The user observed two real messages,
+  then additional conversations and messages, appearing progressively in the
+  normal Messages UI. This closes the former “records fetched but nothing is
+  visible” counterexample for this exact run; it does not prove full drain.
+- Completed content-free slices preserved remote saves/deletes off and outbox
+  `0 -> 0`. Message projection accelerated as Chat parents became available:
+  the first two slices applied 1 and 2 Messages, a later slice applied 247,
+  and the next applied 198. The latter slice also observed the Chat zone's
+  terminal empty read. Its remaining retained counts were 94 Chats, 308
+  Messages, and 983 Attachments; many are explicitly out-of-scope SMS/RCS,
+  tombstones, malformed records, or children still waiting on parents.
+- The semantic coordinator was still active at the checkpoint, so no terminal
+  drain, idempotent replay, background/lock, or restart qualification is
+  claimed. Do not start a second pull, clear caches, or force-stop this run.
+- Current-source update safety was rechecked locally: the confirmation,
+  mutation-adoption, and native update cohort passed 39 tests with one
+  intentional native-live skip. Current code fails closed before IDS if V2
+  owns the mutation but preparation is unavailable, retains terminal source
+  evidence through exact readback, finalizes protected leases before receipt
+  acknowledgement, and emits content-free correlated stage markers. Pixel
+  edit/unsend and independent-recipient display remain release gates.
