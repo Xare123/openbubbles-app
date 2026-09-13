@@ -63,7 +63,8 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Windows qualification | Native-only run 34742235201 passed source `ea757e188d34cffefcdb6f2e3dc0ef88ec3c94f5` via pilot `96a2c33e2`. Local signed DLL `4885b706d651c1ccac9a3806e98a98814540dc116768ef5dac3d084ff7d6426b` passed all 51 codec tests and a non-mutating 37-record observation under unchanged App Control. Original runtime preserved. Its newly added debug lines exposed a separate logger lifetime defect; the repaired source needs a new native qualification. |
 | Logging repair | Logger lifetime and explicit Find My target are qualified in native 3496034e3. Awaiting `doFirstTimeInit` in the Windows hosts fixes startup ordering. Native Find My init/refresh diagnostics now show absent `locations`, not a coordinate-join failure. |
 | Latest qualified native | Run 34744744122 passed `b2797dd07fdeffd01c1705dbf184dbf3b15eac22` via pilot `f110e2562`: seven compose, four exact diagnostic/logger and 51 packaged-DLL codec cases. Parent verified/signed DLL `e2bdf775b8f9b9327c1a8278a034628f4efb382cbe2e2a9afe1f9aec2164f30a`, reran 51 cases under unchanged App Control, and observed real retained-shape diagnostics. This older ABI cannot be used with the new extension bindings. |
-| Current native qualification | Windows run 34762729315 passed source `3496034e3b41c2bfc862e75f975e62c266336cce` using pilot `02fc8e810`. All 141 selected Rust tests and 51 packaged-DLL codec tests passed. Parent verified 33 source inputs, 12 test logs, archive and three ARM64 PEs, signed DLL `bf1507c72421fed903dcaffcbe863a001d0d59bd2c04e20b8ce8befe6345147e`, and reran 51 codec tests with App Control enabled. No CI remains active. |
+| Current native qualification | Windows run 34762729315 passed source `3496034e3b41c2bfc862e75f975e62c266336cce` using pilot `02fc8e810`. All 141 selected Rust tests and 51 packaged-DLL codec tests passed. Parent verified 33 source inputs, 12 test logs, archive and three ARM64 PEs, signed DLL `bf1507c72421fed903dcaffcbe863a001d0d59bd2c04e20b8ce8befe6345147e`, and reran 51 codec tests with App Control enabled. |
+| Active session qualification | Windows run 34766997568 builds source `e4affda67d3d10a2af51526a3bfcce6fa81cdbbe` using pilot `2343e13f96b7d362e875be23b82185eeed5f6fac`. Fresh source validation passed; native build/test is not yet qualified. Import/sign separately only after the declared tests pass. Do not treat the retained 3496034e3 DLL as containing session support. |
 | Next integration | Extension metadata transport/projector is qualified for its supported schema. Next is session-aware association handling; type 2 cannot be admitted as a standalone message. Current live tests below distinguish overall read progress from the still-blocked seven-record sample. |
 | Fast Windows loop | Current Dart plus the verified native DLL opens the retained projection in 8.65 seconds. The stale Windows relay ticket was updated to the Pixel's working ticket after proving the same physical relay and preserving Windows installation IDs/keys. A real read then completed in about 31 seconds and exposed a quarantined own-edit echo. |
 | Current merge repair | Real native-source/copy qualification passed the bounded production recovery and normal applier, preserving local history. Live Windows report `obcs2-semantic-1789278811033254.json` applied two pending messages; fresh-process repeat `1789278895014946` fetched/applied zero, with no conflict. Both observed empty terminal reads in all zones and kept outbox 15 -> 15 with remote writes disabled. Full native-crate qualification remains. |
@@ -381,12 +382,12 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Finish bounded extension metadata integration across native converter, typed
-   transient contract, pre-transaction preparation and existing Message payload
-   fields. Preserve original records, identity checks and atomic projection.
-   Generate matching bindings and qualify one coherent native build, including
-   the reviewed system-event and Find My log-target corrections. Use the Windows
-   retained sample before Pixel. Timestamp write/echo/restart proof already passed.
+1. Finish native session-candidate qualification (run 34766997568), then inspect
+   the retained seven-record sample with its separately verified/signed DLL.
+   V2 context uses the existing string ABI, so no bridge regeneration is required.
+   Preserve records and scope fences. Qualify late/out-of-order inherited-media
+   convergence before claiming session restoration complete. Ordinary Windows
+   read and timestamp write/echo/restart proof remain established on prior source.
 2. Reconnect and inspect the existing Pixel session. Use verified cooperative cancellation
    or let it finish; observation timeouts do not prove termination. Install after native settlement.
 3. Resume through Profile > Backup. Verify progress, media access between sessions,
