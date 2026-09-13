@@ -11,7 +11,8 @@ timestamp: 2026-09-13
 Find My is **not production-qualified**. The Windows test loop works and now
 provides real account evidence without an APK rebuild.
 
-- The user confirms the sole selected person still shares their location.
+- The user confirms exactly one person shares their location with this account,
+  their spouse, and that sharing remains enabled.
   Both roster and selected-person reads returned that entry, but no native
   location. Do not interpret `optedNotToShare` or `tkPermission` as proof that she
   stopped sharing; the fields' directional meaning is not established here.
@@ -19,7 +20,7 @@ provides real account evidence without an APK rebuild.
   empty. This does not test AirTags or prove the separate Items inventory is empty.
 - Items were deliberately not invoked: their ordinary initialization can perform
   CloudKit alignment writes and requires its own reviewed test.
-- Both successful probes verified the FRB runtime handshake, existing DLL signature,
+- Successful probes verified the FRB runtime handshake, existing DLL signature,
   unchanged protected-profile invariants, and confirmed exit of every admitted
   test process. No sharing change, sound, message, logout, or reset occurred.
 
@@ -32,15 +33,20 @@ Private aggregate evidence:
 | --- | --- | --- |
 | Roster | `2a760d5c97d34b89ac3e6f26ccccf338` | 1 person, 0 locations, 0 FMIP devices |
 | Selected person | `b883750254d74f09b5c975570c6be4a6` | Exact sole entry matched; fresh selected response still lacked location |
+| Logger-fixed native repeat | `ab1225a716454ee482b1762eaa78e3dd` | 1 person, 0 locations, 0 FMIP devices; protected-profile checks passed |
 
-The tested native DLL is the retained qualified read implementation, SHA256
-`6c85d27e7f1dbe8d92aac7c7292f1b5676cb6911c4fd67fd7802ced8c627140e`.
-Native reference source: `7f2569165`; current test-host base: `ea757e188`.
+The latest tested native DLL is SHA256
+`e2bdf775b8f9b9327c1a8278a034628f4efb382cbe2e2a9afe1f9aec2164f30a`,
+source `b2797dd07fdeffd01c1705dbf184dbf3b15eac22`, run 34744744122.
+The earlier two probes used retained source `7f2569165`.
 Each private `qualification.json` separately records the actual host/probe/bridge
 hashes. An uncommitted host must not be described as contained in its base SHA.
 
 No old full-app receipt was relabeled. The new Windows native-only build is a
-separate CloudKit qualification, not proof of a Find My fix.
+separate CloudKit qualification, not proof of a Find My fix. The current source
+corrects the restricted logger to target `findmy_diagnostic` explicitly. The
+qualified DLL predates that correction, so native shape/join evidence is still
+pending. Do not infer a secure-protocol failure from absent diagnostic lines.
 
 ## Run the existing loop
 

@@ -2737,27 +2737,9 @@ fn build_reply(
 }
 
 fn reject_unsupported_message_content(
-    proto: &MessageProto,
     proto_4: Option<&MessageProto4>,
     service: CloudCanonicalService,
 ) -> Option<CloudCanonicalConversionOutcome> {
-    // A URL balloon's ordinary text is independently usable even though V2
-    // does not yet decode Apple's embedded RichLink payload. Keep the bytes in
-    // the protected source envelope, project only the base message, and leave
-    // every other extension fail-closed.
-    let has_base_message_content = proto.text.as_deref().is_some_and(|value| !value.is_empty())
-        || proto
-            .attributed_body
-            .as_deref()
-            .is_some_and(|value| !value.is_empty());
-    let can_project_url_balloon_base = proto.balloon_bundle_id.as_deref()
-        == Some(URL_BALLOON_PROVIDER)
-        && (service == CloudCanonicalService::IMessage || has_base_message_content);
-    if proto.payload_data.is_some() && !can_project_url_balloon_base {
-        return Some(CloudCanonicalConversionOutcome::Deferred(
-            CloudCanonicalDeferredReason::UnsupportedExtensionPayload,
-        ));
-    }
     if let Some(proto_4) = proto_4 {
         if proto_4.schedule_type.unwrap_or_default() != 0
             || proto_4.schedule_state.unwrap_or_default() != 0
@@ -2784,6 +2766,35 @@ fn reject_unsupported_message_content(
         }
     }
     None
+}
+
+fn decode_message_extension(
+    proto: &MessageProto,
+    is_reaction: bool,
+) -> Result<CloudCanonicalField<Vec<u8>>, CloudCanonicalConversionOutcome> {
+    use crate::cloud_sync_extension_payload::{
+        decode_extension_payload, serialize_generated_metadata_json,
+    };
+    let Some(bytes) = proto.payload_data.as_deref() else {
+        return Ok(CloudCanonicalField::Absent);
+    };
+    let unsupported = || {
+        CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::UnsupportedExtensionPayload,
+        )
+    };
+    if is_reaction {
+        return Err(unsupported());
+    }
+    let bundle_id = proto.balloon_bundle_id.as_deref().ok_or_else(unsupported)?;
+    // Keep the established URL-balloon base projection. RichLink archives use
+    // a separate schema; their original bytes remain in the protected journal.
+    if bundle_id == URL_BALLOON_PROVIDER {
+        return Ok(CloudCanonicalField::Absent);
+    }
+    let metadata = decode_extension_payload(bytes, bundle_id).map_err(|_| unsupported())?;
+    let json = serialize_generated_metadata_json(&metadata).map_err(|_| unsupported())?;
+    Ok(CloudCanonicalField::Value(json))
 }
 
 pub(crate) fn convert_message(
@@ -2866,7 +2877,7 @@ pub(crate) fn convert_message(
     let proto = &message.msg_proto.0;
     let proto_2 = message.msg_proto_2.as_ref().map(|value| &value.0);
     let proto_4 = message.msg_proto_4.as_ref().map(|value| &value.0);
-    if let Some(outcome) = reject_unsupported_message_content(proto, proto_4, service) {
+    if let Some(outcome) = reject_unsupported_message_content(proto_4, service) {
         return outcome;
     }
     let (association, entity_kind, association_parent_hash) =
@@ -3004,6 +3015,11 @@ pub(crate) fn convert_message(
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
+    let decoded_extension_payload = match decode_message_extension(proto, association.is_reaction())
+    {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
     let immutable_digest = match sha256_digest(&[
         message.guid.as_bytes(),
         message.chat_id.as_bytes(),
@@ -3033,7 +3049,7 @@ pub(crate) fn convert_message(
         text,
         attributed_content.field,
         proto_string(&proto.balloon_bundle_id),
-        CloudCanonicalField::Absent,
+        decoded_extension_payload,
         proto_string(&proto.effect),
         read_at_millis,
         delivered_at_millis,
@@ -4903,6 +4919,67 @@ mod tests {
                 CloudCanonicalOutOfScopeService::SmsFamily
             )
         );
+    }
+
+    #[test]
+    fn extension_archive_projects_renderer_metadata_with_base_message() {
+        use crate::cloud_sync_extension_payload::parse_generated_metadata_json;
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let root = PlistValue::Dictionary(
+            [
+                (
+                    "$class".into(),
+                    PlistValue::String("NSMutableDictionary".into()),
+                ),
+                ("an".into(), PlistValue::String("Synthetic app".into())),
+                (
+                    "URL".into(),
+                    PlistValue::Dictionary(
+                        [
+                            ("$class".into(), PlistValue::String("NSURL".into())),
+                            ("NS.base".into(), PlistValue::String("$null".into())),
+                            (
+                                "NS.relative".into(),
+                                PlistValue::String("app:synthetic".into()),
+                            ),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let archive = rustpush::KeyedArchive::archive_item(root).unwrap();
+        let mut bytes = Vec::new();
+        archive.to_writer_binary(&mut bytes).unwrap();
+        let mut message = normal_message(Some("base text"));
+        message.msg_proto.0.balloon_bundle_id = Some("com.example.synthetic".into());
+        message.msg_proto.0.payload_data = Some(bytes.clone());
+        let outcome = convert_message(
+            &context(&hasher, "server-extension", None),
+            &message_presence(),
+            &message,
+        );
+        let payload = message_payload(&outcome);
+        assert_eq!(
+            payload.text().value().map(String::as_str),
+            Some("base text")
+        );
+        let metadata =
+            parse_generated_metadata_json(payload.decoded_extension_payload().value().unwrap())
+                .unwrap();
+        assert_eq!(metadata.name, "Synthetic app");
+        assert_eq!(metadata.bundle_id, "com.example.synthetic");
+        assert_eq!(metadata.balloon.url, "app:synthetic");
+        assert_eq!(message.msg_proto.0.payload_data.as_ref(), Some(&bytes));
+        assert!(matches!(
+            decode_message_extension(&message.msg_proto.0, true),
+            Err(CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedExtensionPayload
+            ))
+        ));
     }
 
     #[test]

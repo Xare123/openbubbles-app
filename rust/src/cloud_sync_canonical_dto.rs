@@ -1443,6 +1443,14 @@ impl CloudCanonicalMessagePayload {
         validate_optional_identifier(&balloon_bundle_id)?;
         validate_optional_identifier(&effect)?;
         validate_optional_text(&associated_emoji)?;
+        if let CloudCanonicalField::Value(bytes) = &decoded_extension_payload {
+            let metadata =
+                crate::cloud_sync_extension_payload::parse_generated_metadata_json(bytes)
+                    .map_err(|_| CloudCanonicalValidationFailure::InvalidPayload)?;
+            if balloon_bundle_id.value() != Some(&metadata.bundle_id) || association.is_reaction() {
+                return Err(CloudCanonicalValidationFailure::InvalidPayload);
+            }
+        }
         if decoded_extension_payload
             .value()
             .is_some_and(|payload| payload.len() > MAX_BINARY_PAYLOAD_BYTES)

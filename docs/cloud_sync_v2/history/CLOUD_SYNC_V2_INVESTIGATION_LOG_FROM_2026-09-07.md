@@ -3726,3 +3726,17 @@ cannot authorize or perform adoption.
   and reviewed feature enabling, plus keyed-archive UID checks. Immutable Dart
   prepared metadata passed 25 parent-run tests. API/DTO/projector integration is
   still pending; no base-only fallback is being called complete restoration.
+
+### September 13 extension integration and lower-cost delegation
+
+- User requested Muse Contributor for delegated work. The interrupted Astra
+  worker was closed and its partial Dart changes retained for Muse review.
+- Native extension metadata now connects to canonical conversion and the API
+  source. The canonical constructor validates the generated metadata schema,
+  parent bundle and reaction exclusion. Repair digests include exact JSON UTF-8.
+- Local FRB generation attempted Cargo expansion and stopped on missing clang;
+  no bindings were generated. Use the existing cloud bridge workflow, then
+  qualify a matching Windows DLL before exercising this ABI on the live profile.
+- The user reconfirmed exactly one person shares location, their spouse. Current
+  evidence remains one matching entry without coordinates; this is not evidence
+  of stopped sharing. Find My guide now records the latest native repeat.

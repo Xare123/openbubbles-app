@@ -10,7 +10,7 @@ crate-type = ["cdylib", "staticlib"]
 flutter_rust_bridge = "=2.3.0"
 rustpush = { path = "../rustpush", features = ["macos-validation-data", "remote-anisette-v3"] }
 keystore = { path = "../rustpush/keystore" }
-plist = "1.5.0"
+plist = { version = "=1.7.0", features = ["enable_unstable_features_that_may_break_with_minor_version_bumps"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"

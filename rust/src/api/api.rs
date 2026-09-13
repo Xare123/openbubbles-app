@@ -3333,6 +3333,9 @@ pub struct CloudSyncTransientMessagePayload {
     pub attributed_bodies: Vec<CloudSyncTransientAttributedBody>,
     pub balloon_bundle_id_state: CloudSyncTransientFieldState,
     pub balloon_bundle_id: Option<String>,
+    /// Validated v1 extension metadata JSON, never a raw keyed archive.
+    /// Original UTF-8 bytes bind the repair content digest across the bridge.
+    pub extension_metadata_json: Option<String>,
     pub effect_state: CloudSyncTransientFieldState,
     pub effect: Option<String>,
     pub read_at_millis_state: CloudSyncTransientFieldState,
@@ -8177,8 +8180,18 @@ fn cloudkit_repair_message_content_digest(
         repair_digest_field_state(value.balloon_bundle_id_state),
     );
     writer.optional_string("balloonBundleId", value.balloon_bundle_id.as_deref());
-    writer.string("decodedExtensionPayloadState", "absent");
-    writer.optional_bytes("decodedExtensionPayload", None);
+    writer.string(
+        "decodedExtensionPayloadState",
+        if value.extension_metadata_json.is_some() {
+            "value"
+        } else {
+            "absent"
+        },
+    );
+    writer.optional_bytes(
+        "decodedExtensionPayload",
+        value.extension_metadata_json.as_deref().map(str::as_bytes),
+    );
     writer.string("effectState", repair_digest_field_state(value.effect_state));
     writer.optional_string("effect", value.effect.as_deref());
     writer.string(
@@ -8303,6 +8316,7 @@ mod cloudkit_repair_digest_tests {
             attributed_bodies: vec![],
             balloon_bundle_id_state: CloudSyncTransientFieldState::Absent,
             balloon_bundle_id: None,
+            extension_metadata_json: None,
             effect_state: CloudSyncTransientFieldState::Absent,
             effect: None,
             read_at_millis_state: CloudSyncTransientFieldState::Absent,
@@ -8344,8 +8358,7 @@ mod cloudkit_repair_digest_tests {
         value.body = None;
         value.attributed_bodies_state = state;
         value.balloon_bundle_id_state = state;
-        // Native defers extension payloads before this transient boundary;
-        // cloudkit_repair_message_content_digest therefore writes absent.
+        // This fixture has no extension metadata, independent of other fields.
         value.effect_state = state;
         value.read_at_millis_state = state;
         value.delivered_at_millis_state = state;
@@ -8524,6 +8537,17 @@ mod cloudkit_repair_digest_tests {
     }
 
     #[test]
+    fn cloudkit_repair_digest_binds_exact_extension_metadata_bytes() {
+        let plain = basic_message("body");
+        let mut extended = plain.clone();
+        extended.extension_metadata_json = Some("{\"version\":1}".into());
+        assert_ne!(digest(&plain), digest(&extended));
+        let original = digest(&extended);
+        extended.extension_metadata_json = Some(" {\"version\":1}\n".into());
+        assert_ne!(original, digest(&extended));
+    }
+
+    #[test]
     fn cloudkit_repair_digest_changes_for_semantic_and_order_mutations() {
         assert_ne!(
             digest(&basic_message("body")),
@@ -8641,6 +8665,16 @@ fn map_cloud_sync_transient_payload(
             });
         }
         Canonical::Message(payload) => {
+            // The canonical DTO constructor already validated the closed JSON
+            // schema and bundle binding. Preserve its bytes exactly. Explicit
+            // clear needs a future typed bridge state, never silently omit it.
+            let extension_metadata_json = match payload.decoded_extension_payload() {
+                crate::cloud_sync_canonical_dto::CloudCanonicalField::Absent => None,
+                crate::cloud_sync_canonical_dto::CloudCanonicalField::ExplicitClear => return None,
+                crate::cloud_sync_canonical_dto::CloudCanonicalField::Value(bytes) => {
+                    Some(std::str::from_utf8(bytes).ok()?.to_owned())
+                }
+            };
             let (association_kind, reaction_kind, association_parent, reaction_removed) =
                 match payload.association().reaction() {
                     Some((kind, parent, removed)) => (
@@ -8707,6 +8741,7 @@ fn map_cloud_sync_transient_payload(
                     payload.balloon_bundle_id().state(),
                 ),
                 balloon_bundle_id: payload.balloon_bundle_id().value().cloned(),
+                extension_metadata_json,
                 effect_state: map_cloud_sync_transient_field_state(payload.effect().state()),
                 effect: payload.effect().value().cloned(),
                 read_at_millis_state: map_cloud_sync_transient_field_state(

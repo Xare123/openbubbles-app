@@ -276,6 +276,7 @@ mod cloud_sync_attachment_upload_receipt;
 mod cloud_sync_canonical_converter;
 mod cloud_sync_canonical_dto;
 mod cloud_sync_chat_identity;
+mod cloud_sync_extension_payload;
 mod cloud_sync_ids_attachment_source;
 mod cloud_sync_ids_mutation_source;
 mod cloud_sync_ids_mutation_stage;
