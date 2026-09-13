@@ -129,22 +129,25 @@ $nativeDiagnosticCases = @(
 $nativeExtensionScope = 'cloud_sync_extension_payload::tests::'
 $nativeConverterScope = 'cloud_sync_canonical_converter::tests::'
 $nativeDtoScope = 'cloud_sync_canonical_dto::tests::'
-$nativeExtensionMinimum = 25
-$nativeConverterMinimum = 78
-$nativeDtoMinimum = 23
+$nativeExtensionMinimum = 26
+$nativeConverterMinimum = 79
+$nativeDtoMinimum = 24
 $nativeExtensionSpotCases = @(
     'cloud_sync_extension_payload::tests::generated_json_has_exact_version_one_wire_contract_and_roundtrips',
     'cloud_sync_extension_payload::tests::minimum_balloon_is_metadata_not_base_only_success'
     'cloud_sync_extension_payload::tests::session_metadata_has_closed_versions_and_separate_wire_identity'
     'cloud_sync_extension_payload::tests::decode_diagnostic_stages_preserve_result_and_never_contain_content'
+    'cloud_sync_extension_payload::tests::live_layout_shape_does_not_expose_archive_values'
 )
 $nativeConverterSpotCases = @(
     'cloud_sync_canonical_converter::tests::extension_archive_projects_renderer_metadata_with_base_message',
     'cloud_sync_canonical_converter::tests::group_routing_digest_matches_dart_framed_sha256_vector'
+    'cloud_sync_canonical_converter::tests::multipart_numeric_reply_keeps_its_exact_parent_dependency'
 )
 $nativeDtoSpotCases = @(
     'cloud_sync_canonical_dto::tests::every_payload_and_metadata_debug_path_is_redacted',
     'cloud_sync_canonical_dto::tests::aggregate_transient_payload_bytes_are_bounded'
+    'cloud_sync_canonical_dto::tests::multipart_reply_preserves_numeric_path_and_exact_final_uuid'
 )
 $nativeRepairDigestCases = @(
     'api::api::cloudkit_repair_digest_tests::cloudkit_repair_digest_binds_exact_extension_metadata_bytes',
@@ -331,6 +334,12 @@ foreach ($name in @(
 }
 
 $sourceInputPaths = @(
+    'lib/cloud_sync_v2_windows_local_write.dart',
+    'lib/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart',
+    'test/services/cloud_sync/cloud_sync_local_mutation_journal_test.dart',
+    'test/services/cloud_sync/cloud_sync_local_mutation_projection_test.dart',
+    'test/services/cloud_sync/cloud_sync_windows_mutation_target_test.dart',
+    'test/services/cloud_sync/native_protected_message_update_transport_test.dart',
     'rust/src/lib.rs', 'rust/src/desktop_native_logging.rs',
     'rust/Cargo.toml', 'rust/Cargo.lock', 'pubspec.lock',
     'rust/src/frb_generated.rs', 'rust/src/frb_generated.io.rs',
@@ -514,6 +523,10 @@ try {
     }
 
     $dartTests = @(
+        'test/services/cloud_sync/cloud_sync_local_mutation_journal_test.dart',
+        'test/services/cloud_sync/cloud_sync_local_mutation_projection_test.dart',
+        'test/services/cloud_sync/cloud_sync_windows_mutation_target_test.dart',
+        'test/services/cloud_sync/native_protected_message_update_transport_test.dart',
         'test/services/cloud_sync/cloud_sync_v2_windows_harness_test.dart',
         'test/services/cloud_sync/cloud_sync_windows_dev_profile_test.dart',
         'test/services/cloud_sync/cloud_sync_windows_local_write_test.dart',
