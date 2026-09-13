@@ -3822,3 +3822,21 @@ cannot authorize or perform adoption.
 - Muse test worker drifted into unrelated reads and was closed without changes;
   parent wrote and verified the regression tests. No live account test used the
   unqualified session candidate.
+
+### September 13 qualification resume and handoff hygiene
+
+- Rechecked run 34768626100: exact source validation passed for 16112ec69;
+  native build/test packaging was still active. No replacement run launched.
+  Current local Rust/lib/test sources compare unchanged against that source.
+- Muse's bounded Find My async review found awaited roster/selection/native
+  refresh calls. Parent verified the call sites and accepted no code change.
+  It does not resolve absent coordinates or establish stopped sharing.
+- Reviewed the older precision/retry audit and Find My host agent's final
+  work. Precision agent is no longer present; completed Find My host and new
+  review agents were closed. Integrated source and required findings remain;
+  no transcripts, evidence, worktrees or user data were deleted. Supported
+  session deletion was unavailable.
+- Added a thread-scoped AGENTS.md rule requiring document reconciliation and
+  active-job/agent handoff before planned compaction, or immediately afterward
+  if automatic compaction interrupted it. Removed superseded native-candidate
+  rows from the current board; their qualification history remains above.

@@ -116,5 +116,11 @@ reviewed aggregate-only change.
 Full Android UI, real continuously updating coordinates, and Items remain open.
 Do not ask the user to reconfigure sharing based on these incomplete results.
 
+September 13 follow-up: Muse reviewed the selected-person async chain; parent
+confirmed the callback and native API call sites. Roster refresh, selection,
+native refresh and aggregate reads are awaited. No missing-await patch was
+warranted. This rules out that specific host-ordering hypothesis, not the
+remaining native service/context or response-handling problem.
+
 The verbatim older investigation and superseded guard discussions are preserved
 in [Find My history](history/FINDMY_ASTRA_HISTORY_20260910_20260913.md).
