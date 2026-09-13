@@ -143,7 +143,10 @@ $nativeDtoSpotCases = @(
     'cloud_sync_canonical_dto::tests::every_payload_and_metadata_debug_path_is_redacted',
     'cloud_sync_canonical_dto::tests::aggregate_transient_payload_bytes_are_bounded'
 )
-$nativeRepairDigestCase = 'api::api::cloudkit_repair_digest_tests::cloudkit_repair_digest_binds_exact_extension_metadata_bytes'
+$nativeRepairDigestCases = @(
+    'api::api::cloudkit_repair_digest_tests::cloudkit_repair_digest_binds_exact_extension_metadata_bytes',
+    'api::api::cloudkit_repair_digest_tests::cloudkit_repair_digest_matches_every_pinned_neutral_vector'
+)
 $nativeSystemEventCases = @(
     'cloud_sync_transient_bridge::tests::system_events_without_normal_error_and_flags_remain_unsupported',
     'cloud_sync_transient_bridge::tests::system_event_quarantine_still_requires_each_common_envelope_field',
@@ -203,6 +206,8 @@ $requiredFiles = @(
     'rust/src/cloud_sync_extension_payload.rs',
     'rust/src/api/api.rs',
     'test/fixtures/cloud_sync/cloudkit_repair_digest_golden_v1.tsv',
+    'test/fixtures/cloud_sync/extension_metadata_digest_v1.json',
+    'test/fixtures/cloud_sync/.gitattributes',
     'rust/src/frb_generated.rs',
     'lib/src/rust/frb_generated.dart',
     'lib/src/rust/frb_generated.io.dart'
@@ -222,7 +227,7 @@ if ($ArtifactMode -eq 'native-test-host') {
             throw "Reviewed source lacks the pending diagnostic regression: $case. Commit it before dispatch."
         }
     }
-    foreach ($case in @($nativeExtensionSpotCases + $nativeConverterSpotCases + $nativeDtoSpotCases + @($nativeRepairDigestCase) + $nativeSystemEventCases)) {
+    foreach ($case in @($nativeExtensionSpotCases + $nativeConverterSpotCases + $nativeDtoSpotCases + $nativeRepairDigestCases + $nativeSystemEventCases)) {
         $extensionSource = if ($case.StartsWith('cloud_sync_extension_payload::')) { 'rust/src/cloud_sync_extension_payload.rs' }
             elseif ($case.StartsWith('cloud_sync_canonical_converter::')) { 'rust/src/cloud_sync_canonical_converter.rs' }
             elseif ($case.StartsWith('cloud_sync_canonical_dto::')) { 'rust/src/cloud_sync_canonical_dto.rs' }
@@ -344,7 +349,10 @@ $sourceInputPaths = @(
     'test/services/cloud_sync/cloud_sync_prepared_extension_test.dart',
     'test/services/cloud_sync/cloud_sync_extension_integration_test.dart',
     'test/services/cloud_sync/cloud_sync_extension_test_fixture.dart',
-    'test/fixtures/cloud_sync/cloudkit_repair_digest_golden_v1.tsv'
+    'test/fixtures/cloud_sync/cloudkit_repair_digest_golden_v1.tsv',
+    'test/fixtures/cloud_sync/extension_metadata_digest_v1.json',
+    'test/fixtures/cloud_sync/.gitattributes',
+    'test/services/cloud_sync/cloudkit_repair_content_digest_golden_test.dart'
 )
 $sourceInputs = @(foreach ($relative in $sourceInputPaths) {
     [ordered]@{ path = $relative; sha256 = (Get-FileHash -LiteralPath (Join-Path $source $relative) -Algorithm SHA256).Hash.ToLowerInvariant() }
@@ -502,6 +510,7 @@ try {
         'test/services/cloud_sync/objectbox_own_writer_precision_recovery_test.dart',
         'test/services/cloud_sync/cloud_sync_prepared_extension_test.dart',
         'test/services/cloud_sync/cloud_sync_extension_integration_test.dart',
+        'test/services/cloud_sync/cloudkit_repair_content_digest_golden_test.dart',
         'test/services/cloud_sync/objectbox_canonical_semantic_entity_adapter_test.dart',
         'test/services/cloud_sync/rust_cloud_semantic_decoder_test.dart'
     )
@@ -639,11 +648,13 @@ if ($ArtifactMode -eq 'native-test-host') {
         Tee-Object -FilePath $nativeDtoTestLog
     if ($LASTEXITCODE -ne 0) { throw 'Native canonical-DTO tests failed.' }
     Assert-NativeScopeResults -OutputText (Get-Content -LiteralPath $nativeDtoTestLog -Raw) -ExpectedNames $nativeDtoSpotCases -MinimumPassed $nativeDtoMinimum
-    $repairOutput = & (Join-Path $bundle 'native-compose-tests.exe') $nativeRepairDigestCase --exact --test-threads=1 --format=pretty 2>&1
-    $repairExit = $LASTEXITCODE
-    $repairOutput | Tee-Object -FilePath $nativeRepairDigestTestLog -Append
-    if ($repairExit -ne 0) { throw "Native repair-digest test failed: $nativeRepairDigestCase" }
-    Assert-NativeTestResults -OutputText ($repairOutput -join "`n") -ExpectedNames @($nativeRepairDigestCase)
+    foreach ($case in $nativeRepairDigestCases) {
+        $repairOutput = & (Join-Path $bundle 'native-compose-tests.exe') $case --exact --test-threads=1 --format=pretty 2>&1
+        $repairExit = $LASTEXITCODE
+        $repairOutput | Tee-Object -FilePath $nativeRepairDigestTestLog -Append
+        if ($repairExit -ne 0) { throw "Native repair-digest test failed: $case" }
+        Assert-NativeTestResults -OutputText ($repairOutput -join "`n") -ExpectedNames @($case)
+    }
     foreach ($case in $nativeSystemEventCases) {
         $systemOutput = & (Join-Path $bundle 'native-compose-tests.exe') $case --exact --test-threads=1 --format=pretty 2>&1
         $systemExit = $LASTEXITCODE
@@ -873,7 +884,7 @@ $provenance = [ordered]@{
         }
         native_repair_digest_test = [ordered]@{
             result = $nativeExtensionResult
-            expected_name = $nativeRepairDigestCase
+            expected_names = $nativeRepairDigestCases
             executable = if ($ArtifactMode -eq 'native-test-host') { 'bundle/native-compose-tests.exe' } else { $null }
         }
         native_system_event_tests = [ordered]@{
