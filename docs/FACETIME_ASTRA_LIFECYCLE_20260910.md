@@ -282,9 +282,9 @@ LeaveEvent may reflect another device or handoff; it does not prove the remote
 human pressed Hang Up. Native events suppressed by the timestamp guard and native
 protocol reason/transition details remain unobservable through the current event
 contract. No shared Rust API, FRB or generated changes were required or made.
-The offline analyzer is unchanged: it currently skips this new stage and clears
-its media baseline at an unknown record. Inspect the redacted exported lines
-directly for this evidence; do not interpret them as a new analyzer terminal verdict.
+The original analyzer skipped this stage and cleared its media baseline. The
+September 12 follow-up below repairs that parser gap; participant observations
+still do not constitute a terminal verdict.
 
 Exact paths changed by this sidecar, relative to the worktree above:
 
@@ -336,3 +336,20 @@ For the same ordinal, distinguish unmatched preparation/creation `before`, `time
 Do not share the whole ordinary log: unrelated entries may contain private data. Filtering/rotation/crash can lose markers.
 Validation: 36 focused Dart tests passed via supplied Flutter SDK with `--no-pub --no-test-assets` (lifecycle, outgoing-start, diagnostics-contract).
 These are seam/formatter/source checks, not runtime delivery or media proof. No device, native build, dependency, CI or Git-write operations.
+
+## September 12 offline leave-event analysis repair
+
+The native writer's valid `remote_leave` markers were rejected because both the
+stage and the `matches_active_call` field were unsupported. This hid leave
+observations and broke the baseline between otherwise valid media samples.
+The analyzer now validates the exact five-field contract, preserves unavailable
+counts as null, records the three finite leave phases in log order, and retains
+the media baseline across valid observations. Malformed or unknown input still
+breaks that baseline. Reversed timestamps invalidate ordering.
+
+The targeted regression failed before the fix (zero advancing pairs instead of
+one). All 35 Node analyzer tests passed after the fix and in parent verification.
+The patch changes only offline analysis and its tests. It does not infer that a
+participant leave ends a session, close a viewer, or establish that calls work.
+The next live check remains one answered call with verified two-way media beyond
+30 seconds, followed by remote hangup and observation of the existing close path.

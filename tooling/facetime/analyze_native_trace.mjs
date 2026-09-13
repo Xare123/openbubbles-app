@@ -3,11 +3,13 @@ import { pathToFileURL } from "node:url";
 
 // Offline only. Accept the native writer's content-free format, never echo input,
 // paths, timestamps, peer ordinals, exception bodies, or unknown field values.
-const stages = new Set("webview_loaded js_patched permissions_requested permissions_result admission_requested admitted ice_state remote_audio_track remote_video_track media_bytes media_lost leave lifecycle close_reason media_probe".split(" "));
+const stages = new Set("webview_loaded js_patched permissions_requested permissions_result admission_requested admitted ice_state remote_audio_track remote_video_track media_bytes media_lost leave lifecycle close_reason media_probe remote_leave".split(" "));
 const closeReasons = new Set(["native_end_fallback", "web_leave", "declined", "ring_timeout"]);
 const iceStates = new Set("new checking connected completed disconnected failed closed unknown".split(" "));
 const maxInputBytes = 1024 * 1024;
 const integer = value => /^\d+$/.test(value ?? "") && Number.isSafeInteger(Number(value)) ? Number(value) : null;
+const remoteLeaveStates = new Set(["received", "refreshed", "refresh_failed"]);
+const validCount = value => value === "unavailable" || (integer(value) !== null && integer(value) <= 65535);
 
 export function analyzeNativeTrace(text) {
   const result = { schema: 1, acceptedRecords: 0, ignoredLines: 0, segments: [] };
@@ -17,20 +19,31 @@ export function analyzeNativeTrace(text) {
     segment = {
       created, admissionRequested: false, admittedMarker: false,
       resolvedSamples: 0, advancingPairs: 0, terminal: null,
-      orderingValid: true,
+      orderingValid: true, remoteLeaveObservations: [],
     };
     result.segments.push(segment);
   };
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
-    const match = line.match(/^time_ms=(\d+) stage=([a-z_]+)((?: [a-z]+=[a-z0-9_]+)*)$/);
+    const match = line.match(/^time_ms=(\d+) stage=([a-z_]+)((?: [a-z]+(?:_[a-z]+)*=[a-z0-9_]+)*)$/);
     if (!match || integer(match[1]) === null || !stages.has(match[2])) {
       result.ignoredLines++;
       baseline = null; // Unknown records cannot bridge a proof of media progress.
       continue;
     }
-    const fields = Object.fromEntries(match[3].trim().split(" ").filter(Boolean).map(item => item.split("=")));
+    const entries = match[3].trim().split(" ").filter(Boolean).map(item => item.split("="));
+    const fields = Object.fromEntries(entries);
     const stage = match[2], time = Number(match[1]);
+    // Accept only the current native participant-observation contract, including
+    // unavailable counts. Reject missing, duplicate, extra or untrusted fields.
+    if (stage === "remote_leave" && (entries.length !== 5 || Object.keys(fields).length !== 5 ||
+      !remoteLeaveStates.has(fields.state) || fields.reason !== "participant_leave" ||
+      !validCount(fields.active) || !validCount(fields.total) ||
+      !["true", "false", "unavailable"].includes(fields.matches_active_call))) {
+      result.ignoredLines++;
+      baseline = null;
+      continue;
+    }
     if (!segment || (stage === "lifecycle" && fields.state === "created")) {
       start(stage === "lifecycle" && fields.state === "created");
     }
@@ -40,6 +53,18 @@ export function analyzeNativeTrace(text) {
       baseline = null;
     }
     lastTime = time;
+    if (stage === "remote_leave") {
+      // Log-order observations only, not paired transitions or session identity.
+      // Counts can be stale; equality is measured when the native marker arrives.
+      // Neither all-inactive nor matching evidence authorizes a terminal verdict
+      // or invalidates otherwise resolved same-peer media samples.
+      segment.remoteLeaveObservations.push({
+        state: fields.state, reason: "participant_leave",
+        active: integer(fields.active), total: integer(fields.total),
+        matchesActiveCall: fields.matches_active_call === "unavailable" ? null : fields.matches_active_call === "true",
+      });
+      continue;
+    }
     if (stage === "admission_requested" && !segment.terminal &&
       ["answer", "outgoing", "clicked", "already_joined"].includes(fields.state)) {
       if (!segment.admissionRequested) baseline = null;
@@ -84,7 +109,7 @@ export function analyzeNativeTrace(text) {
 
 export function main(args) {
   if (args.length !== 1 || args[0] === "--help") {
-    console.log("Usage: node tooling/facetime/analyze_native_trace.mjs <local-facetime-native.log>\nOffline, read-only, one chronological native log only. No calls, credentials, network, or output files. Exit 0: complete lifecycle capture (created -> admission request -> explicit close), not a working call; 2: missing lifecycle evidence; 1: invalid/unreadable input. Media progression is reported separately and counts only post-admission-request pairs. Inspect rotated generations separately; never merge unrelated calls.");
+    console.log("Usage: node tooling/facetime/analyze_native_trace.mjs <local-facetime-native.log>\nOffline, read-only, one chronological native log only. No calls, credentials, network, or output files. Exit 0: complete lifecycle capture (created -> admission request -> explicit close), not a working call; 2: missing lifecycle evidence; 1: invalid/unreadable input. Media progression is reported separately and counts only post-admission-request pairs. Remote-leave observations are participant diagnostics, not whole-session termination or proof the remote human hung up; unavailable values are null. Inspect rotated generations separately; never merge unrelated calls.");
     return args[0] === "--help" ? 0 : 1;
   }
   try {

@@ -10,6 +10,102 @@ const sample = (bytes, peer = 1, ice = "connected", audio = 1) =>
 const trace = (...events) => events.map((event, i) => `time_ms=${1000 + i * 1000} stage=${event}`).join("\n");
 const run = (...events) => analyzeNativeTrace(trace(...events)).segments;
 const opening = ["lifecycle state=created", "admission_requested state=answer"];
+// Exact content-free field names and values emitted by FaceTimeDiagnosticPolicy.
+const remoteLeave = (state = "received", active = 1, total = 2, matches = "true") =>
+  `remote_leave state=${state} reason=participant_leave active=${active} total=${total} matches_active_call=${matches}`;
+
+test("native remote-leave phases remain visible without erasing same-peer media progression", () => {
+  const report = analyzeNativeTrace(trace(...opening, sample(100), remoteLeave(),
+    remoteLeave("refreshed", 0), remoteLeave("refresh_failed", "unavailable", "unavailable", "unavailable"), sample(200)));
+  const [s] = report.segments;
+  assert.equal(s.advancingPairs, 1);
+  assert.equal(report.ignoredLines, 0);
+  assert.equal(report.acceptedRecords, 7);
+  assert.deepEqual(s.remoteLeaveObservations, [
+    { state: "received", reason: "participant_leave", active: 1, total: 2, matchesActiveCall: true },
+    { state: "refreshed", reason: "participant_leave", active: 0, total: 2, matchesActiveCall: true },
+    { state: "refresh_failed", reason: "participant_leave", active: null, total: null, matchesActiveCall: null },
+  ]);
+  assert.equal(s.terminal, null);
+  assert.equal(s.captureComplete, false);
+});
+
+test("all-inactive participant observations never imply whole-session termination or call identity", () => {
+  for (const matches of ["true", "false", "unavailable"]) {
+    const [s] = run(...opening, remoteLeave("refreshed", 0, 0, matches));
+    assert.equal(s.remoteLeaveObservations.length, 1);
+    assert.equal(s.remoteLeaveObservations[0].matchesActiveCall,
+      matches === "unavailable" ? null : matches === "true");
+    assert.equal(s.terminal, null);
+    assert.equal(s.captureComplete, false);
+    assert.equal(s.mediaProgressionObserved, false);
+  }
+});
+
+test("remote-leave observations stay in their log segment and preserve explicit close reasons", () => {
+  const segments = run(...opening, remoteLeave(), "close_reason state=web_leave",
+    remoteLeave("refreshed", 0), ...opening, sample(100));
+  assert.equal(segments.length, 2);
+  assert.equal(segments[0].remoteLeaveObservations.length, 2);
+  assert.equal(segments[0].terminal, "web_leave");
+  assert.equal(segments[0].captureComplete, true);
+  assert.deepEqual(segments[1].remoteLeaveObservations, []);
+  assert.equal(segments[1].terminal, null);
+});
+
+test("out-of-order remote-leave markers invalidate ordering and cannot bridge media", () => {
+  const input = trace(...opening, sample(100)) + `\ntime_ms=2500 stage=${remoteLeave()}\ntime_ms=5000 stage=${sample(200)}`;
+  const [s] = analyzeNativeTrace(input).segments;
+  assert.equal(s.orderingValid, false);
+  assert.equal(s.advancingPairs, 0);
+  assert.equal(s.remoteLeaveObservations.length, 1);
+});
+
+test("remote-leave counts preserve the native bounds and independently unavailable values", () => {
+  const [s] = run(remoteLeave("received", 65535, "unavailable", "false"),
+    remoteLeave("refresh_failed", "unavailable", 65535));
+  assert.deepEqual(s.remoteLeaveObservations.map(o => [o.active, o.total]), [[65535, null], [null, 65535]]);
+  assert.equal(s.created, false);
+  assert.equal(s.captureComplete, false);
+});
+
+test("remote-leave diagnostics cannot restore a baseline across media or lifecycle boundaries", () => {
+  for (const boundary of ["media_probe state=document_changed", "media_probe state=unavailable",
+    "lifecycle state=accepted", "lifecycle state=destroyed", "close_reason state=web_leave", sample(100, 2)]) {
+    const [s] = run(...opening, sample(100), remoteLeave(), boundary, remoteLeave("refreshed", 0), sample(200));
+    assert.equal(s.remoteLeaveObservations.length, 2);
+    assert.equal(s.advancingPairs, 0);
+  }
+});
+
+test("unknown or malformed remote-leave evidence remains private and breaks the baseline", () => {
+  const secret = "synthetic_private_token";
+  for (const event of [
+    `unknown_stage state=${secret}`, remoteLeave(secret),
+    remoteLeave().replace("participant_leave", secret), remoteLeave("received", 65536),
+    remoteLeave("received", 1, "9007199254740992"), remoteLeave("received", -1),
+    remoteLeave("received", 1, 2, secret), remoteLeave().replace(" active=1", ""),
+    remoteLeave() + " active=0", remoteLeave() + ` private_field=${secret}`,
+  ]) {
+    const report = analyzeNativeTrace(trace(...opening, sample(100), event, sample(200)));
+    assert.equal(report.ignoredLines, 1);
+    assert.deepEqual(report.segments[0].remoteLeaveObservations, []);
+    assert.equal(report.segments[0].advancingPairs, 0);
+    assert.equal(report.segments[0].terminal, null);
+    assert.ok(!JSON.stringify(report).includes(secret));
+  }
+});
+
+test("CLI reports remote-leave evidence but still requires an explicit close", t => {
+  const input = trace(...opening, remoteLeave("refreshed", 0, 0));
+  t.mock.method(fs, "statSync", () => ({ isFile: () => true, size: input.length }));
+  t.mock.method(fs, "readFileSync", () => input);
+  const output = t.mock.method(console, "log", () => {});
+  assert.equal(main(["synthetic-native-trace"]), 2);
+  const report = JSON.parse(output.mock.calls[0].arguments[0]);
+  assert.equal(report.segments[0].remoteLeaveObservations.length, 1);
+  assert.equal(report.segments[0].terminal, null);
+});
 
 test("resolved same-peer progression plus explicit close is a complete diagnostic, not a call-success verdict", () => {
   const [s] = run(...opening, sample(100), sample(200), "admitted state=true", "close_reason state=web_leave");
@@ -149,4 +245,5 @@ test("CLI help is offline and requires no trace", () => {
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Offline, read-only/);
   assert.match(result.stdout, /Exit 0: complete lifecycle capture.*not a working call/);
+  assert.match(result.stdout, /participant diagnostics, not whole-session termination/);
 });
