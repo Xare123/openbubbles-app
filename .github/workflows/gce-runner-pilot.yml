@@ -602,6 +602,8 @@ jobs:
       - name: Build benchmark APK
         id: build
         if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        env:
+          REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -617,11 +619,13 @@ jobs:
           )
           android_background_read=false
           if [[ "$BUILD_FLAVOR" == 'canary' ]]; then
+            test -n "$REGISTRATION_RELAY_ACCESS_TOKEN"
             android_background_read=true
             build_args+=(
               --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_ANDROID_BACKGROUND_READ=true
               --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true
               --dart-define=OPENBUBBLES_CANARY_ADB_CONTROL=true
+              "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
             )
           fi
           if [[ "$OUTBOUND_WRITER" == 'true' ]]; then
