@@ -4928,18 +4928,18 @@ mod tests {
         let root = PlistValue::Dictionary(
             [
                 (
-                    "$class".into(),
+                    "$class".to_owned(),
                     PlistValue::String("NSMutableDictionary".into()),
                 ),
-                ("an".into(), PlistValue::String("Synthetic app".into())),
+                ("an".to_owned(), PlistValue::String("Synthetic app".into())),
                 (
-                    "URL".into(),
+                    "URL".to_owned(),
                     PlistValue::Dictionary(
                         [
-                            ("$class".into(), PlistValue::String("NSURL".into())),
-                            ("NS.base".into(), PlistValue::String("$null".into())),
+                            ("$class".to_owned(), PlistValue::String("NSURL".into())),
+                            ("NS.base".to_owned(), PlistValue::String("$null".into())),
                             (
-                                "NS.relative".into(),
+                                "NS.relative".to_owned(),
                                 PlistValue::String("app:synthetic".into()),
                             ),
                         ]

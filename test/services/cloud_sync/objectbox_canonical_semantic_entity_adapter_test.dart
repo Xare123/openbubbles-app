@@ -7,6 +7,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dar
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_prepared_extension.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
@@ -16,6 +17,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'cloud_sync_test_helpers.dart';
+import 'cloud_sync_extension_test_fixture.dart';
 
 const _defaultMessageHash = 'message-hash';
 
@@ -5762,7 +5764,7 @@ void main() {
     expect(store.box<Handle>().count(), 0);
   });
 
-  test('blocks decoded extension values before message mutation', () {
+  test('blocks unprepared extension values before message mutation', () {
     store.box<Chat>().put(
       Chat(
         guid: 'chat-guid',
@@ -5792,15 +5794,379 @@ void main() {
         ),
         snapshot: _snapshot(CloudEntityKind.message, messageHash),
       ),
-      throwsA(
-        predicate<CloudSyncFailure>(
-          (failure) =>
-              failure.safeCode == 'canonical_message_extension_decode_required',
-        ),
-      ),
+      throwsArgumentError,
     );
     expect(store.box<Message>().count(), 0);
     expect(store.box<Handle>().count(), 0);
+  });
+
+  void seedExtensionChat() {
+    final chatId = store.box<Chat>().put(
+      Chat(
+        guid: 'chat-guid',
+        chatIdentifier: 'iMessage;-;extension-chat',
+        style: 45,
+      ),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'chat-guid',
+      chatIdentifier: 'iMessage;-;extension-chat',
+      chatId: chatId,
+    );
+    // These component tests exercise repeated projection after the normal
+    // gateway has established the message's durable ownership.
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+    );
+  }
+
+  test('projects prepared extension value and updates it atomically', () {
+    seedExtensionChat();
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    final first = CloudSyncPreparedExtension.parse(
+      extensionTestJson(name: 'Synthetic App'),
+      expectedParentBundleId: extensionTestBundle,
+    );
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: 'iMessage;-;extension-chat',
+          createdAt: testEpoch,
+          balloonBundleId: extensionTestBundle,
+          decodedExtensionPayload: first.canonicalUtf8,
+          preparedExtension: first,
+          knownFlags: _messageFlags(fromMe: false),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    var messages = store.box<Message>().getAll();
+    expect(messages, hasLength(1));
+    expect(messages.single.balloonBundleId, extensionTestBundle);
+    expect(messages.single.hasApplePayloadData, isTrue);
+    expect(
+      messages.single.payloadData?.appData?.single.appName,
+      'Synthetic App',
+    );
+    expect(messages.single.payloadData?.appData?.single.appId, 1234);
+    final second = CloudSyncPreparedExtension.parse(
+      extensionTestJson(name: 'Synthetic App v2'),
+      expectedParentBundleId: extensionTestBundle,
+    );
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: 'iMessage;-;extension-chat',
+          createdAt: testEpoch,
+          balloonBundleId: extensionTestBundle,
+          decodedExtensionPayload: second.canonicalUtf8,
+          preparedExtension: second,
+          knownFlags: _messageFlags(fromMe: false),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    messages = store.box<Message>().getAll();
+    expect(messages, hasLength(1));
+    expect(
+      messages.single.payloadData?.appData?.single.appName,
+      'Synthetic App v2',
+    );
+    expect(messages.single.hasApplePayloadData, isTrue);
+  });
+
+  test('preserves extension payload on absent and clears on explicitClear', () {
+    seedExtensionChat();
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    final prepared = CloudSyncPreparedExtension.parse(
+      extensionTestJson(),
+      expectedParentBundleId: extensionTestBundle,
+    );
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: 'iMessage;-;extension-chat',
+          createdAt: testEpoch,
+          balloonBundleId: extensionTestBundle,
+          decodedExtensionPayload: prepared.canonicalUtf8,
+          preparedExtension: prepared,
+          knownFlags: _messageFlags(fromMe: false),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    expect(store.box<Message>().getAll().single.hasApplePayloadData, isTrue);
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: 'iMessage;-;extension-chat',
+          createdAt: testEpoch,
+          knownFlags: _messageFlags(fromMe: false),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    var message = store.box<Message>().getAll().single;
+    expect(message.hasApplePayloadData, isTrue);
+    expect(message.payloadData?.appData?.single.appName, 'Synthetic App');
+    expect(message.balloonBundleId, extensionTestBundle);
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: 'iMessage;-;extension-chat',
+          createdAt: testEpoch,
+          decodedExtensionPayloadState: CloudSemanticFieldState.explicitClear,
+          knownFlags: _messageFlags(fromMe: false),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    message = store.box<Message>().getAll().single;
+    expect(message.payloadData, isNull);
+    expect(message.hasApplePayloadData, isFalse);
+    expect(message.balloonBundleId, extensionTestBundle);
+  });
+
+  test('older edit snapshot preserves newer extension payload', () {
+    seedExtensionChat();
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    final newer = CloudSyncPreparedExtension.parse(
+      extensionTestJson(name: 'Synthetic App v2'),
+      expectedParentBundleId: extensionTestBundle,
+    );
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: 'iMessage;-;extension-chat',
+          createdAt: testEpoch,
+          balloonBundleId: extensionTestBundle,
+          decodedExtensionPayload: newer.canonicalUtf8,
+          preparedExtension: newer,
+          knownFlags: _messageFlags(fromMe: false),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    // Record newer edit history so the replay below reads as an older
+    // snapshot whose content must be preserved, metadata included.
+    // The older replay carries a different provider identity, proving the
+    // preserved pair keeps both the newer payload and its provider.
+    const olderBundle = 'com.example.synthetic.older';
+    final stored = store.box<Message>().getAll().single;
+    stored.messageSummaryInfo.add(MessageSummaryInfo(
+      retractedParts: [],
+      editedContent: {
+        '0': [
+          EditedContent(
+            text: Content(values: [AttributedBody.raw('newer')]),
+            date: 2.0,
+          ),
+        ],
+      },
+      originalTextRange: {},
+      editedParts: [0],
+    ));
+    store.box<Message>().put(stored);
+    final older = CloudSyncPreparedExtension.parse(
+      extensionTestJson(name: 'Synthetic App', bundleId: olderBundle),
+      expectedParentBundleId: olderBundle,
+    );
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: 'iMessage;-;extension-chat',
+          createdAt: testEpoch,
+          balloonBundleId: olderBundle,
+          decodedExtensionPayload: older.canonicalUtf8,
+          preparedExtension: older,
+          knownFlags: _messageFlags(fromMe: false),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    final message = store.box<Message>().getAll().single;
+    expect(
+      message.payloadData?.appData?.single.appName,
+      'Synthetic App v2',
+    );
+    expect(message.hasApplePayloadData, isTrue);
+    expect(message.balloonBundleId, extensionTestBundle);
+  });
+
+  test('changed or cleared provider without metadata drops stale appData', () {
+    seedExtensionChat();
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+    final prepared = CloudSyncPreparedExtension.parse(
+      extensionTestJson(),
+      expectedParentBundleId: extensionTestBundle,
+    );
+    CloudMessageEntityPayload valuePayload() => _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: 'iMessage;-;extension-chat',
+          createdAt: testEpoch,
+          balloonBundleId: extensionTestBundle,
+          decodedExtensionPayload: prepared.canonicalUtf8,
+          preparedExtension: prepared,
+          knownFlags: _messageFlags(fromMe: false),
+        );
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: valuePayload(),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    // A new provider without new metadata orphans the old pairing.
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: 'iMessage;-;extension-chat',
+          createdAt: testEpoch,
+          balloonBundleId: 'com.example.other',
+          knownFlags: _messageFlags(fromMe: false),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    var message = store.box<Message>().getAll().single;
+    expect(message.payloadData, isNull);
+    expect(message.hasApplePayloadData, isFalse);
+    expect(message.balloonBundleId, 'com.example.other');
+    // A cleared provider does the same.
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: valuePayload(),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: 'iMessage;-;extension-chat',
+          createdAt: testEpoch,
+          balloonBundleIdState: CloudSemanticFieldState.explicitClear,
+          knownFlags: _messageFlags(fromMe: false),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    message = store.box<Message>().getAll().single;
+    expect(message.payloadData, isNull);
+    expect(message.hasApplePayloadData, isFalse);
+    expect(message.balloonBundleId, isNull);
+    // An unchanged provider keeps its payload.
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: valuePayload(),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: 'iMessage;-;extension-chat',
+          createdAt: testEpoch,
+          balloonBundleId: extensionTestBundle,
+          knownFlags: _messageFlags(fromMe: false),
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    message = store.box<Message>().getAll().single;
+    expect(message.payloadData?.appData?.single.appName, 'Synthetic App');
+    expect(message.hasApplePayloadData, isTrue);
   });
 
   test(
@@ -7983,6 +8349,9 @@ CloudMessageEntityPayload _messagePayload({
   Iterable<CloudSemanticAttributedBody> attributedBodies = const [],
   CloudSemanticFieldState? attributedBodiesState,
   Uint8List? decodedExtensionPayload,
+  CloudSyncPreparedExtension? preparedExtension,
+  String? balloonBundleId,
+  CloudSemanticFieldState? balloonBundleIdState,
   CloudSemanticFieldState? decodedExtensionPayloadState,
   CloudSemanticService service = CloudSemanticService.iMessage,
   CloudSemanticKnownMessageFlags? knownFlags,
@@ -8020,6 +8389,12 @@ CloudMessageEntityPayload _messagePayload({
           ? CloudSemanticFieldState.absent
           : CloudSemanticFieldState.value),
   decodedExtensionPayload: decodedExtensionPayload,
+  preparedExtension: preparedExtension,
+  balloonBundleId: balloonBundleId,
+  balloonBundleIdState: balloonBundleIdState ??
+      (balloonBundleId == null
+          ? CloudSemanticFieldState.absent
+          : CloudSemanticFieldState.value),
   effectState:
       effectState ??
       (effect == null

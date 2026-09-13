@@ -8,6 +8,7 @@ import 'cloud_inbox_applier.dart';
 import 'cloud_merge_policy.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_prepared_extension.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 
@@ -869,6 +870,31 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
             CloudSyncV2DecoderSafeFailureCodes.messageChatReferenceInvalid,
       );
     }
+    // Parse only the bounded native metadata schema, never a raw archive, and
+    // do so before handing the payload to the transactional store adapter.
+    CloudSyncPreparedExtension? preparedExtension;
+    final nativeJson = payload.extensionMetadataJson;
+    if (nativeJson != null) {
+      if (payload.balloonBundleIdState !=
+              frb_api.CloudSyncTransientFieldState.value ||
+          payload.balloonBundleId == null) {
+        throw const CloudSemanticDecodeFailure(
+          CloudFailureCategory.dependency,
+          safeCode: CloudSyncV2DecoderSafeFailureCodes.messageShapeUnsupported,
+        );
+      }
+      try {
+        preparedExtension = CloudSyncPreparedExtension.parse(
+          nativeJson,
+          expectedParentBundleId: payload.balloonBundleId!,
+        );
+      } on CloudSyncPreparedExtensionFailure {
+        throw const CloudSemanticDecodeFailure(
+          CloudFailureCategory.dependency,
+          safeCode: CloudSyncV2DecoderSafeFailureCodes.messageShapeUnsupported,
+        );
+      }
+    }
     return CloudMessageEntityPayload(
       logicalEntityKeyHash: _requireExternalDigest(
         payload.logicalEntityKeyHash,
@@ -898,9 +924,11 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       attributedBodies: payload.attributedBodies.map(_attributedBody),
       balloonBundleIdState: _fieldState(payload.balloonBundleIdState),
       balloonBundleId: payload.balloonBundleId,
-      // Native currently defers any extension payload before this boundary.
-      // Binary extension bytes must never cross the transient FRB contract.
-      decodedExtensionPayloadState: CloudSemanticFieldState.absent,
+      decodedExtensionPayloadState: preparedExtension == null
+          ? CloudSemanticFieldState.absent
+          : CloudSemanticFieldState.value,
+      decodedExtensionPayload: preparedExtension?.canonicalUtf8,
+      preparedExtension: preparedExtension,
       effectState: _fieldState(payload.effectState),
       effect: payload.effect,
       readAtState: _fieldState(payload.readAtMillisState),
@@ -947,6 +975,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         !_replyShapeMatches(payload) ||
         payload.replyParentCanonicalGuid != null ||
         payload.subjectState != frb_api.CloudSyncTransientFieldState.absent ||
+        payload.extensionMetadataJson != null ||
         !_reactionFallbackIsTextOnly(payload) ||
         payload.balloonBundleIdState !=
             frb_api.CloudSyncTransientFieldState.absent ||

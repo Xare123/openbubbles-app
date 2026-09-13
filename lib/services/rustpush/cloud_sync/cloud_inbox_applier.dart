@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'cloud_attachment_provenance.dart';
 import 'cloud_merge_policy.dart';
+import 'cloud_sync_prepared_extension.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_safe_failure.dart';
@@ -181,6 +182,7 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
     this.balloonBundleId,
     this.decodedExtensionPayloadState = CloudSemanticFieldState.absent,
     Uint8List? decodedExtensionPayload,
+    this.preparedExtension,
     this.effectState = CloudSemanticFieldState.absent,
     this.effect,
     this.readAtState = CloudSemanticFieldState.absent,
@@ -205,7 +207,7 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
        attributedBodies = List.unmodifiable(attributedBodies),
        decodedExtensionPayload = decodedExtensionPayload == null
            ? null
-           : Uint8List.fromList(decodedExtensionPayload),
+           : Uint8List.fromList(decodedExtensionPayload).asUnmodifiableView(),
        edits = List.unmodifiable(edits),
        retractedParts = List.unmodifiable(retractedParts) {
     if (logicalEntityKeyHash.isEmpty) {
@@ -270,6 +272,31 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
       this.decodedExtensionPayload,
       'decoded_extension_payload',
     );
+    _validateSemanticField(
+      decodedExtensionPayloadState,
+      preparedExtension,
+      'prepared_extension',
+    );
+    if (preparedExtension != null) {
+      final bytes = this.decodedExtensionPayload!;
+      final preparedBytes = preparedExtension!.canonicalUtf8;
+      if (balloonBundleIdState != CloudSemanticFieldState.value ||
+          balloonBundleId != preparedExtension!.metadata.bundleId ||
+          bytes.length != preparedBytes.length) {
+        throw ArgumentError('cloud_message_prepared_extension_binding_invalid');
+      }
+      for (var i = 0; i < bytes.length; i++) {
+        if (bytes[i] != preparedBytes[i]) {
+          throw ArgumentError('cloud_message_prepared_extension_binding_invalid');
+        }
+      }
+    }
+    if ((associationKind == CloudSemanticAssociationKind.reactionAdd ||
+            associationKind == CloudSemanticAssociationKind.reactionRemove) &&
+        (decodedExtensionPayloadState != CloudSemanticFieldState.absent ||
+            balloonBundleIdState != CloudSemanticFieldState.absent)) {
+      throw ArgumentError('cloud_message_reaction_extension_invalid');
+    }
     _validateSemanticField(effectState, effect, 'effect');
     _validateSemanticField(readAtState, readAt, 'read_at');
     _validateSemanticField(deliveredAtState, deliveredAt, 'delivered_at');
@@ -322,6 +349,8 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
   final String? balloonBundleId;
   final CloudSemanticFieldState decodedExtensionPayloadState;
   final Uint8List? decodedExtensionPayload;
+  /// Validated renderer metadata bound to the exact immutable digest bytes.
+  final CloudSyncPreparedExtension? preparedExtension;
   final CloudSemanticFieldState effectState;
   final String? effect;
   final CloudSemanticFieldState readAtState;

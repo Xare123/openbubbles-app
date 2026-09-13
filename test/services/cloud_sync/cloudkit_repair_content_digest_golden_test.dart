@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_prepared_extension.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_repair_content_digest.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -132,6 +133,12 @@ Map<String, String> _vectors() => <String, String>{
     unicodeText: 'é🙂',
     rawBytes: Uint8List.fromList(const [0, 255, 1, 128, 10]),
   ),
+  'extension-metadata': CloudKitV2CanonicalRepairDigest.forPayload(
+    _basicMessage(prepared: CloudSyncPreparedExtension.parse(
+      File('test/fixtures/cloud_sync/extension_metadata_digest_v1.json').readAsStringSync(),
+      expectedParentBundleId: 'com.example.synthetic',
+    )),
+  ),
 };
 
 const _flags = CloudSemanticKnownMessageFlags(
@@ -147,6 +154,7 @@ CloudMessageEntityPayload _basicMessage({
   String? body = 'body',
   CloudSemanticKnownMessageFlags? knownFlags = _flags,
   CloudSemanticService service = CloudSemanticService.iMessage,
+  CloudSyncPreparedExtension? prepared,
 }) => CloudMessageEntityPayload(
   logicalEntityKeyHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   canonicalGuid: 'guid',
@@ -161,6 +169,11 @@ CloudMessageEntityPayload _basicMessage({
   subject: 'subject',
   bodyState: CloudSemanticFieldState.value,
   knownFlags: knownFlags,
+  balloonBundleIdState: prepared == null ? CloudSemanticFieldState.absent : CloudSemanticFieldState.value,
+  balloonBundleId: prepared?.metadata.bundleId,
+  decodedExtensionPayloadState: prepared == null ? CloudSemanticFieldState.absent : CloudSemanticFieldState.value,
+  decodedExtensionPayload: prepared?.canonicalUtf8,
+  preparedExtension: prepared,
 );
 
 CloudMessageEntityPayload _fieldStateMessage(CloudSemanticFieldState state) =>
@@ -178,8 +191,7 @@ CloudMessageEntityPayload _fieldStateMessage(CloudSemanticFieldState state) =>
       bodyState: state,
       attributedBodiesState: state,
       balloonBundleIdState: state,
-      // Native defers extension payloads before the FRB boundary, so the only
-      // reachable repair state for this field is absent.
+      // This vector has no extension metadata, independent of other fields.
       decodedExtensionPayloadState: CloudSemanticFieldState.absent,
       effectState: state,
       readAtState: state,

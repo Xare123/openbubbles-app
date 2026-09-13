@@ -5375,6 +5375,10 @@ class CloudSyncTransientMessagePayload {
   final List<CloudSyncTransientAttributedBody> attributedBodies;
   final CloudSyncTransientFieldState balloonBundleIdState;
   final String? balloonBundleId;
+
+  /// Validated v1 extension metadata JSON, never a raw keyed archive.
+  /// Original UTF-8 bytes bind the repair content digest across the bridge.
+  final String? extensionMetadataJson;
   final CloudSyncTransientFieldState effectState;
   final String? effect;
   final CloudSyncTransientFieldState readAtMillisState;
@@ -5421,6 +5425,7 @@ class CloudSyncTransientMessagePayload {
     required this.attributedBodies,
     required this.balloonBundleIdState,
     this.balloonBundleId,
+    this.extensionMetadataJson,
     required this.effectState,
     this.effect,
     required this.readAtMillisState,
@@ -5469,6 +5474,7 @@ class CloudSyncTransientMessagePayload {
       attributedBodies.hashCode ^
       balloonBundleIdState.hashCode ^
       balloonBundleId.hashCode ^
+      extensionMetadataJson.hashCode ^
       effectState.hashCode ^
       effect.hashCode ^
       readAtMillisState.hashCode ^
@@ -5521,6 +5527,7 @@ class CloudSyncTransientMessagePayload {
           attributedBodies == other.attributedBodies &&
           balloonBundleIdState == other.balloonBundleIdState &&
           balloonBundleId == other.balloonBundleId &&
+          extensionMetadataJson == other.extensionMetadataJson &&
           effectState == other.effectState &&
           effect == other.effect &&
           readAtMillisState == other.readAtMillisState &&

@@ -4,27 +4,39 @@ title: OpenBubbles Windows ARM64 Host Build Environment
 description: Verified toolchain layout and the non-obvious constraints for building the Rust bridge and running the test suites for Android, Windows ARM64, and Windows x64 from one Windows-on-ARM host.
 resource: openbubbles-app
 tags: [windows, arm64, x64, android, rust, objectbox, openssl, toolchain, testing]
-timestamp: 2026-09-10
+timestamp: 2026-09-13
 ---
 
 # OpenBubbles Windows ARM64 host build environment
 
 ## Fastest current Dart loop, September 12
 
-Current handoff (September 13): Windows native-only run 34742235201 is qualified
-for source `ea757e188`. Its separate signed directory is
-`C:\Codex\OpenBubblesReview\artifacts\windows-native-34742235201\signed`;
-DLL SHA256 `4885b706d651c1ccac9a3806e98a98814540dc116768ef5dac3d084ff7d6426b`.
+Current handoff (September 13): Windows native-only run 34744744122 is qualified
+for source `b2797dd07`. Its separate signed directory is
+`C:\Codex\OpenBubblesReview\artifacts\windows-native-34744744122\signed`;
+DLL SHA256 `e2bdf775b8f9b9327c1a8278a034628f4efb382cbe2e2a9afe1f9aec2164f30a`.
 All 51 packaged-DLL codec tests passed locally with App Control enabled, and
 the actual loaded module path was verified. The original GUI/runtime was not
 replaced. Archive, unsigned/signed lineage and source-EOL comparison evidence
 are in the adjacent `local-qualification.json` and `provenance.json`.
 
-That DLL exposed a native logger-handle lifetime defect. New native-only run
-34744744122 is qualifying source `b2797dd07`, pilot `f110e2562`, including its
-logger repair and bounded Find My diagnostics. It is not yet qualified. After
-success, verify all exact test cases and hashes, stage/sign separately, rerun
-51 codec cases, and inspect retained-record diagnostics with the new DLL.
+That DLL includes the logger-handle repair and produced real retained-record
+diagnostics. Earlier source `ea757e188` also proved an ordinary text send/edit
+and exact readback. The current candidate adds `extensionMetadataJson` to the
+native contract and therefore requires a newly built matching DLL. Bridge run
+34761004976 generated the bindings and compiled the library successfully; its
+test build found ambiguous types in the new synthetic fixture, now corrected
+in source. Do not interpret generation/library success as passing native tests.
+
+Use the cloud workflow for binding changes: local generation invokes Cargo
+expansion and a full native dependency build. The local attempt stopped on
+missing clang. Import the seven generated artifact files together, verify both
+FRB normalization guards, and qualify the coherent source in the Windows lane.
+Pilot `203bea75e` adds extension, converter, DTO, digest, system-event and Dart
+projector/decoder tests using the same native test executable.
+
+After qualification, verify test cases and hashes, stage/sign separately, rerun
+the packaged-DLL codec cases, then inspect retained records with the new DLL.
 Do not silently substitute a new native library under the old GUI receipt.
 The Find My test host separately pins its allowed DLL hash/source files; update
 those only after review of the newly qualified artifact, not merely to bypass

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
@@ -7,6 +8,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_prepared_extension.dart';
+import 'cloud_sync_extension_test_fixture.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb;
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -81,6 +84,47 @@ void main() {
       );
     }
     expect(bindings.requests, isEmpty);
+  });
+
+  test('prepares native extension metadata before returning a message', () async {
+    final entry = _entry();
+    final json = extensionTestJson();
+    bindings.result = _readyMessage(entry, payload: frb.CloudSyncTransientPayload(
+      message: _messagePayload(
+        balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
+        balloonBundleId: extensionTestBundle,
+        extensionMetadataJson: json,
+      ),
+    ));
+    final payload = (await decoder().decode(entry)).payload! as CloudMessageEntityPayload;
+    expect(payload.preparedExtension, isA<CloudSyncPreparedExtension>());
+    expect(payload.preparedExtension!.metadata.name, 'Synthetic App');
+    expect(payload.decodedExtensionPayloadState, CloudSemanticFieldState.value);
+    expect(payload.decodedExtensionPayload, utf8.encode(json));
+    expect(payload.preparedExtension!.toPayloadData().appData!.single.appId, 1234);
+  });
+
+  test('retains malformed or misbound native extension metadata', () async {
+    final entry = _entry();
+    for (final json in ['<html>', '{}', extensionTestJson(bundleId: 'com.example.other')]) {
+      bindings.result = _readyMessage(entry, payload: frb.CloudSyncTransientPayload(
+        message: _messagePayload(
+          balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
+          balloonBundleId: extensionTestBundle,
+          extensionMetadataJson: json,
+        ),
+      ));
+      await _expectFailure(decoder().decode(entry), CloudFailureCategory.dependency);
+    }
+  });
+
+  test('rejects extension metadata on a native reaction', () async {
+    final entry = _entry();
+    bindings.result = _readyReaction(entry,
+      reactionKind: frb.CloudSyncTransientReactionKind.heart,
+      removed: false, extensionMetadataJson: extensionTestJson());
+    await _expectFailure(decoder().decode(entry), CloudFailureCategory.dependency,
+      safeCode: 'decoder_reaction_shape_unsupported');
   });
 
   test(
@@ -1551,6 +1595,7 @@ frb.CloudSyncTransientDecodeResult _readyReaction(
   required frb.CloudSyncTransientReactionKind reactionKind,
   required bool removed,
   String? emoji,
+  String? extensionMetadataJson,
   int? associatedRangeLocation,
   int? associatedRangeLength,
   int createdAtMillis = 1787385600000,
@@ -1580,6 +1625,7 @@ frb.CloudSyncTransientDecodeResult _readyReaction(
     message: _messagePayload(
       logicalEntityKeyHash: _reactionHash,
       canonicalGuid: 'reaction-guid',
+      extensionMetadataJson: extensionMetadataJson,
       createdAtMillis: createdAtMillis,
       bodyState: bodyState,
       body: body,
@@ -1681,6 +1727,7 @@ frb.CloudSyncTransientMessagePayload _messagePayload({
   frb.CloudSyncTransientFieldState associatedEmojiState =
       frb.CloudSyncTransientFieldState.absent,
   String? associatedEmoji,
+  String? extensionMetadataJson,
 }) => frb.CloudSyncTransientMessagePayload(
   logicalEntityKeyHash: logicalEntityKeyHash,
   canonicalGuid: canonicalGuid,
@@ -1746,6 +1793,7 @@ frb.CloudSyncTransientMessagePayload _messagePayload({
   retractedParts: Uint32List.fromList(retractedParts),
   associatedEmojiState: associatedEmojiState,
   associatedEmoji: associatedEmoji,
+  extensionMetadataJson: extensionMetadataJson,
 );
 
 frb.CloudSyncTransientChatPayload _chatPayload({

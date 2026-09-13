@@ -23113,6 +23113,7 @@ impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
         let mut var_balloonBundleIdState =
             <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
         let mut var_balloonBundleId = <Option<String>>::sse_decode(deserializer);
+        let mut var_extensionMetadataJson = <Option<String>>::sse_decode(deserializer);
         let mut var_effectState =
             <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
         let mut var_effect = <Option<String>>::sse_decode(deserializer);
@@ -23169,6 +23170,7 @@ impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
             attributed_bodies: var_attributedBodies,
             balloon_bundle_id_state: var_balloonBundleIdState,
             balloon_bundle_id: var_balloonBundleId,
+            extension_metadata_json: var_extensionMetadataJson,
             effect_state: var_effectState,
             effect: var_effect,
             read_at_millis_state: var_readAtMillisState,
@@ -33173,6 +33175,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientMessag
             self.attributed_bodies.into_into_dart().into_dart(),
             self.balloon_bundle_id_state.into_into_dart().into_dart(),
             self.balloon_bundle_id.into_into_dart().into_dart(),
+            self.extension_metadata_json.into_into_dart().into_dart(),
             self.effect_state.into_into_dart().into_dart(),
             self.effect.into_into_dart().into_dart(),
             self.read_at_millis_state.into_into_dart().into_dart(),
@@ -40108,6 +40111,7 @@ impl SseEncode for crate::api::api::CloudSyncTransientMessagePayload {
             serializer,
         );
         <Option<String>>::sse_encode(self.balloon_bundle_id, serializer);
+        <Option<String>>::sse_encode(self.extension_metadata_json, serializer);
         <crate::api::api::CloudSyncTransientFieldState>::sse_encode(self.effect_state, serializer);
         <Option<String>>::sse_encode(self.effect, serializer);
         <crate::api::api::CloudSyncTransientFieldState>::sse_encode(

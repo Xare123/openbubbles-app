@@ -19692,8 +19692,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   dco_decode_cloud_sync_transient_message_payload(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 44)
-      throw Exception('unexpected arr length: expect 44 but see ${arr.length}');
+    if (arr.length != 45)
+      throw Exception('unexpected arr length: expect 45 but see ${arr.length}');
     return CloudSyncTransientMessagePayload(
       logicalEntityKeyHash: dco_decode_String(arr[0]),
       canonicalGuid: dco_decode_String(arr[1]),
@@ -19725,39 +19725,40 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         arr[18],
       ),
       balloonBundleId: dco_decode_opt_String(arr[19]),
-      effectState: dco_decode_cloud_sync_transient_field_state(arr[20]),
-      effect: dco_decode_opt_String(arr[21]),
-      readAtMillisState: dco_decode_cloud_sync_transient_field_state(arr[22]),
-      readAtMillis: dco_decode_opt_box_autoadd_i_64(arr[23]),
+      extensionMetadataJson: dco_decode_opt_String(arr[20]),
+      effectState: dco_decode_cloud_sync_transient_field_state(arr[21]),
+      effect: dco_decode_opt_String(arr[22]),
+      readAtMillisState: dco_decode_cloud_sync_transient_field_state(arr[23]),
+      readAtMillis: dco_decode_opt_box_autoadd_i_64(arr[24]),
       deliveredAtMillisState: dco_decode_cloud_sync_transient_field_state(
-        arr[24],
+        arr[25],
       ),
-      deliveredAtMillis: dco_decode_opt_box_autoadd_i_64(arr[25]),
-      knownFlags: dco_decode_cloud_sync_transient_known_message_flags(arr[26]),
+      deliveredAtMillis: dco_decode_opt_box_autoadd_i_64(arr[26]),
+      knownFlags: dco_decode_cloud_sync_transient_known_message_flags(arr[27]),
       associationKind: dco_decode_cloud_sync_transient_association_kind(
-        arr[27],
+        arr[28],
       ),
       reactionKind:
           dco_decode_opt_box_autoadd_cloud_sync_transient_reaction_kind(
-            arr[28],
+            arr[29],
           ),
-      reactionRemoved: dco_decode_bool(arr[29]),
-      reactionParentLogicalKeyHash: dco_decode_opt_String(arr[30]),
-      reactionParentCanonicalGuid: dco_decode_opt_String(arr[31]),
-      reactionParentPart: dco_decode_opt_box_autoadd_u_32(arr[32]),
-      associatedRangeLocation: dco_decode_opt_box_autoadd_u_32(arr[33]),
-      associatedRangeLength: dco_decode_opt_box_autoadd_u_32(arr[34]),
-      replyParentLogicalKeyHash: dco_decode_opt_String(arr[35]),
-      replyParentCanonicalGuid: dco_decode_opt_String(arr[36]),
-      replyParentPart: dco_decode_opt_String(arr[37]),
-      editsState: dco_decode_cloud_sync_transient_field_state(arr[38]),
-      edits: dco_decode_list_cloud_sync_transient_message_edit(arr[39]),
-      retractedPartsState: dco_decode_cloud_sync_transient_field_state(arr[40]),
-      retractedParts: dco_decode_list_prim_u_32_strict(arr[41]),
+      reactionRemoved: dco_decode_bool(arr[30]),
+      reactionParentLogicalKeyHash: dco_decode_opt_String(arr[31]),
+      reactionParentCanonicalGuid: dco_decode_opt_String(arr[32]),
+      reactionParentPart: dco_decode_opt_box_autoadd_u_32(arr[33]),
+      associatedRangeLocation: dco_decode_opt_box_autoadd_u_32(arr[34]),
+      associatedRangeLength: dco_decode_opt_box_autoadd_u_32(arr[35]),
+      replyParentLogicalKeyHash: dco_decode_opt_String(arr[36]),
+      replyParentCanonicalGuid: dco_decode_opt_String(arr[37]),
+      replyParentPart: dco_decode_opt_String(arr[38]),
+      editsState: dco_decode_cloud_sync_transient_field_state(arr[39]),
+      edits: dco_decode_list_cloud_sync_transient_message_edit(arr[40]),
+      retractedPartsState: dco_decode_cloud_sync_transient_field_state(arr[41]),
+      retractedParts: dco_decode_list_prim_u_32_strict(arr[42]),
       associatedEmojiState: dco_decode_cloud_sync_transient_field_state(
-        arr[42],
+        arr[43],
       ),
-      associatedEmoji: dco_decode_opt_String(arr[43]),
+      associatedEmoji: dco_decode_opt_String(arr[44]),
     );
   }
 
@@ -30216,6 +30217,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       deserializer,
     );
     var var_balloonBundleId = sse_decode_opt_String(deserializer);
+    var var_extensionMetadataJson = sse_decode_opt_String(deserializer);
     var var_effectState = sse_decode_cloud_sync_transient_field_state(
       deserializer,
     );
@@ -30286,6 +30288,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       attributedBodies: var_attributedBodies,
       balloonBundleIdState: var_balloonBundleIdState,
       balloonBundleId: var_balloonBundleId,
+      extensionMetadataJson: var_extensionMetadataJson,
       effectState: var_effectState,
       effect: var_effect,
       readAtMillisState: var_readAtMillisState,
@@ -42100,6 +42103,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       serializer,
     );
     sse_encode_opt_String(self.balloonBundleId, serializer);
+    sse_encode_opt_String(self.extensionMetadataJson, serializer);
     sse_encode_cloud_sync_transient_field_state(self.effectState, serializer);
     sse_encode_opt_String(self.effect, serializer);
     sse_encode_cloud_sync_transient_field_state(

@@ -63,7 +63,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Windows qualification | Native-only run 34742235201 passed source `ea757e188d34cffefcdb6f2e3dc0ef88ec3c94f5` via pilot `96a2c33e2`. Local signed DLL `4885b706d651c1ccac9a3806e98a98814540dc116768ef5dac3d084ff7d6426b` passed all 51 codec tests and a non-mutating 37-record observation under unchanged App Control. Original runtime preserved. Its newly added debug lines exposed a separate logger lifetime defect; the repaired source needs a new native qualification. |
 | Logging repair | Retaining flexi_logger's handle fixed writer shutdown. Native b279 qualification and live retained-shape readback passed. A further Find My filter correction selects the explicit `findmy_diagnostic` target; that source correction awaits the next native build. |
 | Latest native build | Run 34744744122 passed `b2797dd07fdeffd01c1705dbf184dbf3b15eac22` via pilot `f110e2562`: seven compose, four exact diagnostic/logger and 51 packaged-DLL codec cases. Parent verified/signed DLL `e2bdf775b8f9b9327c1a8278a034628f4efb382cbe2e2a9afe1f9aec2164f30a`, reran 51 cases under unchanged App Control, and observed real retained-shape diagnostics. No CI run remains active at this checkpoint. |
-| Next integration | Native extension decoding now feeds validated renderer metadata JSON through the canonical DTO and API source. Matching generated bindings and Dart integration are being qualified. System-event classification and Find My log-target corrections await this native batch. No extension restoration has yet been proved on real retained records. |
+| Next integration | Native extension decoding and matching generated bindings now connect to the Dart preparation/projector. Targeted Windows tests cover metadata creation/update/clear, exact bytes, malformed/reaction rejection and preservation of newer content/provider. Native tests await the next Windows build after correcting the synthetic Rust fixture. Real retained-record restoration is unproved. |
 | Fast Windows loop | Current Dart plus the verified native DLL opens the retained projection in 8.65 seconds. The stale Windows relay ticket was updated to the Pixel's working ticket after proving the same physical relay and preserving Windows installation IDs/keys. A real read then completed in about 31 seconds and exposed a quarantined own-edit echo. |
 | Current merge repair | Real native-source/copy qualification passed the bounded production recovery and normal applier, preserving local history. Live Windows report `obcs2-semantic-1789278811033254.json` applied two pending messages; fresh-process repeat `1789278895014946` fetched/applied zero, with no conflict. Both observed empty terminal reads in all zones and kept outbox 15 -> 15 with remote writes disabled. Full native-crate qualification remains. |
 | Retained projection | The same live report retains 6,654 entries: 94 Chats, 5,350 Messages and 1,210 Attachments. Message saves include 3,190 excluded telephony entries and 1,663 blocking saves; Attachments include 1,109 blocking saves. These are journal entries, not proven unique missing messages. Terminal remote ingestion is not complete local projection. |
@@ -409,13 +409,16 @@ observed Pixel pull was incomplete.
 - Native helper worker is closed and its bounded pinned-plist implementation is
   under parent integration. The constructor validates metadata schema and bundle
   binding; malformed/unsupported archives remain retained.
-- Muse worker `01a09b03-5ae8-7d13-9920-c3525453bcd4` reviews and completes the Dart
-  preparation/projector integration. Muse worker `01a09b04-4575-7a01-bda0-8b1217ebe1dd`
-  prepares the isolated Windows native qualification lane. Previous Astra worker
-  hit its usage limit and was closed; partial source was preserved for review.
+- Both Muse workers are closed. Parent reviewed/refined the Dart integration and
+  isolated Windows test lane (pilot `02fc8e810`). New component tests needed the
+  existing route/ownership fixtures; parent fixed those and completed decoder
+  boundary tests. All source/evidence remains preserved for native qualification.
 - Hash exact transport UTF-8; validate parent bundle identity before transaction;
-  store metadata atomically. Local bridge regeneration requires Cargo expansion
-  and failed on missing clang, so use the existing cloud bridge workflow.
+  store metadata atomically. Cloud bridge run 34761004976 produced the matching
+  bindings and compiled the library; the test fixture type error is corrected.
+  Current local evidence: 169 prepared/core/adapter, 45 decoder and 75 existing
+  harness/write/precision/digest tests pass across focused runs. Static analysis
+  of the four production Dart files has no issues. Native suite/live proof pending.
 - System-event worker is closed; its reviewed change excludes normal-message
   `eCode`/`flags` only from class 3-7 unsupported-event classification, never from
   ordinary message conversion. It restores no message by itself; tests await native CI.

@@ -1602,15 +1602,6 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         safeCode: 'canonical_message_shape_unsupported',
       );
     }
-    if (payload.decodedExtensionPayloadState == CloudSemanticFieldState.value) {
-      // Extension decoding must happen before the ObjectBox transaction. Do
-      // not discard URL-balloon or app payload bytes and still advance replay.
-      throw CloudSyncFailure(
-        category: CloudFailureCategory.dependency,
-        safeCode: 'canonical_message_extension_decode_required',
-      );
-    }
-
     final guid = _requireResolvedGuid(
       scope: scope,
       generation: generation,
@@ -1694,20 +1685,49 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         existing: message.text,
       );
     }
-    message.balloonBundleId = _applyNullableStringField(
-      state: payload.balloonBundleIdState,
-      incoming: payload.balloonBundleId,
-      existing: message.balloonBundleId,
-    );
+    // Extension metadata and its balloon provider arrive and age as one pair
+    // with the displayed content. An older snapshot preserves both.
+    final previousBalloonBundleId = message.balloonBundleId;
+    if (replaceEditContent) {
+      message.balloonBundleId = _applyNullableStringField(
+        state: payload.balloonBundleIdState,
+        incoming: payload.balloonBundleId,
+        existing: message.balloonBundleId,
+      );
+    }
     message.expressiveSendStyleId = _applyNullableStringField(
       state: payload.effectState,
       incoming: payload.effect,
       existing: message.expressiveSendStyleId,
     );
-    if (payload.decodedExtensionPayloadState ==
-        CloudSemanticFieldState.explicitClear) {
-      message.payloadData = null;
-      message.hasApplePayloadData = false;
+    // An older snapshot must not swap the renderer payload underneath
+    // preserved newer content, and a changed or cleared provider without
+    // new metadata must not keep stale appData from another provider.
+    final effectiveExtensionState = replaceEditContent
+        ? payload.decodedExtensionPayloadState
+        : CloudSemanticFieldState.absent;
+    switch (effectiveExtensionState) {
+      case CloudSemanticFieldState.absent:
+        final providerChanged = payload.balloonBundleIdState ==
+                CloudSemanticFieldState.explicitClear ||
+            (payload.balloonBundleIdState == CloudSemanticFieldState.value &&
+                payload.balloonBundleId != previousBalloonBundleId);
+        if (replaceEditContent &&
+            providerChanged &&
+            (message.payloadData != null || message.hasApplePayloadData)) {
+          message.payloadData = null;
+          message.hasApplePayloadData = false;
+        }
+        break;
+      case CloudSemanticFieldState.value:
+        // Already validated and byte-bound by the DTO, outside this
+        // transaction. This allocates only fresh legacy renderer models.
+        message.payloadData = payload.preparedExtension!.toPayloadData();
+        message.hasApplePayloadData = true;
+        break;
+      case CloudSemanticFieldState.explicitClear:
+        message.payloadData = null;
+        message.hasApplePayloadData = false;
     }
 
     switch (replaceEditContent

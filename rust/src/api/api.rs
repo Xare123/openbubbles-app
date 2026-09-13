@@ -8475,6 +8475,19 @@ mod cloudkit_repair_digest_tests {
         writer.finish()
     }
 
+    fn extension_metadata_digest() -> String {
+        let json =
+            include_str!("../../../test/fixtures/cloud_sync/extension_metadata_digest_v1.json");
+        let metadata =
+            crate::cloud_sync_extension_payload::parse_generated_metadata_json(json.as_bytes())
+                .unwrap();
+        let mut value = basic_message("body");
+        value.balloon_bundle_id_state = CloudSyncTransientFieldState::Value;
+        value.balloon_bundle_id = Some(metadata.bundle_id);
+        value.extension_metadata_json = Some(json.to_owned());
+        digest(&value)
+    }
+
     fn corpus() -> Vec<(&'static str, &'static str)> {
         CORPUS
             .lines()
@@ -8525,6 +8538,7 @@ mod cloudkit_repair_digest_tests {
             ("retracted-order-1-2", digest(&nested_message(vec![1, 2]))),
             ("retracted-order-2-1", digest(&nested_message(vec![2, 1]))),
             ("raw-bytes-framing", raw_bytes_framing_digest()),
+            ("extension-metadata", extension_metadata_digest()),
         ];
         let expected = corpus();
         assert_eq!(actual.len(), expected.len());

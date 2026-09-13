@@ -3740,3 +3740,22 @@ cannot authorize or perform adoption.
 - The user reconfirmed exactly one person shares location, their spouse. Current
   evidence remains one matching entry without coordinates; this is not evidence
   of stopped sharing. Find My guide now records the latest native repeat.
+
+### September 13 coherent extension candidate qualification
+
+- Cloud run 34761004976 regenerated seven bridge files and compiled the native
+  library. Rust test compilation failed E0283 in the new synthetic dictionary
+  fixture. Parent made dictionary key types explicit; native tests await rerun.
+- Imported generated files together from artifact 10318519609. Both FRB guards
+  passed. Added a shared Unicode/icon metadata digest vector with LF-pinned input;
+  Dart passes the fixed corpus and native consumes the same fixture/expectation.
+- Parent refined Muse's older-snapshot guard to preserve the provider together
+  with its newer renderer data. Four new adapter tests lacked route/ownership
+  fixtures; existing setup helpers fixed the tests without weakening production.
+- 169 prepared/core/adapter, 45 decoder and 75 existing harness/write/precision/
+  digest tests pass across focused local runs. Initial database tests lacked the
+  vendor DLL in PATH; corrected-path reruns passed. No account was opened by
+  these unit tests. The signed old Rust DLL was not initialized against new ABI.
+- Pilot 02fc8e810 qualifies the actual native extension/converter/DTO/digest/
+  system-event scopes and Dart projector/decoder using one shared compile.
+  Both Muse workers are closed; no session/worktree/evidence deletion performed.
