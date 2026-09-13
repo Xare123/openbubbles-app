@@ -642,12 +642,25 @@ fn message_outer_type_class(record: &Record) -> &'static str {
     }
 }
 
-fn has_required_message_identity(presence: &CloudRawRecordPresence) -> bool {
-    [
-        "msgType", "eCode", "chatID", "sender", "time", "msgProto", "flags", "guid", "svc",
+/// Classification only, after discriminator-selected protobuf preflight.
+/// CloudMessage in rustpush/src/imessage/cloud_messages.rs supplies the common
+/// envelope names, but its eCode/flags belong to the normal-message schema.
+/// Classes 3-7 use the distinct payloads in cloud_messages.proto selected by
+/// primary_message_proto_spec. Retain every other envelope requirement; this
+/// does not admit a projection or relax convert_message's nine required fields.
+fn system_event_quarantine_reason(
+    presence: &CloudRawRecordPresence,
+) -> CloudCanonicalQuarantineReason {
+    if [
+        "msgType", "chatID", "sender", "time", "msgProto", "guid", "svc",
     ]
     .iter()
     .all(|field| presence.field(field) == CloudRawFieldPresence::PresentWithValue)
+    {
+        CloudCanonicalQuarantineReason::UnsupportedMessageType
+    } else {
+        CloudCanonicalQuarantineReason::MalformedRequiredIdentity
+    }
 }
 
 // The bit order is fixed and public schema metadata, never record values.
@@ -2624,11 +2637,7 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 let (absent, without_value) = message_required_presence_masks(&presence);
                 debug!("CloudKit V2 transient message retained_shape outer_type_class={} absent_mask={absent:03x} without_value_mask={without_value:03x}",
                     message_outer_type_class(&record));
-                let reason = if has_required_message_identity(&presence) {
-                    CloudCanonicalQuarantineReason::UnsupportedMessageType
-                } else {
-                    CloudCanonicalQuarantineReason::MalformedRequiredIdentity
-                };
+                let reason = system_event_quarantine_reason(&presence);
                 return normalize_conversion(
                     CloudCanonicalConversionOutcome::Quarantined(reason),
                     &hasher,
@@ -3977,31 +3986,227 @@ mod tests {
         }
     }
 
-    #[test]
-    fn system_event_quarantine_still_requires_complete_outer_identity() {
+    // Synthetic decrypted field bytes, not PCS ciphertext or account data.
+    // The tests below exercise presence and the selected gzip/protobuf schema;
+    // they do not run authenticated PCS decode.
+    fn system_event_test_record(message_type: i64, payload: &[u8]) -> Record {
+        use flate2::{write::GzEncoder, Compression};
         use rustpush::cloudkit_proto::record::field;
+        use std::io::Write;
 
-        let required = [
-            "msgType", "eCode", "chatID", "sender", "time", "msgProto", "flags", "guid", "svc",
-        ];
-        let mut record = Record {
-            record_field: required
-                .iter()
-                .map(|name| Field {
-                    identifier: Some(field::Identifier {
-                        name: Some((*name).to_owned()),
-                    }),
-                    value: Some(field::Value::default()),
-                })
-                .collect(),
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+        encoder.write_all(payload).unwrap();
+        let mut record = gzip_test_record("msgType", FieldValueType::Int64Type as i32, None);
+        record.record_field[0].value.as_mut().unwrap().signed_value = Some(message_type);
+        for (name, bytes) in [
+            ("chatID", b"synthetic-chat".to_vec()),
+            ("sender", b"synthetic-sender".to_vec()),
+            ("time", 1i64.to_le_bytes().to_vec()),
+            ("msgProto", encoder.finish().unwrap()),
+            ("guid", b"synthetic-event-guid".to_vec()),
+            ("svc", b"iMessage".to_vec()),
+        ] {
+            record.record_field.push(Field {
+                identifier: Some(field::Identifier {
+                    name: Some(name.to_owned()),
+                }),
+                value: Some(Value {
+                    r#type: Some(FieldValueType::EncryptedBytesType as i32),
+                    bytes_value: Some(bytes),
+                    ..Default::default()
+                }),
+            });
+        }
+        record
+    }
+
+    fn validate_system_event_test_payload(
+        record: &Record,
+    ) -> Result<(), CloudTransientBridgeFailure> {
+        let spec = primary_message_proto_spec(record);
+        let presence = CloudRawRecordPresence::extract(record).unwrap();
+        assert!(gzip_field_requires_preflight(record, &presence, spec)?);
+        let compressed = record
+            .record_field
+            .iter()
+            .find(|field| field_name(field) == Some("msgProto"))
+            .unwrap()
+            .value
+            .as_ref()
+            .unwrap()
+            .bytes_value
+            .as_ref()
+            .unwrap();
+        validate_nested_protobuf(&bounded_gunzip(compressed)?, spec)
+    }
+
+    #[test]
+    fn system_events_without_normal_error_and_flags_remain_unsupported() {
+        for (message_type, payload) in [
+            (3, vec![0x08, 0x01, 0x12, 0x01, b'x']),
+            (4, vec![0x08, 0x01, 0x10, 0x01]),
+        ] {
+            let record = system_event_test_record(message_type, &payload);
+            let original = record.encode_to_vec();
+            let presence = CloudRawRecordPresence::extract(&record).unwrap();
+            assert_eq!(message_required_presence_masks(&presence), (0x042, 0));
+            assert_eq!(validate_system_event_test_payload(&record), Ok(()));
+            assert_eq!(
+                system_event_quarantine_reason(&presence),
+                CloudCanonicalQuarantineReason::UnsupportedMessageType
+            );
+            assert_eq!(record.encode_to_vec(), original);
+        }
+    }
+
+    #[test]
+    fn system_event_quarantine_still_requires_each_common_envelope_field() {
+        for (message_type, payload) in [
+            (3, vec![0x08, 0x01, 0x12, 0x01, b'x']),
+            (4, vec![0x08, 0x01, 0x10, 0x01]),
+        ] {
+            for required in [
+                "msgType", "chatID", "sender", "time", "msgProto", "guid", "svc",
+            ] {
+                for without_value in [false, true] {
+                    let mut record = system_event_test_record(message_type, &payload);
+                    if without_value {
+                        record
+                            .record_field
+                            .iter_mut()
+                            .find(|field| field_name(field) == Some(required))
+                            .unwrap()
+                            .value = None;
+                    } else {
+                        record
+                            .record_field
+                            .retain(|field| field_name(field) != Some(required));
+                    }
+                    let presence = CloudRawRecordPresence::extract(&record).unwrap();
+                    assert_eq!(
+                        system_event_quarantine_reason(&presence),
+                        CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+                        "class {message_type}, field {required}, without_value {without_value}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn system_events_without_normal_fields_still_reject_malformed_payloads() {
+        for (message_type, wrong_schema) in [
+            (3, vec![0x08, 0x01, 0x10, 0x01]),
+            (4, vec![0x08, 0x01, 0x12, 0x01, b'x']),
+        ] {
+            for payload in [vec![0x80], wrong_schema] {
+                let record = system_event_test_record(message_type, &payload);
+                let original = record.encode_to_vec();
+                assert_eq!(
+                    validate_system_event_test_payload(&record),
+                    Err(CloudTransientBridgeFailure::MalformedRecord)
+                );
+                assert_eq!(record.encode_to_vec(), original);
+            }
+            let mut record = system_event_test_record(message_type, &[0x08, 0x01]);
+            record
+                .record_field
+                .iter_mut()
+                .find(|field| field_name(field) == Some("msgProto"))
+                .unwrap()
+                .value
+                .as_mut()
+                .unwrap()
+                .bytes_value = Some(b"not-gzip".to_vec());
+            assert_eq!(
+                validate_system_event_test_payload(&record),
+                Err(CloudTransientBridgeFailure::MalformedRecord)
+            );
+        }
+    }
+
+    #[test]
+    fn normal_message_conversion_still_requires_error_and_flags() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"normal-message-presence-test").unwrap();
+        let hash = CloudCanonicalHash::new(digest('a')).unwrap();
+        let context = CloudCanonicalConversionContext::new(
+            &hasher,
+            hash.clone(),
+            hash.clone(),
+            1,
+            hash,
+            "synthetic-record",
+            None,
+            None,
+            None,
+            "obcs2.test-reference",
+        );
+        // A complete normal SMS record reaches out-of-scope classification,
+        // so empty/default identity cannot mask a weakened required-field gate.
+        let message = CloudMessage {
+            guid: "synthetic-message-guid".into(),
+            chat_id: "synthetic-chat".into(),
+            sender: "synthetic-sender".into(),
+            service: "SMS".into(),
             ..Default::default()
         };
-        let complete = CloudRawRecordPresence::extract(&record).unwrap();
-        assert!(has_required_message_identity(&complete));
+        for missing in ["eCode", "flags"] {
+            let mut record = system_event_test_record(0, &[0x08, 0x01]);
+            let retained = if missing == "eCode" { "flags" } else { "eCode" };
+            record.record_field.extend(
+                gzip_test_record(retained, FieldValueType::Int64Type as i32, None).record_field,
+            );
+            let presence = CloudRawRecordPresence::extract(&record).unwrap();
+            assert!(matches!(
+                convert_message(&context, &presence, &message),
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedRequiredIdentity
+                )
+            ));
+            record.record_field.extend(
+                gzip_test_record(missing, FieldValueType::Int64Type as i32, None).record_field,
+            );
+            let complete = CloudRawRecordPresence::extract(&record).unwrap();
+            assert!(matches!(
+                convert_message(&context, &complete, &message),
+                CloudCanonicalConversionOutcome::OutOfScopeService(
+                    CloudCanonicalOutOfScopeService::SmsFamily
+                )
+            ));
+        }
+    }
 
-        record.record_field.pop();
-        let incomplete = CloudRawRecordPresence::extract(&record).unwrap();
-        assert!(!has_required_message_identity(&incomplete));
+    #[test]
+    fn system_event_classification_stays_after_preflight_before_normal_conversion() {
+        let source = include_str!("cloud_sync_transient_bridge.rs");
+        let body = source
+            .split("async fn cloud_sync_decode_transient_record_with_pcs_access")
+            .nth(1)
+            .unwrap()
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        let messages = body
+            .split("CloudNativeStream::Messages => {")
+            .nth(1)
+            .unwrap();
+        let preflight = messages.find("preflight_gzip_fields(").unwrap();
+        let system_event = messages
+            .find("if matches!(message_outer_type(&record), MessageOuterType::Value(3..=7))")
+            .unwrap();
+        let normal_decode = messages.find("let strict_record_key").unwrap();
+        let normal_convert = messages
+            .find("convert_message(&context, &presence, &message)")
+            .unwrap();
+        assert!(
+            preflight < system_event
+                && system_event < normal_decode
+                && normal_decode < normal_convert
+        );
+        let branch = &messages[system_event..normal_decode];
+        assert!(branch.contains("system_event_quarantine_reason(&presence)"));
+        assert!(branch.contains("return normalize_conversion("));
+        assert!(branch.contains("CloudCanonicalConversionOutcome::Quarantined(reason)"));
     }
 
     fn gzip_test_record(name: &str, field_type: i32, bytes_value: Option<Vec<u8>>) -> Record {

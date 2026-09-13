@@ -14,6 +14,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
+import 'cloud_sync_edit_echo_verification.dart';
 
 void main() {
   final enabled =
@@ -132,6 +133,15 @@ void main() {
       expect(decoded, isA<Map<String, dynamic>>());
       final status = (decoded as Map<String, dynamic>).cast<String, Object?>();
       expect(status['launch_id'], launchId);
+      if (Platform.environment['OPENBUBBLES_VERIFY_EDIT_CLAIM'] case final requestId?) {
+        final proof = await tester.runAsync(() => harnessKey.currentState!.observeEditEchoForTestHost(
+          (auth, pause) => verifyEditEcho(store: Database.store, profile: profile,
+            requestId: requestId, auth: auth, pauseToken: pause)));
+        debugPrint('windows_edit_echo_proof=${jsonEncode(proof)}');
+        expect(proof?['exact_current_text'], isTrue);
+        expect(proof?['exact_edit_text_and_milliseconds'], isTrue);
+        expect(proof?['local_history_unchanged'], isTrue);
+      }
       if (Platform.environment['OPENBUBBLES_INSPECT_RETAINED'] == '1') {
         final observed = await tester.runAsync(() => harnessKey.currentState!.inspectRetainedForTestHost());
         debugPrint('windows_retained_observation=${jsonEncode(observed)}');

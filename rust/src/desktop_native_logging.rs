@@ -17,7 +17,7 @@ pub(crate) fn log_spec_with_probe(
     findmy_probe: bool,
 ) -> &'static str {
     if findmy_probe {
-        "off,rustpush::findmy::diagnostics=debug"
+        "off,findmy_diagnostic=warn"
     } else {
         log_spec(windows_harness, verbose_harness)
     }
@@ -42,7 +42,7 @@ mod tests {
             for verbose in [false, true] {
                 assert_eq!(
                     super::log_spec_with_probe(harness, verbose, true),
-                    "off,rustpush::findmy::diagnostics=debug"
+                    "off,findmy_diagnostic=warn"
                 );
                 assert_eq!(
                     super::log_spec_with_probe(harness, verbose, false),
@@ -50,5 +50,27 @@ mod tests {
                 );
             }
         }
+        // Validate the actual explicit target used by the dependency, not just
+        // that our filter string looks restrictive. A module-path filter does
+        // not admit log records that override their target.
+        assert!(include_str!("../../rustpush/src/findmy/diagnostics.rs")
+            .contains("target: \"findmy_diagnostic\""));
+        let (logger, _handle) =
+            flexi_logger::Logger::try_with_str(super::log_spec_with_probe(false, true, true))
+                .unwrap()
+                .build()
+                .unwrap();
+        assert!(logger.enabled(
+            &log::Metadata::builder()
+                .level(log::Level::Warn)
+                .target("findmy_diagnostic")
+                .build()
+        ));
+        assert!(!logger.enabled(
+            &log::Metadata::builder()
+                .level(log::Level::Error)
+                .target("rustpush::auth")
+                .build()
+        ));
     }
 }

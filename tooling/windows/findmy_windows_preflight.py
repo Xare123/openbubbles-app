@@ -12,7 +12,7 @@ import plistlib
 import re
 import stat
 
-DLL_SHA256 = "6c85d27e7f1dbe8d92aac7c7292f1b5676cb6911c4fd67fd7802ced8c627140e"
+DLL_SHA256 = "e2bdf775b8f9b9327c1a8278a034628f4efb382cbe2e2a9afe1f9aec2164f30a"
 ANISETTE_ENDPOINT = "https://ani.sidestore.io"
 MARKER = "openbubbles-cloud-sync-v2-windows-dev-profile:v1"
 SOURCE_PINS = {

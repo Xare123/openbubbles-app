@@ -7,7 +7,7 @@ param(
     [switch] $FunctionsOnlyForTest,
     [string] $FlutterRoot = 'C:\Codex\Toolchains\flutter-3.44.8-arm64',
     [string] $PythonExecutable = 'C:\Users\ramia\AppData\Local\Python\pythoncore-3.14-64\python.exe',
-    [string] $NativeRuntime = 'C:\Codex\OpenBubblesReview\worktrees\cloudkit-v2-update-seam-windows-live\build\windows\arm64\runner\Debug',
+    [string] $NativeRuntime = 'C:\Codex\OpenBubblesReview\artifacts\windows-native-34744744122\signed',
     [ValidateRange(30, 180)][int] $TimeoutSeconds = 150
 )
 $ErrorActionPreference = 'Stop'
@@ -37,7 +37,7 @@ function Assert-FindMyPlainPath([string] $Path) {
 function Assert-FindMyArtifact([string] $Library) {
     Assert-FindMyPlainPath $Library
     $hash = (Get-FileHash -LiteralPath $Library -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($hash -cne '6c85d27e7f1dbe8d92aac7c7292f1b5676cb6911c4fd67fd7802ced8c627140e') {
+    if ($hash -cne 'e2bdf775b8f9b9327c1a8278a034628f4efb382cbe2e2a9afe1f9aec2164f30a') {
         throw 'findmy_testhost_native_hash_rejected'
     }
     $signature = Get-AuthenticodeSignature -LiteralPath $Library
@@ -144,7 +144,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $head -cnotmatch '^[0-9a-f]{40}$') { throw 'findmy_testhost_source_unavailable' }
     $qualification = @{
         version = 1; launch_id = $launch; native_library = $library
-        native = $artifact; native_source_reference = '7f2569165'; dart_head = $head
+        native = $artifact; native_source_reference = 'b2797dd07fdeffd01c1705dbf184dbf3b15eac22'; dart_head = $head
         bridge_version = '2.3.0'; expected_bridge_content_hash = -849563835
         policy_state = $policy; full_app_receipt_reused = $false
         host_sha256 = (Get-FileHash "$repository/test/live/findmy_windows_live_test.dart").Hash

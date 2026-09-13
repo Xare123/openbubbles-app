@@ -3698,3 +3698,31 @@ cannot authorize or perform adoption.
   Native-only pilot f110e2562 now requires logger/restricted-mode tests and compiles
   the existing bounded Find My diagnostic switch. No new app/GUI build is required
   for the next Windows protocol inspection.
+
+### September 13 live write and actionable retained categories
+
+- Parent-25 initially failed recipient lookup with bad sender authentication before
+  claim/send. Explicit retained-identity registration refresh succeeded; one text
+  was accepted and exactly saved/read back. Edit-26 reused the refreshed registration
+  in a fresh process, received its native receipt and exact CloudKit update confirmation.
+- Claim-bound native echo comparison verified the expected edited text and both
+  history timestamps to the millisecond. Completed-edit replay performed no new
+  submission, and a later read applied zero records with the same exact comparison.
+  This does not prove independent Apple UI display or mid-flight crash recovery.
+- Logger-fixed native b2797dd07 was cloud-qualified, signed separately and passed
+  all 51 local codec cases. Real diagnostics now appear. Six sampled identity
+  failures were classes 3/4 with missing normal flags/error fields; seven sampled
+  Apple extension failures had base text and attributed content. No decryption
+  shortcut or raw-payload discard was used. Evidence is in windows-write-20260913.
+- System-event common-envelope classification is corrected in pending source;
+  classes 3/4 are GroupTitleChange/LocationShareStatusChange, not normal MessageProto.
+  This is unsupported-event classification only, not current sharing authority.
+- Find My selected probe on b279 again found the sole entry without location and
+  preserved profile state. Its value-free logger uses explicit target
+  `findmy_diagnostic`, not its module path. The restricted filter was corrected
+  and its test now checks actual target admission and unrelated-target rejection.
+  That fix awaits the next native batch; do not infer raw response shape yet.
+- Native extension work is reusing bounded plist streaming with exact 1.7.0 pin
+  and reviewed feature enabling, plus keyed-archive UID checks. Immutable Dart
+  prepared metadata passed 25 parent-run tests. API/DTO/projector integration is
+  still pending; no base-only fallback is being called complete restoration.
