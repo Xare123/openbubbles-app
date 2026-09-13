@@ -117,6 +117,7 @@ function Assert-NativeScopeResults {
 $nativeDiagnosticCases = @(
     'cloud_sync_transient_bridge::tests::message_required_masks_distinguish_absent_and_without_value',
     'cloud_sync_transient_bridge::tests::message_extension_diagnostics_never_return_provider_values',
+    'cloud_sync_transient_bridge::tests::retained_reply_diagnostics_are_bounded_and_value_free',
     'tests::native_logger_handle_outlives_initialization',
     'desktop_native_logging::tests::findmy_probe_cannot_enable_broad_native_debug'
 )
@@ -128,13 +129,14 @@ $nativeDiagnosticCases = @(
 $nativeExtensionScope = 'cloud_sync_extension_payload::tests::'
 $nativeConverterScope = 'cloud_sync_canonical_converter::tests::'
 $nativeDtoScope = 'cloud_sync_canonical_dto::tests::'
-$nativeExtensionMinimum = 24
+$nativeExtensionMinimum = 25
 $nativeConverterMinimum = 78
 $nativeDtoMinimum = 23
 $nativeExtensionSpotCases = @(
     'cloud_sync_extension_payload::tests::generated_json_has_exact_version_one_wire_contract_and_roundtrips',
     'cloud_sync_extension_payload::tests::minimum_balloon_is_metadata_not_base_only_success'
     'cloud_sync_extension_payload::tests::session_metadata_has_closed_versions_and_separate_wire_identity'
+    'cloud_sync_extension_payload::tests::decode_diagnostic_stages_preserve_result_and_never_contain_content'
 )
 $nativeConverterSpotCases = @(
     'cloud_sync_canonical_converter::tests::extension_archive_projects_renderer_metadata_with_base_message',
