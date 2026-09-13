@@ -3931,3 +3931,26 @@ cannot authorize or perform adoption.
   process remains, completed request unsend-34 retained for reconciliation-only
   restart, C: 76.15 GiB free. No protected artifacts removed. Supported session
   deletion remains unavailable; closed transcripts are retained, not erased.
+
+### September 13 qualification wait, reply integration and treemap consolidation
+
+- Added Dart tests preserving multipart reply paths through native-domain mapping
+  and actual ObjectBox storage/replay. Missing and cross-chat parents reject with
+  the exact parent-unavailable code. Initial replay fixture lacked the ownership
+  snapshot normally written by the gateway; fixed the fixture, not production.
+  Full adapter/decoder suites passed 204 tests. These test-only additions postdate
+  the currently building e5547e8c7 artifact; verify its pinned test blobs separately.
+- Bounded Find My comparison confirmed the shared non-daemon API path. Existing
+  init/refresh observations already rule out the proposed cached-first timing
+  explanation. Parent rejected the unsupported inference that Pixel/Windows
+  saved configuration values are identical. No code/share-setting change; worker
+  closed and current native service/response issue remains.
+- Registration source already persists renewed users and retries failed lookup
+  once. Scoped evidence/backups had no useful pre-failure registration snapshot.
+  Local-reach's broad filename query did not return promptly and was stopped;
+  bounded fallback searches found only unrelated older installations. No expiry
+  cause or missing-persistence fix is claimed and no credentials were printed.
+- Treemap reduced from 814 to 461 lines before checklist touchups. Preserved its
+  434-line historical tail verbatim (verified normalized text equality) in
+  TREEMAP_PRE_MULTIPART_2026-09-13.md and linked it from the index. Replaced stale
+  active-job/initial-create-only narratives with current gates and invariants.

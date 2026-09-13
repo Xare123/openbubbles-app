@@ -5900,6 +5900,50 @@ void main() {
     expect(messages.single.hasApplePayloadData, isTrue);
   });
 
+  for (final parentState in ['valid', 'missing', 'foreign-chat']) {
+    test('multipart reply preserves part path and requires $parentState parent', () {
+      const route = 'iMessage;-;reply-fixture';
+      const parentGuid = '2DC756A5-E7DC-4824-9C70-D7C69196C21B';
+      const parentKey = 'reply-parent-hash';
+      final chatId = store.box<Chat>().put(Chat(guid: 'chat-guid', chatIdentifier: route));
+      _seedChatOwnershipAndAlias(store, scope: scope, generation: generation,
+        logicalEntityKeyHash: chatHash, canonicalGuid: 'chat-guid', chatIdentifier: route, chatId: chatId);
+      resolver.put(scope: scope, generation: generation, kind: CloudEntityKind.message,
+        logicalEntityKeyHash: parentKey, canonicalGuid: parentGuid);
+      _seedExactOwnershipProof(store, scope: scope, generation: generation, kind: CloudEntityKind.message,
+        logicalEntityKeyHash: parentKey, canonicalGuid: parentGuid);
+      _seedExactOwnershipProof(store, scope: scope, generation: generation, kind: CloudEntityKind.message,
+        logicalEntityKeyHash: messageHash, canonicalGuid: 'message-guid');
+      if (parentState != 'missing') {
+        final parentChat = parentState == 'foreign-chat'
+          ? store.box<Chat>().put(Chat(guid: 'foreign-chat')) : chatId;
+        store.box<Message>().put(Message(guid: parentGuid, text: 'Parent', dateCreated: testEpoch)
+          ..chat.targetId = parentChat);
+      }
+      final adapter = _newAdapter(store: store, activeScopeProvider: () => activeScope,
+        resolver: resolver, semanticApplyEnabled: true, allowMessageUpserts: true);
+      final payload = _messagePayload(logicalEntityKeyHash: messageHash, canonicalGuid: 'message-guid',
+        chatIdentifier: route, replyParentCanonicalGuid: parentGuid,
+        replyParentLogicalKeyHash: parentKey, replyParentPart: '0:1:27');
+      void apply() => store.runInTransaction(TxMode.write, () => adapter.applyEntity(scope: scope,
+        generation: generation, payload: payload,
+        snapshot: _snapshot(CloudEntityKind.message, messageHash, parentLogicalKeyHash: parentKey)));
+      final before = store.box<Message>().count();
+      if (parentState != 'valid') {
+        expect(apply, throwsA(isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode, 'safe code', 'canonical_message_reply_parent_unavailable')));
+        expect(store.box<Message>().count(), before);
+        return;
+      }
+      apply();
+      apply();
+      final reply = store.box<Message>().getAll().singleWhere((m) => m.guid == 'message-guid');
+      expect(reply.threadOriginatorGuid, parentGuid);
+      expect(reply.threadOriginatorPart, '0:1:27');
+      expect(store.box<Message>().count(), before + 1);
+    });
+  }
+
   test('preserves extension payload on absent and clears on explicitClear', () {
     seedExtensionChat();
     final adapter = _newAdapter(
@@ -9066,6 +9110,9 @@ CloudMessageEntityPayload _messagePayload({
   String? chatIdBareDirectServiceIdentifierAliasKeyHash,
   Iterable<CloudSemanticChatAlias> chatIdAliasCandidates = const [],
   String? msgProto4GroupIdAliasKeyHash,
+  String? replyParentCanonicalGuid,
+  String? replyParentLogicalKeyHash,
+  String? replyParentPart,
 }) => CloudMessageEntityPayload(
   logicalEntityKeyHash: logicalEntityKeyHash,
   canonicalGuid: canonicalGuid,
@@ -9076,6 +9123,9 @@ CloudMessageEntityPayload _messagePayload({
       chatIdBareDirectServiceIdentifierAliasKeyHash,
   chatIdAliasCandidates: chatIdAliasCandidates,
   msgProto4GroupIdAliasKeyHash: msgProto4GroupIdAliasKeyHash,
+  replyParentCanonicalGuid: replyParentCanonicalGuid,
+  replyParentLogicalKeyHash: replyParentLogicalKeyHash,
+  replyParentPart: replyParentPart,
   body: body,
   senderHandle: senderHandle,
   createdAt: createdAt ?? testEpoch,

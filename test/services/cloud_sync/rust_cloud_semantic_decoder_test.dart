@@ -86,68 +86,122 @@ void main() {
     expect(bindings.requests, isEmpty);
   });
 
-  test('prepares native extension metadata before returning a message', () async {
-    final entry = _entry();
-    final json = extensionTestJson();
-    bindings.result = _readyMessage(entry, payload: frb.CloudSyncTransientPayload(
-      message: _messagePayload(
-        balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
-        balloonBundleId: extensionTestBundle,
-        extensionMetadataJson: json,
-      ),
-    ));
-    final payload = (await decoder().decode(entry)).payload! as CloudMessageEntityPayload;
-    expect(payload.preparedExtension, isA<CloudSyncPreparedExtension>());
-    expect(payload.preparedExtension!.metadata.name, 'Synthetic App');
-    expect(payload.decodedExtensionPayloadState, CloudSemanticFieldState.value);
-    expect(payload.decodedExtensionPayload, utf8.encode(json));
-    expect(payload.preparedExtension!.toPayloadData().appData!.single.appId, 1234);
-  });
+  test(
+    'prepares native extension metadata before returning a message',
+    () async {
+      final entry = _entry();
+      final json = extensionTestJson();
+      bindings.result = _readyMessage(
+        entry,
+        payload: frb.CloudSyncTransientPayload(
+          message: _messagePayload(
+            balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
+            balloonBundleId: extensionTestBundle,
+            extensionMetadataJson: json,
+          ),
+        ),
+      );
+      final payload =
+          (await decoder().decode(entry)).payload! as CloudMessageEntityPayload;
+      expect(payload.preparedExtension, isA<CloudSyncPreparedExtension>());
+      expect(payload.preparedExtension!.metadata.name, 'Synthetic App');
+      expect(
+        payload.decodedExtensionPayloadState,
+        CloudSemanticFieldState.value,
+      );
+      expect(payload.decodedExtensionPayload, utf8.encode(json));
+      expect(
+        payload.preparedExtension!.toPayloadData().appData!.single.appId,
+        1234,
+      );
+    },
+  );
 
   test('retains malformed or misbound native extension metadata', () async {
     final entry = _entry();
-    for (final json in ['<html>', '{}', extensionTestJson(bundleId: 'com.example.other')]) {
-      bindings.result = _readyMessage(entry, payload: frb.CloudSyncTransientPayload(
-        message: _messagePayload(
-          balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
-          balloonBundleId: extensionTestBundle,
-          extensionMetadataJson: json,
+    for (final json in [
+      '<html>',
+      '{}',
+      extensionTestJson(bundleId: 'com.example.other'),
+    ]) {
+      bindings.result = _readyMessage(
+        entry,
+        payload: frb.CloudSyncTransientPayload(
+          message: _messagePayload(
+            balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
+            balloonBundleId: extensionTestBundle,
+            extensionMetadataJson: json,
+          ),
         ),
-      ));
-      await _expectFailure(decoder().decode(entry), CloudFailureCategory.dependency);
+      );
+      await _expectFailure(
+        decoder().decode(entry),
+        CloudFailureCategory.dependency,
+      );
     }
   });
 
   test('rejects extension metadata on a native reaction', () async {
     final entry = _entry();
-    bindings.result = _readyReaction(entry,
+    bindings.result = _readyReaction(
+      entry,
       reactionKind: frb.CloudSyncTransientReactionKind.heart,
-      removed: false, extensionMetadataJson: extensionTestJson());
-    await _expectFailure(decoder().decode(entry), CloudFailureCategory.dependency,
-      safeCode: 'decoder_reaction_shape_unsupported');
+      removed: false,
+      extensionMetadataJson: extensionTestJson(),
+    );
+    await _expectFailure(
+      decoder().decode(entry),
+      CloudFailureCategory.dependency,
+      safeCode: 'decoder_reaction_shape_unsupported',
+    );
   });
 
-  test('session update requires the same dependency in payload and snapshot', () async {
-    final entry = _entry();
-    final value = jsonDecode(extensionTestJson()) as Map<String, dynamic>;
-    value['version'] = 2;
-    value['context'] = {'role':'update', 'session_guid':'base-guid', 'session_logical_key_hash':_chatHash};
-    bindings.result = _readyMessage(entry, payload: frb.CloudSyncTransientPayload(
-      message: _messagePayload(balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
-        balloonBundleId: extensionTestBundle, extensionMetadataJson: jsonEncode(value)),
-    ));
-    final decoded = await decoder().decode(entry);
-    final payload = decoded.payload! as CloudMessageEntityPayload;
-    expect(payload.semanticParentLogicalKeyHash, decoded.snapshot!.parentLogicalKeyHash);
-    expect(payload.extensionParentCanonicalGuid, 'base-guid');
-    expect(payload.replyParentCanonicalGuid, isNull);
-    value['context']['session_logical_key_hash'] = 'Z' * 43;
-    bindings.result = _readyMessage(entry, payload: frb.CloudSyncTransientPayload(
-      message: _messagePayload(balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
-        balloonBundleId: extensionTestBundle, extensionMetadataJson: jsonEncode(value)),
-    ));
-    await _expectFailure(decoder().decode(entry), CloudFailureCategory.conflict);
-  });
+  test(
+    'session update requires the same dependency in payload and snapshot',
+    () async {
+      final entry = _entry();
+      final value = jsonDecode(extensionTestJson()) as Map<String, dynamic>;
+      value['version'] = 2;
+      value['context'] = {
+        'role': 'update',
+        'session_guid': 'base-guid',
+        'session_logical_key_hash': _chatHash,
+      };
+      bindings.result = _readyMessage(
+        entry,
+        payload: frb.CloudSyncTransientPayload(
+          message: _messagePayload(
+            balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
+            balloonBundleId: extensionTestBundle,
+            extensionMetadataJson: jsonEncode(value),
+          ),
+        ),
+      );
+      final decoded = await decoder().decode(entry);
+      final payload = decoded.payload! as CloudMessageEntityPayload;
+      expect(
+        payload.semanticParentLogicalKeyHash,
+        decoded.snapshot!.parentLogicalKeyHash,
+      );
+      expect(payload.extensionParentCanonicalGuid, 'base-guid');
+      expect(payload.replyParentCanonicalGuid, isNull);
+      value['context']['session_logical_key_hash'] = 'Z' * 43;
+      bindings.result = _readyMessage(
+        entry,
+        payload: frb.CloudSyncTransientPayload(
+          message: _messagePayload(
+            balloonBundleIdState: frb.CloudSyncTransientFieldState.value,
+            balloonBundleId: extensionTestBundle,
+            extensionMetadataJson: jsonEncode(value),
+          ),
+        ),
+      );
+      await _expectFailure(
+        decoder().decode(entry),
+        CloudFailureCategory.conflict,
+      );
+    },
+  );
 
   test(
     'rejects a forged ready SMS payload without typed native proof',
@@ -1080,103 +1134,109 @@ void main() {
     }
   });
 
-  test('maps rich message fields into the domain payload', () async {
-    final entry = _entry();
-    const attributedBody = frb.CloudSyncTransientAttributedBody(
-      text: 'hello',
-      runs: [
-        frb.CloudSyncTransientTextRun(
-          startUtf16: 0,
-          lengthUtf16: 5,
-          mentionHandle: 'friend@example.invalid',
-          bold: true,
-          italic: false,
-        ),
-      ],
-    );
-    const edit = frb.CloudSyncTransientMessageEdit(
-      part_: 1,
-      revision: 2,
-      bodies: [attributedBody],
-      modifiedAtMillis: 1787385604000,
-      originalRangeLocation: 3,
-      originalRangeLength: 2,
-    );
-    bindings.result = _readyMessage(
-      entry,
-      payload: frb.CloudSyncTransientPayload(
-        message: _messagePayload(
-          subjectState: frb.CloudSyncTransientFieldState.value,
-          subject: 'Subject',
-          body: 'hello',
-          attributedBodiesState: frb.CloudSyncTransientFieldState.value,
-          attributedBodies: [attributedBody],
-          createdAtMillis: 1787385601000,
-          error: 7,
-          readAtMillisState: frb.CloudSyncTransientFieldState.value,
-          readAtMillis: 1787385602000,
-          deliveredAtMillisState: frb.CloudSyncTransientFieldState.value,
-          deliveredAtMillis: 1787385603000,
-          knownFlags: const frb.CloudSyncTransientKnownMessageFlags(
-            fromMe: true,
-            delivered: true,
-            read: true,
-            hasDataDetectorResults: true,
-            deliveredQuietly: false,
-            didNotifyRecipient: true,
+  for (final replyPart in ['0', '0:1:27']) {
+    test(
+      'maps rich message fields into the domain payload reply=$replyPart',
+      () async {
+        final entry = _entry();
+        const attributedBody = frb.CloudSyncTransientAttributedBody(
+          text: 'hello',
+          runs: [
+            frb.CloudSyncTransientTextRun(
+              startUtf16: 0,
+              lengthUtf16: 5,
+              mentionHandle: 'friend@example.invalid',
+              bold: true,
+              italic: false,
+            ),
+          ],
+        );
+        const edit = frb.CloudSyncTransientMessageEdit(
+          part_: 1,
+          revision: 2,
+          bodies: [attributedBody],
+          modifiedAtMillis: 1787385604000,
+          originalRangeLocation: 3,
+          originalRangeLength: 2,
+        );
+        bindings.result = _readyMessage(
+          entry,
+          payload: frb.CloudSyncTransientPayload(
+            message: _messagePayload(
+              subjectState: frb.CloudSyncTransientFieldState.value,
+              subject: 'Subject',
+              body: 'hello',
+              attributedBodiesState: frb.CloudSyncTransientFieldState.value,
+              attributedBodies: [attributedBody],
+              createdAtMillis: 1787385601000,
+              error: 7,
+              readAtMillisState: frb.CloudSyncTransientFieldState.value,
+              readAtMillis: 1787385602000,
+              deliveredAtMillisState: frb.CloudSyncTransientFieldState.value,
+              deliveredAtMillis: 1787385603000,
+              knownFlags: const frb.CloudSyncTransientKnownMessageFlags(
+                fromMe: true,
+                delivered: true,
+                read: true,
+                hasDataDetectorResults: true,
+                deliveredQuietly: false,
+                didNotifyRecipient: true,
+              ),
+              replyParentLogicalKeyHash: _messageHash,
+              replyParentCanonicalGuid: 'reply-guid',
+              replyParentPart: replyPart,
+              editsState: frb.CloudSyncTransientFieldState.value,
+              edits: [edit],
+              retractedPartsState: frb.CloudSyncTransientFieldState.value,
+              retractedParts: [2, 4],
+            ),
           ),
-          replyParentLogicalKeyHash: _messageHash,
-          replyParentCanonicalGuid: 'reply-guid',
-          replyParentPart: '0',
-          editsState: frb.CloudSyncTransientFieldState.value,
-          edits: [edit],
-          retractedPartsState: frb.CloudSyncTransientFieldState.value,
-          retractedParts: [2, 4],
-        ),
-      ),
-    );
+        );
 
-    final payload =
-        (await decoder().decode(entry)).payload! as CloudMessageEntityPayload;
-    expect(payload.subjectState, CloudSemanticFieldState.value);
-    expect(payload.subject, 'Subject');
-    expect(payload.bodyState, CloudSemanticFieldState.value);
-    expect(payload.body, 'hello');
-    expect(
-      payload.createdAt,
-      DateTime.fromMillisecondsSinceEpoch(1787385601000, isUtc: true),
+        final payload =
+            (await decoder().decode(entry)).payload!
+                as CloudMessageEntityPayload;
+        expect(payload.subjectState, CloudSemanticFieldState.value);
+        expect(payload.subject, 'Subject');
+        expect(payload.bodyState, CloudSemanticFieldState.value);
+        expect(payload.body, 'hello');
+        expect(
+          payload.createdAt,
+          DateTime.fromMillisecondsSinceEpoch(1787385601000, isUtc: true),
+        );
+        expect(payload.error, 7);
+        expect(
+          payload.readAt,
+          DateTime.fromMillisecondsSinceEpoch(1787385602000, isUtc: true),
+        );
+        expect(
+          payload.deliveredAt,
+          DateTime.fromMillisecondsSinceEpoch(1787385603000, isUtc: true),
+        );
+        expect(payload.knownFlags?.fromMe, isTrue);
+        expect(payload.knownFlags?.hasDataDetectorResults, isTrue);
+        expect(payload.replyParentCanonicalGuid, 'reply-guid');
+        expect(payload.replyParentLogicalKeyHash, _messageHash);
+        expect(payload.replyParentPart, replyPart);
+        expect(payload.attributedBodiesState, CloudSemanticFieldState.value);
+        expect(payload.attributedBodies.single.text, 'hello');
+        expect(payload.attributedBodies.single.runs.single.startUtf16, 0);
+        expect(payload.attributedBodies.single.runs.single.lengthUtf16, 5);
+        expect(
+          payload.attributedBodies.single.runs.single.mentionHandle,
+          'friend@example.invalid',
+        );
+        expect(payload.attributedBodies.single.runs.single.bold, isTrue);
+        expect(payload.editsState, CloudSemanticFieldState.value);
+        expect(payload.edits.single.part, 1);
+        expect(payload.edits.single.revision, 2);
+        expect(payload.edits.single.originalRangeLocation, 3);
+        expect(payload.edits.single.originalRangeLength, 2);
+        expect(payload.retractedPartsState, CloudSemanticFieldState.value);
+        expect(payload.retractedParts, [2, 4]);
+      },
     );
-    expect(payload.error, 7);
-    expect(
-      payload.readAt,
-      DateTime.fromMillisecondsSinceEpoch(1787385602000, isUtc: true),
-    );
-    expect(
-      payload.deliveredAt,
-      DateTime.fromMillisecondsSinceEpoch(1787385603000, isUtc: true),
-    );
-    expect(payload.knownFlags?.fromMe, isTrue);
-    expect(payload.knownFlags?.hasDataDetectorResults, isTrue);
-    expect(payload.replyParentCanonicalGuid, 'reply-guid');
-    expect(payload.replyParentLogicalKeyHash, _messageHash);
-    expect(payload.replyParentPart, '0');
-    expect(payload.attributedBodiesState, CloudSemanticFieldState.value);
-    expect(payload.attributedBodies.single.text, 'hello');
-    expect(payload.attributedBodies.single.runs.single.startUtf16, 0);
-    expect(payload.attributedBodies.single.runs.single.lengthUtf16, 5);
-    expect(
-      payload.attributedBodies.single.runs.single.mentionHandle,
-      'friend@example.invalid',
-    );
-    expect(payload.attributedBodies.single.runs.single.bold, isTrue);
-    expect(payload.editsState, CloudSemanticFieldState.value);
-    expect(payload.edits.single.part, 1);
-    expect(payload.edits.single.revision, 2);
-    expect(payload.edits.single.originalRangeLocation, 3);
-    expect(payload.edits.single.originalRangeLength, 2);
-    expect(payload.retractedPartsState, CloudSemanticFieldState.value);
-    expect(payload.retractedParts, [2, 4]);
-  });
+  }
 
   test('rejects malformed field-state and value combinations', () async {
     final entry = _entry();

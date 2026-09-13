@@ -122,5 +122,14 @@ native refresh and aggregate reads are awaited. No missing-await patch was
 warranted. This rules out that specific host-ordering hypothesis, not the
 remaining native service/context or response-handling problem.
 
+A second bounded comparison confirmed the production People page and Windows
+host call the same makeFindMyFriends/refreshFollowing/selectFriend APIs, with
+the same hardcoded non-daemon branch. The production first poll reads the clone
+of initClient; the host explicitly refreshes. Existing native evidence already
+shows absent locations during initialization as well as refresh, so repeating
+that timing check is not the next useful test. The review does not prove the
+Pixel and Windows retained configuration values are identical. No secure/FMFD
+fallback was found in either caller, and no sharing setting was changed.
+
 The verbatim older investigation and superseded guard discussions are preserved
 in [Find My history](history/FINDMY_ASTRA_HISTORY_20260910_20260913.md).
