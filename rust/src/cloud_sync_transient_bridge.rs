@@ -699,6 +699,69 @@ fn message_extension_class(provider: Option<&str>, payload: Option<&[u8]>) -> &'
     }
 }
 
+/// Shape only, not a permissive reply parser. At most eight components are
+/// inspected; no target, part text, or account identifier leaves this helper.
+#[derive(Debug, PartialEq, Eq)]
+struct RetainedReplyShape {
+    syntax: &'static str,
+    components_capped_at_nine: usize,
+    uuid_position: &'static str,
+    other_parts_canonical_decimal: bool,
+}
+
+fn retained_reply_shape(reply: Option<&str>) -> RetainedReplyShape {
+    let mut shape = RetainedReplyShape {
+        syntax: "absent",
+        components_capped_at_nine: 0,
+        uuid_position: "none",
+        other_parts_canonical_decimal: false,
+    };
+    let Some(reply) = reply else {
+        return shape;
+    };
+    let Some(body) = reply.strip_prefix("r:") else {
+        shape.syntax = if reply.is_empty() {
+            "empty"
+        } else {
+            "missing_prefix"
+        };
+        return shape;
+    };
+    let count = body.split(':').take(9).count();
+    shape.components_capped_at_nine = count;
+    shape.syntax = match count {
+        1 => "missing_component",
+        2 => "two_components",
+        3..=8 => "multiple_components",
+        _ => "over_eight_components",
+    };
+    if count > 8 {
+        return shape;
+    }
+    let mut uuid_count = 0;
+    let mut uuid_index = 0;
+    let mut decimal_parts = true;
+    for (index, part) in body.split(':').enumerate() {
+        if uuid::Uuid::parse_str(part).is_ok() {
+            uuid_count += 1;
+            uuid_index = index;
+        } else {
+            decimal_parts &= !part.is_empty()
+                && part.bytes().all(|b| b.is_ascii_digit())
+                && (part.len() == 1 || !part.starts_with('0'));
+        }
+    }
+    shape.uuid_position = match uuid_count {
+        0 => "none",
+        1 if uuid_index == 0 => "first",
+        1 if uuid_index == count - 1 => "last",
+        1 => "middle",
+        _ => "multiple",
+    };
+    shape.other_parts_canonical_decimal = uuid_count == 1 && count > 1 && decimal_parts;
+    shape
+}
+
 fn record_name(record: &Record) -> Option<&str> {
     record
         .record_identifier
@@ -2670,15 +2733,32 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 debug!("CloudKit V2 retained association type={:?} reference_shape={association_shape} range_location_present={} range_length_present={}",
                     proto.associated_message_type, proto.associated_message_range_location.is_some(),
                     proto.associated_message_range_length.is_some());
+                if matches!(
+                    &converted,
+                    CloudCanonicalConversionOutcome::Quarantined(
+                        CloudCanonicalQuarantineReason::AmbiguousReply
+                    )
+                ) {
+                    let reply_shape = retained_reply_shape(
+                        message
+                            .msg_proto_2
+                            .as_ref()
+                            .and_then(|p| p.0.reply.as_deref()),
+                    );
+                    debug!("CloudKit V2 retained reply shape={reply_shape:?}");
+                }
                 // Only booleans, fixed enums and a nine-bit field mask. No
                 // bundle identifier, body, reply target, account or raw record.
-                debug!("CloudKit V2 transient message retained_shape absent_mask={absent:03x} without_value_mask={without_value:03x} guid_empty={} chat_empty={} sender_empty={} from_me={} body_present={} attributed_present={} extension_class={} reply_present={} outcome={converted:?}",
+                debug!("CloudKit V2 transient message retained_shape absent_mask={absent:03x} without_value_mask={without_value:03x} guid_empty={} chat_empty={} sender_empty={} from_me={} body_present={} attributed_present={} extension_class={} reply_present={}",
                     message.guid.is_empty(), message.chat_id.is_empty(), message.sender.is_empty(),
                     message.flags.contains(rustpush::cloud_messages::MessageFlags::IS_FROM_ME),
                     proto.text.as_deref().is_some_and(|value| !value.is_empty()),
                     proto.attributed_body.as_ref().is_some_and(|value| !value.is_empty()),
                     message_extension_class(proto.balloon_bundle_id.as_deref(), proto.payload_data.as_deref()),
                     message.msg_proto_2.as_ref().is_some_and(|value| value.0.reply.is_some()));
+                // Keep the value-free shape distinct from the typed, redacted
+                // outcome; a body/request debug formatter is never permitted.
+                debug!("CloudKit V2 retained conversion outcome={converted:?}");
             }
             if matches!(
                 &converted,
@@ -5292,6 +5372,94 @@ mod tests {
                 "empty_payload"
             );
             assert_eq!(message_extension_class(provider, None), "no_payload");
+        }
+    }
+
+    #[test]
+    fn retained_reply_diagnostics_are_bounded_and_value_free() {
+        const GUID: &str = "2DC756A5-E7DC-4824-9C70-D7C69196C21B";
+        for (wire, syntax, count, position, decimal) in [
+            (None, "absent", 0, "none", false),
+            (Some(String::new()), "empty", 0, "none", false),
+            (
+                Some("private-target".into()),
+                "missing_prefix",
+                0,
+                "none",
+                false,
+            ),
+            (Some("r:0".into()), "missing_component", 1, "none", false),
+            (
+                Some(format!("r:0:{GUID}")),
+                "two_components",
+                2,
+                "last",
+                true,
+            ),
+            (
+                Some(format!("r:0:1:{GUID}")),
+                "multiple_components",
+                3,
+                "last",
+                true,
+            ),
+            (
+                Some(format!("r:{GUID}:0:1")),
+                "multiple_components",
+                3,
+                "first",
+                true,
+            ),
+            (
+                Some(format!("r:0:{GUID}:1")),
+                "multiple_components",
+                3,
+                "middle",
+                true,
+            ),
+            (
+                Some(format!("r:00:1:{GUID}")),
+                "multiple_components",
+                3,
+                "last",
+                false,
+            ),
+            (
+                Some(format!("r:private-part:{GUID}")),
+                "two_components",
+                2,
+                "last",
+                false,
+            ),
+            (
+                Some(format!("r:{GUID}:{GUID}")),
+                "two_components",
+                2,
+                "multiple",
+                false,
+            ),
+            (
+                Some(format!("r:{}", "0:".repeat(100))),
+                "over_eight_components",
+                9,
+                "none",
+                false,
+            ),
+        ] {
+            let shape = retained_reply_shape(wire.as_deref());
+            assert_eq!(
+                shape,
+                RetainedReplyShape {
+                    syntax,
+                    components_capped_at_nine: count,
+                    uuid_position: position,
+                    other_parts_canonical_decimal: decimal
+                }
+            );
+            let diagnostic = format!("{shape:?}");
+            assert!(!diagnostic.contains(GUID));
+            assert!(!diagnostic.contains("private-target"));
+            assert!(!diagnostic.contains("private-part"));
         }
     }
 

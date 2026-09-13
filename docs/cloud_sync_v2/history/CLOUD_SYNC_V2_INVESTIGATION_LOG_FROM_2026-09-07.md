@@ -3840,3 +3840,34 @@ cannot authorize or perform adoption.
   active-job/agent handoff before planned compaction, or immediately afterward
   if automatic compaction interrupted it. Removed superseded native-candidate
   rows from the current board; their qualification history remains above.
+
+### September 13 session qualification and real retained replay
+
+- Run 34768626100 passed in 22m50s: source 16112ec69, pilot 2343e13f9,
+  143 selected native tests, 519 focused Dart tests and 51 packaged-library
+  codec tests. Parent verified archive/39 source inputs/12 logs/three ARM64
+  binaries, signed only a staged Rust DLL, and reran all 51 codec cases with
+  App Control enabled. Original runtime and vendor ObjectBox were preserved.
+- The actual new DLL was observed in the live test process. Non-projecting
+  inspection passed with unchanged durable state, 37 cases. Five type-2 cases
+  now reach the extension decoder but fail `Malformed`; two previously unknown
+  associations are type 3. None of the sampled seven is proved restored.
+- Normal read report obcs2-semantic-1789318496467790.json applied two retained
+  Message records, fetched zero, observed empty terminal reads in all streams,
+  and kept outbox 17 -> 17 with remote saves/deletes off. Retained count 6648.
+  Exact rollback copy and report are under private windows-session-20260913.
+  Initial token refresh reported session missing before the eventual completed
+  reads; this is not an auth-lifecycle success claim.
+- Normal replies also repeatedly hit AmbiguousReply. A bounded Muse worker is
+  comparing the native parser to existing live/legacy interpretation. Parent
+  added content-free metadata decode-stage labels without changing acceptance;
+  these edits require native qualification before live use. No raw archive was
+  exported and no real messages or credentials were added to source/tests.
+- Muse traced two AmbiguousReply causes: the strict two-component parser and
+  the explicit reaction/extension-plus-reply coexistence guard. Current normal
+  assoc-0/no-payload cases isolate the parser. Native live and Dart legacy
+  imports use different split rules, so no guessed parent mapping was adopted.
+  Parent added a bounded bridge-only shape classifier: component-count cap,
+  UUID position class and canonical-decimal-part flag, never target strings.
+  Both diagnostic additions have synthetic regression cases and are batched
+  into the same next native run. Muse made no changes and was closed.

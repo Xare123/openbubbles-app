@@ -11,19 +11,23 @@ timestamp: 2026-09-13
 
 ## Fastest current Dart loop, September 12
 
-Current handoff (September 13): Windows native-only run 34762729315 is qualified
-for source `3496034e3`. Its separate signed directory is
-`C:\Codex\OpenBubblesReview\artifacts\windows-native-34762729315\signed`;
-DLL SHA256 `bf1507c72421fed903dcaffcbe863a001d0d59bd2c04e20b8ce8befe6345147e`.
+Current handoff (September 13): Windows native-only run 34768626100 is qualified
+for source `16112ec69`. Its separate signed directory is
+`C:\Codex\OpenBubblesReview\artifacts\windows-native-34768626100\signed`;
+DLL SHA256 `32b0bed6c53bc07ad034817627eb2a9cd5318fec859e4d9d93080b4d2a051c08`.
 All 51 packaged-DLL codec tests passed locally with App Control enabled, and
 the actual loaded module path was verified. The original GUI/runtime was not
 replaced. Archive, unsigned/signed lineage and source-EOL comparison evidence
 are in the adjacent `local-qualification.json` and `provenance.json`.
 
-That DLL includes the logger-handle repair and `extensionMetadataJson` contract.
-It passed 141 selected native tests and the shared extension digest vector.
-Live read report obcs2-semantic-1789312307027272.json applied four retained records
-and kept outbox 17 -> 17. The seven sampled extension/association blockers remain.
+That DLL includes the logger-handle repair, `extensionMetadataJson` contract and
+v2 session context. It passed 143 selected native tests, 519 focused Dart tests
+and both shared extension digest vectors. Live read report
+obcs2-semantic-1789318496467790.json applied two retained records and kept outbox
+17 -> 17. The seven sampled extension/association blockers remain: five type-2
+metadata decode failures and two unsupported type-3 records. New diagnostic
+source edits are not included in this DLL. The Find My launcher remains pinned
+to its separately qualified 3496034e3 runtime until deliberately updated.
 Earlier source `ea757e188` proved an ordinary text send/edit and exact readback.
 Bridge run 34761004976 generated the matching bindings; its synthetic test fixture
 error was corrected before successful Windows qualification.

@@ -68,6 +68,31 @@ pub enum ExtensionPayloadFailure {
 type Failure = ExtensionPayloadFailure;
 type Result<T> = std::result::Result<T, Failure>;
 
+// Diagnostic labels are a closed enum, never a key/value copied from an
+// untrusted archive. This lets the Windows loop identify the failing contract
+// without exporting raw payloads or guessing which validation to loosen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExtensionDecodeStage {
+    BundleIdentifier,
+    BinaryPreflight,
+    PlistRead,
+    ArchiveGraph,
+    ArchiveExpansion,
+    Root,
+    RootDictionary,
+    RootClass,
+    Name,
+    AppId,
+    Url,
+    SessionIdentifier,
+    DisplayText,
+    LiveLayout,
+    Icon,
+    TemplateLayout,
+    MetadataContract,
+    Complete,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExtensionPayloadMetadata {
@@ -319,10 +344,11 @@ pub fn decode_extension_payload(
     payload: &[u8],
     bundle_id: &str,
 ) -> Result<ExtensionPayloadMetadata> {
-    let result = decode_extension_payload_inner(payload, bundle_id);
+    let mut stage = ExtensionDecodeStage::BundleIdentifier;
+    let result = decode_extension_payload_inner(payload, bundle_id, &mut stage);
     if let Err(failure) = &result {
         log::debug!(target: "rust_lib_bluebubbles::cloud_sync_transient_bridge",
-            "CloudKit V2 extension metadata decode failed reason={failure:?}");
+            "CloudKit V2 extension metadata decode failed stage={stage:?} reason={failure:?}");
     }
     result
 }
@@ -330,17 +356,26 @@ pub fn decode_extension_payload(
 fn decode_extension_payload_inner(
     payload: &[u8],
     bundle_id: &str,
+    stage: &mut ExtensionDecodeStage,
 ) -> Result<ExtensionPayloadMetadata> {
+    *stage = ExtensionDecodeStage::BundleIdentifier;
     validate_bundle_id(bundle_id)?;
+    *stage = ExtensionDecodeStage::BinaryPreflight;
     validate_binary(payload)?;
+    *stage = ExtensionDecodeStage::PlistRead;
     let archive = Value::from_reader(Cursor::new(payload)).map_err(|_| Failure::Malformed)?;
+    *stage = ExtensionDecodeStage::ArchiveGraph;
     validate_archive(&archive)?;
     // Use expand, not expand_root's missing-root unwrap. The preflight covers
     // expand_key's indexes, recursive clones, and expand_dict's length expect.
+    *stage = ExtensionDecodeStage::ArchiveExpansion;
     let mut expanded = KeyedArchive::expand(payload).map_err(|_| Failure::Malformed)?;
+    *stage = ExtensionDecodeStage::Root;
     let root = expanded.remove("root").ok_or(Failure::Malformed)?;
-    let metadata = project(&root, bundle_id)?;
+    let metadata = project(&root, bundle_id, stage)?;
+    *stage = ExtensionDecodeStage::MetadataContract;
     validate_metadata(&metadata)?;
+    *stage = ExtensionDecodeStage::Complete;
     Ok(metadata)
 }
 
@@ -383,16 +418,25 @@ fn data(value: &Value) -> Result<&[u8]> {
         .ok_or(Failure::Malformed)
 }
 
-fn project(root: &Value, bundle_id: &str) -> Result<ExtensionPayloadMetadata> {
+fn project(
+    root: &Value,
+    bundle_id: &str,
+    stage: &mut ExtensionDecodeStage,
+) -> Result<ExtensionPayloadMetadata> {
+    *stage = ExtensionDecodeStage::RootDictionary;
     let dict = dictionary(root)?;
+    *stage = ExtensionDecodeStage::RootClass;
     class_is(dict, &["NSDictionary", "NSMutableDictionary"])?;
     // Ordinary extra app/userInfo fields are ignored like legacy serde. The
     // graph preflight budgets them and protected source remains untouched.
+    *stage = ExtensionDecodeStage::Name;
     let name = text(required(dict, "an")?)?.to_owned();
+    *stage = ExtensionDecodeStage::AppId;
     let app_id = dict
         .get("appid")
         .map(|v| v.as_unsigned_integer().ok_or(Failure::Malformed))
         .transpose()?;
+    *stage = ExtensionDecodeStage::Url;
     let raw_url = required(dict, "URL")?;
     let url_dict = dictionary(raw_url)?;
     fields(url_dict, &["$class", "NS.base", "NS.relative"])?;
@@ -404,6 +448,7 @@ fn project(root: &Value, bundle_id: &str) -> Result<ExtensionPayloadMetadata> {
     if url.len() > MAX_STRING_BYTES {
         return Err(Failure::LimitExceeded);
     }
+    *stage = ExtensionDecodeStage::SessionIdentifier;
     let session = dict
         .get("sessionIdentifier")
         .map(|v| -> Result<String> {
@@ -419,10 +464,12 @@ fn project(root: &Value, bundle_id: &str) -> Result<ExtensionPayloadMetadata> {
                 .to_string())
         })
         .transpose()?;
+    *stage = ExtensionDecodeStage::DisplayText;
     let ld_text = dict
         .get("ldtext")
         .map(|v| text(v).map(str::to_owned))
         .transpose()?;
+    *stage = ExtensionDecodeStage::LiveLayout;
     let is_live = if let Some(live) = dict.get("liveLayoutInfo") {
         if data(live)?.len() > MAX_LIVE_LAYOUT_BYTES {
             return Err(Failure::LimitExceeded);
@@ -431,7 +478,9 @@ fn project(root: &Value, bundle_id: &str) -> Result<ExtensionPayloadMetadata> {
     } else {
         false
     };
+    *stage = ExtensionDecodeStage::Icon;
     let icon = dict.get("ai").map(|v| decode_icon(data(v)?)).transpose()?;
+    *stage = ExtensionDecodeStage::TemplateLayout;
     let layout = match (dict.get("layoutClass"), dict.get("userInfo")) {
         (None, None) => None,
         (Some(kind), Some(info)) => {
@@ -853,6 +902,74 @@ mod tests {
     }
     fn archive_result(archive: &Value) -> Result<ExtensionPayloadMetadata> {
         decode_extension_payload(&encode(archive), "com.example.synthetic")
+    }
+
+    #[test]
+    fn decode_diagnostic_stages_preserve_result_and_never_contain_content() {
+        let bytes = encode(&archived(balloon()));
+        let mut stage = ExtensionDecodeStage::Complete;
+        let expected = decode_extension_payload(&bytes, "com.example.synthetic").unwrap();
+        let actual =
+            decode_extension_payload_inner(&bytes, "com.example.synthetic", &mut stage).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(stage, ExtensionDecodeStage::Complete);
+        assert_eq!(
+            decode_extension_payload_inner(&bytes, "", &mut stage),
+            Err(Failure::Malformed),
+        );
+        assert_eq!(stage, ExtensionDecodeStage::BundleIdentifier);
+        assert_eq!(
+            decode_extension_payload_inner(b"invalid", "com.example.synthetic", &mut stage),
+            Err(Failure::UnsupportedEncoding),
+        );
+        assert_eq!(stage, ExtensionDecodeStage::BinaryPreflight);
+
+        let mut bad_archive = archived(balloon());
+        bad_archive
+            .as_dictionary_mut()
+            .unwrap()
+            .get_mut("$top")
+            .unwrap()
+            .as_dictionary_mut()
+            .unwrap()
+            .insert("root".into(), uid(u64::MAX));
+        assert_eq!(
+            decode_extension_payload_inner(
+                &encode(&bad_archive),
+                "com.example.synthetic",
+                &mut stage,
+            ),
+            Err(Failure::Malformed)
+        );
+        assert_eq!(stage, ExtensionDecodeStage::ArchiveGraph);
+
+        for (field, expected_stage) in [
+            ("an", ExtensionDecodeStage::Name),
+            ("appid", ExtensionDecodeStage::AppId),
+            ("URL", ExtensionDecodeStage::Url),
+            ("sessionIdentifier", ExtensionDecodeStage::SessionIdentifier),
+            ("ldtext", ExtensionDecodeStage::DisplayText),
+            ("liveLayoutInfo", ExtensionDecodeStage::LiveLayout),
+            ("ai", ExtensionDecodeStage::Icon),
+            ("layoutClass", ExtensionDecodeStage::TemplateLayout),
+        ] {
+            let mut invalid = balloon();
+            invalid
+                .as_dictionary_mut()
+                .unwrap()
+                .insert(field.into(), Value::Boolean(true));
+            let result = decode_extension_payload_inner(
+                &encode(&archived(invalid)),
+                "com.example.synthetic",
+                &mut stage,
+            );
+            assert_eq!(result, Err(Failure::Malformed));
+            assert_eq!(stage, expected_stage);
+            let label = format!("{stage:?}");
+            assert!(!label.contains("synthetic"));
+            assert!(!label.contains("Synthetic App"));
+            assert!(!label.contains("app:synthetic"));
+        }
     }
 
     #[test]
