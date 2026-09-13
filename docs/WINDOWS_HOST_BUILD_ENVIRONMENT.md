@@ -11,6 +11,26 @@ timestamp: 2026-09-10
 
 ## Fastest current Dart loop, September 12
 
+Current handoff (September 13): Windows native-only run 34742235201 is qualified
+for source `ea757e188`. Its separate signed directory is
+`C:\Codex\OpenBubblesReview\artifacts\windows-native-34742235201\signed`;
+DLL SHA256 `4885b706d651c1ccac9a3806e98a98814540dc116768ef5dac3d084ff7d6426b`.
+All 51 packaged-DLL codec tests passed locally with App Control enabled, and
+the actual loaded module path was verified. The original GUI/runtime was not
+replaced. Archive, unsigned/signed lineage and source-EOL comparison evidence
+are in the adjacent `local-qualification.json` and `provenance.json`.
+
+That DLL exposed a native logger-handle lifetime defect. New native-only run
+34744744122 is qualifying source `b2797dd07`, pilot `f110e2562`, including its
+logger repair and bounded Find My diagnostics. It is not yet qualified. After
+success, verify all exact test cases and hashes, stage/sign separately, rerun
+51 codec cases, and inspect retained-record diagnostics with the new DLL.
+Do not silently substitute a new native library under the old GUI receipt.
+The Find My test host separately pins its allowed DLL hash/source files; update
+those only after review of the newly qualified artifact, not merely to bypass
+a rejected import. Current live roster/selected results and invocation are in
+[the Find My guide](FINDMY_ASTRA_20260910.md).
+
 Use `test/live/cloud_sync_v2_windows_live_harness_test.dart` before rebuilding a
 Windows bundle when native code and generated interfaces are unchanged. It runs
 the real retained dev profile with the current Dart source and an explicitly
