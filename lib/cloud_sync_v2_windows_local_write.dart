@@ -174,6 +174,8 @@ final class CloudSyncWindowsWriteRequest {
             )
           : null,
       refreshSenderAuthentication = json['refreshSenderAuthentication'] == true,
+      previousMutationFromRequestId =
+          json['previousMutationFromRequestId'] as String?,
       existingChatFromRequestId = json['existingChatFromRequestId'] as String? {
     final validVersion = json['version'] == 3
         ? _recipient == null &&
@@ -238,6 +240,14 @@ final class CloudSyncWindowsWriteRequest {
                         ).hasMatch(existingChatFromRequestId!) &&
                         existingChatFromRequestId != id);
     if (!validVersion ||
+        (json.containsKey('previousMutationFromRequestId') &&
+            (json['version'] != 6 ||
+                previousMutationFromRequestId == null ||
+                !RegExp(
+                  r'^[a-z0-9-]{1,64}$',
+                ).hasMatch(previousMutationFromRequestId!) ||
+                previousMutationFromRequestId == id ||
+                previousMutationFromRequestId == existingChatFromRequestId)) ||
         (json['version'] != 5 &&
             (json.containsKey('reactionType') ||
                 json.containsKey('reactionPart'))) ||
@@ -282,6 +292,10 @@ final class CloudSyncWindowsWriteRequest {
   /// retry after failure and never a reason to clear hardware or CloudKit state.
   final bool refreshSenderAuthentication;
   final String? existingChatFromRequestId;
+
+  /// Explicit test-chain predecessor. Absent for historical v6 requests, whose
+  /// immutable binding and pristine-parent selection stay unchanged.
+  final String? previousMutationFromRequestId;
   String get binding => sha256
       .convert(
         utf8.encode(
@@ -296,6 +310,11 @@ final class CloudSyncWindowsWriteRequest {
                     mutationType,
                     mutationPart,
                     text,
+                    if (previousMutationFromRequestId != null)
+                      [
+                        'confirmed-predecessor-v1',
+                        previousMutationFromRequestId,
+                      ],
                     if (refreshSenderAuthentication) 'refresh-sender-auth-v1',
                   ]
                 : reactionType != null
@@ -561,8 +580,9 @@ Message cloudSyncWindowsMutationParent(
   Store store,
   Map<String, dynamic> claim,
   CloudSyncWindowsWriteRequest request,
-  String accountFingerprint,
-) {
+  String accountFingerprint, {
+  CloudSyncLocalMutationAdmissionSource? confirmedPreviousMutation,
+}) {
   if (request.mutationType == null) {
     throw StateError('cloud_sync_windows_mutation_request_required');
   }
@@ -581,13 +601,24 @@ Message cloudSyncWindowsMutationParent(
   try {
     final rows = query.find();
     final parent = rows.length == 1 ? rows.single : null;
+    final chained = request.previousMutationFromRequestId != null;
+    if (chained != (confirmedPreviousMutation != null) ||
+        (chained &&
+            (confirmedPreviousMutation!.accountFingerprint !=
+                    accountFingerprint ||
+                confirmedPreviousMutation.kind != 0 ||
+                confirmedPreviousMutation.targetPart != 0 ||
+                parent == null ||
+                !confirmedPreviousMutation.matchesReflectedParent(parent)))) {
+      throw StateError('cloud_sync_windows_mutation_predecessor_mismatch');
+    }
     if (parent == null ||
         parent.chat.targetId != chat.id ||
         chat.guid != 'iMessage;-;${request.recipient}' ||
         chat.chatIdentifier != request.recipient ||
         parent.isFromMe != true ||
         parent.dateDeleted != null ||
-        parent.dateEdited != null ||
+        (chained ? parent.dateEdited == null : parent.dateEdited != null) ||
         parent.dateScheduled != null ||
         parent.verificationFailed ||
         parent.associatedMessageGuid != null ||
@@ -595,7 +626,9 @@ Message cloudSyncWindowsMutationParent(
         parent.hasAttachments ||
         parent.dbAttachments.isNotEmpty ||
         parent.subject?.isNotEmpty == true ||
-        parent.messageSummaryInfo.isNotEmpty ||
+        (chained
+            ? parent.messageSummaryInfo.isEmpty
+            : parent.messageSummaryInfo.isNotEmpty) ||
         parent.text?.trim().isNotEmpty != true ||
         parent.attributedBody.length != 1 ||
         parent.attributedBody.single.string != parent.text) {
@@ -1401,12 +1434,94 @@ final class CloudSyncWindowsLocalWrite {
                   ).readAsString(),
                 )
                 as Map<String, dynamic>;
+        Map<String, dynamic>? previousMutationClaim;
+        if (request.previousMutationFromRequestId case final previousId?) {
+          Future<Map<String, dynamic>> readBoundedJson(String name) async {
+            final file = File(path.join(directory.path, name));
+            if (await file.length() > 8192) {
+              throw StateError(
+                'cloud_sync_windows_mutation_predecessor_mismatch',
+              );
+            }
+            return jsonDecode(await file.readAsString())
+                as Map<String, dynamic>;
+          }
+
+          final previousRequest = CloudSyncWindowsWriteRequest.fromJson(
+            await readBoundedJson(
+              'windows-local-write-request-$previousId.json',
+            ),
+          );
+          previousMutationClaim = await readBoundedJson(
+            'windows-write-$previousId.json',
+          );
+          if (previousRequest.id != previousId ||
+              previousRequest.mutationType != 'edit' ||
+              previousRequest.existingChatFromRequestId !=
+                  request.existingChatFromRequestId ||
+              previousRequest.recipient != request.recipient ||
+              previousRequest.sender != request.sender ||
+              previousMutationClaim['version'] != 2 ||
+              previousMutationClaim['purpose'] != 'mutation' ||
+              previousMutationClaim['account'] != auth.accountFingerprint ||
+              previousMutationClaim['binding'] != previousRequest.binding ||
+              previousMutationClaim['local_message_id'] is! int ||
+              previousMutationClaim['target_guid_hash'] is! String ||
+              previousMutationClaim['source_sha256'] is! String) {
+            throw StateError(
+              'cloud_sync_windows_mutation_predecessor_mismatch',
+            );
+          }
+        }
         Message selectParent() {
+          CloudSyncLocalMutationAdmissionSource? previousProof;
+          if (previousMutationClaim case final previousMutation?) {
+            final query = store
+                .box<CloudSyncLocalMutationIntentEntity>()
+                .query(
+                  CloudSyncLocalMutationIntentEntity_.accountFingerprint
+                      .equals(auth.accountFingerprint)
+                      .and(
+                        CloudSyncLocalMutationIntentEntity_.localMessageId
+                            .equals(
+                              previousMutation['local_message_id'] as int,
+                            ),
+                      )
+                      .and(
+                        CloudSyncLocalMutationIntentEntity_.targetGuidHash
+                            .equals(
+                              previousMutation['target_guid_hash'] as String,
+                            ),
+                      )
+                      .and(
+                        CloudSyncLocalMutationIntentEntity_.sourceSha256.equals(
+                          previousMutation['source_sha256'] as String,
+                        ),
+                      ),
+                )
+                .build();
+            try {
+              final intent = query.findUnique();
+              if (intent == null) {
+                throw StateError(
+                  'cloud_sync_windows_mutation_predecessor_mismatch',
+                );
+              }
+              previousProof = journal.readConfirmedPredecessor(
+                intentId: intent.id,
+                currentAuth: auth,
+                stillCurrent: current,
+              );
+            } finally {
+              query.close();
+            }
+          }
           final parent = cloudSyncWindowsMutationParent(
             store,
             previous,
             request,
             auth.accountFingerprint,
+            confirmedPreviousMutation: previousProof,
           );
           // Deliberately narrow qualification window, not a claim about Apple's
           // full product limits. Five minutes covers isolated harness startup
@@ -1429,7 +1544,27 @@ final class CloudSyncWindowsLocalWrite {
             zone: 'messageManateeZone',
             persistenceLane: CloudSyncPersistenceLane.semantic,
           );
-          if (createJournal.readConfirmedParentDependency(
+          if (previousProof != null) {
+            final proof = previousProof;
+            final predecessor = proof.requirePredecessor(
+              store: store,
+              messageScope: scope,
+              readConfirmedLocalParent: (target) =>
+                  createJournal.readConfirmedParentDependency(
+                    store,
+                    scope,
+                    target,
+                    reflectedMutationValidated: proof.matchesReflectedParent(
+                      target,
+                    ),
+                  ),
+            );
+            if (predecessor.localMessageId != parent.id) {
+              throw StateError(
+                'cloud_sync_windows_mutation_predecessor_mismatch',
+              );
+            }
+          } else if (createJournal.readConfirmedParentDependency(
                 store,
                 scope,
                 parent,

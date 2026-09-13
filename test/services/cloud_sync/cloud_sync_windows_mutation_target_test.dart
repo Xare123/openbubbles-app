@@ -7,8 +7,8 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-// Real ObjectBox selection with synthetic data. First-pristine-mutation only:
-// chained edits, attachment parents and arbitrary personal history are excluded.
+// Real ObjectBox selection with synthetic data. Pristine selection remains the
+// default; chaining requires an explicit completed-journal predecessor proof.
 void main() {
   const guid = '11111111-1111-4111-8111-111111111111';
   const recipient = '+15555550100';
@@ -25,6 +25,67 @@ void main() {
     'mutationPart': 0,
     'text': 'Edited text',
   };
+
+  test('explicit chain binding preserves historical v6 identity', () {
+    final raw = mutationRequest();
+    final original = CloudSyncWindowsWriteRequest.fromJson(raw);
+    final originalBinding = sha256
+        .convert(
+          utf8.encode(
+            jsonEncode([
+              'windows-local-write-v6',
+              raw['id'],
+              recipient,
+              sender,
+              raw['existingChatFromRequestId'],
+              'edit',
+              0,
+              raw['text'],
+            ]),
+          ),
+        )
+        .toString();
+    expect(original.binding, originalBinding);
+    expect(original.previousMutationFromRequestId, isNull);
+    final first = CloudSyncWindowsWriteRequest.fromJson({
+      ...raw,
+      'previousMutationFromRequestId': 'previous-edit-1',
+    });
+    final second = CloudSyncWindowsWriteRequest.fromJson({
+      ...raw,
+      'previousMutationFromRequestId': 'previous-edit-2',
+    });
+    expect(first.binding, isNot(original.binding));
+    expect(first.binding, isNot(second.binding));
+    expect(first.previousMutationFromRequestId, 'previous-edit-1');
+    for (final invalid in [
+      null,
+      '',
+      '../private',
+      raw['id'],
+      raw['existingChatFromRequestId'],
+    ]) {
+      expect(
+        () => CloudSyncWindowsWriteRequest.fromJson({
+          ...raw,
+          'previousMutationFromRequestId': invalid,
+        }),
+        throwsStateError,
+      );
+    }
+    expect(
+      () => CloudSyncWindowsWriteRequest.fromJson({
+        'version': 1,
+        'id': 'initial-1',
+        'recipient': recipient,
+        'sender': sender,
+        'text': 'Fixture',
+        'allowSend': true,
+        'previousMutationFromRequestId': 'previous-edit-1',
+      }),
+      throwsStateError,
+    );
+  });
 
   group('mutation parent selection and payload', () {
     late Directory directory;
@@ -97,6 +158,17 @@ void main() {
       expect(
         cloudSyncWindowsMutationParent(store, claim, req, 'account').id,
         parent.id,
+      );
+    });
+
+    test('a chain request cannot select a parent without a journal proof', () {
+      final request = CloudSyncWindowsWriteRequest.fromJson({
+        ...mutationRequest(),
+        'previousMutationFromRequestId': 'previous-edit-1',
+      });
+      expect(
+        () => cloudSyncWindowsMutationParent(store, claim, request, 'account'),
+        throwsStateError,
       );
     });
 

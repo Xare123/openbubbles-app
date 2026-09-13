@@ -1158,7 +1158,10 @@ impl CloudCanonicalReplyReference {
     ) -> Result<Self, CloudCanonicalValidationFailure> {
         validate_identifier(&parent_guid)?;
         validate_identifier(&parent_part)?;
-        if parent_guid.contains(':') || parent_part.contains(':') {
+        if parent_guid.contains(':')
+            || (parent_part.contains(':')
+                && !unambiguous_multipart_reply(&parent_part, &parent_guid))
+        {
             return Err(CloudCanonicalValidationFailure::AmbiguousReplyParent);
         }
         Ok(Self {
@@ -2276,19 +2279,14 @@ pub(crate) fn parse_reply_parent(
     let body = value
         .strip_prefix("r:")
         .ok_or(CloudCanonicalValidationFailure::MalformedReplyParent)?;
-    let mut parts = body.split(':');
-    let parent_part = parts
-        .next()
+    let (parent_part, parent_guid) = body
+        .rsplit_once(':')
         .ok_or(CloudCanonicalValidationFailure::MalformedReplyParent)?;
-    let parent_guid = parts
-        .next()
-        .ok_or(CloudCanonicalValidationFailure::MalformedReplyParent)?;
-    if parts.next().is_some() {
+    if parent_part.contains(':') && !unambiguous_multipart_reply(parent_part, parent_guid) {
         return Err(CloudCanonicalValidationFailure::AmbiguousReplyParent);
     }
     if parent_part.is_empty()
-        || !parent_part.bytes().all(|byte| byte.is_ascii_digit())
-        || (parent_part.len() > 1 && parent_part.starts_with('0'))
+        || !parent_part.split(':').all(canonical_reply_decimal)
         || parent_guid.is_empty()
     {
         return Err(CloudCanonicalValidationFailure::MalformedReplyParent);
@@ -2301,6 +2299,24 @@ pub(crate) fn parse_reply_parent(
         parent_guid: parent_guid.to_owned(),
         parent_part: parent_part.to_owned(),
     })
+}
+
+fn canonical_reply_decimal(part: &str) -> bool {
+    !part.is_empty()
+        && part.bytes().all(|b| b.is_ascii_digit())
+        && (part.len() == 1 || !part.starts_with('0'))
+}
+
+// Observed CloudKit replies carry a numeric part path followed by one UUID.
+// This agrees with both legacy splits (first UUID / final component), without
+// accepting an arbitrary colon-containing GUID or dropping part information.
+fn unambiguous_multipart_reply(part: &str, guid: &str) -> bool {
+    let count = part.split(':').take(9).count();
+    (2..=8).contains(&count)
+        && part.split(':').all(canonical_reply_decimal)
+        && guid.len() == 36
+        && uuid::Uuid::parse_str(guid)
+            .is_ok_and(|id| id.hyphenated().to_string().eq_ignore_ascii_case(guid))
 }
 
 impl ParsedReplyParent {
@@ -3062,6 +3078,48 @@ mod tests {
                 Err(CloudCanonicalValidationFailure::MalformedReplyParent),
                 "{malformed}"
             );
+        }
+    }
+
+    #[test]
+    fn multipart_reply_preserves_numeric_path_and_exact_final_uuid() {
+        const GUID: &str = "2DC756A5-E7DC-4824-9C70-D7C69196C21B";
+        for part in ["0:0:0", "1:27", "0:1:2:3:4:5:6:7"] {
+            let parsed = parse_reply_parent(&format!("r:{part}:{GUID}")).unwrap();
+            assert_eq!(parsed.parent_part(), part);
+            assert_eq!(parsed.parent_guid(), GUID);
+            let reference = CloudCanonicalReplyReference::new(
+                GUID.into(),
+                part.into(),
+                CloudCanonicalHash::new("A".repeat(43)).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(reference.parent_part(), part);
+            assert!(!format!("{reference:?}").contains(GUID));
+        }
+        for part in [
+            "0::0",
+            "00:0:0",
+            "0:-1:0",
+            "0:1.0:0",
+            "0:private:0",
+            "0:1:2:3:4:5:6:7:8",
+        ] {
+            assert!(parse_reply_parent(&format!("r:{part}:{GUID}")).is_err());
+            assert!(CloudCanonicalReplyReference::new(
+                GUID.into(),
+                part.into(),
+                CloudCanonicalHash::new("A".repeat(43)).unwrap(),
+            )
+            .is_err());
+        }
+        for suffix in [
+            "opaque-guid",
+            "2DC756A5E7DC48249C70D7C69196C21B",
+            "",
+            "bad:guid",
+        ] {
+            assert!(parse_reply_parent(&format!("r:0:0:0:{suffix}")).is_err());
         }
     }
 

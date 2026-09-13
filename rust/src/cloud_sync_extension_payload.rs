@@ -348,7 +348,7 @@ pub fn decode_extension_payload(
     let result = decode_extension_payload_inner(payload, bundle_id, &mut stage);
     if let Err(failure) = &result {
         log::debug!(target: "rust_lib_bluebubbles::cloud_sync_transient_bridge",
-            "CloudKit V2 extension metadata decode failed stage={stage:?} reason={failure:?}");
+            "CloudKit V2 extension metadata decode failed stage={stage:?} reason={failure:?} wire_bytes={}", payload.len());
     }
     result
 }
@@ -418,6 +418,30 @@ fn data(value: &Value) -> Result<&[u8]> {
         .ok_or(Failure::Malformed)
 }
 
+fn live_layout_wire_shape(value: &Value) -> (&'static str, &'static str) {
+    let scalar = |v: &Value| match v {
+        Value::Data(_) => "data",
+        Value::Dictionary(_) => "dictionary",
+        Value::String(s) if s == "$null" => "null_marker",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        _ => "other_scalar",
+    };
+    let Some(dict) = value.as_dictionary() else {
+        return (scalar(value), "not_wrapped");
+    };
+    let class = match dict.get("$class").and_then(Value::as_string) {
+        Some("NSData") => "ns_data",
+        Some("NSMutableData") => "ns_mutable_data",
+        Some(_) => "other_class",
+        None => "class_absent_or_not_string",
+    };
+    (
+        class,
+        dict.get("NS.data").map(scalar).unwrap_or("ns_data_absent"),
+    )
+}
+
 fn project(
     root: &Value,
     bundle_id: &str,
@@ -471,7 +495,13 @@ fn project(
         .transpose()?;
     *stage = ExtensionDecodeStage::LiveLayout;
     let is_live = if let Some(live) = dict.get("liveLayoutInfo") {
-        if data(live)?.len() > MAX_LIVE_LAYOUT_BYTES {
+        let live_bytes = data(live).map_err(|failure| {
+            let (wrapper, field) = live_layout_wire_shape(live);
+            log::debug!(target: "rust_lib_bluebubbles::cloud_sync_transient_bridge",
+                "CloudKit V2 live layout shape wrapper={wrapper} field={field}");
+            failure
+        })?;
+        if live_bytes.len() > MAX_LIVE_LAYOUT_BYTES {
             return Err(Failure::LimitExceeded);
         }
         true
@@ -970,6 +1000,29 @@ mod tests {
             assert!(!label.contains("Synthetic App"));
             assert!(!label.contains("app:synthetic"));
         }
+    }
+
+    #[test]
+    fn live_layout_shape_does_not_expose_archive_values() {
+        assert_eq!(
+            live_layout_wire_shape(&Value::Data(vec![1, 2])),
+            ("data", "not_wrapped")
+        );
+        assert_eq!(
+            live_layout_wire_shape(&s("$null")),
+            ("null_marker", "not_wrapped")
+        );
+        assert_eq!(
+            live_layout_wire_shape(&blob(vec![1, 2])),
+            ("ns_mutable_data", "data")
+        );
+        let private = dict(&[
+            ("$class", s("private-app")),
+            ("NS.data", s("private-content")),
+        ]);
+        let shape = live_layout_wire_shape(&private);
+        assert_eq!(shape, ("other_class", "string"));
+        assert!(!format!("{shape:?}").contains("private"));
     }
 
     #[test]

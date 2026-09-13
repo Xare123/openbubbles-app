@@ -3881,3 +3881,45 @@ cannot authorize or perform adoption.
 - All reviewed agents are closed and verified absent. No active local app,
   Flutter test, Cargo or Rust process remained. C: had 76.99 GiB free; no cleanup
   threshold was crossed and no retained source/evidence was removed.
+
+### September 13 chained writes and observed multipart replies
+
+- Native run 34770635736 passed in 25m56s: 145 selected Rust tests, 519 focused
+  Dart tests and 51 packaged-DLL codec cases. Parent verified 39 source inputs,
+  12 logs, three ARM64 binaries, signed separately and reran 51 codec tests.
+  Actual loaded module path was verified during the fresh account read.
+- The Windows harness had blocked every edited parent. Added an explicit
+  previous-mutation request binding and read-only confirmed-predecessor proof;
+  immutable history, receipt, exact confirmed operation, pending-free map,
+  account, owner and protected-store identity are required before new sends.
+  Old v6 bindings/pristine checks and terminal-source restrictions remain.
+- Muse worker produced no patch after bounded redirection and was closed.
+  Parent implemented/reviewed the proof and fixtures. An initial test command
+  referenced a nonexistent executor test; corrected to the existing transport
+  test. New fixture initially used historical terminal times before its real
+  staging time; corrected the fixture and made every negative case first prove
+  its valid baseline. 27 request/target and 88 journal/projection/transport tests
+  passed; analyzer clean. No negative-only test pass was counted as proof.
+- Parent request 27 failed IDS 6005 before claim/send. Explicit same-identity
+  refresh on new request 31 succeeded. Requests 31, 32, 33, 34 then completed
+  send/edit/edit/unsend using qualified native 16112ec69 and current Dart. Each
+  mutation had one exact CloudKit confirmation, zero unresolved operations.
+- Fresh read obcs2-semantic-1789321273552358.json with native 008a342c5663 proved
+  exact final text, three edit-history entries and millisecond timestamps,
+  plus matching one-part retraction. Outbox 21 -> 21, remote writes off.
+  Messages fetched/applied one echo and did not observe an empty terminal read
+  that pass; Chats and Attachments did. Completed-unsend restart submitted zero
+  updates. This is bounded protocol proof, not independent Apple/Pixel display.
+- Rejected normal replies consistently exposed four components after r:
+  three canonical decimal parts and one final UUID. Native and Dart legacy
+  splits agree for that exact shape. Candidate parser preserves the full path
+  and case-exact UUID, admits only unique final canonical UUID multipart forms,
+  and retains ambiguous forms. DTO/converter regressions added; native rerun
+  required. Reaction-plus-reply coexistence is not relaxed.
+- Extension diagnostics found LiveLayout/Malformed and BinaryPreflight/
+  LimitExceeded, rather than a decryption failure. Added fixed wrapper/data
+  shape and byte-size observations for the next batch; no limit increase,
+  raw payload export, or guessed format acceptance. Type 3 remains unsupported.
+- Private provenance: artifacts/windows-native-34770635736/local-qualification.json,
+  build-evidence/windows-chain-20260913 and windows-chain-echo-20260913. No Pixel
+  install, personal-message deletion, identity reset, or main-repository PR.

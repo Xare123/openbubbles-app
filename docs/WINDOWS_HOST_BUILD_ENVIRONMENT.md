@@ -9,31 +9,39 @@ timestamp: 2026-09-13
 
 # OpenBubbles Windows ARM64 host build environment
 
-## Fastest current Dart loop, September 12
+## Fastest current Dart loop, September 13
 
-Current handoff (September 13): Windows native-only run 34768626100 is qualified
-for source `16112ec69`. Its separate signed directory is
-`C:\Codex\OpenBubblesReview\artifacts\windows-native-34768626100\signed`;
-DLL SHA256 `32b0bed6c53bc07ad034817627eb2a9cd5318fec859e4d9d93080b4d2a051c08`.
+Current handoff: Windows native-only run 34770635736 is qualified
+for source `008a342c5663`. Its separate signed directory is
+`C:\Codex\OpenBubblesReview\artifacts\windows-native-34770635736\signed`;
+DLL SHA256 `f6606a65ec755747ccbaea7ec6eb82523ddf2aaa4fdb5bb6b61b5d5b063b6278`.
 All 51 packaged-DLL codec tests passed locally with App Control enabled, and
 the actual loaded module path was verified. The original GUI/runtime was not
 replaced. Archive, unsigned/signed lineage and source-EOL comparison evidence
 are in the adjacent `local-qualification.json` and `provenance.json`.
 
 That DLL includes the logger-handle repair, `extensionMetadataJson` contract and
-v2 session context. It passed 143 selected native tests, 519 focused Dart tests
-and both shared extension digest vectors. Live read report
-obcs2-semantic-1789318496467790.json applied two retained records and kept outbox
-17 -> 17. The seven sampled extension/association blockers remain: five type-2
-metadata decode failures and two unsupported type-3 records. New diagnostic
-source edits are not included in this DLL. The Find My launcher remains pinned
+v2 session context and fixed diagnostic shapes. It passed 145 selected native
+tests, 519 focused Dart tests and both shared extension digest vectors. Live
+read obcs2-semantic-1789321273552358.json fetched/applied the chained-write echo,
+outbox 21 -> 21. Exact text, three history entries/timestamps and one retracted
+part matched. The next multipart-reply parser fix is NOT in this DLL. The Find My launcher remains pinned
 to its separately qualified 3496034e3 runtime until deliberately updated.
 
-Next qualification is run 34770635736, source `008a342c5663`, pilot `a8db46f655`.
-It batches fixed reply-shape and extension-decode-stage diagnostics. The lane
-requires five exact diagnostic tests and at least 25 extension tests, including
-the new stage/result-preservation test. Do not use that candidate live before
-artifact qualification. Active run and resume action are tracked in the treemap.
+For explicit chained Windows requests, optional `previousMutationFromRequestId`
+in version 6 must identify the completed previous edit and retain the original
+`existingChatFromRequestId`. Its immutable request/claim, exact reflected history,
+confirmed operation, pending-free map and current owner/auth are checked before
+claim and send. Old v6 bindings/pristine selection are unchanged. Each later
+mutation gets a new request ID; completed-request restart reconciles only.
+Private request snapshots remain in the test profile, never source or CI.
+
+Parent-31 -> edits-32/33 -> unsend-34 passed with qualified 16112ec69 native code
+and separately tested current Dart (115 local tests). Exact echo used 008a342c5663.
+This does not establish recipient UI behavior or Apple's mutation timing limits.
+An initial IDS 6005 was rejected before a claim; explicit same-identity sender
+refresh worked. Do not silently repeat registration on every failed send.
+Active next qualification and resume action are tracked in the treemap.
 Earlier source `ea757e188` proved an ordinary text send/edit and exact readback.
 Bridge run 34761004976 generated the matching bindings; its synthetic test fixture
 error was corrected before successful Windows qualification.

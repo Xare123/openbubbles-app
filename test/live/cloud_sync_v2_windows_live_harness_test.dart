@@ -141,6 +141,12 @@ void main() {
         expect(proof?['exact_current_text'], isTrue);
         expect(proof?['exact_edit_text_and_milliseconds'], isTrue);
         expect(proof?['local_history_unchanged'], isTrue);
+        expect(proof?['exact_retracted_parts'], isTrue);
+        if (Platform.environment['OPENBUBBLES_VERIFY_CHAIN_UNSEND'] == '1') {
+          expect(proof?['local_edit_count'], 3);
+          expect(proof?['native_edit_count'], 3);
+          expect(proof?['retracted_part_count'], 1);
+        }
       }
       if (Platform.environment['OPENBUBBLES_INSPECT_RETAINED'] == '1') {
         final observed = await tester.runAsync(() => harnessKey.currentState!.inspectRetainedForTestHost());

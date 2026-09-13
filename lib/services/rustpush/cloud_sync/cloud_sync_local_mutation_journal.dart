@@ -36,6 +36,131 @@ final class CloudSyncLocalMutationJournal {
   final Store _store;
   final ObjectBoxCloudKitWriterAuthority _authority;
   final CloudKitWriterAuthoritySnapshot _owner;
+
+  /// Read-only evidence for a new mutation over one completed edit. This does
+  /// not reopen the old source, change its terminal state, or authorize a send.
+  /// The caller must also resolve the current scoped raw-record predecessor.
+  CloudSyncLocalMutationAdmissionSource readConfirmedPredecessor({
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _requireOwner();
+    final owner = _authority.read(_owner.scope)!;
+    if (owner.state != CloudKitWriterAuthorityState.stable ||
+        owner.targetOwner != CloudKitWriterOwner.none ||
+        owner.transitionIdHash != null) {
+      _fail('owner_changed');
+    }
+    final row = _read(intentId);
+    final source = validateCloudSyncMutationRow(row);
+    _requireAuth(source, currentAuth, stillCurrent);
+    if (row.state != 5 ||
+        row.kind != CloudSyncLocalMutationKind.edit.index ||
+        row.targetPart != 0) {
+      _fail('confirmed_predecessor_required');
+    }
+    final target = _target(
+      row.localMessageId,
+      row.targetGuidHash,
+      row.localChatId,
+    );
+    if (_snapshot(target) != row.reflectedSnapshotSha256) {
+      _fail('reflection_changed');
+    }
+    final query = _store
+        .box<CloudOutboxOperationEntity>()
+        .query(
+          CloudOutboxOperationEntity_.operationId.equals(
+            row.admittedOperationId!,
+          ),
+        )
+        .build();
+    late final CloudOutboxOperationEntity? operation;
+    try {
+      operation = query.findUnique();
+    } finally {
+      query.close();
+    }
+    final scope = CloudSyncScope(
+      accountFingerprint: row.accountFingerprint,
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: 'messageManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    if (operation == null ||
+        operation.accountFingerprint != row.accountFingerprint ||
+        operation.scopeKey != cloudSyncPersistentScopeKey(scope) ||
+        operation.zone != scope.zone ||
+        operation.state != CloudOutboxStatus.confirmed.index ||
+        operation.confirmedAtMs <= 0 ||
+        operation.confirmedAtMs > row.updatedAtMs ||
+        operation.action != CloudOutboxAction.save.index ||
+        operation.payloadVersion != cloudSyncMessageUpdatePayloadVersion ||
+        operation.mutationRevision <= 0 ||
+        operation.checkpointGeneration <= 0 ||
+        operation.dependencyOperationIdsJson != '[]' ||
+        operation.encryptedPayloadRef == null ||
+        !_protectedReference.hasMatch(operation.encryptedPayloadRef!) ||
+        operation.payloadSha256 == null ||
+        !_hash.hasMatch(operation.payloadSha256!) ||
+        operation.serverRecordIdHash == null ||
+        !_nativeDigest.hasMatch(operation.serverRecordIdHash!) ||
+        !_nativeDigest.hasMatch(operation.logicalEntityKeyHash) ||
+        operation.createdAtMs <= 0 ||
+        operation.protectedLeaseReference != null ||
+        operation.leaseIdHash != null ||
+        operation.leaseExpiresAtMs != 0 ||
+        operation.localChatOrigin != null ||
+        operation.operationId !=
+            CloudOperationIdentity.forMutation(
+              scope: scope,
+              logicalEntityKeyHash: operation.logicalEntityKeyHash,
+              action: CloudOutboxAction.save,
+              payloadVersion: operation.payloadVersion,
+              mutationRevision: operation.mutationRevision,
+              payloadSha256: operation.payloadSha256,
+            )) {
+      _fail('confirmed_predecessor_operation_invalid');
+    }
+    final mapQuery = _store
+        .box<CloudRecordMapEntity>()
+        .query(
+          CloudRecordMapEntity_.mapKey.equals(
+            cloudSyncCanonicalRecordMapKey(
+              scope,
+              operation.logicalEntityKeyHash,
+            ),
+          ),
+        )
+        .build();
+    try {
+      final map = mapQuery.findUnique();
+      if (map == null ||
+          map.scopeKey != operation.scopeKey ||
+          map.accountFingerprint != row.accountFingerprint ||
+          map.zone != operation.zone ||
+          map.generation != operation.checkpointGeneration ||
+          map.logicalEntityKeyHash != operation.logicalEntityKeyHash ||
+          map.serverRecordIdHash != operation.serverRecordIdHash ||
+          !_protectedReference.hasMatch(map.encryptedServerRecordId) ||
+          map.etagHash == null ||
+          !_nativeDigest.hasMatch(map.etagHash!) ||
+          map.encryptedRawRecordRef == null ||
+          !_protectedReference.hasMatch(map.encryptedRawRecordRef!) ||
+          map.rawRecordGeneration <= 0 ||
+          map.protectedReadbackLeaseReference != null ||
+          map.pendingUpdateOperationId != null ||
+          map.pendingUpdatePredecessorEtagHash != null) {
+        _fail('confirmed_predecessor_map_invalid');
+      }
+    } finally {
+      mapQuery.close();
+    }
+    _requireAuth(source, currentAuth, stillCurrent);
+    return CloudSyncLocalMutationAdmissionSource._(row);
+  });
   Box<CloudSyncLocalMutationIntentEntity> get _rows =>
       _store.box<CloudSyncLocalMutationIntentEntity>();
 

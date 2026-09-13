@@ -17,6 +17,9 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_st
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:crypto/crypto.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identity.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 
 void main() {
   late Directory directory;
@@ -960,6 +963,192 @@ void main() {
           return restore == null ? _wire() : await restore();
         },
       );
+
+  // Real source adoption/receipt/reflection followed by synthetic completed
+  // operation rows. This tests a read-only proof, not remote completion itself.
+  Future<int> seedConfirmedPredecessor() async {
+    final id = await submit(() async => _receipt(identity, source));
+    await reflectSource(id);
+    final terminalBase = row(id).updatedAtMs;
+    final scope = CloudSyncScope(
+      accountFingerprint: _scope.accountFingerprint,
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: 'messageManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final logical = 'L' * 43;
+    final payload = '1' * 64;
+    final opId = CloudOperationIdentity.forMutation(
+      scope: scope,
+      logicalEntityKeyHash: logical,
+      action: CloudOutboxAction.save,
+      payloadVersion: cloudSyncMessageUpdatePayloadVersion,
+      mutationRevision: 1,
+      payloadSha256: payload,
+    );
+    store.box<CloudOutboxOperationEntity>().put(
+      CloudOutboxOperationEntity(
+        operationId: opId,
+        scopeKey: cloudSyncPersistentScopeKey(scope),
+        accountFingerprint: scope.accountFingerprint,
+        zone: scope.zone,
+        logicalEntityKeyHash: logical,
+        action: CloudOutboxAction.save.index,
+        payloadVersion: cloudSyncMessageUpdatePayloadVersion,
+        mutationRevision: 1,
+        checkpointGeneration: 1,
+        encryptedPayloadRef: 'obcs2.ref.${'P' * 43}',
+        payloadSha256: payload,
+        serverRecordIdHash: 'R' * 43,
+        state: CloudOutboxStatus.confirmed.index,
+        attemptCount: 1,
+        confirmedAtMs: terminalBase + 2,
+        createdAtMs: terminalBase + 1,
+        updatedAtMs: terminalBase + 2,
+      ),
+    );
+    store.box<CloudRecordMapEntity>().put(
+      CloudRecordMapEntity(
+        mapKey: cloudSyncCanonicalRecordMapKey(scope, logical),
+        scopeKey: cloudSyncPersistentScopeKey(scope),
+        accountFingerprint: scope.accountFingerprint,
+        zone: scope.zone,
+        logicalEntityKeyHash: logical,
+        serverRecordIdHash: 'R' * 43,
+        generation: 1,
+        encryptedServerRecordId: 'obcs2.ref.${'I' * 43}',
+        etagHash: 'E' * 43,
+        encryptedRawRecordRef: 'obcs2.ref.${'W' * 43}',
+        rawRecordGeneration: 1,
+        updatedAtMs: terminalBase + 2,
+      ),
+    );
+    store.box<CloudSyncLocalMutationIntentEntity>().put(
+      row(id)
+        ..state = 5
+        ..admittedOperationId = opId
+        ..admittedBindingSha256 = '2' * 64
+        ..updatedAtMs = terminalBase + 3,
+    );
+    return id;
+  }
+
+  test(
+    'confirmed predecessor survives restart and retained writer epoch without reopening authority',
+    () async {
+      final id = await seedConfirmedPredecessor();
+      final owner = store.box<CloudKitWriterAuthorityEntity>().getAll().single
+        ..epoch += 2;
+      store.box<CloudKitWriterAuthorityEntity>().put(owner);
+      await reopen();
+      final proof = journal.readConfirmedPredecessor(
+        intentId: id,
+        currentAuth: _auth(session: 'restarted-session'),
+        stillCurrent: () => true,
+      );
+      expect(
+        proof.matchesReflectedParent(store.box<Message>().get(target.id!)!),
+        isTrue,
+      );
+      expect(row(id).state, 5);
+      expect(
+        () => journal.readReflectedForUpdate(
+          intentId: id,
+          currentAuth: _auth(),
+          stillCurrent: () => true,
+        ),
+        throwsStateError,
+      );
+    },
+  );
+
+  for (final fault in [
+    'unconfirmed',
+    'unsend',
+    'text',
+    'history',
+    'account',
+    'operation',
+    'operation-lease',
+    'map-pending',
+    'map-identity',
+    'future-confirmation',
+    'auth-session',
+    'future-epoch',
+  ]) {
+    test(
+      'confirmed predecessor rejects $fault before creating another intent',
+      () async {
+        final id = await seedConfirmedPredecessor();
+        expect(
+          journal
+              .readConfirmedPredecessor(
+                intentId: id,
+                currentAuth: _auth(),
+                stillCurrent: () => true,
+              )
+              .matchesReflectedParent(store.box<Message>().get(target.id!)!),
+          isTrue,
+        );
+        switch (fault) {
+          case 'unconfirmed':
+            store.box<CloudSyncLocalMutationIntentEntity>().put(
+              row(id)..state = 4,
+            );
+          case 'unsend':
+            store.box<CloudSyncLocalMutationIntentEntity>().put(
+              row(id)..kind = 1,
+            );
+          case 'text':
+            store.box<Message>().put(
+              store.box<Message>().get(target.id!)!..text = 'local change',
+            );
+          case 'history':
+            store.box<Message>().put(
+              store.box<Message>().get(target.id!)!..messageSummaryInfo = [],
+            );
+          case 'operation':
+            store.box<CloudOutboxOperationEntity>().removeAll();
+          case 'operation-lease':
+            store.box<CloudOutboxOperationEntity>().put(
+              store.box<CloudOutboxOperationEntity>().getAll().single
+                ..protectedLeaseReference = 'obcs2.lease.${'Z' * 43}',
+            );
+          case 'map-pending':
+            store.box<CloudRecordMapEntity>().put(
+              store.box<CloudRecordMapEntity>().getAll().single
+                ..pendingUpdateOperationId = 'pending',
+            );
+          case 'map-identity':
+            store.box<CloudRecordMapEntity>().put(
+              store.box<CloudRecordMapEntity>().getAll().single
+                ..serverRecordIdHash = 'Z' * 43,
+            );
+          case 'future-confirmation':
+            store.box<CloudOutboxOperationEntity>().put(
+              store.box<CloudOutboxOperationEntity>().getAll().single
+                ..confirmedAtMs = row(id).updatedAtMs + 1,
+            );
+          case 'future-epoch':
+            store.box<CloudSyncLocalMutationIntentEntity>().put(
+              row(id)..writerEpoch = 100,
+            );
+        }
+        expect(
+          () => journal.readConfirmedPredecessor(
+            intentId: id,
+            currentAuth: _auth(
+              account: fault == 'account' ? 'B' * 43 : 'A' * 43,
+            ),
+            stillCurrent: () => fault != 'auth-session',
+          ),
+          throwsStateError,
+        );
+        expect(store.box<CloudSyncLocalMutationIntentEntity>().count(), 1);
+      },
+    );
+  }
 
   test(
     'source-derived edit is atomically reflected and idempotent after reopen',

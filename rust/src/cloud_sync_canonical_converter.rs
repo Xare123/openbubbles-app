@@ -5811,6 +5811,49 @@ mod tests {
     }
 
     #[test]
+    fn multipart_numeric_reply_keeps_its_exact_parent_dependency() {
+        const GUID: &str = "2DC756A5-E7DC-4824-9C70-D7C69196C21B";
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut message = normal_message(Some("synthetic multipart reply"));
+        message.msg_proto_2 = Some(GZipWrapper(MessageProto2 {
+            reply: Some(format!("r:0:0:0:{GUID}")),
+        }));
+        let outcome = convert_message(
+            &context(&hasher, "server-numeric-reply", None),
+            &message_presence(),
+            &message,
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("unambiguous multipart reply must convert");
+        };
+        let Some(CloudCanonicalPayload::Message(payload)) = mutation.payload() else {
+            panic!("message payload required");
+        };
+        let reply = payload.reply().unwrap();
+        assert_eq!(reply.parent_guid(), GUID);
+        assert_eq!(reply.parent_part(), "0:0:0");
+        assert_eq!(
+            reply.parent_hash(),
+            &hasher
+                .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, GUID,)
+                .unwrap()
+        );
+
+        let mut reaction = reaction_message();
+        reaction.msg_proto_2 = message.msg_proto_2;
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-reaction-reply", None),
+                &message_presence(),
+                &reaction
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::AmbiguousReply
+            )
+        );
+    }
+
+    #[test]
     fn owned_attachment_keeps_entire_guid_suffix_and_owner_part() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let attachment = AttachmentMeta {

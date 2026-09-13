@@ -240,6 +240,8 @@ Future<Map<String, Object?>> verifyEditEcho({
   local.sort();
   incoming.sort();
   if (localHistory(store.box<Message>().get(messageId)!) != before) reject();
+  final localRetracted = message.messageSummaryInfo.expand((s) => s.retractedParts).toSet().toList()..sort();
+  final nativeRetracted = payload.retractedParts.toSet().toList()..sort();
   return {
     'exact_current_text':
         payload.body == message.text && payload.body == request.text,
@@ -249,5 +251,7 @@ Future<Map<String, Object?>> verifyEditEcho({
         jsonEncode(local) == jsonEncode(incoming),
     'decoded_current_etag': true,
     'local_history_unchanged': true,
+    'exact_retracted_parts': jsonEncode(localRetracted) == jsonEncode(nativeRetracted),
+    'retracted_part_count': nativeRetracted.length,
   };
 }
