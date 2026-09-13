@@ -129,7 +129,7 @@ $nativeDiagnosticCases = @(
 $nativeExtensionScope = 'cloud_sync_extension_payload::tests::'
 $nativeConverterScope = 'cloud_sync_canonical_converter::tests::'
 $nativeDtoScope = 'cloud_sync_canonical_dto::tests::'
-$nativeExtensionMinimum = 26
+$nativeExtensionMinimum = 28
 $nativeConverterMinimum = 79
 $nativeDtoMinimum = 24
 $nativeExtensionSpotCases = @(
@@ -138,6 +138,8 @@ $nativeExtensionSpotCases = @(
     'cloud_sync_extension_payload::tests::session_metadata_has_closed_versions_and_separate_wire_identity'
     'cloud_sync_extension_payload::tests::decode_diagnostic_stages_preserve_result_and_never_contain_content'
     'cloud_sync_extension_payload::tests::live_layout_shape_does_not_expose_archive_values'
+    'cloud_sync_extension_payload::tests::direct_live_layout_data_matches_wrapper_and_keeps_the_same_limit'
+    'cloud_sync_extension_payload::tests::direct_icon_data_still_requires_valid_bounded_gzip'
 )
 $nativeConverterSpotCases = @(
     'cloud_sync_canonical_converter::tests::extension_archive_projects_renderer_metadata_with_base_message',
