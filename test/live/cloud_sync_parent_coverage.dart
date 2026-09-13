@@ -318,7 +318,10 @@ Future<Map<String, Object?>> observeCachedParentCoverage({
           normalizedFields.add(field.key);
         }
       }
-      if (!exact && kinds.isEmpty && !corroborates && normalizedFields.isEmpty) {
+      if (!exact &&
+          kinds.isEmpty &&
+          !corroborates &&
+          normalizedFields.isEmpty) {
         continue;
       }
       final canonicalQuery =

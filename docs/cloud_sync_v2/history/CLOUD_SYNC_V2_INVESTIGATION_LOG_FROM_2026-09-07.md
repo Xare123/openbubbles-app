@@ -4223,3 +4223,17 @@ cannot authorize or perform adoption.
   Worker reviewed and closed; shared work/evidence retained, session deletion
   unsupported. No Pixel install, new message send, account reset or cloud-data
   mutation occurred in this investigation.
+- Candidate 4ffce9c12 ran in GCE app-rust-only 34788562396 and rustpush-only
+  34788563781. App Rust passed 633 tests, including the discovery scope/budget
+  matrix; rustpush passed 308, including its raw-only wrapper contract. The app
+  run correctly failed the generated-binding drift gate because this new API
+  changed committed glue. This is not an end-to-end qualification success.
+  Both runners were cleaned up; independent inventories returned no VMs/runners.
+- Imported exactly seven generated files from artifact 10327298772, with source
+  4ffce9c12 and artifact digest
+  56c0766ce869c7cf9e3aa47313c36ab13e544d4adc1198d4ac262ae35557d3e1.
+  All destination files were clean before import and copy hashes matched.
+  SSE-duplicate and diagnostic normalization checks passed; 31 local source
+  contract/harness tests passed against the new Dart surface. Current Dart/old
+  4e7121a18 native pairing is prohibited. Requalify a matching runtime before
+  any live discovery call. No protected Chat1 page has yet been fetched.

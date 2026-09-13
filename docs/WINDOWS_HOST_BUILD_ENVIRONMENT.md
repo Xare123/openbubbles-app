@@ -31,8 +31,12 @@ are in this DLL. Attachment-date repair 4e7121a18 is now also live-qualified:
 eight exact failures became ready, and a normal replay applied 86 attachments.
 Copied-source tests verify the eight samples' canonical parent links and
 production download-source resolution. No file-byte or Pixel display claim.
-The pending Chat1 discovery API requires regenerated bindings and a new matching
-DLL. Do not run this old runtime against those new bindings after import.
+The Chat1 discovery bindings from GCE 34788562396 are now imported, so current
+generated Dart is ahead of this qualified DLL. Do not run a live harness with
+the old DLL until restoring its exact bindings or qualifying a new matched
+runtime. All seven generated files were imported and both normalization guards
+passed. GCE passed 633 Rust tests; its expected drift gate requires committing
+the generated output and rerunning qualification. Rustpush-only passed 308 tests.
 The Find My launcher remains pinned
 to its separately qualified 3496034e3 runtime until deliberately updated.
 

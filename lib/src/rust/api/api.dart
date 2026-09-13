@@ -654,6 +654,29 @@ cloudSyncFetchProtectedPageUnderWriterPause({
       maximumChanges: maximumChanges,
     );
 
+/// Explicit raw-only discovery of the existing auxiliary Chat1 zone. This
+/// uses the same protected lease lifecycle as semantic fetch, but never
+/// admits an auxiliary record to semantic decoding or writes CloudKit data.
+Future<CloudSyncProtectedFetchResult>
+cloudSyncFetchProtectedChat1DiscoveryUnderWriterPause({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required BigInt generation,
+  String? previousCheckpointReference,
+  required int maximumChanges,
+}) => RustLib.instance.api
+    .crateApiApiCloudSyncFetchProtectedChat1DiscoveryUnderWriterPause(
+      cloudMessagesClient: cloudMessagesClient,
+      nativeWriterPauseToken: nativeWriterPauseToken,
+      storageDirectory: storageDirectory,
+      expectedAccountFingerprint: expectedAccountFingerprint,
+      generation: generation,
+      previousCheckpointReference: previousCheckpointReference,
+      maximumChanges: maximumChanges,
+    );
+
 CloudSyncProtectedLeaseResult cloudSyncCommitProtectedPageLease({
   required String storageDirectory,
   required String pageLeaseReference,
