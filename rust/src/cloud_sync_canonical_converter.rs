@@ -2558,6 +2558,14 @@ fn apple_nanos_to_unix_millis(value: u64) -> Option<i64> {
     APPLE_EPOCH_OFFSET_MILLIS.checked_add(millis)
 }
 
+// AttachmentMeta.cdt uses signed Apple-epoch nanoseconds, as stamped by
+// getAttachmentMeta/NativeAttachmentMetaTimes and consumed by the legacy
+// attachment cutoff. Canonical snapshots use Unix milliseconds. Floor to the
+// containing millisecond, including negative (pre-2001) fractional values.
+fn apple_attachment_nanos_to_unix_millis(value: i64) -> Option<i64> {
+    APPLE_EPOCH_OFFSET_MILLIS.checked_add(value.div_euclid(1_000_000))
+}
+
 fn proto_string(value: &Option<String>) -> CloudCanonicalField<String> {
     value
         .clone()
@@ -3414,7 +3422,14 @@ pub(crate) fn convert_attachment(
         vec![],
         CloudCanonicalPayload::Attachment(Box::new(payload)),
         None,
-        Some(attachment.created_date),
+        match apple_attachment_nanos_to_unix_millis(attachment.created_date) {
+            Some(value) => Some(value),
+            None => {
+                return CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedRecord,
+                )
+            }
+        },
         None,
         None,
         vec![],
@@ -5906,6 +5921,64 @@ mod tests {
         assert_eq!(payload.canonical_guid(), "standalone-attachment-guid");
         assert_eq!(payload.owner_part(), None);
         assert!(mutation.envelope().parent_logical_key_hash().is_none());
+    }
+
+    #[test]
+    fn attachment_created_date_converts_apple_nanos_to_unix_millis() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        // Apple-epoch nanosecond fixture mirroring the native upload path
+        // (NativeAttachmentMetaTimes in cloud_sync_ids_attachment_source.rs).
+        let attachment = AttachmentMeta {
+            guid: "standalone-attachment-guid".to_owned(),
+            total_bytes: 42,
+            created_date: 769_000_001_000_000_000,
+            ..Default::default()
+        };
+        let CloudCanonicalConversionOutcome::Ready(mutation) = convert_attachment(
+            &context(&hasher, "server-attachment-created-date", None),
+            &attachment_presence_with(&["aguid", "tb", "ig", "cdt"], true),
+            &attachment,
+        ) else {
+            panic!("attachment should convert");
+        };
+        let snapshot = mutation.snapshot().expect("upsert carries a snapshot");
+        // 769_000_001_000 ms + Apple-to-Unix offset 978_307_200_000 ms.
+        assert_eq!(snapshot.created_at_millis(), Some(1_747_307_201_000));
+        // The raw nanosecond value exceeds Dart's millisecond date range.
+        assert!(snapshot.created_at_millis().unwrap() <= MAX_CANONICAL_TIMESTAMP_MILLIS);
+    }
+
+    #[test]
+    fn attachment_created_date_zero_and_negative_map_to_apple_epoch_millis() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        // Zero is the Apple epoch, not an absent date. Fractional negatives
+        // must floor rather than truncate to the following millisecond.
+        for (created_date, expected) in [
+            (0, 978_307_200_000),
+            (999_999, 978_307_200_000),
+            (1_000_000, 978_307_200_001),
+            (-1, 978_307_199_999),
+            (-1_000_000, 978_307_199_999),
+            (-1_000_001, 978_307_199_998),
+            (i64::MIN, -8_245_064_836_855),
+            (i64::MAX, 10_201_679_236_854),
+        ] {
+            let attachment = AttachmentMeta {
+                guid: "standalone-attachment-guid".to_owned(),
+                total_bytes: 42,
+                created_date,
+                ..Default::default()
+            };
+            let CloudCanonicalConversionOutcome::Ready(mutation) = convert_attachment(
+                &context(&hasher, "server-attachment-created-date-edge", None),
+                &attachment_presence_with(&["aguid", "tb", "ig", "cdt"], true),
+                &attachment,
+            ) else {
+                panic!("attachment should convert");
+            };
+            let snapshot = mutation.snapshot().expect("upsert carries a snapshot");
+            assert_eq!(snapshot.created_at_millis(), Some(expected));
+        }
     }
 
     #[test]
