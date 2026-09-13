@@ -3665,3 +3665,36 @@ cannot authorize or perform adoption.
   the patch and reran actionlint/PowerShell parsing. No main-branch CI migration,
   secrets, infrastructure or local trust changes. Existing approved signer/private
   key is available, but acceptance of newly signed bytes remains an import gate.
+
+### Native qualification, live Find My, and logger lifetime repair
+
+- GCE 34741584069 completed all selected checks, signed the Canary and removed
+  its VM/registration. Independent inventories were empty. Signed artifact ID
+  10312788076 remains in GitHub; no Pixel install occurred because ADB is absent.
+- Windows native run 34742235201 passed 7 compose, 2 diagnostic and 51 packaged-DLL
+  codec cases. Parent verified archive/binary/test-log hashes and source inputs
+  (nine differed only by cloud CRLF checkout versus local LF), signed a separate
+  copy with the existing certificate, and reran all 51 codec cases under enabled
+  App Control. The actual loaded module path was inspected. Old runtime untouched.
+- Two live Find My passes completed with unchanged retained-state checks and
+  confirmed child cleanup. User confirms the sole followed person still shares.
+  Roster and selected-detail requests both returned that person without coordinates;
+  FMIP returned zero devices. Items remain untested. No permission/consent inference.
+  The launcher needed exact SDK dartvm/dartaotruntime ancestry tracking; the failed
+  first attempt never admitted native requests. A stale selected-result reason was
+  separately reproduced and repaired. Parent rerun: 37 Dart and 11 Python tests pass.
+- The gate audit found FIFO RwLock acquisition, not a lost Notify wakeup. An active
+  pause can block Items, but V2 ownership is not a permanent prohibition. No speculative
+  gate patch was made. Find My history was preserved verbatim; the current guide is short.
+- Newly compiled retained diagnostics remained absent. The pinned flexi_logger
+  0.28.5 contract and actual reproduction established that dropping the returned
+  LoggerHandle shuts down writers. The app discarded it immediately. A two-case
+  witness reproduced shutdown before first write; five tests of exact extracted
+  repaired logger code passed, including real file output, debug output with console
+  disabled, idempotence and secret suppression. Full rebuilt-DLL proof remains open.
+- Repair retains LoggerHandle, parses console filters, and preserves secret filtering
+  on desktop as well as Android. Find My test mode logs only its value-free diagnostic
+  module; general native logs remain off in that mode. No parser admission was loosened.
+  Native-only pilot f110e2562 now requires logger/restricted-mode tests and compiles
+  the existing bounded Find My diagnostic switch. No new app/GUI build is required
+  for the next Windows protocol inspection.

@@ -3,30 +3,32 @@ use std::{
     sync::{LazyLock, OnceLock},
 };
 
-use flexi_logger::{opt_format, Age, Cleanup, Criterion, FileSpec, Logger, Naming, WriteMode};
+use flexi_logger::{
+    opt_format, Age, Cleanup, Criterion, FileSpec, Logger, LoggerHandle, Naming, WriteMode,
+};
 use log::info;
 use tokio::runtime::Runtime;
 
-static LOGGER_INITIALIZED: OnceLock<()> = OnceLock::new();
+// Dropping the handle shuts down flexi_logger's writers. Retain it for the
+// process lifetime, including across background-isolate initialization calls.
+static LOGGER_INITIALIZED: OnceLock<Option<LoggerHandle>> = OnceLock::new();
 
 uniffi::setup_scaffolding!();
 
-#[cfg(target_os = "android")]
 struct SensitiveLogFilter {
     inner: Box<dyn log::Log>,
 }
 
-#[cfg(target_os = "android")]
 impl SensitiveLogFilter {
     fn new(inner: Box<dyn log::Log>) -> Self {
         Self { inner }
     }
 }
 
-#[cfg(target_os = "android")]
 impl log::Log for SensitiveLogFilter {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.level() <= log::Level::Warn && self.inner.enabled(metadata)
+        (!cfg!(target_os = "android") || metadata.level() <= log::Level::Warn)
+            && self.inner.enabled(metadata)
     }
 
     fn log(&self, record: &log::Record<'_>) {
@@ -98,11 +100,16 @@ pub fn init_logger(path: &Path) {
         #[cfg(target_os = "android")]
         let log_spec = "warn";
         #[cfg(not(target_os = "android"))]
-        let log_spec = desktop_native_logging::log_spec(
+        let findmy_probe = cfg!(target_os = "windows")
+            && std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_FINDMY_PROBE").as_deref()
+                == Ok("1");
+        #[cfg(not(target_os = "android"))]
+        let log_spec = desktop_native_logging::log_spec_with_probe(
             cfg!(target_os = "windows")
                 && std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS").as_deref() == Ok("1"),
             std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_VERBOSE_NATIVE_LOGS").as_deref()
                 == Ok("1"),
+            findmy_probe,
         );
         #[cfg(target_os = "android")]
         let system = android_logger::AndroidLogger::new(
@@ -113,10 +120,16 @@ pub fn init_logger(path: &Path) {
             if let Err(_) = std::env::var("RUST_LOG") {
                 std::env::set_var("RUST_LOG", log_spec);
             }
-            pretty_env_logger::formatted_builder().build()
+            let mut builder = pretty_env_logger::formatted_builder();
+            builder.parse_filters(&if findmy_probe {
+                log_spec.to_owned()
+            } else {
+                std::env::var("RUST_LOG").unwrap_or_else(|_| log_spec.to_owned())
+            });
+            builder.build()
         };
 
-        let (logger, _) = Logger::try_with_str(log_spec)
+        let (logger, handle) = Logger::try_with_str(log_spec)
             .expect("No logger?")
             .log_to_file(
                 FileSpec::default()
@@ -137,26 +150,89 @@ pub fn init_logger(path: &Path) {
 
         // Logging is process-global. Background isolates can call this entry
         // point again, so repeated initialization must be harmless.
-        #[cfg(target_os = "android")]
+        // Restored desktop logging must retain the same secret suppression as
+        // Android, including when an operator opts into verbose diagnostics.
         let outputs: Vec<Box<dyn log::Log>> = vec![
             Box::new(SensitiveLogFilter::new(Box::new(system))),
             Box::new(SensitiveLogFilter::new(logger)),
         ];
-        #[cfg(not(target_os = "android"))]
-        let outputs: Vec<Box<dyn log::Log>> = vec![Box::new(system), logger];
-
         #[cfg(target_os = "android")]
         let max_level = log::Level::Warn;
         #[cfg(not(target_os = "android"))]
         let max_level = log::Level::Trace;
 
-        let _ = multi_log::MultiLogger::init(outputs, max_level);
+        match multi_log::MultiLogger::init(outputs, max_level) {
+            Ok(()) => Some(handle),
+            // Do not replace an existing process logger or crash account
+            // startup. An unregistered file writer must be closed normally.
+            Err(_) => None,
+        }
     });
 }
 
 #[cfg(test)]
 mod tests {
     use super::contains_sensitive_log_material;
+
+    #[test]
+    fn native_logger_handle_outlives_initialization() {
+        // Isolate process-global registration from parallel native tests.
+        const CHILD: &str = "OPENBUBBLES_LOGGER_LIFETIME_TEST_CHILD";
+        if std::env::var(CHILD).as_deref() != Ok("1") {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "tests::native_logger_handle_outlives_initialization",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .env("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS", "1")
+                .env_remove("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_FINDMY_PROBE")
+                .env_remove("OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_VERBOSE_NATIVE_LOGS")
+                .env("RUST_LOG", "off");
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "logger child failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        super::init_logger(directory.path());
+        let handle = super::LOGGER_INITIALIZED
+            .get()
+            .and_then(Option::as_ref)
+            .expect("registered live logger handle");
+        log::warn!("synthetic-native-logger-lifetime-marker");
+        log::debug!(target: "rust_lib_bluebubbles::cloud_sync_transient_bridge",
+            "synthetic-retained-debug-marker");
+        log::warn!("session-token: synthetic-secret-must-not-be-written");
+        handle.flush();
+        let mut contents = String::new();
+        for entry in std::fs::read_dir(directory.path().join("logs")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|extension| extension == "log") {
+                contents.push_str(&std::fs::read_to_string(path).unwrap());
+            }
+        }
+        assert!(contents.contains("synthetic-native-logger-lifetime-marker"));
+        #[cfg(not(target_os = "android"))]
+        assert!(contents.contains("synthetic-retained-debug-marker"));
+        assert!(!contents.contains("synthetic-secret-must-not-be-written"));
+        super::init_logger(directory.path());
+        assert!(std::ptr::eq(
+            handle,
+            super::LOGGER_INITIALIZED.get().unwrap().as_ref().unwrap()
+        ));
+        handle.shutdown();
+    }
 
     #[test]
     fn suppresses_ids_secrets_and_raw_responses() {

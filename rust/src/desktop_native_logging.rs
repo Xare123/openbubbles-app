@@ -9,6 +9,20 @@ pub(crate) fn log_spec(windows_harness: bool, verbose_harness: bool) -> &'static
     }
 }
 
+/// Find My test-host diagnostics are a bounded, value-free module even when
+/// broad native verbosity was requested by the surrounding environment.
+pub(crate) fn log_spec_with_probe(
+    windows_harness: bool,
+    verbose_harness: bool,
+    findmy_probe: bool,
+) -> &'static str {
+    if findmy_probe {
+        "off,rustpush::findmy::diagnostics=debug"
+    } else {
+        log_spec(windows_harness, verbose_harness)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -20,5 +34,21 @@ mod tests {
             super::log_spec(true, false),
             "warn,rust_lib_bluebubbles::cloud_sync_transient_bridge=debug"
         );
+    }
+
+    #[test]
+    fn findmy_probe_cannot_enable_broad_native_debug() {
+        for harness in [false, true] {
+            for verbose in [false, true] {
+                assert_eq!(
+                    super::log_spec_with_probe(harness, verbose, true),
+                    "off,rustpush::findmy::diagnostics=debug"
+                );
+                assert_eq!(
+                    super::log_spec_with_probe(harness, verbose, false),
+                    super::log_spec(harness, verbose)
+                );
+            }
+        }
     }
 }

@@ -54,13 +54,14 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 | Item | Current evidence |
 | --- | --- |
-| Fully qualified APK | Source 9d33235fc35c6a31dee34ed655fdb4d576ccb61d; [GCE 34732301245](https://github.com/Xare123/openbubbles-app/actions/runs/34732301245) passed all selected tests, bridge regeneration, packaging, native-library verification, trusted signing and cleanup. Includes progress card and local recent-chat visibility. |
+| Fully qualified APK | Source `6f778c99eda74f0c1e98eeca205c85afefba6054`; [GCE 34741584069](https://github.com/Xare123/openbubbles-app/actions/runs/34741584069) passed all selected tests, bridge validation, packaging, native-library verification, signing and cleanup. Includes pacing and live-proven precision recovery. Signed artifact ID 10312788076, archive digest `fa37e83bd68c3e5e4da4352aa703b9788ca93a719c58aadc0feca7abee5e7028`. Not installed. |
 | Last observed Pixel | Canary 883f001868ac64a160c20018b2fb46e3aedb029e, version 1.15.0 (20002227). Fresh-account messages visibly restored. At 2026-09-13 04:01:18Z, Messages still fetched; Chats/Attachments had terminal empty reads. Outbox stayed 0 -> 0. Later ADB inventories were empty; recheck before device actions. |
 | Next source | FaceTime trace repair fbbfbfebb passed 35 Node tests. Subsequent foreground pacing repair adds smaller Regular work and matching report validation. All 199 focused tests passed; analyzer has no errors/warnings (five existing style infos). Full qualification and Pixel installation remain. |
 | Recent-first | Local recent-chat visibility implemented/tested. Account-wide newest-history fetching is NOT implemented. Persist a fresh-stream direction before its first request and bind continuation/restart before enabling legacy-style order. Existing cursors keep their direction. |
 | Windows writes | Bounded direct text/reaction/image and separate edit/unsend have source-specific evidence. September 12 edit-21 and unsend-24 reached exact CloudKit confirmation. Pixel, chained mutations, groups and independent rendering remain open. |
 | Release state | Full production is not established. Remaining gates below apply. |
-| Active qualification | Full GCE run 34741584069 was dispatched for reviewed source `6f778c99eda74f0c1e98eeca205c85afefba6054`, T2D60, Canary writer + automatic uploads. Setup passed configuration/authentication and started runner creation. Build, signing and cleanup remain unverified. Prior queued run 34737436184 was canceled with successful cleanup and empty inventory. |
+| Windows qualification | Native-only run 34742235201 passed source `ea757e188d34cffefcdb6f2e3dc0ef88ec3c94f5` via pilot `96a2c33e2`. Local signed DLL `4885b706d651c1ccac9a3806e98a98814540dc116768ef5dac3d084ff7d6426b` passed all 51 codec tests and a non-mutating 37-record observation under unchanged App Control. Original runtime preserved. Its newly added debug lines exposed a separate logger lifetime defect; the repaired source needs a new native qualification. |
+| Logging repair | `init_logger` dropped flexi_logger's handle during construction, shutting down writers. Isolated pinned-dependency reproduction confirmed it. Source now retains the handle, parses console filters and applies secret filtering on desktop too. Five extracted-subsystem tests pass; full native validation and actual diagnostic-line readback remain pending. Find My probe logging is restricted to its value-free module. |
 | Fast Windows loop | Current Dart plus the verified native DLL opens the retained projection in 8.65 seconds. The stale Windows relay ticket was updated to the Pixel's working ticket after proving the same physical relay and preserving Windows installation IDs/keys. A real read then completed in about 31 seconds and exposed a quarantined own-edit echo. |
 | Current merge repair | Real native-source/copy qualification passed the bounded production recovery and normal applier, preserving local history. Live Windows report `obcs2-semantic-1789278811033254.json` applied two pending messages; fresh-process repeat `1789278895014946` fetched/applied zero, with no conflict. Both observed empty terminal reads in all zones and kept outbox 15 -> 15 with remote writes disabled. Full native-crate qualification remains. |
 | Retained projection | The same live report retains 6,654 entries: 94 Chats, 5,350 Messages and 1,210 Attachments. Message saves include 3,190 excluded telephony entries and 1,663 blocking saves; Attachments include 1,109 blocking saves. These are journal entries, not proven unique missing messages. Terminal remote ingestion is not complete local projection. |
@@ -83,6 +84,7 @@ Historical tests do not establish current-device behavior.
 | Progress/speed | Card and smaller Regular workload implemented. | Integrated qualification, Pixel UX and measured performance. |
 | Newest history first | Local recent-chat admission fixed. | Durable fresh-stream direction plus multi-page/restart/incremental qualification. |
 | FaceTime | Lifecycle/layout candidate; offline leave analysis repaired. | Actual two-way media beyond 30 seconds, remote hangup, subsequent and incoming calls. |
+| Find My | [Windows service test](FINDMY_ASTRA_20260910.md) reaches the real account and user-confirmed sole shared person. Fresh roster and selected reads return that entry without coordinates. | Native response/secure-location handling, independent UI refresh, Devices/Items inventory and supported per-device actions. No stopped-sharing inference or Items success claim. |
 | SMS/MMS/RCS | Excluded by user. | Preserve and label exclusion separately from iMessage failures. |
 
 ## Safety gates
@@ -369,6 +371,8 @@ CloudKit readback or independent Apple-device display.
 - [ ] Newest-history bootstrap with durably bound direction and existing cursors preserved.
 - [ ] Accurate status for fetched, projected, retained, media and outgoing reconciliation.
 - [ ] Measured Regular/Turbo behavior, then real FaceTime call qualification.
+- [ ] Find My People location retrieval and ongoing/stale-location behavior with the user's confirmed sharing intact.
+- [ ] Find My Devices/Items inventory and supported per-device actions, including correct behavior while CloudKit reads pause native writers.
 - [ ] Document supported operations and limitations. No upstream draft until user confirmation.
 
 ## Current critical path

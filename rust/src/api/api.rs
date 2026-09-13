@@ -263,11 +263,9 @@ fn initialize_windows_protected_keystore(directory: &std::path::Path) -> anyhow:
 pub fn do_first_time_init(path: String) {
     let dir = PathBuf::from_str(&path).unwrap();
 
-    // This dedicated process emits only the Dart allowlisted probe report.
-    // Authentication errors must not escape into unrestricted native logs.
-    if !windows_findmy_probe_enabled() {
-        init_logger(&dir);
-    }
+    // The dedicated Find My host selects the value-free diagnostics module
+    // only. Shared filtering suppresses credential/raw-response messages.
+    init_logger(&dir);
 
     #[cfg(target_os = "windows")]
     if let Err(error) = initialize_windows_protected_keystore(&dir) {

@@ -671,9 +671,12 @@ fn message_required_presence_masks(presence: &CloudRawRecordPresence) -> (u16, u
     (absent, without_value)
 }
 
-fn message_extension_class(provider: Option<&str>, payload_present: bool) -> &'static str {
-    if !payload_present {
+fn message_extension_class(provider: Option<&str>, payload: Option<&[u8]>) -> &'static str {
+    let Some(payload) = payload else {
         return "no_payload";
+    };
+    if payload.is_empty() {
+        return "empty_payload";
     }
     match provider {
         Some("com.apple.messages.URLBalloonProvider") => "url_balloon",
@@ -2649,11 +2652,12 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 let proto = &message.msg_proto.0;
                 // Only booleans, fixed enums and a nine-bit field mask. No
                 // bundle identifier, body, reply target, account or raw record.
-                debug!("CloudKit V2 transient message retained_shape absent_mask={absent:03x} without_value_mask={without_value:03x} guid_empty={} chat_empty={} sender_empty={} body_present={} attributed_present={} extension_class={} reply_present={} outcome={converted:?}",
+                debug!("CloudKit V2 transient message retained_shape absent_mask={absent:03x} without_value_mask={without_value:03x} guid_empty={} chat_empty={} sender_empty={} from_me={} body_present={} attributed_present={} extension_class={} reply_present={} outcome={converted:?}",
                     message.guid.is_empty(), message.chat_id.is_empty(), message.sender.is_empty(),
+                    message.flags.contains(rustpush::cloud_messages::MessageFlags::IS_FROM_ME),
                     proto.text.as_deref().is_some_and(|value| !value.is_empty()),
                     proto.attributed_body.as_ref().is_some_and(|value| !value.is_empty()),
-                    message_extension_class(proto.balloon_bundle_id.as_deref(), proto.payload_data.is_some()),
+                    message_extension_class(proto.balloon_bundle_id.as_deref(), proto.payload_data.as_deref()),
                     message.msg_proto_2.as_ref().is_some_and(|value| value.0.reply.is_some()));
             }
             if matches!(
@@ -5063,8 +5067,15 @@ mod tests {
             (Some("com.apple.private-user-value"), "apple_other"),
             (Some("private-account-and-message"), "other_provider"),
         ] {
-            assert_eq!(message_extension_class(provider, true), expected);
-            assert_eq!(message_extension_class(provider, false), "no_payload");
+            assert_eq!(
+                message_extension_class(provider, Some(b"synthetic payload")),
+                expected
+            );
+            assert_eq!(
+                message_extension_class(provider, Some(b"")),
+                "empty_payload"
+            );
+            assert_eq!(message_extension_class(provider, None), "no_payload");
         }
     }
 
