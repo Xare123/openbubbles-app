@@ -4046,3 +4046,11 @@ cannot authorize or perform adoption.
   but its public author reports no successful live automatic key delivery. It
   is a protocol lead only. No live key request or sharing change was attempted.
   Both review workers are closed; their commands have exited.
+- Committed fccca0bb5 and pilot 5fd8d03fe. Retrying Windows 34779665447 and full
+  GCE Canary 34779666716 in parallel; both initial exact-source/configuration
+  validations passed. Windows job 103784229966 was checking contracts; GCE create
+  job 103784232405 was provisioning gce-34779666716-1. Keep these exact handles.
+- Pre-dispatch inventory was empty. No old VM, runner or local test/app process
+  remains from the failed attempt. Current agents are closed and verified absent.
+  Approximately 74.4 GiB free; no evidence, private profile, or transcript was
+  deleted. This handoff preserves the full CloudKit/FaceTime/Find My goal.
