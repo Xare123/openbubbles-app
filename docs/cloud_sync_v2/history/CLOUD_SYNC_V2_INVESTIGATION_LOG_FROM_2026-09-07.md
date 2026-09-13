@@ -3954,3 +3954,41 @@ cannot authorize or perform adoption.
   434-line historical tail verbatim (verified normalized text equality) in
   TREEMAP_PRE_MULTIPART_2026-09-13.md and linked it from the index. Replaced stale
   active-job/initial-create-only narratives with current gates and invariants.
+
+### September 13 reply restoration and direct-data extension repair
+
+- Run 34772982148 passed in 26m9s: 148 selected native tests, 616 Dart tests,
+  51 packaged-DLL codec cases. Parent verified 45 source inputs, 12 logs and
+  three ARM64 binaries, signed separately, and passed 51 local codec cases.
+  Two post-dispatch test-only inputs were verified against pinned Git blobs;
+  current native/ABI remained exact. Smart App Control stayed enabled.
+- Non-projecting inspection preserved durable state. A prior ambiguous reply
+  was now ready with its body/history intact. Five type-2 extension failures
+  showed direct plist Data at liveLayoutInfo (about 4.9-11.9 KiB archives).
+  Parent implemented direct/wrapped data equivalence with unchanged live-layout
+  and icon limits/gzip validation, plus type/size regressions. No null/string/
+  array coercion or raw-value logging. Internal limit labels added without
+  raising any budget; observed other failures were only 19-200 KiB on the wire.
+- Report obcs2-semantic-1789323940156030.json applied 34 retained messages,
+  fetched zero, observed all streams empty and kept outbox 21 -> 21.
+  Verified local-copy delta proved 34 distinct new messages, 32 multipart replies,
+  33 with text. Two replacement characters were present; no full visual QA claim.
+- Existing read-only drain then completed in 5m5s with remote_drained=true,
+  projection partial and no cap hit. Its initial remote read is report
+  obcs2-semantic-1789324543739425.json; final local sweep is
+  obcs2-semantic-1789324819203393.json. Sweep applied 250 Message and 11 Attachment
+  records. Copy delta proved 250 distinct messages, 246 multipart replies, 245
+  with text and two replacement characters. Remaining retained total 6353;
+  outbox unchanged, no remote saves/deletes. Counts examined include repeated
+  dependency work and are not unique-message counts.
+- Total across these two passes: 284 distinct restored messages, including 278
+  replies. Attachment record projection is not a completed-body-download claim.
+  Private evidence and verified copies are under windows-multipart-20260913 and
+  windows-multipart-drain-20260913 in build-evidence.
+- Small Muse cache review made no changes. Parent did not accept its blanket
+  claim that compiled caching necessarily requires a source-SHA key; no measured
+  cache speedup or safety benchmark exists yet. Review worker closed. Keep the
+  current lane unchanged pending a separately justified benchmark.
+- Read-only GCP check before the next batch: zero instances; us-west1 T2D quota
+  100 CPUs, global CPU quota 164, SSD quota 500 GiB, all usage zero. Existing
+  T2D-60 primary lane and GitHub-hosted signing are retained, not reconfigured.

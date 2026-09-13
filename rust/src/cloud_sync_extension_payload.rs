@@ -68,6 +68,12 @@ pub enum ExtensionPayloadFailure {
 type Failure = ExtensionPayloadFailure;
 type Result<T> = std::result::Result<T, Failure>;
 
+fn limit_exceeded(bound: &'static str, actual: usize, maximum: usize) -> Failure {
+    log::debug!(target: "rust_lib_bluebubbles::cloud_sync_transient_bridge",
+        "CloudKit V2 extension bound={bound} actual={actual} maximum={maximum}");
+    Failure::LimitExceeded
+}
+
 // Diagnostic labels are a closed enum, never a key/value copied from an
 // untrusted archive. This lets the Windows loop identify the failing contract
 // without exporting raw payloads or guessing which validation to loosen.
@@ -410,6 +416,11 @@ fn class_is(dict: &Dictionary, allowed: &[&str]) -> Result<()> {
 }
 
 fn data(value: &Value) -> Result<&[u8]> {
+    // Data-valued archive fields may be stored directly or keyed as NSData.
+    // Consumers retain their own content validation and byte limits.
+    if let Some(bytes) = value.as_data() {
+        return Ok(bytes);
+    }
     let dict = dictionary(value)?;
     fields(dict, &["$class", "NS.data"])?;
     class_is(dict, &["NSData", "NSMutableData"])?;
@@ -495,6 +506,9 @@ fn project(
         .transpose()?;
     *stage = ExtensionDecodeStage::LiveLayout;
     let is_live = if let Some(live) = dict.get("liveLayoutInfo") {
+        // Real CloudKit archives store this field as a direct plist data value
+        // as well as an NSData wrapper. It remains an opaque presence marker;
+        // neither representation is executed, returned, or exempt from bounds.
         let live_bytes = data(live).map_err(|failure| {
             let (wrapper, field) = live_layout_wire_shape(live);
             log::debug!(target: "rust_lib_bluebubbles::cloud_sync_transient_bridge",
@@ -593,8 +607,18 @@ impl Budget {
             .bytes
             .checked_add(bytes)
             .ok_or(Failure::LimitExceeded)?;
-        if depth >= MAX_DEPTH || self.nodes > MAX_VISITED_NODES || self.bytes > MAX_EXPANDED_BYTES {
-            return Err(Failure::LimitExceeded);
+        if depth >= MAX_DEPTH {
+            return Err(limit_exceeded("depth", depth, MAX_DEPTH));
+        }
+        if self.nodes > MAX_VISITED_NODES {
+            return Err(limit_exceeded("node_visits", self.nodes, MAX_VISITED_NODES));
+        }
+        if self.bytes > MAX_EXPANDED_BYTES {
+            return Err(limit_exceeded(
+                "expanded_bytes",
+                self.bytes,
+                MAX_EXPANDED_BYTES,
+            ));
         }
         Ok(())
     }
@@ -747,7 +771,7 @@ fn be(bytes: &[u8]) -> Result<usize> {
 
 fn validate_binary_header(bytes: &[u8]) -> Result<()> {
     if bytes.len() > MAX_PAYLOAD_BYTES {
-        return Err(Failure::LimitExceeded);
+        return Err(limit_exceeded("wire_bytes", bytes.len(), MAX_PAYLOAD_BYTES));
     }
     if bytes.is_empty() {
         return Err(Failure::Malformed);
@@ -770,7 +794,7 @@ fn validate_binary_header(bytes: &[u8]) -> Result<()> {
     let root = be(&trailer[16..24])?;
     let table = be(&trailer[24..32])?;
     if count > MAX_VISITED_NODES {
-        return Err(Failure::LimitExceeded);
+        return Err(limit_exceeded("binary_objects", count, MAX_VISITED_NODES));
     }
     if count == 0
         || root >= count
@@ -808,7 +832,7 @@ fn validate_binary(bytes: &[u8]) -> Result<()> {
         let size = match &event {
             Event::String(s) => {
                 if s.len() > MAX_STRING_BYTES {
-                    return Err(Failure::LimitExceeded);
+                    return Err(limit_exceeded("string_bytes", s.len(), MAX_STRING_BYTES));
                 }
                 s.len()
             }
@@ -851,7 +875,7 @@ fn validate_binary(bytes: &[u8]) -> Result<()> {
             )
             .ok_or(Failure::LimitExceeded)?;
         if slots > MAX_VISITED_NODES {
-            return Err(Failure::LimitExceeded);
+            return Err(limit_exceeded("collection_slots", slots, MAX_VISITED_NODES));
         }
         frames.push(EventFrame {
             keys: is_dict.then(BTreeSet::new),
@@ -1023,6 +1047,80 @@ mod tests {
         let shape = live_layout_wire_shape(&private);
         assert_eq!(shape, ("other_class", "string"));
         assert!(!format!("{shape:?}").contains("private"));
+    }
+
+    #[test]
+    fn direct_live_layout_data_matches_wrapper_and_keeps_the_same_limit() {
+        for size in [0, 3, MAX_LIVE_LAYOUT_BYTES] {
+            let mut direct = balloon();
+            direct
+                .as_dictionary_mut()
+                .unwrap()
+                .insert("liveLayoutInfo".into(), Value::Data(vec![42; size]));
+            let mut wrapped = balloon();
+            wrapped
+                .as_dictionary_mut()
+                .unwrap()
+                .insert("liveLayoutInfo".into(), blob(vec![42; size]));
+            let metadata = decode(direct).unwrap();
+            assert!(metadata.balloon.is_live);
+            assert_eq!(metadata, decode(wrapped).unwrap());
+        }
+        for value in [
+            Value::Data(vec![42; MAX_LIVE_LAYOUT_BYTES + 1]),
+            blob(vec![42; MAX_LIVE_LAYOUT_BYTES + 1]),
+        ] {
+            let mut oversized = balloon();
+            oversized
+                .as_dictionary_mut()
+                .unwrap()
+                .insert("liveLayoutInfo".into(), value);
+            assert_eq!(decode(oversized), Err(Failure::LimitExceeded));
+        }
+        for value in [
+            s("private bytes"),
+            Value::Boolean(true),
+            Value::Array(vec![]),
+        ] {
+            let mut wrong_type = balloon();
+            wrong_type
+                .as_dictionary_mut()
+                .unwrap()
+                .insert("liveLayoutInfo".into(), value);
+            assert_eq!(decode(wrong_type), Err(Failure::Malformed));
+        }
+    }
+
+    #[test]
+    fn direct_icon_data_still_requires_valid_bounded_gzip() {
+        let bytes = gzip(b"synthetic icon bytes");
+        let mut direct = balloon();
+        direct
+            .as_dictionary_mut()
+            .unwrap()
+            .insert("ai".into(), Value::Data(bytes.clone()));
+        let mut wrapped = balloon();
+        wrapped
+            .as_dictionary_mut()
+            .unwrap()
+            .insert("ai".into(), blob(bytes));
+        let decoded = decode(direct).unwrap();
+        assert_eq!(decoded, decode(wrapped).unwrap());
+        assert_eq!(decoded.balloon.icon, Some(b"synthetic icon bytes".to_vec()));
+        for (bytes, expected) in [
+            (vec![1, 2, 3], Failure::InvalidIcon),
+            (
+                vec![0; MAX_COMPRESSED_ICON_BYTES + 1],
+                Failure::LimitExceeded,
+            ),
+        ] {
+            let mut invalid = balloon();
+            invalid
+                .as_dictionary_mut()
+                .unwrap()
+                .insert("ai".into(), Value::Data(bytes));
+            assert_eq!(decode(invalid), Err(expected));
+        }
     }
 
     #[test]

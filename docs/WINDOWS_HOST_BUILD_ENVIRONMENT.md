@@ -11,21 +11,22 @@ timestamp: 2026-09-13
 
 ## Fastest current Dart loop, September 13
 
-Current handoff: Windows native-only run 34770635736 is qualified
-for source `008a342c5663`. Its separate signed directory is
-`C:\Codex\OpenBubblesReview\artifacts\windows-native-34770635736\signed`;
-DLL SHA256 `f6606a65ec755747ccbaea7ec6eb82523ddf2aaa4fdb5bb6b61b5d5b063b6278`.
+Current handoff: Windows native-only run 34772982148 is qualified
+for source `e5547e8c7`. Its separate signed directory is
+`C:\Codex\OpenBubblesReview\artifacts\windows-native-34772982148\signed`;
+DLL SHA256 `f05cf4387fbb2d3b1d29ecc500d491303aecc146ab766f4e7f890fa52c48ec9f`.
 All 51 packaged-DLL codec tests passed locally with App Control enabled, and
 the actual loaded module path was verified. The original GUI/runtime was not
 replaced. Archive, unsigned/signed lineage and source-EOL comparison evidence
 are in the adjacent `local-qualification.json` and `provenance.json`.
 
 That DLL includes the logger-handle repair, `extensionMetadataJson` contract and
-v2 session context and fixed diagnostic shapes. It passed 145 selected native
-tests, 519 focused Dart tests and both shared extension digest vectors. Live
-read obcs2-semantic-1789321273552358.json fetched/applied the chained-write echo,
-outbox 21 -> 21. Exact text, three history entries/timestamps and one retracted
-part matched. The next multipart-reply parser fix is NOT in this DLL. The Find My launcher remains pinned
+v2 session context and multipart numeric replies. It passed 148 selected native
+tests, 616 Dart tests and both shared extension digest vectors. A bounded replay
+then a full retained drain restored 284 distinct messages (278 replies) and
+applied 11 attachment records, outbox 21 -> 21. Remote history is drained but
+projection remains partial. Direct-data extension decoding is NOT in this DLL.
+The Find My launcher remains pinned
 to its separately qualified 3496034e3 runtime until deliberately updated.
 
 For explicit chained Windows requests, optional `previousMutationFromRequestId`
@@ -42,6 +43,16 @@ This does not establish recipient UI behavior or Apple's mutation timing limits.
 An initial IDS 6005 was rejected before a claim; explicit same-identity sender
 refresh worked. Do not silently repeat registration on every failed send.
 Active next qualification and resume action are tracked in the treemap.
+
+Use the existing `drain` operation after an empty-stream read when the goal is a
+complete retained-work sweep, not repeated 150-row restarts. Latest run took
+5m5s and finished below the test host's six-minute cap. Do not treat a timeout as
+successful completion. The controller's remote-drained status and its final
+local-sweep report are different evidence: local sweep zones do not perform
+remote reads. Preserve both reports and classify remaining work explicitly.
+`test/live/cloud_sync_projection_delta_test.dart` audits bounded new-row counts
+only on verified before/after copies via OPENBUBBLES_PROJECTION_DELTA_COPIES;
+it neither proves full visual legibility nor touches the live profile.
 Earlier source `ea757e188` proved an ordinary text send/edit and exact readback.
 Bridge run 34761004976 generated the matching bindings; its synthetic test fixture
 error was corrected before successful Windows qualification.
