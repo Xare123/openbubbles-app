@@ -77,6 +77,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Parent coverage result | Complete current-generation cached Chat scan: 794 physical records, 700 decoded, 81 tombstones and 13 out-of-scope. Eight sampled missing routes match neither current native identities nor legacy normalization; four applied controls correctly find proven parents. Five samples are bare UUIDs; three are explicit direct phone/email routes. No alias/index regression is established by these samples, and no remote-absence/deletion inference is made. |
 | Pending raw discovery candidate | Separate opt-in protected Chat1 discovery API implemented, not compiled or live-qualified. It requires a read permit, fixes the zone to chat1ManateeZone and caps pages at 50; default semantic fetch still rejects all auxiliary streams, and auxiliary semantic decode remains forbidden. Rustpush dependency c4dd64b5afc086e87d508fed04090f8cd0abc555 is pushed to the fork. New FRB binding generation and native qualification are required before calling it. No general-container fallback. |
 | Binding/runtime transition | All seven generated bridge files from GCE 34788562396 are imported together. That run passed 633 Rust tests but correctly failed binding drift because the new API output was not committed. Rustpush-only 34788563781 passed all 308 tests. Both cleanup jobs and independent inventories passed. SSE/diagnostic normalization checks and 31 local source-contract/harness tests passed after import. Current generated Dart must NOT be used with the old 4e7121a18 DLL. A matching Windows build and reproducible full qualification are next. |
+| Active qualification / exact resume | Source c6091ddf92e13c902fc61bd911606def5ac373a7, pilot 3ac9ccadb26859e118ba471fa860739f12e34db8. Windows 34789713162 and full GCE Canary 34789714678 are active. GCE t2d-standard-60, primary lane, us-west1-b; expected VM/runner gce-34789714678-1. Existing signing path and 75-minute lifetime unchanged. Verify actual outcomes, binding reproducibility, signed artifacts and cleanup. Windows lane now pins native-fetch/source-contract inputs and runs the two discovery policy tests plus timestamp spot cases. |
 
 Prior tables and obsolete next steps were preserved verbatim in the September 12
 consolidation entry of the [investigation log](cloud_sync_v2/history/CLOUD_SYNC_V2_INVESTIGATION_LOG_FROM_2026-09-07.md).
@@ -393,6 +394,9 @@ CloudKit readback or independent Apple-device display.
    enabling semantic decode. The cached-parent comparison already passed its
    controls and found no match for eight sampled missing routes. Do not repeat
    that same scan or call the unbound raw API as a shortcut.
+   Implement the explicit test-host caller using the existing protected lease
+   and shadow-journal contracts; do not leave unadopted references or use the
+   current new bindings with an old DLL. No live Chat1 request has happened.
 2. Resolve measured internal preflight limits using the new fixed bound labels.
    Keep limits tied to memory/work budgets and field semantics. Do not discard
    protected records or treat a diagnostic label as corrupted user data.

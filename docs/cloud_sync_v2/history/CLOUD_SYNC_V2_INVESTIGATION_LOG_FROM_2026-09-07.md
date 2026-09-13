@@ -4237,3 +4237,21 @@ cannot authorize or perform adoption.
   contract/harness tests passed against the new Dart surface. Current Dart/old
   4e7121a18 native pairing is prohibited. Requalify a matching runtime before
   any live discovery call. No protected Chat1 page has yet been fetched.
+- Committed coherent source c6091ddf92e13c902fc61bd911606def5ac373a7. Isolated
+  pilot 3ac9ccadb26859e118ba471fa860739f12e34db8 adds native-fetch/source-contract
+  provenance inputs, two explicit discovery-policy tests and timestamp spot
+  cases/minimum 81 converter tests. PowerShell syntax and diff checks passed;
+  the pilot's unrelated asset-graph deletion remains untouched.
+- Dispatched Windows 34789713162 and full GCE Canary 34789714678. Expected
+  runner gce-34789714678-1, t2d-standard-60/us-west1-b, primary lane, existing
+  75-minute lifetime and GitHub-hosted signing. Both builds use the exact source
+  above. Review their actual outcomes/artifacts and cleanup before promotion.
+- All current Muse workers were reviewed, closed and verified absent. No
+  dedicated worktree was created and no protected artifacts were removed;
+  supported transcript deletion is unavailable. Local target app/test/Cargo
+  processes are absent. C: has about 67.5 GiB free. ADB inventory is empty.
+  Existing generated-plugin and unrelated rustpush edits are preserved.
+- Next work is the explicit test-host discovery caller with correct protected
+  lease adoption/cleanup and separate shadow state, followed by a live bounded
+  read only after matching-runtime qualification. The existing raw/general API
+  and semantic auxiliary decode remain off-limits as shortcuts.
