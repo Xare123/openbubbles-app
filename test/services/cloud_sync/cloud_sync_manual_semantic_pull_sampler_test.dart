@@ -6,6 +6,9 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_sync_g
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
@@ -291,9 +294,168 @@ void main() {
     );
   });
 
-  tearDown(() {
+  tearDown(() async {
+    await CloudKitOperationInterlock.debugResetPoisonedLocksForTesting();
     privateStorageDirectory.deleteSync(recursive: true);
   });
+
+  for (final failure in ['none', 'flush', 'persist', 'release']) {
+    test(
+      'lifecycle pause awaits flush, report and release: $failure',
+      () async {
+        final progress = CloudSyncProgress();
+        final flushEntered = Completer<void>();
+        final flushGate = Completer<void>();
+        final persistEntered = Completer<void>();
+        final persistGate = Completer<void>();
+        final releaseEntered = Completer<void>();
+        final releaseGate = Completer<void>();
+        final fenceStore = InMemoryCloudSyncStore();
+        final contender = CloudKitOperationInterlock(
+          privateStorageDirectory: privateStorageDirectory.path,
+          fenceStore: fenceStore,
+        );
+        final pause = _RecordingNativeWriterPause(
+          beforeResume: () async {
+            releaseEntered.complete();
+            await releaseGate.future;
+            if (failure == 'release') throw StateError('release failed');
+          },
+        );
+        var fetches = 0;
+        var flushes = 0;
+        var reports = 0;
+        final sampler = _sampler(
+          privateStorageDirectory: privateStorageDirectory,
+          readPreflight: () async => _readyState(),
+          readAuthSnapshot: () async => _auth(),
+          operationFenceStore: fenceStore,
+          nativeWriterPause: pause,
+          progress: progress,
+          createStore: (_) async => InMemoryCloudSyncStore(),
+          createInboxApplier: (_, _, _) async => FakeCloudInboxApplier(),
+          observerFactory: (_) async => _GatedObserver(() async {
+            if (++flushes == 1) {
+              flushEntered.complete();
+              await flushGate.future;
+              if (failure == 'flush') throw StateError('flush failed');
+            }
+          }),
+          createRawTransport: (_, _, _) async {
+            final transport = FakeCloudSyncTransport();
+            transport.fetchHandler = (scope, token, generation, limit) async {
+              fetches++;
+              progress.onAppLifecycleState(AppLifecycleState.paused);
+              return CloudFetchBatch(
+                scope: scope,
+                changes: const [],
+                batchId: 'empty-${scope.zone}',
+                generation: generation,
+                nextToken: token,
+                hasMore: false,
+              );
+            };
+            return transport;
+          },
+        );
+        final controller = CloudSyncSemanticDrainController(
+          persistReport: (_) async => throw TestFailure('unused'),
+          runSession: (_) async => throw TestFailure('unused'),
+          runCatchUp: () => sampler.runConfirmedCatchUpAndPersist(
+            finishActiveRemotePassOnCancel: true,
+            persistReport: (report) async {
+              reports++;
+              persistEntered.complete();
+              await persistGate.future;
+              if (failure == 'persist') throw StateError('persist failed');
+              return 'saved';
+            },
+          ),
+          cancelCatchUp: sampler.cancelActiveCatchUp,
+        );
+        var disposed = false;
+        final operation = progress.start(CloudSyncSpeed.regular, () async {
+          progress.cancelWindow = () {
+            unawaited(
+              controller.dispose().then((_) {
+                disposed = true;
+              }),
+            );
+          };
+          try {
+            return await controller.drainConfirmedAndPersist();
+          } finally {
+            await controller.dispose();
+          }
+        });
+        Future<void> expectStillPausing() async {
+          expect(progress.active, isTrue);
+          expect(progress.phase, CloudSyncProgressPhase.pausing);
+          expect(disposed, isFalse);
+          expect(pause.isPaused, isTrue);
+          await expectLater(
+            contender.runExclusive(
+              kind: CloudKitOperationKind.destructiveReset,
+              action: () async => fail('premature release'),
+            ),
+            throwsA(isA<CloudKitOperationInterlockException>()),
+          );
+        }
+
+        try {
+          await flushEntered.future;
+          await expectStillPausing();
+          flushGate.complete();
+          if (failure != 'flush') {
+            await persistEntered.future;
+            await expectStillPausing();
+            expect(fetches, 3);
+            persistGate.complete();
+          }
+          await releaseEntered.future;
+          await expectStillPausing();
+          releaseGate.complete();
+          await operation;
+          expect(disposed, isTrue);
+          expect(progress.active, isFalse);
+          expect(
+            progress.phase,
+            failure == 'none'
+                ? CloudSyncProgressPhase.paused
+                : CloudSyncProgressPhase.error,
+          );
+          expect(reports, failure == 'flush' ? 0 : 1);
+          expect(pause.resumeCalls, 1);
+          final finalFetches = fetches;
+          await Future<void>.delayed(Duration.zero);
+          expect(fetches, finalFetches);
+          if (failure == 'release') {
+            await expectLater(
+              contender.runExclusive(
+                kind: CloudKitOperationKind.destructiveReset,
+                action: () async => fail('uncertain release must stay fenced'),
+              ),
+              throwsA(isA<CloudKitOperationInterlockException>()),
+            );
+          } else {
+            expect(
+              await contender.runExclusive(
+                kind: CloudKitOperationKind.destructiveReset,
+                action: () async => 'released',
+              ),
+              'released',
+            );
+          }
+        } finally {
+          if (!flushGate.isCompleted) flushGate.complete();
+          if (!persistGate.isCompleted) persistGate.complete();
+          if (!releaseGate.isCompleted) releaseGate.complete();
+          await operation;
+          await CloudKitOperationInterlock.debugResetPoisonedLocksForTesting();
+        }
+      },
+    );
+  }
 
   test(
     'foreground pause persists a complete safe pass and releases native pause',
@@ -1876,6 +2038,17 @@ void main() {
       expect(nativeWriterPause.resumeCalls, 0);
       expect(sampler.isActive, isTrue);
       await expectLater(sampler.runConfirmed(), throwsStateError);
+      final contender = CloudKitOperationInterlock(
+        privateStorageDirectory: privateStorageDirectory.path,
+        fenceStore: InMemoryCloudSyncStore(),
+      );
+      await expectLater(
+        contender.runExclusive(
+          kind: CloudKitOperationKind.destructiveReset,
+          action: () async => fail('uncertain pause must fence teardown'),
+        ),
+        throwsA(isA<CloudKitOperationInterlockException>()),
+      );
     },
   );
 
@@ -3754,8 +3927,23 @@ class _ProgressSink implements CloudSyncProgressSink {
   void projectionWindow(int examined, int applied) {}
 }
 
+final class _GatedObserver implements FlushableCloudSyncObserver {
+  _GatedObserver(this.onFlush);
+  final Future<void> Function() onFlush;
+  @override
+  void onEvent(CloudSyncEvent event) {}
+  @override
+  Future<void> flush() => onFlush();
+}
+
 final class _RecordingNativeWriterPause implements CloudSyncNativeWriterPause {
-  _RecordingNativeWriterPause({this.events, this.pauseError, this.resumeError});
+  _RecordingNativeWriterPause({
+    this.events,
+    this.pauseError,
+    this.resumeError,
+    this.beforeResume,
+  });
+  final Future<void> Function()? beforeResume;
 
   final List<String>? events;
   final Object? pauseError;
@@ -3782,6 +3970,7 @@ final class _RecordingNativeWriterPause implements CloudSyncNativeWriterPause {
     expect(value, same(token));
     resumeCalls++;
     events?.add('resume-native-writers');
+    await beforeResume?.call();
     final error = resumeError;
     if (error != null) throw error;
     isPaused = false;

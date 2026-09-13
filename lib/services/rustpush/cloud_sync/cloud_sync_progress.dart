@@ -23,6 +23,7 @@ class CloudSyncProgress extends ChangeNotifier
   CloudSyncSpeed speed = CloudSyncSpeed.regular;
   bool active = false;
   bool pauseRequested = false;
+  bool restartRequired = false;
   String? zone;
   String? safeFailure;
   int batches = 0;
@@ -165,6 +166,7 @@ class CloudSyncProgress extends ChangeNotifier
   ) {
     final existing = _operation;
     if (existing != null) return existing;
+    if (restartRequired) return Future<void>.value();
     active = true;
     pauseRequested = false;
     safeFailure = null;
@@ -192,6 +194,9 @@ class CloudSyncProgress extends ChangeNotifier
             : CloudSyncProgressPhase.paused;
       } catch (error) {
         final code = cloudSyncV2SafeFailureCode(error);
+        if (code == 'cloud_sync_v2_pcs_restart_required') {
+          restartRequired = true;
+        }
         // A pause request must never conceal an unrelated safety failure.
         if (pauseRequested && code == 'cloud_sync_semantic_drain_cancelled') {
           phase = CloudSyncProgressPhase.paused;

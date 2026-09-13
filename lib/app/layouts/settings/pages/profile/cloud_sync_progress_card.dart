@@ -88,8 +88,12 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
             ),
             if (p.safeFailure != null)
               Text(
-                'Diagnostic code: ${p.safeFailure}. Resolve the cause before resuming. '
-                'If native pause release is unconfirmed, restart OpenBubbles.',
+                p.restartRequired
+                    ? 'iCloud encryption preparation timed out. Native work may still be running. '
+                          'Further sync and account teardown are blocked for safety. '
+                          'Fully close and restart OpenBubbles before resuming.'
+                    : 'Diagnostic code: ${p.safeFailure}. Resolve the cause before resuming. '
+                          'If native pause release is unconfirmed, restart OpenBubbles.',
               ),
             if (p.refreshFailed)
               const Text(
@@ -122,7 +126,9 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
               children: [
                 if (!p.active)
                   FilledButton.icon(
-                    onPressed: available ? () => widget.onStart(speed) : null,
+                    onPressed: available && !p.restartRequired
+                        ? () => widget.onStart(speed)
+                        : null,
                     icon: const Icon(Icons.sync),
                     label: const Text('Start / resume'),
                   ),

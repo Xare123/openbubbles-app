@@ -621,6 +621,12 @@ final class CloudSyncManualSemanticPullSampler {
                 pauseMayRemainActive = false;
               }
             } catch (error) {
+              if (pauseMayRemainActive) {
+                // Retain exclusion before runExclusive unwinds. A sampler-local
+                // active flag cannot fence a replacement sampler or teardown.
+                _operationInterlock.poisonUntilProcessRestart();
+                rethrow;
+              }
               if (authenticationAttempt == 0 &&
                   !completedPass &&
                   _isRefreshableReadAuthenticationFailure(error)) {

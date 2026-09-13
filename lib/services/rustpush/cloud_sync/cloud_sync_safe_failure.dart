@@ -573,6 +573,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_v2_pcs_recovery_fetch_failed',
   'cloud_sync_v2_pcs_recovery_required',
   'cloud_sync_v2_pcs_status_failed',
+  'cloud_sync_v2_pcs_restart_required',
   'cloud_sync_v2_pcs_ui_required',
   'cloud_sync_native_auth_account_fingerprint_failed',
   'cloud_sync_native_auth_account_changed',

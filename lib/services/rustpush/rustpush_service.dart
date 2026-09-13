@@ -9563,8 +9563,14 @@ class RustPushService extends GetxService {
       throw StateError('cloud_sync_v2_pcs_preparation_unavailable');
     }
 
-    final future = _runCloudKitIdentityMaintenance(() =>
-        _prepareCloudSyncV2Pcs(validateContinuation: validateContinuation));
+    final interlock = _createCloudKitOperationInterlock();
+    final future = interlock.runExclusive(
+      kind: CloudKitOperationKind.identityMaintenance,
+      action: () => _prepareCloudSyncV2Pcs(
+        interlock: interlock,
+        validateContinuation: validateContinuation,
+      ),
+    );
     _cloudSyncV2PcsPreparationInFlight = future;
     return future.whenComplete(() {
       if (identical(_cloudSyncV2PcsPreparationInFlight, future)) {
@@ -9574,6 +9580,7 @@ class RustPushService extends GetxService {
   }
 
   Future<CloudSyncV2PcsPreparationOutcome> _prepareCloudSyncV2Pcs({
+    required CloudKitOperationInterlock interlock,
     void Function()? validateContinuation,
   }) async {
     final preparedState = state;
@@ -9602,7 +9609,10 @@ class RustPushService extends GetxService {
     bool ready;
     try {
       ready = await awaitCloudSyncPcsOperation(
-        api.isInClique(keychain: keychain), _cloudSyncV2PcsOperationTimeout);
+        api.isInClique(keychain: keychain), _cloudSyncV2PcsOperationTimeout,
+        poisonUntilProcessRestart: interlock.poisonUntilProcessRestart);
+    } on CloudSyncPcsRestartRequired {
+      rethrow;
     } catch (_) {
       throw StateError('cloud_sync_v2_pcs_status_failed');
     }
@@ -9615,7 +9625,10 @@ class RustPushService extends GetxService {
     List<api.ViableBottle> bottles;
     try {
       bottles = await awaitCloudSyncPcsOperation(
-        api.getBottles(keychain: keychain), _cloudSyncV2PcsOperationTimeout);
+        api.getBottles(keychain: keychain), _cloudSyncV2PcsOperationTimeout,
+        poisonUntilProcessRestart: interlock.poisonUntilProcessRestart);
+    } on CloudSyncPcsRestartRequired {
+      rethrow;
     } catch (_) {
       throw StateError('cloud_sync_v2_pcs_recovery_fetch_failed');
     }
@@ -9656,7 +9669,10 @@ class RustPushService extends GetxService {
               bottle: bottle.escrow,
               password: credential,
               devicePassword: localDevicePassword,
-            ), _cloudSyncV2PcsOperationTimeout);
+            ), _cloudSyncV2PcsOperationTimeout,
+          poisonUntilProcessRestart: interlock.poisonUntilProcessRestart);
+      } on CloudSyncPcsRestartRequired {
+        rethrow;
       } catch (error) {
         if (error is AnyhowException &&
             error.message.contains('Credential is not verified.')) {
@@ -9671,7 +9687,10 @@ class RustPushService extends GetxService {
 
       try {
         ready = await awaitCloudSyncPcsOperation(
-          api.isInClique(keychain: keychain), _cloudSyncV2PcsOperationTimeout);
+          api.isInClique(keychain: keychain), _cloudSyncV2PcsOperationTimeout,
+          poisonUntilProcessRestart: interlock.poisonUntilProcessRestart);
+      } on CloudSyncPcsRestartRequired {
+        rethrow;
       } catch (_) {
         throw StateError('cloud_sync_v2_pcs_status_failed');
       }
@@ -10840,7 +10859,12 @@ class RustPushService extends GetxService {
   Future<T> _runCloudKitOperation<T>({
     required CloudKitOperationKind kind,
     required Future<T> Function() action,
-  }) {
+  }) => _createCloudKitOperationInterlock().runExclusive(
+    kind: kind,
+    action: action,
+  );
+
+  CloudKitOperationInterlock _createCloudKitOperationInterlock() {
     if (statePath.isEmpty) {
       throw StateError('cloudkit_interlock_storage_unavailable');
     }
@@ -10853,9 +10877,6 @@ class RustPushService extends GetxService {
     return CloudKitOperationInterlock(
       privateStorageDirectory: statePath,
       fenceStore: fenceStore,
-    ).runExclusive(
-      kind: kind,
-      action: action,
     );
   }
 

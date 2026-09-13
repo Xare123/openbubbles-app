@@ -34,6 +34,33 @@ void main() {
     ),
   );
 
+  testWidgets('uncertain PCS explains restart and disables resume', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    await p.start(CloudSyncSpeed.regular, () async {
+      throw StateError('cloud_sync_v2_pcs_restart_required');
+    });
+    await tester.pumpWidget(host(p, (_) async => fail('must not retry')));
+    expect(
+      find.textContaining('Native work may still be running'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Fully close and restart'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text('Paused'), findsNothing);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    await tester.pumpWidget(host(p, (_) async => fail('must not retry')));
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+  });
+
   testWidgets('normal settings action starts once and survives page closure', (
     tester,
   ) async {

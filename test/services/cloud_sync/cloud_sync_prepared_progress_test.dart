@@ -12,7 +12,7 @@ import 'cloud_sync_progress_test.dart' as fixtures;
 
 void main() {
   test(
-    'late PCS keeps the interlock against teardown and other reads',
+    'PCS deadline returns while teardown and reads stay fenced until restart',
     () async {
       final directory = Directory.systemTemp.createTempSync(
         'pcs-owned-operation-',
@@ -30,43 +30,48 @@ void main() {
           return awaitCloudSyncPcsOperation(
             native.future,
             const Duration(milliseconds: 1),
+            poisonUntilProcessRestart: lock.poisonUntilProcessRestart,
           );
         },
       );
-      final failure = expectLater(work, throwsA(isA<TimeoutException>()));
+      final failure = expectLater(
+        work,
+        throwsA(isA<CloudSyncPcsRestartRequired>()),
+      );
       try {
         await started.future;
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-        for (final kind in [
-          CloudKitOperationKind.destructiveReset,
-          CloudKitOperationKind.v2SemanticRead,
-        ]) {
-          await expectLater(
-            lock.runExclusive(
-              kind: kind,
-              action: () async => fail('must stay fenced'),
-            ),
-            throwsA(
-              isA<CloudKitOperationInterlockException>().having(
-                (e) => e.safeCode,
-                'code',
-                'cloudkit_interlock_busy',
+        await failure.timeout(const Duration(seconds: 2));
+        expect(native.isCompleted, isFalse);
+        for (final lateCompletion in [false, true]) {
+          if (lateCompletion) {
+            native.complete();
+            await Future<void>.delayed(Duration.zero);
+          }
+          for (final kind in [
+            CloudKitOperationKind.destructiveReset,
+            CloudKitOperationKind.v2SemanticRead,
+            CloudKitOperationKind.identityMaintenance,
+            CloudKitOperationKind.writerTransition,
+          ]) {
+            await expectLater(
+              lock.runExclusive(
+                kind: kind,
+                action: () async => fail('must stay fenced'),
               ),
-            ),
-          );
+              throwsA(
+                isA<CloudKitOperationInterlockException>().having(
+                  (e) => e.safeCode,
+                  'code',
+                  'cloudkit_interlock_busy',
+                ),
+              ),
+            );
+          }
         }
-        native.complete();
-        await failure;
-        expect(
-          await lock.runExclusive(
-            kind: CloudKitOperationKind.destructiveReset,
-            action: () async => 'released',
-          ),
-          'released',
-        );
       } finally {
         if (!native.isCompleted) native.complete();
         await failure;
+        await CloudKitOperationInterlock.debugResetPoisonedLocksForTesting();
         directory.deleteSync(recursive: true);
       }
     },
@@ -183,16 +188,24 @@ void main() {
   }
 
   test(
-    'PCS timeout retains ownership until late native success, never continues',
+    'PCS timeout bounds feedback, poisons before returning, never continues',
     () {
       fakeAsync((clock) {
         final native = Completer<bool>();
         Object? error;
         var released = false;
-        awaitCloudSyncPcsOperation(native.future, const Duration(seconds: 30))
+        var poisoned = false;
+        awaitCloudSyncPcsOperation(
+              native.future,
+              const Duration(seconds: 30),
+              poisonUntilProcessRestart: () {
+                poisoned = true;
+              },
+            )
             .then<void>(
               (_) => fail('late success must not continue'),
               onError: (Object e) {
+                expect(poisoned, isTrue);
                 error = e;
               },
             )
@@ -200,22 +213,24 @@ void main() {
               released = true;
             });
         clock.elapse(const Duration(seconds: 31));
-        expect(released, isFalse);
+        expect(released, isTrue);
+        expect(error, isA<CloudSyncPcsRestartRequired>());
         native.complete(true);
         clock.flushMicrotasks();
-        expect(error, isA<TimeoutException>());
+        expect(error, isA<CloudSyncPcsRestartRequired>());
         expect(released, isTrue);
       });
     },
   );
 
-  test('PCS timeout also waits for late failure without leaking it', () {
+  test('PCS timeout observes late failure without leaking it', () {
     fakeAsync((clock) {
       final native = Completer<void>();
       Object? error;
       awaitCloudSyncPcsOperation(
         native.future,
         const Duration(seconds: 30),
+        poisonUntilProcessRestart: () {},
       ).then<void>(
         (_) => fail('unexpected success'),
         onError: (Object e) {
@@ -223,19 +238,67 @@ void main() {
         },
       );
       clock.elapse(const Duration(seconds: 31));
-      expect(error, isNull);
+      expect(error, isA<CloudSyncPcsRestartRequired>());
       native.completeError(StateError('private native error'));
       clock.flushMicrotasks();
-      expect(error, isA<TimeoutException>());
+      expect(error, isA<CloudSyncPcsRestartRequired>());
       expect(error.toString(), isNot(contains('private native error')));
     });
   });
+
+  for (final pauseBeforeTimeout in [false, true]) {
+    test(
+      'stuck PCS gives bounded restart feedback, paused=$pauseBeforeTimeout',
+      () {
+        fakeAsync((clock) {
+          final progress = CloudSyncProgress();
+          final native = Completer<bool>();
+          var poisoned = false;
+          var returned = false;
+          progress
+              .startPrepared(
+                CloudSyncSpeed.regular,
+                validate: () {},
+                preparePcs: () => awaitCloudSyncPcsOperation(
+                  native.future,
+                  const Duration(seconds: 30),
+                  poisonUntilProcessRestart: () {
+                    poisoned = true;
+                  },
+                ),
+                readOnlyCatchUp: () async => throw TestFailure('must not read'),
+              )
+              .then((_) {
+                returned = true;
+              });
+          clock.flushMicrotasks();
+          if (pauseBeforeTimeout) progress.pause();
+          clock.elapse(const Duration(seconds: 30));
+          expect(native.isCompleted, isFalse);
+          expect(returned, isTrue);
+          expect(poisoned, isTrue);
+          expect(progress.active, isFalse);
+          expect(progress.phase, CloudSyncProgressPhase.error);
+          expect(progress.safeFailure, 'cloud_sync_v2_pcs_restart_required');
+          expect(progress.restartRequired, isTrue);
+          progress.start(
+            CloudSyncSpeed.turbo,
+            () async => throw TestFailure('must not retry before restart'),
+          );
+          clock.flushMicrotasks();
+          expect(progress.restartRequired, isTrue);
+          expect(progress.phase, CloudSyncProgressPhase.error);
+        });
+      },
+    );
+  }
 
   test('timely PCS success and failure preserve their outcomes', () async {
     expect(
       await awaitCloudSyncPcsOperation(
         Future.value(7),
         const Duration(seconds: 30),
+        poisonUntilProcessRestart: () => fail('timely success must not poison'),
       ),
       7,
     );
@@ -243,6 +306,8 @@ void main() {
       awaitCloudSyncPcsOperation(
         Future<void>.error(StateError('expected')),
         const Duration(seconds: 30),
+        poisonUntilProcessRestart: () =>
+            fail('settled failure must not poison'),
       ),
       throwsStateError,
     );
@@ -285,7 +350,17 @@ void main() {
         pcsStart,
       );
       final pcs = source.substring(pcsStart, pcsStop);
-      expect(pcs, contains('_runCloudKitIdentityMaintenance('));
+      expect(pcs, contains('kind: CloudKitOperationKind.identityMaintenance'));
+      expect(
+        RegExp(
+          'poisonUntilProcessRestart: interlock.poisonUntilProcessRestart',
+        ).allMatches(pcs).length,
+        4,
+      );
+      expect(
+        RegExp('on CloudSyncPcsRestartRequired').allMatches(pcs).length,
+        4,
+      );
       expect(pcs, contains('awaitCloudSyncPcsOperation('));
       expect(pcs, isNot(contains('.timeout(')));
       expect(pcs, isNot(contains('resetClique(')));
