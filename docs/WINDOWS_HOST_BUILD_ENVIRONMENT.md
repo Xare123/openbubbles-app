@@ -28,6 +28,12 @@ obcs2-semantic-1789318496467790.json applied two retained records and kept outbo
 metadata decode failures and two unsupported type-3 records. New diagnostic
 source edits are not included in this DLL. The Find My launcher remains pinned
 to its separately qualified 3496034e3 runtime until deliberately updated.
+
+Next qualification is run 34770635736, source `008a342c5663`, pilot `a8db46f655`.
+It batches fixed reply-shape and extension-decode-stage diagnostics. The lane
+requires five exact diagnostic tests and at least 25 extension tests, including
+the new stage/result-preservation test. Do not use that candidate live before
+artifact qualification. Active run and resume action are tracked in the treemap.
 Earlier source `ea757e188` proved an ordinary text send/edit and exact readback.
 Bridge run 34761004976 generated the matching bindings; its synthetic test fixture
 error was corrected before successful Windows qualification.
