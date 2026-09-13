@@ -3992,3 +3992,14 @@ cannot authorize or perform adoption.
 - Read-only GCP check before the next batch: zero instances; us-west1 T2D quota
   100 CPUs, global CPU quota 164, SSD quota 500 GiB, all usage zero. Existing
   T2D-60 primary lane and GitHub-hosted signing are retained, not reconfigured.
+- Candidate 991b8379f was committed and dispatched in parallel to Windows
+  34775816810 and full GCE Canary 34775818423, pilot 2da3562ce. Both exact-source
+  validation stages passed. GCE create job 103773610019 was provisioning the
+  existing primary-lane runner; Windows job 103773606609 was setting up Flutter.
+  Expected VM/runner gce-34775818423-1, 75-minute lifetime. No new infrastructure,
+  secret/IAM changes or signing migration. Outbound/automatic-upload build flags
+  match the prior approved Canary configuration; no account is run in CI.
+- Before handoff: all current review workers closed and verified absent; no
+  local Flutter/app/Cargo process remained; roughly 75 GiB free on C:. Docs,
+  history index and current resume handles reconciled. No protected data or
+  evidence was deleted; platform-supported transcript deletion is unavailable.
