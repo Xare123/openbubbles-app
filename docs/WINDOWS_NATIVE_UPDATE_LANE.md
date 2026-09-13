@@ -12,15 +12,13 @@ timestamp: 2026-09-13
 Use the existing `windows-cloudkit-fast-loop.yml` on GitHub-hosted
 `windows-11-arm`, selecting `artifact_mode=native-test-host`. No GCE, Windows VM
 bootstrap, production signing, shared cache, or GUI/media rebuild is added.
-The existing harness run [34642902373](https://github.com/Xare123/openbubbles-app/actions/runs/34642902373)
-succeeded in 24m32s; this native-only variation has not been dispatched or timed.
-It removes GUI compilation/assembly, not the necessary cold Rust dependency build.
+Native-only runs 34742235201 and 34744744122 passed. The latter qualified source
+`b2797dd07` and its logger repair. Extension integration is being qualified by
+run 34762729315, source `3496034e3b41c2bfc862e75f975e62c266336cce`, pilot
+`02fc8e810a2993a7c8925dc667572c0248fb9d9a`. Cold Rust dependencies still build.
 
-`source_ref` intentionally has **no default**. Parent must first commit and review
-the pending content-free diagnostics in `rust/src/cloud_sync_transient_bridge.rs`
-along with the timestamp changes already present at `6f778c99eda7`.
-That old SHA lacks the two new diagnostic tests and must not be dispatched for
-this qualification. The supplied lowercase 40-character SHA must equal the
+`source_ref` intentionally has **no default**. Commit/review the complete source,
+including generated bindings, before dispatch. The supplied full SHA must equal the
 remote head of `agent/cloudkit-v2-update-seam`. Source/sidecar remain separate
 exact checkouts. Preflight rejects absent diagnostics before toolchain setup.
 
@@ -28,8 +26,9 @@ exact checkouts. Preflight rejects absent diagnostics before toolchain setup.
 
 - Clean source, initialized matching recursive submodules, existing launcher
   contracts, unchanged lockfiles, and pre/post source/binding SHA256 checks.
-- Both existing PowerShell launcher contracts and the three focused Windows Dart
-  test files, plus `objectbox_own_writer_precision_recovery_test.dart`.
+- Existing PowerShell launcher contracts and focused Dart tests for the Windows
+  harness/profile/writer, precision recovery, prepared extensions, projection,
+  decoder and the shared digest corpus.
 - One job-local Cargo target directory for the debug ARM64 DLL and crate test
   executable. `cargo build --locked --lib`, then `cargo test --locked --lib
   --no-run`; no full Rust suite or live/account test is executed.
@@ -37,9 +36,9 @@ exact checkouts. Preflight rejects absent diagnostics before toolchain setup.
   packaged test executable, including
   `authored_edit_milliseconds_survive_apple_seconds_roundtrip` and
   `original_timestamp_keeps_its_containing_millisecond`.
-- Execute these two additional crate tests with `--exact`, without recompiling:
-  `cloud_sync_transient_bridge::tests::message_required_masks_distinguish_absent_and_without_value`
-  and `cloud_sync_transient_bridge::tests::message_extension_diagnostics_never_return_provider_values`.
+- Execute four exact diagnostic/logger tests, full extension/converter/DTO scopes,
+  two exact digest tests and five exact system-event tests without recompiling.
+  The script and provenance list names and minimum executed counts.
   Missing names, zero tests, ignored cases, wrong counts, or failures reject output.
 - Run all **51** encoder cases in `cloud_sync_local_send_encoder_test.dart`
   through FRB against the packaged DLL. This separately checks the actual cdylib;
@@ -70,8 +69,8 @@ certificate, valid expected-signer DLL signature, unchanged vendor ObjectBox
 bytes, matching build receipt and actual acceptance by unchanged App Control.
 Its `-SkipBuild` branch verifies, but does not import or sign, a new DLL;
 `-BuildOnly` rebuilds. Neither is a native-only import/signing command.
-No certificate store/private key was inspected and no signing operation occurred
-in this task. Certificate availability and acceptance of the new bytes are untested.
+Earlier qualified DLLs were signed locally and accepted with App Control enabled.
+Each new artifact still requires its own signing and actual load/test result.
 
 Parent must retain the original unsigned archive/manifest, stage separately and
 use the existing approved local signer only if authorized. Record unsigned-to-signed
@@ -86,7 +85,7 @@ a GUI assembly receipt pairing the old runner with a new source identifier.
 Any later test-host launch must bind the reviewed Dart source and the actual
 signed DLL hash separately. This patch issues no local launch/assembly receipt
 and makes no live CloudKit claim. `artifact_mode=harness` retains the existing
-GUI path; it is not the new nine-case native regression qualification.
+GUI path; its qualification differs from native-test-host mode.
 
 # Parent review and dispatch
 
@@ -102,8 +101,8 @@ earlier seven-compose/two-diagnostic qualification remains historical evidence.
 Only the Windows workflow, its existing `build_and_smoke.ps1`, and this document
 belong to this patch. Preserve the pilot's pre-existing deleted
 `.dart_tool/build/fcd1995bc647fb959e82ea360c6c2c9a/asset_graph.json`; do not stage it.
-Review/commit/push only those three paths, then verify the remote pilot head is
-the reviewed sidecar commit. Nothing was committed, pushed or triggered here.
+Review/commit/push only the intended pilot paths, then verify the remote head.
+The extension qualification script is committed and pushed as `02fc8e810`.
 
 After the final source commit is on the trusted branch, substitute its reviewed
 full SHA and dispatch:
@@ -112,9 +111,8 @@ full SHA and dispatch:
 gh workflow run windows-cloudkit-fast-loop.yml --repo Xare123/openbubbles-app --ref agent/gce-runner-pilot -f "source_ref=<FINAL_REVIEWED_40_HEX_SHA>" -f artifact_mode=native-test-host -f build_variant=read-only
 ```
 
-Preparation checks: PowerShell AST parsing, inline workflow PowerShell parsing,
-actionlint 1.7.12, `git diff --check`, and synthetic native-result/preflight
-contracts. No native/Flutter build, artifact download, cache population, signing,
-or account/profile operation ran locally. Actual source preflight rejects the
-dirty worktree and its broken nested `clearadi` Git pointer; synthetic clean-Git
-preflight is a contract test, not evidence that this checkout is qualified.
+Preparation checks include PowerShell AST parsing and `git diff --check`; prior
+workflow parsing/actionlint and native-result tests remain recorded in history.
+Local source preflight is blocked by the broken nested `clearadi` Git pointer.
+The cloud workflow's fresh recursive checkout passed real source preflight.
+Do not weaken its clean-checkout requirement to accommodate local metadata.
