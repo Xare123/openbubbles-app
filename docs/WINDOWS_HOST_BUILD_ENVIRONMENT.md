@@ -11,10 +11,10 @@ timestamp: 2026-09-13
 
 ## Fastest current Dart loop, September 13
 
-Current handoff: Windows native-only run 34775816810 is qualified
-for source `991b8379f`. Its separate signed directory is
-`C:\Codex\OpenBubblesReview\artifacts\windows-native-34775816810\signed`;
-DLL SHA256 `34c6ee5f80543614dd83f34d17e7db7bd15b668fe3817c6c0d333e9d7bf52af2`.
+Current handoff: Windows native-only run 34779665447 is qualified
+for source `fccca0bb5`. Its separate signed directory is
+`C:\Codex\OpenBubblesReview\artifacts\windows-native-34779665447\signed`;
+DLL SHA256 `501f40e89d6268d52cd7e678a21b669d8952ca18c0421fba31ed1d0b2bb90e3f`.
 All 51 packaged-DLL codec tests passed locally with App Control enabled, and
 the actual loaded module path was verified. The original GUI/runtime was not
 replaced. Archive, unsigned/signed lineage and source-EOL comparison evidence
@@ -22,11 +22,13 @@ are in the adjacent `local-qualification.json` and `provenance.json`.
 
 That DLL includes the logger-handle repair, `extensionMetadataJson` contract and
 v2 session context, multipart replies and direct-data archive fields. It passed
-150 selected native tests and 620 Dart tests. Its live sample moved beyond the
-live-layout failure but still rejects icon encoding. The earlier e5547e8c7 drain
-restored 284 distinct messages (278 replies) and applied 11 attachment records;
-the latest 991b8379f replay added zero, outbox unchanged. Shared-contract extraction
-and recognized raw-icon routing are NOT in this DLL and need qualification.
+151 selected native tests and 658 Dart tests. Five sampled raw-JPEG icons now
+decode; replay/sweep added 14 extension-message rows and one attachment record,
+with separate display metadata instead of treating placeholder base text as prose.
+The earlier e5547e8c7 drain restored 284 distinct messages (278 replies) and
+applied 11 attachment records. Shared-contract extraction and raw-icon routing
+are in this DLL. Attachment-date repair 4e7121a18 is a newer, unqualified native
+candidate; never substitute it into this runtime's provenance.
 The Find My launcher remains pinned
 to its separately qualified 3496034e3 runtime until deliberately updated.
 
@@ -50,7 +52,17 @@ artifact, not a green continue-on-error step. Run 34775818423 failed Dart vocabu
 and protector-harness compilation even though their step conclusions appeared
 successful. No APK was signed. The candidate fixes share the real metadata schema
 with the dependency-light protector harness and enforce its lockfile. Cargo
-metadata validation is not compilation/test proof; rerun the actual harness.
+metadata validation is not compilation/test proof. Full run 34779666716 then
+passed all actual outcomes, including protector, and signed its Canary. For
+app-rust-only qualification set outbound_writer=false and automatic_uploads=false;
+those are APK-only flags requiring full qualification, not switches to enable
+native test coverage. Misconfigured run 34782349481 was rejected before creation.
+
+Read-only retained inspection now accepts OPENBUBBLES_INSPECT_RETAINED_OFFSET
+(canonical decimal 0-4096, default 0), validated before native/profile startup.
+Each category/zone is still capped at eight records. Fixed date-shape and
+failure-source classifications never print date values, message content or
+arbitrary stacks. Different offsets are samples, not prevalence estimates.
 
 Use the existing `drain` operation after an empty-stream read when the goal is a
 complete retained-work sweep, not repeated 150-row restarts. Latest run took
@@ -61,6 +73,11 @@ remote reads. Preserve both reports and classify remaining work explicitly.
 `test/live/cloud_sync_projection_delta_test.dart` audits bounded new-row counts
 only on verified before/after copies via OPENBUBBLES_PROJECTION_DELTA_COPIES;
 it neither proves full visual legibility nor touches the live profile.
+Set OPENBUBBLES_PROJECTION_VALIDATE_ICONS=1 only for a bounded copied-data
+audit: it decodes at most 32 stored extension icons with Flutter, capped at
+1 MiB encoded image bytes and 1024-pixel dimensions, without output images or
+network. All 14 newly restored icons decoded successfully. This does not prove
+full InteractiveHolder behavior, provider support, or Pixel display.
 Earlier source `ea757e188` proved an ordinary text send/edit and exact readback.
 Bridge run 34761004976 generated the matching bindings; its synthetic test fixture
 error was corrected before successful Windows qualification.

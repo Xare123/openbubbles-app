@@ -4054,3 +4054,103 @@ cannot authorize or perform adoption.
   remains from the failed attempt. Current agents are closed and verified absent.
   Approximately 74.4 GiB free; no evidence, private profile, or transcript was
   deleted. This handoff preserves the full CloudKit/FaceTime/Find My goal.
+
+### September 13 post-compaction reconciliation and date-boundary evidence
+
+- Recovered completed inspection session 68799: exit zero, durable state
+  unchanged, offset 256. All eight sampled malformed Attachment records were
+  native-ready but Dart rejected DateTime.fromMillisecondsSinceEpoch at
+  rust_cloud_semantic_decoder.dart:1239. Fixed filename/line diagnostics contain
+  no personal message bodies or credentials. Timestamp field and units require
+  investigation; no coercion, omission or reset is authorized by this result.
+- Different retained windows also measured 50,507-80,485-byte extension strings
+  against the 16,384-byte preflight limit. Archive sizes remain below the total
+  cap. The large field is not yet identified, so blanket limit increases are
+  not justified. Existing explicit-empty chat identities remain retained.
+- Windows 34779665447 and full GCE Canary 34779666716 both completed successfully
+  on fccca0bb5 / pilot 5fd8d03fe. Actual outcome JSON confirms app Rust,
+  automatic uploads, Dart, protector and rustpush all passed. Packaging, signing
+  and cleanup succeeded; independent inventories are empty. Windows artifact
+  10325461041 and signed Canary artifact 10324607303 await local qualification.
+- Five previously named workers rechecked: all not_found, none active. No
+  supported transcript deletion is available. Private evidence and profiles are
+  retained; no deletion performed. C: has about 74 GiB free; ADB inventory empty.
+- Read-only offset/failure diagnostics in the Windows Dart harness remain an
+  uncommitted test overlay, separate from the cloud-qualified native source.
+
+### September 13 raw-JPEG restoration and attachment timestamp repair
+
+- Imported Windows artifact 10325461041 from run 34779665447, source fccca0bb5,
+  pilot 5fd8d03fe. Verified 53 source inputs, 12 test logs, archive/member hashes
+  and three ARM64 PEs. Cloud proof: 151 selected native, 658 Dart and 51 actual-DLL
+  codec tests. Separately signed Rust/test executable; unchanged vendor ObjectBox.
+  Local 51 codec plus 24 harness tests passed. Later date-shape changes pass all
+  25 harness tests. Analyzer found only two existing style infos, no new errors.
+  Smart App Control remains enabled. Native lineage is in the private artifact
+  root windows-native-34779665447/local-qualification.json.
+- Native inspection identified five failed icons as 2,036-byte raw JPEGs. Those
+  five messages now decode ready and have an exact local chat candidate. This
+  proves the compatibility fix against actual data, not full widget rendering.
+- Run-once 1789332457042301 added one distinct extension-message row. A 3m15s
+  drain then added 13 more distinct rows and applied one Attachment record:
+  remote report 1789332557626821; local sweep 1789332723873549. All remote streams
+  were empty; retained total is 6338; outbox stayed 21; remote saves/deletes off.
+  Hash-verified before/after copies independently establish the row deltas.
+- All 14 new rows have placeholder-only base text, one replacement character
+  each, plus separate extension display text and icon metadata. None of those
+  display-text values contains a replacement character. The normal message
+  holder routes these records to InteractiveHolder, not TextBubble. This is
+  not yet a claim that every interactive provider is supported or that current
+  Pixel rendering is correct. Private copy audits now distinguish this shape
+  from readable base prose; old text-count metrics alone were insufficient.
+- Offset-256 observation confirms eight native-ready Attachment failures all
+  have createdAt populated outside Dart's millisecond range, with no other date
+  populated. Their scale matches Apple-epoch nanos. Independent source evidence
+  establishes that unit: getAttachmentMeta/nsSinceAppleEpoch, legacy attachment
+  cutoff, and NativeAttachmentMetaTimes. The converter incorrectly passed that
+  raw field as Unix milliseconds.
+- Muse worker 01a09c7f-ee9d-7b92-a145-e6f657997f71 implemented the narrow converter
+  repair. Parent reviewed source semantics, shortened comments and expanded
+  signed/fractional/zero/int64-edge regression cases. Only the converter changed
+  in committed 4e7121a18e8c011ae5472831111af86a61280178. No date omission, identity
+  fallback, protected-state reset, or Dart-side production coercion was added.
+  Native compilation/live repaired-date proof are pending. Worker reviewed and
+  closed; shared worktree/evidence retained, transcript deletion unsupported.
+- Windows 34782347926 (job 103791533166) is qualifying that exact source.
+  GCE app-rust-only 34782416330 (create 103791721863, build 103791894323) is active
+  on t2d-standard-60/us-west1-b, runner gce-34782416330-1, existing lifetime.
+  This lane intentionally produces no APK. First launch 34782349481 rejected
+  APK-writer flags in app-rust-only mode before VM creation. Parent corrected
+  flags, verified no VM/runner from that failed launch, and did not alter guards.
+- Current Dart-only inspection/copy-audit overlay is separately tested. No local
+  native build, Pixel install, account reset or new outbound send was performed.
+  ADB is empty. C: has about 65 GiB free; active-worktree build output is about
+  9.32 GiB (591 files). Private evidence is preserved; no deletions. Two cloud
+  jobs above are the exact resume handles, not reasons to dispatch duplicates.
+- GCE date qualification 34782416330 subsequently passed all 631 Rust library
+  tests (zero failures/ignored/filtered), including both new date tests. The
+  app-rust-only actual-outcomes artifact 10325955208 confirms success; other
+  suites were intentionally skipped. Cleanup completed and independent VM and
+  runner inventories are empty. Windows 34782347926 still builds the matching
+  ARM64 runtime. No claim of repaired live dates before importing that runtime.
+- Second Muse worker 01a09c99-78d2-7550-ae24-68b510ae3624 reviewed type-3
+  associations read-only. Parent checked the existing type-2 session and
+  reaction-range guards. No in-repo type-3 semantics were established; no
+  accept/flatten patch was made. Its proposed presence diagnostics mostly
+  duplicate existing evidence and are not a reason for another build. Worker
+  closed; retained records remain available for a protocol-backed investigation.
+- Retained observations now include only the existing account-scoped record
+  HMAC alongside fixed classifications, to compare the exact before/after
+  records across runtime upgrades without printing raw identities or dates.
+- Stored exact pre-repair HMAC observations for eight attachments in private
+  windows-icons-20260913/retained-date-before.json. They bind the next native
+  repeat to the same records instead of assuming offsets select the same data.
+- Flutter's actual image decoder successfully decoded all 14 new stored app
+  icons from database copies, with explicit byte/dimension/count bounds and
+  proper native-resource disposal. No image file or private display text was
+  emitted. This closes the icon-byte validity check, not full interactive UI.
+- Final local command suites remain green; actual analyzer output has three
+  existing brace-style infos (two harness, one copy audit), not runtime errors.
+  Both Muse workers are closed and verified absent; no local app/test/native
+  build process remains. Windows 34782347926 is the only active qualification
+  job. Keep the goal active and qualify live repaired dates after its artifact.

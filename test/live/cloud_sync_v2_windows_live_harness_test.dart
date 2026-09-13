@@ -28,6 +28,10 @@ void main() {
 
   setUpAll(() async {
     if (!enabled) return;
+    if (Platform.environment['OPENBUBBLES_INSPECT_RETAINED'] == '1') {
+      harness.cloudSyncV2RetainedInspectionOffset(
+        Platform.environment['OPENBUBBLES_INSPECT_RETAINED_OFFSET']);
+    }
     TestWidgetsFlutterBinding.ensureInitialized();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(

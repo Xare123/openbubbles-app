@@ -8,6 +8,33 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('retained date inspection reports fixed shapes without values', () {
+    expect(cloudSyncV2RetainedDateShape(null), {'present': false});
+    expect(cloudSyncV2RetainedDateShape(0)['zero'], isTrue);
+    expect(cloudSyncV2RetainedDateShape(1735689600000)['unix_millis_2001_2100'], isTrue);
+    expect(cloudSyncV2RetainedDateShape(1735689600000000)['unix_micros_2001_2100'], isTrue);
+    expect(cloudSyncV2RetainedDateShape(1735689600000000000)['unix_nanos_2001_2100'], isTrue);
+    final nanos = cloudSyncV2RetainedDateShape(757382400000000000);
+    expect(nanos['apple_nanos_2001_2100'], isTrue);
+    expect(nanos['unix_nanos_2001_2100'], isFalse);
+    expect(nanos['dart_range'], isFalse);
+    for (final extreme in [-9223372036854775808, 9223372036854775807]) {
+      expect(cloudSyncV2RetainedDateShape(extreme)['int64_extreme'], isTrue);
+      expect(cloudSyncV2RetainedDateShape(extreme)['dart_range'], isFalse);
+    }
+    expect(cloudSyncV2RetainedDateShape(8640000000000000)['dart_range'], isTrue);
+    expect(cloudSyncV2RetainedDateShape(8640000000000001)['dart_range'], isFalse);
+    expect(nanos.values.every((value) => value is bool), isTrue);
+  });
+  test('retained inspection offset is explicit and bounded before initialization', () {
+    expect(cloudSyncV2RetainedInspectionOffset(null), 0);
+    for (final value in ['0', '128', '4096']) {
+      expect(cloudSyncV2RetainedInspectionOffset(value), int.parse(value));
+    }
+    for (final value in ['', '-1', '+1', '01', ' 128', '128 ', '4097', '10000', '1e2']) {
+      expect(() => cloudSyncV2RetainedInspectionOffset(value), throwsStateError);
+    }
+  });
   test('write preflight does not renew a warm session', () async {
     var ensured = 0;
     final ready = await cloudSyncV2WindowsPrepareWriteAuthentication(

@@ -134,6 +134,61 @@ String cloudSyncV2WindowsHarnessStartupFailureCode(
     ? 'cloud_sync_windows_native_initialization_failed'
     : cloudSyncV2SafeFailureCode(error);
 
+@visibleForTesting
+int cloudSyncV2RetainedInspectionOffset(String? value) {
+  if (value == null) return 0;
+  if (!RegExp(r'^(0|[1-9][0-9]{0,3})$').hasMatch(value)) {
+    throw StateError('cloud_sync_windows_dev_observation_offset_invalid');
+  }
+  final offset = int.parse(value);
+  if (offset > 4096) {
+    throw StateError('cloud_sync_windows_dev_observation_offset_invalid');
+  }
+  return offset;
+}
+
+/// Fixed categories only. Candidate scales diagnose the wire contract; they
+/// never authorize coercing, omitting or changing a stored timestamp.
+@visibleForTesting
+Map<String, Object?> cloudSyncV2RetainedDateShape(int? value) {
+  if (value == null) return const {'present': false};
+  const first = 978307200000; // 2001-01-01 UTC, for diagnosis only.
+  const last = 4102444800000; // 2100-01-01 UTC.
+  bool contemporary(int candidate) => candidate >= first && candidate < last;
+  return {
+    'present': true,
+    'negative': value < 0,
+    'zero': value == 0,
+    'int64_extreme': value == -9223372036854775808 || value == 9223372036854775807,
+    'dart_range': value >= -8640000000000000 && value <= 8640000000000000,
+    'unix_millis_2001_2100': contemporary(value),
+    'unix_micros_2001_2100': contemporary(value ~/ 1000),
+    'unix_nanos_2001_2100': contemporary(value ~/ 1000000),
+    'apple_nanos_2001_2100': contemporary(value ~/ 1000000 + first),
+  };
+}
+
+final class _RetainedInspectionBindings implements RustCloudSemanticDecodeBindings {
+  _RetainedInspectionBindings(this.observation);
+  final Map<String, Object?> observation;
+  final _delegate = FrbRustCloudSemanticDecodeBindings();
+
+  @override
+  Future<api.CloudSyncTransientDecodeResult> decode(RustCloudSemanticDecodeRequest request) async {
+    final result = await _delegate.decode(request);
+    final snapshot = result.snapshot;
+    if (snapshot != null && result.entityKind == api.CloudSyncTransientEntityKind.attachment) {
+      observation['attachment_date_shape'] = {
+        'created': cloudSyncV2RetainedDateShape(snapshot.createdAtMillis),
+        'read': cloudSyncV2RetainedDateShape(snapshot.readAtMillis),
+        'delivered': cloudSyncV2RetainedDateShape(snapshot.deliveredAtMillis),
+        'retracted': cloudSyncV2RetainedDateShape(snapshot.retractedAtMillis),
+      };
+    }
+    return result;
+  }
+}
+
 enum CloudSyncV2WindowsHarnessOperation {
   interactive,
   runOnce,
@@ -1191,6 +1246,8 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         widget.operation != CloudSyncV2WindowsHarnessOperation.interactive) {
       throw StateError('cloud_sync_windows_dev_test_host_invalid');
     }
+    final offset = cloudSyncV2RetainedInspectionOffset(
+      Platform.environment['OPENBUBBLES_INSPECT_RETAINED_OFFSET']);
     String durableState() => jsonEncode([
       Database.store.box<CloudSyncCheckpointEntity>().getAll().map((r) => [
         r.id, r.generation, r.fetchedSequence, r.appliedSequence,
@@ -1224,7 +1281,9 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
               .and(CloudInboxChangeEntity_.failureCategory.equals(category.name))
               .and(CloudInboxChangeEntity_.changeType.equals('save'))
               .and(CloudInboxChangeEntity_.isTombstone.equals(false)),
-          )..order(CloudInboxChangeEntity_.fetchSequence)).build()..limit = 8;
+          )..order(CloudInboxChangeEntity_.fetchSequence)).build()
+            ..offset = offset
+            ..limit = 8;
           final rows = query.find();
           query.close();
           for (final row in rows) {
@@ -1240,10 +1299,12 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                 serverModifiedAt: row.serverModifiedAtMs == 0 ? null
                   : DateTime.fromMillisecondsSinceEpoch(row.serverModifiedAtMs, isUtc: true)));
             final labels = <String>[];
-            final item = <String, Object?>{'zone': zone, 'previous_category': category.name};
+            final item = <String, Object?>{'zone': zone,
+              'record_hash': row.serverRecordIdHash, 'previous_category': category.name};
             try {
               final decoded = await RustCloudSemanticDecoder(readAuthSnapshot: () async => auth,
                 storageDirectory: fs.appDocDir.path, nativeWriterPauseToken: pause as BigInt,
+                bindings: _RetainedInspectionBindings(item),
                 diagnosticRecorder: labels.add).decode(entry);
               final payload = decoded.payload;
               item['decode'] = 'ready';
@@ -1257,6 +1318,12 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                   'edits': payload.edits.length, 'has_reply': payload.replyParentCanonicalGuid != null,
                   'chat_route': payload.chatIdentifier.startsWith('iMessage;-;') ? 'direct'
                     : payload.chatIdentifier.startsWith('iMessage;+;') ? 'group' : 'bare_or_other'});
+              } else if (payload is CloudReactionEntityPayload) {
+                final parent = payload.parentCanonicalGuid;
+                final parents = Database.store.box<Message>().query(Message_.guid.equals(parent)).build();
+                try { item['parent_candidates'] = parents.count(); } finally { parents.close(); }
+                item.addAll({'kind': 'reaction', 'parent_declared': true,
+                  'parent_part_present': payload.parentPart != null});
               } else if (payload is CloudAttachmentEntityPayload) {
                 final parent = payload.ownerCanonicalGuid;
                 final parents = parent == null ? null : Database.store.box<Message>().query(Message_.guid.equals(parent)).build();
@@ -1264,8 +1331,19 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                 item.addAll({'kind': 'attachment', 'parent_declared': parent != null,
                   'body_capability': payload.bodyCapability.name});
               } else { item['kind'] = 'other'; }
-            } on CloudSemanticDecodeFailure catch (failure) {
-              item['decode'] = cloudSyncV2SafeFailureCodeForCandidate(failure.safeCode);
+            } on CloudSemanticDecodeFailure catch (failure, stack) {
+              final code = failure.safeCode;
+              item['decode'] = cloudSyncV2SafeFailureCodeForCandidate(code);
+              item['failure_category'] = failure.category.name;
+              item['failure_code_present'] = code != null;
+              if (item['decode'] == 'cloud_sync_unknown_failure' && code != null) {
+                item['failure_code_sha256'] = sha256.convert(utf8.encode(code)).toString();
+              }
+              final frame = RegExp(r'/(rust_cloud_semantic_decoder|cloud_inbox_applier)\.dart:(\d+):\d+').firstMatch(stack.toString());
+              if (frame != null) {
+                item['failure_source'] = '${frame.group(1)}.dart';
+                item['failure_line'] = int.parse(frame.group(2)!);
+              }
             } on CloudSemanticOutOfScopeServiceDisposition catch (excluded) {
               item['decode'] = excluded.safeCode;
             }
@@ -1281,7 +1359,8 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       }
       final unchanged = before == durableState();
       if (!unchanged) throw StateError('cloud_sync_windows_dev_observation_changed');
-      return {'durable_state_unchanged': unchanged, 'cases': observations};
+      return {'durable_state_unchanged': unchanged, 'window_offset': offset,
+        'limit_per_category': 8, 'cases': observations};
     });
   }
 

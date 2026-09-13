@@ -9,7 +9,7 @@ tags:
   - cloudkit
   - reconciliation
   - privacy
-timestamp: 2026-09-06
+timestamp: 2026-09-13
 ---
 
 # Cloud Sync V2 Canonical Mapping
@@ -439,7 +439,8 @@ that part-level mutation rather than choosing by local arrival order.
 | `cm.tn` | `Attachment.transferName` | `T1/C1` | Treat as display name, sanitize path separators for local materialization. | Proposed |
 | `cm.tb` | `Attachment.totalBytes` | `C1/D0` | Non-negative maps directly. Negative means unknown and must not become zero. | Proposed |
 | `cm.ig` | `Attachment.isOutgoing` | `C1` | Apply present boolean. | Proposed |
-| `cm.sdt`, `cm.cdt` | snapshot timing evidence | `D0` | Negative values are valid wire values. Canonical `Attachment` currently lacks date fields. | Snapshot only |
+| `cm.cdt` | snapshot `createdAtMillis` | `D0` | Signed nanoseconds since 2001-01-01, not Unix milliseconds. Convert with `978307200000 + floor(cdt / 1000000)`; zero is the Apple epoch. Negative values are valid. Never pass raw nanos to Dart DateTime. | Native regressions passed in GCE 34782416330; repaired live projection pending |
+| `cm.sdt` | protected timing evidence, no current canonical date field | protected `N0` | Same signed Apple-nanosecond unit; do not substitute transfer start time for creation time. | Not projected |
 | `cm.st` | no current canonical transfer-state field | protected `N0` or safe enum `D0` | Do not infer file availability from this value alone. | Blocked for entity |
 | `cm.is` | sticker association validation | `C1/D0` | Current `Attachment` has no sticker field. Corroborate parent message only after fixtures. | Fixture required |
 | `cm.ha` | no current canonical target | protected `N0` | Hidden attachment behavior is unverified. | Blocked |
