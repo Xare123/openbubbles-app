@@ -22,6 +22,8 @@ timestamp: 2026-07-31
   resource ownership.
 - [Cloud Sync V2](CLOUD_SYNC_V2.md): guarded Pixel Android and Windows
   ARM64/x64 reconciliation architecture and rollout.
+- [Cloud Sync V2 recent-first audit](CLOUD_SYNC_V2_RECENT_FIRST_AUDIT.md):
+  cursor-preserving local visibility design, dependency model, and proof gates.
 - [Cloud Sync V2 live validation](CLOUD_SYNC_V2_LIVE_VALIDATION.md):
   two-account test topology, safety gates, evidence, and stop conditions.
 - [Cloud Sync V2 open-source pattern review](CLOUD_SYNC_V2_OPEN_SOURCE_REVIEW.md):

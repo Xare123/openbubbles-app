@@ -942,6 +942,81 @@ void main() {
     },
   );
 
+  test(
+    '200 fetched saves can project three while retaining 197 dependencies and cursor continuity',
+    () async {
+      scope = testScope(persistenceLane: CloudSyncPersistenceLane.semantic);
+      // Synthetic dependency model, not a claim about Apple's page contents.
+      // The actual canonical parent gates are covered by the adapter suite.
+      for (var sequence = 1; sequence <= 197; sequence++) {
+        applier.resultsBySequence[sequence] =
+            const CloudInboxApplyResult.retryable(
+              failureCategory: CloudFailureCategory.dependency,
+              safeCode: 'canonical_message_chat_unavailable',
+            );
+      }
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: List.generate(200, (index) => testChange(index + 1)),
+          batchId: 'synthetic-200-save-page',
+          generation: 1,
+          nextToken: 'after-200-saves',
+          hasMore: true,
+        ),
+      );
+      const flags = CloudSyncFeatureFlags(
+        readOnlyFetch: true,
+        semanticApply: true,
+      );
+      final result = await engine(
+        flags: flags,
+        batchSize: 200,
+        maximumFetchPagesPerRun: 1,
+        maximumInboxEntriesPerRun: 200,
+        retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.counters.fetched, 200);
+      expect(result.counters.applied, 3);
+      expect(result.retainedUnprojectedBacklog, 197);
+      expect(result.failureSafeCode, 'retained_projection_incomplete');
+      expect(result.observedEmptyTerminalRead, isFalse);
+      expect(applier.appliedSequences, List.generate(200, (index) => index + 1));
+      final rows = await store.inboxEntries(scope);
+      expect(rows, hasLength(200));
+      expect(
+        rows.where((row) => row.status == CloudInboxStatus.retainedUnprojected),
+        hasLength(197),
+      );
+      expect(
+        rows.every((row) => row.change.encryptedPayloadReference != null),
+        isTrue,
+      );
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.fetchedToken, 'after-200-saves');
+      expect(checkpoint.pendingBatchId, isNull);
+      expect(checkpoint.lastAppliedSequence, 0);
+
+      // A new coordinator resumes the same durable store. The fake applier
+      // intentionally has no retained replay capability: an empty server
+      // response must not erase or misreport the still-missing local parents.
+      final resumed = await engine(
+        flags: flags,
+        batchSize: 200,
+        maximumFetchPagesPerRun: 1,
+        coordinatorId: 'resumed-synthetic-200',
+        retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+      expect(transport.observedFetchTokens, [null, 'after-200-saves']);
+      expect(resumed.observedEmptyTerminalRead, isTrue);
+      expect(resumed.retainedUnprojectedBacklog, 197);
+      expect(resumed.status, CloudSyncRunStatus.degraded);
+      expect((await store.inboxEntries(scope)), hasLength(200));
+      expect(transport.pushCallCount, 0);
+    },
+  );
+
   const preflightSafeCodeCases = <CloudPreflightCode, String>{
     CloudPreflightCode.unsupportedRecordType:
         'preflight_unsupported_record_type',
