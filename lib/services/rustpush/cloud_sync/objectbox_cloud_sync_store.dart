@@ -31,6 +31,7 @@ import 'objectbox_canonical_semantic_entity_adapter.dart';
 class ObjectBoxCloudSyncStore
     implements
         CloudSyncStore,
+        CloudQuarantinedInboxBarrierReader,
         CloudRetainedUnprojectedBacklogStore,
         CloudRetainedUnprojectedBacklogSummaryStore,
         CloudUnknownInboxBarrierRecoveryStore,
@@ -89,6 +90,16 @@ class ObjectBoxCloudSyncStore
   }) {
     return ObjectBoxCloudSyncStore(store: Database.store, protector: protector);
   }
+
+  @override
+  Future<bool> hasQuarantinedInboxBarrier(CloudSyncScope scope) async =>
+      _store.runInTransaction(TxMode.read, () {
+        final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+        if (checkpoint == null) return false;
+        _validateCheckpointScope(checkpoint, scope);
+        final row = _findFirstNonterminalInboxLocked(scope, checkpoint);
+        return row?.status == CloudInboxStatus.quarantined.index;
+      });
 
   static const int _maximumRetainedRunsPerScope = 256;
   final CloudSyncChatIdentityEvidence? Function(CloudOutboxOperation operation)?

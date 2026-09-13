@@ -13,6 +13,7 @@ import 'cloud_sync_store.dart';
 class InMemoryCloudSyncStore
     implements
         CloudSyncStore,
+        CloudQuarantinedInboxBarrierReader,
         CloudRetainedUnprojectedBacklogStore,
         CloudRetainedUnprojectedBacklogSummaryStore,
         CloudSyncUnknownOutcomeLeasingStore,
@@ -30,6 +31,18 @@ class InMemoryCloudSyncStore
   final List<CloudSyncRunRecord> _runs = [];
 
   List<CloudSyncRunRecord> get runs => List.unmodifiable(_runs);
+
+  @override
+  Future<bool> hasQuarantinedInboxBarrier(CloudSyncScope scope) =>
+      _lock.synchronized(() async {
+        final generation = _checkpoint(scope).generation;
+        for (final row in _inbox[scope.storageKey]?.values ?? <CloudInboxEntry>[]) {
+          if (row.generation != generation || row.status == CloudInboxStatus.applied ||
+              row.status == CloudInboxStatus.retainedUnprojected) { continue; }
+          return row.status == CloudInboxStatus.quarantined;
+        }
+        return false;
+      });
 
   Future<List<CloudInboxEntry>> inboxEntries(CloudSyncScope scope) {
     return _lock.synchronized(() async {

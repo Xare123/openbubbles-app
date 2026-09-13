@@ -893,6 +893,45 @@ void main() {
     expect(transport.fetchCallCount, 1);
   });
 
+  for (final hard in [true, false]) {
+  test('pending head hard=$hard precedence over unrelated retained debt on restart', () async {
+    final barrierApplier = _RetainedProjectionEngineApplier(
+      onReproject: (scope, generation, leaseFence, limit) async {
+        final retained = (await store.inboxEntries(scope)).where(
+          (row) => row.status == CloudInboxStatus.retainedUnprojected).length;
+        return CloudRetainedProjectionResult(examined: retained, reprojected: 0,
+          retained: retained, hasRemaining: retained > 0);
+      });
+    transport.enqueueFetchBatch(CloudFetchBatch(scope: scope,
+      changes: [testChange(1), testChange(2)], batchId: 'retained-and-quarantined',
+      generation: 1, nextToken: 'blocked-token', hasMore: true));
+    barrierApplier.resultsBySequence[1] = const CloudInboxApplyResult.quarantined(
+      failureCategory: CloudFailureCategory.malformedRecord);
+    barrierApplier.resultsBySequence[2] = hard ? const CloudInboxApplyResult.quarantined(
+      failureCategory: CloudFailureCategory.conflict,
+      safeCode: 'canonical_message_edit_history_conflict')
+      : const CloudInboxApplyResult.deferred(failureCategory: CloudFailureCategory.dependency,
+          safeCode: 'semantic_parent_missing');
+    const flags = CloudSyncFeatureFlags(readOnlyFetch: true, semanticApply: true);
+    await engine(flags: flags, inboxApplierOverride: barrierApplier)
+        .synchronize(trigger: CloudSyncTrigger.manual);
+    final fetches = transport.fetchCallCount;
+    for (var i = 0; i < 2; i++) {
+      final result = await engine(flags: flags, coordinatorId: 'hard-barrier-$i',
+          maximumInboxEntriesPerRun: i == 0 ? 1 : 512,
+          inboxApplierOverride: barrierApplier)
+          .synchronize(trigger: CloudSyncTrigger.manual);
+      expect(result.failureCategory, hard ? CloudFailureCategory.conflict : CloudFailureCategory.dependency);
+      expect(result.failureSafeCode, hard ? 'checkpoint_pending_page_unresolved' : 'retained_projection_incomplete');
+      expect(result.counters.fetched, 0);
+      expect(result.counters.applied, 0);
+      expect(transport.fetchCallCount, fetches);
+      expect((await store.inboxEntries(scope)).last.status,
+        hard ? CloudInboxStatus.quarantined : CloudInboxStatus.pending);
+    }
+  });
+  }
+
   test(
     'terminal retained row permits later projection and the next fetched page',
     () async {

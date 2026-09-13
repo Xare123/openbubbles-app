@@ -34,6 +34,18 @@ void main() {
     ),
   );
 
+  testWidgets('unavailable relay explains recovery without requesting account reset', (tester) async {
+    final p = CloudSyncProgress();
+    await p.start(CloudSyncSpeed.regular, () async {
+      throw StateError('cloud_sync_native_auth_refresh_relay_unavailable');
+    });
+    await tester.pumpWidget(host(p, (_) async {}));
+    expect(find.textContaining('Your saved relay is unavailable'), findsOneWidget);
+    expect(find.textContaining('Fully close and restart'), findsNothing);
+    expect(p.restartRequired, isFalse);
+    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNotNull);
+  });
+
   testWidgets('uncertain PCS explains restart and disables resume', (
     tester,
   ) async {

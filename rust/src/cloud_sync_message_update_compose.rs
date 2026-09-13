@@ -100,10 +100,8 @@ pub(crate) fn compose_message_update(
                 encode_replacement_attributed_body(&edit.new_parts.0, part)?;
             let current_length = u32::try_from(current_text.encode_utf16().count())
                 .map_err(|_| MessageUpdateComposeError::OversizedMessage)?;
-            let original_timestamp = predecessor.message_time_apple_nanos as f64 / 1_000_000_000.0;
-            if !valid_apple_seconds(original_timestamp) {
-                return Err(MessageUpdateComposeError::MalformedMessage);
-            }
+            let original_timestamp =
+                original_timestamp_apple_seconds(predecessor.message_time_apple_nanos)?;
             let replacement_timestamp =
                 prepared_timestamp_apple_seconds(prepared_sent_timestamp_ms)?;
             let basis = resolve_edit_basis(
@@ -263,8 +261,38 @@ fn prepared_timestamp_apple_seconds(
     if prepared_sent_timestamp_ms == 0 || prepared_sent_timestamp_ms > i64::MAX as u64 {
         return Err(MessageUpdateComposeError::MalformedMessage);
     }
-    let seconds = prepared_sent_timestamp_ms as f64 / 1000.0 - APPLE_EPOCH_OFFSET_MILLIS / 1000.0;
+    // Subtract the integer epoch before conversion: subtracting two large
+    // floating-point seconds values lost one millisecond for some authored
+    // dates. Select the first adjacent representable value inside the authored
+    // millisecond if division rounded just below its boundary. The reader can
+    // keep its containing-millisecond (floor) rule, including real sub-ms dates.
+    let relative_ms = prepared_sent_timestamp_ms
+        .checked_sub(APPLE_EPOCH_OFFSET_MILLIS as u64)
+        .ok_or(MessageUpdateComposeError::MalformedMessage)?;
+    apple_seconds_with_millisecond_floor(relative_ms as f64 / 1000.0, relative_ms)
+}
+
+fn original_timestamp_apple_seconds(nanos: i64) -> Result<f64, MessageUpdateComposeError> {
+    if nanos <= 0 {
+        return Err(MessageUpdateComposeError::MalformedMessage);
+    }
+    apple_seconds_with_millisecond_floor(nanos as f64 / 1_000_000_000.0, nanos as u64 / 1_000_000)
+}
+
+fn apple_seconds_with_millisecond_floor(
+    mut seconds: f64,
+    millis: u64,
+) -> Result<f64, MessageUpdateComposeError> {
     if !valid_apple_seconds(seconds) {
+        return Err(MessageUpdateComposeError::MalformedMessage);
+    }
+    let decoded = (seconds * 1000.0).floor();
+    if decoded < millis as f64 {
+        seconds = f64::from_bits(seconds.to_bits() + 1);
+    } else if decoded > millis as f64 {
+        seconds = f64::from_bits(seconds.to_bits() - 1);
+    }
+    if !valid_apple_seconds(seconds) || (seconds * 1000.0).floor() != millis as f64 {
         return Err(MessageUpdateComposeError::MalformedMessage);
     }
     Ok(seconds)
@@ -308,6 +336,35 @@ mod tests {
 
     const ORIGINAL_APPLE_NANOS: i64 = 800_000_000_000_000_000;
     const PREPARED_UNIX_MILLIS: u64 = 1_800_000_000_000;
+
+    #[test]
+    fn authored_edit_milliseconds_survive_apple_seconds_roundtrip() {
+        for base in [
+            978_307_200_001u64,
+            978_307_201_000,
+            1_720_000_000_000,
+            1_789_000_000_000,
+            4_102_444_800_000,
+        ] {
+            for offset in 0..10_000 {
+                let authored = base + offset;
+                let wire = prepared_timestamp_apple_seconds(authored).unwrap();
+                let decoded = APPLE_EPOCH_OFFSET_MILLIS as u64 + (wire * 1000.0).floor() as u64;
+                assert_eq!(decoded, authored, "authored millisecond changed");
+            }
+        }
+    }
+
+    #[test]
+    fn original_timestamp_keeps_its_containing_millisecond() {
+        for millis in [1_001i64, 800_000_000_001, 800_000_000_002] {
+            for submillis in [0, 1, 999_999] {
+                let nanos = millis * 1_000_000 + submillis;
+                let wire = original_timestamp_apple_seconds(nanos).unwrap();
+                assert_eq!((wire * 1000.0).floor() as i64, millis);
+            }
+        }
+    }
 
     fn encoded_body(text: &str) -> Vec<u8> {
         coder_encode_flattened(&[attributed_body_value(

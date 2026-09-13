@@ -74,6 +74,7 @@ void main() {
         'drain',
         'local-write',
         'probe-message-feed',
+        'inspect-edit-conflict',
       };
       expect(operation, isIn(allowedOperations));
       final harnessKey = GlobalKey<harness.CloudSyncV2WindowsHarnessState>();
@@ -85,6 +86,8 @@ void main() {
             operation: harness.CloudSyncV2WindowsHarnessOperation.values
                 .singleWhere(
                   (candidate) => switch (operation) {
+                    'inspect-edit-conflict' =>
+                      candidate == harness.CloudSyncV2WindowsHarnessOperation.interactive,
                     'view-projection' =>
                       candidate ==
                           harness
@@ -126,6 +129,28 @@ void main() {
       expect(decoded, isA<Map<String, dynamic>>());
       final status = (decoded as Map<String, dynamic>).cast<String, Object?>();
       expect(status['launch_id'], launchId);
+      if (Platform.environment['OPENBUBBLES_INSPECT_EDIT_CONFLICT'] == '1') {
+        final comparison = await tester.runAsync(
+          () => harnessKey.currentState!.inspectEditConflictForTestHost(),
+        );
+        debugPrint('windows_edit_conflict_comparison=${jsonEncode(comparison)}');
+        if (Platform.environment['OPENBUBBLES_EDIT_CONFLICT_COPY'] != null) {
+          expect(comparison?['copy_recovery_rejected'], isNot(true));
+          final proof = comparison?['copy_replay'] as Map<String, Object?>?;
+          expect(proof, isNotNull);
+          expect(proof?['production_recovery'], isTrue);
+          expect(proof?['disposition'], 'applied');
+          expect(proof?['local_history_preserved'], isTrue);
+          expect(proof?['original_inbox_status'], 2);
+        }
+      }
+      if (status['safe_code'] == 'cloud_sync_native_auth_refresh_failed' &&
+          Platform.environment['OPENBUBBLES_DIAGNOSE_READ_AUTH'] == '1') {
+        final diagnostic = await tester.runAsync(
+          () => harnessKey.currentState!.diagnoseReadAuthenticationForTestHost(),
+        );
+        debugPrint('windows_read_auth_diagnostic=$diagnostic');
+      }
       expect(
         status['state'],
         anyOf('finished', 'ready'),

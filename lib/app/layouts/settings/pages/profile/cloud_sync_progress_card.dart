@@ -88,7 +88,10 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
             ),
             if (p.safeFailure != null)
               Text(
-                p.restartRequired
+                p.safeFailure == 'cloud_sync_native_auth_refresh_relay_unavailable'
+                    ? 'Your saved relay is unavailable. Check its connection or update its pairing code, then tap Start / resume. '
+                          'Your downloaded history is still saved.'
+                    : p.restartRequired
                     ? 'iCloud encryption preparation timed out. Native work may still be running. '
                           'Further sync and account teardown are blocked for safety. '
                           'Fully close and restart OpenBubbles before resuming.'

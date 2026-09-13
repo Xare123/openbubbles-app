@@ -487,6 +487,20 @@ abstract interface class CloudPretransactionAttachmentConflictBarrierRecoverySto
   });
 }
 
+/// One bounded retry of a freshly proven old own-writer precision echo.
+/// Implementations preserve the protected source and never advance cursors.
+abstract interface class CloudOwnWriterPrecisionBarrierRecovery {
+  Future<bool> requeueOwnWriterPrecisionBarrier(
+    CloudSyncScope scope, {
+    required CloudCoordinatorLeaseFence leaseFence,
+  });
+}
+
+/// Read-only distinction between hard quarantine and soft projection debt.
+abstract interface class CloudQuarantinedInboxBarrierReader {
+  Future<bool> hasQuarantinedInboxBarrier(CloudSyncScope scope);
+}
+
 /// Optional outbox capability used by the reconciliation worker.
 ///
 /// The read-only shadow wrapper deliberately does not expose this mutation

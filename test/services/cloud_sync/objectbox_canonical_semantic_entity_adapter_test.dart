@@ -7205,6 +7205,7 @@ void main() {
     CloudMessageEntityPayload gatePage({
       String body = currentText,
       String logicalKey = messageHash,
+      bool fromMe = false,
       String sender = 'mailto:sender@example.com',
       DateTime? createdAt,
       String? subject,
@@ -7230,7 +7231,7 @@ void main() {
           attributedBodiesState: bodiesState,
           attributedBodies:
               bodiesState == CloudSemanticFieldState.value ? bodies ?? [gateBody(body)] : const [],
-          knownFlags: _messageFlags(fromMe: false),
+          knownFlags: _messageFlags(fromMe: fromMe),
           editsState:
               editsState ?? (edits.isEmpty ? CloudSemanticFieldState.absent : CloudSemanticFieldState.value),
           edits: edits,
@@ -7544,6 +7545,180 @@ void main() {
       expect(onlyHistory(message), hasLength(3));
       expect(onlyHistory(message).last.text!.values.single.string, newerText);
       expect(message.buildMessageParts().single.text, newerText);
+    });
+
+    test('own edit echo recognizes exact legacy wire precision without rewriting history after reopen', () async {
+      final authored = DateTime.fromMillisecondsSinceEpoch(1789000000001, isUtc: true);
+      final wire = authored.subtract(const Duration(milliseconds: 1));
+      seedTransition(gatePage(fromMe: true, edits: [
+        gateRev(originalText, 0, firstEditAt), gateRev(currentText, 1, authored),
+      ]));
+      final echo = gatePage(fromMe: true, edits: [
+        gateRev(originalText, 0, firstEditAt), gateRev(currentText, 1, wire),
+      ]);
+      for (var i = 0; i < 2; i++) {
+        gateAdapter().applyEntity(scope: scope, generation: generation, payload: echo,
+          snapshot: _snapshot(CloudEntityKind.message, messageHash));
+        expect(onlyMessage().text, currentText);
+        expect(onlyHistory(onlyMessage()), hasLength(2));
+        expect(onlyHistory(onlyMessage()).last.date, authored.millisecondsSinceEpoch.toDouble());
+        await reopenGate();
+      }
+    });
+
+    test('precision recovery proves bootstrap without a semantic owner and is read-only', () async {
+      final authored = DateTime.fromMillisecondsSinceEpoch(1789000000001, isUtc: true);
+      seedTransition(gatePage(fromMe: true, edits: [
+        gateRev(originalText, 0, firstEditAt), gateRev(currentText, 1, authored)]));
+      final message = onlyMessage();
+      final snapshots = store.box<CloudSemanticSnapshotEntity>();
+      for (final row in snapshots.getAll().where((r) => r.entityKind == 'message')) {
+        snapshots.remove(row.id);
+      }
+      final before = jsonEncode(message.messageSummaryInfo.map((s) => s.toJson()).toList());
+      final echo = [gateRev(originalText, 0, firstEditAt),
+        gateRev(currentText, 1, authored.subtract(const Duration(milliseconds: 1)))];
+      int? prove(CloudMessageEntityPayload payload) => store.runInTransaction(TxMode.read, () =>
+        gateAdapter().proveOwnWriterPrecisionEcho(CloudDecodedMutation.upsert(
+          scope: scope, generation: generation, changeId: 'precision-proof',
+          snapshot: _snapshot(CloudEntityKind.message, messageHash), payload: payload)));
+      expect(prove(gatePage(fromMe: true, edits: echo)), message.id);
+      expect(prove(gatePage(fromMe: false, edits: echo)), isNull);
+      expect(prove(gatePage(fromMe: true, body: divergentText, edits: echo)), isNull);
+      expect(prove(gatePage(fromMe: true, subject: 'changed', edits: echo)), isNull);
+      expect(prove(gatePage(fromMe: true, edits: [echo.first,
+        gateRev(currentText, 1, authored.subtract(const Duration(milliseconds: 2)))])), isNull);
+      expect(prove(gatePage(fromMe: true, edits: [...echo, gateRev(newerText, 2, thirdEditAt)])), isNull);
+      expect(snapshots.getAll().where((r) => r.entityKind == 'message'), isEmpty);
+      expect(jsonEncode(onlyMessage().messageSummaryInfo.map((s) => s.toJson()).toList()), before);
+      await reopenGate();
+      expect(prove(gatePage(fromMe: true, edits: echo)), message.id);
+    });
+
+    for (final exactPrecision in [true, false]) {
+      test('empty own sender with retained local handle requires exact precision=$exactPrecision', () async {
+        final authored = DateTime.fromMillisecondsSinceEpoch(
+          exactPrecision ? 1789000000001 : 1789000000003,
+          isUtc: true,
+        );
+        final authoredHistory = [
+          gateRev(originalText, 0, firstEditAt),
+          gateRev(currentText, 1, authored),
+        ];
+        // Seed an older local reflection that retained a nonzero sender handle.
+        seedTransition(gatePage(fromMe: true, edits: authoredHistory));
+        final message = onlyMessage();
+        expect(message.handleId, greaterThan(0));
+        final retainedHandle = message.handleId;
+        final historyBefore = jsonEncode(
+          message.messageSummaryInfo.map((info) => info.toJson()).toList(),
+        );
+        final snapshots = store.box<CloudSemanticSnapshotEntity>();
+        for (final row in snapshots.getAll().where((row) => row.entityKind == 'message')) {
+          snapshots.remove(row.id);
+        }
+        final wireHistory = [
+          gateRev(originalText, 0, firstEditAt),
+          gateRev(currentText, 1, authored.subtract(const Duration(milliseconds: 1))),
+        ];
+        int? prove(CloudMessageEntityPayload payload) => store.runInTransaction(
+          TxMode.read,
+          () => gateAdapter().proveOwnWriterPrecisionEcho(
+            CloudDecodedMutation.upsert(
+              scope: scope,
+              generation: generation,
+              changeId: 'empty-own-sender-precision-proof',
+              snapshot: _snapshot(CloudEntityKind.message, messageHash),
+              payload: payload,
+            ),
+          ),
+        );
+        for (var pass = 0; pass < 2; pass++) {
+          expect(
+            prove(gatePage(fromMe: true, sender: '', edits: wireHistory)),
+            exactPrecision ? message.id : null,
+          );
+          // Neither ordinary equality nor a peer/specified different sender
+          // can borrow this own-writer recovery admission.
+          expect(prove(gatePage(fromMe: true, sender: '', edits: authoredHistory)), isNull);
+          expect(prove(gatePage(fromMe: false, sender: '', edits: wireHistory)), isNull);
+          expect(prove(gatePage(fromMe: true, sender: 'mailto:other@example.com',
+            edits: wireHistory)), isNull);
+          expect(onlyMessage().handleId, retainedHandle);
+          expect(jsonEncode(onlyMessage().messageSummaryInfo
+            .map((info) => info.toJson()).toList()), historyBefore);
+          expect(store.box<CloudSemanticSnapshotEntity>().getAll()
+            .where((row) => row.entityKind == 'message'), isEmpty);
+          if (pass == 0) await reopenGate();
+        }
+      });
+    }
+
+    test('precision recovery rejects the reversed wire-to-authored direction', () {
+      final authored = DateTime.fromMillisecondsSinceEpoch(1789000000001, isUtc: true);
+      seedTransition(gatePage(fromMe: true, edits: [gateRev(originalText, 0, firstEditAt),
+        gateRev(currentText, 1, authored.subtract(const Duration(milliseconds: 1)))]));
+      final incoming = gatePage(fromMe: true, edits: [gateRev(originalText, 0, firstEditAt),
+        gateRev(currentText, 1, authored)]);
+      expect(store.runInTransaction(TxMode.read, () => gateAdapter().proveOwnWriterPrecisionEcho(
+        CloudDecodedMutation.upsert(scope: scope, generation: generation, changeId: 'reverse',
+          snapshot: _snapshot(CloudEntityKind.message, messageHash), payload: incoming))), isNull);
+    });
+
+    test('writer precision is not a general one-millisecond tolerance', () {
+      final authored = DateTime.fromMillisecondsSinceEpoch(1789000000003, isUtc: true);
+      seedTransition(gatePage(fromMe: true, edits: [
+        gateRev(originalText, 0, firstEditAt), gateRev(currentText, 1, authored),
+      ]));
+      expect(() => gateAdapter().applyEntity(scope: scope, generation: generation,
+        payload: gatePage(fromMe: true, edits: [
+          gateRev(originalText, 0, firstEditAt),
+          gateRev(currentText, 1, authored.subtract(const Duration(milliseconds: 1))),
+        ]), snapshot: _snapshot(CloudEntityKind.message, messageHash)), throwsA(isA<CloudSyncFailure>()));
+      expect(onlyHistory(onlyMessage()).last.date, authored.millisecondsSinceEpoch.toDouble());
+    });
+
+    test('writer precision allows a full newer history but rejects changed history content', () {
+      final authored = DateTime.fromMillisecondsSinceEpoch(1789000000001, isUtc: true);
+      final wire = authored.subtract(const Duration(milliseconds: 1));
+      seedTransition(gatePage(fromMe: true, edits: [
+        gateRev(originalText, 0, firstEditAt), gateRev(currentText, 1, authored),
+      ]));
+      expect(() => gateAdapter().applyEntity(scope: scope, generation: generation,
+        payload: gatePage(fromMe: true, body: divergentText, edits: [
+          gateRev(originalText, 0, firstEditAt), gateRev(divergentText, 1, wire),
+        ]), snapshot: _snapshot(CloudEntityKind.message, messageHash)), throwsA(isA<CloudSyncFailure>()));
+      gateAdapter().applyEntity(scope: scope, generation: generation,
+        payload: gatePage(fromMe: true, body: newerText, edits: [
+          gateRev(originalText, 0, firstEditAt), gateRev(currentText, 1, wire),
+          gateRev(newerText, 2, authored.add(const Duration(seconds: 10))),
+        ]), snapshot: _snapshot(CloudEntityKind.message, messageHash));
+      expect(onlyMessage().text, newerText);
+      expect(onlyHistory(onlyMessage()), hasLength(3));
+    });
+
+    test('peer edit history does not borrow the own-writer compatibility rule', () {
+      final authored = DateTime.fromMillisecondsSinceEpoch(1789000000001, isUtc: true);
+      seedTransition(gatePage(edits: [
+        gateRev(originalText, 0, firstEditAt), gateRev(currentText, 1, authored),
+      ]));
+      expect(() => gateAdapter().applyEntity(scope: scope, generation: generation,
+        payload: gatePage(edits: [gateRev(originalText, 0, firstEditAt),
+          gateRev(currentText, 1, authored.subtract(const Duration(milliseconds: 1)))]),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash)), throwsA(isA<CloudSyncFailure>()));
+    });
+
+    test('writer precision never collapses distinct adjacent history entries', () {
+      final authored = DateTime.fromMillisecondsSinceEpoch(1789000000001, isUtc: true);
+      seedTransition(gatePage(fromMe: true, edits: [gateRev(originalText, 0, firstEditAt),
+        gateRev(currentText, 1, authored),
+        gateRev(currentText, 2, authored.add(const Duration(milliseconds: 1))),
+      ]));
+      gateAdapter().applyEntity(scope: scope, generation: generation,
+        payload: gatePage(fromMe: true, edits: [gateRev(originalText, 0, firstEditAt),
+          gateRev(currentText, 1, authored.subtract(const Duration(milliseconds: 1)))]),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash));
+      expect(onlyHistory(onlyMessage()), hasLength(3));
     });
 
     test('incomparable histories throw and preserve the stored row', () {

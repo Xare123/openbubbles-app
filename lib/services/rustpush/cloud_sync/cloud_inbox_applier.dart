@@ -1014,6 +1014,7 @@ class TransactionalCloudInboxApplier
         CloudLegacyOwnershipRepairer,
         CloudRetainedProjectionReprocessor,
         CloudRetainedProjectionWindowReprocessor,
+        CloudOwnWriterPrecisionBarrierRecovery,
         CloudReadOnlyTombstoneAcknowledgementPolicy {
   const TransactionalCloudInboxApplier({
     required this._decoder,
@@ -1024,9 +1025,17 @@ class TransactionalCloudInboxApplier
     this._allowTombstones = false,
     this._reconsiderExcludedChatMetadata = false,
     this._diagnosticRecorder,
+    this.ownWriterPrecisionRecovery,
   });
 
   final CloudSemanticDecoder _decoder;
+  final CloudOwnWriterPrecisionBarrierRecovery? ownWriterPrecisionRecovery;
+
+  @override
+  Future<bool> requeueOwnWriterPrecisionBarrier(CloudSyncScope scope, {
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async => await ownWriterPrecisionRecovery?.requeueOwnWriterPrecisionBarrier(
+    scope, leaseFence: leaseFence) ?? false;
   final CloudSemanticStoreGateway _store;
   final CloudMergePolicy _mergePolicy;
   final CloudTransientCanonicalIdentityRegistrar? _identityRegistrar;

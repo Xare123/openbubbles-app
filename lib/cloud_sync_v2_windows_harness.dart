@@ -14,6 +14,13 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dar
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_identity_read_set.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/transient_cloud_canonical_identity_registry.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_semantic_store_gateway.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_own_writer_precision_recovery.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_admission.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_staging.dart';
@@ -904,6 +911,263 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
     return _initialize();
   }
 
+  /// One opt-in authentication diagnostic after a failed read. Uses the normal
+  /// quota read to expose the error family hidden by the native refresh wrapper.
+  /// Never returns account data, token values, response bodies or quota values.
+  @visibleForTesting
+  Future<String> diagnoseReadAuthenticationForTestHost() async {
+    if (Platform.environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] != '1' ||
+        Platform.environment['OPENBUBBLES_DIAGNOSE_READ_AUTH'] != '1' ||
+        widget.autoStart || _busy ||
+        widget.operation != CloudSyncV2WindowsHarnessOperation.runOnce ||
+        _account == null || _osConfig == null) {
+      throw StateError('cloud_sync_windows_dev_test_host_invalid');
+    }
+    final provider = api.makeTokenProvider(account: _account!, config: _osConfig!);
+    try {
+      await api.getQuotaInfo(info: provider);
+      return 'quota_read_succeeded';
+    } catch (error) {
+      final text = error.toString();
+      for (final entry in const <String, String>{
+        'Relay device offline': 'relay_offline',
+        'Fetching validation data failed': 'relay_validation_failed',
+        'Mac hardware validation is unavailable': 'mac_validation_unavailable',
+        'Plist parsing error': 'plist_decode_failed',
+        'Circle http error': 'account_protocol_failed',
+        'Token missing': 'token_missing',
+        'HTTP error': 'http_transport_failed',
+        'Response error': 'http_status_failed',
+        'Failed to authenticate': 'delegate_authentication_failed',
+        'Authentication error': 'authentication_rejected',
+      }.entries) {
+        if (text.contains(entry.key)) return entry.value;
+      }
+      return 'unclassified_authentication_failure';
+    } finally {
+      provider.dispose();
+    }
+  }
+
+  /// Re-decodes one quarantined conflict under the existing read-only session.
+  /// Only structural comparison booleans and relative time differences escape.
+  /// The quarantined row, canonical message and all checkpoints stay unchanged.
+  @visibleForTesting
+  Future<Map<String, Object?>> inspectEditConflictForTestHost() async {
+    if (Platform.environment['OPENBUBBLES_INSPECT_EDIT_CONFLICT'] != '1' ||
+        Platform.environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] != '1' ||
+        widget.autoStart || _busy || _adapter == null) {
+      throw StateError('cloud_sync_windows_dev_test_host_invalid');
+    }
+    return _adapter!.sampler.runConfirmedReadOnlyObservation((auth, pause) async {
+      final query = (Database.store.box<CloudInboxChangeEntity>().query(
+        CloudInboxChangeEntity_.accountFingerprint.equals(auth.accountFingerprint)
+          .and(CloudInboxChangeEntity_.zone.equals('messageManateeZone'))
+          .and(CloudInboxChangeEntity_.status.equals(CloudInboxStatus.quarantined.index))
+          .and(CloudInboxChangeEntity_.failureCategory.equals('conflict')),
+      )..order(CloudInboxChangeEntity_.updatedAtMs, flags: Order.descending)).build()..limit = 1;
+      final rows = query.find();
+      query.close();
+      if (rows.isEmpty) return {'found': false};
+      final row = rows.single;
+      if (row.isTombstone || row.changeType != 'save' || row.preflightCategory != null) {
+        return {'found': true, 'unsupported_shape': true};
+      }
+      final scope = CloudSyncScope(accountFingerprint: auth.accountFingerprint,
+        container: 'com.apple.messages.cloud', database: 'private', zone: row.zone,
+        persistenceLane: CloudSyncPersistenceLane.semantic);
+      final entry = CloudInboxEntry(scope: scope, sequence: row.fetchSequence,
+        generation: row.generation, batchId: row.batchId,
+        status: CloudInboxStatus.quarantined, attemptCount: row.retryCount,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAtMs, isUtc: true),
+        change: CloudFetchedChange(changeId: row.changeIdHash,
+          recordIdHash: row.serverRecordIdHash, etagHash: row.etagHash,
+          type: CloudChangeType.save, encryptedServerRecordId: row.encryptedServerRecordId,
+          protectedSystemFieldsReference: row.protectedSystemFieldsRef,
+          encryptedPayloadReference: row.encryptedPayloadRef, payloadSha256: row.payloadSha256,
+          serverModifiedAt: row.serverModifiedAtMs > 0
+            ? DateTime.fromMillisecondsSinceEpoch(row.serverModifiedAtMs, isUtc: true) : null));
+      final decoded = await RustCloudSemanticDecoder(readAuthSnapshot: () async => auth,
+        storageDirectory: fs.appDocDir.path, nativeWriterPauseToken: pause as BigInt).decode(entry);
+      final incoming = decoded.payload;
+      if (incoming is! CloudMessageEntityPayload) return {'found': true, 'not_message': true};
+      final messages = Database.store.box<Message>().query(Message_.guid.equals(incoming.canonicalGuid)).build()..limit = 2;
+      final local = messages.find();
+      messages.close();
+      if (local.length != 1) return {'found': true, 'local_count': local.length};
+      final message = local.single;
+      final replayQuery = Database.store.box<CloudSemanticReplayEntity>().query(
+        CloudSemanticReplayEntity_.accountFingerprint.equals(auth.accountFingerprint)
+          .and(CloudSemanticReplayEntity_.zone.equals(row.zone))
+          .and(CloudSemanticReplayEntity_.generation.equals(row.generation))
+          .and(CloudSemanticReplayEntity_.inboxSequence.equals(row.fetchSequence)),
+      ).build();
+      final originalReplayCount = replayQuery.count();
+      replayQuery.close();
+      final mapQuery = Database.store.box<CloudRecordMapEntity>().query(
+        CloudRecordMapEntity_.scopeKey.equals(row.scopeKey)
+          .and(CloudRecordMapEntity_.generation.equals(row.generation))
+          .and(CloudRecordMapEntity_.serverRecordIdHash.equals(row.serverRecordIdHash)),
+      ).build()..limit = 2;
+      final originalMaps = mapQuery.find();
+      mapQuery.close();
+      Map<String, Object?>? copiedReplay;
+      final copyDirectory = Platform.environment['OPENBUBBLES_EDIT_CONFLICT_COPY'];
+      if (copyDirectory != null) {
+        const permitted = r'C:\Codex\OpenBubblesReview\build-evidence\windows-edit-precision-recovery-20260913\objectbox';
+        if (path.windows.normalize(copyDirectory).toLowerCase() != permitted.toLowerCase() ||
+            FileSystemEntity.typeSync(copyDirectory, followLinks: false) != FileSystemEntityType.directory) {
+          throw StateError('cloud_sync_windows_dev_test_host_invalid');
+        }
+        final copyHash = (await sha256.bind(File(path.join(copyDirectory, 'data.mdb')).openRead()).first).toString();
+        final expectedHash = Platform.environment['OPENBUBBLES_EDIT_CONFLICT_COPY_SHA256'];
+        if (expectedHash == null || !RegExp(r'^[a-f0-9]{64}$').hasMatch(expectedHash) || copyHash != expectedHash) {
+          throw StateError('cloud_sync_windows_dev_test_host_invalid');
+        }
+        final copy = await openStore(directory: copyDirectory);
+        try {
+          final copiedRow = copy.box<CloudInboxChangeEntity>().get(row.id);
+          final copiedMessage = copy.box<Message>().get(message.id!);
+          if (originalReplayCount != 0 || copiedRow == null || copiedMessage == null ||
+              copiedRow.status != CloudInboxStatus.quarantined.index ||
+              copiedRow.changeIdHash != row.changeIdHash || copiedRow.payloadSha256 != row.payloadSha256 ||
+              jsonEncode(copiedMessage.messageSummaryInfo.map((s) => s.toJson()).toList()) !=
+                jsonEncode(message.messageSummaryInfo.map((s) => s.toJson()).toList())) {
+            throw StateError('cloud_sync_windows_dev_test_host_invalid');
+          }
+          final localStore = ObjectBoxCloudSyncStore(store: copy,
+            protector: RustCloudSyncProtector(storageDirectory: fs.appDocDir.path));
+          final fence = await localStore.tryAcquireCoordinatorLease(scope,
+            ownerId: 'windows-edit-copy-proof', now: DateTime.now().toUtc(),
+            leaseDuration: const Duration(minutes: 2));
+          if (fence == null) throw StateError('cloud_sync_projection_repair_lease_unavailable');
+          try {
+            final chatScope = CloudSyncScope(accountFingerprint: auth.accountFingerprint,
+              container: scope.container, database: scope.database, zone: 'chatManateeZone',
+              persistenceLane: CloudSyncPersistenceLane.semantic);
+            final chatCheckpoint = await localStore.readCheckpoint(chatScope);
+            final identities = TransientCloudCanonicalIdentityRegistry();
+            final labels = <String>[];
+            final adapter = ObjectBoxCanonicalSemanticEntityAdapter(store: copy,
+              activeScopeProvider: () => CloudCanonicalActiveScope(scope: scope, generation: row.generation),
+              identityResolver: identities, semanticApplyEnabled: true, allowMessageUpserts: true,
+              chatDependencyScope: CloudCanonicalActiveScope(scope: chatScope, generation: chatCheckpoint.generation),
+              diagnosticRecorder: labels.add);
+            final decoder = RustCloudSemanticDecoder(readAuthSnapshot: () async => auth,
+              storageDirectory: fs.appDocDir.path, nativeWriterPauseToken: pause,
+              diagnosticRecorder: labels.add);
+            // Exercise the actual fenced production recovery. Never edit the
+            // quarantine directly, even in this copied-database qualification.
+            final recovered = await ObjectBoxOwnWriterPrecisionRecovery(
+              store: copy, decoder: decoder, canonicalAdapter: adapter,
+              identityRegistrar: identities, proveEcho: adapter.proveOwnWriterPrecisionEcho,
+              onDiagnostic: labels.add,
+              revalidateAccount: () async {
+                final fresh = await FrbCloudSyncNativeAuthBinding().capture(
+                  cloudMessagesClient: _activeClient!, privateStorageDirectory: fs.appDocDir.path);
+                return fresh.accountFingerprint == auth.accountFingerprint &&
+                  fresh.nativeSessionId == auth.nativeSessionId &&
+                  fresh.protectedStoreIdentity == auth.protectedStoreIdentity;
+              },
+            ).requeueOwnWriterPrecisionBarrier(scope, leaseFence: fence);
+            if (!recovered) {
+              return {'found': true, 'copy_recovery_rejected': true,
+                'original_inbox_status': Database.store.box<CloudInboxChangeEntity>().get(row.id)?.status,
+                'sender_present': incoming.senderHandle.isNotEmpty,
+                'local_sender_id_missing': message.handleId == 0,
+                'sender_matches_chat_self': incoming.senderHandle == message.chat.target?.usingHandle,
+                'diagnostic_labels': labels};
+            }
+            final pending = await localStore.readEligibleInbox(scope, now: DateTime.now().toUtc(), limit: 1);
+            if (pending.length != 1 || pending.single.sequence != row.fetchSequence) {
+              throw StateError('cloud_sync_windows_dev_test_host_invalid');
+            }
+            final applier = TransactionalCloudInboxApplier(
+              decoder: decoder,
+              store: ObjectBoxCloudSemanticStoreGateway(store: copy, canonicalAdapter: adapter),
+              identityRegistrar: identities, diagnosticRecorder: labels.add);
+            final result = await applier.apply(pending.single, leaseFence: fence);
+            final after = copy.box<Message>().get(message.id!);
+            copiedReplay = {'production_recovery': recovered, 'disposition': result.disposition.name,
+              'copy_inbox_status': copy.box<CloudInboxChangeEntity>().get(row.id)?.status,
+              'local_history_preserved': jsonEncode(after?.messageSummaryInfo.map((s) => s.toJson()).toList()) ==
+                jsonEncode(message.messageSummaryInfo.map((s) => s.toJson()).toList()),
+              'original_inbox_status': Database.store.box<CloudInboxChangeEntity>().get(row.id)?.status,
+              'diagnostic_labels': labels};
+          } finally {
+            await localStore.releaseCoordinatorLease(scope, leaseFence: fence);
+          }
+        } finally {
+          copy.close();
+        }
+      }
+      String? transition;
+      String? transitionFailure;
+      final diagnosticLabels = <String>[];
+      final registry = TransientCloudCanonicalIdentityRegistry();
+      final identityLease = registry.bind(decoded);
+      try {
+        final checkpoints = Database.store.box<CloudSyncCheckpointEntity>().query(
+          CloudSyncCheckpointEntity_.accountFingerprint.equals(auth.accountFingerprint)
+            .and(CloudSyncCheckpointEntity_.zone.equals('chatManateeZone'))
+            .and(CloudSyncCheckpointEntity_.persistenceLane.equals('semantic')),
+        ).build()..limit = 2;
+        final chats = checkpoints.find();
+        checkpoints.close();
+        if (chats.length != 1) throw StateError('cloud_sync_chat_observation_binding_invalid');
+        final chatScope = CloudSyncScope(accountFingerprint: auth.accountFingerprint,
+          container: scope.container, database: scope.database, zone: 'chatManateeZone',
+          persistenceLane: CloudSyncPersistenceLane.semantic);
+        final adapter = ObjectBoxCanonicalSemanticEntityAdapter(store: Database.store,
+          activeScopeProvider: () => CloudCanonicalActiveScope(scope: scope, generation: row.generation),
+          identityResolver: registry, semanticApplyEnabled: true, allowMessageUpserts: true,
+          chatDependencyScope: CloudCanonicalActiveScope(scope: chatScope, generation: chats.single.generation),
+          diagnosticRecorder: diagnosticLabels.add);
+        transition = Database.store.runInTransaction(TxMode.read, () => adapter.classifyMessageContentTransition(
+          scope: scope, generation: row.generation, payload: incoming))?.name;
+      } catch (error) {
+        transitionFailure = cloudSyncV2SafeFailureCode(error);
+      } finally {
+        identityLease.release();
+      }
+      final comparisons = <Map<String, Object?>>[];
+      for (final summary in message.messageSummaryInfo.take(2)) {
+        for (final part in summary.editedContent.entries.take(8)) {
+          for (final old in part.value.take(8)) {
+            for (final fresh in incoming.edits.take(8)) {
+              if (part.key != fresh.part.toString()) continue;
+              final date = old.date;
+              final millis = date == null || !date.isFinite ? null
+                : date >= 978307200000 ? date.toInt() : 978307200000 + (date * 1000).floor();
+              final oldBodies = old.text?.values ?? <AttributedBody>[];
+              comparisons.add({
+                'part': fresh.part,
+                'same_text': jsonEncode(oldBodies.map((b) => b.string).toList()) ==
+                  jsonEncode(fresh.bodies.map((b) => b.text).toList()),
+                'time_delta_ms': millis == null ? null : fresh.modifiedAt.millisecondsSinceEpoch - millis,
+                'old_date_integral': date == null ? null : date == date.floorToDouble(),
+                'old_body_lengths': oldBodies.map((b) => b.string.length).toList(),
+                'new_body_lengths': fresh.bodies.map((b) => b.text.length).toList(),
+                'old_ranges': oldBodies.map((b) => b.runs.map((r) => r.range).toList()).toList(),
+                'new_ranges': fresh.bodies.map((b) => b.runs.map((r) => [r.startUtf16,r.lengthUtf16]).toList()).toList(),
+                'old_attribute_keys': oldBodies.map((b) => b.runs.map((r) => (r.attributes?.toMap().keys.toList() ?? <String>[])..sort()).toList()).toList(),
+                'new_parts': fresh.bodies.map((b) => b.runs.map((r) => r.messagePart).toList()).toList(),
+              });
+            }
+          }
+        }
+      }
+      return {'found': true, 'is_from_me': message.isFromMe,
+        'existing_summaries': message.messageSummaryInfo.length,
+        'incoming_edits': incoming.edits.length, 'comparisons': comparisons,
+        'transition': transition, 'transition_failure': transitionFailure,
+        'diagnostic_labels': diagnosticLabels, 'original_replay_count': originalReplayCount,
+        'original_map_count': originalMaps.length,
+        'original_map_etag_matches': originalMaps.length == 1 && originalMaps.single.etagHash == row.etagHash,
+        'copy_replay': copiedReplay};
+    });
+  }
+
   Future<void> _initialize() async {
     _resumeAfterTwoFactor =
         _CloudSyncV2WindowsHarnessResumeOperation.initialize;
@@ -1560,6 +1824,12 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       final repairedChatOrderRows =
           await repairCloudSyncChatLatestMessageDates();
       final reportFile = await reportWriter.write(report);
+      if (!report.safeToContinueDrain) {
+        throw CloudSyncSemanticDrainUnsafeReportException(
+          report.unambiguousRejectedZoneFailureSafeCode ??
+              'cloud_sync_semantic_drain_unsafe_report',
+        );
+      }
       final fetched = report.zones.fold<int>(
         0,
         (sum, zone) => sum + zone.fetched,
@@ -1939,7 +2209,10 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
     );
     setState(() {
       _busy = false;
-      _status = 'Stopped safely: ${cloudSyncV2SafeFailureCode(error)}';
+      final code = cloudSyncV2SafeFailureCode(error);
+      _status = code == 'cloud_sync_native_auth_refresh_relay_unavailable'
+          ? 'Your saved relay is unavailable. Check its connection or update its pairing code, then try the read again.'
+          : 'Stopped safely: $code';
     });
   }
 

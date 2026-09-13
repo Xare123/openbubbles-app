@@ -1893,6 +1893,7 @@ fn classify_cloud_sync_read_authentication_failure(
 
 fn cloud_sync_read_authentication_refresh_error(error: PushError) -> anyhow::Error {
     let safe_code = match error {
+        PushError::DeviceNotFound => "cloud_sync_native_auth_refresh_relay_unavailable",
         PushError::CloudKitWarmAuthenticationRequired | PushError::TokenMissing => {
             "cloud_sync_native_auth_refresh_session_missing"
         }
@@ -2273,6 +2274,10 @@ mod cloud_sync_read_authentication_tests {
             cloud_sync_read_authentication_refresh_error(PushError::UnauthorizedAccountError)
                 .to_string(),
             "cloud_sync_native_auth_refresh_credentials_rejected"
+        );
+        assert_eq!(
+            cloud_sync_read_authentication_refresh_error(PushError::DeviceNotFound).to_string(),
+            "cloud_sync_native_auth_refresh_relay_unavailable"
         );
     }
 

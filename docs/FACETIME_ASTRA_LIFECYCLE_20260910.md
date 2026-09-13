@@ -3,7 +3,7 @@ type: Investigation
 title: FaceTime explicit-leave lifecycle repair
 description: Isolated candidate restoring intent-scoped native teardown, with offline regression evidence and remaining Android live gates.
 tags: [facetime, android, lifecycle, regression]
-timestamp: 2026-09-11
+timestamp: 2026-09-12
 ---
 
 # Result
@@ -353,3 +353,107 @@ The patch changes only offline analysis and its tests. It does not infer that a
 participant leave ends a session, close a viewer, or establish that calls work.
 The next live check remains one answered call with verified two-way media beyond
 30 seconds, followed by remote hangup and observation of the existing close path.
+
+## September 12 scoped regression recheck at bc9cbab793
+
+Checkout: `C:\Codex\OpenBubblesReview\worktrees\cloudkit-v2-update-seam`,
+HEAD `bc9cbab7937799c39e161564ef957d0d3772ab01` verified locally. This section
+supersedes older worktree/test-status claims for this review only. Production
+FaceTime is still unqualified; no new production defect was reproduced in the
+owned Kotlin/WebView/JS or outgoing Dart lifecycle paths. No production edits.
+
+### Retained evidence, not a new capture
+
+Targeted filename inventory used local-reach, then an ignore-independent filename
+check under `device-evidence`. No `facetime-native*.log` generation was found.
+No general app/Rust logs, profiles, databases, credentials or device were opened.
+
+- Latest FaceTime capture folder found:
+  `facetime-20260911-live-review/capture-20260911-100513-a1`.
+  Its `review-summary.json` reports absent native diagnostic directories and zero
+  native lifecycle records. Both `pid-facetime-logcat.txt` and its retry are zero
+  bytes, verified directly. The current analyzer on the retry returns zero accepted
+  records, zero ignored lines, no segments, exit 2 (insufficient evidence).
+- Earlier retained `pixel-write-20260909-3dc614c9e/`
+  `facetime-login-native-20260910-0555.log` is 815 bytes. The current analyzer
+  returns zero accepted records, five ignored lines, no segments, exit 2.
+  Raw lines were not echoed. This is not a current-schema lifecycle trace.
+- The September 11 summary has no installed source-commit attestation. Its shared
+  version code and recorded WebView version cannot prove this HEAD was installed.
+  These captures cannot establish remote ringing/answer, two-way media, the cause
+  of an early close, or repeat-call availability. Absence of records is not absence
+  of failure.
+
+### Current code and the only failing regression
+
+Current source retains explicit-user Leave authority and its 1.5-second native
+fallback, pending-ticket timer ownership, stale-cleanup isolation, same-peer inbound
+media progression, diagnostic-only remote-leave handling, and the newer active
+non-self JoinEvent acceptance gate. Preview, invitation, self-echo and all-inactive
+snapshots do not establish working media or authorize a new terminal predicate.
+
+Initial Node suite: 73/74 passed. The failing invitation source-contract test used
+the exact text `if ring && !has_remote_invitation_target(`. Current Rust formats
+that condition across lines 1333-1347, still after target lookup and before
+`.send_message` at 1349 and `session.is_propped = true` at 1455. This was a test
+matcher defect, not missing invitation protection or a demonstrated no-ring cause.
+
+Only `tooling/facetime/outgoing_invitation_contract.test.mjs` changed besides this
+document. It now accepts whitespace between condition tokens while retaining the
+lookup/guard/send/success order and guard-body assertions. A negative regression
+still rejects missing and post-dispatch guards; the production check covers both
+current wrapped and single-line formatting. No Rust or application behavior changed.
+
+### Fresh local verification
+
+- `node --test tooling/facetime/*.test.mjs test/services/facetime/face_time_media_probe_test.cjs`:
+  75/75 passed after the matcher correction, including 35 trace-analyzer tests.
+- `test/services/facetime/run_face_time_host_tests.ps1`: 76/76 Kotlin/JUnit tests
+  passed using existing compiler jars, no Gradle/download/native build.
+- Existing ARM64 Flutter 3.44.8 SDK, through its cached Dart executable and
+  `flutter_tools.snapshot`, `test --no-pub --no-test-assets --reporter expanded`:
+  61/61 passed across outgoing lifecycle, outgoing start, outgoing acceptance,
+  incoming admission, diagnostics contract and log export tests.
+- Same cached Dart executable, `analyze lib/services/rustpush/face_time_outgoing_lifecycle.dart lib/helpers/ui/facetime_helpers.dart test/services/facetime`:
+  zero errors, two existing unused-import warnings in the helper, 11 infos; exit 1.
+  Unrelated lint cleanup was deliberately not included.
+
+These checks do not compile the Android Activity or qualify Apple WebView behavior,
+remote ringing, real media or device lifecycle. Existing unrelated working-tree
+changes were left intact. Plain Git status encountered broken nested-submodule
+metadata; app status was inspected with `--ignore-submodules=all`. No metadata repair,
+commit, push, CI, new agents/worktrees, device/account access or cleanup was performed.
+
+### Smallest next parent-owned live gate
+
+After parent-approved Android compilation/installation with an attested app commit,
+enable developer mode plus FaceTime diagnostics before starting. Use two consented
+manual calls, not automated retries:
+
+1. Outgoing call: independently confirm remote ringing and answer. Verify two-way
+   audio and video for at least 35 seconds after answer. Remote hangs up; observe
+   the viewer for ten seconds without local End. Record whether it closes, remains
+   open, or closes early. If it remains open, use native End once for recovery and
+   distinguish that local action from the preceding remote-hangup observation.
+2. Without restarting the app, manually place the next call, confirm ringing,
+   answer and two-way media, then use Apple's explicit Leave. Verify viewer closure
+   and that the app is available afterward. A normal close does not by itself test
+   the native fallback; qualify that separately only if this gate does not exercise it.
+
+Retain only both bounded `logs/facetime-native/facetime-native*.log` generations
+(at most 128 KiB total), build/WebView version, and content-free human observations.
+Analyze generations separately. Needed stages: creation/admission, resolved
+same-peer ICE/tracks/advancing inbound bytes, any `remote_leave` phases, explicit
+leave/close reason and destruction. Inbound counters supplement, not replace,
+independent two-way media confirmation. Missing or rotated stages remain unknown.
+For setup/retry failure before a native span, additionally retain only bounded
+`facetime_setup` markers from the existing INFO app logger, never the whole app log.
+
+No Rust/API/service seam change is justified by the retained captures. If the viewer
+survives remote hangup, that observation plus its trace is the next evidence for a
+parent-owned terminal-event seam decision, not authority to infer termination from
+participant inactivity. Parent reviews this test/doc-only diff before integration.
+
+End-of-review storage: C: free 64.59 GiB; existing checkout `build` 5.588 GiB and
+`.dart_tool` 0.444 GiB (whole-tree totals, not attributed growth). Targeted JVM jar:
+100,411 bytes. Existing test caches were reused; no dependency trees were copied.

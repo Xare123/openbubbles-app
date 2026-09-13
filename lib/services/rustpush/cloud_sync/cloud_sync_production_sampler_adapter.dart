@@ -56,6 +56,7 @@ import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_mutation_guard.dart';
 import 'cloudkit_writer_ownership.dart';
 import 'objectbox_cloud_sync_store.dart';
+import 'objectbox_own_writer_precision_recovery.dart';
 import 'objectbox_cloud_sync_preflight.dart';
 import 'cloud_sync_shadow_transport.dart';
 import 'rust_cloud_semantic_decoder.dart';
@@ -278,6 +279,7 @@ String cloudSyncNativeAuthBridgeSafeCode(Object error) {
     'cloud_sync_native_auth_transport_failed',
     'cloud_sync_native_auth_refresh_session_missing',
     'cloud_sync_native_auth_refresh_credentials_rejected',
+    'cloud_sync_native_auth_refresh_relay_unavailable',
     'cloud_sync_native_auth_refresh_transport_failed',
     'cloud_sync_native_auth_refresh_state_failed',
     'cloud_sync_native_auth_refresh_timeout',
@@ -629,23 +631,31 @@ final class CloudSyncProductionSemanticPullAdapter {
           canonicalAdapter: canonicalAdapter,
           reconsiderExcludedChatMetadata: reconsiderExcludedChatMetadata,
         );
-        return TransactionalCloudInboxApplier(
-          reconsiderExcludedChatMetadata: reconsiderExcludedChatMetadata,
-          decoder: RustCloudSemanticDecoder(
+        final decoder = RustCloudSemanticDecoder(
             readAuthSnapshot: authProvider.capture,
             storageDirectory: privateStorageDirectory,
             nativeWriterPauseToken: pauseToken,
             bindings: semanticDecodeBindings,
             diagnosticRecorder: diagnostics.record,
             verboseDiagnosticsEnabled: verboseDiagnosticsEnabled,
+          );
+        Future<bool> revalidateAccount() async {
+          final current = await authProvider.capture();
+          return snapshot.sameIdentity(current) &&
+              identical(snapshot.cloudMessagesClient, readActiveClient());
+        }
+        return TransactionalCloudInboxApplier(
+          reconsiderExcludedChatMetadata: reconsiderExcludedChatMetadata,
+          decoder: decoder,
+          ownWriterPrecisionRecovery: ObjectBoxOwnWriterPrecisionRecovery(
+            store: Database.store, decoder: decoder, canonicalAdapter: canonicalAdapter,
+            identityRegistrar: identityRegistry,
+            proveEcho: canonicalAdapter.proveOwnWriterPrecisionEcho,
+            revalidateAccount: revalidateAccount,
           ),
           store: gateway,
           identityRegistrar: identityRegistry,
-          activeScopeRevalidator: () async {
-            final current = await authProvider.capture();
-            return snapshot.sameIdentity(current) &&
-                identical(snapshot.cloudMessagesClient, readActiveClient());
-          },
+          activeScopeRevalidator: revalidateAccount,
           allowTombstones: false,
           diagnosticRecorder: diagnostics.record,
         );

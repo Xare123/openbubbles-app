@@ -527,6 +527,7 @@ void main() {
       'cloud_sync_native_auth_pcs_zones_failed',
       'cloud_sync_native_auth_metadata_invalid',
       'cloud_sync_native_auth_refresh_credentials_rejected',
+      'cloud_sync_native_auth_refresh_relay_unavailable',
       'cloud_sync_native_auth_refresh_failed',
       'cloud_sync_native_auth_refresh_session_missing',
       'cloud_sync_native_auth_refresh_state_failed',

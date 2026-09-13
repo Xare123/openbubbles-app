@@ -7,9 +7,12 @@ import fs from "node:fs";
 const source = fs.readFileSync(new URL("../../rustpush/src/facetime.rs", import.meta.url), "utf8");
 const prop = source.slice(source.indexOf("pub async fn prop_up_conv("), source.indexOf("pub async fn decline_invite("));
 
-test("outgoing invitation checks effective remote targets before dispatch and success", () => {
+function assertInvitationGuard(prop) {
   const lookup = prop.lastIndexOf("get_participants_targets(");
-  const guard = prop.indexOf("if ring && !has_remote_invitation_target(", lookup);
+  // rustfmt may wrap the condition; token order, not line layout, is the contract.
+  const guardPattern = /if\s+ring\s*&&\s*!has_remote_invitation_target\(/g;
+  guardPattern.lastIndex = Math.max(0, lookup);
+  const guard = guardPattern.exec(prop)?.index ?? -1;
   const send = prop.indexOf(".send_message(", lookup);
   const success = prop.indexOf("session.is_propped = true;");
   assert.ok(lookup >= 0 && guard > lookup && send > guard && success > send,
@@ -21,6 +24,21 @@ test("outgoing invitation checks effective remote targets before dispatch and su
   assert.match(gate, /target\.participant\.as_str\(\)/);
   assert.match(gate, /target\.delivery_data\.push_token\.as_slice\(\)/);
   assert.match(gate, /return Err\(PushError::NoValidTargets\);/);
+}
+
+test("outgoing invitation checks effective remote targets before dispatch and success", () => {
+  assertInvitationGuard(prop);
+  assertInvitationGuard(prop.replace(/if\s+ring\s*&&\s*!has_remote_invitation_target\(/,
+    "if ring && !has_remote_invitation_target("));
+});
+
+test("invitation contract still rejects a missing or post-dispatch guard", () => {
+  const condition = /if\s+ring\s*&&\s*!has_remote_invitation_target\(/;
+  const withoutGuard = prop.replace(condition, "if unrelated_predicate(");
+  assert.throws(() => assertInvitationGuard(withoutGuard), assert.AssertionError);
+  const afterDispatch = withoutGuard.replace("session.is_propped = true;",
+    "if ring && !has_remote_invitation_target() {} session.is_propped = true;");
+  assert.throws(() => assertInvitationGuard(afterDispatch), assert.AssertionError);
 });
 
 test("guard matches both invitation selection and IDS local-token exclusion", () => {

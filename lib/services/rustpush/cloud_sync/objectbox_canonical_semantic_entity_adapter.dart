@@ -3444,6 +3444,75 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       })
       .toList(growable: false);
 
+  /// Read-only admission proof for the old own-writer millisecond echo only.
+  /// The caller binds fresh native identities and holds the ObjectBox lock.
+  /// Reuse bootstrap ownership proof, without persisting a provisional owner.
+  int? proveOwnWriterPrecisionEcho(CloudDecodedMutation decoded) {
+    int? reject(String code) {
+      _diagnosticRecorder?.call(code);
+      return null;
+    }
+    final payload = decoded.payload;
+    final snapshot = decoded.snapshot;
+    if (payload is! CloudMessageEntityPayload || snapshot == null ||
+        payload.knownFlags?.fromMe != true ||
+        payload.editsState != CloudSemanticFieldState.value ||
+        payload.retractedParts.isNotEmpty || payload.edits.isEmpty) {
+      return reject('canonical_writer_precision_payload_ineligible');
+    }
+    // This is the proof used by provePreexistingCanonicalOwnership, without
+    // its bootstrap diagnostic (no bootstrap has been committed here).
+    proveLegacyCanonicalOwnership(scope: decoded.scope,
+      generation: decoded.generation, payload: payload, snapshot: snapshot);
+    final message = _findUniqueLegacyOwnershipMessage(payload.canonicalGuid);
+    if (message == null || message.isFromMe != true || message.verificationFailed ||
+        message.temp || message.error != 0 || message.dateDeleted != null ||
+        message.messageSummaryInfo.length != 1) {
+      return reject('canonical_writer_precision_local_ineligible');
+    }
+    if (payload.service != CloudSemanticService.iMessage ||
+        payload.decodedExtensionPayloadState == CloudSemanticFieldState.value ||
+        payload.replyParentCanonicalGuid != null ||
+        _applyNullableStringField(state: payload.subjectState,
+          incoming: payload.subject, existing: message.subject) != message.subject ||
+        (payload.bodyState == CloudSemanticFieldState.value && payload.body != message.text) ||
+        payload.attributedBodiesState != CloudSemanticFieldState.value ||
+        jsonEncode(Content(values: _attributedBodies(payload.attributedBodies)).toJson()) !=
+          jsonEncode(Content(values: message.attributedBody).toJson())) {
+      return reject('canonical_writer_precision_current_content_mismatch');
+    }
+    // The normal projector treats an empty sender on a proven own message as
+    // the local account, not as handle row 0 in every prior producer. Local
+    // IDS reflection can retain a handle; replay will normalize it normally.
+    if (payload.senderHandle.isNotEmpty) {
+      final sender = _normalizeHandle(payload.senderHandle, allowBusinessUrn: true);
+      if (sender == null || _findHandle('${sender.address}/iMessage')?.originalROWID !=
+          message.handleId) { return reject('canonical_writer_precision_sender_mismatch'); }
+    }
+    final history = message.messageSummaryInfo.single;
+    if (history.retractedParts.isNotEmpty) { return reject('canonical_writer_precision_retracted'); }
+    final existing = <String>{};
+    final incoming = <String>{};
+    for (final part in history.editedContent.entries) {
+      for (final edit in part.value) {
+        if (edit.text == null) { return reject('canonical_writer_precision_history_ineligible'); }
+        existing.add(_editIdentity(part.key, edit));
+      }
+    }
+    for (final edit in payload.edits) {
+      incoming.add(_editIdentity(edit.part.toString(), EditedContent(
+        text: Content(values: _attributedBodies(edit.bodies)),
+        date: edit.modifiedAt.millisecondsSinceEpoch.toDouble())));
+    }
+    // Both complete sets must match; ordinary subsets/new revisions are not
+    // this recovery cause. At least one old-round-trip difference is required.
+    if (existing.isEmpty || existing.length != incoming.length ||
+        existing.containsAll(incoming) ||
+        !_containsWriterPrecisionHistory(incoming, existing,
+          authoredToWireOnly: true)) { return reject('canonical_writer_precision_history_mismatch'); }
+    return message.id;
+  }
+
   bool _incomingEditContentMayReplace(
     Message message,
     CloudMessageEntityPayload payload,
@@ -3453,30 +3522,58 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     final retracted = {...current.retractedParts, ...payload.retractedParts};
     final existing = <String>{};
     final incoming = <String>{};
+    final existingBodies = <String>{};
+    final incomingBodies = <String>{};
+    final existingTextTimes = <String>{};
+    final incomingTextTimes = <String>{};
+    void describeEdit(String part, EditedContent edit, Set<String> bodies, Set<String> textTimes) {
+      bodies.add(jsonEncode([part, edit.text!.toJson()]));
+      textTimes.add(jsonEncode([part, _editTimestampMillis(edit),
+        edit.text!.values.map((body) => body.string).toList()]));
+    }
     for (final entry in current.editedContent.entries) {
       if (retracted.contains(int.tryParse(entry.key))) continue;
       for (final edit in entry.value) {
         existing.add(_editIdentity(entry.key, edit));
+        describeEdit(entry.key, edit, existingBodies, existingTextTimes);
       }
     }
     if (existing.isEmpty) return true;
     for (final edit in payload.edits) {
       if (retracted.contains(edit.part)) continue;
-      incoming.add(
-        _editIdentity(
-          edit.part.toString(),
-          EditedContent(
-            text: Content(values: _attributedBodies(edit.bodies)),
-            date: edit.modifiedAt.millisecondsSinceEpoch.toDouble(),
-          ),
-        ),
+      final decoded = EditedContent(
+        text: Content(values: _attributedBodies(edit.bodies)),
+        date: edit.modifiedAt.millisecondsSinceEpoch.toDouble(),
       );
+      incoming.add(_editIdentity(edit.part.toString(), decoded));
+      describeEdit(edit.part.toString(), decoded, incomingBodies, incomingTextTimes);
     }
     // Native revision numbers are page-local sorted indexes, not a causal
     // clock. Compare complete decoded histories instead, independent of order
     // and duplicates introduced by legacy or live-message import.
     if (incoming.containsAll(existing)) return true;
     if (existing.containsAll(incoming)) return false;
+    // Older app-authored updates converted Unix milliseconds to floating-point
+    // seconds before subtracting Apple's epoch. That exact wire round trip can
+    // lose one millisecond. Match only identical part/body/format entries, with
+    // one-to-one timestamp matching, and keep equivalent local history intact.
+    if (message.isFromMe == true) {
+      final incomingContains = _containsWriterPrecisionHistory(incoming, existing);
+      final existingContains = _containsWriterPrecisionHistory(existing, incoming);
+      if (incomingContains || existingContains) {
+        _diagnosticRecorder?.call('canonical_message_edit_history_writer_precision');
+        return incomingContains && !existingContains;
+      }
+    }
+    // Comparison keys stay in memory. Only this finite cause label is emitted;
+    // diagnostics never authorize replacing an incomparable history.
+    bool comparable(Set<String> a, Set<String> b) =>
+        a.containsAll(b) || b.containsAll(a);
+    _diagnosticRecorder?.call(comparable(existingBodies, incomingBodies)
+        ? 'canonical_message_edit_history_timestamp_mismatch'
+        : comparable(existingTextTimes, incomingTextTimes)
+        ? 'canonical_message_edit_history_format_mismatch'
+        : 'canonical_message_edit_history_content_mismatch');
     throw CloudSyncFailure(
       category: CloudFailureCategory.conflict,
       safeCode: 'canonical_message_edit_history_conflict',
@@ -3489,6 +3586,50 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     return jsonEncode([part, millis, edit.text!.toJson()]);
   }
 
+  bool _containsWriterPrecisionHistory(Set<String> container, Set<String> subset,
+      {bool authoredToWireOnly = false}) {
+    Map<String, List<int>> group(Set<String> identities) {
+      final grouped = <String, List<int>>{};
+      for (final identity in identities) {
+        final value = jsonDecode(identity) as List<dynamic>;
+        (grouped[jsonEncode([value[0], value[2]])] ??= <int>[]).add(value[1] as int);
+      }
+      for (final times in grouped.values) { times.sort(); }
+      return grouped;
+    }
+    final available = group(container);
+    final required = group(subset);
+    for (final entry in required.entries) {
+      final candidates = available[entry.key];
+      if (candidates == null || candidates.length < entry.value.length) return false;
+      var next = 0;
+      for (final wanted in entry.value) {
+        bool matches(int candidate) => authoredToWireOnly
+            ? candidate == wanted || (wanted >= 978307200000 &&
+                candidate == wanted - 1 && _oldWriterWireRoundTrip(wanted) == candidate)
+            : _sameWriterMillisecond(candidate, wanted);
+        while (next < candidates.length &&
+            !matches(candidates[next])) {
+          if (candidates[next] > wanted + 1) return false;
+          next++;
+        }
+        if (next == candidates.length) return false;
+        next++;
+      }
+    }
+    return true;
+  }
+
+  bool _sameWriterMillisecond(int left, int right) {
+    if (left == right) return true;
+    if ((left - right).abs() != 1 || left < 978307200000 || right < 978307200000) return false;
+    // Exact legacy producer + decoder arithmetic, not a general time tolerance.
+    return _oldWriterWireRoundTrip(left) == right || _oldWriterWireRoundTrip(right) == left;
+  }
+
+  int _oldWriterWireRoundTrip(int millis) =>
+      978307200000 + ((millis / 1000.0 - 978307200.0) * 1000.0).floor();
+
   int _editTimestampMillis(EditedContent edit) {
     final date = edit.date;
     const appleEpochMillis = 978307200000;
@@ -3498,6 +3639,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         date <= 0 ||
         date > maximumMillis ||
         edit.text?.values.isNotEmpty != true) {
+      _diagnosticRecorder?.call('canonical_message_edit_history_invalid_entry');
       throw CloudSyncFailure(
         category: CloudFailureCategory.conflict,
         safeCode: 'canonical_message_edit_history_conflict',

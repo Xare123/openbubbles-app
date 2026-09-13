@@ -763,6 +763,11 @@ class CloudSyncEngine {
 
       if (config.flags.semanticApply && !_isCancelled(cancellationToken)) {
         await _renewCoordinatorLeaseOrThrow();
+        if (_inboxApplier is CloudOwnWriterPrecisionBarrierRecovery) {
+          await (_inboxApplier as CloudOwnWriterPrecisionBarrierRecovery)
+              .requeueOwnWriterPrecisionBarrier(scope,
+                leaseFence: _requireActiveLeaseFence());
+        }
         final recovered = await _store.recoverRetainedInboxBarriers(
           scope,
           now: _clock(),
@@ -1300,27 +1305,30 @@ class CloudSyncEngine {
     var journalUsage = CloudShadowJournalUsage.empty;
     final shadowMode =
         config.flags.readOnlyFetch && !config.flags.semanticApply;
-    if (config.flags.semanticApply && maximumInboxEntries <= 0) {
-      // A semantic page cannot be journaled safely without capacity to make
-      // its rows terminal. Leave the committed token untouched for the next
-      // run rather than creating an unserviceable pending page.
-      return _PullResult(
-        fetched: 0,
-        succeeded: false,
-        failureCategory: CloudFailureCategory.dependency,
-      );
-    }
     if (config.flags.semanticApply &&
         (checkpoint.pendingBatchId != null ||
             checkpoint.hasUnmarkedPendingInbox)) {
       // The startup inbox pass already attempted the page. Keeping the old
       // token means refetching here would be unsafe and would only create a
       // duplicate page while its predecessor is retryable/deferred.
+      final hardQuarantine = _store is CloudQuarantinedInboxBarrierReader &&
+          await (_store as CloudQuarantinedInboxBarrierReader)
+              .hasQuarantinedInboxBarrier(scope);
+      return _PullResult(
+        fetched: 0,
+        succeeded: false,
+        failureCategory: hardQuarantine
+            ? CloudFailureCategory.conflict : CloudFailureCategory.dependency,
+        failureSafeCode: 'checkpoint_pending_page_unresolved',
+      );
+    }
+    if (config.flags.semanticApply && maximumInboxEntries <= 0) {
+      // Inspect a hard pending-page barrier before this soft budget result.
+      // No new semantic page can be admitted without application capacity.
       return _PullResult(
         fetched: 0,
         succeeded: false,
         failureCategory: CloudFailureCategory.dependency,
-        failureSafeCode: 'checkpoint_pending_page_unresolved',
       );
     }
     if (shadowMode) {

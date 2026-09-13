@@ -9,6 +9,67 @@ timestamp: 2026-09-10
 
 # OpenBubbles Windows ARM64 host build environment
 
+## Fastest current Dart loop, September 12
+
+Use `test/live/cloud_sync_v2_windows_live_harness_test.dart` before rebuilding a
+Windows bundle when native code and generated interfaces are unchanged. It runs
+the real retained dev profile with the current Dart source and an explicitly
+selected, hash-verified native DLL. The source comparison for `bc9cbab79` against
+the qualified native base `7f2569165` found only six added blank lines in generated
+Rust; this exception must not authorize functional native changes.
+
+Required process environment: `OPENBUBBLES_RUN_LIVE_WINDOWS_HARNESS=1`,
+`OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST=1`,
+`OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS=1`, a fresh 32-hex
+`OPENBUBBLES_LIVE_HARNESS_LAUNCH_ID`, and the verified
+`OPENBUBBLES_TEST_NATIVE_LIBRARY` path. Select `view-projection` or `run-once`
+with `OPENBUBBLES_LIVE_HARNESS_OPERATION`. Compile the existing Windows dev,
+semantic-pull and sampler gates and a truthful source identifier. Native writer
+flags are unnecessary for these two read operations. Hold the existing profile
+launcher mutex and keep other Windows app/test processes out of that profile.
+
+Prepend the qualified runtime folder to PATH for the test process so ObjectBox
+5.3.2 ARM64 is found. The initial missing-path attempt failed with error 126 before
+the account operation. After correcting PATH, local projection startup passed in
+8.65 seconds without a native rebuild. A live read then failed authentication
+refresh. The opt-in `OPENBUBBLES_DIAGNOSE_READ_AUTH=1` probe identified
+`relay_offline` through a normal quota read without outputting quota values,
+tokens or response bodies. This does not prove a successful CloudKit read.
+
+Evidence: `C:\Codex\OpenBubblesReview\build-evidence\windows-live-testhost-20260912\result.json`.
+The native refresh wrapper currently collapses this condition to a generic code;
+the pending precise relay-unavailable mapping needs native qualification before use.
+
+The diagnosis was a stale saved pairing, not an outage of the user's current relay.
+After matching host, token and physical-device version/serial/identity fields, only
+the Windows relay code was rotated, with an exact backup. Per-install UUID/UDID,
+keys and certificates were preserved. The next read passed authentication in the
+same short loop and returned two changes. Its first report contained an edit-history
+conflict, despite the live test reporting a completed operation. The harness now
+checks the report's semantic acceptance predicate before reporting success.
+
+That preserved conflict compares equal in text/format but differs by one millisecond
+in one edit. A frozen ObjectBox copy plus the actual native decoder and ordinary
+transactional applier demonstrated the precision fix: applied inbox state, unchanged
+local history, original quarantine untouched. No production requeue was simulated
+on the real profile during that first proof.
+
+September 13: the cause-specific production retry subsequently passed on a fresh
+copy and then through ordinary live `run-once`: two pending messages applied,
+all three zones observed an empty terminal read, no remaining conflict, outbox
+15 -> 15. Report `obcs2-semantic-1789278811033254.json` still records retained
+projection debt; this is not a complete-history claim. A rollback copy was made
+under the profile mutex before the live run. Evidence is in
+`C:\Codex\OpenBubblesReview\build-evidence\windows-edit-precision-recovery-20260913`.
+
+Two real-copy counterexamples refined recovery: a write readback envelope cannot
+be decoded using change-feed metadata, and an empty native own sender does not
+require prior local handle ID zero. Recovery validates the fetched source,
+complete directional precision echo, finalized local operation/map provenance,
+no semantic replay, first-page barrier and lease. It never consumes mapped raw
+bytes, writes remotely or advances a cursor; ordinary application does that local
+commit. The new native writer arithmetic is not exercised by the retained DLL.
+
 ## Decision
 
 Drive all three architecture targets from one Windows-on-ARM host. Nothing here

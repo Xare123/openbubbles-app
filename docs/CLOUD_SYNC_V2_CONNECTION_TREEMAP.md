@@ -60,6 +60,10 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Recent-first | Local recent-chat visibility implemented/tested. Account-wide newest-history fetching is NOT implemented. Persist a fresh-stream direction before its first request and bind continuation/restart before enabling legacy-style order. Existing cursors keep their direction. |
 | Windows writes | Bounded direct text/reaction/image and separate edit/unsend have source-specific evidence. September 12 edit-21 and unsend-24 reached exact CloudKit confirmation. Pixel, chained mutations, groups and independent rendering remain open. |
 | Release state | Full production is not established. Remaining gates below apply. |
+| Active qualification | GCE 34737436184 was canceled while its setup job was still queued, after Windows found a blocking merge issue. Cleanup passed and the GCE inventory remained empty. Qualify the integrated precision/recovery fix before another APK. |
+| Fast Windows loop | Current Dart plus the verified native DLL opens the retained projection in 8.65 seconds. The stale Windows relay ticket was updated to the Pixel's working ticket after proving the same physical relay and preserving Windows installation IDs/keys. A real read then completed in about 31 seconds and exposed a quarantined own-edit echo. |
+| Current merge repair | Real native-source/copy qualification passed the bounded production recovery and normal applier, preserving local history. Live Windows report `obcs2-semantic-1789278811033254.json` applied two pending messages; fresh-process repeat `1789278895014946` fetched/applied zero, with no conflict. Both observed empty terminal reads in all zones and kept outbox 15 -> 15 with remote writes disabled. Full native-crate qualification remains. |
+| Retained projection | The same live report retains 6,654 entries: 94 Chats, 5,350 Messages and 1,210 Attachments. Message saves include 3,190 excluded telephony entries and 1,663 blocking saves; Attachments include 1,109 blocking saves. These are journal entries, not proven unique missing messages. Terminal remote ingestion is not complete local projection. |
 
 Prior tables and obsolete next steps were preserved verbatim in the September 12
 consolidation entry of the [investigation log](cloud_sync_v2/history/CLOUD_SYNC_V2_INVESTIGATION_LOG_FROM_2026-09-07.md).
@@ -368,8 +372,10 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Qualify smaller Regular work and report validation while preserving total fresh-record
-   allowance, cursor identity, retained evidence and at-head repair.
+1. Qualify the integrated native timestamp fix, live-proven bounded recovery and
+   smaller Regular work. Windows fresh-process read idempotence passed.
+   Preserve cursor identity, retained evidence and at-head repair. Triage the real
+   retained message/attachment categories without silently excluding iMessage data.
 2. Reconnect and inspect the existing Pixel session. Use verified cooperative cancellation
    or let it finish; observation timeouts do not prove termination. Install after native settlement.
 3. Resume through Profile > Backup. Verify progress, media access between sessions,
