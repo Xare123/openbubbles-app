@@ -63,6 +63,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_update_executor.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_pcs_operation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_preflight.dart';
@@ -9512,7 +9513,7 @@ class RustPushService extends GetxService {
         !_cloudSyncV2CanaryRuntimeAllowed ||
         !_cloudSyncV2DeveloperRuntimeAllowed ||
         !ls.isUiThread ||
-        loggingOut ||
+        loggingOut || _serviceClosing ||
         _cloudSyncV2PcsPreparationQuiescing ||
         _cloudSyncV2PcsPreparationInFlight != null ||
         _cloudSyncV2SemanticPullQuiescing ||
@@ -9536,7 +9537,7 @@ class RustPushService extends GetxService {
   /// Joins this app instance to the existing iCloud Keychain clique needed by
   /// CloudKit V2. This never enables legacy sync and has no reset path.
   Future<CloudSyncV2PcsPreparationOutcome>
-  prepareCloudSyncV2PcsConfirmed() {
+  prepareCloudSyncV2PcsConfirmed({void Function()? validateContinuation}) {
     if (!CloudSyncDevGate.manualSemanticPullEnabled) {
       throw StateError('cloud_sync_semantic_pull_disabled');
     }
@@ -9562,7 +9563,8 @@ class RustPushService extends GetxService {
       throw StateError('cloud_sync_v2_pcs_preparation_unavailable');
     }
 
-    final future = _prepareCloudSyncV2Pcs();
+    final future = _runCloudKitIdentityMaintenance(() =>
+        _prepareCloudSyncV2Pcs(validateContinuation: validateContinuation));
     _cloudSyncV2PcsPreparationInFlight = future;
     return future.whenComplete(() {
       if (identical(_cloudSyncV2PcsPreparationInFlight, future)) {
@@ -9571,7 +9573,9 @@ class RustPushService extends GetxService {
     });
   }
 
-  Future<CloudSyncV2PcsPreparationOutcome> _prepareCloudSyncV2Pcs() async {
+  Future<CloudSyncV2PcsPreparationOutcome> _prepareCloudSyncV2Pcs({
+    void Function()? validateContinuation,
+  }) async {
     final preparedState = state;
     final services = preparedState?.icloudServices;
     final keychain = services?.keychain;
@@ -9583,21 +9587,22 @@ class RustPushService extends GetxService {
 
     void ensureAccountStillActive() {
       if (_cloudSyncV2PcsPreparationQuiescing ||
-          loggingOut ||
+          loggingOut || _serviceClosing ||
           !identical(state, preparedState)) {
         throw StateError('cloud_sync_v2_pcs_account_changed');
       }
       if (ss.settings.cloudSyncingEnabled.value || isSyncing.value != null) {
         throw StateError('legacy_sync_active');
       }
+      CloudKitOperationInterlock.throwIfActiveFenceLost();
+      validateContinuation?.call();
     }
 
     ensureAccountStillActive();
     bool ready;
     try {
-      ready = await api
-          .isInClique(keychain: keychain)
-          .timeout(_cloudSyncV2PcsOperationTimeout);
+      ready = await awaitCloudSyncPcsOperation(
+        api.isInClique(keychain: keychain), _cloudSyncV2PcsOperationTimeout);
     } catch (_) {
       throw StateError('cloud_sync_v2_pcs_status_failed');
     }
@@ -9609,9 +9614,8 @@ class RustPushService extends GetxService {
 
     List<api.ViableBottle> bottles;
     try {
-      bottles = await api
-          .getBottles(keychain: keychain)
-          .timeout(_cloudSyncV2PcsOperationTimeout);
+      bottles = await awaitCloudSyncPcsOperation(
+        api.getBottles(keychain: keychain), _cloudSyncV2PcsOperationTimeout);
     } catch (_) {
       throw StateError('cloud_sync_v2_pcs_recovery_fetch_failed');
     }
@@ -9625,11 +9629,13 @@ class RustPushService extends GetxService {
         "Your device's password is required to access end-to-end encrypted data in iCloud.";
     String? localDevicePassword;
     while (bottle != null) {
+      ensureAccountStillActive();
       final (changeDevice, credential) =
           await promptPassword(bottle, description);
       ensureAccountStillActive();
       if (changeDevice) {
         bottle = await _promptCloudSyncV2BottleChoice(bottles);
+        ensureAccountStillActive();
         description =
             "Your device's password is required to access end-to-end encrypted data in iCloud.";
         continue;
@@ -9644,14 +9650,13 @@ class RustPushService extends GetxService {
       ss.saveSettings();
 
       try {
-        await api
-            .joinCliqueWithBottle(
+        await awaitCloudSyncPcsOperation(
+          api.joinCliqueWithBottle(
               keychain: keychain,
               bottle: bottle.escrow,
               password: credential,
               devicePassword: localDevicePassword,
-            )
-            .timeout(_cloudSyncV2PcsOperationTimeout);
+            ), _cloudSyncV2PcsOperationTimeout);
       } catch (error) {
         if (error is AnyhowException &&
             error.message.contains('Credential is not verified.')) {
@@ -9665,9 +9670,8 @@ class RustPushService extends GetxService {
       ensureAccountStillActive();
 
       try {
-        ready = await api
-            .isInClique(keychain: keychain)
-            .timeout(_cloudSyncV2PcsOperationTimeout);
+        ready = await awaitCloudSyncPcsOperation(
+          api.isInClique(keychain: keychain), _cloudSyncV2PcsOperationTimeout);
       } catch (_) {
         throw StateError('cloud_sync_v2_pcs_status_failed');
       }
@@ -9762,11 +9766,28 @@ class RustPushService extends GetxService {
   bool get cloudSyncV2ProgressVisible =>
       CloudSyncDevGate.manualSemanticPullEnabled && _cloudSyncV2CanaryRuntimeAllowed;
 
-  Future<void> startCloudSyncV2Progress(CloudSyncSpeed speed) =>
-      cloudSyncV2Progress.start(speed, () async {
-        final result = await runCloudSyncV2AutomaticSemanticCatchUpConfirmed(
-          progress: cloudSyncV2Progress,
-        );
+  bool get cloudSyncV2ProgressAvailable =>
+      cloudSyncV2PcsPreparationAvailable && cloudSyncV2ManualSemanticPullAvailable &&
+      ls.currentState == AppLifecycleState.resumed;
+
+  Future<void> startCloudSyncV2Progress(CloudSyncSpeed speed) {
+    final expectedClient = state?.icloudServices?.cloudMessagesClient;
+    final expectedStorage = statePath;
+    void validate() {
+      _validateCloudSyncV2QueuedRead(
+        expectedClient: expectedClient, expectedStorage: expectedStorage);
+      if (!ls.isUiThread || ls.currentState != AppLifecycleState.resumed) {
+        cloudSyncV2Progress.pause();
+      }
+      cloudSyncV2Progress.checkPause();
+    }
+    return cloudSyncV2Progress.startPrepared(speed,
+      validate: validate,
+      preparePcs: () async => await prepareCloudSyncV2PcsConfirmed(
+        validateContinuation: validate) != CloudSyncV2PcsPreparationOutcome.cancelled,
+      readOnlyCatchUp: () async {
+        final result = await runCloudSyncV2AutomaticSemanticCatchUpReadOnly(
+          progress: cloudSyncV2Progress);
         // Match the existing confirmed catch-up UI's local list refresh.
         try {
           await repairCloudSyncChatLatestMessageDates();
@@ -9776,6 +9797,7 @@ class RustPushService extends GetxService {
         }
         return result;
       });
+  }
 
   /// Content-free lifecycle state for the removable canary ADB controller.
   /// (CANARY_ADB_HOOK: remove with canary ADB control.)
@@ -9885,18 +9907,17 @@ class RustPushService extends GetxService {
     });
   }
 
-  /// Read-only automatic catch-up for the removable canary ADB channel.
+  /// Read-only automatic catch-up for normal progress and the canary ADB channel.
   /// (CANARY_ADB_HOOK: remove with canary ADB control.)
   ///
   /// Same guards, same bounded session runner, and same in-flight mutual
   /// exclusion as [runCloudSyncV2AutomaticSemanticCatchUpConfirmed], but it
   /// NEVER wakes the ordinary-send worker, so this entry point cannot cause
   /// a CloudKit upload. Local canonical projection of fetched records is
-  /// unchanged from the confirmed UI flow. No existing behavior is altered:
-  /// every other caller keeps using the confirmed entry points, and no
-  /// writer, interlock, or pause logic is touched.
+  /// unchanged from the confirmed UI flow. Progress is optional; ADB callers
+  /// retain their existing budget and cancellation behavior.
   Future<CloudSyncSemanticDrainResult>
-  runCloudSyncV2AutomaticSemanticCatchUpReadOnly() {
+  runCloudSyncV2AutomaticSemanticCatchUpReadOnly({CloudSyncProgress? progress}) {
     if (!CloudSyncDevGate.manualSemanticPullEnabled) {
       throw StateError('cloud_sync_semantic_pull_disabled');
     }
@@ -9920,6 +9941,7 @@ class RustPushService extends GetxService {
 
     final future = _runCloudSyncV2AutomaticSemanticCatchUp(
       expectedCloudMessagesClient: expectedCloudMessagesClient,
+      progress: progress,
     );
     _cloudSyncV2SemanticPullInFlight = future;
     return future.whenComplete(() {
@@ -11104,6 +11126,7 @@ class RustPushService extends GetxService {
   @override
   void onClose() {
     _serviceClosing = true;
+    cloudSyncV2Progress.pause();
     unawaited(_disableCloudSyncV2AndroidBackgroundRead());
     _networkRefreshTimer?.cancel();
     _networkSubscription?.cancel();

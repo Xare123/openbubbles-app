@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 
 import 'cloud_sync_observability.dart';
 import 'cloud_sync_safe_failure.dart';
@@ -129,6 +130,34 @@ class CloudSyncProgress extends ChangeNotifier
   void checkPause() {
     if (pauseRequested) throw StateError('cloud_sync_semantic_drain_cancelled');
   }
+
+  /// Page navigation is intentionally not a lifecycle signal. Backgrounding
+  /// pauses this foreground session; only the existing Android worker owns
+  /// background execution. Resuming the app never silently restarts Turbo.
+  void onAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      pause();
+    }
+  }
+
+  Future<void> startPrepared(
+    CloudSyncSpeed selected, {
+    required void Function() validate,
+    required Future<bool> Function() preparePcs,
+    required Future<CloudSyncSemanticDrainResult> Function() readOnlyCatchUp,
+  }) => start(selected, () async {
+    validate();
+    checkPause();
+    activity(CloudSyncProgressPhase.pcs);
+    final prepared = await preparePcs();
+    // Revalidate the same account/lifecycle after any password prompt or IO.
+    validate();
+    if (!prepared) pause();
+    checkPause();
+    return readOnlyCatchUp();
+  });
 
   Future<void> start(
     CloudSyncSpeed selected,

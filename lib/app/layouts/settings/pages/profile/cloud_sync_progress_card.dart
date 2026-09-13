@@ -97,7 +97,8 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
               ),
             const SizedBox(height: 8),
             const Text(
-              'Resumes saved checkpoints. After an app restart, tap Start / resume.',
+              'Prepares iCloud encryption, then resumes saved checkpoints. '
+              'Apple may ask you to verify a device password. After an app restart, tap Start / resume.',
             ),
             if (!available && !p.active)
               const Text(
@@ -163,7 +164,9 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'No history is skipped or reset. You can leave this page while the app runs. '
+                  'No history is skipped or reset. Leaving this page does not stop sync. '
+                  'Backgrounding the app pauses foreground catch-up at a safe boundary. '
+                  'Only the existing opted-in Android worker runs background reads; this screen does not enable it or keep the app alive. '
                   'Session counters restart at zero after an app restart. '
                   'Downloads and opted-in background work are separate.',
                 ),

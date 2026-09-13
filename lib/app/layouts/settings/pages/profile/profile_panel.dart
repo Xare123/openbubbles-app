@@ -505,7 +505,7 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                   SettingsSection(backgroundColor: tileColor, children: [
                     CloudSyncProgressCard(
                       progress: pushService.cloudSyncV2Progress,
-                      isAvailable: () => pushService.cloudSyncV2ManualSemanticPullAvailable,
+                      isAvailable: () => pushService.cloudSyncV2ProgressAvailable,
                       onStart: pushService.startCloudSyncV2Progress,
                     ),
                   ]),

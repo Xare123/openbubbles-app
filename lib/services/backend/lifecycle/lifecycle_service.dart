@@ -74,6 +74,9 @@ class LifecycleService extends GetxService with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
     Logger.debug("App State changed to $state");
+    if (isUiThread) {
+      pushService.cloudSyncV2Progress.onAppLifecycleState(state);
+    }
 
     // If the current state is resume, and we've already had a resume, remove all states up to the last resume.
     if (state == AppLifecycleState.resumed &&

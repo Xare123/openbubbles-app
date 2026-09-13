@@ -178,7 +178,7 @@ void main() {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
-    final methodStart = source.indexOf('prepareCloudSyncV2PcsConfirmed()');
+    final methodStart = source.indexOf('prepareCloudSyncV2PcsConfirmed(');
     final methodEnd = source.indexOf(
       'bool get cloudSyncV2ManualShadowAvailable',
       methodStart,
@@ -531,7 +531,7 @@ void main() {
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
     final start = source.indexOf(
-      'runCloudSyncV2AutomaticSemanticCatchUpConfirmed()',
+      'runCloudSyncV2AutomaticSemanticCatchUpConfirmed({',
     );
     final end = source.indexOf('_runCloudSyncV2ManualSemanticPull({', start);
 

@@ -39,11 +39,17 @@ void main() {
   ) async {
     final p = CloudSyncProgress();
     final done = Completer<CloudSyncSemanticDrainResult>();
+    final prepared = Completer<bool>();
     var starts = 0;
     await tester.pumpWidget(
       host(p, (speed) {
         starts++;
-        return p.start(speed, () => done.future);
+        return p.startPrepared(
+          speed,
+          validate: () {},
+          preparePcs: () => prepared.future,
+          readOnlyCatchUp: () => done.future,
+        );
       }),
     );
     await tester.ensureVisible(find.text('Start / resume'));
@@ -60,6 +66,8 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: SizedBox()));
     expect(p.active, isTrue);
     expect(p.pauseRequested, isFalse);
+    expect(p.phase, CloudSyncProgressPhase.pcs);
+    prepared.complete(true);
     done.complete(fixtures.result());
     await tester.pump();
     expect(p.phase, CloudSyncProgressPhase.remoteHead);
