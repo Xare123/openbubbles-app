@@ -7,7 +7,72 @@ tags: [cloudkit, catch-up, dependency-replay, presentation, audit]
 timestamp: 2026-09-12
 ---
 
-# Decision
+# Priority 1 follow-up: local chat-list reconciliation
+
+The original audit below is retained as baseline evidence. Its three chat-list
+characterization tests have now been replaced by desired-behavior tests. The
+separate follow-up patch changes only `lib/services/ui/chat/chats_service.dart`
+at runtime. It does not implement transcript reconciliation, replay priority,
+server direction changes, or background scheduling.
+
+`ChatsService.onInit` now treats both Chat and Message ObjectBox notifications
+as hints. `_requestVisibilityReconciliation` coalesces them behind one in-flight
+scan and a dirty-again bit. `init` fences the scanner during existing initial
+loading, then reconciles again so a stale initial snapshot cannot permanently
+erase an admission. `onClose` invalidates every pending continuation.
+
+`readVisibilityPage` returns at most 15 eligible chats, with a closed query per
+page and event-loop yields between nonempty pages. Local keysets cover ordered
+pins, remaining pins, and ordinary chats, using cached latest-message date and
+ID as a tie-breaker, not an insertion high-water mark. Null dates are visited
+too. Each page publishes one sorted list only if there are additions. Stable
+scans remove formerly eligible entries while preserving in-memory drafts never
+admitted from the database. Existing archive/unknown-sender helpers remain in
+charge of their views. This is not a remote cursor or a new sync lane.
+
+`ensureVisibilityController` checks the real `ChatManager` before creation:
+reusing `createChatController` indiscriminately would reset active/alive flags.
+Unchanged list objects/controllers remain intact. The reconciliation path does
+not call `init`, `Chat.save`, the backend, native services, or notifications.
+Existing initial-loader startup integrations are not invoked by DB hints.
+
+Boundedness is precise: at most 15 Chat entities are returned/hydrated per
+page, with one scanner, no growing OFFSET, no full-list `find`, and no list
+emission for no-op hints. It is not a constant-time native scan guarantee.
+ObjectBox still evaluates the existing eligibility backlink and sort; the
+existing `Chat.sort`/preview hydration and full in-memory list sort also cost
+work. Null/stale date caches cannot promise first-page true message recency;
+the canonical V2 projection's existing monotonic cache remains a prerequisite.
+No cache repair or schema migration is added here.
+
+Remaining qualification: rendered app/frame latency on supported hardware,
+production-size messages/attachments, and real startup integration. Tests cover
+the real service scheduler and ObjectBox queries; the initial-loader race test
+substitutes only its slow list-producing body to avoid startup native calls and
+pruning. Most admission tests substitute controller construction; separate
+cases exercise actual new controller creation and existing active-controller
+reuse. No device or live-account test was authorized.
+
+Follow-up validation: 155 tests passed with Flutter 3.44.8 x64, `--no-pub`,
+ObjectBox 5.3.2 x64, and concurrency 2: 16 chat-visibility tests, two existing
+chat-date repair tests, and 137 coordinator tests including the original
+200-record/197-retained model. Targeted analysis of the changed service and
+test reports no issues; `git diff --check` passes. The 3000-chat synthetic
+fixture returned all 3000 GUIDs exactly once, newest cached dates first, via
+203 queries with at most 15 results each. Final run: 2743 ms total, slowest
+chat-page query 19519 microseconds, in the desktop test harness. This is not a
+device frame benchmark and mostly uses a controller-construction observer.
+The separate real-controller admission test recorded zero ObjectBox writes,
+zero backend calls, and zero native service calls. Duplicate no-op hints caused
+zero list emissions. An initial side-effect assertion compared UTC/local
+DateTime representations; it was corrected to compare epoch milliseconds.
+
+Integration order: retain the reference base, then audit commit `404aa522a`,
+then this separate priority-1 follow-up. Parent review and authorized rendered
+runtime qualification precede release. No parent integration, push, APK build,
+credentials, schema change, native pin change, or device operation occurred.
+
+# Original audit decision
 
 No production runtime patch in this change. Deliver source audit, executable
 baseline characterization, and a proof-gated design. First fix local visibility

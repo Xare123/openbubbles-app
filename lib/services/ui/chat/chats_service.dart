@@ -34,36 +34,154 @@ class ChatsService extends GetxService {
 
   final List<Handle> webCachedHandles = [];
 
+  Future<void>? _visibilityRun;
+  Future<void>? _initialLoad;
+  bool _visibilityDirty = false;
+  bool _visibilityDisposed = false;
+  int _visibilityGeneration = 0;
+  final Set<String> _visibilityManagedGuids = {};
+
+  @visibleForTesting
+  Future<void>? get visibilityReconciliation => _visibilityRun;
+
+  /// A notification is a hint, not a count delta or an insertion-ID cursor.
+  /// Keep one scanner; changes during a scan request one more complete pass.
+  void _requestVisibilityReconciliation() {
+    if (_visibilityDisposed || !ss.settings.finishedSetup.value) return;
+    _visibilityDirty = true;
+    if (_visibilityRun != null || _initialLoad != null) return;
+    final generation = _visibilityGeneration;
+    _visibilityRun = Future<void>(() async {
+      try {
+        while (_visibilityDirty && _visibilityCurrent(generation)) {
+          _visibilityDirty = false;
+          final seen = <String>{};
+          // Ordered pins, remaining pins, then ordinary chats. Each section
+          // has a keyset cursor, so no growing OFFSET or full-list find().
+          for (var section = 0; section < 3; section++) {
+            Chat? after;
+            while (_visibilityCurrent(generation)) {
+              final page = readVisibilityPage(section, after);
+              if (!_visibilityCurrent(generation)) return;
+              final known = chats.map((chat) => chat.guid).toSet();
+              final additions = <Chat>[];
+              for (final chat in page) {
+                seen.add(chat.guid);
+                if (!known.add(chat.guid)) continue;
+                chat.getParticipants();
+                chat.title = chat.getTitle();
+                ensureVisibilityController(chat);
+                additions.add(chat);
+              }
+              if (additions.isNotEmpty) {
+                final next = [...chats, ...additions]..sort(Chat.sort);
+                chats.value = next;
+                hasChats.value = true;
+                loadedChatBatch.value = true;
+              }
+              // Never hold a query/transaction across a yield.
+              if (page.isNotEmpty) await yieldVisibilityPage();
+              if (page.length < batchSize) break;
+              after = page.last;
+            }
+          }
+          if (!_visibilityCurrent(generation)) return;
+          // A changed ordering/eligibility key may have moved behind a cursor.
+          // Re-scan before removing anything; keep drafts never admitted here.
+          if (!_visibilityDirty) {
+            final remaining = chats.where((chat) =>
+                !_visibilityManagedGuids.contains(chat.guid) ||
+                seen.contains(chat.guid)).toList();
+            if (remaining.length != chats.length) chats.value = remaining;
+            currentCount = seen.length;
+            hasChats.value = chats.isNotEmpty;
+            loadedChatBatch.value = true;
+            if (!loadedAllChats.isCompleted) loadedAllChats.complete();
+            _visibilityManagedGuids.clear();
+          }
+          _visibilityManagedGuids.addAll(seen);
+          await yieldVisibilityPage();
+        }
+      } catch (_) {
+        // Preserve the last published list. A later DB hint or explicit init
+        // can retry; never spin on a storage failure or log message content.
+        _visibilityDirty = false;
+        Logger.warn('Local chat visibility reconciliation failed');
+      } finally {
+        _visibilityRun = null;
+        if (_visibilityDirty && !_visibilityDisposed && _initialLoad == null) {
+          _requestVisibilityReconciliation();
+        }
+      }
+    });
+  }
+
+  bool _visibilityCurrent(int generation) =>
+      !_visibilityDisposed &&
+      generation == _visibilityGeneration &&
+      _initialLoad == null;
+
+  @protected
+  Future<void> yieldVisibilityPage() => Future<void>.delayed(Duration.zero);
+
+  @protected
+  void ensureVisibilityController(Chat chat) {
+    // createChatController also resets active/alive flags on an existing
+    // controller. Lookup first, including controllers for temporarily hidden
+    // chats, so neither their identity nor route state changes here.
+    if (cm.getChatController(chat.guid) == null) cm.createChatController(chat);
+  }
+
+  @protected
+  List<Chat> readVisibilityPage(int section, Chat? after) {
+    var condition = Chat_.dateDeleted.isNull()
+        .and(Chat_.telephonyId.isNull())
+        .and(Chat_.isRoutingStub.equals(false).or(Chat_.isRoutingStub.isNull()));
+    condition = condition.and(section == 2
+        ? Chat_.isPinned.equals(false).or(Chat_.isPinned.isNull())
+        : Chat_.isPinned.equals(true).and(section == 0
+            ? Chat_.pinIndex.notNull()
+            : Chat_.pinIndex.isNull()));
+    if (after != null) {
+      final date = after.dbOnlyLatestMessageDate;
+      final dateTail = date == null
+          ? Chat_.dbOnlyLatestMessageDate.isNull().and(Chat_.id.lessThan(after.id!))
+          : Chat_.dbOnlyLatestMessageDate.lessThanDate(date)
+              .or(Chat_.dbOnlyLatestMessageDate.isNull())
+              .or(Chat_.dbOnlyLatestMessageDate.equalsDate(date)
+                  .and(Chat_.id.lessThan(after.id!)));
+      condition = condition.and(section == 0
+          ? Chat_.pinIndex.greaterThan(after.pinIndex!)
+              .or(Chat_.pinIndex.equals(after.pinIndex!).and(dateTail))
+          : dateTail);
+    }
+    final builder = Database.chats.query(condition)
+      ..backlink(Message_.chat,
+          Message_.dateDeleted.isNull().and(Message_.dateCreated.notNull()));
+    if (section == 0) builder.order(Chat_.pinIndex);
+    final query = (builder
+          ..order(Chat_.dbOnlyLatestMessageDate, flags: Order.descending)
+          ..order(Chat_.id, flags: Order.descending))
+        .build()..limit = batchSize;
+    try {
+      return query.find();
+    } finally {
+      query.close();
+    }
+  }
+
   @override
   void onInit() {
     super.onInit();
     if (!kIsWeb) {
-      // watch for new chats
-      (() async {
-        final countQuery = (Database.chats.query(Chat_.dateDeleted.isNull().and(Chat_.telephonyId.isNull()).and(Chat_.isRoutingStub.equals(false).or(Chat_.isRoutingStub.isNull())))
-              ..backlink(
-                  Message_.chat,
-                  Message_.dateDeleted
-                      .isNull()
-                      .and(Message_.dateCreated.notNull()))
-              ..order(Chat_.id, flags: Order.descending))
-            .watch(triggerImmediately: true);
-        countSub = countQuery.listen((event) async {
-          if (!ss.settings.finishedSetup.value) return;
-          final newCount = event.count();
-          if (newCount > currentCount && currentCount != 0) {
-            final chat = event.findFirst()!;
-            if (chat.latestMessage.dateCreated!.millisecondsSinceEpoch == 0) {
-              // wait for the chat.addMessage to go through
-              await Future.delayed(const Duration(milliseconds: 500));
-              // refresh the latest message
-              chat.dbLatestMessage;
-            }
-            await addChat(chat);
-          }
-          currentCount = newCount;
-        });
-      })();
+      // A Message can make an old Chat eligible without inserting a Chat.
+      // Observe both entities without keeping an unclosed watch query alive.
+      countSub = Database.store.entityChanges.listen((types) {
+        if (types.contains(Chat) || types.contains(Message)) {
+          _requestVisibilityReconciliation();
+        }
+      });
+      _requestVisibilityReconciliation();
     } else {
       countSub = WebListeners.newChat.listen((chat) async {
         if (!ss.settings.finishedSetup.value) return;
@@ -97,6 +215,26 @@ class ChatsService extends GetxService {
   }
 
   Future<void> init({bool force = false}) async {
+    if (_visibilityDisposed) return;
+    if (kIsWeb) return loadInitialChats(force: force);
+    final active = _initialLoad;
+    if (active != null) return active;
+    _visibilityGeneration++;
+    _visibilityDirty = true;
+    // Defer entry until the pause is installed. Existing startup behavior is
+    // unchanged; only list publication is serialized with local admission.
+    return _initialLoad = Future<void>(() async {
+      if (!_visibilityDisposed) await loadInitialChats(force: force);
+    })
+        .whenComplete(() {
+      _initialLoad = null;
+      _requestVisibilityReconciliation();
+    });
+  }
+
+  @protected
+  Future<void> loadInitialChats({bool force = false}) async {
+    if (_visibilityDisposed) return;
     if (!force && !ss.settings.finishedSetup.value) return;
     Logger.info("Fetching chats... ${StackTrace.current}", tag: "ChatBloc");
     currentCount = Chat.count() ?? (await backend.getRemoteService()?.chatCount().catchError((err) {
@@ -129,8 +267,11 @@ class ChatsService extends GetxService {
         webCachedHandles.retainWhere((element) => ids.remove(element.address));
       }
 
+      if (_visibilityDisposed) return;
       for (Chat c in temp) {
-        cm.createChatController(c, active: cm.activeChat?.chat.guid == c.guid);
+        if (kIsWeb || cm.getChatController(c.guid) == null) {
+          cm.createChatController(c, active: cm.activeChat?.chat.guid == c.guid);
+        }
       }
       newChats.addAll(temp);
       newChats.sort(Chat.sort);
@@ -191,6 +332,9 @@ class ChatsService extends GetxService {
 
   @override
   void onClose() {
+    _visibilityDisposed = true;
+    _visibilityGeneration++;
+    _visibilityDirty = false;
     countSub.cancel();
     super.onClose();
   }
