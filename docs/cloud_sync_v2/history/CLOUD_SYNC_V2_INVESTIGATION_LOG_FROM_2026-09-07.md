@@ -3601,3 +3601,67 @@ Apple-device display, and create zero duplicate local or remote records.
 Automatic uploads remain disabled during this proof.
 Existing-history adoption remains a separate write gate; diagnostic counts
 cannot authorize or perform adoption.
+
+## September 13: real own-edit recovery and restart proof
+
+- Reviewed source `6f778c99eda74f0c1e98eeca205c85afefba6054` fixes old writer
+  floating-point loss of one edit millisecond, conservatively matches the exact
+  old own-writer mapping, and adds a fenced one-attempt recovery of an uncommitted
+  quarantine. Original source, failure evidence and immutable replay checks stay
+  intact; only normal application may commit canonical state or advance cursors.
+- Real copied-database testing rejected two invalid assumptions: a write-readback
+  envelope is not the identical change-feed envelope, and an empty own sender
+  does not imply every previous local producer stored handle ID zero. Final
+  recovery uses freshly native-validated fetched content and finalized local
+  operation/map provenance, not mapped raw content or a fabricated receipt.
+- Copy proof passed through production recovery and normal applier, preserving
+  history. Before live use, a separate rollback database was retained under the
+  Windows profile mutex. Live report `obcs2-semantic-1789278811033254.json`
+  applied two pending messages. Fresh-process report `1789278895014946` fetched
+  and applied zero. Both reached empty terminal reads in all zones, had no
+  quarantined conflict and preserved outbox 15 -> 15 with remote writes disabled.
+- Local qualification: parent 343 focused Dart tests, then agent 167 focused
+  recovery/canonical tests after copy-driven corrections. Current targeted
+  analysis has no errors/warnings and two existing harness style infos. Two
+  extracted native helper tests pass; full native crate remains a cloud gate.
+- Retained totals remain 6,654. Ordinary retry selection rotates durably by
+  attempt timestamp and sequence; differing diagnostic mixes across these runs
+  do not establish first-window starvation. Exhaustive sequence sweeps separately
+  restart from zero after process death, an explicit scheduling limitation, not
+  proof that ordinary retries cannot reach later records. Telephony exclusions
+  are not missing iMessage counts.
+- Full qualification dispatched as GCE 34741584069 (T2D60, writer/automatic
+  Canary). Never describe the retained Windows DLL as executing the new native
+  writer arithmetic. Pixel ADB inventory is empty; no install or device reset.
+- FaceTime test matcher correction was reviewed and its four tests rerun by
+  parent. Missing native traces prevent a call-success claim. Its worker and
+  the recovery worker were closed and verified absent after integration/review.
+  Transcript deletion is unsupported by the available controls; shared build
+  outputs, protected profiles, evidence and uncommitted work were preserved.
+  Find My host implementation remains active in a disjoint write set.
+
+### Retained sample and native-only Windows qualification
+
+- `retained-sample-20260913.json` in the same private evidence directory contains
+  37 bounded observations (first eight by sequence/category in each current
+  semantic generation). No fetch, projection, row rewrite, cursor movement or
+  outbound operation occurred. Categories are selection strata, not prevalence.
+- Message dependency sample: one now classified as excluded SMS, seven unsupported
+  extension payloads. Malformed sample: six required-identity failures, one parent
+  failure, one ambiguous reply. Five unsupported-service rows remain unsupported.
+- All eight Attachment dependency samples decode but their declared Message parent
+  is absent locally; six are materializable and two have unsupported media
+  credentials. Eight malformed samples remain native malformed-record failures.
+  Missing parents could include excluded or unavailable records; do not fabricate
+  routing or claim these are all repairable iMessage attachments.
+- Added content-free native diagnostic classification, not a decoder fallback:
+  fixed nine-bit absent/without-value masks (msgType, eCode, chatID, sender, time,
+  msgProto, flags, guid, svc), empty-identity booleans, fixed provider category and
+  typed failure outcome. Values/identifiers/bodies never enter the diagnostic.
+  Two native tests accompany it; Rustfmt parses it, native execution is pending.
+- Isolated pilot `96a2c33e26690aa98808df71e65283898f3200b7` adds a native-test-host
+  mode to the existing Windows ARM64 cloud lane. It builds/tests the new Rust DLL
+  and a distinct test executable, omitting GUI/media compilation. Parent reviewed
+  the patch and reran actionlint/PowerShell parsing. No main-branch CI migration,
+  secrets, infrastructure or local trust changes. Existing approved signer/private
+  key is available, but acceptance of newly signed bytes remains an import gate.

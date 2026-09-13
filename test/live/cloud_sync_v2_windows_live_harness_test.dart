@@ -75,6 +75,7 @@ void main() {
         'local-write',
         'probe-message-feed',
         'inspect-edit-conflict',
+        'inspect-retained',
       };
       expect(operation, isIn(allowedOperations));
       final harnessKey = GlobalKey<harness.CloudSyncV2WindowsHarnessState>();
@@ -87,6 +88,8 @@ void main() {
                 .singleWhere(
                   (candidate) => switch (operation) {
                     'inspect-edit-conflict' =>
+                      candidate == harness.CloudSyncV2WindowsHarnessOperation.interactive,
+                    'inspect-retained' =>
                       candidate == harness.CloudSyncV2WindowsHarnessOperation.interactive,
                     'view-projection' =>
                       candidate ==
@@ -129,6 +132,11 @@ void main() {
       expect(decoded, isA<Map<String, dynamic>>());
       final status = (decoded as Map<String, dynamic>).cast<String, Object?>();
       expect(status['launch_id'], launchId);
+      if (Platform.environment['OPENBUBBLES_INSPECT_RETAINED'] == '1') {
+        final observed = await tester.runAsync(() => harnessKey.currentState!.inspectRetainedForTestHost());
+        debugPrint('windows_retained_observation=${jsonEncode(observed)}');
+        expect(observed?['durable_state_unchanged'], isTrue);
+      }
       if (Platform.environment['OPENBUBBLES_INSPECT_EDIT_CONFLICT'] == '1') {
         final comparison = await tester.runAsync(
           () => harnessKey.currentState!.inspectEditConflictForTestHost(),

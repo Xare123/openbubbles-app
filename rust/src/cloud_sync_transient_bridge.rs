@@ -650,6 +650,39 @@ fn has_required_message_identity(presence: &CloudRawRecordPresence) -> bool {
     .all(|field| presence.field(field) == CloudRawFieldPresence::PresentWithValue)
 }
 
+// The bit order is fixed and public schema metadata, never record values.
+// Keep aligned with convert_message's required fields. Separate missing keys
+// from keys sent without values; neither observation changes admission.
+fn message_required_presence_masks(presence: &CloudRawRecordPresence) -> (u16, u16) {
+    let mut absent = 0;
+    let mut without_value = 0;
+    for (index, field) in [
+        "msgType", "eCode", "chatID", "sender", "time", "msgProto", "flags", "guid", "svc",
+    ]
+    .iter()
+    .enumerate()
+    {
+        match presence.field(field) {
+            CloudRawFieldPresence::Absent => absent |= 1 << index,
+            CloudRawFieldPresence::PresentWithoutValue => without_value |= 1 << index,
+            CloudRawFieldPresence::PresentWithValue => {}
+        }
+    }
+    (absent, without_value)
+}
+
+fn message_extension_class(provider: Option<&str>, payload_present: bool) -> &'static str {
+    if !payload_present {
+        return "no_payload";
+    }
+    match provider {
+        Some("com.apple.messages.URLBalloonProvider") => "url_balloon",
+        Some(value) if value.starts_with("com.apple.") => "apple_other",
+        Some(_) => "other_provider",
+        None => "provider_absent",
+    }
+}
+
 fn record_name(record: &Record) -> Option<&str> {
     record
         .record_identifier
@@ -2585,6 +2618,9 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
             // semantics are implemented; the normal decoder is the wrong wire
             // schema and previously mislabeled all classes 4-7 as malformed.
             if matches!(message_outer_type(&record), MessageOuterType::Value(3..=7)) {
+                let (absent, without_value) = message_required_presence_masks(&presence);
+                debug!("CloudKit V2 transient message retained_shape outer_type_class={} absent_mask={absent:03x} without_value_mask={without_value:03x}",
+                    message_outer_type_class(&record));
                 let reason = if has_required_message_identity(&presence) {
                     CloudCanonicalQuarantineReason::UnsupportedMessageType
                 } else {
@@ -2604,6 +2640,22 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
             let converted = convert_message(&context, &presence, &message);
+            if matches!(
+                &converted,
+                CloudCanonicalConversionOutcome::Quarantined(_)
+                    | CloudCanonicalConversionOutcome::Deferred(_)
+            ) {
+                let (absent, without_value) = message_required_presence_masks(&presence);
+                let proto = &message.msg_proto.0;
+                // Only booleans, fixed enums and a nine-bit field mask. No
+                // bundle identifier, body, reply target, account or raw record.
+                debug!("CloudKit V2 transient message retained_shape absent_mask={absent:03x} without_value_mask={without_value:03x} guid_empty={} chat_empty={} sender_empty={} body_present={} attributed_present={} extension_class={} reply_present={} outcome={converted:?}",
+                    message.guid.is_empty(), message.chat_id.is_empty(), message.sender.is_empty(),
+                    proto.text.as_deref().is_some_and(|value| !value.is_empty()),
+                    proto.attributed_body.as_ref().is_some_and(|value| !value.is_empty()),
+                    message_extension_class(proto.balloon_bundle_id.as_deref(), proto.payload_data.is_some()),
+                    message.msg_proto_2.as_ref().is_some_and(|value| value.0.reply.is_some()));
+            }
             if matches!(
                 &converted,
                 CloudCanonicalConversionOutcome::Quarantined(
@@ -4965,6 +5017,55 @@ mod tests {
         assert_eq!(failure, CloudTransientBridgeFailure::DecoderFailure);
         assert!(!rendered.contains(secret));
         assert!(!rendered.contains("participant"));
+    }
+
+    #[test]
+    fn message_required_masks_distinguish_absent_and_without_value() {
+        use rustpush::cloudkit_proto::record::field;
+        let names = [
+            "msgType", "eCode", "chatID", "sender", "time", "msgProto", "flags", "guid", "svc",
+        ];
+        let mut record = Record {
+            record_field: names
+                .iter()
+                .map(|name| Field {
+                    identifier: Some(field::Identifier {
+                        name: Some((*name).to_owned()),
+                    }),
+                    value: Some(field::Value::default()),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        assert_eq!(
+            message_required_presence_masks(&CloudRawRecordPresence::extract(&record).unwrap()),
+            (0, 0)
+        );
+        record.record_field[3].value = None;
+        record.record_field.pop();
+        assert_eq!(
+            message_required_presence_masks(&CloudRawRecordPresence::extract(&record).unwrap()),
+            (1 << 8, 1 << 3)
+        );
+        assert_eq!(
+            message_required_presence_masks(
+                &CloudRawRecordPresence::extract(&Record::default()).unwrap()
+            ),
+            (0x1ff, 0)
+        );
+    }
+
+    #[test]
+    fn message_extension_diagnostics_never_return_provider_values() {
+        for (provider, expected) in [
+            (None, "provider_absent"),
+            (Some("com.apple.messages.URLBalloonProvider"), "url_balloon"),
+            (Some("com.apple.private-user-value"), "apple_other"),
+            (Some("private-account-and-message"), "other_provider"),
+        ] {
+            assert_eq!(message_extension_class(provider, true), expected);
+            assert_eq!(message_extension_class(provider, false), "no_payload");
+        }
     }
 
     fn diagnostic_message(
