@@ -4003,3 +4003,46 @@ cannot authorize or perform adoption.
   local Flutter/app/Cargo process remained; roughly 75 GiB free on C:. Docs,
   history index and current resume handles reconciled. No protected data or
   evidence was deleted; platform-supported transcript deletion is unavailable.
+
+### September 13 actual full-suite failure and shared metadata boundary
+
+- Windows 34775816810 passed on source 991b8379f: 150 selected Rust tests,
+  620 Dart tests and 51 packaged-DLL codec tests. Parent verified/sign-staged
+  the artifact and reran all 51 codec cases with App Control unchanged.
+  Newer unbuilt metadata extraction was not passed off as the built source;
+  its original archive source was verified against the pinned Git blob.
+- Live 37-record inspection crossed the raw-data live-layout boundary, but
+  the five sampled records still failed at Icon/InvalidIcon. Normal read
+  obcs2-semantic-1789327578312833.json added zero records; all streams empty,
+  outbox 21 -> 21, retained 6353. No additional restoration claim.
+- GCE full Canary 34775818423 failed before APK packaging. Actual outcomes:
+  Dart 3563 passed, one failed, four skipped; app Rust/rustpush/automatic-upload
+  suites passed; protector harness failed unresolved extension-module imports.
+  The earlier green-step interpretation was wrong because continue-on-error
+  changes step conclusions. Parent corrected the report. Signing was skipped;
+  cleanup passed and independent inventories confirmed no VM/runner remains.
+- Muse fixed seven missing literal projector error codes and removed one
+  no-longer-emitted literal from the exact current-producer set, retaining the
+  historical diagnostic vocabulary. Parent reviewed and passed both complete
+  safe-error/diagnostic suites, 38 tests. No prefix allowance/test weakening.
+- Parent moved the unchanged metadata schema/JSON validation into the pure
+  cloud_sync_extension_metadata module. DTO and archive decoder import it;
+  the protector harness uses that same module, not a stub or the network stack.
+  Harness serde_json is pinned to the app's 1.0.134. Lockfile metadata resolves
+  without rustpush/reqwest; it also reconciles the existing libc=0.2.175 pin and
+  required tempfile/rustix changes. Broad offline lock regeneration was rejected
+  and replaced by a minimal lock-preserving resolution. Compilation still needs
+  cloud proof; Cargo metadata is not a test pass.
+- Candidate icon handling adds signature-based raw-image byte routing under the
+  same input cap, with PNG fixture/byte-preservation tests, and differentiates
+  gzip decode/integrity/trailing-byte failures. Unknown data/corrupt gzip remain
+  rejected. This is not evidence of the actual failed icons' encoding/rendering.
+- Windows qualification now includes safe-code/diagnostic regressions and all
+  shared metadata/harness inputs. GCE persists actual selected-suite outcomes as
+  JSON before its unchanged strict gate, and runs the protector with --locked.
+  YAML, embedded reporter Python and PowerShell parsing passed; no cache,
+  signing, IAM or infrastructure migration was made.
+- Find My research identified an experimental secure-People/SearchParty flow,
+  but its public author reports no successful live automatic key delivery. It
+  is a protocol lead only. No live key request or sharing change was attempted.
+  Both review workers are closed; their commands have exited.

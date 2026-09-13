@@ -2595,7 +2595,7 @@ fn build_association(
     context: &CloudCanonicalConversionContext<'_>,
     message_type: i64,
     proto: &MessageProto,
-    extension_session: Option<&crate::cloud_sync_extension_payload::ExtensionSessionContext>,
+    extension_session: Option<&crate::cloud_sync_extension_metadata::ExtensionSessionContext>,
 ) -> Result<
     (
         CloudCanonicalMessageAssociation,
@@ -2654,7 +2654,7 @@ fn build_association(
     }
     if associated_type == 2 {
         if let Some(session) = extension_session {
-            if session.role == crate::cloud_sync_extension_payload::ExtensionSessionRole::Update {
+            if session.role == crate::cloud_sync_extension_metadata::ExtensionSessionRole::Update {
                 return Ok((
                     CloudCanonicalMessageAssociation::None,
                     CloudCanonicalEntityKind::Message,
@@ -2784,12 +2784,12 @@ fn reject_unsupported_message_content(
 fn decode_message_extension(
     proto: &MessageProto,
     is_reaction: bool,
-    session: Option<&crate::cloud_sync_extension_payload::ExtensionSessionContext>,
+    session: Option<&crate::cloud_sync_extension_metadata::ExtensionSessionContext>,
 ) -> Result<CloudCanonicalField<Vec<u8>>, CloudCanonicalConversionOutcome> {
-    use crate::cloud_sync_extension_payload::{
-        decode_extension_payload, serialize_generated_metadata_json,
-        serialize_session_metadata_json,
+    use crate::cloud_sync_extension_metadata::{
+        serialize_generated_metadata_json, serialize_session_metadata_json,
     };
+    use crate::cloud_sync_extension_payload::decode_extension_payload;
     let Some(bytes) = proto.payload_data.as_deref() else {
         return Ok(CloudCanonicalField::Absent);
     };
@@ -2820,10 +2820,10 @@ fn message_extension_session(
     context: &CloudCanonicalConversionContext<'_>,
     message: &CloudMessage,
 ) -> Result<
-    Option<crate::cloud_sync_extension_payload::ExtensionSessionContext>,
+    Option<crate::cloud_sync_extension_metadata::ExtensionSessionContext>,
     CloudCanonicalConversionOutcome,
 > {
-    use crate::cloud_sync_extension_payload::{
+    use crate::cloud_sync_extension_metadata::{
         validate_session_context, ExtensionSessionContext, ExtensionSessionRole,
     };
     let proto = &message.msg_proto.0;
@@ -2973,7 +2973,7 @@ pub(crate) fn convert_message(
     };
     if (association.is_reaction()
         || extension_session.as_ref().is_some_and(|s| {
-            s.role == crate::cloud_sync_extension_payload::ExtensionSessionRole::Update
+            s.role == crate::cloud_sync_extension_metadata::ExtensionSessionRole::Update
         }))
         && reply.is_some()
     {
@@ -5056,7 +5056,7 @@ mod tests {
             payload.text().value().map(String::as_str),
             Some("base text")
         );
-        let metadata = crate::cloud_sync_extension_payload::parse_projection_metadata_json(
+        let metadata = crate::cloud_sync_extension_metadata::parse_projection_metadata_json(
             payload.decoded_extension_payload().value().unwrap(),
         )
         .unwrap();
@@ -5077,13 +5077,13 @@ mod tests {
         );
         let update_payload = message_payload(&update_outcome);
         let (_, context_meta) =
-            crate::cloud_sync_extension_payload::parse_projection_metadata_json(
+            crate::cloud_sync_extension_metadata::parse_projection_metadata_json(
                 update_payload.decoded_extension_payload().value().unwrap(),
             )
             .unwrap();
         let context_meta = context_meta.unwrap();
         assert!(
-            context_meta.role == crate::cloud_sync_extension_payload::ExtensionSessionRole::Update
+            context_meta.role == crate::cloud_sync_extension_metadata::ExtensionSessionRole::Update
         );
         assert_eq!(context_meta.session_guid, message.guid);
         assert!(matches!(

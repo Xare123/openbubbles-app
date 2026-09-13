@@ -133,3 +133,22 @@ fallback was found in either caller, and no sharing setting was changed.
 
 The verbatim older investigation and superseded guard discussions are preserved
 in [Find My history](history/FINDMY_ASTRA_HISTORY_20260910_20260913.md).
+
+## Secure People research lead, not a working integration
+
+At reviewed commit 04dd253, [Onitrack's People implementation](https://github.com/TureBentzin/onitrack/blob/04dd25312643d8c9aa93c883a343488a4b682635/onitrack/people.py)
+separates FMF relationship discovery from encrypted SearchParty location fetching.
+It uses an advertised identifier and P-224 relationship key, not an AirTag's
+MasterBeaconRecord secret. Its [key-acquisition code](https://github.com/TureBentzin/onitrack/blob/04dd25312643d8c9aa93c883a343488a4b682635/onitrack/key_acquisition.py)
+expects verified IDS command 242 and an inner type-10/version-1 key-delivery
+payload. These are implementation leads, not observed packets from this account.
+
+Crucially, the [project README](https://github.com/TureBentzin/onitrack/blob/04dd25312643d8c9aa93c883a343488a4b682635/README.md)
+reports that live automatic key acquisition remains unsuccessful. The receiver
+and key parser are synthetic-tested; successful sign-in/directory queries do not
+prove key delivery or location retrieval. Do not import this as a working fix.
+
+Our MULTIPLEX_SERVICE already declares FMF/FMD subservices and the FindMyClient
+receiver accepts those topics. Next work must verify the exact delivered payload
+and permitted relationship-key request, not merely add another topic. No live
+distributeKeys request, sharing change or key import was attempted here.

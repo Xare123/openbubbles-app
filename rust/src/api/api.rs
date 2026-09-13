@@ -8479,7 +8479,7 @@ mod cloudkit_repair_digest_tests {
         let json =
             include_str!("../../../test/fixtures/cloud_sync/extension_metadata_digest_v1.json");
         let metadata =
-            crate::cloud_sync_extension_payload::parse_generated_metadata_json(json.as_bytes())
+            crate::cloud_sync_extension_metadata::parse_generated_metadata_json(json.as_bytes())
                 .unwrap();
         let mut value = basic_message("body");
         value.balloon_bundle_id_state = CloudSyncTransientFieldState::Value;
@@ -8492,7 +8492,7 @@ mod cloudkit_repair_digest_tests {
         let json =
             include_str!("../../../test/fixtures/cloud_sync/extension_session_digest_v2.json");
         let (metadata, context) =
-            crate::cloud_sync_extension_payload::parse_projection_metadata_json(json.as_bytes())
+            crate::cloud_sync_extension_metadata::parse_projection_metadata_json(json.as_bytes())
                 .unwrap();
         assert!(context.is_some());
         let mut value = basic_message("body");
