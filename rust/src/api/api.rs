@@ -17311,7 +17311,7 @@ fn two_factor_fresh_login_is_authenticated(state: &LoginState, has_pet: bool) ->
 }
 
 #[cfg(target_os = "windows")]
-fn is_cloud_sync_windows_dev_profile(path: &str) -> bool {
+pub(super) fn is_cloud_sync_windows_dev_profile(path: &str) -> bool {
     let Some(directory) = canonical_cloudkit_state_directory(&PathBuf::from(path)).ok() else {
         return false;
     };
@@ -17343,7 +17343,7 @@ fn is_cloud_sync_windows_dev_profile(path: &str) -> bool {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn is_cloud_sync_windows_dev_profile(_path: &str) -> bool {
+pub(super) fn is_cloud_sync_windows_dev_profile(_path: &str) -> bool {
     false
 }
 
