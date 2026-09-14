@@ -1036,6 +1036,7 @@ fn classify_ptcpts_wire_shape_detail(record: &Record) -> Chat1RouteFailureDetail
 }
 
 #[derive(Default)]
+#[frb(ignore)]
 struct SelectiveChatProperties {
     legacy_identifiers: Vec<String>,
     last_seen_message_guid: Option<String>,
@@ -1166,6 +1167,7 @@ struct NormalizedRouteTarget {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[frb(ignore)]
 enum MessageRouteKind {
     Direct,
     Group,
@@ -1193,12 +1195,14 @@ fn message_route_kind(value: &str) -> Result<MessageRouteKind, ()> {
     }
 }
 
+#[frb(ignore)]
 struct MessageRouteAnchor {
     route_hash: String,
     normalized_route: NormalizedRouteTarget,
 }
 
 #[derive(Default)]
+#[frb(ignore)]
 struct MessageAnchorIndex {
     routes_by_guid_hash: HashMap<String, MessageRouteAnchor>,
     conflicting_guid_hashes: HashSet<String>,
@@ -2136,6 +2140,7 @@ impl SemanticMatchCounts {
 }
 
 #[derive(Default)]
+#[frb(ignore)]
 struct CandidateCardinality {
     zero: u32,
     unique: u32,
