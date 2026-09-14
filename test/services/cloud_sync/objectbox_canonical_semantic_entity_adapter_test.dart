@@ -8548,6 +8548,7 @@ void main() {
           encryptedPayloadRef: change.encryptedPayloadReference, payloadSha256: change.payloadSha256,
           batchId: entry.batchId, generation: generation, fetchSequence: sequence,
           status: CloudInboxStatus.pending.index, isTombstone: false,
+          serverModifiedAtFormatVersion: null,
           createdAtMs: testEpoch.millisecondsSinceEpoch, updatedAtMs: testEpoch.millisecondsSinceEpoch,
         ));
         final snapshot = CloudSemanticSnapshot(kind: CloudEntityKind.message,
