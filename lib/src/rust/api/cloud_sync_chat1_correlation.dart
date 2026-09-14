@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import '../lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `combined`, `decode_verified_chat1_record`, `encrypted_string_field`, `exact_match_counts`, `failure`, `inspect_chat1_route_fields`, `is_bare_digest`, `is_hex_digest`, `is_protected_reference`, `message_decode_request`, `normalized_combined`, `normalized_pairs`, `normalized_route_target`, `normalized_target_mask`, `observe`, `paged_semantic_failure`, `pairs`, `record_identifier_name`, `record_type_name`, `scan_chat1_route_pages`, `semantic_failure`, `target_mask`, `valid_source`, `valid_sources`, `verified_chat1_record`
+// These functions are ignored because they are not marked as `pub`: `combined`, `decode_verified_chat1_record`, `encrypted_i64_field`, `encrypted_legacy_identifiers`, `encrypted_participant_uris`, `encrypted_string_field`, `exact_match_counts`, `failure`, `inspect_chat1_route_fields`, `is_bare_digest`, `is_hex_digest`, `is_protected_reference`, `message_decode_request`, `msgproto_combined`, `msgproto_pairs`, `multi_normalized_optional_target_mask`, `multi_normalized_target_mask`, `multi_optional_target_mask`, `multi_target_mask`, `normalized_combined`, `normalized_msgproto_combined`, `normalized_msgproto_pairs`, `normalized_optional_target_mask`, `normalized_pairs`, `normalized_route_extra_combined`, `normalized_route_extra_pairs`, `normalized_route_target`, `normalized_sender_combined`, `normalized_sender_pairs`, `normalized_target_mask`, `observe`, `optional_target_mask`, `paged_semantic_failure`, `pairs`, `record_identifier_name`, `record_type_name`, `route_extra_combined`, `route_extra_pairs`, `scan_chat1_route_pages`, `semantic_failure`, `sender_combined`, `sender_pairs`, `target_mask`, `unique_field_value`, `valid_source`, `valid_sources`, `verified_chat1_record`
 // These types are ignored because they are not used by any `pub` functions: `MatchCounts`, `NormalizedRouteTarget`, `PagedSemanticCounts`, `RouteFieldMatches`, `SemanticMatchCounts`, `VerifiedChat1Record`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`, `default`
@@ -15,8 +15,10 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 /// Performs one bounded comparison under the exact active native writer pause.
 /// The default path is cached-only. A separately gated semantic diagnostic may
 /// resolve the existing Chat1 PCS configuration with lookup-only reads, then
-/// decrypt only four routing strings. Neither path persists a token, projects,
-/// admits, saves, deletes, synchronizes keychain state, or repairs identity.
+/// decrypt only selective routing strings (cid/gid/ogid/guid/lah/svc/stl and
+/// participant URIs plus prop legacy identifiers). Neither path persists a
+/// token, projects, admits, saves, deletes, synchronizes keychain state, or
+/// repairs identity.
 Future<CloudSyncChat1CorrelationResult>
 cloudSyncInspectChat1RecordNameCorrelationUnderWriterPause({
   required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
@@ -59,13 +61,22 @@ enum CloudSyncChat1CorrelationFailureCode {
 
 /// Aggregate-only result. Exact-match fields compare a decoded Message route
 /// with a verified Chat1 record name. Semantic-match fields compare its HMAC
-/// with four decrypted Chat1 routing fields. Neither result authorizes Chat
-/// admission, and zero never proves deletion or absence.
+/// with four decrypted Chat1 routing fields. Selective fields additionally
+/// compare route targets with participant URIs, legacy identifiers and
+/// last-addressed handle; msgProto4 group targets with cid/gid/ogid/guid and
+/// legacy; and sender targets with participants and last-addressed handle.
+/// Service and style are counted only as presence aggregates. Neither result
+/// authorizes Chat admission, and zero never proves deletion or absence.
 class CloudSyncChat1CorrelationResult {
+  /// True when the requested bounded diagnostic returned normally. For a
+  /// paged request this does not mean the whole zone was exhausted; callers
+  /// must also inspect `paged_terminal_reached` and `paged_budget_exhausted`.
   final bool completed;
   final int messageSources;
   final int decodedMessageRoutes;
   final int distinctMessageRoutes;
+  final int messageGroupIdSources;
+  final int messageSenderSources;
   final int chat1Sources;
   final int verifiedChat1Records;
   final int exactMatchPairs;
@@ -85,6 +96,31 @@ class CloudSyncChat1CorrelationResult {
   final int semanticMatchPairs;
   final int matchedSemanticMessageRoutes;
   final int matchedSemanticChat1Records;
+  final int routeParticipantMatchPairs;
+  final int routeLegacyMatchPairs;
+  final int routeLahMatchPairs;
+  final int msgprotoChatIdentifierMatchPairs;
+  final int msgprotoGroupIdMatchPairs;
+  final int msgprotoOriginalGroupIdMatchPairs;
+  final int msgprotoGuidMatchPairs;
+  final int msgprotoLegacyMatchPairs;
+  final int senderParticipantMatchPairs;
+  final int senderLahMatchPairs;
+  final int matchedRouteExtraMessageRoutes;
+  final int matchedRouteExtraChat1Records;
+  final int matchedMsgprotoTargets;
+  final int matchedMsgprotoChat1Records;
+  final int matchedSenderTargets;
+  final int matchedSenderChat1Records;
+  final int participantPresentRecords;
+  final int legacyPresentRecords;
+  final int lahPresentRecords;
+  final int servicePresentRecords;
+  final int imessageServiceRecords;
+  final int otherServiceRecords;
+  final int styleGroupRecords;
+  final int styleDirectRecords;
+  final int styleOtherRecords;
   final bool pagedCorrelationRequested;
   final int pagedPagesScanned;
   final int pagedChangesScanned;
@@ -96,6 +132,31 @@ class CloudSyncChat1CorrelationResult {
   final int pagedSemanticMatchPairs;
   final int pagedMatchedMessageRoutes;
   final int pagedMatchedChat1Records;
+  final int pagedRouteParticipantMatchPairs;
+  final int pagedRouteLegacyMatchPairs;
+  final int pagedRouteLahMatchPairs;
+  final int pagedMsgprotoChatIdentifierMatchPairs;
+  final int pagedMsgprotoGroupIdMatchPairs;
+  final int pagedMsgprotoOriginalGroupIdMatchPairs;
+  final int pagedMsgprotoGuidMatchPairs;
+  final int pagedMsgprotoLegacyMatchPairs;
+  final int pagedSenderParticipantMatchPairs;
+  final int pagedSenderLahMatchPairs;
+  final int pagedMatchedRouteExtraMessageRoutes;
+  final int pagedMatchedRouteExtraChat1Records;
+  final int pagedMatchedMsgprotoTargets;
+  final int pagedMatchedMsgprotoChat1Records;
+  final int pagedMatchedSenderTargets;
+  final int pagedMatchedSenderChat1Records;
+  final int pagedParticipantPresentRecords;
+  final int pagedLegacyPresentRecords;
+  final int pagedLahPresentRecords;
+  final int pagedServicePresentRecords;
+  final int pagedImessageServiceRecords;
+  final int pagedOtherServiceRecords;
+  final int pagedStyleGroupRecords;
+  final int pagedStyleDirectRecords;
+  final int pagedStyleOtherRecords;
   final int pagedNormalizedChatIdentifierMatchPairs;
   final int pagedNormalizedGroupIdMatchPairs;
   final int pagedNormalizedOriginalGroupIdMatchPairs;
@@ -103,6 +164,22 @@ class CloudSyncChat1CorrelationResult {
   final int pagedNormalizedSemanticMatchPairs;
   final int pagedNormalizedMatchedMessageRoutes;
   final int pagedNormalizedMatchedChat1Records;
+  final int pagedNormalizedRouteParticipantMatchPairs;
+  final int pagedNormalizedRouteLegacyMatchPairs;
+  final int pagedNormalizedRouteLahMatchPairs;
+  final int pagedNormalizedMsgprotoChatIdentifierMatchPairs;
+  final int pagedNormalizedMsgprotoGroupIdMatchPairs;
+  final int pagedNormalizedMsgprotoOriginalGroupIdMatchPairs;
+  final int pagedNormalizedMsgprotoGuidMatchPairs;
+  final int pagedNormalizedMsgprotoLegacyMatchPairs;
+  final int pagedNormalizedSenderParticipantMatchPairs;
+  final int pagedNormalizedSenderLahMatchPairs;
+  final int pagedNormalizedMatchedRouteExtraMessageRoutes;
+  final int pagedNormalizedMatchedRouteExtraChat1Records;
+  final int pagedNormalizedMatchedMsgprotoTargets;
+  final int pagedNormalizedMatchedMsgprotoChat1Records;
+  final int pagedNormalizedMatchedSenderTargets;
+  final int pagedNormalizedMatchedSenderChat1Records;
   final bool pagedTerminalReached;
   final bool pagedBudgetExhausted;
   final CloudSyncChat1CorrelationFailureCode? failureCode;
@@ -112,6 +189,8 @@ class CloudSyncChat1CorrelationResult {
     required this.messageSources,
     required this.decodedMessageRoutes,
     required this.distinctMessageRoutes,
+    required this.messageGroupIdSources,
+    required this.messageSenderSources,
     required this.chat1Sources,
     required this.verifiedChat1Records,
     required this.exactMatchPairs,
@@ -131,6 +210,31 @@ class CloudSyncChat1CorrelationResult {
     required this.semanticMatchPairs,
     required this.matchedSemanticMessageRoutes,
     required this.matchedSemanticChat1Records,
+    required this.routeParticipantMatchPairs,
+    required this.routeLegacyMatchPairs,
+    required this.routeLahMatchPairs,
+    required this.msgprotoChatIdentifierMatchPairs,
+    required this.msgprotoGroupIdMatchPairs,
+    required this.msgprotoOriginalGroupIdMatchPairs,
+    required this.msgprotoGuidMatchPairs,
+    required this.msgprotoLegacyMatchPairs,
+    required this.senderParticipantMatchPairs,
+    required this.senderLahMatchPairs,
+    required this.matchedRouteExtraMessageRoutes,
+    required this.matchedRouteExtraChat1Records,
+    required this.matchedMsgprotoTargets,
+    required this.matchedMsgprotoChat1Records,
+    required this.matchedSenderTargets,
+    required this.matchedSenderChat1Records,
+    required this.participantPresentRecords,
+    required this.legacyPresentRecords,
+    required this.lahPresentRecords,
+    required this.servicePresentRecords,
+    required this.imessageServiceRecords,
+    required this.otherServiceRecords,
+    required this.styleGroupRecords,
+    required this.styleDirectRecords,
+    required this.styleOtherRecords,
     required this.pagedCorrelationRequested,
     required this.pagedPagesScanned,
     required this.pagedChangesScanned,
@@ -142,6 +246,31 @@ class CloudSyncChat1CorrelationResult {
     required this.pagedSemanticMatchPairs,
     required this.pagedMatchedMessageRoutes,
     required this.pagedMatchedChat1Records,
+    required this.pagedRouteParticipantMatchPairs,
+    required this.pagedRouteLegacyMatchPairs,
+    required this.pagedRouteLahMatchPairs,
+    required this.pagedMsgprotoChatIdentifierMatchPairs,
+    required this.pagedMsgprotoGroupIdMatchPairs,
+    required this.pagedMsgprotoOriginalGroupIdMatchPairs,
+    required this.pagedMsgprotoGuidMatchPairs,
+    required this.pagedMsgprotoLegacyMatchPairs,
+    required this.pagedSenderParticipantMatchPairs,
+    required this.pagedSenderLahMatchPairs,
+    required this.pagedMatchedRouteExtraMessageRoutes,
+    required this.pagedMatchedRouteExtraChat1Records,
+    required this.pagedMatchedMsgprotoTargets,
+    required this.pagedMatchedMsgprotoChat1Records,
+    required this.pagedMatchedSenderTargets,
+    required this.pagedMatchedSenderChat1Records,
+    required this.pagedParticipantPresentRecords,
+    required this.pagedLegacyPresentRecords,
+    required this.pagedLahPresentRecords,
+    required this.pagedServicePresentRecords,
+    required this.pagedImessageServiceRecords,
+    required this.pagedOtherServiceRecords,
+    required this.pagedStyleGroupRecords,
+    required this.pagedStyleDirectRecords,
+    required this.pagedStyleOtherRecords,
     required this.pagedNormalizedChatIdentifierMatchPairs,
     required this.pagedNormalizedGroupIdMatchPairs,
     required this.pagedNormalizedOriginalGroupIdMatchPairs,
@@ -149,6 +278,22 @@ class CloudSyncChat1CorrelationResult {
     required this.pagedNormalizedSemanticMatchPairs,
     required this.pagedNormalizedMatchedMessageRoutes,
     required this.pagedNormalizedMatchedChat1Records,
+    required this.pagedNormalizedRouteParticipantMatchPairs,
+    required this.pagedNormalizedRouteLegacyMatchPairs,
+    required this.pagedNormalizedRouteLahMatchPairs,
+    required this.pagedNormalizedMsgprotoChatIdentifierMatchPairs,
+    required this.pagedNormalizedMsgprotoGroupIdMatchPairs,
+    required this.pagedNormalizedMsgprotoOriginalGroupIdMatchPairs,
+    required this.pagedNormalizedMsgprotoGuidMatchPairs,
+    required this.pagedNormalizedMsgprotoLegacyMatchPairs,
+    required this.pagedNormalizedSenderParticipantMatchPairs,
+    required this.pagedNormalizedSenderLahMatchPairs,
+    required this.pagedNormalizedMatchedRouteExtraMessageRoutes,
+    required this.pagedNormalizedMatchedRouteExtraChat1Records,
+    required this.pagedNormalizedMatchedMsgprotoTargets,
+    required this.pagedNormalizedMatchedMsgprotoChat1Records,
+    required this.pagedNormalizedMatchedSenderTargets,
+    required this.pagedNormalizedMatchedSenderChat1Records,
     required this.pagedTerminalReached,
     required this.pagedBudgetExhausted,
     this.failureCode,
@@ -160,6 +305,8 @@ class CloudSyncChat1CorrelationResult {
       messageSources.hashCode ^
       decodedMessageRoutes.hashCode ^
       distinctMessageRoutes.hashCode ^
+      messageGroupIdSources.hashCode ^
+      messageSenderSources.hashCode ^
       chat1Sources.hashCode ^
       verifiedChat1Records.hashCode ^
       exactMatchPairs.hashCode ^
@@ -179,6 +326,31 @@ class CloudSyncChat1CorrelationResult {
       semanticMatchPairs.hashCode ^
       matchedSemanticMessageRoutes.hashCode ^
       matchedSemanticChat1Records.hashCode ^
+      routeParticipantMatchPairs.hashCode ^
+      routeLegacyMatchPairs.hashCode ^
+      routeLahMatchPairs.hashCode ^
+      msgprotoChatIdentifierMatchPairs.hashCode ^
+      msgprotoGroupIdMatchPairs.hashCode ^
+      msgprotoOriginalGroupIdMatchPairs.hashCode ^
+      msgprotoGuidMatchPairs.hashCode ^
+      msgprotoLegacyMatchPairs.hashCode ^
+      senderParticipantMatchPairs.hashCode ^
+      senderLahMatchPairs.hashCode ^
+      matchedRouteExtraMessageRoutes.hashCode ^
+      matchedRouteExtraChat1Records.hashCode ^
+      matchedMsgprotoTargets.hashCode ^
+      matchedMsgprotoChat1Records.hashCode ^
+      matchedSenderTargets.hashCode ^
+      matchedSenderChat1Records.hashCode ^
+      participantPresentRecords.hashCode ^
+      legacyPresentRecords.hashCode ^
+      lahPresentRecords.hashCode ^
+      servicePresentRecords.hashCode ^
+      imessageServiceRecords.hashCode ^
+      otherServiceRecords.hashCode ^
+      styleGroupRecords.hashCode ^
+      styleDirectRecords.hashCode ^
+      styleOtherRecords.hashCode ^
       pagedCorrelationRequested.hashCode ^
       pagedPagesScanned.hashCode ^
       pagedChangesScanned.hashCode ^
@@ -190,6 +362,31 @@ class CloudSyncChat1CorrelationResult {
       pagedSemanticMatchPairs.hashCode ^
       pagedMatchedMessageRoutes.hashCode ^
       pagedMatchedChat1Records.hashCode ^
+      pagedRouteParticipantMatchPairs.hashCode ^
+      pagedRouteLegacyMatchPairs.hashCode ^
+      pagedRouteLahMatchPairs.hashCode ^
+      pagedMsgprotoChatIdentifierMatchPairs.hashCode ^
+      pagedMsgprotoGroupIdMatchPairs.hashCode ^
+      pagedMsgprotoOriginalGroupIdMatchPairs.hashCode ^
+      pagedMsgprotoGuidMatchPairs.hashCode ^
+      pagedMsgprotoLegacyMatchPairs.hashCode ^
+      pagedSenderParticipantMatchPairs.hashCode ^
+      pagedSenderLahMatchPairs.hashCode ^
+      pagedMatchedRouteExtraMessageRoutes.hashCode ^
+      pagedMatchedRouteExtraChat1Records.hashCode ^
+      pagedMatchedMsgprotoTargets.hashCode ^
+      pagedMatchedMsgprotoChat1Records.hashCode ^
+      pagedMatchedSenderTargets.hashCode ^
+      pagedMatchedSenderChat1Records.hashCode ^
+      pagedParticipantPresentRecords.hashCode ^
+      pagedLegacyPresentRecords.hashCode ^
+      pagedLahPresentRecords.hashCode ^
+      pagedServicePresentRecords.hashCode ^
+      pagedImessageServiceRecords.hashCode ^
+      pagedOtherServiceRecords.hashCode ^
+      pagedStyleGroupRecords.hashCode ^
+      pagedStyleDirectRecords.hashCode ^
+      pagedStyleOtherRecords.hashCode ^
       pagedNormalizedChatIdentifierMatchPairs.hashCode ^
       pagedNormalizedGroupIdMatchPairs.hashCode ^
       pagedNormalizedOriginalGroupIdMatchPairs.hashCode ^
@@ -197,6 +394,22 @@ class CloudSyncChat1CorrelationResult {
       pagedNormalizedSemanticMatchPairs.hashCode ^
       pagedNormalizedMatchedMessageRoutes.hashCode ^
       pagedNormalizedMatchedChat1Records.hashCode ^
+      pagedNormalizedRouteParticipantMatchPairs.hashCode ^
+      pagedNormalizedRouteLegacyMatchPairs.hashCode ^
+      pagedNormalizedRouteLahMatchPairs.hashCode ^
+      pagedNormalizedMsgprotoChatIdentifierMatchPairs.hashCode ^
+      pagedNormalizedMsgprotoGroupIdMatchPairs.hashCode ^
+      pagedNormalizedMsgprotoOriginalGroupIdMatchPairs.hashCode ^
+      pagedNormalizedMsgprotoGuidMatchPairs.hashCode ^
+      pagedNormalizedMsgprotoLegacyMatchPairs.hashCode ^
+      pagedNormalizedSenderParticipantMatchPairs.hashCode ^
+      pagedNormalizedSenderLahMatchPairs.hashCode ^
+      pagedNormalizedMatchedRouteExtraMessageRoutes.hashCode ^
+      pagedNormalizedMatchedRouteExtraChat1Records.hashCode ^
+      pagedNormalizedMatchedMsgprotoTargets.hashCode ^
+      pagedNormalizedMatchedMsgprotoChat1Records.hashCode ^
+      pagedNormalizedMatchedSenderTargets.hashCode ^
+      pagedNormalizedMatchedSenderChat1Records.hashCode ^
       pagedTerminalReached.hashCode ^
       pagedBudgetExhausted.hashCode ^
       failureCode.hashCode;
@@ -210,6 +423,8 @@ class CloudSyncChat1CorrelationResult {
           messageSources == other.messageSources &&
           decodedMessageRoutes == other.decodedMessageRoutes &&
           distinctMessageRoutes == other.distinctMessageRoutes &&
+          messageGroupIdSources == other.messageGroupIdSources &&
+          messageSenderSources == other.messageSenderSources &&
           chat1Sources == other.chat1Sources &&
           verifiedChat1Records == other.verifiedChat1Records &&
           exactMatchPairs == other.exactMatchPairs &&
@@ -229,6 +444,35 @@ class CloudSyncChat1CorrelationResult {
           semanticMatchPairs == other.semanticMatchPairs &&
           matchedSemanticMessageRoutes == other.matchedSemanticMessageRoutes &&
           matchedSemanticChat1Records == other.matchedSemanticChat1Records &&
+          routeParticipantMatchPairs == other.routeParticipantMatchPairs &&
+          routeLegacyMatchPairs == other.routeLegacyMatchPairs &&
+          routeLahMatchPairs == other.routeLahMatchPairs &&
+          msgprotoChatIdentifierMatchPairs ==
+              other.msgprotoChatIdentifierMatchPairs &&
+          msgprotoGroupIdMatchPairs == other.msgprotoGroupIdMatchPairs &&
+          msgprotoOriginalGroupIdMatchPairs ==
+              other.msgprotoOriginalGroupIdMatchPairs &&
+          msgprotoGuidMatchPairs == other.msgprotoGuidMatchPairs &&
+          msgprotoLegacyMatchPairs == other.msgprotoLegacyMatchPairs &&
+          senderParticipantMatchPairs == other.senderParticipantMatchPairs &&
+          senderLahMatchPairs == other.senderLahMatchPairs &&
+          matchedRouteExtraMessageRoutes ==
+              other.matchedRouteExtraMessageRoutes &&
+          matchedRouteExtraChat1Records ==
+              other.matchedRouteExtraChat1Records &&
+          matchedMsgprotoTargets == other.matchedMsgprotoTargets &&
+          matchedMsgprotoChat1Records == other.matchedMsgprotoChat1Records &&
+          matchedSenderTargets == other.matchedSenderTargets &&
+          matchedSenderChat1Records == other.matchedSenderChat1Records &&
+          participantPresentRecords == other.participantPresentRecords &&
+          legacyPresentRecords == other.legacyPresentRecords &&
+          lahPresentRecords == other.lahPresentRecords &&
+          servicePresentRecords == other.servicePresentRecords &&
+          imessageServiceRecords == other.imessageServiceRecords &&
+          otherServiceRecords == other.otherServiceRecords &&
+          styleGroupRecords == other.styleGroupRecords &&
+          styleDirectRecords == other.styleDirectRecords &&
+          styleOtherRecords == other.styleOtherRecords &&
           pagedCorrelationRequested == other.pagedCorrelationRequested &&
           pagedPagesScanned == other.pagedPagesScanned &&
           pagedChangesScanned == other.pagedChangesScanned &&
@@ -241,6 +485,42 @@ class CloudSyncChat1CorrelationResult {
           pagedSemanticMatchPairs == other.pagedSemanticMatchPairs &&
           pagedMatchedMessageRoutes == other.pagedMatchedMessageRoutes &&
           pagedMatchedChat1Records == other.pagedMatchedChat1Records &&
+          pagedRouteParticipantMatchPairs ==
+              other.pagedRouteParticipantMatchPairs &&
+          pagedRouteLegacyMatchPairs == other.pagedRouteLegacyMatchPairs &&
+          pagedRouteLahMatchPairs == other.pagedRouteLahMatchPairs &&
+          pagedMsgprotoChatIdentifierMatchPairs ==
+              other.pagedMsgprotoChatIdentifierMatchPairs &&
+          pagedMsgprotoGroupIdMatchPairs ==
+              other.pagedMsgprotoGroupIdMatchPairs &&
+          pagedMsgprotoOriginalGroupIdMatchPairs ==
+              other.pagedMsgprotoOriginalGroupIdMatchPairs &&
+          pagedMsgprotoGuidMatchPairs == other.pagedMsgprotoGuidMatchPairs &&
+          pagedMsgprotoLegacyMatchPairs ==
+              other.pagedMsgprotoLegacyMatchPairs &&
+          pagedSenderParticipantMatchPairs ==
+              other.pagedSenderParticipantMatchPairs &&
+          pagedSenderLahMatchPairs == other.pagedSenderLahMatchPairs &&
+          pagedMatchedRouteExtraMessageRoutes ==
+              other.pagedMatchedRouteExtraMessageRoutes &&
+          pagedMatchedRouteExtraChat1Records ==
+              other.pagedMatchedRouteExtraChat1Records &&
+          pagedMatchedMsgprotoTargets == other.pagedMatchedMsgprotoTargets &&
+          pagedMatchedMsgprotoChat1Records ==
+              other.pagedMatchedMsgprotoChat1Records &&
+          pagedMatchedSenderTargets == other.pagedMatchedSenderTargets &&
+          pagedMatchedSenderChat1Records ==
+              other.pagedMatchedSenderChat1Records &&
+          pagedParticipantPresentRecords ==
+              other.pagedParticipantPresentRecords &&
+          pagedLegacyPresentRecords == other.pagedLegacyPresentRecords &&
+          pagedLahPresentRecords == other.pagedLahPresentRecords &&
+          pagedServicePresentRecords == other.pagedServicePresentRecords &&
+          pagedImessageServiceRecords == other.pagedImessageServiceRecords &&
+          pagedOtherServiceRecords == other.pagedOtherServiceRecords &&
+          pagedStyleGroupRecords == other.pagedStyleGroupRecords &&
+          pagedStyleDirectRecords == other.pagedStyleDirectRecords &&
+          pagedStyleOtherRecords == other.pagedStyleOtherRecords &&
           pagedNormalizedChatIdentifierMatchPairs ==
               other.pagedNormalizedChatIdentifierMatchPairs &&
           pagedNormalizedGroupIdMatchPairs ==
@@ -255,6 +535,38 @@ class CloudSyncChat1CorrelationResult {
               other.pagedNormalizedMatchedMessageRoutes &&
           pagedNormalizedMatchedChat1Records ==
               other.pagedNormalizedMatchedChat1Records &&
+          pagedNormalizedRouteParticipantMatchPairs ==
+              other.pagedNormalizedRouteParticipantMatchPairs &&
+          pagedNormalizedRouteLegacyMatchPairs ==
+              other.pagedNormalizedRouteLegacyMatchPairs &&
+          pagedNormalizedRouteLahMatchPairs ==
+              other.pagedNormalizedRouteLahMatchPairs &&
+          pagedNormalizedMsgprotoChatIdentifierMatchPairs ==
+              other.pagedNormalizedMsgprotoChatIdentifierMatchPairs &&
+          pagedNormalizedMsgprotoGroupIdMatchPairs ==
+              other.pagedNormalizedMsgprotoGroupIdMatchPairs &&
+          pagedNormalizedMsgprotoOriginalGroupIdMatchPairs ==
+              other.pagedNormalizedMsgprotoOriginalGroupIdMatchPairs &&
+          pagedNormalizedMsgprotoGuidMatchPairs ==
+              other.pagedNormalizedMsgprotoGuidMatchPairs &&
+          pagedNormalizedMsgprotoLegacyMatchPairs ==
+              other.pagedNormalizedMsgprotoLegacyMatchPairs &&
+          pagedNormalizedSenderParticipantMatchPairs ==
+              other.pagedNormalizedSenderParticipantMatchPairs &&
+          pagedNormalizedSenderLahMatchPairs ==
+              other.pagedNormalizedSenderLahMatchPairs &&
+          pagedNormalizedMatchedRouteExtraMessageRoutes ==
+              other.pagedNormalizedMatchedRouteExtraMessageRoutes &&
+          pagedNormalizedMatchedRouteExtraChat1Records ==
+              other.pagedNormalizedMatchedRouteExtraChat1Records &&
+          pagedNormalizedMatchedMsgprotoTargets ==
+              other.pagedNormalizedMatchedMsgprotoTargets &&
+          pagedNormalizedMatchedMsgprotoChat1Records ==
+              other.pagedNormalizedMatchedMsgprotoChat1Records &&
+          pagedNormalizedMatchedSenderTargets ==
+              other.pagedNormalizedMatchedSenderTargets &&
+          pagedNormalizedMatchedSenderChat1Records ==
+              other.pagedNormalizedMatchedSenderChat1Records &&
           pagedTerminalReached == other.pagedTerminalReached &&
           pagedBudgetExhausted == other.pagedBudgetExhausted &&
           failureCode == other.failureCode;
