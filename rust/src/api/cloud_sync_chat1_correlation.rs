@@ -1983,15 +1983,18 @@ impl SemanticMatchCounts {
     }
 
     fn candidate_cardinality(counts: &[u16]) -> CandidateCardinality {
-        (0..MAX_MESSAGE_SOURCES).fold(CandidateCardinality::default(), |mut cardinality, index| {
-            let count = counts.get(index).copied().unwrap_or(0);
-            match count {
-                0 => cardinality.zero += 1,
-                1 => cardinality.unique += 1,
-                _ => cardinality.multiple += 1,
-            }
-            cardinality
-        })
+        (0..MAX_MESSAGE_SOURCES).fold(
+            CandidateCardinality::default(),
+            |mut cardinality, index| {
+                let count = counts.get(index).copied().unwrap_or(0);
+                match count {
+                    0 => cardinality.zero += 1,
+                    1 => cardinality.unique += 1,
+                    _ => cardinality.multiple += 1,
+                }
+                cardinality
+            },
+        )
     }
 
     fn observe(&mut self, fields: &RouteFieldMatches) {
