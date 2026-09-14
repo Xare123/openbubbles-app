@@ -279,7 +279,7 @@ jobs:
         run: git config --global --add safe.directory "$FLUTTER_ROOT"
 
       - name: Set up Java
-        if: ${{ env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           java-version: "21"
@@ -287,7 +287,7 @@ jobs:
           cache: gradle
 
       - name: Set up Android SDK
-        if: ${{ env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' && env.VALIDATION_MODE != 'app-rust-only' && env.VALIDATION_MODE != 'dart-only' }}
         uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
 
       - name: Cache Cargo registries
