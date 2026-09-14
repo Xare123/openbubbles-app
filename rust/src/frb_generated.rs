@@ -21852,6 +21852,13 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         let mut var_pagedSemanticMatchPairs = <u32>::sse_decode(deserializer);
         let mut var_pagedMatchedMessageRoutes = <u32>::sse_decode(deserializer);
         let mut var_pagedMatchedChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedChatIdentifierMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedGroupIdMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedOriginalGroupIdMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedGuidMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedSemanticMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMatchedMessageRoutes = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMatchedChat1Records = <u32>::sse_decode(deserializer);
         let mut var_pagedTerminalReached = <bool>::sse_decode(deserializer);
         let mut var_pagedBudgetExhausted = <bool>::sse_decode(deserializer);
         let mut var_failureCode = <Option<
@@ -21892,6 +21899,15 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
             paged_semantic_match_pairs: var_pagedSemanticMatchPairs,
             paged_matched_message_routes: var_pagedMatchedMessageRoutes,
             paged_matched_chat1_records: var_pagedMatchedChat1Records,
+            paged_normalized_chat_identifier_match_pairs:
+                var_pagedNormalizedChatIdentifierMatchPairs,
+            paged_normalized_group_id_match_pairs: var_pagedNormalizedGroupIdMatchPairs,
+            paged_normalized_original_group_id_match_pairs:
+                var_pagedNormalizedOriginalGroupIdMatchPairs,
+            paged_normalized_guid_match_pairs: var_pagedNormalizedGuidMatchPairs,
+            paged_normalized_semantic_match_pairs: var_pagedNormalizedSemanticMatchPairs,
+            paged_normalized_matched_message_routes: var_pagedNormalizedMatchedMessageRoutes,
+            paged_normalized_matched_chat1_records: var_pagedNormalizedMatchedChat1Records,
             paged_terminal_reached: var_pagedTerminalReached,
             paged_budget_exhausted: var_pagedBudgetExhausted,
             failure_code: var_failureCode,
@@ -31732,6 +31748,27 @@ impl flutter_rust_bridge::IntoDart
             self.paged_matched_chat1_records
                 .into_into_dart()
                 .into_dart(),
+            self.paged_normalized_chat_identifier_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_group_id_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_original_group_id_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_guid_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_semantic_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_matched_message_routes
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_matched_chat1_records
+                .into_into_dart()
+                .into_dart(),
             self.paged_terminal_reached.into_into_dart().into_dart(),
             self.paged_budget_exhausted.into_into_dart().into_dart(),
             self.failure_code.into_into_dart().into_dart(),
@@ -39445,6 +39482,19 @@ impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         <u32>::sse_encode(self.paged_semantic_match_pairs, serializer);
         <u32>::sse_encode(self.paged_matched_message_routes, serializer);
         <u32>::sse_encode(self.paged_matched_chat1_records, serializer);
+        <u32>::sse_encode(
+            self.paged_normalized_chat_identifier_match_pairs,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_normalized_group_id_match_pairs, serializer);
+        <u32>::sse_encode(
+            self.paged_normalized_original_group_id_match_pairs,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_normalized_guid_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_normalized_semantic_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_normalized_matched_message_routes, serializer);
+        <u32>::sse_encode(self.paged_normalized_matched_chat1_records, serializer);
         <bool>::sse_encode(self.paged_terminal_reached, serializer);
         <bool>::sse_encode(self.paged_budget_exhausted, serializer);
         <Option<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode>>::sse_encode(self.failure_code, serializer);

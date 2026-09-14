@@ -18873,8 +18873,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   dco_decode_cloud_sync_chat_1_correlation_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 37)
-      throw Exception('unexpected arr length: expect 37 but see ${arr.length}');
+    if (arr.length != 44)
+      throw Exception('unexpected arr length: expect 44 but see ${arr.length}');
     return CloudSyncChat1CorrelationResult(
       completed: dco_decode_bool(arr[0]),
       messageSources: dco_decode_u_32(arr[1]),
@@ -18910,11 +18910,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       pagedSemanticMatchPairs: dco_decode_u_32(arr[31]),
       pagedMatchedMessageRoutes: dco_decode_u_32(arr[32]),
       pagedMatchedChat1Records: dco_decode_u_32(arr[33]),
-      pagedTerminalReached: dco_decode_bool(arr[34]),
-      pagedBudgetExhausted: dco_decode_bool(arr[35]),
+      pagedNormalizedChatIdentifierMatchPairs: dco_decode_u_32(arr[34]),
+      pagedNormalizedGroupIdMatchPairs: dco_decode_u_32(arr[35]),
+      pagedNormalizedOriginalGroupIdMatchPairs: dco_decode_u_32(arr[36]),
+      pagedNormalizedGuidMatchPairs: dco_decode_u_32(arr[37]),
+      pagedNormalizedSemanticMatchPairs: dco_decode_u_32(arr[38]),
+      pagedNormalizedMatchedMessageRoutes: dco_decode_u_32(arr[39]),
+      pagedNormalizedMatchedChat1Records: dco_decode_u_32(arr[40]),
+      pagedTerminalReached: dco_decode_bool(arr[41]),
+      pagedBudgetExhausted: dco_decode_bool(arr[42]),
       failureCode:
           dco_decode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
-            arr[36],
+            arr[43],
           ),
     );
   }
@@ -29220,6 +29227,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_pagedSemanticMatchPairs = sse_decode_u_32(deserializer);
     var var_pagedMatchedMessageRoutes = sse_decode_u_32(deserializer);
     var var_pagedMatchedChat1Records = sse_decode_u_32(deserializer);
+    var var_pagedNormalizedChatIdentifierMatchPairs = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedGroupIdMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedNormalizedOriginalGroupIdMatchPairs = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedGuidMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedNormalizedSemanticMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedNormalizedMatchedMessageRoutes = sse_decode_u_32(deserializer);
+    var var_pagedNormalizedMatchedChat1Records = sse_decode_u_32(deserializer);
     var var_pagedTerminalReached = sse_decode_bool(deserializer);
     var var_pagedBudgetExhausted = sse_decode_bool(deserializer);
     var var_failureCode =
@@ -29261,6 +29279,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       pagedSemanticMatchPairs: var_pagedSemanticMatchPairs,
       pagedMatchedMessageRoutes: var_pagedMatchedMessageRoutes,
       pagedMatchedChat1Records: var_pagedMatchedChat1Records,
+      pagedNormalizedChatIdentifierMatchPairs:
+          var_pagedNormalizedChatIdentifierMatchPairs,
+      pagedNormalizedGroupIdMatchPairs: var_pagedNormalizedGroupIdMatchPairs,
+      pagedNormalizedOriginalGroupIdMatchPairs:
+          var_pagedNormalizedOriginalGroupIdMatchPairs,
+      pagedNormalizedGuidMatchPairs: var_pagedNormalizedGuidMatchPairs,
+      pagedNormalizedSemanticMatchPairs: var_pagedNormalizedSemanticMatchPairs,
+      pagedNormalizedMatchedMessageRoutes:
+          var_pagedNormalizedMatchedMessageRoutes,
+      pagedNormalizedMatchedChat1Records:
+          var_pagedNormalizedMatchedChat1Records,
       pagedTerminalReached: var_pagedTerminalReached,
       pagedBudgetExhausted: var_pagedBudgetExhausted,
       failureCode: var_failureCode,
@@ -41598,6 +41627,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.pagedSemanticMatchPairs, serializer);
     sse_encode_u_32(self.pagedMatchedMessageRoutes, serializer);
     sse_encode_u_32(self.pagedMatchedChat1Records, serializer);
+    sse_encode_u_32(self.pagedNormalizedChatIdentifierMatchPairs, serializer);
+    sse_encode_u_32(self.pagedNormalizedGroupIdMatchPairs, serializer);
+    sse_encode_u_32(self.pagedNormalizedOriginalGroupIdMatchPairs, serializer);
+    sse_encode_u_32(self.pagedNormalizedGuidMatchPairs, serializer);
+    sse_encode_u_32(self.pagedNormalizedSemanticMatchPairs, serializer);
+    sse_encode_u_32(self.pagedNormalizedMatchedMessageRoutes, serializer);
+    sse_encode_u_32(self.pagedNormalizedMatchedChat1Records, serializer);
     sse_encode_bool(self.pagedTerminalReached, serializer);
     sse_encode_bool(self.pagedBudgetExhausted, serializer);
     sse_encode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(

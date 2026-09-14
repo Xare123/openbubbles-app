@@ -323,9 +323,7 @@ mod tests {
             ]))
         );
         assert_eq!(
-            normalized_chat_identity_variants(
-                "iMessage;+;AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
-            ),
+            normalized_chat_identity_variants("iMessage;+;AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",),
             Some(BTreeSet::from([
                 "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".to_owned(),
                 "imessage;+;aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".to_owned(),
