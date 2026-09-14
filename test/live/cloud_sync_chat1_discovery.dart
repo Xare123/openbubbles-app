@@ -18,6 +18,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/shadow_only_cloud_sync_
 import 'package:bluebubbles/src/rust/lib.dart' as rustlib;
 import 'package:bluebubbles/src/rust/api/cloud_sync_chat1_correlation.dart'
     as correlation_api;
+import 'package:path/path.dart' as path;
 
 Future<Map<String, Object?>> observeChat1Discovery({
   required Store store,
@@ -449,6 +450,37 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     throw StateError('chat1_correlation_chat1_read_set_invalid');
   }
   final before = _correlationDurableState(store);
+  if (Platform.environment['OPENBUBBLES_EXPORT_CHAT1_INPUT_MANIFEST'] == '1') {
+    await _exportChat1CorrelationInputManifest(
+      profile: profile,
+      auth: auth,
+      messageGeneration: messageCheckpoint.generation,
+      messageRows: messageRows,
+      anchorMessageRows: anchorMessageRows,
+      chat1Generation: chat1Checkpoint.generation,
+      chat1Rows: chat1Rows,
+    );
+    final finalAuth = await readCurrentBoundAuth();
+    if (!auth.sameIdentity(finalAuth)) {
+      throw StateError('account_changed');
+    }
+    final durableStateUnchanged = before == _correlationDurableState(store);
+    if (!durableStateUnchanged) {
+      throw StateError('chat1_correlation_export_write_tripwire');
+    }
+    return <String, Object?>{
+      'account_bound': true,
+      'scope': 'chat1ManateeZone',
+      'network_read_performed': false,
+      'content_exposed': false,
+      'durable_state_unchanged': true,
+      'manifest_exported': true,
+      'message_sources': messageRows.length,
+      'anchor_message_sources': anchorMessageRows.length,
+      'chat1_sources': chat1Rows.length,
+      'anchor_source_budget_exhausted': anchorSourceBudgetExhausted,
+    };
+  }
   final result = await correlation_api
       .cloudSyncInspectChat1RecordNameCorrelationUnderWriterPause(
         cloudMessagesClient: client,
@@ -683,6 +715,61 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     'paged_terminal_reached': result.pagedTerminalReached,
     'paged_budget_exhausted': result.pagedBudgetExhausted,
     'failure_code': result.failureCode?.name,
+  };
+}
+
+Future<void> _exportChat1CorrelationInputManifest({
+  required Directory profile,
+  required CloudSyncNativeAuthSnapshot auth,
+  required int messageGeneration,
+  required List<CloudInboxChangeEntity> messageRows,
+  required List<CloudInboxChangeEntity> anchorMessageRows,
+  required int chat1Generation,
+  required List<CloudInboxChangeEntity> chat1Rows,
+}) async {
+  final directory = Directory(
+    path.join(profile.path, 'cloud-sync-v2', 'diagnostics'),
+  );
+  await directory.create(recursive: true);
+  final destination = File(
+    path.join(directory.path, 'chat1-correlation-input-v1.json'),
+  );
+  final temporary = File('${destination.path}.$pid.tmp');
+  final encoded = jsonEncode(<String, Object?>{
+    'schema': 1,
+    'content_exposed': false,
+    'account_fingerprint': auth.accountFingerprint,
+    'protected_store_identity': auth.protectedStoreIdentity,
+    'message_generation': messageGeneration,
+    'message_sources': messageRows.map(_correlationSourceMap).toList(),
+    'anchor_message_sources': anchorMessageRows
+        .map(_correlationSourceMap)
+        .toList(),
+    'chat1_generation': chat1Generation,
+    'chat1_sources': chat1Rows.map(_correlationSourceMap).toList(),
+  });
+  if (encoded.length > 4 * 1024 * 1024) {
+    throw StateError('chat1_correlation_export_too_large');
+  }
+  try {
+    await temporary.writeAsString(encoded, flush: true);
+    if (await destination.exists()) await destination.delete();
+    await temporary.rename(destination.path);
+  } finally {
+    if (await temporary.exists()) await temporary.delete();
+  }
+}
+
+Map<String, Object?> _correlationSourceMap(CloudInboxChangeEntity row) {
+  final source = _correlationSource(row);
+  return <String, Object?>{
+    'change_id_hash': source.changeIdHash,
+    'record_id_hash': source.recordIdHash,
+    'etag_hash': source.etagHash,
+    'payload_sha256': source.payloadSha256,
+    'payload_length': source.payloadLength,
+    'server_modified_at_millis': source.serverModifiedAtMillis,
+    'protected_raw_envelope_reference': source.protectedRawEnvelopeReference,
   };
 }
 

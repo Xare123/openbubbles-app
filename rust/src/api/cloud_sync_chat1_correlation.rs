@@ -4984,3 +4984,285 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_standalone_live_tests {
+    use super::*;
+    use crate::api::api;
+    use serde::Deserialize;
+    use std::{fs, path::PathBuf};
+
+    const LIVE_ENABLE: &str = "OPENBUBBLES_RUN_CHAT1_STANDALONE_LIVE";
+    const MANIFEST_RELATIVE_PATH: &[&str] = &[
+        "cloud-sync-v2",
+        "diagnostics",
+        "chat1-correlation-input-v1.json",
+    ];
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LiveManifestSource {
+        change_id_hash: String,
+        record_id_hash: String,
+        etag_hash: Option<String>,
+        payload_sha256: String,
+        payload_length: Option<u64>,
+        server_modified_at_millis: Option<i64>,
+        protected_raw_envelope_reference: String,
+    }
+
+    impl From<LiveManifestSource> for CloudSyncChat1CorrelationSourceInput {
+        fn from(value: LiveManifestSource) -> Self {
+            Self {
+                change_id_hash: value.change_id_hash,
+                record_id_hash: value.record_id_hash,
+                etag_hash: value.etag_hash,
+                payload_sha256: value.payload_sha256,
+                payload_length: value.payload_length,
+                server_modified_at_millis: value.server_modified_at_millis,
+                protected_raw_envelope_reference: value.protected_raw_envelope_reference,
+            }
+        }
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LiveManifest {
+        schema: u32,
+        content_exposed: bool,
+        account_fingerprint: String,
+        protected_store_identity: String,
+        message_generation: u64,
+        message_sources: Vec<LiveManifestSource>,
+        anchor_message_sources: Vec<LiveManifestSource>,
+        chat1_generation: u64,
+        chat1_sources: Vec<LiveManifestSource>,
+    }
+
+    fn required_live_environment() {
+        for name in [
+            LIVE_ENABLE,
+            "OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST",
+            "OPENBUBBLES_INSPECT_CHAT1_CORRELATION",
+            "OPENBUBBLES_INSPECT_CHAT1_SEMANTIC_CORRELATION",
+            "OPENBUBBLES_INSPECT_CHAT1_PAGED_CORRELATION",
+        ] {
+            assert_eq!(
+                std::env::var(name).as_deref(),
+                Ok("1"),
+                "chat1_standalone_live_enable_required"
+            );
+        }
+        for name in [
+            "OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY",
+            "OPENBUBBLES_CLOUDKIT_WRITER_OWNER",
+            "OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_REPLAY_EXCLUDED_CHATS",
+            "OPENBUBBLES_VERIFY_EDIT_CLAIM",
+            "OPENBUBBLES_VERIFY_CHAIN_UNSEND",
+        ] {
+            assert!(
+                std::env::var_os(name).is_none(),
+                "chat1_standalone_writer_environment_rejected"
+            );
+        }
+    }
+
+    fn live_profile() -> PathBuf {
+        let mut profile =
+            PathBuf::from(std::env::var_os("APPDATA").expect("chat1_standalone_appdata_required"));
+        profile.push("OpenBubbles");
+        profile.push("cloudkit-v2-dev");
+        let marker = fs::read_to_string(profile.join(".openbubbles-cloud-sync-v2-windows-dev"))
+            .expect("chat1_standalone_profile_marker_required");
+        assert_eq!(
+            marker, "openbubbles-cloud-sync-v2-windows-dev-profile:v1",
+            "chat1_standalone_profile_marker_rejected"
+        );
+        profile
+    }
+
+    fn read_manifest(profile: &PathBuf) -> LiveManifest {
+        let mut path = profile.clone();
+        for part in MANIFEST_RELATIVE_PATH {
+            path.push(part);
+        }
+        let metadata = fs::metadata(&path).expect("chat1_standalone_manifest_required");
+        assert!(
+            metadata.is_file() && metadata.len() <= 4 * 1024 * 1024,
+            "chat1_standalone_manifest_rejected"
+        );
+        let bytes = fs::read(path).expect("chat1_standalone_manifest_read_failed");
+        serde_json::from_slice(&bytes).expect("chat1_standalone_manifest_decode_failed")
+    }
+
+    fn is_bare_digest(value: &str) -> bool {
+        value.len() == 43
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[ignore = "requires the explicit isolated Windows profile and live Apple services"]
+    async fn current_rust_correlates_exported_chat1_inputs_read_only() {
+        required_live_environment();
+        let profile = live_profile();
+        let manifest = read_manifest(&profile);
+        assert_eq!(manifest.schema, 1, "chat1_standalone_manifest_schema");
+        assert!(
+            !manifest.content_exposed,
+            "chat1_standalone_content_rejected"
+        );
+        assert!(
+            is_bare_digest(&manifest.account_fingerprint)
+                && is_bare_digest(&manifest.protected_store_identity),
+            "chat1_standalone_manifest_identity_rejected"
+        );
+
+        let message_sources = manifest
+            .message_sources
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>();
+        let anchor_message_sources = manifest
+            .anchor_message_sources
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>();
+        let chat1_sources = manifest
+            .chat1_sources
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>();
+        assert!(
+            manifest.message_generation > 0
+                && manifest.chat1_generation > 0
+                && message_sources.len() == MAX_MESSAGE_SOURCES
+                && (MAX_MESSAGE_SOURCES..=MAX_ANCHOR_MESSAGE_SOURCES)
+                    .contains(&anchor_message_sources.len())
+                && chat1_sources.len() == MAX_CHAT1_SOURCES
+                && valid_sources(&message_sources, MAX_MESSAGE_SOURCES)
+                && valid_sources(&anchor_message_sources, MAX_ANCHOR_MESSAGE_SOURCES)
+                && valid_sources(&chat1_sources, MAX_CHAT1_SOURCES),
+            "chat1_standalone_manifest_sources_rejected"
+        );
+
+        let profile_string = profile.to_string_lossy().into_owned();
+        api::do_first_time_init(profile_string.clone());
+        let hardware = api::read_hardware(profile_string.clone())
+            .expect("chat1_standalone_hardware_restore_failed");
+        let identity = api::decode_identity(&hardware.identity)
+            .expect("chat1_standalone_identity_restore_failed");
+        let config = hardware.os_config.clone();
+        let (connection, push_error) = api::setup_push(
+            &config,
+            &identity,
+            Some(hardware.push.clone()),
+            profile_string.clone(),
+        )
+        .await;
+        assert!(push_error.is_none(), "chat1_standalone_aps_setup_failed");
+        let anisette = api::make_anisette(profile_string.clone(), &config, &connection).await;
+        let account = api::restore_account(profile_string.clone(), &anisette, &config, &connection)
+            .await
+            .expect("chat1_standalone_account_restore_failed");
+        let token_provider = api::make_token_provider(&account, &config);
+        let cloudkit =
+            api::make_cloudkit(profile_string.clone(), &anisette, &config, &token_provider)
+                .await
+                .expect("chat1_standalone_cloudkit_restore_failed");
+        let keychain = api::make_keychain(
+            profile_string.clone(),
+            &cloudkit,
+            &anisette,
+            &config,
+            &token_provider,
+        )
+        .expect("chat1_standalone_keychain_restore_failed");
+        let client = api::make_cloud_messages_client(&cloudkit, &keychain);
+
+        let mut pause_token = rand::random::<u64>();
+        if pause_token == 0 {
+            pause_token = 1;
+        }
+        let acquired = api::cloud_sync_pause_password_cloudkit_writers(pause_token)
+            .await
+            .expect("chat1_standalone_writer_pause_failed");
+        assert_eq!(
+            acquired, pause_token,
+            "chat1_standalone_writer_pause_mismatch"
+        );
+        let warm =
+            api::cloud_sync_warm_read_authentication_under_writer_pause(&client, pause_token).await;
+        let result = if warm.is_ok() {
+            Some(
+                cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause(
+                    &client,
+                    pause_token,
+                    profile_string,
+                    manifest.account_fingerprint,
+                    manifest.protected_store_identity,
+                    manifest.message_generation,
+                    message_sources,
+                    anchor_message_sources,
+                    manifest.chat1_generation,
+                    chat1_sources,
+                )
+                .await,
+            )
+        } else {
+            None
+        };
+        api::cloud_sync_resume_password_cloudkit_writers(pause_token)
+            .await
+            .expect("chat1_standalone_writer_resume_failed");
+        assert!(warm.is_ok(), "chat1_standalone_read_authentication_failed");
+        let result = result.expect("chat1_standalone_result_missing");
+
+        let report = serde_json::json!({
+            "completed": result.completed,
+            "failure_code": result.failure_code.map(|value| format!("{value:?}")),
+            "message_sources": result.message_sources,
+            "decoded_message_routes": result.decoded_message_routes,
+            "anchor_message_sources": result.anchor_message_sources,
+            "decoded_anchor_messages": result.decoded_anchor_messages,
+            "skipped_anchor_messages": result.skipped_anchor_messages,
+            "distinct_anchor_message_guids": result.distinct_anchor_message_guids,
+            "conflicting_anchor_message_guids": result.conflicting_anchor_message_guids,
+            "paged_pages_scanned": result.paged_pages_scanned,
+            "paged_changes_scanned": result.paged_changes_scanned,
+            "paged_chat_records": result.paged_chat_records,
+            "paged_record_decode_failures": result.paged_record_decode_failures,
+            "paged_route_field_decode_failures": result.paged_route_field_decode_failures,
+            "paged_route_field_failure_matrix": result.paged_route_field_failure_matrix,
+            "paged_semantic_match_pairs": result.paged_semantic_match_pairs,
+            "paged_normalized_semantic_match_pairs": result.paged_normalized_semantic_match_pairs,
+            "paged_matched_message_routes": result.paged_matched_message_routes,
+            "paged_normalized_matched_message_routes": result.paged_normalized_matched_message_routes,
+            "paged_last_seen_target_message_match_pairs": result.paged_last_seen_target_message_match_pairs,
+            "paged_last_seen_anchor_exact_match_pairs": result.paged_last_seen_anchor_exact_match_pairs,
+            "paged_last_seen_anchor_normalized_match_pairs": result.paged_last_seen_anchor_normalized_match_pairs,
+            "paged_sender_service_style_match_pairs": result.paged_sender_service_style_match_pairs,
+            "paged_sender_service_style_zero_candidate_targets": result.paged_sender_service_style_zero_candidate_targets,
+            "paged_sender_service_style_unique_candidate_targets": result.paged_sender_service_style_unique_candidate_targets,
+            "paged_sender_service_style_multiple_candidate_targets": result.paged_sender_service_style_multiple_candidate_targets,
+            "paged_last_seen_target_zero_candidate_targets": result.paged_last_seen_target_zero_candidate_targets,
+            "paged_last_seen_target_unique_candidate_targets": result.paged_last_seen_target_unique_candidate_targets,
+            "paged_last_seen_target_multiple_candidate_targets": result.paged_last_seen_target_multiple_candidate_targets,
+            "paged_anchor_exact_zero_candidate_targets": result.paged_anchor_exact_zero_candidate_targets,
+            "paged_anchor_exact_unique_candidate_targets": result.paged_anchor_exact_unique_candidate_targets,
+            "paged_anchor_exact_multiple_candidate_targets": result.paged_anchor_exact_multiple_candidate_targets,
+            "paged_anchor_normalized_zero_candidate_targets": result.paged_anchor_normalized_zero_candidate_targets,
+            "paged_anchor_normalized_unique_candidate_targets": result.paged_anchor_normalized_unique_candidate_targets,
+            "paged_anchor_normalized_multiple_candidate_targets": result.paged_anchor_normalized_multiple_candidate_targets,
+            "paged_terminal_reached": result.paged_terminal_reached,
+            "paged_budget_exhausted": result.paged_budget_exhausted,
+        });
+        println!("OPENBUBBLES_CHAT1_STANDALONE_AGGREGATE={report}");
+        assert!(result.completed, "chat1_standalone_correlation_failed");
+        assert!(
+            result.failure_code.is_none(),
+            "chat1_standalone_correlation_failed"
+        );
+    }
+}

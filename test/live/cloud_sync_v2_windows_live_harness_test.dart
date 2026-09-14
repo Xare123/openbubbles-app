@@ -275,6 +275,21 @@ void main() {
         expect(observed?['account_bound'], isTrue);
         if (Platform.environment['OPENBUBBLES_INSPECT_CHAT1_CORRELATION'] ==
             '1') {
+          if (Platform.environment['OPENBUBBLES_EXPORT_CHAT1_INPUT_MANIFEST'] ==
+              '1') {
+            expect(observed?['network_read_performed'], isFalse);
+            expect(observed?['content_exposed'], isFalse);
+            expect(observed?['durable_state_unchanged'], isTrue);
+            expect(observed?['manifest_exported'], isTrue);
+            expect(observed?['message_sources'], 8);
+            expect(
+              observed?['anchor_message_sources'],
+              inInclusiveRange(8, 2048),
+            );
+            expect(observed?['chat1_sources'], 50);
+            expect(observed?['anchor_source_budget_exhausted'], isA<bool>());
+            return;
+          }
           final semanticCorrelation =
               Platform
                   .environment['OPENBUBBLES_INSPECT_CHAT1_SEMANTIC_CORRELATION'] ==
