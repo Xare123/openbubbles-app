@@ -542,6 +542,12 @@ fn is_protected_reference(value: &str) -> bool {
     value.strip_prefix("obcs2.ref.").is_some_and(is_bare_digest)
 }
 
+fn is_protected_store_identity(value: &str) -> bool {
+    value
+        .strip_prefix("obcs2.store.")
+        .is_some_and(is_bare_digest)
+}
+
 fn valid_source(source: &CloudSyncChat1CorrelationSourceInput) -> bool {
     is_bare_digest(&source.change_id_hash)
         && is_bare_digest(&source.record_id_hash)
@@ -2341,6 +2347,8 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
         return failure(CloudSyncChat1CorrelationFailureCode::TestHostRequired);
     }
     if (paged_correlation && !semantic_correlation)
+        || !is_bare_digest(&expected_account_fingerprint)
+        || !is_protected_store_identity(&expected_protected_store_identity)
         || message_generation == 0
         || chat1_generation == 0
         || message_sources.len() != MAX_MESSAGE_SOURCES
@@ -3953,6 +3961,20 @@ mod tests {
     }
 
     #[test]
+    fn protected_store_identity_uses_the_protector_wire_grammar() {
+        let digest = "A".repeat(43);
+        assert!(is_protected_store_identity(&format!(
+            "obcs2.store.{digest}"
+        )));
+        assert!(!is_protected_store_identity(&digest));
+        assert!(!is_protected_store_identity(&format!("obcs2.ref.{digest}")));
+        assert!(!is_protected_store_identity(&format!(
+            "obcs2.store.{}",
+            "A".repeat(42)
+        )));
+    }
+
+    #[test]
     fn failure_result_never_contains_partial_observation() {
         let result = failure(CloudSyncChat1CorrelationFailureCode::Chat1SourceMismatch);
         assert!(!result.completed);
@@ -5095,13 +5117,6 @@ mod windows_standalone_live_tests {
         serde_json::from_slice(&bytes).expect("chat1_standalone_manifest_decode_failed")
     }
 
-    fn is_bare_digest(value: &str) -> bool {
-        value.len() == 43
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[ignore = "requires the explicit isolated Windows profile and live Apple services"]
     async fn current_rust_correlates_exported_chat1_inputs_read_only() {
@@ -5115,7 +5130,7 @@ mod windows_standalone_live_tests {
         );
         assert!(
             is_bare_digest(&manifest.account_fingerprint)
-                && is_bare_digest(&manifest.protected_store_identity),
+                && is_protected_store_identity(&manifest.protected_store_identity),
             "chat1_standalone_manifest_identity_rejected"
         );
 
