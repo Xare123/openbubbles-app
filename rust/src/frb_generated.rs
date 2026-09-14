@@ -21836,6 +21836,8 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         let mut var_decodedRouteRecords = <u32>::sse_decode(deserializer);
         let mut var_recordDecodeFailures = <u32>::sse_decode(deserializer);
         let mut var_routeFieldDecodeFailures = <u32>::sse_decode(deserializer);
+        let mut var_routeFieldFailureMatrixSchema = <u32>::sse_decode(deserializer);
+        let mut var_routeFieldFailureMatrix = <Vec<u32>>::sse_decode(deserializer);
         let mut var_chatIdentifierMatchPairs = <u32>::sse_decode(deserializer);
         let mut var_groupIdMatchPairs = <u32>::sse_decode(deserializer);
         let mut var_originalGroupIdMatchPairs = <u32>::sse_decode(deserializer);
@@ -21876,6 +21878,7 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         let mut var_pagedTombstones = <u32>::sse_decode(deserializer);
         let mut var_pagedRecordDecodeFailures = <u32>::sse_decode(deserializer);
         let mut var_pagedRouteFieldDecodeFailures = <u32>::sse_decode(deserializer);
+        let mut var_pagedRouteFieldFailureMatrix = <Vec<u32>>::sse_decode(deserializer);
         let mut var_pagedSemanticMatchPairs = <u32>::sse_decode(deserializer);
         let mut var_pagedMatchedMessageRoutes = <u32>::sse_decode(deserializer);
         let mut var_pagedMatchedChat1Records = <u32>::sse_decode(deserializer);
@@ -21953,6 +21956,8 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
             decoded_route_records: var_decodedRouteRecords,
             record_decode_failures: var_recordDecodeFailures,
             route_field_decode_failures: var_routeFieldDecodeFailures,
+            route_field_failure_matrix_schema: var_routeFieldFailureMatrixSchema,
+            route_field_failure_matrix: var_routeFieldFailureMatrix,
             chat_identifier_match_pairs: var_chatIdentifierMatchPairs,
             group_id_match_pairs: var_groupIdMatchPairs,
             original_group_id_match_pairs: var_originalGroupIdMatchPairs,
@@ -21993,6 +21998,7 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
             paged_tombstones: var_pagedTombstones,
             paged_record_decode_failures: var_pagedRecordDecodeFailures,
             paged_route_field_decode_failures: var_pagedRouteFieldDecodeFailures,
+            paged_route_field_failure_matrix: var_pagedRouteFieldFailureMatrix,
             paged_semantic_match_pairs: var_pagedSemanticMatchPairs,
             paged_matched_message_routes: var_pagedMatchedMessageRoutes,
             paged_matched_chat1_records: var_pagedMatchedChat1Records,
@@ -31863,6 +31869,10 @@ impl flutter_rust_bridge::IntoDart
             self.route_field_decode_failures
                 .into_into_dart()
                 .into_dart(),
+            self.route_field_failure_matrix_schema
+                .into_into_dart()
+                .into_dart(),
+            self.route_field_failure_matrix.into_into_dart().into_dart(),
             self.chat_identifier_match_pairs
                 .into_into_dart()
                 .into_dart(),
@@ -31937,6 +31947,9 @@ impl flutter_rust_bridge::IntoDart
                 .into_into_dart()
                 .into_dart(),
             self.paged_route_field_decode_failures
+                .into_into_dart()
+                .into_dart(),
+            self.paged_route_field_failure_matrix
                 .into_into_dart()
                 .into_dart(),
             self.paged_semantic_match_pairs.into_into_dart().into_dart(),
@@ -39779,6 +39792,8 @@ impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         <u32>::sse_encode(self.decoded_route_records, serializer);
         <u32>::sse_encode(self.record_decode_failures, serializer);
         <u32>::sse_encode(self.route_field_decode_failures, serializer);
+        <u32>::sse_encode(self.route_field_failure_matrix_schema, serializer);
+        <Vec<u32>>::sse_encode(self.route_field_failure_matrix, serializer);
         <u32>::sse_encode(self.chat_identifier_match_pairs, serializer);
         <u32>::sse_encode(self.group_id_match_pairs, serializer);
         <u32>::sse_encode(self.original_group_id_match_pairs, serializer);
@@ -39819,6 +39834,7 @@ impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         <u32>::sse_encode(self.paged_tombstones, serializer);
         <u32>::sse_encode(self.paged_record_decode_failures, serializer);
         <u32>::sse_encode(self.paged_route_field_decode_failures, serializer);
+        <Vec<u32>>::sse_encode(self.paged_route_field_failure_matrix, serializer);
         <u32>::sse_encode(self.paged_semantic_match_pairs, serializer);
         <u32>::sse_encode(self.paged_matched_message_routes, serializer);
         <u32>::sse_encode(self.paged_matched_chat1_records, serializer);

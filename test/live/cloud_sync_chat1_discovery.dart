@@ -420,6 +420,9 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     'decoded_route_records': result.decodedRouteRecords,
     'record_decode_failures': result.recordDecodeFailures,
     'route_field_decode_failures': result.routeFieldDecodeFailures,
+    'route_field_failure_matrix_schema':
+        result.routeFieldFailureMatrixSchema,
+    'route_field_failure_matrix': result.routeFieldFailureMatrix,
     'chat_identifier_match_pairs': result.chatIdentifierMatchPairs,
     'group_id_match_pairs': result.groupIdMatchPairs,
     'original_group_id_match_pairs': result.originalGroupIdMatchPairs,
@@ -466,6 +469,8 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     'paged_tombstones': result.pagedTombstones,
     'paged_record_decode_failures': result.pagedRecordDecodeFailures,
     'paged_route_field_decode_failures': result.pagedRouteFieldDecodeFailures,
+    'paged_route_field_failure_matrix':
+        result.pagedRouteFieldFailureMatrix,
     'paged_semantic_match_pairs': result.pagedSemanticMatchPairs,
     'paged_matched_message_routes': result.pagedMatchedMessageRoutes,
     'paged_matched_chat1_records': result.pagedMatchedChat1Records,

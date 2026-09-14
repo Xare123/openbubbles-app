@@ -18,6 +18,23 @@ import 'cloud_sync_edit_echo_verification.dart';
 import 'cloud_sync_chat1_discovery.dart';
 import 'cloud_sync_parent_coverage.dart';
 
+void expectRouteFieldFailureMatrix(
+  Object? value, {
+  required int expectedSum,
+  required String reason,
+}) {
+  final matrix = (value as List).cast<int>();
+  expect(matrix, hasLength(88), reason: '${reason}_length');
+  for (final count in matrix) {
+    expect(count, greaterThanOrEqualTo(0), reason: reason);
+  }
+  expect(
+    matrix.fold<int>(0, (sum, count) => sum + count),
+    expectedSum,
+    reason: '${reason}_sum',
+  );
+}
+
 void main() {
   final enabled =
       Platform.environment['OPENBUBBLES_RUN_LIVE_WINDOWS_HARNESS'] == '1';
@@ -273,6 +290,14 @@ void main() {
             final recordFailures = observed?['record_decode_failures'] as int;
             final fieldFailures =
                 observed?['route_field_decode_failures'] as int;
+            final failureMatrixSchema =
+                observed?['route_field_failure_matrix_schema'] as int;
+            expect(failureMatrixSchema, 1);
+            expectRouteFieldFailureMatrix(
+              observed?['route_field_failure_matrix'],
+              expectedSum: fieldFailures,
+              reason: 'route_field_failure_matrix',
+            );
             final semanticPairs = observed?['semantic_match_pairs'] as int;
             expect(chatTypes + otherTypes, 50);
             expect(decoded + recordFailures + fieldFailures, chatTypes);
@@ -346,8 +371,15 @@ void main() {
             if (pagedCorrelation) {
               final pages = observed?['paged_pages_scanned'] as int;
               final changes = observed?['paged_changes_scanned'] as int;
+              final pagedFieldFailures =
+                  observed?['paged_route_field_decode_failures'] as int;
               final pagedNormalizedPairs =
                   observed?['paged_normalized_semantic_match_pairs'] as int;
+              expectRouteFieldFailureMatrix(
+                observed?['paged_route_field_failure_matrix'],
+                expectedSum: pagedFieldFailures,
+                reason: 'paged_route_field_failure_matrix',
+              );
               expect(pages, inInclusiveRange(1, 20));
               expect(changes, inInclusiveRange(1, 1000));
               expect(
@@ -473,6 +505,11 @@ void main() {
                 lessThanOrEqualTo(changes),
               );
             } else {
+              expectRouteFieldFailureMatrix(
+                observed?['paged_route_field_failure_matrix'],
+                expectedSum: 0,
+                reason: 'paged_route_field_failure_matrix_disabled',
+              );
               for (final key in <String>{
                 'paged_normalized_chat_identifier_match_pairs',
                 'paged_normalized_group_id_match_pairs',
@@ -535,6 +572,17 @@ void main() {
               );
             }
           } else {
+            expect(observed?['route_field_failure_matrix_schema'], 1);
+            expectRouteFieldFailureMatrix(
+              observed?['route_field_failure_matrix'],
+              expectedSum: 0,
+              reason: 'route_field_failure_matrix_disabled',
+            );
+            expectRouteFieldFailureMatrix(
+              observed?['paged_route_field_failure_matrix'],
+              expectedSum: 0,
+              reason: 'paged_route_field_failure_matrix_disabled',
+            );
             for (final key in <String>{
               'chat_record_type_records',
               'other_record_type_records',

@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 import '../lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `combined`, `decode_verified_chat1_record`, `encrypted_i64_field`, `encrypted_legacy_identifiers`, `encrypted_participant_uris`, `encrypted_string_field`, `exact_match_counts`, `failure`, `inspect_chat1_route_fields`, `is_bare_digest`, `is_hex_digest`, `is_protected_reference`, `message_decode_request`, `msgproto_combined`, `msgproto_pairs`, `multi_normalized_optional_target_mask`, `multi_normalized_target_mask`, `multi_optional_target_mask`, `multi_target_mask`, `normalized_combined`, `normalized_msgproto_combined`, `normalized_msgproto_pairs`, `normalized_optional_target_mask`, `normalized_pairs`, `normalized_route_extra_combined`, `normalized_route_extra_pairs`, `normalized_route_target`, `normalized_sender_combined`, `normalized_sender_pairs`, `normalized_target_mask`, `observe`, `optional_target_mask`, `paged_semantic_failure`, `pairs`, `record_identifier_name`, `record_type_name`, `route_extra_combined`, `route_extra_pairs`, `scan_chat1_route_pages`, `semantic_failure`, `sender_combined`, `sender_pairs`, `target_mask`, `unique_field_value`, `valid_source`, `valid_sources`, `verified_chat1_record`
-// These types are ignored because they are not used by any `pub` functions: `MatchCounts`, `NormalizedRouteTarget`, `PagedSemanticCounts`, `RouteFieldMatches`, `SemanticMatchCounts`, `VerifiedChat1Record`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `combined`, `decode_verified_chat1_record`, `encrypted_i64_field`, `encrypted_legacy_identifiers`, `encrypted_participant_uris`, `encrypted_string_field`, `exact_match_counts`, `failure`, `inspect_chat1_route_fields`, `is_bare_digest`, `is_hex_digest`, `is_protected_reference`, `matrix_index`, `message_decode_request`, `msgproto_combined`, `msgproto_pairs`, `multi_normalized_optional_target_mask`, `multi_normalized_target_mask`, `multi_optional_target_mask`, `multi_target_mask`, `new`, `normalized_combined`, `normalized_msgproto_combined`, `normalized_msgproto_pairs`, `normalized_optional_target_mask`, `normalized_pairs`, `normalized_route_extra_combined`, `normalized_route_extra_pairs`, `normalized_route_target`, `normalized_sender_combined`, `normalized_sender_pairs`, `normalized_target_mask`, `observe_route_field_failure`, `observe`, `optional_target_mask`, `paged_semantic_failure`, `pairs`, `record_identifier_name`, `record_type_name`, `route_extra_combined`, `route_extra_pairs`, `route_field_failure_matrix_snapshot`, `scan_chat1_route_pages`, `semantic_failure`, `sender_combined`, `sender_pairs`, `target_mask`, `unique_field_value`, `valid_source`, `valid_sources`, `verified_chat1_record`
+// These types are ignored because they are not used by any `pub` functions: `Chat1RouteFailureField`, `Chat1RouteFailureKind`, `Chat1RouteFieldFailure`, `MatchCounts`, `NormalizedRouteTarget`, `PagedSemanticCounts`, `RouteFieldMatches`, `SemanticMatchCounts`, `VerifiedChat1Record`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`, `default`
 
 /// Performs one bounded comparison under the exact active native writer pause.
@@ -89,6 +89,13 @@ class CloudSyncChat1CorrelationResult {
   final int decodedRouteRecords;
   final int recordDecodeFailures;
   final int routeFieldDecodeFailures;
+
+  /// Versioned, row-major aggregate counters. Rows are record_key, cid,
+  /// gid, ogid, guid, lah, svc, stl, ptcpts, prop and cross_field. Columns
+  /// are missing_value, wire_shape, key_selection, ciphertext_key, decrypt,
+  /// payload_decode, validation and cap.
+  final int routeFieldFailureMatrixSchema;
+  final Uint32List routeFieldFailureMatrix;
   final int chatIdentifierMatchPairs;
   final int groupIdMatchPairs;
   final int originalGroupIdMatchPairs;
@@ -129,6 +136,7 @@ class CloudSyncChat1CorrelationResult {
   final int pagedTombstones;
   final int pagedRecordDecodeFailures;
   final int pagedRouteFieldDecodeFailures;
+  final Uint32List pagedRouteFieldFailureMatrix;
   final int pagedSemanticMatchPairs;
   final int pagedMatchedMessageRoutes;
   final int pagedMatchedChat1Records;
@@ -203,6 +211,8 @@ class CloudSyncChat1CorrelationResult {
     required this.decodedRouteRecords,
     required this.recordDecodeFailures,
     required this.routeFieldDecodeFailures,
+    required this.routeFieldFailureMatrixSchema,
+    required this.routeFieldFailureMatrix,
     required this.chatIdentifierMatchPairs,
     required this.groupIdMatchPairs,
     required this.originalGroupIdMatchPairs,
@@ -243,6 +253,7 @@ class CloudSyncChat1CorrelationResult {
     required this.pagedTombstones,
     required this.pagedRecordDecodeFailures,
     required this.pagedRouteFieldDecodeFailures,
+    required this.pagedRouteFieldFailureMatrix,
     required this.pagedSemanticMatchPairs,
     required this.pagedMatchedMessageRoutes,
     required this.pagedMatchedChat1Records,
@@ -319,6 +330,8 @@ class CloudSyncChat1CorrelationResult {
       decodedRouteRecords.hashCode ^
       recordDecodeFailures.hashCode ^
       routeFieldDecodeFailures.hashCode ^
+      routeFieldFailureMatrixSchema.hashCode ^
+      routeFieldFailureMatrix.hashCode ^
       chatIdentifierMatchPairs.hashCode ^
       groupIdMatchPairs.hashCode ^
       originalGroupIdMatchPairs.hashCode ^
@@ -359,6 +372,7 @@ class CloudSyncChat1CorrelationResult {
       pagedTombstones.hashCode ^
       pagedRecordDecodeFailures.hashCode ^
       pagedRouteFieldDecodeFailures.hashCode ^
+      pagedRouteFieldFailureMatrix.hashCode ^
       pagedSemanticMatchPairs.hashCode ^
       pagedMatchedMessageRoutes.hashCode ^
       pagedMatchedChat1Records.hashCode ^
@@ -437,6 +451,9 @@ class CloudSyncChat1CorrelationResult {
           decodedRouteRecords == other.decodedRouteRecords &&
           recordDecodeFailures == other.recordDecodeFailures &&
           routeFieldDecodeFailures == other.routeFieldDecodeFailures &&
+          routeFieldFailureMatrixSchema ==
+              other.routeFieldFailureMatrixSchema &&
+          routeFieldFailureMatrix == other.routeFieldFailureMatrix &&
           chatIdentifierMatchPairs == other.chatIdentifierMatchPairs &&
           groupIdMatchPairs == other.groupIdMatchPairs &&
           originalGroupIdMatchPairs == other.originalGroupIdMatchPairs &&
@@ -482,6 +499,7 @@ class CloudSyncChat1CorrelationResult {
           pagedRecordDecodeFailures == other.pagedRecordDecodeFailures &&
           pagedRouteFieldDecodeFailures ==
               other.pagedRouteFieldDecodeFailures &&
+          pagedRouteFieldFailureMatrix == other.pagedRouteFieldFailureMatrix &&
           pagedSemanticMatchPairs == other.pagedSemanticMatchPairs &&
           pagedMatchedMessageRoutes == other.pagedMatchedMessageRoutes &&
           pagedMatchedChat1Records == other.pagedMatchedChat1Records &&
