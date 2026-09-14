@@ -5,7 +5,7 @@
 //! cursor, project, admit, or write.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     panic::{catch_unwind, AssertUnwindSafe},
     path::PathBuf,
     sync::Arc,
@@ -48,6 +48,7 @@ use crate::{
 };
 
 const MAX_MESSAGE_SOURCES: usize = 8;
+const MAX_ANCHOR_MESSAGE_SOURCES: usize = 2048;
 const MAX_CHAT1_SOURCES: usize = 50;
 const MAX_CHAT1_ROUTE_FIELD_BYTES: usize = 64 * 1024;
 const MAX_CHAT1_SCAN_PAGES: usize = 20;
@@ -211,6 +212,11 @@ pub struct CloudSyncChat1CorrelationResult {
     pub distinct_message_routes: u32,
     pub message_group_id_sources: u32,
     pub message_sender_sources: u32,
+    pub anchor_message_sources: u32,
+    pub decoded_anchor_messages: u32,
+    pub skipped_anchor_messages: u32,
+    pub distinct_anchor_message_guids: u32,
+    pub conflicting_anchor_message_guids: u32,
     pub chat1_sources: u32,
     pub verified_chat1_records: u32,
     pub exact_match_pairs: u32,
@@ -323,6 +329,31 @@ pub struct CloudSyncChat1CorrelationResult {
     pub paged_normalized_matched_msgproto_chat1_records: u32,
     pub paged_normalized_matched_sender_targets: u32,
     pub paged_normalized_matched_sender_chat1_records: u32,
+    pub paged_last_seen_message_guid_present_records: u32,
+    pub paged_last_seen_target_message_match_pairs: u32,
+    pub paged_matched_last_seen_target_messages: u32,
+    pub paged_matched_last_seen_target_chat1_records: u32,
+    pub paged_last_seen_anchor_exact_match_pairs: u32,
+    pub paged_matched_anchor_exact_targets: u32,
+    pub paged_matched_anchor_exact_chat1_records: u32,
+    pub paged_last_seen_anchor_normalized_match_pairs: u32,
+    pub paged_matched_anchor_normalized_targets: u32,
+    pub paged_matched_anchor_normalized_chat1_records: u32,
+    pub paged_sender_service_style_match_pairs: u32,
+    pub paged_matched_sender_service_style_targets: u32,
+    pub paged_matched_sender_service_style_chat1_records: u32,
+    pub paged_sender_service_style_zero_candidate_targets: u32,
+    pub paged_sender_service_style_unique_candidate_targets: u32,
+    pub paged_sender_service_style_multiple_candidate_targets: u32,
+    pub paged_last_seen_target_zero_candidate_targets: u32,
+    pub paged_last_seen_target_unique_candidate_targets: u32,
+    pub paged_last_seen_target_multiple_candidate_targets: u32,
+    pub paged_anchor_exact_zero_candidate_targets: u32,
+    pub paged_anchor_exact_unique_candidate_targets: u32,
+    pub paged_anchor_exact_multiple_candidate_targets: u32,
+    pub paged_anchor_normalized_zero_candidate_targets: u32,
+    pub paged_anchor_normalized_unique_candidate_targets: u32,
+    pub paged_anchor_normalized_multiple_candidate_targets: u32,
     pub paged_terminal_reached: bool,
     pub paged_budget_exhausted: bool,
     pub failure_code: Option<CloudSyncChat1CorrelationFailureCode>,
@@ -336,6 +367,11 @@ fn failure(code: CloudSyncChat1CorrelationFailureCode) -> CloudSyncChat1Correlat
         distinct_message_routes: 0,
         message_group_id_sources: 0,
         message_sender_sources: 0,
+        anchor_message_sources: 0,
+        decoded_anchor_messages: 0,
+        skipped_anchor_messages: 0,
+        distinct_anchor_message_guids: 0,
+        conflicting_anchor_message_guids: 0,
         chat1_sources: 0,
         verified_chat1_records: 0,
         exact_match_pairs: 0,
@@ -442,6 +478,31 @@ fn failure(code: CloudSyncChat1CorrelationFailureCode) -> CloudSyncChat1Correlat
         paged_normalized_matched_msgproto_chat1_records: 0,
         paged_normalized_matched_sender_targets: 0,
         paged_normalized_matched_sender_chat1_records: 0,
+        paged_last_seen_message_guid_present_records: 0,
+        paged_last_seen_target_message_match_pairs: 0,
+        paged_matched_last_seen_target_messages: 0,
+        paged_matched_last_seen_target_chat1_records: 0,
+        paged_last_seen_anchor_exact_match_pairs: 0,
+        paged_matched_anchor_exact_targets: 0,
+        paged_matched_anchor_exact_chat1_records: 0,
+        paged_last_seen_anchor_normalized_match_pairs: 0,
+        paged_matched_anchor_normalized_targets: 0,
+        paged_matched_anchor_normalized_chat1_records: 0,
+        paged_sender_service_style_match_pairs: 0,
+        paged_matched_sender_service_style_targets: 0,
+        paged_matched_sender_service_style_chat1_records: 0,
+        paged_sender_service_style_zero_candidate_targets: 0,
+        paged_sender_service_style_unique_candidate_targets: 0,
+        paged_sender_service_style_multiple_candidate_targets: 0,
+        paged_last_seen_target_zero_candidate_targets: 0,
+        paged_last_seen_target_unique_candidate_targets: 0,
+        paged_last_seen_target_multiple_candidate_targets: 0,
+        paged_anchor_exact_zero_candidate_targets: 0,
+        paged_anchor_exact_unique_candidate_targets: 0,
+        paged_anchor_exact_multiple_candidate_targets: 0,
+        paged_anchor_normalized_zero_candidate_targets: 0,
+        paged_anchor_normalized_unique_candidate_targets: 0,
+        paged_anchor_normalized_multiple_candidate_targets: 0,
         paged_terminal_reached: false,
         paged_budget_exhausted: false,
         failure_code: Some(code),
@@ -974,12 +1035,18 @@ fn classify_ptcpts_wire_shape_detail(record: &Record) -> Chat1RouteFailureDetail
     Chat1RouteFailureDetail::PtcptsOther
 }
 
-fn encrypted_legacy_identifiers(
+#[derive(Default)]
+struct SelectiveChatProperties {
+    legacy_identifiers: Vec<String>,
+    last_seen_message_guid: Option<String>,
+}
+
+fn encrypted_chat_properties(
     record: &Record,
     key: &PCSEncryptor,
-) -> Result<Vec<String>, Chat1RouteFailureKind> {
+) -> Result<SelectiveChatProperties, Chat1RouteFailureKind> {
     let Some(value) = unique_field_value(record, "prop")? else {
-        return Ok(Vec::new());
+        return Ok(SelectiveChatProperties::default());
     };
     if value.r#type == Some(FieldValueType::EmptyList as i32) {
         if value.is_encrypted == Some(true)
@@ -996,7 +1063,7 @@ fn encrypted_legacy_identifiers(
         {
             return Err(Chat1RouteFailureKind::WireShape);
         }
-        return Ok(Vec::new());
+        return Ok(SelectiveChatProperties::default());
     }
     if value.r#type != Some(FieldValueType::EncryptedBytesType as i32)
         || value.is_encrypted != Some(true)
@@ -1023,7 +1090,7 @@ fn encrypted_legacy_identifiers(
         .decrypt_data_checked(ciphertext, "prop")
         .map_err(|_| Chat1RouteFailureKind::Decrypt)?;
     if plaintext.is_empty() {
-        return Ok(Vec::new());
+        return Ok(SelectiveChatProperties::default());
     }
     if plaintext.len() > MAX_CHAT1_PROP_BYTES {
         return Err(Chat1RouteFailureKind::Cap);
@@ -1045,7 +1112,31 @@ fn encrypted_legacy_identifiers(
             return Err(Chat1RouteFailureKind::Validation);
         }
     }
-    Ok(properties.legacy_group_identifiers)
+    let last_seen_message_guid = match properties.last_seen_message_guid {
+        // This is optional reference evidence. An encrypted empty value cannot
+        // prove a relation, so the diagnostic treats it as absent without
+        // weakening validation of any non-empty identifier.
+        Some(value) if value.is_empty() => None,
+        Some(value) => {
+            if value.len() > MAX_CHAT1_SELECTIVE_STRING_BYTES || identifier(&value).is_none() {
+                return Err(Chat1RouteFailureKind::Validation);
+            }
+            Some(value)
+        }
+        None => None,
+    };
+    Ok(SelectiveChatProperties {
+        legacy_identifiers: properties.legacy_group_identifiers,
+        last_seen_message_guid,
+    })
+}
+
+#[cfg(test)]
+fn encrypted_legacy_identifiers(
+    record: &Record,
+    key: &PCSEncryptor,
+) -> Result<Vec<String>, Chat1RouteFailureKind> {
+    encrypted_chat_properties(record, key).map(|value| value.legacy_identifiers)
 }
 
 fn target_mask(
@@ -1072,6 +1163,145 @@ fn target_mask(
 #[frb(ignore)]
 struct NormalizedRouteTarget {
     variant_hashes: HashSet<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MessageRouteKind {
+    Direct,
+    Group,
+    Bare,
+}
+
+fn message_route_kind(value: &str) -> Result<MessageRouteKind, ()> {
+    let mut parts = value.splitn(3, ';');
+    let Some(service) = parts.next() else {
+        return Err(());
+    };
+    let Some(marker) = parts.next() else {
+        return Ok(MessageRouteKind::Bare);
+    };
+    let Some(target) = parts.next() else {
+        return Err(());
+    };
+    if !matches!(service, "iMessage" | "SMS") || target.is_empty() {
+        return Err(());
+    }
+    match marker {
+        "-" => Ok(MessageRouteKind::Direct),
+        "+" => Ok(MessageRouteKind::Group),
+        _ => Err(()),
+    }
+}
+
+struct MessageRouteAnchor {
+    route_hash: String,
+    normalized_route: NormalizedRouteTarget,
+}
+
+#[derive(Default)]
+struct MessageAnchorIndex {
+    routes_by_guid_hash: HashMap<String, MessageRouteAnchor>,
+    conflicting_guid_hashes: HashSet<String>,
+    decoded_sources: u32,
+    skipped_sources: u32,
+}
+
+impl MessageAnchorIndex {
+    fn observe_decoded_source(
+        &mut self,
+        guid: &str,
+        route: &str,
+        hasher: &CloudSemanticIdentifierHasher,
+    ) -> Result<(), ()> {
+        if identifier(guid).is_none() || identifier(route).is_none() {
+            return Err(());
+        }
+        let normalized_route = normalized_route_target(route, hasher)?;
+        self.decoded_sources = self.decoded_sources.saturating_add(1);
+        let guid_hash = hasher.server_record_id_hash(guid);
+        let route_hash = hasher.server_record_id_hash(route);
+        if self.conflicting_guid_hashes.contains(&guid_hash) {
+            return Ok(());
+        }
+        if let Some(existing) = self.routes_by_guid_hash.get(&guid_hash) {
+            if existing.route_hash != route_hash {
+                self.routes_by_guid_hash.remove(&guid_hash);
+                self.conflicting_guid_hashes.insert(guid_hash);
+            }
+            return Ok(());
+        }
+        self.routes_by_guid_hash.insert(
+            guid_hash,
+            MessageRouteAnchor {
+                route_hash,
+                normalized_route,
+            },
+        );
+        Ok(())
+    }
+}
+
+fn hashed_target_mask(value_hash: &str, targets: &[String]) -> u8 {
+    targets
+        .iter()
+        .enumerate()
+        .fold(0u8, |mask, (index, target)| {
+            if value_hash == target {
+                mask | 1u8.checked_shl(index as u32).unwrap_or(0)
+            } else {
+                mask
+            }
+        })
+}
+
+fn normalized_anchor_target_mask(
+    anchor: &NormalizedRouteTarget,
+    targets: &[NormalizedRouteTarget],
+) -> u8 {
+    targets
+        .iter()
+        .enumerate()
+        .fold(0u8, |mask, (index, target)| {
+            if anchor
+                .variant_hashes
+                .iter()
+                .any(|hash| target.variant_hashes.contains(hash))
+            {
+                mask | 1u8.checked_shl(index as u32).unwrap_or(0)
+            } else {
+                mask
+            }
+        })
+}
+
+fn service_style_compatible_mask(
+    mask: u8,
+    service: Option<&str>,
+    style: Option<i64>,
+    route_kinds: &[MessageRouteKind],
+) -> u8 {
+    // A conversation can currently route over SMS while still owning older
+    // iMessages. Both services therefore remain eligible parent metadata;
+    // unsupported RCS/iMessageLite records cannot narrow an iMessage target.
+    if !matches!(service, Some("iMessage") | Some("SMS")) {
+        return 0;
+    }
+    route_kinds
+        .iter()
+        .enumerate()
+        .fold(0u8, |compatible, (index, kind)| {
+            let bit = 1u8.checked_shl(index as u32).unwrap_or(0);
+            let style_matches = match kind {
+                MessageRouteKind::Direct => style == Some(45),
+                MessageRouteKind::Group => style == Some(43),
+                MessageRouteKind::Bare => matches!(style, Some(43) | Some(45)),
+            };
+            if mask & bit != 0 && style_matches {
+                compatible | bit
+            } else {
+                compatible
+            }
+        })
 }
 
 fn normalized_route_target(
@@ -1237,9 +1467,14 @@ struct RouteFieldMatches {
     normalized_msgproto_legacy: u8,
     normalized_sender_participants: u8,
     normalized_sender_lah: u8,
+    last_seen_target_message: u8,
+    last_seen_anchor_exact: u8,
+    last_seen_anchor_normalized: u8,
+    sender_service_style: u8,
     has_participants: bool,
     has_legacy: bool,
     has_lah: bool,
+    has_last_seen_message_guid: bool,
     has_service: bool,
     service_imessage: bool,
     service_other: bool,
@@ -1352,6 +1587,9 @@ fn inspect_chat1_route_fields(
     normalized_msgproto_targets: &[Option<NormalizedRouteTarget>],
     sender_targets: &[Option<String>],
     normalized_sender_targets: &[Option<NormalizedRouteTarget>],
+    message_guid_targets: &[String],
+    message_route_kinds: &[MessageRouteKind],
+    anchor_index: &MessageAnchorIndex,
     hasher: &CloudSemanticIdentifierHasher,
 ) -> Result<RouteFieldMatches, Chat1RouteFieldFailure> {
     let record_key = match catch_unwind(AssertUnwindSafe(|| pcs_keys_for_record(record, zone_key)))
@@ -1373,6 +1611,9 @@ fn inspect_chat1_route_fields(
         normalized_msgproto_targets,
         sender_targets,
         normalized_sender_targets,
+        message_guid_targets,
+        message_route_kinds,
+        anchor_index,
         hasher,
     )
 }
@@ -1386,6 +1627,9 @@ fn inspect_chat1_route_fields_with_key(
     normalized_msgproto_targets: &[Option<NormalizedRouteTarget>],
     sender_targets: &[Option<String>],
     normalized_sender_targets: &[Option<NormalizedRouteTarget>],
+    message_guid_targets: &[String],
+    message_route_kinds: &[MessageRouteKind],
+    anchor_index: &MessageAnchorIndex,
     hasher: &CloudSemanticIdentifierHasher,
 ) -> Result<RouteFieldMatches, Chat1RouteFieldFailure> {
     let map_failure = |field: Chat1RouteFailureField| {
@@ -1426,8 +1670,10 @@ fn inspect_chat1_route_fields_with_key(
             Chat1RouteFieldFailure::new(Chat1RouteFailureField::Ptcpts, kind)
         }
     })?;
-    let legacy_identifiers = encrypted_legacy_identifiers(record, record_key)
+    let properties = encrypted_chat_properties(record, record_key)
         .map_err(map_failure(Chat1RouteFailureField::Prop))?;
+    let legacy_identifiers = &properties.legacy_identifiers;
+    let last_seen_message_guid = properties.last_seen_message_guid.as_deref();
     for value in participants
         .iter()
         .chain(legacy_identifiers.iter())
@@ -1441,6 +1687,43 @@ fn inspect_chat1_route_fields_with_key(
             ));
         }
     }
+    let sender_participants = multi_optional_target_mask(&participants, sender_targets, hasher);
+    let last_seen_target_message =
+        target_mask(last_seen_message_guid, message_guid_targets, hasher);
+    let (last_seen_anchor_exact, last_seen_anchor_normalized) = last_seen_message_guid
+        .map(|guid| hasher.server_record_id_hash(guid))
+        .and_then(|guid_hash| anchor_index.routes_by_guid_hash.get(&guid_hash))
+        .map(|anchor| {
+            (
+                hashed_target_mask(&anchor.route_hash, targets),
+                normalized_anchor_target_mask(&anchor.normalized_route, normalized_targets),
+            )
+        })
+        .unwrap_or((0, 0));
+    let sender_service_style = service_style_compatible_mask(
+        sender_participants,
+        service_name.as_deref(),
+        style,
+        message_route_kinds,
+    );
+    let last_seen_target_message = service_style_compatible_mask(
+        last_seen_target_message,
+        service_name.as_deref(),
+        style,
+        message_route_kinds,
+    );
+    let last_seen_anchor_exact = service_style_compatible_mask(
+        last_seen_anchor_exact,
+        service_name.as_deref(),
+        style,
+        message_route_kinds,
+    );
+    let last_seen_anchor_normalized = service_style_compatible_mask(
+        last_seen_anchor_normalized,
+        service_name.as_deref(),
+        style,
+        message_route_kinds,
+    );
     Ok(RouteFieldMatches {
         chat_identifier: target_mask(chat_identifier.as_deref(), targets, hasher),
         group_id: target_mask(group_id.as_deref(), targets, hasher),
@@ -1463,7 +1746,7 @@ fn inspect_chat1_route_fields_with_key(
         ),
         normalized_guid: normalized_target_mask(guid.as_deref(), normalized_targets, hasher),
         route_participants: multi_target_mask(&participants, targets, hasher),
-        route_legacy: multi_target_mask(&legacy_identifiers, targets, hasher),
+        route_legacy: multi_target_mask(legacy_identifiers, targets, hasher),
         route_lah: target_mask(last_addressed_handle.as_deref(), targets, hasher),
         msgproto_chat_identifier: optional_target_mask(
             chat_identifier.as_deref(),
@@ -1477,8 +1760,8 @@ fn inspect_chat1_route_fields_with_key(
             hasher,
         ),
         msgproto_guid: optional_target_mask(guid.as_deref(), msgproto_targets, hasher),
-        msgproto_legacy: multi_optional_target_mask(&legacy_identifiers, msgproto_targets, hasher),
-        sender_participants: multi_optional_target_mask(&participants, sender_targets, hasher),
+        msgproto_legacy: multi_optional_target_mask(legacy_identifiers, msgproto_targets, hasher),
+        sender_participants,
         sender_lah: optional_target_mask(last_addressed_handle.as_deref(), sender_targets, hasher),
         normalized_route_participants: multi_normalized_target_mask(
             &participants,
@@ -1486,7 +1769,7 @@ fn inspect_chat1_route_fields_with_key(
             hasher,
         ),
         normalized_route_legacy: multi_normalized_target_mask(
-            &legacy_identifiers,
+            legacy_identifiers,
             normalized_targets,
             hasher,
         ),
@@ -1516,7 +1799,7 @@ fn inspect_chat1_route_fields_with_key(
             hasher,
         ),
         normalized_msgproto_legacy: multi_normalized_optional_target_mask(
-            &legacy_identifiers,
+            legacy_identifiers,
             normalized_msgproto_targets,
             hasher,
         ),
@@ -1530,11 +1813,16 @@ fn inspect_chat1_route_fields_with_key(
             normalized_sender_targets,
             hasher,
         ),
+        last_seen_target_message,
+        last_seen_anchor_exact,
+        last_seen_anchor_normalized,
+        sender_service_style,
         has_participants: !participants.is_empty(),
         has_legacy: !legacy_identifiers.is_empty(),
         has_lah: last_addressed_handle
             .as_deref()
             .is_some_and(|value| !value.is_empty()),
+        has_last_seen_message_guid: last_seen_message_guid.is_some(),
         has_service: service_name
             .as_deref()
             .is_some_and(|value| !value.is_empty()),
@@ -1614,6 +1902,23 @@ struct SemanticMatchCounts {
     style_group_records: u32,
     style_direct_records: u32,
     style_other_records: u32,
+    last_seen_message_guid_present_records: u32,
+    last_seen_target_message_match_pairs: u32,
+    matched_last_seen_target_message_mask: u8,
+    matched_last_seen_target_chat1_records: u32,
+    last_seen_anchor_exact_match_pairs: u32,
+    matched_anchor_exact_mask: u8,
+    matched_anchor_exact_chat1_records: u32,
+    last_seen_anchor_normalized_match_pairs: u32,
+    matched_anchor_normalized_mask: u8,
+    matched_anchor_normalized_chat1_records: u32,
+    sender_service_style_match_pairs: u32,
+    matched_sender_service_style_mask: u8,
+    matched_sender_service_style_chat1_records: u32,
+    sender_service_style_candidate_counts: [u16; MAX_MESSAGE_SOURCES],
+    last_seen_target_candidate_counts: [u16; MAX_MESSAGE_SOURCES],
+    anchor_exact_candidate_counts: [u16; MAX_MESSAGE_SOURCES],
+    anchor_normalized_candidate_counts: [u16; MAX_MESSAGE_SOURCES],
 }
 
 impl SemanticMatchCounts {
@@ -1655,6 +1960,27 @@ impl SemanticMatchCounts {
         snapshot.resize(CHAT1_ROUTE_FAILURE_MATRIX_LEN, 0);
         snapshot.truncate(CHAT1_ROUTE_FAILURE_MATRIX_LEN);
         snapshot
+    }
+
+    fn observe_candidate_mask(counts: &mut [u16; MAX_MESSAGE_SOURCES], mask: u8) {
+        for (index, count) in counts.iter_mut().enumerate() {
+            if mask & (1u8 << index) != 0 {
+                *count = count.saturating_add(1);
+            }
+        }
+    }
+
+    fn candidate_cardinality(counts: &[u16; MAX_MESSAGE_SOURCES]) -> CandidateCardinality {
+        counts
+            .iter()
+            .fold(CandidateCardinality::default(), |mut cardinality, count| {
+                match count {
+                    0 => cardinality.zero += 1,
+                    1 => cardinality.unique += 1,
+                    _ => cardinality.multiple += 1,
+                }
+                cardinality
+            })
     }
 
     fn observe(&mut self, fields: &RouteFieldMatches) {
@@ -1762,7 +2088,54 @@ impl SemanticMatchCounts {
         } else if fields.style_other {
             self.style_other_records += 1;
         }
+        if fields.has_last_seen_message_guid {
+            self.last_seen_message_guid_present_records += 1;
+        }
+        self.last_seen_target_message_match_pairs += fields.last_seen_target_message.count_ones();
+        self.matched_last_seen_target_message_mask |= fields.last_seen_target_message;
+        if fields.last_seen_target_message != 0 {
+            self.matched_last_seen_target_chat1_records += 1;
+        }
+        self.last_seen_anchor_exact_match_pairs += fields.last_seen_anchor_exact.count_ones();
+        self.matched_anchor_exact_mask |= fields.last_seen_anchor_exact;
+        if fields.last_seen_anchor_exact != 0 {
+            self.matched_anchor_exact_chat1_records += 1;
+        }
+        self.last_seen_anchor_normalized_match_pairs +=
+            fields.last_seen_anchor_normalized.count_ones();
+        self.matched_anchor_normalized_mask |= fields.last_seen_anchor_normalized;
+        if fields.last_seen_anchor_normalized != 0 {
+            self.matched_anchor_normalized_chat1_records += 1;
+        }
+        self.sender_service_style_match_pairs += fields.sender_service_style.count_ones();
+        self.matched_sender_service_style_mask |= fields.sender_service_style;
+        if fields.sender_service_style != 0 {
+            self.matched_sender_service_style_chat1_records += 1;
+        }
+        Self::observe_candidate_mask(
+            &mut self.sender_service_style_candidate_counts,
+            fields.sender_service_style,
+        );
+        Self::observe_candidate_mask(
+            &mut self.last_seen_target_candidate_counts,
+            fields.last_seen_target_message,
+        );
+        Self::observe_candidate_mask(
+            &mut self.anchor_exact_candidate_counts,
+            fields.last_seen_anchor_exact,
+        );
+        Self::observe_candidate_mask(
+            &mut self.anchor_normalized_candidate_counts,
+            fields.last_seen_anchor_normalized,
+        );
     }
+}
+
+#[derive(Default)]
+struct CandidateCardinality {
+    zero: u32,
+    unique: u32,
+    multiple: u32,
 }
 
 #[frb(ignore)]
@@ -1819,6 +2192,9 @@ async fn scan_chat1_route_pages(
     normalized_msgproto_targets: &[Option<NormalizedRouteTarget>],
     sender_targets: &[Option<String>],
     normalized_sender_targets: &[Option<NormalizedRouteTarget>],
+    message_guid_targets: &[String],
+    message_route_kinds: &[MessageRouteKind],
+    anchor_index: &MessageAnchorIndex,
     hasher: &CloudSemanticIdentifierHasher,
 ) -> Result<PagedSemanticCounts, ()> {
     let mut counts = PagedSemanticCounts::default();
@@ -1893,6 +2269,9 @@ async fn scan_chat1_route_pages(
                         normalized_msgproto_targets,
                         sender_targets,
                         normalized_sender_targets,
+                        message_guid_targets,
+                        message_route_kinds,
+                        anchor_index,
                         hasher,
                     ) {
                         Ok(fields) => counts.semantic.observe(&fields),
@@ -1924,7 +2303,9 @@ async fn scan_chat1_route_pages(
 /// The default path is cached-only. A separately gated semantic diagnostic may
 /// resolve the existing Chat1 PCS configuration with lookup-only reads, then
 /// decrypt only selective routing strings (cid/gid/ogid/guid/lah/svc/stl and
-/// participant URIs plus prop legacy identifiers). Neither path persists a
+/// participant URIs plus prop legacy identifiers and lastSeenMessageGuid).
+/// The optional anchor set is decoded only from already-protected local
+/// Message rows and leaves only aggregate cardinalities. Neither path persists a
 /// token, projects, admits, saves, deletes, synchronizes keychain state, or
 /// repairs identity.
 #[allow(clippy::too_many_arguments)]
@@ -1936,6 +2317,7 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
     expected_protected_store_identity: String,
     message_generation: u64,
     message_sources: Vec<CloudSyncChat1CorrelationSourceInput>,
+    anchor_message_sources: Vec<CloudSyncChat1CorrelationSourceInput>,
     chat1_generation: u64,
     chat1_sources: Vec<CloudSyncChat1CorrelationSourceInput>,
 ) -> CloudSyncChat1CorrelationResult {
@@ -1952,7 +2334,9 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
     if (paged_correlation && !semantic_correlation)
         || message_generation == 0
         || chat1_generation == 0
+        || message_sources.len() != MAX_MESSAGE_SOURCES
         || !valid_sources(&message_sources, MAX_MESSAGE_SOURCES)
+        || !valid_sources(&anchor_message_sources, MAX_ANCHOR_MESSAGE_SOURCES)
         || !valid_sources(&chat1_sources, MAX_CHAT1_SOURCES)
     {
         return failure(CloudSyncChat1CorrelationFailureCode::InvalidRequest);
@@ -1987,6 +2371,8 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
     let mut message_sender_hashes: Vec<Option<String>> = Vec::with_capacity(message_sources.len());
     let mut normalized_sender_targets: Vec<Option<NormalizedRouteTarget>> =
         Vec::with_capacity(message_sources.len());
+    let mut message_guid_hashes = Vec::with_capacity(message_sources.len());
+    let mut message_route_kinds = Vec::with_capacity(message_sources.len());
     for source in &message_sources {
         let request = match message_decode_request(
             &storage_directory,
@@ -2008,17 +2394,23 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
             CloudTransientDecodeOutcome::Ready(mutation) => mutation,
             _ => return failure(CloudSyncChat1CorrelationFailureCode::MessageDecodeFailed),
         };
-        let (route, msgproto_group_id, sender_handle) = match mutation.payload() {
+        let (guid, route, msgproto_group_id, sender_handle) = match mutation.payload() {
             Some(CloudCanonicalPayload::Message(payload)) => (
+                payload.guid().to_owned(),
                 payload.chat_identifier().to_owned(),
                 payload.msg_proto_4_group_id().map(str::to_owned),
                 payload.sender_handle().to_owned(),
             ),
             _ => return failure(CloudSyncChat1CorrelationFailureCode::MessageDecodeFailed),
         };
-        if identifier(&route).is_none() {
+        if identifier(&guid).is_none() || identifier(&route).is_none() {
             return failure(CloudSyncChat1CorrelationFailureCode::MessageDecodeFailed);
         }
+        message_guid_hashes.push(hasher.server_record_id_hash(&guid));
+        message_route_kinds.push(match message_route_kind(&route) {
+            Ok(value) => value,
+            Err(()) => return failure(CloudSyncChat1CorrelationFailureCode::MessageDecodeFailed),
+        });
         message_route_hashes.push(hasher.server_record_id_hash(&route));
         let normalized_target = match normalized_route_target(&route, &hasher) {
             Ok(value) => value,
@@ -2060,6 +2452,52 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
                     return failure(CloudSyncChat1CorrelationFailureCode::MessageDecodeFailed)
                 }
             }
+        }
+    }
+
+    let mut anchor_index = MessageAnchorIndex::default();
+    for source in &anchor_message_sources {
+        let request = match message_decode_request(
+            &storage_directory,
+            &expected_account_fingerprint,
+            &expected_protected_store_identity,
+            message_generation,
+            source,
+        ) {
+            Ok(request) => request,
+            Err(()) => {
+                anchor_index.skipped_sources = anchor_index.skipped_sources.saturating_add(1);
+                continue;
+            }
+        };
+        let mutation = match cloud_sync_decode_transient_record_cached_only(
+            cloud_messages_client,
+            &permit,
+            request,
+        )
+        .await
+        {
+            CloudTransientDecodeOutcome::Ready(mutation) => mutation,
+            _ => {
+                anchor_index.skipped_sources = anchor_index.skipped_sources.saturating_add(1);
+                continue;
+            }
+        };
+        let (guid, route) = match mutation.payload() {
+            Some(CloudCanonicalPayload::Message(payload)) => (
+                payload.guid().to_owned(),
+                payload.chat_identifier().to_owned(),
+            ),
+            _ => {
+                anchor_index.skipped_sources = anchor_index.skipped_sources.saturating_add(1);
+                continue;
+            }
+        };
+        if anchor_index
+            .observe_decoded_source(&guid, &route, &hasher)
+            .is_err()
+        {
+            anchor_index.skipped_sources = anchor_index.skipped_sources.saturating_add(1);
         }
     }
 
@@ -2139,6 +2577,9 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
             &normalized_msgproto_targets,
             &message_sender_hashes,
             &normalized_sender_targets,
+            &message_guid_hashes,
+            &message_route_kinds,
+            &anchor_index,
             &hasher,
         ) {
             Ok(value) => value,
@@ -2166,6 +2607,9 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
             &normalized_msgproto_targets,
             &message_sender_hashes,
             &normalized_sender_targets,
+            &message_guid_hashes,
+            &message_route_kinds,
+            &anchor_index,
             &hasher,
         )
         .await
@@ -2197,6 +2641,34 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
         return failure(CloudSyncChat1CorrelationFailureCode::AccountChanged);
     }
     let counts = exact_match_counts(&message_route_hashes, &chat1_record_hashes);
+    let sender_service_style_cardinality = if paged_correlation {
+        SemanticMatchCounts::candidate_cardinality(
+            &paged_counts.semantic.sender_service_style_candidate_counts,
+        )
+    } else {
+        CandidateCardinality::default()
+    };
+    let last_seen_target_cardinality = if paged_correlation {
+        SemanticMatchCounts::candidate_cardinality(
+            &paged_counts.semantic.last_seen_target_candidate_counts,
+        )
+    } else {
+        CandidateCardinality::default()
+    };
+    let anchor_exact_cardinality = if paged_correlation {
+        SemanticMatchCounts::candidate_cardinality(
+            &paged_counts.semantic.anchor_exact_candidate_counts,
+        )
+    } else {
+        CandidateCardinality::default()
+    };
+    let anchor_normalized_cardinality = if paged_correlation {
+        SemanticMatchCounts::candidate_cardinality(
+            &paged_counts.semantic.anchor_normalized_candidate_counts,
+        )
+    } else {
+        CandidateCardinality::default()
+    };
     CloudSyncChat1CorrelationResult {
         completed: true,
         message_sources: message_sources.len() as u32,
@@ -2210,6 +2682,11 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
             .iter()
             .filter(|value| value.is_some())
             .count() as u32,
+        anchor_message_sources: anchor_message_sources.len() as u32,
+        decoded_anchor_messages: anchor_index.decoded_sources,
+        skipped_anchor_messages: anchor_index.skipped_sources,
+        distinct_anchor_message_guids: anchor_index.routes_by_guid_hash.len() as u32,
+        conflicting_anchor_message_guids: anchor_index.conflicting_guid_hashes.len() as u32,
         chat1_sources: chat1_sources.len() as u32,
         verified_chat1_records: chat1_record_hashes.len() as u32,
         exact_match_pairs: counts.exact_match_pairs as u32,
@@ -2379,6 +2856,63 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
         paged_normalized_matched_sender_chat1_records: paged_counts
             .semantic
             .normalized_matched_sender_chat1_records,
+        paged_last_seen_message_guid_present_records: paged_counts
+            .semantic
+            .last_seen_message_guid_present_records,
+        paged_last_seen_target_message_match_pairs: paged_counts
+            .semantic
+            .last_seen_target_message_match_pairs,
+        paged_matched_last_seen_target_messages: paged_counts
+            .semantic
+            .matched_last_seen_target_message_mask
+            .count_ones(),
+        paged_matched_last_seen_target_chat1_records: paged_counts
+            .semantic
+            .matched_last_seen_target_chat1_records,
+        paged_last_seen_anchor_exact_match_pairs: paged_counts
+            .semantic
+            .last_seen_anchor_exact_match_pairs,
+        paged_matched_anchor_exact_targets: paged_counts
+            .semantic
+            .matched_anchor_exact_mask
+            .count_ones(),
+        paged_matched_anchor_exact_chat1_records: paged_counts
+            .semantic
+            .matched_anchor_exact_chat1_records,
+        paged_last_seen_anchor_normalized_match_pairs: paged_counts
+            .semantic
+            .last_seen_anchor_normalized_match_pairs,
+        paged_matched_anchor_normalized_targets: paged_counts
+            .semantic
+            .matched_anchor_normalized_mask
+            .count_ones(),
+        paged_matched_anchor_normalized_chat1_records: paged_counts
+            .semantic
+            .matched_anchor_normalized_chat1_records,
+        paged_sender_service_style_match_pairs: paged_counts
+            .semantic
+            .sender_service_style_match_pairs,
+        paged_matched_sender_service_style_targets: paged_counts
+            .semantic
+            .matched_sender_service_style_mask
+            .count_ones(),
+        paged_matched_sender_service_style_chat1_records: paged_counts
+            .semantic
+            .matched_sender_service_style_chat1_records,
+        paged_sender_service_style_zero_candidate_targets: sender_service_style_cardinality.zero,
+        paged_sender_service_style_unique_candidate_targets: sender_service_style_cardinality
+            .unique,
+        paged_sender_service_style_multiple_candidate_targets: sender_service_style_cardinality
+            .multiple,
+        paged_last_seen_target_zero_candidate_targets: last_seen_target_cardinality.zero,
+        paged_last_seen_target_unique_candidate_targets: last_seen_target_cardinality.unique,
+        paged_last_seen_target_multiple_candidate_targets: last_seen_target_cardinality.multiple,
+        paged_anchor_exact_zero_candidate_targets: anchor_exact_cardinality.zero,
+        paged_anchor_exact_unique_candidate_targets: anchor_exact_cardinality.unique,
+        paged_anchor_exact_multiple_candidate_targets: anchor_exact_cardinality.multiple,
+        paged_anchor_normalized_zero_candidate_targets: anchor_normalized_cardinality.zero,
+        paged_anchor_normalized_unique_candidate_targets: anchor_normalized_cardinality.unique,
+        paged_anchor_normalized_multiple_candidate_targets: anchor_normalized_cardinality.multiple,
         paged_terminal_reached: paged_counts.terminal_reached,
         paged_budget_exhausted: paged_counts.budget_exhausted,
         failure_code: None,
@@ -3144,6 +3678,9 @@ mod tests {
             normalized_msgproto_targets,
             sender_targets,
             normalized_sender_targets,
+            message_guid_targets,
+            message_route_kinds,
+            anchor_index,
         ) = empty_inspect_context();
         let failure = match inspect_chat1_route_fields_with_key(
             &wire_shape_record,
@@ -3154,6 +3691,9 @@ mod tests {
             &normalized_msgproto_targets,
             &sender_targets,
             &normalized_sender_targets,
+            &message_guid_targets,
+            &message_route_kinds,
+            &anchor_index,
             &hasher,
         ) {
             Err(failure) => failure,
@@ -3572,6 +4112,9 @@ mod tests {
             Some(normalized_route_target("member-a@example.invalid", &hasher).unwrap()),
             Some(normalized_route_target(&chat.last_addressed_handle, &hasher).unwrap()),
         ];
+        let message_guid_targets = vec![String::new(); targets.len()];
+        let message_route_kinds = vec![MessageRouteKind::Bare; targets.len()];
+        let anchor_index = MessageAnchorIndex::default();
         let fields = inspect_chat1_route_fields_with_key(
             &record,
             &encryptor,
@@ -3581,6 +4124,9 @@ mod tests {
             &normalized_msgproto_targets,
             &sender_targets,
             &normalized_sender_targets,
+            &message_guid_targets,
+            &message_route_kinds,
+            &anchor_index,
             &hasher,
         )
         .expect("ephemeral oracle record must decode");
@@ -3610,6 +4156,153 @@ mod tests {
     }
 
     #[test]
+    fn message_anchor_index_rejects_ambiguous_guid_routes() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let guid = "p:0/anchor-message.invalid";
+        let direct = "iMessage;-;member-a@example.invalid";
+        let group = "iMessage;+;group-chat@example.invalid";
+        let mut index = MessageAnchorIndex::default();
+
+        index
+            .observe_decoded_source(guid, direct, &hasher)
+            .expect("first anchor must be accepted");
+        index
+            .observe_decoded_source(guid, direct, &hasher)
+            .expect("an identical duplicate must remain unambiguous");
+        assert_eq!(index.decoded_sources, 2);
+        assert_eq!(index.routes_by_guid_hash.len(), 1);
+        assert!(index.conflicting_guid_hashes.is_empty());
+
+        index
+            .observe_decoded_source(guid, group, &hasher)
+            .expect("a conflicting source is observed but cannot be used");
+        assert_eq!(index.decoded_sources, 3);
+        assert!(index.routes_by_guid_hash.is_empty());
+        assert_eq!(index.conflicting_guid_hashes.len(), 1);
+
+        index
+            .observe_decoded_source(guid, direct, &hasher)
+            .expect("later duplicates cannot revive a conflicting GUID");
+        assert_eq!(index.decoded_sources, 4);
+        assert!(index.routes_by_guid_hash.is_empty());
+        assert!(index.observe_decoded_source("", direct, &hasher).is_err());
+        assert_eq!(index.decoded_sources, 4);
+    }
+
+    #[test]
+    fn message_route_kind_accepts_supported_current_routes_only() {
+        assert_eq!(
+            message_route_kind("iMessage;-;member@example.invalid"),
+            Ok(MessageRouteKind::Direct)
+        );
+        assert_eq!(
+            message_route_kind("SMS;+;group.invalid"),
+            Ok(MessageRouteKind::Group)
+        );
+        assert_eq!(
+            message_route_kind("opaque-bare-route"),
+            Ok(MessageRouteKind::Bare)
+        );
+        assert_eq!(message_route_kind("RCS;-;member@example.invalid"), Err(()));
+        assert_eq!(
+            message_route_kind("iMessage;?;member@example.invalid"),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn last_seen_anchor_and_service_style_filters_are_selective() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let record_name = "oracle-anchor.invalid";
+        let encryptor = oracle_encryptor(record_name);
+        let last_seen_guid = "p:0/anchor-message.invalid";
+        let target_route = "iMessage;+;group-chat@example.invalid";
+        let mut chat = oracle_chat();
+        chat.properties
+            .as_mut()
+            .expect("oracle properties")
+            .last_seen_message_guid = Some(last_seen_guid.to_owned());
+        let targets = vec![hasher.server_record_id_hash(target_route)];
+        let normalized_targets = vec![normalized_route_target(target_route, &hasher).unwrap()];
+        let message_guid_targets = vec![hasher.server_record_id_hash(last_seen_guid)];
+        let message_route_kinds = vec![MessageRouteKind::Group];
+        let sender_targets = vec![Some(
+            hasher.server_record_id_hash("member-a@example.invalid"),
+        )];
+        let normalized_sender_targets = vec![Some(
+            normalized_route_target("member-a@example.invalid", &hasher).unwrap(),
+        )];
+        let empty_optional = vec![None];
+        let empty_normalized_optional = vec![None];
+        let mut anchor_index = MessageAnchorIndex::default();
+        anchor_index
+            .observe_decoded_source(last_seen_guid, target_route, &hasher)
+            .expect("anchor fixture must be valid");
+
+        let inspect = |chat: &CloudChat| {
+            let record = oracle_record(chat, &encryptor);
+            inspect_chat1_route_fields_with_key(
+                &record,
+                &encryptor,
+                &targets,
+                &normalized_targets,
+                &empty_optional,
+                &empty_normalized_optional,
+                &sender_targets,
+                &normalized_sender_targets,
+                &message_guid_targets,
+                &message_route_kinds,
+                &anchor_index,
+                &hasher,
+            )
+            .expect("anchor oracle must decode")
+        };
+
+        let fields = inspect(&chat);
+        assert!(fields.has_last_seen_message_guid);
+        assert_eq!(fields.last_seen_target_message, 1);
+        assert_eq!(fields.last_seen_anchor_exact, 1);
+        assert_eq!(fields.last_seen_anchor_normalized, 1);
+        assert_eq!(fields.sender_service_style, 1);
+
+        let mut wrong_style = chat.clone();
+        wrong_style.style = 45;
+        let fields = inspect(&wrong_style);
+        assert_eq!(fields.last_seen_target_message, 0);
+        assert_eq!(fields.last_seen_anchor_exact, 0);
+        assert_eq!(fields.last_seen_anchor_normalized, 0);
+        assert_eq!(fields.sender_service_style, 0);
+
+        let mut sms_route = chat.clone();
+        sms_route.service_name = "SMS".to_owned();
+        let fields = inspect(&sms_route);
+        assert_eq!(fields.last_seen_target_message, 1);
+        assert_eq!(fields.last_seen_anchor_exact, 1);
+        assert_eq!(fields.last_seen_anchor_normalized, 1);
+        assert_eq!(fields.sender_service_style, 1);
+
+        let mut wrong_service = chat;
+        wrong_service.service_name = "RCS".to_owned();
+        let fields = inspect(&wrong_service);
+        assert_eq!(fields.last_seen_target_message, 0);
+        assert_eq!(fields.last_seen_anchor_exact, 0);
+        assert_eq!(fields.last_seen_anchor_normalized, 0);
+        assert_eq!(fields.sender_service_style, 0);
+    }
+
+    #[test]
+    fn candidate_cardinality_reports_zero_unique_and_multiple_per_target() {
+        let mut counts = SemanticMatchCounts::default();
+        counts.sender_service_style_candidate_counts = [0, 1, 2, 3, 1, 0, 7, 1];
+        let cardinality = SemanticMatchCounts::candidate_cardinality(
+            &counts.sender_service_style_candidate_counts,
+        );
+        assert_eq!(cardinality.zero, 2);
+        assert_eq!(cardinality.unique, 3);
+        assert_eq!(cardinality.multiple, 3);
+    }
+
+    #[test]
     fn encrypted_chat1_route_oracle_table_covers_key_decrypt_validation() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let record_name = "oracle-failure.invalid";
@@ -3624,6 +4317,8 @@ mod tests {
         let empty_normalized: Vec<NormalizedRouteTarget> = Vec::new();
         let empty_optional: Vec<Option<String>> = Vec::new();
         let empty_normalized_optional: Vec<Option<NormalizedRouteTarget>> = Vec::new();
+        let empty_route_kinds: Vec<MessageRouteKind> = Vec::new();
+        let empty_anchor_index = MessageAnchorIndex::default();
         let check = |record: &Record, key: &PCSEncryptor| match inspect_chat1_route_fields_with_key(
             record,
             key,
@@ -3633,6 +4328,9 @@ mod tests {
             &empty_normalized_optional,
             &empty_optional,
             &empty_normalized_optional,
+            &empty_targets,
+            &empty_route_kinds,
+            &empty_anchor_index,
             &hasher,
         ) {
             Err(failure) => failure,
@@ -3899,6 +4597,9 @@ mod tests {
         Vec<Option<NormalizedRouteTarget>>,
         Vec<Option<String>>,
         Vec<Option<NormalizedRouteTarget>>,
+        Vec<String>,
+        Vec<MessageRouteKind>,
+        MessageAnchorIndex,
     ) {
         (
             Vec::new(),
@@ -3907,6 +4608,9 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            MessageAnchorIndex::default(),
         )
     }
 
@@ -3938,6 +4642,9 @@ mod tests {
             normalized_msgproto_targets,
             sender_targets,
             normalized_sender_targets,
+            message_guid_targets,
+            message_route_kinds,
+            anchor_index,
         ) = empty_inspect_context();
         let fields = inspect_chat1_route_fields_with_key(
             &missing_cid,
@@ -3948,6 +4655,9 @@ mod tests {
             &normalized_msgproto_targets,
             &sender_targets,
             &normalized_sender_targets,
+            &message_guid_targets,
+            &message_route_kinds,
+            &anchor_index,
             &hasher,
         )
         .expect("missing cid currently inspects Ok");
@@ -3977,6 +4687,9 @@ mod tests {
             normalized_msgproto_targets,
             sender_targets,
             normalized_sender_targets,
+            message_guid_targets,
+            message_route_kinds,
+            anchor_index,
         ) = empty_inspect_context();
         let fields = inspect_chat1_route_fields_with_key(
             &missing,
@@ -3987,6 +4700,9 @@ mod tests {
             &normalized_msgproto_targets,
             &sender_targets,
             &normalized_sender_targets,
+            &message_guid_targets,
+            &message_route_kinds,
+            &anchor_index,
             &hasher,
         )
         .expect("missing stl currently inspects Ok");
@@ -4018,6 +4734,9 @@ mod tests {
             normalized_msgproto_targets,
             sender_targets,
             normalized_sender_targets,
+            message_guid_targets,
+            message_route_kinds,
+            anchor_index,
         ) = empty_inspect_context();
         let fields = inspect_chat1_route_fields_with_key(
             &missing,
@@ -4028,6 +4747,9 @@ mod tests {
             &normalized_msgproto_targets,
             &sender_targets,
             &normalized_sender_targets,
+            &message_guid_targets,
+            &message_route_kinds,
+            &anchor_index,
             &hasher,
         )
         .expect("missing ptcpts currently inspects Ok");
@@ -4057,6 +4779,9 @@ mod tests {
             normalized_msgproto_targets,
             sender_targets,
             normalized_sender_targets,
+            message_guid_targets,
+            message_route_kinds,
+            anchor_index,
         ) = empty_inspect_context();
         let fields = inspect_chat1_route_fields_with_key(
             &missing,
@@ -4067,6 +4792,9 @@ mod tests {
             &normalized_msgproto_targets,
             &sender_targets,
             &normalized_sender_targets,
+            &message_guid_targets,
+            &message_route_kinds,
+            &anchor_index,
             &hasher,
         )
         .expect("missing prop currently inspects Ok");

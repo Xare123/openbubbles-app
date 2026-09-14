@@ -344,6 +344,80 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
       query.close();
     }
   }
+  const maximumAnchorMessageSources = 2048;
+  // Apple Chat1 properties can point at an older message GUID. Build a bounded
+  // local-only GUID-to-route index from the newest protected Message records,
+  // while always retaining the eight explicit targets in the read set. No
+  // message content or identifier leaves the native diagnostic.
+  final anchorMessageRows = <CloudInboxChangeEntity>[];
+  final anchorRecordHashes = <String>{};
+  final anchorProtectedReferences = <String>{};
+  var anchorSourceBudgetExhausted = false;
+
+  void addAnchorSource(CloudInboxChangeEntity row) {
+    if (!_isCorrelationSourceRow(row)) return;
+    if (anchorMessageRows.length >= maximumAnchorMessageSources) {
+      if (!anchorRecordHashes.contains(row.serverRecordIdHash) &&
+          !anchorProtectedReferences.contains(row.encryptedPayloadRef)) {
+        anchorSourceBudgetExhausted = true;
+      }
+      return;
+    }
+    final protectedReference = row.encryptedPayloadRef!;
+    if (!anchorRecordHashes.add(row.serverRecordIdHash)) return;
+    if (!anchorProtectedReferences.add(protectedReference)) {
+      anchorRecordHashes.remove(row.serverRecordIdHash);
+      return;
+    }
+    anchorMessageRows.add(row);
+  }
+
+  for (final row in messageRows) {
+    addAnchorSource(row);
+  }
+  if (messageRows.any(
+    (row) => !anchorRecordHashes.contains(row.serverRecordIdHash),
+  )) {
+    throw StateError('chat1_correlation_anchor_targets_missing');
+  }
+  final anchorQuery =
+      (store.box<CloudInboxChangeEntity>().query(
+            CloudInboxChangeEntity_.scopeKey
+                .equals(messageCheckpoint.checkpointKey)
+                .and(
+                  CloudInboxChangeEntity_.accountFingerprint.equals(
+                    auth.accountFingerprint,
+                  ),
+                )
+                .and(
+                  CloudInboxChangeEntity_.generation.equals(
+                    messageCheckpoint.generation,
+                  ),
+                )
+                .and(
+                  CloudInboxChangeEntity_.status
+                      .equals(CloudInboxStatus.applied.index)
+                      .or(
+                        CloudInboxChangeEntity_.status.equals(
+                          CloudInboxStatus.retainedUnprojected.index,
+                        ),
+                      ),
+                )
+                .and(CloudInboxChangeEntity_.changeType.equals('save'))
+                .and(CloudInboxChangeEntity_.isTombstone.equals(false)),
+          )..order(
+            CloudInboxChangeEntity_.fetchSequence,
+            flags: Order.descending,
+          ))
+          .build()
+        ..limit = maximumAnchorMessageSources + messageRows.length + 1;
+  try {
+    for (final row in anchorQuery.find()) {
+      addAnchorSource(row);
+    }
+  } finally {
+    anchorQuery.close();
+  }
   final chat1Query = (store.box<CloudInboxChangeEntity>().query(
     CloudInboxChangeEntity_.scopeKey
         .equals(chat1Checkpoint.checkpointKey)
@@ -384,6 +458,9 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
         expectedProtectedStoreIdentity: auth.protectedStoreIdentity,
         messageGeneration: BigInt.from(messageCheckpoint.generation),
         messageSources: messageRows.map(_correlationSource).toList(),
+        anchorMessageSources: anchorMessageRows
+            .map(_correlationSource)
+            .toList(),
         chat1Generation: BigInt.from(chat1Checkpoint.generation),
         chat1Sources: chat1Rows.map(_correlationSource).toList(),
       );
@@ -420,8 +497,7 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     'decoded_route_records': result.decodedRouteRecords,
     'record_decode_failures': result.recordDecodeFailures,
     'route_field_decode_failures': result.routeFieldDecodeFailures,
-    'route_field_failure_matrix_schema':
-        result.routeFieldFailureMatrixSchema,
+    'route_field_failure_matrix_schema': result.routeFieldFailureMatrixSchema,
     'route_field_failure_matrix': result.routeFieldFailureMatrix,
     'chat_identifier_match_pairs': result.chatIdentifierMatchPairs,
     'group_id_match_pairs': result.groupIdMatchPairs,
@@ -432,6 +508,12 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     'matched_semantic_chat1_records': result.matchedSemanticChat1Records,
     'message_group_id_sources': result.messageGroupIdSources,
     'message_sender_sources': result.messageSenderSources,
+    'anchor_message_sources': result.anchorMessageSources,
+    'decoded_anchor_messages': result.decodedAnchorMessages,
+    'skipped_anchor_messages': result.skippedAnchorMessages,
+    'distinct_anchor_message_guids': result.distinctAnchorMessageGuids,
+    'conflicting_anchor_message_guids': result.conflictingAnchorMessageGuids,
+    'anchor_source_budget_exhausted': anchorSourceBudgetExhausted,
     'route_participant_match_pairs': result.routeParticipantMatchPairs,
     'route_legacy_match_pairs': result.routeLegacyMatchPairs,
     'route_lah_match_pairs': result.routeLahMatchPairs,
@@ -444,10 +526,8 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     'msgproto_legacy_match_pairs': result.msgprotoLegacyMatchPairs,
     'sender_participant_match_pairs': result.senderParticipantMatchPairs,
     'sender_lah_match_pairs': result.senderLahMatchPairs,
-    'matched_route_extra_message_routes':
-        result.matchedRouteExtraMessageRoutes,
-    'matched_route_extra_chat1_records':
-        result.matchedRouteExtraChat1Records,
+    'matched_route_extra_message_routes': result.matchedRouteExtraMessageRoutes,
+    'matched_route_extra_chat1_records': result.matchedRouteExtraChat1Records,
     'matched_msgproto_targets': result.matchedMsgprotoTargets,
     'matched_msgproto_chat1_records': result.matchedMsgprotoChat1Records,
     'matched_sender_targets': result.matchedSenderTargets,
@@ -469,8 +549,7 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     'paged_tombstones': result.pagedTombstones,
     'paged_record_decode_failures': result.pagedRecordDecodeFailures,
     'paged_route_field_decode_failures': result.pagedRouteFieldDecodeFailures,
-    'paged_route_field_failure_matrix':
-        result.pagedRouteFieldFailureMatrix,
+    'paged_route_field_failure_matrix': result.pagedRouteFieldFailureMatrix,
     'paged_semantic_match_pairs': result.pagedSemanticMatchPairs,
     'paged_matched_message_routes': result.pagedMatchedMessageRoutes,
     'paged_matched_chat1_records': result.pagedMatchedChat1Records,
@@ -552,6 +631,55 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
         result.pagedNormalizedMatchedSenderTargets,
     'paged_normalized_matched_sender_chat1_records':
         result.pagedNormalizedMatchedSenderChat1Records,
+    'paged_last_seen_message_guid_present_records':
+        result.pagedLastSeenMessageGuidPresentRecords,
+    'paged_last_seen_target_message_match_pairs':
+        result.pagedLastSeenTargetMessageMatchPairs,
+    'paged_matched_last_seen_target_messages':
+        result.pagedMatchedLastSeenTargetMessages,
+    'paged_matched_last_seen_target_chat1_records':
+        result.pagedMatchedLastSeenTargetChat1Records,
+    'paged_last_seen_anchor_exact_match_pairs':
+        result.pagedLastSeenAnchorExactMatchPairs,
+    'paged_matched_anchor_exact_targets': result.pagedMatchedAnchorExactTargets,
+    'paged_matched_anchor_exact_chat1_records':
+        result.pagedMatchedAnchorExactChat1Records,
+    'paged_last_seen_anchor_normalized_match_pairs':
+        result.pagedLastSeenAnchorNormalizedMatchPairs,
+    'paged_matched_anchor_normalized_targets':
+        result.pagedMatchedAnchorNormalizedTargets,
+    'paged_matched_anchor_normalized_chat1_records':
+        result.pagedMatchedAnchorNormalizedChat1Records,
+    'paged_sender_service_style_match_pairs':
+        result.pagedSenderServiceStyleMatchPairs,
+    'paged_matched_sender_service_style_targets':
+        result.pagedMatchedSenderServiceStyleTargets,
+    'paged_matched_sender_service_style_chat1_records':
+        result.pagedMatchedSenderServiceStyleChat1Records,
+    'paged_sender_service_style_zero_candidate_targets':
+        result.pagedSenderServiceStyleZeroCandidateTargets,
+    'paged_sender_service_style_unique_candidate_targets':
+        result.pagedSenderServiceStyleUniqueCandidateTargets,
+    'paged_sender_service_style_multiple_candidate_targets':
+        result.pagedSenderServiceStyleMultipleCandidateTargets,
+    'paged_last_seen_target_zero_candidate_targets':
+        result.pagedLastSeenTargetZeroCandidateTargets,
+    'paged_last_seen_target_unique_candidate_targets':
+        result.pagedLastSeenTargetUniqueCandidateTargets,
+    'paged_last_seen_target_multiple_candidate_targets':
+        result.pagedLastSeenTargetMultipleCandidateTargets,
+    'paged_anchor_exact_zero_candidate_targets':
+        result.pagedAnchorExactZeroCandidateTargets,
+    'paged_anchor_exact_unique_candidate_targets':
+        result.pagedAnchorExactUniqueCandidateTargets,
+    'paged_anchor_exact_multiple_candidate_targets':
+        result.pagedAnchorExactMultipleCandidateTargets,
+    'paged_anchor_normalized_zero_candidate_targets':
+        result.pagedAnchorNormalizedZeroCandidateTargets,
+    'paged_anchor_normalized_unique_candidate_targets':
+        result.pagedAnchorNormalizedUniqueCandidateTargets,
+    'paged_anchor_normalized_multiple_candidate_targets':
+        result.pagedAnchorNormalizedMultipleCandidateTargets,
     'paged_terminal_reached': result.pagedTerminalReached,
     'paged_budget_exhausted': result.pagedBudgetExhausted,
     'failure_code': result.failureCode?.name,
@@ -629,6 +757,18 @@ correlation_api.CloudSyncChat1CorrelationSourceInput _correlationSource(
         : row.serverModifiedAtMs,
     protectedRawEnvelopeReference: protectedReference,
   );
+}
+
+bool _isCorrelationSourceRow(CloudInboxChangeEntity row) {
+  final payloadSha256 = row.payloadSha256;
+  final protectedReference = row.encryptedPayloadRef;
+  return _isBareDigest(row.changeIdHash) &&
+      _isBareDigest(row.serverRecordIdHash) &&
+      (row.etagHash == null || _isBareDigest(row.etagHash!)) &&
+      payloadSha256 != null &&
+      _isHexDigest(payloadSha256) &&
+      protectedReference != null &&
+      _isProtectedReference(protectedReference);
 }
 
 String _correlationDurableState(Store store) => jsonEncode([

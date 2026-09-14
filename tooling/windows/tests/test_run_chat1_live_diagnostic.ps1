@@ -55,17 +55,142 @@ try {
         network_read_performed = $true; content_exposed = $false
         durable_state_unchanged = $true; completed = $true
         message_sources = 8; chat1_sources = 50; verified_chat1_records = 50
-        route_field_failure_matrix_schema = 1
-        route_field_failure_matrix = @(0) * 88
-        paged_route_field_failure_matrix = @(0) * 88
-        route_field_decode_failures = 0; paged_route_field_decode_failures = 0
+        route_field_failure_matrix_schema = $chat1LiveFailureMatrixSchema
+        route_field_failure_matrix = @(0) * $chat1LiveFailureMatrixTotalLen
+        paged_route_field_failure_matrix = @(0) * $chat1LiveFailureMatrixTotalLen
+        route_field_decode_failures = 3; paged_route_field_decode_failures = 2
         paged_pages_scanned = 4; paged_changes_scanned = 167
         paged_chat_records = 165; paged_tombstones = 2
         paged_record_decode_failures = 0
         paged_terminal_reached = $true; paged_budget_exhausted = $false
         failure_code = $null
     }
+    foreach ($key in $chat1LiveCorrelationBooleanKeys) {
+        $report | Add-Member -NotePropertyName $key -NotePropertyValue $true
+    }
+    foreach ($key in $chat1LiveCorrelationCountKeys) {
+        $report | Add-Member -NotePropertyName $key -NotePropertyValue 0
+    }
+    $report.anchor_message_sources = 64
+    $report.decoded_anchor_messages = 60
+    $report.skipped_anchor_messages = 4
+    $report.distinct_anchor_message_guids = 58
+    $report.conflicting_anchor_message_guids = 1
+    foreach ($prefix in @(
+        'paged_sender_service_style',
+        'paged_last_seen_target',
+        'paged_anchor_exact',
+        'paged_anchor_normalized'
+    )) {
+        $report.($prefix + '_zero_candidate_targets') = 8
+    }
+    $report.paged_semantic_match_pairs = 3
+    $report.paged_route_participant_match_pairs = 2
+    $report.paged_normalized_route_participant_match_pairs = 1
+    $report.paged_participant_present_records = 50
+    $report.route_field_failure_matrix[46] = 2
+    $report.route_field_failure_matrix[65] = 1
+    $report.route_field_failure_matrix[88] = 1
+    $report.route_field_failure_matrix[91] = 1
+    $report.route_field_failure_matrix[94] = 1
+    $report.paged_route_field_failure_matrix[46] = 1
+    $report.paged_route_field_failure_matrix[65] = 1
+    $report.paged_route_field_failure_matrix[92] = 1
+    $report.paged_route_field_failure_matrix[95] = 1
     Assert-Chat1Aggregate $report 'correlation'
+    $report.skipped_anchor_messages = 3
+    $anchorAccountingRejected = $false
+    try { Assert-Chat1Aggregate $report 'correlation' } catch {
+        $anchorAccountingRejected = $_.Exception.Message -eq 'chat1_live_anchor_accounting_rejected'
+    } finally {
+        $report.skipped_anchor_messages = 4
+    }
+    Assert-Check $anchorAccountingRejected
+    $report.paged_anchor_exact_zero_candidate_targets = 7
+    $cardinalityRejected = $false
+    try { Assert-Chat1Aggregate $report 'correlation' } catch {
+        $cardinalityRejected = $_.Exception.Message -eq 'chat1_live_candidate_cardinality_rejected'
+    } finally {
+        $report.paged_anchor_exact_zero_candidate_targets = 8
+    }
+    Assert-Check $cardinalityRejected
+    $objectMatrix = $report.route_field_failure_matrix
+    $report.route_field_failure_matrix = [int[]]$objectMatrix
+    Assert-Chat1Aggregate $report 'correlation'
+    $typedAggregate = Copy-Chat1Aggregate $report
+    Assert-Check ($typedAggregate.Contains('route_field_failure_matrix') -and
+        $typedAggregate['route_field_failure_matrix'].Count -eq $chat1LiveFailureMatrixTotalLen)
+    Assert-Check ($typedAggregate['paged_semantic_match_pairs'] -eq 3 -and
+        $typedAggregate['paged_route_participant_match_pairs'] -eq 2 -and
+        $typedAggregate['paged_normalized_route_participant_match_pairs'] -eq 1 -and
+        $typedAggregate['paged_participant_present_records'] -eq 50)
+    $report.paged_semantic_match_pairs = 8001
+    $counterRejected = $false
+    try { Assert-Chat1Aggregate $report 'correlation' } catch {
+        $counterRejected = $_.Exception.Message -eq 'chat1_live_correlation_counter_rejected'
+    } finally {
+        $report.paged_semantic_match_pairs = 3
+    }
+    Assert-Check $counterRejected
+    $report.route_field_failure_matrix = $objectMatrix
+    $report.route_field_failure_matrix[104] = 1
+    $partitionRejected = $false
+    try { Assert-Chat1Aggregate $report 'correlation' } catch {
+        $partitionRejected = $_.Exception.Message -eq 'chat1_live_failure_matrix_rejected'
+    } finally {
+        $report.route_field_failure_matrix[104] = 0
+    }
+    Assert-Check $partitionRejected
+    $report.paged_route_field_failure_matrix[104] = 1
+    $pagedPartitionRejected = $false
+    try { Assert-Chat1Aggregate $report 'correlation' } catch {
+        $pagedPartitionRejected = $_.Exception.Message -eq 'chat1_live_failure_matrix_rejected'
+    } finally {
+        $report.paged_route_field_failure_matrix[104] = 0
+    }
+    Assert-Check $pagedPartitionRejected
+    $report.route_field_failure_matrix_schema = 1
+    $schemaRejected = $false
+    try { Assert-Chat1Aggregate $report 'correlation' } catch {
+        $schemaRejected = $_.Exception.Message -eq 'chat1_live_failure_matrix_schema_rejected'
+    } finally {
+        $report.route_field_failure_matrix_schema = $chat1LiveFailureMatrixSchema
+    }
+    Assert-Check $schemaRejected
+    $originalMatrix = $report.route_field_failure_matrix
+    $report.route_field_failure_matrix = @($originalMatrix | Select-Object -First 104)
+    $lengthRejected = $false
+    try { Assert-Chat1Aggregate $report 'correlation' } catch {
+        $lengthRejected = $_.Exception.Message -eq 'chat1_live_failure_matrix_rejected'
+    } finally {
+        $report.route_field_failure_matrix = $originalMatrix
+    }
+    Assert-Check $lengthRejected
+    $report.route_field_failure_matrix[0] = '1'
+    $typeRejected = $false
+    try { Assert-Chat1Aggregate $report 'correlation' } catch {
+        $typeRejected = $true
+    } finally {
+        $report.route_field_failure_matrix[0] = 0
+    }
+    Assert-Check $typeRejected
+    $report | Add-Member -NotePropertyName skip_reason `
+        -NotePropertyValue 'message content must never survive'
+    $stringRejected = $false
+    try { Assert-Chat1Aggregate $report 'correlation' } catch {
+        $stringRejected = $_.Exception.Message -eq 'chat1_live_aggregate_string_rejected'
+    } finally {
+        $report.PSObject.Properties.Remove('skip_reason')
+    }
+    Assert-Check $stringRejected
+    $report.paged_pages_scanned = 0
+    $boundsRejected = $false
+    try { Assert-Chat1Aggregate $report 'correlation' } catch {
+        $boundsRejected = $_.Exception.Message -eq 'chat1_live_paged_bounds_rejected'
+    } finally {
+        $report.paged_pages_scanned = 4
+    }
+    Assert-Check $boundsRejected
     Assert-Chat1AggregateLaunch $report '0123456789abcdef0123456789abcdef'
     $report | Add-Member -NotePropertyName launch_id `
         -NotePropertyValue '0123456789abcdef0123456789abcdef'
@@ -91,10 +216,40 @@ try {
     Assert-Check $rejected
     $discovery.durable_state_unchanged = $true
     Assert-Chat1Aggregate $discovery 'discovery'
+    $cacheOnly = [pscustomobject]@{
+        account_bound = $true; scope = 'chat1ManateeZone'
+        network_read_performed = $false; content_exposed = $false
+        durable_state_unchanged = $true; failure_code = $null
+    }
+    Assert-Chat1Aggregate $cacheOnly 'cache-only'
+    $cacheOnly.content_exposed = $true
+    $cacheContentRejected = $false
+    try { Assert-Chat1Aggregate $cacheOnly 'cache-only' } catch {
+        $cacheContentRejected = $_.Exception.Message -eq 'chat1_live_write_tripwire_rejected'
+    } finally {
+        $cacheOnly.content_exposed = $false
+    }
+    Assert-Check $cacheContentRejected
+    $cacheOnly.durable_state_unchanged = $false
+    $cacheMutationRejected = $false
+    try { Assert-Chat1Aggregate $cacheOnly 'cache-only' } catch {
+        $cacheMutationRejected = $_.Exception.Message -eq 'chat1_live_write_tripwire_rejected'
+    } finally {
+        $cacheOnly.durable_state_unchanged = $true
+    }
+    Assert-Check $cacheMutationRejected
+    $cacheOnly.failure_code = 'UnexpectedFailure'
+    $cacheFailureRejected = $false
+    try { Assert-Chat1Aggregate $cacheOnly 'cache-only' } catch {
+        $cacheFailureRejected = $_.Exception.Message -eq 'chat1_live_write_tripwire_rejected'
+    } finally {
+        $cacheOnly.failure_code = $null
+    }
+    Assert-Check $cacheFailureRejected
     $aggregate = Copy-Chat1Aggregate $report
     Assert-Check ($aggregate['scope'] -ceq 'chat1ManateeZone' -and $aggregate['message_sources'] -eq 8)
-    Assert-Check ($aggregate['route_field_failure_matrix'].Count -eq 88 -and
-        $aggregate['paged_route_field_failure_matrix'].Count -eq 88)
+    Assert-Check ($aggregate['route_field_failure_matrix'].Count -eq $chat1LiveFailureMatrixTotalLen -and
+        $aggregate['paged_route_field_failure_matrix'].Count -eq $chat1LiveFailureMatrixTotalLen)
     $identityStart = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
     Add-Chat1TestHostIdentity -Start $identityStart -BuildIdentifier '0123456789ab'
     Assert-Check ($identityStart.Environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] -ceq '1')

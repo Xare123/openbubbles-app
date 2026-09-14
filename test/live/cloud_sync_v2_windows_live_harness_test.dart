@@ -290,6 +290,20 @@ void main() {
           expect(observed?['completed'], isTrue);
           expect(observed?['message_sources'], 8);
           expect(observed?['decoded_message_routes'], 8);
+          final anchorSources = observed?['anchor_message_sources'] as int;
+          final decodedAnchors = observed?['decoded_anchor_messages'] as int;
+          final skippedAnchors = observed?['skipped_anchor_messages'] as int;
+          final distinctAnchorGuids =
+              observed?['distinct_anchor_message_guids'] as int;
+          final conflictingAnchorGuids =
+              observed?['conflicting_anchor_message_guids'] as int;
+          expect(anchorSources, inInclusiveRange(8, 2048));
+          expect(decodedAnchors + skippedAnchors, anchorSources);
+          expect(
+            distinctAnchorGuids + conflictingAnchorGuids,
+            lessThanOrEqualTo(decodedAnchors),
+          );
+          expect(observed?['anchor_source_budget_exhausted'], isA<bool>());
           expect(observed?['chat1_sources'], 50);
           expect(observed?['verified_chat1_records'], 50);
           expect(observed?['failure_code'], isNull);
@@ -442,6 +456,10 @@ void main() {
                 'paged_msgproto_legacy_match_pairs',
                 'paged_sender_participant_match_pairs',
                 'paged_sender_lah_match_pairs',
+                'paged_last_seen_target_message_match_pairs',
+                'paged_last_seen_anchor_exact_match_pairs',
+                'paged_last_seen_anchor_normalized_match_pairs',
+                'paged_sender_service_style_match_pairs',
                 'paged_normalized_route_participant_match_pairs',
                 'paged_normalized_route_legacy_match_pairs',
                 'paged_normalized_route_lah_match_pairs',
@@ -466,6 +484,10 @@ void main() {
                 'paged_normalized_matched_route_extra_message_routes',
                 'paged_normalized_matched_msgproto_targets',
                 'paged_normalized_matched_sender_targets',
+                'paged_matched_last_seen_target_messages',
+                'paged_matched_anchor_exact_targets',
+                'paged_matched_anchor_normalized_targets',
+                'paged_matched_sender_service_style_targets',
               }) {
                 expect(observed?[key], inInclusiveRange(0, 8), reason: key);
               }
@@ -476,12 +498,31 @@ void main() {
                 'paged_normalized_matched_route_extra_chat1_records',
                 'paged_normalized_matched_msgproto_chat1_records',
                 'paged_normalized_matched_sender_chat1_records',
+                'paged_last_seen_message_guid_present_records',
+                'paged_matched_last_seen_target_chat1_records',
+                'paged_matched_anchor_exact_chat1_records',
+                'paged_matched_anchor_normalized_chat1_records',
+                'paged_matched_sender_service_style_chat1_records',
               }) {
                 expect(
                   observed?[key],
                   inInclusiveRange(0, observed?['paged_chat_records'] as int),
                   reason: key,
                 );
+              }
+              for (final prefix in <String>{
+                'paged_sender_service_style',
+                'paged_last_seen_target',
+                'paged_anchor_exact',
+                'paged_anchor_normalized',
+              }) {
+                final zero =
+                    observed?['${prefix}_zero_candidate_targets'] as int;
+                final unique =
+                    observed?['${prefix}_unique_candidate_targets'] as int;
+                final multiple =
+                    observed?['${prefix}_multiple_candidate_targets'] as int;
+                expect(zero + unique + multiple, 8, reason: prefix);
               }
               final messageGroupIdSources =
                   observed?['message_group_id_sources'] as int;
@@ -575,6 +616,31 @@ void main() {
                 'paged_normalized_matched_msgproto_chat1_records',
                 'paged_normalized_matched_sender_targets',
                 'paged_normalized_matched_sender_chat1_records',
+                'paged_last_seen_message_guid_present_records',
+                'paged_last_seen_target_message_match_pairs',
+                'paged_matched_last_seen_target_messages',
+                'paged_matched_last_seen_target_chat1_records',
+                'paged_last_seen_anchor_exact_match_pairs',
+                'paged_matched_anchor_exact_targets',
+                'paged_matched_anchor_exact_chat1_records',
+                'paged_last_seen_anchor_normalized_match_pairs',
+                'paged_matched_anchor_normalized_targets',
+                'paged_matched_anchor_normalized_chat1_records',
+                'paged_sender_service_style_match_pairs',
+                'paged_matched_sender_service_style_targets',
+                'paged_matched_sender_service_style_chat1_records',
+                'paged_sender_service_style_zero_candidate_targets',
+                'paged_sender_service_style_unique_candidate_targets',
+                'paged_sender_service_style_multiple_candidate_targets',
+                'paged_last_seen_target_zero_candidate_targets',
+                'paged_last_seen_target_unique_candidate_targets',
+                'paged_last_seen_target_multiple_candidate_targets',
+                'paged_anchor_exact_zero_candidate_targets',
+                'paged_anchor_exact_unique_candidate_targets',
+                'paged_anchor_exact_multiple_candidate_targets',
+                'paged_anchor_normalized_zero_candidate_targets',
+                'paged_anchor_normalized_unique_candidate_targets',
+                'paged_anchor_normalized_multiple_candidate_targets',
               }) {
                 expect(observed?[key], 0, reason: key);
               }
