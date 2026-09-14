@@ -57,11 +57,14 @@ const MAX_CHAT1_LEGACY_IDENTIFIERS: usize = 32;
 const MAX_CHAT1_SELECTIVE_STRING_BYTES: usize = 4096;
 const MAX_CHAT1_PROP_BYTES: usize = 16 * 1024;
 const MAX_CHAT1_PARTICIPANT_PLAINTEXT_BYTES: usize = 4 * 1024;
-const CHAT1_ROUTE_FAILURE_MATRIX_SCHEMA: u32 = 1;
+const CHAT1_ROUTE_FAILURE_MATRIX_SCHEMA: u32 = 2;
 const CHAT1_ROUTE_FAILURE_FIELD_COUNT: usize = 11;
 const CHAT1_ROUTE_FAILURE_KIND_COUNT: usize = 8;
-const CHAT1_ROUTE_FAILURE_MATRIX_LEN: usize =
+const CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN: usize =
     CHAT1_ROUTE_FAILURE_FIELD_COUNT * CHAT1_ROUTE_FAILURE_KIND_COUNT;
+const CHAT1_ROUTE_FAILURE_DETAIL_COUNT: usize = 17;
+const CHAT1_ROUTE_FAILURE_MATRIX_LEN: usize =
+    CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN + CHAT1_ROUTE_FAILURE_DETAIL_COUNT;
 
 /// Stable row order for the aggregate-only route-field failure matrix. The
 /// order is schema, not user data, and must only change with a schema bump.
@@ -95,15 +98,57 @@ enum Chat1RouteFailureKind {
     Cap = 7,
 }
 
+/// Schema-v2 detail counters appended after the frozen 88-cell schema-v1
+/// matrix. These counters contain classifications only, never field values,
+/// record identifiers, exact lengths, hashes, or per-record ordering.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(usize)]
+enum Chat1RouteFailureDetail {
+    LahStringValueAbsent = 0,
+    LahEmpty = 1,
+    LahTooLong = 2,
+    LahTrimMismatch = 3,
+    LahControl = 4,
+    LahOther = 5,
+    PtcptsDuplicate = 6,
+    PtcptsOuterEmptyList = 7,
+    PtcptsOuterType = 8,
+    PtcptsOuterFlagAbsent = 9,
+    PtcptsOuterFlagTrue = 10,
+    PtcptsOuterPayload = 11,
+    PtcptsEntryType = 12,
+    PtcptsEntryFlagAbsent = 13,
+    PtcptsEntryFlagFalse = 14,
+    PtcptsEntryPayload = 15,
+    PtcptsOther = 16,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Chat1RouteFieldFailure {
     field: Chat1RouteFailureField,
     kind: Chat1RouteFailureKind,
+    detail: Option<Chat1RouteFailureDetail>,
 }
 
 impl Chat1RouteFieldFailure {
     const fn new(field: Chat1RouteFailureField, kind: Chat1RouteFailureKind) -> Self {
-        Self { field, kind }
+        Self {
+            field,
+            kind,
+            detail: None,
+        }
+    }
+
+    const fn with_detail(
+        field: Chat1RouteFailureField,
+        kind: Chat1RouteFailureKind,
+        detail: Chat1RouteFailureDetail,
+    ) -> Self {
+        Self {
+            field,
+            kind,
+            detail: Some(detail),
+        }
     }
 
     const fn matrix_index(self) -> usize {
@@ -181,7 +226,9 @@ pub struct CloudSyncChat1CorrelationResult {
     /// Versioned, row-major aggregate counters. Rows are record_key, cid,
     /// gid, ogid, guid, lah, svc, stl, ptcpts, prop and cross_field. Columns
     /// are missing_value, wire_shape, key_selection, ciphertext_key, decrypt,
-    /// payload_decode, validation and cap.
+    /// payload_decode, validation and cap. Schema 2 preserves those first 88
+    /// cells exactly, then appends the fixed LAH-validation and PTCPTS-shape
+    /// detail taxonomy declared by `Chat1RouteFailureDetail`.
     pub route_field_failure_matrix_schema: u32,
     pub route_field_failure_matrix: Vec<u32>,
     pub chat_identifier_match_pairs: u32,
@@ -659,10 +706,45 @@ fn encrypted_string_field(
     Ok(Some(decoded))
 }
 
-fn unique_field_value(
-    record: &Record,
-    name: &str,
-) -> Result<Option<Value>, Chat1RouteFailureKind> {
+fn classify_lah_validation_detail(record: &Record, key: &PCSEncryptor) -> Chat1RouteFailureDetail {
+    let value = match unique_field_value(record, "lah") {
+        Ok(Some(value)) => value,
+        _ => return Chat1RouteFailureDetail::LahOther,
+    };
+    let Some(ciphertext) = value
+        .bytes_value
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    else {
+        return Chat1RouteFailureDetail::LahOther;
+    };
+    let plaintext = match key.decrypt_data_checked(ciphertext, "lah") {
+        Ok(value) => value,
+        Err(_) => return Chat1RouteFailureDetail::LahOther,
+    };
+    let decoded = match catch_unwind(AssertUnwindSafe(|| {
+        EncryptedValue::decode(plaintext.as_slice())
+    })) {
+        Ok(Ok(value)) => value,
+        _ => return Chat1RouteFailureDetail::LahOther,
+    };
+    let Some(value) = decoded.string_value else {
+        return Chat1RouteFailureDetail::LahStringValueAbsent;
+    };
+    if value.is_empty() {
+        Chat1RouteFailureDetail::LahEmpty
+    } else if value.len() > MAX_CHAT1_SELECTIVE_STRING_BYTES {
+        Chat1RouteFailureDetail::LahTooLong
+    } else if value.trim() != value {
+        Chat1RouteFailureDetail::LahTrimMismatch
+    } else if value.chars().any(char::is_control) {
+        Chat1RouteFailureDetail::LahControl
+    } else {
+        Chat1RouteFailureDetail::LahOther
+    }
+}
+
+fn unique_field_value(record: &Record, name: &str) -> Result<Option<Value>, Chat1RouteFailureKind> {
     let mut matching = record.record_field.iter().filter(|field| {
         field
             .identifier
@@ -807,6 +889,71 @@ fn encrypted_participant_uris(
         uris.push(decoded_participant.uri);
     }
     Ok(uris)
+}
+
+fn classify_ptcpts_wire_shape_detail(record: &Record) -> Chat1RouteFailureDetail {
+    let mut matching = record.record_field.iter().filter(|field| {
+        field
+            .identifier
+            .as_ref()
+            .and_then(|identifier| identifier.name.as_deref())
+            == Some("ptcpts")
+    });
+    let Some(field) = matching.next() else {
+        return Chat1RouteFailureDetail::PtcptsOther;
+    };
+    if matching.next().is_some() {
+        return Chat1RouteFailureDetail::PtcptsDuplicate;
+    }
+    let Some(value) = field.value.as_ref() else {
+        return Chat1RouteFailureDetail::PtcptsOther;
+    };
+    if value.r#type == Some(FieldValueType::EmptyList as i32) {
+        return Chat1RouteFailureDetail::PtcptsOuterEmptyList;
+    }
+    if value.r#type != Some(FieldValueType::EncryptedBytesListType as i32) {
+        return Chat1RouteFailureDetail::PtcptsOuterType;
+    }
+    match value.is_encrypted {
+        None => return Chat1RouteFailureDetail::PtcptsOuterFlagAbsent,
+        Some(true) => return Chat1RouteFailureDetail::PtcptsOuterFlagTrue,
+        Some(false) => {}
+    }
+    if value.bytes_value.is_some()
+        || value.signed_value.is_some()
+        || value.double_value.is_some()
+        || value.date_value.is_some()
+        || value.string_value.is_some()
+        || value.location_value.is_some()
+        || value.reference_value.is_some()
+        || value.asset_value.is_some()
+        || value.package_value.is_some()
+    {
+        return Chat1RouteFailureDetail::PtcptsOuterPayload;
+    }
+    for entry in &value.list_values {
+        if entry.r#type != Some(FieldValueType::EncryptedBytesType as i32) {
+            return Chat1RouteFailureDetail::PtcptsEntryType;
+        }
+        match entry.is_encrypted {
+            None => return Chat1RouteFailureDetail::PtcptsEntryFlagAbsent,
+            Some(false) => return Chat1RouteFailureDetail::PtcptsEntryFlagFalse,
+            Some(true) => {}
+        }
+        if entry.signed_value.is_some()
+            || entry.double_value.is_some()
+            || entry.date_value.is_some()
+            || entry.string_value.is_some()
+            || entry.location_value.is_some()
+            || entry.reference_value.is_some()
+            || entry.asset_value.is_some()
+            || !entry.list_values.is_empty()
+            || entry.package_value.is_some()
+        {
+            return Chat1RouteFailureDetail::PtcptsEntryPayload;
+        }
+    }
+    Chat1RouteFailureDetail::PtcptsOther
 }
 
 fn encrypted_legacy_identifiers(
@@ -1226,23 +1373,42 @@ fn inspect_chat1_route_fields_with_key(
     let map_failure = |field: Chat1RouteFailureField| {
         move |kind: Chat1RouteFailureKind| Chat1RouteFieldFailure::new(field, kind)
     };
-    let chat_identifier = encrypted_string_field(record, &record_key, "cid")
+    let chat_identifier = encrypted_string_field(record, record_key, "cid")
         .map_err(map_failure(Chat1RouteFailureField::Cid))?;
-    let group_id = encrypted_string_field(record, &record_key, "gid")
+    let group_id = encrypted_string_field(record, record_key, "gid")
         .map_err(map_failure(Chat1RouteFailureField::Gid))?;
-    let original_group_id = encrypted_string_field(record, &record_key, "ogid")
+    let original_group_id = encrypted_string_field(record, record_key, "ogid")
         .map_err(map_failure(Chat1RouteFailureField::Ogid))?;
-    let guid = encrypted_string_field(record, &record_key, "guid")
+    let guid = encrypted_string_field(record, record_key, "guid")
         .map_err(map_failure(Chat1RouteFailureField::Guid))?;
-    let last_addressed_handle = encrypted_string_field(record, &record_key, "lah")
-        .map_err(map_failure(Chat1RouteFailureField::Lah))?;
-    let service_name = encrypted_string_field(record, &record_key, "svc")
+    let last_addressed_handle =
+        encrypted_string_field(record, record_key, "lah").map_err(|kind| {
+            if kind == Chat1RouteFailureKind::Validation {
+                Chat1RouteFieldFailure::with_detail(
+                    Chat1RouteFailureField::Lah,
+                    kind,
+                    classify_lah_validation_detail(record, record_key),
+                )
+            } else {
+                Chat1RouteFieldFailure::new(Chat1RouteFailureField::Lah, kind)
+            }
+        })?;
+    let service_name = encrypted_string_field(record, record_key, "svc")
         .map_err(map_failure(Chat1RouteFailureField::Svc))?;
-    let style = encrypted_i64_field(record, &record_key, "stl")
+    let style = encrypted_i64_field(record, record_key, "stl")
         .map_err(map_failure(Chat1RouteFailureField::Stl))?;
-    let participants = encrypted_participant_uris(record, &record_key)
-        .map_err(map_failure(Chat1RouteFailureField::Ptcpts))?;
-    let legacy_identifiers = encrypted_legacy_identifiers(record, &record_key)
+    let participants = encrypted_participant_uris(record, record_key).map_err(|kind| {
+        if kind == Chat1RouteFailureKind::WireShape {
+            Chat1RouteFieldFailure::with_detail(
+                Chat1RouteFailureField::Ptcpts,
+                kind,
+                classify_ptcpts_wire_shape_detail(record),
+            )
+        } else {
+            Chat1RouteFieldFailure::new(Chat1RouteFailureField::Ptcpts, kind)
+        }
+    })?;
+    let legacy_identifiers = encrypted_legacy_identifiers(record, record_key)
         .map_err(map_failure(Chat1RouteFailureField::Prop))?;
     for value in participants
         .iter()
@@ -1444,6 +1610,26 @@ impl SemanticMatchCounts {
             .get_mut(failure.matrix_index())
             .expect("route-field failure matrix index must match schema");
         *slot = slot.saturating_add(1);
+        let detail = failure
+            .detail
+            .or_else(|| match (failure.field, failure.kind) {
+                (Chat1RouteFailureField::Lah, Chat1RouteFailureKind::Validation) => {
+                    Some(Chat1RouteFailureDetail::LahOther)
+                }
+                (Chat1RouteFailureField::Ptcpts, Chat1RouteFailureKind::WireShape) => {
+                    Some(Chat1RouteFailureDetail::PtcptsOther)
+                }
+                _ => None,
+            });
+        if let Some(index) =
+            detail.map(|value| CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN + value as usize)
+        {
+            let detail_slot = self
+                .route_field_failure_matrix
+                .get_mut(index)
+                .expect("route-field failure detail index must match schema");
+            *detail_slot = detail_slot.saturating_add(1);
+        }
     }
 
     fn route_field_failure_matrix_snapshot(&self) -> Vec<u32> {
@@ -2704,13 +2890,16 @@ mod tests {
             Chat1RouteFailureKind::Validation,
             Chat1RouteFailureKind::Cap,
         ];
-        let mut seen = [false; CHAT1_ROUTE_FAILURE_MATRIX_LEN];
+        assert_eq!(CHAT1_ROUTE_FAILURE_MATRIX_SCHEMA, 2);
+        assert_eq!(CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN, 88);
+        assert_eq!(CHAT1_ROUTE_FAILURE_MATRIX_LEN, 105);
+        let mut seen = [false; CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN];
         let mut counts = SemanticMatchCounts::default();
         for field in fields {
             for kind in kinds {
                 let failure = Chat1RouteFieldFailure::new(field, kind);
                 let index = failure.matrix_index();
-                assert!(index < CHAT1_ROUTE_FAILURE_MATRIX_LEN);
+                assert!(index < CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN);
                 assert!(!seen[index]);
                 seen[index] = true;
                 counts.observe_route_field_failure(failure);
@@ -2719,11 +2908,244 @@ mod tests {
         assert!(seen.into_iter().all(|value| value));
         assert_eq!(
             counts.route_field_decode_failures as usize,
-            CHAT1_ROUTE_FAILURE_MATRIX_LEN
+            CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN
         );
         assert_eq!(
-            counts.route_field_failure_matrix.iter().sum::<u32>(),
+            counts.route_field_failure_matrix[..CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN]
+                .iter()
+                .sum::<u32>(),
             counts.route_field_decode_failures
+        );
+        assert_eq!(
+            counts.route_field_failure_matrix[CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN..]
+                .iter()
+                .sum::<u32>(),
+            2
+        );
+        assert_eq!(
+            counts.route_field_failure_matrix
+                [CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN + Chat1RouteFailureDetail::LahOther as usize],
+            1
+        );
+        assert_eq!(
+            counts.route_field_failure_matrix[CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN
+                + Chat1RouteFailureDetail::PtcptsOther as usize],
+            1
+        );
+    }
+
+    #[test]
+    fn route_field_failure_details_partition_live_blockers_without_content() {
+        let key = oracle_encryptor("detail-fixture.invalid");
+        let lah_cases = [
+            (None, Chat1RouteFailureDetail::LahStringValueAbsent),
+            (Some(String::new()), Chat1RouteFailureDetail::LahEmpty),
+            (
+                Some("x".repeat(MAX_CHAT1_SELECTIVE_STRING_BYTES + 1)),
+                Chat1RouteFailureDetail::LahTooLong,
+            ),
+            (
+                Some(" padded ".to_owned()),
+                Chat1RouteFailureDetail::LahTrimMismatch,
+            ),
+            (
+                Some("control\nvalue".to_owned()),
+                Chat1RouteFailureDetail::LahControl,
+            ),
+        ];
+        let mut counts = SemanticMatchCounts::default();
+        for (string_value, expected) in lah_cases {
+            let plaintext = EncryptedValue {
+                string_value,
+                ..Default::default()
+            }
+            .encode_to_vec();
+            let record = Record {
+                record_field: vec![record_field(
+                    "lah",
+                    Value {
+                        r#type: Some(FieldValueType::StringType as i32),
+                        bytes_value: Some(key.encrypt_data(&plaintext, "lah")),
+                        is_encrypted: Some(true),
+                        ..Default::default()
+                    },
+                )],
+                ..Default::default()
+            };
+            assert_eq!(classify_lah_validation_detail(&record, &key), expected);
+            counts.observe_route_field_failure(Chat1RouteFieldFailure::with_detail(
+                Chat1RouteFailureField::Lah,
+                Chat1RouteFailureKind::Validation,
+                expected,
+            ));
+        }
+
+        let outer = |value: Value| Record {
+            record_field: vec![record_field("ptcpts", value)],
+            ..Default::default()
+        };
+        let list = |flag: Option<bool>, entries: Vec<Value>| Value {
+            r#type: Some(FieldValueType::EncryptedBytesListType as i32),
+            is_encrypted: flag,
+            list_values: entries,
+            ..Default::default()
+        };
+        let entry = |r#type: FieldValueType, flag: Option<bool>| Value {
+            r#type: Some(r#type as i32),
+            is_encrypted: flag,
+            bytes_value: Some(vec![1]),
+            ..Default::default()
+        };
+        let duplicate = Record {
+            record_field: vec![
+                record_field("ptcpts", list(Some(false), Vec::new())),
+                record_field("ptcpts", list(Some(false), Vec::new())),
+            ],
+            ..Default::default()
+        };
+        let ptcpts_cases = vec![
+            (duplicate, Chat1RouteFailureDetail::PtcptsDuplicate),
+            (
+                outer(Value {
+                    r#type: Some(FieldValueType::EmptyList as i32),
+                    ..Default::default()
+                }),
+                Chat1RouteFailureDetail::PtcptsOuterEmptyList,
+            ),
+            (
+                outer(Value {
+                    r#type: Some(FieldValueType::StringType as i32),
+                    is_encrypted: Some(false),
+                    ..Default::default()
+                }),
+                Chat1RouteFailureDetail::PtcptsOuterType,
+            ),
+            (
+                outer(list(None, Vec::new())),
+                Chat1RouteFailureDetail::PtcptsOuterFlagAbsent,
+            ),
+            (
+                outer(list(Some(true), Vec::new())),
+                Chat1RouteFailureDetail::PtcptsOuterFlagTrue,
+            ),
+            (
+                outer(Value {
+                    string_value: Some("present".to_owned()),
+                    ..list(Some(false), Vec::new())
+                }),
+                Chat1RouteFailureDetail::PtcptsOuterPayload,
+            ),
+            (
+                outer(list(
+                    Some(false),
+                    vec![entry(FieldValueType::StringType, Some(true))],
+                )),
+                Chat1RouteFailureDetail::PtcptsEntryType,
+            ),
+            (
+                outer(list(
+                    Some(false),
+                    vec![entry(FieldValueType::EncryptedBytesType, None)],
+                )),
+                Chat1RouteFailureDetail::PtcptsEntryFlagAbsent,
+            ),
+            (
+                outer(list(
+                    Some(false),
+                    vec![entry(FieldValueType::EncryptedBytesType, Some(false))],
+                )),
+                Chat1RouteFailureDetail::PtcptsEntryFlagFalse,
+            ),
+            (
+                outer(list(
+                    Some(false),
+                    vec![Value {
+                        string_value: Some("present".to_owned()),
+                        ..entry(FieldValueType::EncryptedBytesType, Some(true))
+                    }],
+                )),
+                Chat1RouteFailureDetail::PtcptsEntryPayload,
+            ),
+        ];
+        for (record, expected) in &ptcpts_cases {
+            assert_eq!(classify_ptcpts_wire_shape_detail(record), *expected);
+            counts.observe_route_field_failure(Chat1RouteFieldFailure::with_detail(
+                Chat1RouteFailureField::Ptcpts,
+                Chat1RouteFailureKind::WireShape,
+                *expected,
+            ));
+        }
+
+        let lah_base_index = Chat1RouteFieldFailure::new(
+            Chat1RouteFailureField::Lah,
+            Chat1RouteFailureKind::Validation,
+        )
+        .matrix_index();
+        let ptcpts_base_index = Chat1RouteFieldFailure::new(
+            Chat1RouteFailureField::Ptcpts,
+            Chat1RouteFailureKind::WireShape,
+        )
+        .matrix_index();
+        assert_eq!(lah_base_index, 46);
+        assert_eq!(ptcpts_base_index, 65);
+        assert_eq!(counts.route_field_failure_matrix[lah_base_index], 5);
+        assert_eq!(counts.route_field_failure_matrix[ptcpts_base_index], 10);
+        assert_eq!(counts.route_field_decode_failures, 15);
+        assert_eq!(
+            counts.route_field_failure_matrix[..CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN]
+                .iter()
+                .sum::<u32>(),
+            counts.route_field_decode_failures
+        );
+        assert_eq!(
+            counts.route_field_failure_matrix[CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN..]
+                .iter()
+                .sum::<u32>(),
+            counts.route_field_failure_matrix[lah_base_index]
+                + counts.route_field_failure_matrix[ptcpts_base_index]
+        );
+        assert_eq!(
+            counts.route_field_failure_matrix
+                [CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN + Chat1RouteFailureDetail::LahOther as usize],
+            0
+        );
+        assert_eq!(
+            counts.route_field_failure_matrix[CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN
+                + Chat1RouteFailureDetail::PtcptsOther as usize],
+            0
+        );
+
+        let wire_shape_record = outer(list(None, Vec::new()));
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let (
+            targets,
+            normalized_targets,
+            msgproto_targets,
+            normalized_msgproto_targets,
+            sender_targets,
+            normalized_sender_targets,
+        ) = empty_inspect_context();
+        let failure = match inspect_chat1_route_fields_with_key(
+            &wire_shape_record,
+            &key,
+            &targets,
+            &normalized_targets,
+            &msgproto_targets,
+            &normalized_msgproto_targets,
+            &sender_targets,
+            &normalized_sender_targets,
+            &hasher,
+        ) {
+            Err(failure) => failure,
+            Ok(_) => panic!("expected detailed ptcpts wire-shape failure"),
+        };
+        assert_eq!(
+            failure,
+            Chat1RouteFieldFailure::with_detail(
+                Chat1RouteFailureField::Ptcpts,
+                Chat1RouteFailureKind::WireShape,
+                Chat1RouteFailureDetail::PtcptsOuterFlagAbsent,
+            )
         );
     }
 
@@ -3248,9 +3670,18 @@ mod tests {
                 .to_value_encrypted(&encryptor, name)
                 .expect("invalid value must encode");
             let mutated = replace_record_field(&base, name, invalid_value);
+            let expected = if field == Chat1RouteFailureField::Lah {
+                Chat1RouteFieldFailure::with_detail(
+                    field,
+                    Chat1RouteFailureKind::Validation,
+                    Chat1RouteFailureDetail::LahTrimMismatch,
+                )
+            } else {
+                Chat1RouteFieldFailure::new(field, Chat1RouteFailureKind::Validation)
+            };
             assert_eq!(
                 check(&mutated, &encryptor),
-                Chat1RouteFieldFailure::new(field, Chat1RouteFailureKind::Validation),
+                expected,
                 "validation for {name}"
             );
             cases += 1;

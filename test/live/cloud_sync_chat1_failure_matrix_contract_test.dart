@@ -1,17 +1,22 @@
-// Test-only contract for the schema-1 Chat1 route-field failure matrix.
+// Test-only contract for the schema-2 Chat1 route-field failure matrix.
 // No live Apple operations, no network/native calls, no user data.
-// Covers the frozen 11-field x 8-kind row-major matrix and the Dart-side
-// invariants mirrored in cloud_sync_v2_windows_live_harness_test.dart.
+// Covers the frozen schema-1 11-field x 8-kind prefix, appended content-free
+// detail counters, and Dart-side live-harness invariants.
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 
 // Schema constants mirror rust/src/api/cloud_sync_chat1_correlation.rs:
-// CHAT1_ROUTE_FAILURE_MATRIX_SCHEMA = 1, FIELD_COUNT = 11, KIND_COUNT = 8.
-const int kFailureMatrixSchema = 1;
+// CHAT1_ROUTE_FAILURE_MATRIX_SCHEMA = 2. The first 88 slots remain the exact
+// schema-1 row-major matrix; schema-2 appends 17 detail counters.
+const int kFailureMatrixSchema = 2;
 const int kFailureFieldCount = 11;
 const int kFailureKindCount = 8;
-const int kFailureMatrixLen = 88;
+const int kFailureMatrixBaseLen = 88;
+const int kFailureMatrixDetailLen = 17;
+const int kFailureMatrixLen = kFailureMatrixBaseLen + kFailureMatrixDetailLen;
+const int kLahValidationBaseIndex = 46;
+const int kPtcptsWireShapeBaseIndex = 65;
 
 // Stable row order. Schema only, not user data.
 const List<String> kFailureFields = <String>[
@@ -40,14 +45,33 @@ const List<String> kFailureKinds = <String>[
   'cap',
 ];
 
+// Stable append-only detail order. Categories never carry values, lengths,
+// hashes, record identifiers, or ordering.
+const List<String> kFailureDetails = <String>[
+  'lah_string_value_absent',
+  'lah_empty',
+  'lah_too_long',
+  'lah_trim_mismatch',
+  'lah_control',
+  'lah_other',
+  'ptcpts_duplicate',
+  'ptcpts_outer_empty_list',
+  'ptcpts_outer_type',
+  'ptcpts_outer_flag_absent',
+  'ptcpts_outer_flag_true',
+  'ptcpts_outer_payload',
+  'ptcpts_entry_type',
+  'ptcpts_entry_flag_absent',
+  'ptcpts_entry_flag_false',
+  'ptcpts_entry_payload',
+  'ptcpts_other',
+];
+
 int matrixIndex(int fieldIdx, int kindIdx) =>
     fieldIdx * kFailureKindCount + kindIdx;
 
 int decodeFieldIdx(int index) => index ~/ kFailureKindCount;
 int decodeKindIdx(int index) => index % kFailureKindCount;
-
-int matrixSum(List<int> matrix) =>
-    matrix.fold<int>(0, (sum, count) => sum + count);
 
 // Pure mirror of expectRouteFieldFailureMatrix in the live harness test.
 void checkMatrix(
@@ -63,18 +87,32 @@ void checkMatrix(
       reason: reason + '_x' + i.toString(),
     );
   }
-  expect(matrixSum(matrix), expectedSum, reason: reason + '_sum');
+  final baseSum = matrix
+      .take(kFailureMatrixBaseLen)
+      .fold<int>(0, (sum, count) => sum + count);
+  expect(baseSum, expectedSum, reason: reason + '_base_sum');
+  final detailSum = matrix
+      .skip(kFailureMatrixBaseLen)
+      .fold<int>(0, (sum, count) => sum + count);
+  expect(
+    detailSum,
+    matrix[kLahValidationBaseIndex] + matrix[kPtcptsWireShapeBaseIndex],
+    reason: reason + '_detail_partition',
+  );
 }
 
 void main() {
-  test('schema and dimensions are frozen at v1 11x8', () {
-    expect(kFailureMatrixSchema, 1);
+  test('schema 2 preserves the v1 11x8 prefix and appends detail', () {
+    expect(kFailureMatrixSchema, 2);
     expect(kFailureFieldCount, 11);
     expect(kFailureKindCount, 8);
-    expect(kFailureMatrixLen, 88);
-    expect(kFailureMatrixLen, kFailureFieldCount * kFailureKindCount);
+    expect(kFailureMatrixBaseLen, 88);
+    expect(kFailureMatrixBaseLen, kFailureFieldCount * kFailureKindCount);
+    expect(kFailureMatrixDetailLen, 17);
+    expect(kFailureMatrixLen, 105);
     expect(kFailureFields, hasLength(kFailureFieldCount));
     expect(kFailureKinds, hasLength(kFailureKindCount));
+    expect(kFailureDetails, hasLength(kFailureMatrixDetailLen));
   });
   test('row order is frozen record_key through cross_field', () {
     expect(kFailureFields.first, 'record_key');
@@ -96,13 +134,13 @@ void main() {
       for (var k = 0; k < kFailureKindCount; k++) {
         final idx = matrixIndex(f, k);
         expect(idx, f * kFailureKindCount + k);
-        expect(idx, inInclusiveRange(0, kFailureMatrixLen - 1));
+        expect(idx, inInclusiveRange(0, kFailureMatrixBaseLen - 1));
         expect(seen.add(idx), isTrue);
         expect(decodeFieldIdx(idx), f);
         expect(decodeKindIdx(idx), k);
       }
     }
-    expect(seen, hasLength(kFailureMatrixLen));
+    expect(seen, hasLength(kFailureMatrixBaseLen));
   });
   test('spot cells pin row-major arithmetic', () {
     expect(matrixIndex(0, 0), 0, reason: 'record_key:missing_value');
@@ -124,16 +162,32 @@ void main() {
       expectedSum: 0,
       reason: 'paged_disabled',
     );
-    expect(kFailureMatrixSchema, 1, reason: 'schema_disabled');
+    expect(kFailureMatrixSchema, 2, reason: 'schema_disabled');
     expect(Uint32List(kFailureMatrixLen), hasLength(kFailureMatrixLen));
   });
   test('each singleton cell attributes exactly one failure', () {
-    for (var idx = 0; idx < kFailureMatrixLen; idx++) {
+    for (var idx = 0; idx < kFailureMatrixBaseLen; idx++) {
       final matrix = List<int>.filled(kFailureMatrixLen, 0);
       matrix[idx] = 1;
+      if (idx == kLahValidationBaseIndex) {
+        matrix[kFailureMatrixBaseLen + 5] = 1;
+      } else if (idx == kPtcptsWireShapeBaseIndex) {
+        matrix[kFailureMatrixBaseLen + 16] = 1;
+      }
       checkMatrix(matrix, expectedSum: 1, reason: 'cell' + idx.toString());
       expect(decodeFieldIdx(idx), idx ~/ kFailureKindCount);
       expect(decodeKindIdx(idx), idx % kFailureKindCount);
+    }
+  });
+  test('each detail cell partitions exactly one matching base failure', () {
+    for (var detail = 0; detail < kFailureMatrixDetailLen; detail++) {
+      final matrix = List<int>.filled(kFailureMatrixLen, 0);
+      final base = detail <= 5
+          ? kLahValidationBaseIndex
+          : kPtcptsWireShapeBaseIndex;
+      matrix[base] = 1;
+      matrix[kFailureMatrixBaseLen + detail] = 1;
+      checkMatrix(matrix, expectedSum: 1, reason: 'detail' + detail.toString());
     }
   });
   test('multi-cell matrix sums across rows and columns', () {
@@ -152,9 +206,11 @@ void main() {
     final rust = File(
       'rust/src/api/cloud_sync_chat1_correlation.rs',
     ).readAsStringSync();
-    expect(rust, contains('CHAT1_ROUTE_FAILURE_MATRIX_SCHEMA: u32 = 1'));
+    expect(rust, contains('CHAT1_ROUTE_FAILURE_MATRIX_SCHEMA: u32 = 2'));
     expect(rust, contains('CHAT1_ROUTE_FAILURE_FIELD_COUNT: usize = 11'));
     expect(rust, contains('CHAT1_ROUTE_FAILURE_KIND_COUNT: usize = 8'));
+    expect(rust, contains('CHAT1_ROUTE_FAILURE_DETAIL_COUNT: usize = 17'));
+    expect(rust, contains('CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN'));
     expect(rust, contains('CHAT1_ROUTE_FAILURE_MATRIX_LEN'));
     expect(rust.indexOf('RecordKey = 0'), greaterThanOrEqualTo(0));
     expect(
@@ -178,6 +234,7 @@ void main() {
       'test/live/cloud_sync_v2_windows_live_harness_test.dart',
     ).readAsStringSync();
     expect(harness, contains('expectRouteFieldFailureMatrix'));
-    expect(harness, contains('hasLength(88)'));
+    expect(harness, contains('kChat1FailureMatrixDetailLen = 17'));
+    expect(harness, contains('kChat1FailureMatrixBaseLen = 88'));
   });
 }

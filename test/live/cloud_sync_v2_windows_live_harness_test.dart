@@ -18,20 +18,36 @@ import 'cloud_sync_edit_echo_verification.dart';
 import 'cloud_sync_chat1_discovery.dart';
 import 'cloud_sync_parent_coverage.dart';
 
+const int kChat1FailureMatrixSchema = 2;
+const int kChat1FailureMatrixBaseLen = 88;
+const int kChat1FailureMatrixDetailLen = 17;
+const int kChat1FailureMatrixLen =
+    kChat1FailureMatrixBaseLen + kChat1FailureMatrixDetailLen;
+const int kChat1LahValidationBaseIndex = 46;
+const int kChat1PtcptsWireShapeBaseIndex = 65;
+
 void expectRouteFieldFailureMatrix(
   Object? value, {
   required int expectedSum,
   required String reason,
 }) {
   final matrix = (value as List).cast<int>();
-  expect(matrix, hasLength(88), reason: '${reason}_length');
+  expect(matrix, hasLength(kChat1FailureMatrixLen), reason: '${reason}_length');
   for (final count in matrix) {
     expect(count, greaterThanOrEqualTo(0), reason: reason);
   }
+  final baseSum = matrix
+      .take(kChat1FailureMatrixBaseLen)
+      .fold<int>(0, (sum, count) => sum + count);
+  expect(baseSum, expectedSum, reason: '${reason}_base_sum');
+  final detailSum = matrix
+      .skip(kChat1FailureMatrixBaseLen)
+      .fold<int>(0, (sum, count) => sum + count);
   expect(
-    matrix.fold<int>(0, (sum, count) => sum + count),
-    expectedSum,
-    reason: '${reason}_sum',
+    detailSum,
+    matrix[kChat1LahValidationBaseIndex] +
+        matrix[kChat1PtcptsWireShapeBaseIndex],
+    reason: '${reason}_detail_partition',
   );
 }
 
@@ -292,7 +308,7 @@ void main() {
                 observed?['route_field_decode_failures'] as int;
             final failureMatrixSchema =
                 observed?['route_field_failure_matrix_schema'] as int;
-            expect(failureMatrixSchema, 1);
+            expect(failureMatrixSchema, kChat1FailureMatrixSchema);
             expectRouteFieldFailureMatrix(
               observed?['route_field_failure_matrix'],
               expectedSum: fieldFailures,
@@ -572,7 +588,10 @@ void main() {
               );
             }
           } else {
-            expect(observed?['route_field_failure_matrix_schema'], 1);
+            expect(
+              observed?['route_field_failure_matrix_schema'],
+              kChat1FailureMatrixSchema,
+            );
             expectRouteFieldFailureMatrix(
               observed?['route_field_failure_matrix'],
               expectedSum: 0,
