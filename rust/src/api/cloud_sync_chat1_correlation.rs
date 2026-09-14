@@ -13,7 +13,9 @@ use std::{
 use flutter_rust_bridge::frb;
 use prost::Message as _;
 use rustpush::{
-    cloud_messages::{CloudChat, CloudMessagesClient, MESSAGES_SERVICE},
+    cloud_messages::{
+        CloudChat, CloudMessageRecordKind, CloudMessagesClient, MESSAGES_SERVICE,
+    },
     cloudkit::pcs_keys_for_record,
     cloudkit_operation_gate::acquire_cloudkit_read_authentication,
     cloudkit_proto::{
@@ -45,6 +47,8 @@ use crate::{
 const MAX_MESSAGE_SOURCES: usize = 8;
 const MAX_CHAT1_SOURCES: usize = 50;
 const MAX_CHAT1_ROUTE_FIELD_BYTES: usize = 64 * 1024;
+const MAX_CHAT1_SCAN_PAGES: usize = 20;
+const MAX_CHAT1_CHANGES_PER_PAGE: u32 = 50;
 
 /// Exact opaque metadata copied from one already-adopted journal row. No raw
 /// record name, route, field value, Apple token, or message body is present.
@@ -78,6 +82,7 @@ pub enum CloudSyncChat1CorrelationFailureCode {
     MessageDecodeFailed,
     Chat1SourceMismatch,
     Chat1PcsLookupFailed,
+    Chat1PagedFetchFailed,
     AccountChanged,
 }
 
@@ -110,6 +115,19 @@ pub struct CloudSyncChat1CorrelationResult {
     pub semantic_match_pairs: u32,
     pub matched_semantic_message_routes: u32,
     pub matched_semantic_chat1_records: u32,
+    pub paged_correlation_requested: bool,
+    pub paged_pages_scanned: u32,
+    pub paged_changes_scanned: u32,
+    pub paged_chat_records: u32,
+    pub paged_other_records: u32,
+    pub paged_tombstones: u32,
+    pub paged_record_decode_failures: u32,
+    pub paged_route_field_decode_failures: u32,
+    pub paged_semantic_match_pairs: u32,
+    pub paged_matched_message_routes: u32,
+    pub paged_matched_chat1_records: u32,
+    pub paged_terminal_reached: bool,
+    pub paged_budget_exhausted: bool,
     pub failure_code: Option<CloudSyncChat1CorrelationFailureCode>,
 }
 
@@ -138,6 +156,19 @@ fn failure(code: CloudSyncChat1CorrelationFailureCode) -> CloudSyncChat1Correlat
         semantic_match_pairs: 0,
         matched_semantic_message_routes: 0,
         matched_semantic_chat1_records: 0,
+        paged_correlation_requested: false,
+        paged_pages_scanned: 0,
+        paged_changes_scanned: 0,
+        paged_chat_records: 0,
+        paged_other_records: 0,
+        paged_tombstones: 0,
+        paged_record_decode_failures: 0,
+        paged_route_field_decode_failures: 0,
+        paged_semantic_match_pairs: 0,
+        paged_matched_message_routes: 0,
+        paged_matched_chat1_records: 0,
+        paged_terminal_reached: false,
+        paged_budget_exhausted: false,
         failure_code: Some(code),
     }
 }
@@ -146,6 +177,14 @@ fn semantic_failure(code: CloudSyncChat1CorrelationFailureCode) -> CloudSyncChat
     let mut result = failure(code);
     result.semantic_correlation_requested = true;
     result.pcs_lookup_attempted = true;
+    result
+}
+
+fn paged_semantic_failure(
+    code: CloudSyncChat1CorrelationFailureCode,
+) -> CloudSyncChat1CorrelationResult {
+    let mut result = semantic_failure(code);
+    result.paged_correlation_requested = true;
     result
 }
 
@@ -466,6 +505,33 @@ struct SemanticMatchCounts {
     matched_chat1_records: u32,
 }
 
+impl SemanticMatchCounts {
+    fn observe(&mut self, fields: &RouteFieldMatches) {
+        self.decoded_route_records += 1;
+        self.chat_identifier_match_pairs += fields.chat_identifier.count_ones();
+        self.group_id_match_pairs += fields.group_id.count_ones();
+        self.original_group_id_match_pairs += fields.original_group_id.count_ones();
+        self.guid_match_pairs += fields.guid.count_ones();
+        self.semantic_match_pairs += fields.pairs();
+        let combined = fields.combined();
+        self.matched_message_route_mask |= combined;
+        if combined != 0 {
+            self.matched_chat1_records += 1;
+        }
+    }
+}
+
+#[frb(ignore)]
+#[derive(Default)]
+struct PagedSemanticCounts {
+    pages_scanned: u32,
+    changes_scanned: u32,
+    tombstones: u32,
+    terminal_reached: bool,
+    budget_exhausted: bool,
+    semantic: SemanticMatchCounts,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 struct MatchCounts {
     distinct_message_routes: usize,
@@ -499,6 +565,92 @@ fn exact_match_counts(message_routes: &[String], chat1_records: &[String]) -> Ma
     }
 }
 
+async fn scan_chat1_route_pages(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    permit: &rustpush::cloudkit_operation_gate::CloudKitReadAuthenticationPermit<'_>,
+    zone_key: &rustpush::cloudkit::PCSZoneConfig,
+    targets: &[String],
+    hasher: &CloudSemanticIdentifierHasher,
+) -> Result<PagedSemanticCounts, ()> {
+    let mut counts = PagedSemanticCounts::default();
+    let mut continuation_token = None;
+    for page_index in 0..MAX_CHAT1_SCAN_PAGES {
+        let page = cloud_messages_client
+            .sync_chat1_discovery_page_for_read_authentication(
+                permit,
+                continuation_token.take(),
+                Some(MAX_CHAT1_CHANGES_PER_PAGE),
+            )
+            .await
+            .map_err(|_| ())?;
+        if page.changes.len() > MAX_CHAT1_CHANGES_PER_PAGE as usize {
+            return Err(());
+        }
+        let page_complete = page.is_complete();
+        let next_token = page.next_token;
+        counts.pages_scanned += 1;
+        counts.changes_scanned += page.changes.len() as u32;
+        for change in page.changes {
+            match change.kind {
+                CloudMessageRecordKind::Tombstone => {
+                    counts.tombstones += 1;
+                }
+                CloudMessageRecordKind::UnsupportedRecordType => {
+                    if change.record_type.as_deref() != Some(CloudChat::record_type()) {
+                        counts.semantic.other_record_type_records += 1;
+                        continue;
+                    }
+                    counts.semantic.chat_record_type_records += 1;
+                    let Some(raw) = change.encrypted_record else {
+                        counts.semantic.record_decode_failures += 1;
+                        continue;
+                    };
+                    if preflight_record_wire_budget(&raw).is_err() {
+                        counts.semantic.record_decode_failures += 1;
+                        continue;
+                    }
+                    let record = match Record::decode(raw.as_slice()) {
+                        Ok(record) => record,
+                        Err(_) => {
+                            counts.semantic.record_decode_failures += 1;
+                            continue;
+                        }
+                    };
+                    if record_identifier_name(&record) != change.record_name.as_deref()
+                        || record_type_name(&record) != change.record_type.as_deref()
+                    {
+                        counts.semantic.record_decode_failures += 1;
+                        continue;
+                    }
+                    match inspect_chat1_route_fields(&record, zone_key, targets, hasher) {
+                        Ok(fields) => counts.semantic.observe(&fields),
+                        Err(()) => counts.semantic.route_field_decode_failures += 1,
+                    }
+                }
+                CloudMessageRecordKind::EncryptedUpsert
+                | CloudMessageRecordKind::MalformedMetadata => {
+                    counts.semantic.record_decode_failures += 1;
+                }
+            }
+        }
+        if page_complete {
+            counts.terminal_reached = true;
+            break;
+        }
+        if counts.semantic.matched_message_route_mask.count_ones() as usize == targets.len() {
+            break;
+        }
+        continuation_token = next_token;
+        if continuation_token.is_none() {
+            return Err(());
+        }
+        if page_index + 1 == MAX_CHAT1_SCAN_PAGES {
+            counts.budget_exhausted = true;
+        }
+    }
+    Ok(counts)
+}
+
 /// Performs one bounded comparison under the exact active native writer pause.
 /// The default path is cached-only. A separately gated semantic diagnostic may
 /// resolve the existing Chat1 PCS configuration with lookup-only reads, then
@@ -518,13 +670,16 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
 ) -> CloudSyncChat1CorrelationResult {
     let semantic_correlation =
         std::env::var("OPENBUBBLES_INSPECT_CHAT1_SEMANTIC_CORRELATION").as_deref() == Ok("1");
+    let paged_correlation =
+        std::env::var("OPENBUBBLES_INSPECT_CHAT1_PAGED_CORRELATION").as_deref() == Ok("1");
     if std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST").as_deref() != Ok("1")
         || std::env::var("OPENBUBBLES_INSPECT_CHAT1_CORRELATION").as_deref() != Ok("1")
         || !is_cloud_sync_windows_dev_profile(&storage_directory)
     {
         return failure(CloudSyncChat1CorrelationFailureCode::TestHostRequired);
     }
-    if message_generation == 0
+    if (paged_correlation && !semantic_correlation)
+        || message_generation == 0
         || chat1_generation == 0
         || !valid_sources(&message_sources, MAX_MESSAGE_SOURCES)
         || !valid_sources(&chat1_sources, MAX_CHAT1_SOURCES)
@@ -657,18 +812,29 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
                 continue;
             }
         };
-        semantic_counts.decoded_route_records += 1;
-        semantic_counts.chat_identifier_match_pairs += fields.chat_identifier.count_ones();
-        semantic_counts.group_id_match_pairs += fields.group_id.count_ones();
-        semantic_counts.original_group_id_match_pairs += fields.original_group_id.count_ones();
-        semantic_counts.guid_match_pairs += fields.guid.count_ones();
-        semantic_counts.semantic_match_pairs += fields.pairs();
-        let combined = fields.combined();
-        semantic_counts.matched_message_route_mask |= combined;
-        if combined != 0 {
-            semantic_counts.matched_chat1_records += 1;
-        }
+        semantic_counts.observe(&fields);
     }
+
+    let paged_counts = if paged_correlation {
+        match scan_chat1_route_pages(
+            cloud_messages_client,
+            &permit,
+            chat1_zone_key.as_ref().expect("semantic lookup completed"),
+            &message_route_hashes,
+            &hasher,
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(()) => {
+                return paged_semantic_failure(
+                    CloudSyncChat1CorrelationFailureCode::Chat1PagedFetchFailed,
+                )
+            }
+        }
+    } else {
+        PagedSemanticCounts::default()
+    };
 
     let after =
         match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
@@ -710,6 +876,24 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
         semantic_match_pairs: semantic_counts.semantic_match_pairs,
         matched_semantic_message_routes: semantic_counts.matched_message_route_mask.count_ones(),
         matched_semantic_chat1_records: semantic_counts.matched_chat1_records,
+        paged_correlation_requested: paged_correlation,
+        paged_pages_scanned: paged_counts.pages_scanned,
+        paged_changes_scanned: paged_counts.changes_scanned,
+        paged_chat_records: paged_counts.semantic.chat_record_type_records,
+        paged_other_records: paged_counts.semantic.other_record_type_records,
+        paged_tombstones: paged_counts.tombstones,
+        paged_record_decode_failures: paged_counts.semantic.record_decode_failures,
+        paged_route_field_decode_failures: paged_counts
+            .semantic
+            .route_field_decode_failures,
+        paged_semantic_match_pairs: paged_counts.semantic.semantic_match_pairs,
+        paged_matched_message_routes: paged_counts
+            .semantic
+            .matched_message_route_mask
+            .count_ones(),
+        paged_matched_chat1_records: paged_counts.semantic.matched_chat1_records,
+        paged_terminal_reached: paged_counts.terminal_reached,
+        paged_budget_exhausted: paged_counts.budget_exhausted,
         failure_code: None,
     }
 }
@@ -761,6 +945,18 @@ mod tests {
         assert_eq!(fields.pairs(), 3);
         assert_eq!(fields.combined(), 0b0000_0011);
         assert_eq!(fields.combined().count_ones(), 2);
+        let mut counts = SemanticMatchCounts::default();
+        counts.observe(&fields);
+        counts.observe(&RouteFieldMatches {
+            chat_identifier: 0,
+            group_id: 0b0000_0100,
+            original_group_id: 0,
+            guid: 0,
+        });
+        assert_eq!(counts.decoded_route_records, 2);
+        assert_eq!(counts.semantic_match_pairs, 4);
+        assert_eq!(counts.matched_message_route_mask, 0b0000_0111);
+        assert_eq!(counts.matched_chat1_records, 2);
     }
 
     #[test]
@@ -810,6 +1006,12 @@ mod tests {
         assert_eq!(result.semantic_match_pairs, 0);
         assert_eq!(result.matched_semantic_message_routes, 0);
         assert_eq!(result.matched_semantic_chat1_records, 0);
+        assert!(!result.paged_correlation_requested);
+        assert_eq!(result.paged_pages_scanned, 0);
+        assert_eq!(result.paged_changes_scanned, 0);
+        assert_eq!(result.paged_semantic_match_pairs, 0);
+        assert!(!result.paged_terminal_reached);
+        assert!(!result.paged_budget_exhausted);
         assert_eq!(
             result.failure_code,
             Some(CloudSyncChat1CorrelationFailureCode::Chat1SourceMismatch)
@@ -828,6 +1030,28 @@ mod tests {
         assert_eq!(
             result.failure_code,
             Some(CloudSyncChat1CorrelationFailureCode::Chat1PcsLookupFailed)
+        );
+    }
+
+    #[test]
+    fn paged_failure_marks_the_explicit_lane_without_partial_observation() {
+        let result = paged_semantic_failure(
+            CloudSyncChat1CorrelationFailureCode::Chat1PagedFetchFailed,
+        );
+        assert!(!result.completed);
+        assert!(result.semantic_correlation_requested);
+        assert!(result.pcs_lookup_attempted);
+        assert!(result.paged_correlation_requested);
+        assert_eq!(result.paged_pages_scanned, 0);
+        assert_eq!(result.paged_changes_scanned, 0);
+        assert_eq!(result.paged_semantic_match_pairs, 0);
+        assert_eq!(result.paged_matched_message_routes, 0);
+        assert_eq!(result.paged_matched_chat1_records, 0);
+        assert!(!result.paged_terminal_reached);
+        assert!(!result.paged_budget_exhausted);
+        assert_eq!(
+            result.failure_code,
+            Some(CloudSyncChat1CorrelationFailureCode::Chat1PagedFetchFailed)
         );
     }
 }
