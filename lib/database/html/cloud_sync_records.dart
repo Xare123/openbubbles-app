@@ -3,6 +3,9 @@
 /// Cloud Sync V2 is unavailable on web. Keeping these types allows the shared
 /// database exports to compile without creating a web persistence path.
 const int cloudSyncSchemaVersion = 2;
+const int cloudInboxServerModifiedAtLegacyAppleEpochFormat = 0;
+const int cloudInboxServerModifiedAtUnixEpochFormat = 1;
+const int cloudInboxAppleEpochOffsetMillis = 978307200000;
 
 class CloudSyncLocalMutationIntentEntity {}
 
@@ -11,6 +14,12 @@ class CloudSyncLocalSendIntentEntity {}
 class CloudSyncCheckpointEntity {}
 
 class CloudInboxChangeEntity {}
+
+int? cloudInboxCanonicalServerModifiedAtMillis(CloudInboxChangeEntity entity) =>
+    throw UnsupportedError('Cloud Sync V2 is unavailable on web');
+
+DateTime? cloudInboxCanonicalServerModifiedAt(CloudInboxChangeEntity entity) =>
+    throw UnsupportedError('Cloud Sync V2 is unavailable on web');
 
 class CloudSyncLeaseEntity {}
 

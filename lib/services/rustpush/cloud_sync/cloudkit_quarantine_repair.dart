@@ -445,12 +445,7 @@ final class CloudKitV2QuarantineRepairGateway {
         encryptedPayloadReference: row.encryptedPayloadRef,
         payloadSha256: row.payloadSha256,
         isTombstone: row.isTombstone,
-        serverModifiedAt: row.serverModifiedAtMs == 0
-            ? null
-            : DateTime.fromMillisecondsSinceEpoch(
-                row.serverModifiedAtMs,
-                isUtc: true,
-              ),
+        serverModifiedAt: cloudInboxCanonicalServerModifiedAt(row),
       ),
       status: status,
       attemptCount: row.retryCount,
@@ -1966,8 +1961,8 @@ final class CloudKitV2QuarantineRepairGateway {
         inbox.encryptedPayloadRef != change.encryptedPayloadReference ||
         inbox.payloadSha256 != change.payloadSha256 ||
         inbox.isTombstone != change.isTombstone ||
-        inbox.serverModifiedAtMs !=
-            (change.serverModifiedAt?.toUtc().millisecondsSinceEpoch ?? 0) ||
+        cloudInboxCanonicalServerModifiedAtMillis(inbox) !=
+            change.serverModifiedAt?.toUtc().millisecondsSinceEpoch ||
         inbox.scopeKey != _RepairContext._scopeKey(expected.scope) ||
         inbox.accountFingerprint != expected.scope.accountFingerprint ||
         inbox.zone != expected.scope.zone ||
@@ -2170,7 +2165,7 @@ final class CloudKitV2QuarantineRepairGateway {
 final class _CloudKitV2RepairEvidenceDigest {
   const _CloudKitV2RepairEvidenceDigest._();
 
-  static const version = 'cloudkit-quarantine-repair-evidence-v2';
+  static const version = 'cloudkit-quarantine-repair-evidence-v3';
 
   static String compute({
     required _RepairContext context,
@@ -2273,6 +2268,10 @@ final class _CloudKitV2RepairEvidenceDigest {
       ..integer('inbox.retryCount', value.retryCount)
       ..integer('inbox.nextEligibleAtMs', value.nextEligibleAtMs)
       ..integer('inbox.serverModifiedAtMs', value.serverModifiedAtMs)
+      ..nullableInteger(
+        'inbox.serverModifiedAtFormatVersion',
+        value.serverModifiedAtFormatVersion,
+      )
       ..integer('inbox.createdAtMs', value.createdAtMs)
       ..integer('inbox.updatedAtMs', value.updatedAtMs)
       ..integer('inbox.completedAtMs', value.completedAtMs);

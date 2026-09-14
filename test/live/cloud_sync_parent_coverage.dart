@@ -102,12 +102,7 @@ Future<Map<String, Object?>> observeCachedParentCoverage({
         protectedSystemFieldsReference: row.protectedSystemFieldsRef,
         encryptedPayloadReference: row.encryptedPayloadRef,
         payloadSha256: row.payloadSha256,
-        serverModifiedAt: row.serverModifiedAtMs == 0
-            ? null
-            : DateTime.fromMillisecondsSinceEpoch(
-                row.serverModifiedAtMs,
-                isUtc: true,
-              ),
+        serverModifiedAt: cloudInboxCanonicalServerModifiedAt(row),
       ),
     ),
   );

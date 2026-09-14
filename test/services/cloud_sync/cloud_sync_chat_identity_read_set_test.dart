@@ -342,6 +342,39 @@ void main() {
     },
   );
 
+  test('copies a legacy source timestamp in canonical Unix form without rewrite', () {
+    const legacyAppleMillis = 812345678901;
+    final durable = saved()
+      ..serverModifiedAtMs = legacyAppleMillis
+      ..serverModifiedAtFormatVersion =
+          cloudInboxServerModifiedAtLegacyAppleEpochFormat;
+    store.box<CloudInboxChangeEntity>().put(durable);
+
+    final source =
+        CloudSyncChatIdentityReadSet.capture(store, scope).retainedSaves.single;
+    expect(
+      source.serverModifiedAtMs,
+      legacyAppleMillis + cloudInboxAppleEpochOffsetMillis,
+    );
+    expect(saved().serverModifiedAtMs, legacyAppleMillis);
+    expect(
+      saved().serverModifiedAtFormatVersion,
+      cloudInboxServerModifiedAtLegacyAppleEpochFormat,
+    );
+  });
+
+  test('rejects an unknown source timestamp format before native observation', () {
+    store.box<CloudInboxChangeEntity>().put(
+      saved()
+        ..serverModifiedAtMs = 1
+        ..serverModifiedAtFormatVersion = 99,
+    );
+    expect(
+      () => CloudSyncChatIdentityReadSet.capture(store, scope),
+      throwsStateError,
+    );
+  });
+
   for (final mutation in <String, void Function(CloudInboxChangeEntity)>{
     'etag': (r) => r.etagHash = hash(999),
     'record id': (r) => r.serverRecordIdHash = hash(999),

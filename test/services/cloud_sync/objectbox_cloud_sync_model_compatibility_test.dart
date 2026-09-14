@@ -8,51 +8,191 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:objectbox/internal.dart' as obx;
 
 void main() {
-  test('mutation journal upgrade preserves an actual entity-34 store after reopen', () async {
-    final directory = await Directory.systemTemp.createTemp('cloud-sync-mutation-upgrade-');
-    addTearDown(() => directory.delete(recursive: true));
-    final current = getObjectBoxModel();
-    final previousMap = current.model.toMap();
-    (previousMap['entities'] as List).removeWhere(
-      (entity) => entity['name'] == 'CloudSyncLocalMutationIntentEntity',
+  test('inbox timestamp formats normalize explicitly and fail closed', () {
+    final row = CloudInboxChangeEntity(
+      changeKey: 'timestamp-helper-change',
+      changeIdHash: 'A' * 43,
+      scopeKey: 'timestamp-helper-scope',
+      accountFingerprint: 'B' * 43,
+      zone: 'messageManateeZone',
+      serverRecordIdHash: 'C' * 43,
+      changeType: 'save',
+      batchId: 'timestamp-helper-batch',
+      fetchSequence: 1,
+      serverModifiedAtMs: 1700000000123,
+      createdAtMs: 1000,
+      updatedAtMs: 1000,
     );
-    previousMap['lastEntityId'] = '34:2734237264100580081';
-    previousMap['lastIndexId'] = '97:2075310387007054598';
-    final previous = obx.ModelDefinition(
-      obx.ModelInfo.fromMap(previousMap),
-      Map.of(current.bindings)..remove(CloudSyncLocalMutationIntentEntity),
+    expect(cloudInboxCanonicalServerModifiedAtMillis(row), 1700000000123);
+
+    row
+      ..serverModifiedAtMs = 800000000123
+      ..serverModifiedAtFormatVersion =
+          cloudInboxServerModifiedAtLegacyAppleEpochFormat;
+    expect(
+      cloudInboxCanonicalServerModifiedAtMillis(row),
+      800000000123 + cloudInboxAppleEpochOffsetMillis,
     );
-    final oldStore = Store(previous, directory: directory.path);
-    late int chatId;
-    late int messageId;
-    late int intentId;
-    try {
-      final chat = Chat(guid: 'iMessage;-;migration@example.invalid');
-      chatId = oldStore.box<Chat>().put(chat);
-      final message = Message(guid: 'old-guid', text: 'retained text', isFromMe: true)
-        ..chat.target = chat;
-      messageId = oldStore.box<Message>().put(message);
-      intentId = oldStore.box<CloudSyncLocalSendIntentEntity>().put(
-        CloudSyncLocalSendIntentEntity(
-          intentKey: 'synthetic-original-send', accountFingerprint: 'A' * 43,
-          writerEpoch: 2, localMessageId: messageId,
-          sourceSha256: 'b' * 64, messageGuidHash: 'c' * 64,
-          state: 0, createdAtMs: 1000, updatedAtMs: 1000,
-        ),
-      );
-    } finally { oldStore.close(); }
-    for (var pass = 0; pass < 2; pass++) {
-      final upgraded = await openStore(directory: directory.path);
-      try {
-        final message = upgraded.box<Message>().get(messageId)!;
-        expect(message.text, 'retained text');
-        expect(message.chat.targetId, chatId);
-        expect(upgraded.box<CloudSyncLocalSendIntentEntity>().get(intentId)!.intentKey,
-            'synthetic-original-send');
-        expect(upgraded.box<CloudSyncLocalMutationIntentEntity>().count(), 0);
-      } finally { upgraded.close(); }
-    }
+
+    row.serverModifiedAtFormatVersion = 99;
+    expect(
+      () => cloudInboxCanonicalServerModifiedAtMillis(row),
+      throwsStateError,
+    );
+
+    row
+      ..serverModifiedAtMs = 9223372036854775807
+      ..serverModifiedAtFormatVersion =
+          cloudInboxServerModifiedAtLegacyAppleEpochFormat;
+    expect(
+      () => cloudInboxCanonicalServerModifiedAtMillis(row),
+      throwsStateError,
+    );
+
+    row.serverModifiedAtMs = 0;
+    expect(cloudInboxCanonicalServerModifiedAtMillis(row), isNull);
   });
+
+  test(
+    'inbox timestamp format upgrade preserves legacy rows without rewriting control state',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'cloud-sync-inbox-timestamp-upgrade-',
+      );
+      addTearDown(() async {
+        if (directory.existsSync()) await directory.delete(recursive: true);
+      });
+      final current = getObjectBoxModel();
+      final previousMap = current.model.toMap();
+      final inboxModel = (previousMap['entities'] as List)
+          .cast<Map>()
+          .singleWhere((entity) => entity['name'] == 'CloudInboxChangeEntity');
+      (inboxModel['properties'] as List).removeWhere(
+        (property) => property['name'] == 'serverModifiedAtFormatVersion',
+      );
+      inboxModel['lastPropertyId'] = '27:1526171191000868532';
+      final previous = obx.ModelDefinition(
+        obx.ModelInfo.fromMap(previousMap),
+        current.bindings,
+      );
+      const legacyAppleMillis = 800000000123;
+      final oldStore = Store(previous, directory: directory.path);
+      late final int rowId;
+      try {
+        rowId = oldStore.box<CloudInboxChangeEntity>().put(
+          CloudInboxChangeEntity(
+            changeKey: 'legacy-timestamp-change',
+            changeIdHash: 'A' * 43,
+            scopeKey: 'legacy-timestamp-scope',
+            accountFingerprint: 'B' * 43,
+            zone: 'messageManateeZone',
+            serverRecordIdHash: 'C' * 43,
+            changeType: 'save',
+            batchId: 'legacy-timestamp-batch',
+            generation: 7,
+            fetchSequence: 19,
+            status: CloudInboxStatus.applied.index,
+            retryCount: 2,
+            serverModifiedAtMs: legacyAppleMillis,
+            serverModifiedAtFormatVersion: null,
+            createdAtMs: 1000,
+            updatedAtMs: 2000,
+            completedAtMs: 3000,
+          ),
+        );
+      } finally {
+        oldStore.close();
+      }
+
+      for (var restart = 0; restart < 2; restart++) {
+        final upgraded = await openStore(directory: directory.path);
+        try {
+          final row = upgraded.box<CloudInboxChangeEntity>().get(rowId)!;
+          expect(row.serverModifiedAtFormatVersion, isNull);
+          expect(row.serverModifiedAtMs, legacyAppleMillis);
+          expect(
+            cloudInboxCanonicalServerModifiedAtMillis(row),
+            legacyAppleMillis + cloudInboxAppleEpochOffsetMillis,
+          );
+          expect(row.generation, 7);
+          expect(row.fetchSequence, 19);
+          expect(row.status, CloudInboxStatus.applied.index);
+          expect(row.retryCount, 2);
+          expect(row.completedAtMs, 3000);
+        } finally {
+          upgraded.close();
+        }
+      }
+    },
+  );
+
+  test(
+    'mutation journal upgrade preserves an actual entity-34 store after reopen',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'cloud-sync-mutation-upgrade-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final current = getObjectBoxModel();
+      final previousMap = current.model.toMap();
+      (previousMap['entities'] as List).removeWhere(
+        (entity) => entity['name'] == 'CloudSyncLocalMutationIntentEntity',
+      );
+      previousMap['lastEntityId'] = '34:2734237264100580081';
+      previousMap['lastIndexId'] = '97:2075310387007054598';
+      final previous = obx.ModelDefinition(
+        obx.ModelInfo.fromMap(previousMap),
+        Map.of(current.bindings)..remove(CloudSyncLocalMutationIntentEntity),
+      );
+      final oldStore = Store(previous, directory: directory.path);
+      late int chatId;
+      late int messageId;
+      late int intentId;
+      try {
+        final chat = Chat(guid: 'iMessage;-;migration@example.invalid');
+        chatId = oldStore.box<Chat>().put(chat);
+        final message = Message(
+          guid: 'old-guid',
+          text: 'retained text',
+          isFromMe: true,
+        )..chat.target = chat;
+        messageId = oldStore.box<Message>().put(message);
+        intentId = oldStore.box<CloudSyncLocalSendIntentEntity>().put(
+          CloudSyncLocalSendIntentEntity(
+            intentKey: 'synthetic-original-send',
+            accountFingerprint: 'A' * 43,
+            writerEpoch: 2,
+            localMessageId: messageId,
+            sourceSha256: 'b' * 64,
+            messageGuidHash: 'c' * 64,
+            state: 0,
+            createdAtMs: 1000,
+            updatedAtMs: 1000,
+          ),
+        );
+      } finally {
+        oldStore.close();
+      }
+      for (var pass = 0; pass < 2; pass++) {
+        final upgraded = await openStore(directory: directory.path);
+        try {
+          final message = upgraded.box<Message>().get(messageId)!;
+          expect(message.text, 'retained text');
+          expect(message.chat.targetId, chatId);
+          expect(
+            upgraded
+                .box<CloudSyncLocalSendIntentEntity>()
+                .get(intentId)!
+                .intentKey,
+            'synthetic-original-send',
+          );
+          expect(upgraded.box<CloudSyncLocalMutationIntentEntity>().count(), 0);
+        } finally {
+          upgraded.close();
+        }
+      }
+    },
+  );
 
   test(
     'Outbox property26 database upgrades to nullable localChatOrigin without data loss',
@@ -763,10 +903,18 @@ void main() {
       }
 
       final inboxProperties = propertiesFor('CloudInboxChangeEntity');
+      final inboxEntity = (model['entities'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((entity) => entity['name'] == 'CloudInboxChangeEntity');
+      expect(inboxEntity['lastPropertyId'], '28:1894058837921571294');
       expect(inboxProperties['generation']?['id'], '21:8085608731784905006');
       expect(
         inboxProperties['generation']?['indexId'],
         '81:3830688548090503170',
+      );
+      expect(
+        inboxProperties['serverModifiedAtFormatVersion']?['id'],
+        '28:1894058837921571294',
       );
 
       final replayProperties = propertiesFor('CloudSemanticReplayEntity');

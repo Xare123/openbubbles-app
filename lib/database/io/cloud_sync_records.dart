@@ -8,6 +8,15 @@ import 'package:objectbox/objectbox.dart';
 /// written to ObjectBox in plaintext.
 const int cloudSyncSchemaVersion = 2;
 
+/// Legacy builds persisted CloudKit system-field milliseconds relative to
+/// Apple's 2001 reference date. New rows persist Unix-epoch milliseconds.
+/// Missing ObjectBox integer properties deserialize to zero, so version zero
+/// is intentionally reserved for the legacy representation.
+const int cloudInboxServerModifiedAtLegacyAppleEpochFormat = 0;
+const int cloudInboxServerModifiedAtUnixEpochFormat = 1;
+const int cloudInboxAppleEpochOffsetMillis = 978307200000;
+const int _cloudInboxInt64Max = 9223372036854775807;
+
 /// Exact edit/unsend intent. Separate from the initial-create journal so a
 /// mutation can never be uploaded as a newly created message. Metadata only;
 /// replacement text and original wire remain in the native protected source.
@@ -299,6 +308,12 @@ class CloudInboxChangeEntity {
   int retryCount;
   int nextEligibleAtMs;
   int serverModifiedAtMs;
+
+  /// See [cloudInboxServerModifiedAtLegacyAppleEpochFormat] and
+  /// [cloudInboxServerModifiedAtUnixEpochFormat]. A null value is the durable
+  /// representation of a row written before this property existed.
+  int? serverModifiedAtFormatVersion;
+
   int createdAtMs;
   int updatedAtMs;
   int completedAtMs;
@@ -328,10 +343,34 @@ class CloudInboxChangeEntity {
     this.retryCount = 0,
     this.nextEligibleAtMs = 0,
     this.serverModifiedAtMs = 0,
+    this.serverModifiedAtFormatVersion =
+        cloudInboxServerModifiedAtUnixEpochFormat,
     required this.createdAtMs,
     required this.updatedAtMs,
     this.completedAtMs = 0,
   });
+}
+
+/// Returns the source timestamp in Unix-epoch milliseconds without mutating
+/// the row. Unknown formats and int64 overflow fail closed.
+int? cloudInboxCanonicalServerModifiedAtMillis(CloudInboxChangeEntity entity) {
+  final stored = entity.serverModifiedAtMs;
+  if (stored == 0) return null;
+  return switch (entity.serverModifiedAtFormatVersion) {
+    null || cloudInboxServerModifiedAtLegacyAppleEpochFormat =>
+      stored > _cloudInboxInt64Max - cloudInboxAppleEpochOffsetMillis
+          ? throw StateError('cloud_inbox_server_modified_at_overflow')
+          : stored + cloudInboxAppleEpochOffsetMillis,
+    cloudInboxServerModifiedAtUnixEpochFormat => stored,
+    _ => throw StateError('cloud_inbox_server_modified_at_format_invalid'),
+  };
+}
+
+DateTime? cloudInboxCanonicalServerModifiedAt(CloudInboxChangeEntity entity) {
+  final milliseconds = cloudInboxCanonicalServerModifiedAtMillis(entity);
+  return milliseconds == null
+      ? null
+      : DateTime.fromMillisecondsSinceEpoch(milliseconds, isUtc: true);
 }
 
 @Entity()

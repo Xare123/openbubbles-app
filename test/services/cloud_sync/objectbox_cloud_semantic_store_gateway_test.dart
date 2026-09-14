@@ -897,6 +897,106 @@ void main() {
     _expectNoSemanticMutation(objectBox, adapter);
   });
 
+  test(
+    'legacy Apple-epoch inbox timestamp binds to canonical source without rewrite',
+    () async {
+      final canonicalMillis = cloudInboxAppleEpochOffsetMillis + 812345678901;
+      final entry = _entry(
+        scope: scope,
+        serverModifiedAt: DateTime.fromMillisecondsSinceEpoch(
+          canonicalMillis,
+          isUtc: true,
+        ),
+      );
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final row = inboxBox.getAll().single
+        ..serverModifiedAtMs =
+            canonicalMillis - cloudInboxAppleEpochOffsetMillis
+        ..serverModifiedAtFormatVersion =
+            cloudInboxServerModifiedAtLegacyAppleEpochFormat;
+      inboxBox.put(row);
+
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      );
+
+      final applied = inboxBox.get(row.id)!;
+      expect(applied.status, CloudInboxStatus.applied.index);
+      expect(
+        applied.serverModifiedAtMs,
+        canonicalMillis - cloudInboxAppleEpochOffsetMillis,
+      );
+      expect(
+        applied.serverModifiedAtFormatVersion,
+        cloudInboxServerModifiedAtLegacyAppleEpochFormat,
+      );
+      expect(
+        cloudInboxCanonicalServerModifiedAtMillis(applied),
+        canonicalMillis,
+      );
+    },
+  );
+
+  test('unknown inbox timestamp format fails closed before mutation', () async {
+    final entry = _entry(
+      scope: scope,
+      serverModifiedAt: DateTime.utc(2026, 9, 14, 12),
+    );
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+    final row = inboxBox.getAll().single..serverModifiedAtFormatVersion = 99;
+    inboxBox.put(row);
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      ),
+      throwsA(_failureCode('semantic_inbox_timestamp_format_invalid')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
+  test('canonical timestamp mismatch fails the exact inbox fence', () async {
+    final entry = _entry(
+      scope: scope,
+      serverModifiedAt: DateTime.utc(2026, 9, 14, 12),
+    );
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+    final row = inboxBox.getAll().single..serverModifiedAtMs += 1;
+    inboxBox.put(row);
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      ),
+      throwsA(_failureCode('semantic_inbox_fence_lost')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
   test('captured transaction is inactive after callback returns', () async {
     final entry = _entry(scope: scope);
     _seedDurableFence(
@@ -5119,6 +5219,9 @@ void _putPendingInboxEntry(
       fetchSequence: entry.sequence,
       status: CloudInboxStatus.pending.index,
       isTombstone: change.isTombstone,
+      serverModifiedAtMs:
+          change.serverModifiedAt?.toUtc().millisecondsSinceEpoch ?? 0,
+      serverModifiedAtFormatVersion: cloudInboxServerModifiedAtUnixEpochFormat,
       createdAtMs: entry.createdAt.millisecondsSinceEpoch,
       updatedAtMs: now.millisecondsSinceEpoch,
     ),
@@ -5151,6 +5254,7 @@ CloudInboxChangeEntity _copyInbox(
     retryCount: source.retryCount,
     nextEligibleAtMs: source.nextEligibleAtMs,
     serverModifiedAtMs: source.serverModifiedAtMs,
+    serverModifiedAtFormatVersion: source.serverModifiedAtFormatVersion,
     createdAtMs: source.createdAtMs,
     updatedAtMs: source.updatedAtMs,
     completedAtMs: source.completedAtMs,

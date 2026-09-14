@@ -284,6 +284,8 @@ class ObjectBoxCloudSyncStore
             preflightCode: change.preflightCode?.name,
             serverModifiedAtMs:
                 change.serverModifiedAt?.millisecondsSinceEpoch ?? 0,
+            serverModifiedAtFormatVersion:
+                cloudInboxServerModifiedAtUnixEpochFormat,
             createdAtMs: transactionNowMs,
             updatedAtMs: transactionNowMs,
           ),
@@ -513,6 +515,8 @@ class ObjectBoxCloudSyncStore
             preflightCode: change.preflightCode?.name,
             serverModifiedAtMs:
                 change.serverModifiedAt?.millisecondsSinceEpoch ?? 0,
+            serverModifiedAtFormatVersion:
+                cloudInboxServerModifiedAtUnixEpochFormat,
             createdAtMs: transactionNowMs,
             updatedAtMs: transactionNowMs,
           ),
@@ -868,7 +872,7 @@ class ObjectBoxCloudSyncStore
       );
       scanPaged(
         (_store.box<CloudSyncLocalMutationIntentEntity>().query(
-              CloudSyncLocalMutationIntentEntity_.state.notEquals(5),
+          CloudSyncLocalMutationIntentEntity_.state.notEquals(5),
             )
               ..order(CloudSyncLocalMutationIntentEntity_.id))
             .build(),
@@ -4502,7 +4506,7 @@ class ObjectBoxCloudSyncStore
         encryptedPayloadReference: entity.encryptedPayloadRef,
         payloadSha256: entity.payloadSha256,
         isTombstone: entity.isTombstone,
-        serverModifiedAt: _dateOrNull(entity.serverModifiedAtMs),
+        serverModifiedAt: cloudInboxCanonicalServerModifiedAt(entity),
         preflightFailure: _failureOrNull(
           entity.preflightCategory ??
               (entity.retryCount == 0 ? entity.failureCategory : null),

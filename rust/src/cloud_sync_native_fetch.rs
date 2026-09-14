@@ -79,6 +79,7 @@ const CHECKPOINT_MAGIC: &[u8] = b"OBCS2-NATIVE-CHECKPOINT";
 const RECORD_IDENTITY_MAGIC: &[u8] = b"OBCS2-NATIVE-RECORD-ID";
 const RESET_PROOF_MAGIC: &[u8] = b"OBCS2-NATIVE-RESET-PROOF";
 const FORMAT_VERSION: u16 = 1;
+const APPLE_EPOCH_OFFSET_MILLIS: i64 = 978_307_200_000;
 
 static PROTECTED_STORE_OPERATION_LOCK: Mutex<()> = Mutex::new(());
 
@@ -3121,7 +3122,9 @@ fn seconds_to_millis(value: Option<f64>) -> Option<Option<i64>> {
             if millis < i64::MIN as f64 || millis > i64::MAX as f64 {
                 return None;
             }
-            Some(Some(millis.round() as i64))
+            Some(Some(
+                (millis.round() as i64).checked_add(APPLE_EPOCH_OFFSET_MILLIS)?,
+            ))
         }
         None => Some(None),
     }
@@ -3386,15 +3389,7 @@ fn metadata_bytes(change: &CloudMessageRecordPageChange) -> Option<usize> {
 }
 
 fn server_modified_at_millis(change: &CloudMessageRecordPageChange) -> Option<i64> {
-    let seconds = change.system_fields.as_ref()?.modified_at?;
-    if !seconds.is_finite() {
-        return None;
-    }
-    let millis = seconds * 1_000.0;
-    if millis < i64::MIN as f64 || millis > i64::MAX as f64 {
-        return None;
-    }
-    Some(millis.round() as i64)
+    seconds_to_millis(change.system_fields.as_ref()?.modified_at).flatten()
 }
 
 fn sha256_digest(value: &[u8]) -> CloudCanonicalDigest {
@@ -5792,6 +5787,33 @@ mod tests {
                 retry_after: Some(Duration::from_secs(MAX_RETRY_AFTER_SECONDS + 1)),
             }),
             Some(MAX_RETRY_AFTER_SECONDS),
+        );
+    }
+
+    #[test]
+    fn apple_system_field_seconds_are_canonical_unix_milliseconds() {
+        assert_eq!(seconds_to_millis(None), Some(None));
+        assert_eq!(
+            seconds_to_millis(Some(0.0)),
+            Some(Some(APPLE_EPOCH_OFFSET_MILLIS))
+        );
+        assert_eq!(
+            seconds_to_millis(Some(1.234_6)),
+            Some(Some(APPLE_EPOCH_OFFSET_MILLIS + 1_235))
+        );
+        assert_eq!(
+            seconds_to_millis(Some(-1.25)),
+            Some(Some(APPLE_EPOCH_OFFSET_MILLIS - 1_250))
+        );
+        assert_eq!(seconds_to_millis(Some(f64::NAN)), None);
+        assert_eq!(seconds_to_millis(Some(f64::INFINITY)), None);
+        assert_eq!(seconds_to_millis(Some(i64::MAX as f64 / 1_000.0)), None);
+
+        let mut source = change("epoch-source", Vec::new());
+        source.system_fields.as_mut().unwrap().modified_at = Some(2.0);
+        assert_eq!(
+            server_modified_at_millis(&source),
+            Some(APPLE_EPOCH_OFFSET_MILLIS + 2_000)
         );
     }
 

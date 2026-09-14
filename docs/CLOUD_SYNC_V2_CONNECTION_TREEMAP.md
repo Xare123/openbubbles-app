@@ -4,7 +4,7 @@ title: Cloud Sync V2 Current Connection Treemap
 description: Current source of truth for CloudKit V2 architecture, safety boundaries, qualification state, and next gates.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-13
+timestamp: 2026-09-14
 ---
 
 # Cloud Sync V2 current connection treemap
@@ -83,6 +83,13 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Bounded paged Chat1 result | Exact source and bindings `a951e1251c658e81e9ef6533e5b3e8874b28bae7` passed Windows 34804132572 and full GCE Canary 34804133857 through pilot `629df1f5d70b2c63c51212b362b05d569df2c3d4`; signing and teardown passed. The verified copied ARM64 DLL was separately signed, SHA256 `9220F65671F4DBF385BF065C47D35139904DA9FA6BC3A748697BF7A3801832AA`. A mutex-held live walk reached terminal state after four pages / 167 changes: 165 valid `chatEncryptedv2` records, two tombstones, no other records or decode failures, and zero exact or raw semantic matches for all eight target routes. No content crossed the bridge and durable state remained unchanged. This closes the entire current Chat1-zone raw-equality hypothesis, not Chat1 relevance or remote existence. |
 | Normalized comparison result | Exact source `a2f72eff9edce5cc377ca62c472e5f8bc3aa5c4d` passed full GCE 34807869942 and Windows fast loop 34807865131. Its mutex-held live retry reached the same terminal four-page / 167-change Chat1 state and found zero normalized `cid`, `gid`, `ogid` or `guid` matches for the eight routes, with no record/field decode failures, content exposure or durable mutation. This closes only those equality families for the current zone. |
 | Parent-field live result / current blocker | Exact source and bindings `cb5e81410f135f969fc15cffee957ad79ab63abd` passed Windows fast loop 34843955881. Artifact SHA256 `DCEFCAE4A829914D5715C6324F21489DBE53EFE7605B3C57E1A2C2C2E7B8B88B`; the imported ARM64 runtime was signature-checked before launch. Live run `61909185c0e0f5736b8e5c44569236bf` reached terminal Chat1 state in four pages / 167 changes: 165 Chat records and two tombstones, with account binding, network read, no content exposure and unchanged durable state. All 165 records failed only two diagnostic assumptions: 18 encrypted empty `lah` values and 147 `ptcpts` lists whose outer false flag is omitted. The production preflight already accepts the omitted flag, and canonical conversion treats empty `lah` as non-authoritative. Repair those two diagnostic-only shape assumptions without loosening other route fields or admission. |
+| Current compatibility candidate | `908ccc0040ed4bb60d2611db945e0b304eff639c` accepts encrypted empty `lah` as absent for that field only and mirrors the production participant-flag contract: outer rejects only explicit true, entries reject only explicit false. All type, payload, key, decrypt, cap, plist and participant validation remains. GCE app-Rust 34849044238 passed the full Rust library suite and coherent bridge generation/compilation; its only failing gate was the expected one-line generated private-helper comment drift, now imported exactly. Cleanup passed, zero GCE instances remain, and the repository self-hosted runner inventory is empty. |
+| Exact Windows qualification | Windows ARM64 run 34849043947 passed in 23m57s for exact source `908ccc004` and pilot `629df1f5d70b2c63c51212b362b05d569df2c3d4`: 666 Dart tests, 51 packaged native codec tests, launcher contracts and ARM64/provenance checks. Artifact 10351037466 was hash-verified (`6647710ec763084e741541a7cfd9f6a2a272d1395bc7afcf698280a0f96498d6`), imported into the clean detached `chat1-live-a93671` runtime and locally signature-checked. The receipt binds the installed app/DLL to the same source and sidecar; pinned ObjectBox bytes remained unchanged. |
+| Repaired Chat1 live result / current blocker | Live launch `dd0cf181df5b3751342e8a2f78dc07ad` reached terminal state in four pages / 167 changes: 165 decoded Chat records, two tombstones, zero record or route-field failures, no content exposure and unchanged durable state. All raw/normalized route, group and legacy equality families remained zero. The only positive relationship was sender membership in Chat1 participant lists: 76 normalized pairs, three of five sender targets, spanning 31 Chat records. This proves a useful edge but is many-to-many and cannot authorize admission. Next measure exact participant-set, route style, service and temporal/ownership corroboration, then require one uniquely proven parent or retain the message. |
+| Standalone parent-correlation boundary | Windows ARM64 run 34873675005 qualified exact source `df8c75bceed50622ddbb1f7cd3f717854034c9e1`; its three-file native-test-host bundle passed provenance, ARM64, ObjectBox and 51-codec verification. GCE 34873674805 passed all 673 Rust tests and clean teardown; its overall failure was only the exact one-line generated private-helper comment drift, now imported. Two standalone live attempts advanced past protected-manifest identity validation but failed before Chat1 fetch at `chat1_standalone_read_authentication_failed`; both preserved all 212 Cloud Sync files and 155,026,542 bytes byte-for-byte. The test host had restored state but omitted production's explicit read-authentication refresh before writer pause. Candidate `fdd2beb595a4599c8783fbc8be5ed3e286415e69` adds refresh-before-pause ordering, bounded safe failure markers and a cross-platform source-order regression test. Windows 34877349884 and GCE 34877349816 must pass before another live attempt. |
+| Exact relationship-probe qualification | Source `b39c785b36579586843616cbbac5bd639f4fb85f` passed GCE app-Rust 34889517605 with reproducible bindings, the full selected Rust suite and clean ephemeral-runner teardown; bindings workflow 34889470902 also passed Rust, rustpush, Anisette and protector-harness checks. Windows ARM64 run 34889520601 passed in 24m53s and produced artifact 10366986676, archive digest `805fe7e50bd858f1a56c2812f4cf4f3aa71af245bd8ae87d864dc76080563da3`. Parent independently verified its three ARM64 binaries, source/pilot provenance and pinned ObjectBox library, then signed only the executable and OpenBubbles DLL with the existing local development certificate. |
+| Exact b39 live result | The standalone relationship probe authenticated, scanned 2,048 protected Message anchors, decoded 1,622, skipped 426 safely, and reached the terminal Chat1 page after four pages / 167 changes: 165 Chat records plus two tombstones. It exposed no plaintext or raw identifier and left the 212-file, 155,026,542-byte profile byte-for-byte unchanged. Five target messages had zero Chat1 candidates. Three incoming bare-route messages each retained the same two candidates (Chat1 indexes 79 and 164); sender membership, service/style and `dcId`-to-`lah` corroborated both equally, while route/group/last-seen relationships matched neither. A second no-build analysis proved Chat1 participants exclude the local `dcId`: only one remote participant was observed for either candidate, so the two-versus-three-member difference cannot safely select a parent. |
+| Timestamp epoch compatibility candidate | The local candidate converts native CloudKit `Date.time` from Apple-reference seconds to Unix milliseconds at both native decode paths, removes the b39 diagnostic's compensating double conversion, and bumps the attachment cache manifest to v2. ObjectBox property 28 stores a nullable timestamp-format marker: absent/0 remains a legacy Apple-epoch row and 1 is canonical Unix. Reads normalize through one checked helper without rewriting legacy rows, checkpoints, generations, sequences or cursors; unknown formats and overflow fail closed. Focused ObjectBox upgrade/store/gateway tests (221), downstream repair/identity/recovery tests (180), production-adapter/harness/materialization tests (72), and four native Rust epoch/cache tests pass locally. Exact-source GCE, Windows live replay and Pixel upgrade qualification remain. |
 
 Prior tables and obsolete next steps were preserved verbatim in the September 12
 consolidation entry of the [investigation log](cloud_sync_v2/history/CLOUD_SYNC_V2_INVESTIGATION_LOG_FROM_2026-09-07.md).
@@ -394,30 +401,36 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Align the Chat1 parent-field diagnostic with two live Apple wire shapes on
-   exact source `cb5e81410`: encrypted empty `lah` means absent for that field
-   only, and omitted `ptcpts` encryption flags follow the already-qualified
-   production preflight contract. Preserve strict validation for every other
-   route field, all caps, aggregate-only output and the append-only matrix schema.
-   Compile/test, generate coherent bindings if required, then produce and import
-   one matching signed ARM64 Windows harness.
-2. Repeat the same mutex-held eight-route terminal comparison once. Selective
-   matches permit the smallest candidate-bound parent-admission proof using the
-   existing full observation. Zero selective matches requires aggregate-only
-   relationship-shape classification before any content-bearing inspection.
-   Do not repeat raw/normalized `cid/gid/ogid/guid` equality or paging alone.
-3. Resolve measured internal preflight limits using the new fixed bound labels.
+1. Exact source `b39c785b3` is qualified by GCE app-Rust 34889517605,
+   bindings 34889470902 and Windows ARM64 34889520601. Its standalone live run
+   authenticated, reached terminal Chat1 state and preserved the protected
+   profile byte-for-byte.
+2. Close the eight-message missing-parent sample without guessing. The complete
+   current Chat1 zone, direct/normalized identifiers, last-seen links, 1,622
+   usable Message anchors, sender, local handle, service/style and target-local
+   participant coverage do not produce a unique parent. Either obtain stronger
+   deterministic evidence from a target-centered retained Message cohort, or
+   classify these exact sources as retained/unresolvable and prove the normal
+   stream can terminate around them. Never choose by participant count or time
+   proximity alone.
+3. Qualify the separately reviewable timestamp-format candidate. Its nullable
+   ObjectBox marker keeps pre-property rows distinguishable, native decode now
+   emits canonical Unix milliseconds, all durable reads normalize without a
+   physical migration, and attachment cache manifests are versioned. Run the
+   complete exact-source GCE suite, then prove Windows replay and Pixel upgrade
+   behavior before treating the repair as live-proven.
+4. Resolve measured internal preflight limits using the new fixed bound labels.
    Keep limits tied to memory/work budgets and field semantics. Do not discard
    protected records or treat a diagnostic label as corrupted user data.
-4. Verify repeat/cold-restart reads, terminal stream state, duplicate suppression,
+5. Verify repeat/cold-restart reads, terminal stream state, duplicate suppression,
    legible text, and representative current media/documents. Separate excluded
    telephony and tombstones from actionable iMessage projection work.
-5. On the Pixel, qualify the installed candidate and ordinary composer, background/
+6. On the Pixel, qualify the installed candidate and ordinary composer, background/
    lock/reconnect, registration repair, and independent-client display. Preserve
    Alpha; do not infer completion from Windows tests.
-6. Finish approved group/media/mutation and mid-flight recovery cases. The direct
+7. Finish approved group/media/mutation and mid-flight recovery cases. The direct
    single-part Windows chain is proved, not the full cross-device matrix.
-7. Qualify fresh-stream newest-first ordering without reversing existing cursors.
+8. Qualify fresh-stream newest-first ordering without reversing existing cursors.
    FaceTime and Find My retain their separate live gates listed above.
 
 ## Current ownership and continuation rules
@@ -428,15 +441,20 @@ CloudKit readback or independent Apple-device display.
   qualification; do not stub the harness to satisfy compilation.
 - New projector failure literals require the exact reviewed vocabulary and
   safe-error tests. The Windows lane now includes these downstream checks.
-- Parent owns account operations and integration. Completed agents have been
-  reviewed/closed. Exact active agent/job handles belong in the candidate table.
-- Current local live processes are closed and cleanup for launch
-  `61909185c0e0f5736b8e5c44569236bf` confirmed all four owned processes stopped.
-  Windows run 34843955881 is complete. The only retained child agent was reviewed
-  and closed; its proposed relationship-shape fallback remains deferred because
-  the live result identified an earlier, narrower schema mismatch. No agent or
-  cloud job is active at this checkpoint. C: had about 54.4 GiB free. Preserve
-  the exact bundle, receipt, live aggregate and prior rollback evidence.
+- Parent owns account operations and integration. Both b39 relationship audits
+  and the timestamp-compatibility audit were reviewed and closed; none edited
+  files or produced unique artifacts. Exact active agent/job handles belong in
+  the candidate table.
+- Current local live processes are closed. Cleanup for launches
+  `1cec35e558d6dc76a0040286129c59eb`,
+  `4842d0299701cd6b74748f714e04b894` and
+  `dd0cf181df5b3751342e8a2f78dc07ad` confirmed all four owned processes from
+  each launch stopped; raw stdout was removed. GCE app-Rust 34849044238 and
+  Windows ARM64 34849043947 are complete, no live Apple call is active, zero
+  GCE instances and zero repository self-hosted runners remained after the
+  named runs. The exact b39 process also exited and preserved its profile; C:
+  had about 40.8 GiB free at the latest checkpoint. Preserve the exact bundle,
+  receipt, bounded aggregates and prior rollback evidence.
 - Preserve the qualified DLLs, source manifests and rollback evidence. Current
   generated bindings already include extensionMetadataJson; a metadata JSON
   schema change inside that string is not a new FRB ABI by itself.

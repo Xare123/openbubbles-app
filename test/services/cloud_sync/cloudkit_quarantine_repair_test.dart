@@ -166,7 +166,7 @@ void main() {
       expect(receipt.originalTerminalSafeCode, 'semantic_conflict');
       expect(
         receipt.evidenceDigestVersion,
-        'cloudkit-quarantine-repair-evidence-v2',
+        'cloudkit-quarantine-repair-evidence-v3',
       );
       expect(receipt.evidenceDigestSha256, matches(RegExp(r'^[0-9a-f]{64}$')));
 

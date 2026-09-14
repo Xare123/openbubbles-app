@@ -351,7 +351,7 @@ final class CloudAttachmentDownloadCoordinator {
           encryptedPayloadReference: entity.encryptedPayloadRef,
           payloadSha256: entity.payloadSha256,
           isTombstone: entity.isTombstone,
-          serverModifiedAt: _dateOrNull(entity.serverModifiedAtMs),
+          serverModifiedAt: cloudInboxCanonicalServerModifiedAt(entity),
           preflightFailure: _failureOrNull(
             entity.preflightCategory ??
                 (entity.retryCount == 0 ? entity.failureCategory : null),

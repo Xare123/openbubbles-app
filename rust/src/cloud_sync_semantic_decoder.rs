@@ -17,6 +17,8 @@ use thiserror::Error;
 
 use crate::cloud_sync_canonical_dto::{CloudCanonicalEntityKind, CloudCanonicalHash};
 
+const APPLE_EPOCH_OFFSET_MILLIS: i64 = 978_307_200_000;
+
 // The keyed hasher and the two types it reports through live in a
 // dependency-light module so the native protector and its standalone harness
 // can link them without this module's Apple record parsing stack.
@@ -398,7 +400,11 @@ fn timestamp_millis(seconds: Option<f64>) -> Result<Option<i64>, CloudSemanticDe
     if millis < i64::MIN as f64 || millis > i64::MAX as f64 {
         return Err(CloudSemanticDecodeFailure::MalformedRecord);
     }
-    Ok(Some(millis.round() as i64))
+    Ok(Some(
+        (millis.round() as i64)
+            .checked_add(APPLE_EPOCH_OFFSET_MILLIS)
+            .ok_or(CloudSemanticDecodeFailure::MalformedRecord)?,
+    ))
 }
 
 #[cfg(test)]
@@ -640,12 +646,32 @@ mod tests {
 
         let projection =
             project_attachment(&source, &attachment, &hasher()).expect("negative dates are valid");
-        assert_eq!(projection.server_modified_at_millis, Some(-1_250));
+        assert_eq!(
+            projection.server_modified_at_millis,
+            Some(APPLE_EPOCH_OFFSET_MILLIS - 1_250)
+        );
         assert_ne!(projection.server_record_id_hash, "server-attachment-id");
         assert_ne!(projection.logical_entity_key_hash, "attachment-logical-id");
         assert_eq!(
             format!("{projection:?}"),
             "CloudSemanticProjection(redacted)"
+        );
+    }
+
+    #[test]
+    fn system_field_timestamp_rejects_invalid_or_overflowing_values() {
+        assert_eq!(timestamp_millis(None), Ok(None));
+        assert_eq!(
+            timestamp_millis(Some(0.0)),
+            Ok(Some(APPLE_EPOCH_OFFSET_MILLIS))
+        );
+        assert_eq!(
+            timestamp_millis(Some(f64::NAN)),
+            Err(CloudSemanticDecodeFailure::MalformedRecord)
+        );
+        assert_eq!(
+            timestamp_millis(Some(i64::MAX as f64 / 1_000.0)),
+            Err(CloudSemanticDecodeFailure::MalformedRecord)
         );
     }
 

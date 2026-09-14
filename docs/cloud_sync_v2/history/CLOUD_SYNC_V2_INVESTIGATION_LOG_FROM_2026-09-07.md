@@ -4435,3 +4435,192 @@ cannot authorize or perform adoption.
   relationship-shape classifier is deferred, not integrated, because this live
   result found an earlier and narrower blocker. No unique files or commits were
   produced by that worker.
+- Repair `908ccc0040ed4bb60d2611db945e0b304eff639c` implements only those two
+  compatibility changes. New tests prove empty `lah` does not weaken `cid`, both
+  allowed participant flag forms still decrypt and validate, and explicit
+  contradictory flags still fail. Rust formatting, diff checks, protected-bridge
+  source contracts and live-launch safety/cleanup contracts pass locally. The
+  native local test attempted compilation but stopped at the host's missing
+  `clang`; this is an environment block, not a passing native result.
+- GCE app-Rust run 34849044238 and Windows ARM64 read-only harness run
+  34849043947 were dispatched against that exact trusted source. Neither runner
+  receives an Apple profile/database, writer capability or automatic-send
+  capability. Verify actual native tests, bindings coherence, artifact lineage
+  and teardown before importing or making another live request.
+- GCE 34849044238 passed the full Rust library suite and generated/check-compiled
+  coherent bridge code. Its overall build job then failed the deliberate drift
+  gate because only the generated Dart ignored-private-functions comment gained
+  `encrypted_last_addressed_handle` and
+  `encrypted_string_field_with_empty_policy`. Parent hash-compared all eight
+  generated files: the other seven are byte-identical. The exact one-line
+  generator output is staged locally; it changes no public API, codec or ABI.
+- GCE cleanup for 34849044238 passed and the project has zero remaining compute
+  instances. Three older offline, non-busy repository runner registrations tied
+  to completed September 12 runs were independently verified to have no backing
+  instance and removed; the repository runner inventory now contains zero
+  self-hosted runners.
+
+### September 14 exact compatibility qualification and selective parent signal
+
+- Windows ARM64 run 34849043947 completed successfully in 23m57s against exact
+  source `908ccc0040ed4bb60d2611db945e0b304eff639c` and pilot
+  `629df1f5d70b2c63c51212b362b05d569df2c3d4`. It passed 666 Dart tests, 51
+  packaged native codec cases, launcher contracts, ARM64 checks and provenance
+  verification. Artifact 10351037466 and its sidecar both hash to
+  `6647710ec763084e741541a7cfd9f6a2a272d1395bc7afcf698280a0f96498d6`.
+  The 78-file, 335,772,787-byte bundle was imported into the clean detached
+  `chat1-live-a93671` runtime. The local receipt, app and Rust DLL all bind to
+  the same source and pilot; signatures are valid and pinned ObjectBox bytes
+  are unchanged.
+- Live launch `1cec35e558d6dc76a0040286129c59eb` then proved the compatibility
+  repair against the account-bound Chat1 zone. It reached terminal state in
+  four pages / 167 changes, decoded all 165 Chat records plus two tombstones,
+  and produced zero record or route-field failures. Its first wrapper version
+  preserved only failure matrices and basic counts, so the run did not retain
+  the selective match counters needed for the next decision.
+- The launcher was narrowed to preserve only a fixed, bounded allowlist of
+  aggregate booleans and counters. It rejects arbitrary strings, out-of-range
+  counters, malformed matrices, content exposure and durable mutation. A child
+  failure may retain only the same bounded `failure-aggregate.json`; raw stdout
+  is always removed. Synthetic launcher tests pass.
+- Repeat launch `4842d0299701cd6b74748f714e04b894` reached the ready boundary but
+  the Dart child exited nonzero. The first wrapper revision then hit a strict
+  property-access failure before retaining the bounded aggregate. Cleanup still
+  confirmed all four owned processes stopped and raw stdout was removed. This
+  transient failed attempt remains evidence; it is not rewritten as a pass.
+- Identical retry `dd0cf181df5b3751342e8a2f78dc07ad` succeeded. It was
+  account-bound, performed the requested read, exposed no content and left all
+  durable state unchanged. Four pages contained 167 changes: 165 Chat records
+  and two tombstones, terminal without budget exhaustion, with zero record and
+  route-field failures. All exact/raw/normalized `cid`, `gid`, `ogid`, `guid`,
+  legacy and last-addressed-handle match families were zero for the eight
+  unresolved Message sources.
+- Sender membership in Chat1 participants was the sole positive relationship:
+  25 pairs / three sender targets / 11 Chat records on the first page, and 76
+  normalized pairs / three sender targets / 31 Chat records across the zone.
+  Every Chat record had participants; there were 59 direct-style and 106
+  group-style records. This proves a relationship edge but not a unique parent.
+  Sender-only admission would be unsafe because three targets fan out across 31
+  records. The next bounded test must classify complete participant-set, style,
+  service, time and already-proven ownership corroboration. It may propose only
+  a unique candidate; ambiguity remains retained.
+- Cleanup for all three launches confirmed four owned processes stopped and no
+  raw stdout remains. No APK was built or installed and no CloudKit write was
+  performed.
+
+### September 14 standalone identity and read-authentication lifecycle
+
+- The first direct native-test-host attempt against source `4d774121a` failed
+  before Apple setup because the test treated the protected-store identity as a
+  bare digest. Production intentionally uses `obcs2.store.<digest>`. The failed
+  attempt retained no aggregate and left the 212-file, 155,026,542-byte Cloud
+  Sync state byte-for-byte unchanged.
+- Source `df8c75bceed50622ddbb1f7cd3f717854034c9e1` added the exact
+  protected-store grammar validator plus an early fail-closed manifest check.
+  GCE app-Rust run 34873674805 passed all 673 Rust tests in 2.86 seconds and
+  completed VM/runner cleanup. The workflow's final status was failure only
+  because regeneration added `is_protected_store_identity` to one generated
+  Dart private-helper comment. Parent imported that exact one-line result; no
+  bridge API, codec or ABI changed.
+- Windows ARM64 run 34873675005 succeeded for the same exact source. Artifact
+  10361047371 passed the independent native-test-host verifier: exactly three
+  ARM64 files, 110,998,016 bytes, read-only variant, source/pilot provenance and
+  51 native codec cases. The executable, vendor ObjectBox and Rust DLL SHA256
+  values are respectively
+  `8D27909E60D574EA0925246A610CFEE0CD7BCB6DA25C21B7C15336D8D3CBCE95`,
+  `9C8583C4015AB9E4CE2ED3D2D581811FA059E03BB528CB8C8387ADCDFDA8D8A5`
+  and `22B80DCA5923F7FB7E09A5574AB9FB26EDDF8B37ABAEE31C25684E757CBF0207`.
+- Two controlled standalone attempts then passed protected-manifest validation,
+  hardware/account restoration and client construction but stopped before any
+  Chat1 page at `chat1_standalone_read_authentication_failed`. Neither emitted
+  an aggregate; both preserved every Cloud Sync file and byte. The identical
+  repeat rules out the earlier manifest fix and a one-off process race.
+- Full-flow review found a test-host lifecycle omission. `make_cloudkit`
+  restores a persisted read-authentication generation when usable, but the
+  standalone caller went directly to container warmup. Production explicitly
+  calls `cloud_sync_ensure_read_authentication` first so an expired or missing
+  generation is refreshed before the writer pause. This is test-path debt, not
+  evidence of a Chat1 schema or PCS failure.
+- Candidate `fdd2beb595a4599c8783fbc8be5ed3e286415e69` now mirrors that
+  production order, classifies only fixed safe refresh failures and adds a
+  source-order regression test. Exact-source Windows run 34877349884 and GCE
+  app-Rust run 34877349816 are active. No APK, CloudKit record write, personal
+  content upload or Alpha change is part of either lane.
+
+### September 14 privacy-safe relationship graph and epoch finding
+
+- Source `b39c785b36579586843616cbbac5bd639f4fb85f` extends only the
+  Windows-test relationship graph. It decodes the eight exact target Message
+  sources plus a bounded 2,048-source Message anchor cohort, pseudonymizes every
+  identifier before serialization, and records route-cluster evidence. It does
+  not admit, project, save, update or delete a CloudKit record.
+- GCE app-Rust run 34889517605 completed successfully with reproducible bridge
+  bindings, the selected Rust suite and verified ephemeral-runner teardown.
+  Bindings run 34889470902 also passed Rust, rustpush, remote-Anisette and
+  protector-harness checks. Windows ARM64 run 34889520601 passed in 24m53s and
+  produced artifact 10366986676. Parent verified exact source/pilot provenance,
+  three ARM64 binaries, the pinned ObjectBox hash and the local development
+  signatures before execution.
+- The exact b39 standalone run authenticated and reached terminal Chat1 state:
+  four pages / 167 changes, 165 decoded Chat records, two tombstones and no
+  record failure. Of 2,048 protected Message anchors, 1,622 decoded and 426
+  remained safely skipped. No plaintext or raw identifier crossed the report,
+  and all 212 Cloud Sync files / 155,026,542 bytes were byte-identical before
+  and after.
+- Five of the eight target messages had no candidate. Three incoming bare-route
+  messages each retained the same two group-style candidates, indexes 79 and
+  164. Sender membership, service/style and destination `dcId` against Chat1
+  `lah` corroborated both. Route, group and direct last-seen evidence matched
+  neither. Participant coverage also cannot decide: Chat1 participants contain
+  remote members while `lah` holds the local handle, and each target contributes
+  only one observed remote member. Selecting the two-member rather than the
+  three-member candidate would therefore guess missing participants.
+- A separate source audit found that CloudKit record system dates are Apple-
+  reference seconds. `cloud_sync_native_fetch.rs` currently multiplies those
+  seconds without adding 978,307,200,000 ms in both envelope decode and page
+  preparation; the currently unused semantic decoder repeats the defect. The
+  protected envelope preserves the original floating-point seconds, while
+  derived ObjectBox times, equality fences and attachment source-version hashes
+  can carry the legacy interpretation. The diagnostic currently compensates by
+  adding the offset to those legacy milliseconds. A production fix must version
+  the derived representation and lazily recompute from protected bytes; blindly
+  adding the offset or changing only the decoder would break existing rows and
+  double-shift the diagnostic.
+
+### September 14 versioned system-timestamp repair candidate
+
+- The local candidate now converts CloudKit system-field `Date.time` values
+  from Apple-reference seconds to Unix milliseconds in both native fetch decode
+  paths. Conversion preserves the prior containing-millisecond rounding, rejects
+  non-finite or out-of-range values and uses checked addition for the
+  978,307,200,000 ms epoch offset. The standalone b39 relationship probe now
+  consumes the native canonical value directly instead of adding the offset a
+  second time.
+- `CloudInboxChangeEntity` adds nullable ObjectBox property 28,
+  `serverModifiedAtFormatVersion`. Null is the durable representation of a row
+  written before the property existed, explicit 0 is legacy Apple-epoch
+  compatibility and explicit 1 is canonical Unix. New semantic and shadow
+  journal rows write 1. A single checked read helper normalizes null/0 lazily;
+  it never rewrites the row, checkpoint, generation, sequence, cursor or
+  outbox. Unknown nonempty formats and arithmetic overflow fail closed.
+- The actual predecessor-schema test creates a database without property 28,
+  reopens it twice with the current model and proves the marker remains null,
+  the canonical read gains exactly one epoch offset and all control fields stay
+  unchanged. Store tests prove newly journaled semantic and shadow rows persist
+  marker 1. Gateway tests prove legacy normalization preserves the physical row,
+  unknown formats stop before mutation and a canonical mismatch still loses the
+  exact inbox fence.
+- Attachment cache manifests are now `obcs2-attachment-cache-v2`; a dedicated
+  native test proves a correctly sized and hashed v1 pair is rejected rather
+  than reused. Quarantine evidence is v3 and includes the nullable format marker
+  so a marker change invalidates old repair evidence instead of silently
+  changing timestamp meaning.
+- Local qualification passed 221 focused ObjectBox model/store/gateway tests,
+  180 downstream quarantine/attachment/identity/group/recovery tests and 72
+  production-adapter/Windows-harness/materialization tests. Four focused
+  Rust tests pass for native fetch conversion, semantic conversion, diagnostic
+  conversion and legacy cache rejection. One extra-`?` Rust type error and one
+  attempted double normalization of the already-canonical identity DTO were
+  caught by these checks and corrected. Exact-source GCE, Windows live replay
+  and Pixel existing-database upgrade proof remain; this is not yet a release
+  claim.

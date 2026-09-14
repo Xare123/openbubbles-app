@@ -50,7 +50,7 @@ const MAX_ATTACHMENT_BYTES: u64 = 512 * 1024 * 1024;
 const ATTACHMENT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const ATTACHMENT_DIRECTORY_NAME: &str = ".attachment-materialization";
 const NATIVE_STORE_DIRECTORY_NAME: &str = "cloud_sync_v2_native_store";
-const CACHE_MANIFEST_VERSION: &str = "obcs2-attachment-cache-v1";
+const CACHE_MANIFEST_VERSION: &str = "obcs2-attachment-cache-v2";
 const MAX_CACHE_MANIFEST_BYTES: u64 = 512;
 const MAX_STALE_PARTIAL_SCAN: usize = 256;
 const STALE_PARTIAL_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -1685,6 +1685,26 @@ mod tests {
                 &sha256_hex_reader([1_u8, 2, 3, 4].as_slice()).unwrap(),
                 4,
             ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            verify_cached_body(&body, &manifest, "source-version", 4),
+            Err(CloudNativeAttachmentMaterializationFailure::IntegrityMismatch)
+        );
+    }
+
+    #[test]
+    fn legacy_cache_manifest_version_is_not_reused() {
+        let directory = tempdir().unwrap();
+        let body = directory.path().join("final.body");
+        let manifest = directory.path().join("final.manifest");
+        let body_bytes = [1_u8, 2, 3, 4];
+        let body_sha256 = sha256_hex_reader(body_bytes.as_slice()).unwrap();
+        fs::write(&body, body_bytes).unwrap();
+        fs::write(
+            &manifest,
+            format!("obcs2-attachment-cache-v1\nsource-version\n{body_sha256}\n4\n"),
         )
         .unwrap();
 

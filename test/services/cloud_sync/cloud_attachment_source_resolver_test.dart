@@ -752,6 +752,7 @@ CloudInboxChangeEntity _copyInbox(
   retryCount: inbox.retryCount,
   nextEligibleAtMs: inbox.nextEligibleAtMs,
   serverModifiedAtMs: inbox.serverModifiedAtMs,
+  serverModifiedAtFormatVersion: inbox.serverModifiedAtFormatVersion,
   createdAtMs: inbox.createdAtMs,
   updatedAtMs: inbox.updatedAtMs,
   completedAtMs: inbox.completedAtMs,

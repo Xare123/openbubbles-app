@@ -700,6 +700,67 @@ void main() {
     );
   }
 
+  for (final shadowJournal in const [false, true]) {
+    test(
+      '${shadowJournal ? 'shadow' : 'semantic'} journal persists canonical server timestamp format',
+      () async {
+        final scope = testScope(
+          persistenceLane: shadowJournal
+              ? CloudSyncPersistenceLane.shadow
+              : CloudSyncPersistenceLane.semantic,
+        );
+        final original = testChange(1);
+        final serverModifiedAt = DateTime.utc(2026, 9, 14, 12, 34, 56, 789);
+        final change = CloudFetchedChange(
+          changeId: original.changeId,
+          recordIdHash: original.recordIdHash,
+          etagHash: original.etagHash,
+          type: original.type,
+          encryptedServerRecordId: original.encryptedServerRecordId,
+          protectedSystemFieldsReference:
+              original.protectedSystemFieldsReference,
+          encryptedPayloadReference: original.encryptedPayloadReference,
+          payloadSha256: original.payloadSha256,
+          isTombstone: original.isTombstone,
+          serverModifiedAt: serverModifiedAt,
+        );
+        final value = batch(scope, changes: [change]);
+
+        if (shadowJournal) {
+          await journalShadow(
+            value,
+            now: testEpoch,
+            budget: CloudShadowJournalBudget(),
+          );
+        } else {
+          await journal(value);
+        }
+
+        var row = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+        expect(
+          row.serverModifiedAtFormatVersion,
+          cloudInboxServerModifiedAtUnixEpochFormat,
+        );
+        expect(row.serverModifiedAtMs, serverModifiedAt.millisecondsSinceEpoch);
+        expect(
+          cloudInboxCanonicalServerModifiedAtMillis(row),
+          serverModifiedAt.millisecondsSinceEpoch,
+        );
+
+        await reopen();
+        row = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+        expect(
+          row.serverModifiedAtFormatVersion,
+          cloudInboxServerModifiedAtUnixEpochFormat,
+        );
+        expect(
+          cloudInboxCanonicalServerModifiedAtMillis(row),
+          serverModifiedAt.millisecondsSinceEpoch,
+        );
+      },
+    );
+  }
+
   test(
     'production Messages in iCloud outbound leasing blocks when a sibling checkpoint is missing',
     () async {
@@ -1316,6 +1377,7 @@ void main() {
                 row.failureCategory,
                 row.retryCount,
                 row.serverModifiedAtMs,
+                row.serverModifiedAtFormatVersion,
                 row.createdAtMs,
               ]),
             ),
@@ -1633,6 +1695,7 @@ void main() {
         'retryCount': before.retryCount,
         'nextEligibleAtMs': before.nextEligibleAtMs,
         'serverModifiedAtMs': before.serverModifiedAtMs,
+        'serverModifiedAtFormatVersion': before.serverModifiedAtFormatVersion,
         'createdAtMs': before.createdAtMs,
       };
 
@@ -1678,6 +1741,7 @@ void main() {
         'retryCount': retained.retryCount,
         'nextEligibleAtMs': retained.nextEligibleAtMs,
         'serverModifiedAtMs': retained.serverModifiedAtMs,
+        'serverModifiedAtFormatVersion': retained.serverModifiedAtFormatVersion,
         'createdAtMs': retained.createdAtMs,
       }, preservedEvidence);
       expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);

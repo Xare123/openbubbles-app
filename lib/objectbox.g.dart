@@ -1113,7 +1113,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(18, 6719772093493207335),
     name: 'CloudInboxChangeEntity',
-    lastPropertyId: const obx_int.IdUid(27, 1526171191000868532),
+    lastPropertyId: const obx_int.IdUid(28, 1894058837921571294),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1285,6 +1285,12 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(27, 1526171191000868532),
         name: 'preflightCategory',
         type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(28, 1894058837921571294),
+        name: 'serverModifiedAtFormatVersion',
+        type: 6,
         flags: 0,
       ),
     ],
@@ -4988,7 +4994,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
         final preflightCategoryOffset = object.preflightCategory == null
             ? null
             : fbb.writeString(object.preflightCategory!);
-        fbb.startTable(28);
+        fbb.startTable(29);
         fbb.addInt64(0, object.id);
         fbb.addOffset(1, changeKeyOffset);
         fbb.addOffset(2, accountFingerprintOffset);
@@ -5016,6 +5022,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
         fbb.addOffset(24, changeIdHashOffset);
         fbb.addOffset(25, preflightCodeOffset);
         fbb.addOffset(26, preflightCategoryOffset);
+        fbb.addInt64(27, object.serverModifiedAtFormatVersion);
         fbb.finish(fbb.endTable());
         return object.id;
       },
@@ -5118,6 +5125,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
           48,
           0,
         );
+        final serverModifiedAtFormatVersionParam = const fb.Int64Reader()
+            .vTableGetNullable(buffer, rootOffset, 58);
         final createdAtMsParam = const fb.Int64Reader().vTableGet(
           buffer,
           rootOffset,
@@ -5161,6 +5170,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
           retryCount: retryCountParam,
           nextEligibleAtMs: nextEligibleAtMsParam,
           serverModifiedAtMs: serverModifiedAtMsParam,
+          serverModifiedAtFormatVersion: serverModifiedAtFormatVersionParam,
           createdAtMs: createdAtMsParam,
           updatedAtMs: updatedAtMsParam,
           completedAtMs: completedAtMsParam,
@@ -8800,6 +8810,12 @@ class CloudInboxChangeEntity_ {
   static final preflightCategory =
       obx.QueryStringProperty<CloudInboxChangeEntity>(
         _entities[9].properties[26],
+      );
+
+  /// See [CloudInboxChangeEntity.serverModifiedAtFormatVersion].
+  static final serverModifiedAtFormatVersion =
+      obx.QueryIntegerProperty<CloudInboxChangeEntity>(
+        _entities[9].properties[27],
       );
 }
 

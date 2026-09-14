@@ -1141,12 +1141,7 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           protectedSystemFieldsReference: row.protectedSystemFieldsRef,
           encryptedPayloadReference: row.encryptedPayloadRef,
           payloadSha256: row.payloadSha256,
-          serverModifiedAt: row.serverModifiedAtMs > 0
-              ? DateTime.fromMillisecondsSinceEpoch(
-                  row.serverModifiedAtMs,
-                  isUtc: true,
-                )
-              : null,
+          serverModifiedAt: cloudInboxCanonicalServerModifiedAt(row),
         ),
       );
       final decoded = await RustCloudSemanticDecoder(
@@ -1640,12 +1635,7 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                 protectedSystemFieldsReference: row.protectedSystemFieldsRef,
                 encryptedPayloadReference: row.encryptedPayloadRef,
                 payloadSha256: row.payloadSha256,
-                serverModifiedAt: row.serverModifiedAtMs == 0
-                    ? null
-                    : DateTime.fromMillisecondsSinceEpoch(
-                        row.serverModifiedAtMs,
-                        isUtc: true,
-                      ),
+                serverModifiedAt: cloudInboxCanonicalServerModifiedAt(row),
               ),
             );
             final labels = <String>[];

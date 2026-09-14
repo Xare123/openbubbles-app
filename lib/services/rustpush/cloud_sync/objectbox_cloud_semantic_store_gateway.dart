@@ -306,8 +306,27 @@ final class ObjectBoxCloudSemanticFence {
       inboxQuery.close();
     }
     final change = entry.change;
-    if (inboxEntity == null ||
-        inboxEntity.changeKey != changeKey ||
+    if (inboxEntity == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'semantic_inbox_fence_lost',
+      );
+    }
+    final int? durableServerModifiedAtMs;
+    try {
+      durableServerModifiedAtMs = cloudInboxCanonicalServerModifiedAtMillis(
+        inboxEntity,
+      );
+    } catch (_) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'semantic_inbox_timestamp_format_invalid',
+      );
+    }
+    final expectedServerModifiedAtMs = change.serverModifiedAt
+        ?.toUtc()
+        .millisecondsSinceEpoch;
+    if (inboxEntity.changeKey != changeKey ||
         inboxEntity.changeIdHash != change.changeId ||
         inboxEntity.scopeKey != scopeKey ||
         inboxEntity.accountFingerprint != entry.scope.accountFingerprint ||
@@ -324,7 +343,8 @@ final class ObjectBoxCloudSemanticFence {
         inboxEntity.generation != entry.generation ||
         inboxEntity.fetchSequence != entry.sequence ||
         inboxEntity.status != expectedInboxStatus.index ||
-        inboxEntity.isTombstone != change.isTombstone) {
+        inboxEntity.isTombstone != change.isTombstone ||
+        durableServerModifiedAtMs != expectedServerModifiedAtMs) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.dependency,
         safeCode: 'semantic_inbox_fence_lost',
@@ -1364,12 +1384,7 @@ final class ObjectBoxCloudSemanticStoreGateway
         protectedSystemFieldsReference: row.protectedSystemFieldsRef,
         encryptedPayloadReference: row.encryptedPayloadRef,
         payloadSha256: row.payloadSha256,
-        serverModifiedAt: row.serverModifiedAtMs == 0
-            ? null
-            : DateTime.fromMillisecondsSinceEpoch(
-                row.serverModifiedAtMs,
-                isUtc: true,
-              ),
+        serverModifiedAt: cloudInboxCanonicalServerModifiedAt(row),
       ),
       status: CloudInboxStatus.applied,
       attemptCount: row.retryCount,
@@ -1420,12 +1435,7 @@ final class ObjectBoxCloudSemanticStoreGateway
         protectedSystemFieldsReference: row.protectedSystemFieldsRef,
         encryptedPayloadReference: row.encryptedPayloadRef,
         payloadSha256: row.payloadSha256,
-        serverModifiedAt: row.serverModifiedAtMs == 0
-            ? null
-            : DateTime.fromMillisecondsSinceEpoch(
-                row.serverModifiedAtMs,
-                isUtc: true,
-              ),
+        serverModifiedAt: cloudInboxCanonicalServerModifiedAt(row),
       ),
       status: CloudInboxStatus.retainedUnprojected,
       attemptCount: row.retryCount,

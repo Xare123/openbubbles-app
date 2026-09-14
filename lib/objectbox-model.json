@@ -910,7 +910,7 @@
     },
     {
       "id": "18:6719772093493207335",
-      "lastPropertyId": "27:1526171191000868532",
+      "lastPropertyId": "28:1894058837921571294",
       "name": "CloudInboxChangeEntity",
       "properties": [
         {
@@ -1066,6 +1066,11 @@
           "id": "27:1526171191000868532",
           "name": "preflightCategory",
           "type": 9
+        },
+        {
+          "id": "28:1894058837921571294",
+          "name": "serverModifiedAtFormatVersion",
+          "type": 6
         }
       ],
       "relations": []

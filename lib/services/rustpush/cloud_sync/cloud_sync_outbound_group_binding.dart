@@ -201,9 +201,7 @@ CloudSyncRestoredGroupChatProof _proofFromLatest({
       payloadSha256: payloadSha256,
       // Inbox rows store no payload length; the native input stays None.
       payloadLength: null,
-      serverModifiedAtMillis: latest.serverModifiedAtMs <= 0
-          ? null
-          : latest.serverModifiedAtMs,
+      serverModifiedAtMillis: cloudInboxCanonicalServerModifiedAtMillis(latest),
       protectedRawEnvelopeReference: protectedRef,
     ),
   );

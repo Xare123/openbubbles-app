@@ -247,10 +247,6 @@ fn apple_seconds_to_unix_millis(value: Option<f64>) -> Option<i64> {
     APPLE_EPOCH_UNIX_MILLIS.checked_add((value * 1000.0).floor() as i64)
 }
 
-fn apple_millis_to_unix_millis(value: Option<i64>) -> Option<i64> {
-    APPLE_EPOCH_UNIX_MILLIS.checked_add(value?)
-}
-
 fn verified_message_record(
     storage_directory: &str,
     account_fingerprint: &str,
@@ -748,9 +744,7 @@ pub(super) async fn collect(
             outer_type: message.r#type,
             error: message.error,
             created_at_millis: apple_nanos_to_unix_millis(message.time),
-            server_modified_at_millis: apple_millis_to_unix_millis(
-                decoded.server_modified_at_millis,
-            ),
+            server_modified_at_millis: decoded.server_modified_at_millis,
             text_present: proto.text.as_deref().is_some_and(|value| !value.is_empty()),
             attributed_body_present: proto
                 .attributed_body
@@ -970,10 +964,6 @@ mod tests {
         assert_eq!(
             apple_seconds_to_unix_millis(Some(1.999_999)),
             Some(APPLE_EPOCH_UNIX_MILLIS + 1_999)
-        );
-        assert_eq!(
-            apple_millis_to_unix_millis(Some(2_345)),
-            Some(APPLE_EPOCH_UNIX_MILLIS + 2_345)
         );
         assert_eq!(apple_seconds_to_unix_millis(Some(f64::NAN)), None);
         assert_eq!(apple_seconds_to_unix_millis(None), None);

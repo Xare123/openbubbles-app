@@ -839,9 +839,7 @@ correlation_api.CloudSyncChat1CorrelationSourceInput _correlationSource(
     etagHash: row.etagHash,
     payloadSha256: payloadSha256,
     payloadLength: null,
-    serverModifiedAtMillis: row.serverModifiedAtMs <= 0
-        ? null
-        : row.serverModifiedAtMs,
+    serverModifiedAtMillis: cloudInboxCanonicalServerModifiedAtMillis(row),
     protectedRawEnvelopeReference: protectedReference,
   );
 }

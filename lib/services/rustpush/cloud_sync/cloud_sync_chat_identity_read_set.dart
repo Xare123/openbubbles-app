@@ -195,6 +195,7 @@ final class CloudSyncChatIdentityReadSet {
                     row.payloadSha256,
                     row.batchId,
                     row.serverModifiedAtMs,
+                    row.serverModifiedAtFormatVersion,
                     row.preflightCategory,
                     row.preflightCode,
                     row.failureCategory,
@@ -249,7 +250,7 @@ final class CloudSyncChatIdentitySource {
       encryptedServerRecordId = row.encryptedServerRecordId!,
       encryptedPayloadReference = row.encryptedPayloadRef!,
       payloadSha256 = row.payloadSha256!,
-      serverModifiedAtMs = row.serverModifiedAtMs;
+      serverModifiedAtMs = cloudInboxCanonicalServerModifiedAtMillis(row) ?? 0;
 
   final int sequence;
   final String changeIdHash;
