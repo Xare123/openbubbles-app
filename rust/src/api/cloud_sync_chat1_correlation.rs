@@ -1199,6 +1199,30 @@ fn inspect_chat1_route_fields(
             ))
         }
     };
+    inspect_chat1_route_fields_with_key(
+        record,
+        &record_key,
+        targets,
+        normalized_targets,
+        msgproto_targets,
+        normalized_msgproto_targets,
+        sender_targets,
+        normalized_sender_targets,
+        hasher,
+    )
+}
+
+fn inspect_chat1_route_fields_with_key(
+    record: &Record,
+    record_key: &PCSEncryptor,
+    targets: &[String],
+    normalized_targets: &[NormalizedRouteTarget],
+    msgproto_targets: &[Option<String>],
+    normalized_msgproto_targets: &[Option<NormalizedRouteTarget>],
+    sender_targets: &[Option<String>],
+    normalized_sender_targets: &[Option<NormalizedRouteTarget>],
+    hasher: &CloudSemanticIdentifierHasher,
+) -> Result<RouteFieldMatches, Chat1RouteFieldFailure> {
     let map_failure = |field: Chat1RouteFailureField| {
         move |kind: Chat1RouteFailureKind| Chat1RouteFieldFailure::new(field, kind)
     };
@@ -2160,10 +2184,13 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prost::Message as _;
     use rustpush::cloudkit_proto::{
         record::{field, Field, Type as RecordType},
-        Identifier, RecordIdentifier,
+        CloudKitEncryptedValue, CloudKitEncryptor as _, Identifier, RecordIdentifier,
+        RecordZoneIdentifier,
     };
+    use rustpush::pcs::PCSKey;
 
     fn record_field(name: &str, value: Value) -> Field {
         Field {
@@ -2172,6 +2199,116 @@ mod tests {
             }),
             value: Some(value),
         }
+    }
+
+    fn oracle_record_id(record_name: &str) -> RecordIdentifier {
+        RecordIdentifier {
+            value: Some(Identifier {
+                name: Some(record_name.to_owned()),
+                ..Default::default()
+            }),
+            zone_identifier: Some(RecordZoneIdentifier {
+                value: Some(Identifier {
+                    name: Some("chat1ManateeZone".to_owned()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn oracle_encryptor(record_name: &str) -> PCSEncryptor {
+        PCSEncryptor {
+            keys: vec![PCSKey::random()],
+            record_id: oracle_record_id(record_name),
+        }
+    }
+
+    fn oracle_chat() -> CloudChat {
+        CloudChat {
+            style: 43,
+            successful_query: 1,
+            state: 3,
+            chat_identifier: "chat-user@example.invalid".to_owned(),
+            group_id: "group-chat@example.invalid".to_owned(),
+            original_group_id: "original-group@example.invalid".to_owned(),
+            guid: "iMessage;-;chat-user@example.invalid".to_owned(),
+            service_name: "iMessage".to_owned(),
+            last_addressed_handle: "sender@example.invalid".to_owned(),
+            last_read_message_timestamp: 0,
+            is_filtered: 0,
+            participants: vec![
+                CloudParticipant {
+                    uri: "member-a@example.invalid".to_owned(),
+                },
+                CloudParticipant {
+                    uri: "member-b@example.invalid".to_owned(),
+                },
+            ],
+            properties: Some(CloudProp {
+                legacy_group_identifiers: vec!["legacy-group@example.invalid".to_owned()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn oracle_record(chat: &CloudChat, encryptor: &PCSEncryptor) -> Record {
+        Record {
+            record_identifier: Some(encryptor.record_id.clone()),
+            r#type: Some(RecordType {
+                name: Some(CloudChat::record_type().to_owned()),
+            }),
+            record_field: chat.to_record_encrypted(Some(encryptor)),
+            ..Default::default()
+        }
+    }
+
+    fn replace_record_field(record: &Record, name: &str, value: Value) -> Record {
+        let mut out = record.clone();
+        for field in &mut out.record_field {
+            if field
+                .identifier
+                .as_ref()
+                .and_then(|identifier| identifier.name.as_deref())
+                == Some(name)
+            {
+                field.value = Some(value.clone());
+            }
+        }
+        out
+    }
+
+    fn corrupt_field_ciphertext(record: &Record, name: &str) -> Record {
+        let mut out = record.clone();
+        for field in &mut out.record_field {
+            if field
+                .identifier
+                .as_ref()
+                .and_then(|identifier| identifier.name.as_deref())
+                != Some(name)
+            {
+                continue;
+            }
+            let Some(value) = field.value.as_mut() else {
+                continue;
+            };
+            if name == "ptcpts" {
+                if let Some(entry) = value.list_values.first_mut() {
+                    if let Some(bytes) = entry.bytes_value.as_mut() {
+                        if let Some(last) = bytes.last_mut() {
+                            *last ^= 0x01;
+                        }
+                    }
+                }
+            } else if let Some(bytes) = value.bytes_value.as_mut() {
+                if let Some(last) = bytes.last_mut() {
+                    *last ^= 0x01;
+                }
+            }
+        }
+        out
     }
 
     fn dummy_pcs_key() -> PCSEncryptor {
@@ -2948,5 +3085,347 @@ mod tests {
             result.failure_code,
             Some(CloudSyncChat1CorrelationFailureCode::Chat1PagedFetchFailed)
         );
+    }
+
+    #[test]
+    fn encrypted_chat1_route_oracle_matches_all_supported_fields() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let record_name = "oracle-record.invalid";
+        let encryptor = oracle_encryptor(record_name);
+        let chat = oracle_chat();
+        let record = oracle_record(&chat, &encryptor);
+        let route_values = [
+            chat.chat_identifier.clone(),
+            chat.group_id.clone(),
+            chat.original_group_id.clone(),
+            chat.guid.clone(),
+            "member-a@example.invalid".to_owned(),
+            "member-b@example.invalid".to_owned(),
+            "legacy-group@example.invalid".to_owned(),
+            chat.last_addressed_handle.clone(),
+        ];
+        let targets = route_values
+            .iter()
+            .map(|value| hasher.server_record_id_hash(value))
+            .collect::<Vec<_>>();
+        let normalized_targets = route_values
+            .iter()
+            .map(|value| normalized_route_target(value, &hasher).unwrap())
+            .collect::<Vec<_>>();
+        let msgproto_targets = [
+            Some(hasher.server_record_id_hash(&chat.chat_identifier)),
+            Some(hasher.server_record_id_hash("legacy-group@example.invalid")),
+            None,
+        ];
+        let normalized_msgproto_targets = [
+            Some(normalized_route_target(&chat.chat_identifier, &hasher).unwrap()),
+            Some(normalized_route_target("legacy-group@example.invalid", &hasher).unwrap()),
+            None,
+        ];
+        let sender_targets = [
+            Some(hasher.server_record_id_hash("member-a@example.invalid")),
+            Some(hasher.server_record_id_hash(&chat.last_addressed_handle)),
+        ];
+        let normalized_sender_targets = [
+            Some(normalized_route_target("member-a@example.invalid", &hasher).unwrap()),
+            Some(normalized_route_target(&chat.last_addressed_handle, &hasher).unwrap()),
+        ];
+        let fields = inspect_chat1_route_fields_with_key(
+            &record,
+            &encryptor,
+            &targets,
+            &normalized_targets,
+            &msgproto_targets,
+            &normalized_msgproto_targets,
+            &sender_targets,
+            &normalized_sender_targets,
+            &hasher,
+        )
+        .expect("ephemeral oracle record must decode");
+        assert_ne!(fields.chat_identifier, 0);
+        assert_ne!(fields.group_id, 0);
+        assert_ne!(fields.original_group_id, 0);
+        assert_ne!(fields.guid, 0);
+        assert_eq!(fields.route_participants.count_ones(), 2);
+        assert_ne!(fields.route_legacy, 0);
+        assert_ne!(fields.route_lah, 0);
+        assert_ne!(fields.msgproto_chat_identifier, 0);
+        assert_ne!(fields.msgproto_legacy, 0);
+        assert_ne!(fields.sender_participants, 0);
+        assert_ne!(fields.sender_lah, 0);
+        assert_ne!(fields.normalized_chat_identifier, 0);
+        assert_ne!(fields.normalized_route_participants, 0);
+        assert_ne!(fields.normalized_route_legacy, 0);
+        assert!(fields.has_participants);
+        assert!(fields.has_legacy);
+        assert!(fields.has_lah);
+        assert!(fields.has_service);
+        assert!(fields.service_imessage);
+        assert!(!fields.service_other);
+        assert!(fields.style_group);
+        assert!(!fields.style_direct);
+        assert!(!fields.style_other);
+    }
+
+    #[test]
+    fn encrypted_chat1_route_oracle_table_covers_key_decrypt_validation() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let record_name = "oracle-failure.invalid";
+        let encryptor = oracle_encryptor(record_name);
+        let bad_encryptor = PCSEncryptor {
+            keys: vec![PCSKey::random()],
+            record_id: oracle_record_id(record_name),
+        };
+        let chat = oracle_chat();
+        let base = oracle_record(&chat, &encryptor);
+        let empty_targets: Vec<String> = Vec::new();
+        let empty_normalized: Vec<NormalizedRouteTarget> = Vec::new();
+        let empty_optional: Vec<Option<String>> = Vec::new();
+        let empty_normalized_optional: Vec<Option<NormalizedRouteTarget>> = Vec::new();
+        let check = |record: &Record, key: &PCSEncryptor| match inspect_chat1_route_fields_with_key(
+            record,
+            key,
+            &empty_targets,
+            &empty_normalized,
+            &empty_optional,
+            &empty_normalized_optional,
+            &empty_optional,
+            &empty_normalized_optional,
+            &hasher,
+        ) {
+            Err(failure) => failure,
+            Ok(_) => panic!("expected route-field failure"),
+        };
+        let scalar_cases: [(&str, Chat1RouteFailureField, String); 6] = [
+            (
+                "cid",
+                Chat1RouteFailureField::Cid,
+                chat.chat_identifier.clone(),
+            ),
+            ("gid", Chat1RouteFailureField::Gid, chat.group_id.clone()),
+            (
+                "ogid",
+                Chat1RouteFailureField::Ogid,
+                chat.original_group_id.clone(),
+            ),
+            ("guid", Chat1RouteFailureField::Guid, chat.guid.clone()),
+            (
+                "lah",
+                Chat1RouteFailureField::Lah,
+                chat.last_addressed_handle.clone(),
+            ),
+            (
+                "svc",
+                Chat1RouteFailureField::Svc,
+                chat.service_name.clone(),
+            ),
+        ];
+        let mut cases = 0u32;
+        for (name, field, value) in scalar_cases {
+            let bad_value = value
+                .to_value_encrypted(&bad_encryptor, name)
+                .expect("bad-key value must encode");
+            let mutated = replace_record_field(&base, name, bad_value);
+            assert_eq!(
+                check(&mutated, &encryptor),
+                Chat1RouteFieldFailure::new(field, Chat1RouteFailureKind::CiphertextKey),
+                "key mismatch for {name}"
+            );
+            cases += 1;
+            let wrong_aad = if name == "cid" { "gid" } else { "cid" };
+            let aad_value = value
+                .to_value_encrypted(&encryptor, wrong_aad)
+                .expect("wrong-aad value must encode");
+            let mutated = replace_record_field(&base, name, aad_value);
+            assert_eq!(
+                check(&mutated, &encryptor),
+                Chat1RouteFieldFailure::new(field, Chat1RouteFailureKind::Decrypt),
+                "aad mismatch for {name}"
+            );
+            cases += 1;
+            let invalid_value = "   "
+                .to_owned()
+                .to_value_encrypted(&encryptor, name)
+                .expect("invalid value must encode");
+            let mutated = replace_record_field(&base, name, invalid_value);
+            assert_eq!(
+                check(&mutated, &encryptor),
+                Chat1RouteFieldFailure::new(field, Chat1RouteFailureKind::Validation),
+                "validation for {name}"
+            );
+            cases += 1;
+        }
+        let bad_style = 43i64
+            .to_value_encrypted(&bad_encryptor, "stl")
+            .expect("bad-key style must encode");
+        assert_eq!(
+            check(&replace_record_field(&base, "stl", bad_style), &encryptor),
+            Chat1RouteFieldFailure::new(
+                Chat1RouteFailureField::Stl,
+                Chat1RouteFailureKind::CiphertextKey
+            ),
+            "key mismatch for stl"
+        );
+        cases += 1;
+        let aad_style = 43i64
+            .to_value_encrypted(&encryptor, "cid")
+            .expect("wrong-aad style must encode");
+        assert_eq!(
+            check(&replace_record_field(&base, "stl", aad_style), &encryptor),
+            Chat1RouteFieldFailure::new(
+                Chat1RouteFailureField::Stl,
+                Chat1RouteFailureKind::Decrypt
+            ),
+            "aad mismatch for stl"
+        );
+        cases += 1;
+        let empty_payload = EncryptedValue {
+            ..Default::default()
+        }
+        .encode_to_vec();
+        let empty_ciphertext = encryptor.encrypt_data(&empty_payload, "stl");
+        let empty_style = Value {
+            r#type: Some(FieldValueType::Int64Type as i32),
+            bytes_value: Some(empty_ciphertext),
+            is_encrypted: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(
+            check(&replace_record_field(&base, "stl", empty_style), &encryptor),
+            Chat1RouteFieldFailure::new(
+                Chat1RouteFailureField::Stl,
+                Chat1RouteFailureKind::Validation
+            ),
+            "validation for stl"
+        );
+        cases += 1;
+        let bad_participants = vec![
+            CloudParticipant {
+                uri: "member-a@example.invalid".to_owned(),
+            },
+            CloudParticipant {
+                uri: "member-b@example.invalid".to_owned(),
+            },
+        ]
+        .to_value_encrypted(&bad_encryptor, "ptcpts")
+        .expect("bad-key participants must encode");
+        assert_eq!(
+            check(
+                &replace_record_field(&base, "ptcpts", bad_participants),
+                &encryptor
+            ),
+            Chat1RouteFieldFailure::new(
+                Chat1RouteFailureField::Ptcpts,
+                Chat1RouteFailureKind::CiphertextKey
+            ),
+            "key mismatch for ptcpts"
+        );
+        cases += 1;
+        let aad_participants = vec![
+            CloudParticipant {
+                uri: "member-a@example.invalid".to_owned(),
+            },
+            CloudParticipant {
+                uri: "member-b@example.invalid".to_owned(),
+            },
+        ]
+        .to_value_encrypted(&encryptor, "cid")
+        .expect("wrong-aad participants must encode");
+        assert_eq!(
+            check(
+                &replace_record_field(&base, "ptcpts", aad_participants),
+                &encryptor
+            ),
+            Chat1RouteFieldFailure::new(
+                Chat1RouteFailureField::Ptcpts,
+                Chat1RouteFailureKind::Decrypt
+            ),
+            "aad mismatch for ptcpts"
+        );
+        cases += 1;
+        let invalid_participants = vec![CloudParticipant {
+            uri: "not-a-participant.invalid".to_owned(),
+        }]
+        .to_value_encrypted(&encryptor, "ptcpts")
+        .expect("invalid participants must encode");
+        assert_eq!(
+            check(
+                &replace_record_field(&base, "ptcpts", invalid_participants),
+                &encryptor
+            ),
+            Chat1RouteFieldFailure::new(
+                Chat1RouteFailureField::Ptcpts,
+                Chat1RouteFailureKind::Validation
+            ),
+            "validation for ptcpts"
+        );
+        cases += 1;
+        let bad_prop = CloudProp {
+            legacy_group_identifiers: vec!["legacy-group@example.invalid".to_owned()],
+            ..Default::default()
+        }
+        .to_value_encrypted(&bad_encryptor, "prop")
+        .expect("bad-key prop must encode");
+        assert_eq!(
+            check(&replace_record_field(&base, "prop", bad_prop), &encryptor),
+            Chat1RouteFieldFailure::new(
+                Chat1RouteFailureField::Prop,
+                Chat1RouteFailureKind::CiphertextKey
+            ),
+            "key mismatch for prop"
+        );
+        cases += 1;
+        let aad_prop = CloudProp {
+            legacy_group_identifiers: vec!["legacy-group@example.invalid".to_owned()],
+            ..Default::default()
+        }
+        .to_value_encrypted(&encryptor, "cid")
+        .expect("wrong-aad prop must encode");
+        assert_eq!(
+            check(&replace_record_field(&base, "prop", aad_prop), &encryptor),
+            Chat1RouteFieldFailure::new(
+                Chat1RouteFailureField::Prop,
+                Chat1RouteFailureKind::Decrypt
+            ),
+            "aad mismatch for prop"
+        );
+        cases += 1;
+        let invalid_prop = CloudProp {
+            legacy_group_identifiers: vec!["   ".to_owned()],
+            ..Default::default()
+        }
+        .to_value_encrypted(&encryptor, "prop")
+        .expect("invalid prop must encode");
+        assert_eq!(
+            check(
+                &replace_record_field(&base, "prop", invalid_prop),
+                &encryptor
+            ),
+            Chat1RouteFieldFailure::new(
+                Chat1RouteFailureField::Prop,
+                Chat1RouteFailureKind::Validation
+            ),
+            "validation for prop"
+        );
+        cases += 1;
+        for name in ["cid", "stl", "ptcpts", "prop"] {
+            let (field, kind) = match name {
+                "cid" => (Chat1RouteFailureField::Cid, Chat1RouteFailureKind::Decrypt),
+                "stl" => (Chat1RouteFailureField::Stl, Chat1RouteFailureKind::Decrypt),
+                "ptcpts" => (
+                    Chat1RouteFailureField::Ptcpts,
+                    Chat1RouteFailureKind::Decrypt,
+                ),
+                _ => (Chat1RouteFailureField::Prop, Chat1RouteFailureKind::Decrypt),
+            };
+            let mutated = corrupt_field_ciphertext(&base, name);
+            assert_eq!(
+                check(&mutated, &encryptor),
+                Chat1RouteFieldFailure::new(field, kind),
+                "tampered ciphertext for {name}"
+            );
+            cases += 1;
+        }
+        assert_eq!(cases, 31, "table must run all deterministic oracle cases");
     }
 }
