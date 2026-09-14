@@ -5285,7 +5285,7 @@ mod windows_standalone_live_tests {
                 manifest.protected_store_identity.clone(),
                 manifest.message_generation,
                 message_sources.clone(),
-                anchor_message_sources,
+                anchor_message_sources.clone(),
                 manifest.chat1_generation,
                 chat1_sources,
             )
@@ -5303,6 +5303,7 @@ mod windows_standalone_live_tests {
                         &manifest.protected_store_identity,
                         manifest.message_generation,
                         &message_sources,
+                        &anchor_message_sources,
                     )
                     .await,
                 )

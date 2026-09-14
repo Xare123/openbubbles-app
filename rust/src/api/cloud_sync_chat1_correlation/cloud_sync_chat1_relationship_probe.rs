@@ -7,13 +7,14 @@
 use super::*;
 use rustpush::cloud_messages::{CloudMessage, MessageFlags};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const ENABLE: &str = "OPENBUBBLES_INSPECT_CHAT1_PSEUDONYMOUS_GRAPH";
 const ACKNOWLEDGE: &str = "OPENBUBBLES_ACKNOWLEDGE_LOCAL_PERSONAL_DATA";
-const REPORT_SCHEMA: u32 = 1;
+const REPORT_SCHEMA: u32 = 2;
 const MAX_REPORT_BYTES: usize = 512 * 1024;
 const APPLE_EPOCH_UNIX_MILLIS: i64 = 978_307_200_000;
+const MAX_REPORTED_CLUSTER_IDENTITIES: usize = MAX_CHAT1_PARTICIPANTS;
 
 pub(super) fn requested() -> Result<bool, ()> {
     let enable = std::env::var_os(ENABLE);
@@ -73,6 +74,31 @@ struct MessageRelationshipRow {
     text_present: bool,
     attributed_body_present: bool,
     extension_payload_present: bool,
+    anchor_route_evidence: AnchorRouteEvidence,
+}
+
+#[derive(Serialize)]
+struct AnchorRouteEvidence {
+    exact_route_messages: u32,
+    normalized_route_messages: u32,
+    group_correlated_messages: u32,
+    matched_anchor_messages: u32,
+    cluster_messages_including_target: u32,
+    from_me_messages: u32,
+    incoming_messages: u32,
+    observed_sender_count: u32,
+    observed_senders_truncated: bool,
+    observed_senders: Vec<PseudonymRef>,
+    observed_destination_handle_count: u32,
+    observed_destination_handles_truncated: bool,
+    observed_destination_handles: Vec<PseudonymRef>,
+    observed_group_id_count: u32,
+    observed_group_ids_truncated: bool,
+    observed_group_ids: Vec<PseudonymRef>,
+    service_class_counts: BTreeMap<&'static str, u32>,
+    route_kind_counts: BTreeMap<&'static str, u32>,
+    first_created_at_millis: Option<i64>,
+    last_created_at_millis: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -100,6 +126,9 @@ struct RelationshipReport {
     schema: u32,
     content_exposed: bool,
     raw_identifiers_exposed: bool,
+    anchor_sources: u32,
+    decoded_anchor_sources: u32,
+    skipped_anchor_sources: u32,
     pages_scanned: u32,
     changes_scanned: u32,
     chat_records: u32,
@@ -210,12 +239,16 @@ fn apple_nanos_to_unix_millis(value: i64) -> Option<i64> {
         .checked_add(APPLE_EPOCH_UNIX_MILLIS)
 }
 
-fn seconds_to_millis(value: Option<f64>) -> Option<i64> {
+fn apple_seconds_to_unix_millis(value: Option<f64>) -> Option<i64> {
     let value = value?;
     if !value.is_finite() || value < i64::MIN as f64 / 1000.0 || value > i64::MAX as f64 / 1000.0 {
         return None;
     }
-    Some((value * 1000.0).round() as i64)
+    APPLE_EPOCH_UNIX_MILLIS.checked_add((value * 1000.0).floor() as i64)
+}
+
+fn apple_millis_to_unix_millis(value: Option<i64>) -> Option<i64> {
+    APPLE_EPOCH_UNIX_MILLIS.checked_add(value?)
 }
 
 fn verified_message_record(
@@ -298,6 +331,220 @@ fn decode_message(
     .map_err(|_| "message_typed_decode")
 }
 
+struct DecodedMessageSource {
+    record_name: String,
+    message: CloudMessage,
+    server_modified_at_millis: Option<i64>,
+}
+
+fn message_identity_is_valid(message: &CloudMessage) -> bool {
+    identifier(&message.guid).is_some()
+        && identifier(&message.chat_id).is_some()
+        && [&message.sender, &message.destination_caller_id]
+            .iter()
+            .all(|value| {
+                value.len() <= MAX_CHAT1_SELECTIVE_STRING_BYTES
+                    && !value.chars().any(char::is_control)
+            })
+        && message
+            .msg_proto_4
+            .as_ref()
+            .and_then(|value| value.0.group_id.as_deref())
+            .is_none_or(|value| {
+                value.len() <= MAX_CHAT1_SELECTIVE_STRING_BYTES && identifier(value).is_some()
+            })
+}
+
+fn decoded_message_source(
+    storage_directory: &str,
+    expected_account_fingerprint: &str,
+    message_generation: u64,
+    source: &CloudSyncChat1CorrelationSourceInput,
+    message_zone_key: &rustpush::cloudkit::PCSZoneConfig,
+    hasher: &CloudSemanticIdentifierHasher,
+) -> Result<DecodedMessageSource, &'static str> {
+    let record = verified_message_record(
+        storage_directory,
+        expected_account_fingerprint,
+        message_generation,
+        source,
+        hasher,
+    )?;
+    let record_name = record_identifier_name(&record)
+        .ok_or("probe_message_name")?
+        .to_owned();
+    let message = decode_message(&record, message_zone_key)?;
+    if !message_identity_is_valid(&message) {
+        return Err("probe_message_identity");
+    }
+    Ok(DecodedMessageSource {
+        record_name,
+        message,
+        server_modified_at_millis: source.server_modified_at_millis,
+    })
+}
+
+fn normalized_identity_overlap(left: &str, right: &str) -> bool {
+    let Some(left) = normalized_chat_identity_variants(left) else {
+        return false;
+    };
+    let Some(right) = normalized_chat_identity_variants(right) else {
+        return false;
+    };
+    !left.is_disjoint(&right)
+}
+
+fn message_group_id(message: &CloudMessage) -> Option<&str> {
+    message
+        .msg_proto_4
+        .as_ref()
+        .and_then(|value| value.0.group_id.as_deref())
+        .filter(|value| !value.is_empty())
+}
+
+#[derive(Default)]
+struct AnchorClusterAccumulator {
+    from_me_messages: u32,
+    incoming_messages: u32,
+    senders: BTreeSet<String>,
+    destination_handles: BTreeSet<String>,
+    group_ids: BTreeSet<String>,
+    service_class_counts: BTreeMap<&'static str, u32>,
+    route_kind_counts: BTreeMap<&'static str, u32>,
+    first_created_at_millis: Option<i64>,
+    last_created_at_millis: Option<i64>,
+}
+
+impl AnchorClusterAccumulator {
+    fn observe(&mut self, message: &CloudMessage) {
+        let from_me = message.flags.contains(MessageFlags::IS_FROM_ME);
+        self.from_me_messages = self.from_me_messages.saturating_add(u32::from(from_me));
+        self.incoming_messages = self.incoming_messages.saturating_add(u32::from(!from_me));
+        if !message.sender.is_empty() {
+            self.senders.insert(message.sender.clone());
+        }
+        if !message.destination_caller_id.is_empty() {
+            self.destination_handles
+                .insert(message.destination_caller_id.clone());
+        }
+        if let Some(group_id) = message_group_id(message) {
+            self.group_ids.insert(group_id.to_owned());
+        }
+        let service_count = self
+            .service_class_counts
+            .entry(fixed_service(Some(&message.service)))
+            .or_default();
+        *service_count = service_count.saturating_add(1);
+        let route_count = self
+            .route_kind_counts
+            .entry(route_kind(&message.chat_id))
+            .or_default();
+        *route_count = route_count.saturating_add(1);
+        if let Some(created) = apple_nanos_to_unix_millis(message.time) {
+            self.first_created_at_millis = Some(
+                self.first_created_at_millis
+                    .map_or(created, |value| value.min(created)),
+            );
+            self.last_created_at_millis = Some(
+                self.last_created_at_millis
+                    .map_or(created, |value| value.max(created)),
+            );
+        }
+    }
+}
+
+fn pseudonymize_bounded_set(
+    values: &BTreeSet<String>,
+    symbols: &mut SymbolTable,
+    hasher: &CloudSemanticIdentifierHasher,
+) -> (u32, bool, Vec<PseudonymRef>) {
+    let count = u32::try_from(values.len()).unwrap_or(u32::MAX);
+    let truncated = values.len() > MAX_REPORTED_CLUSTER_IDENTITIES;
+    let references = values
+        .iter()
+        .take(MAX_REPORTED_CLUSTER_IDENTITIES)
+        .map(|value| pseudonym_ref(Some(value), symbols, hasher))
+        .collect();
+    (count, truncated, references)
+}
+
+fn anchor_route_evidence(
+    target: &CloudMessage,
+    anchors: &[CloudMessage],
+    symbols: &mut SymbolTable,
+    hasher: &CloudSemanticIdentifierHasher,
+) -> AnchorRouteEvidence {
+    let target_group_id = message_group_id(target);
+    let mut exact_route_messages = 0u32;
+    let mut normalized_route_messages = 0u32;
+    let mut group_correlated_messages = 0u32;
+    let mut matched_anchor_messages = 0u32;
+    let mut cluster = AnchorClusterAccumulator::default();
+    cluster.observe(target);
+
+    for anchor in anchors {
+        // The exported anchor set may contain the target source itself. Its
+        // evidence is already represented by `target`, so never double count it.
+        if anchor.guid == target.guid
+            && anchor.chat_id == target.chat_id
+            && anchor.time == target.time
+        {
+            continue;
+        }
+        let exact_route = anchor.chat_id == target.chat_id;
+        let normalized_route = normalized_identity_overlap(&anchor.chat_id, &target.chat_id);
+        let group_correlated = target_group_id.is_some_and(|target_group_id| {
+            normalized_identity_overlap(target_group_id, &anchor.chat_id)
+                || message_group_id(anchor).is_some_and(|anchor_group_id| {
+                    normalized_identity_overlap(target_group_id, anchor_group_id)
+                })
+        });
+        exact_route_messages = exact_route_messages.saturating_add(u32::from(exact_route));
+        normalized_route_messages =
+            normalized_route_messages.saturating_add(u32::from(normalized_route));
+        group_correlated_messages =
+            group_correlated_messages.saturating_add(u32::from(group_correlated));
+        if !normalized_route && !group_correlated {
+            continue;
+        }
+        matched_anchor_messages = matched_anchor_messages.saturating_add(1);
+        cluster.observe(anchor);
+    }
+
+    let (observed_sender_count, observed_senders_truncated, observed_senders) =
+        pseudonymize_bounded_set(&cluster.senders, symbols, hasher);
+    let (
+        observed_destination_handle_count,
+        observed_destination_handles_truncated,
+        observed_destination_handles,
+    ) = pseudonymize_bounded_set(&cluster.destination_handles, symbols, hasher);
+    let (observed_group_id_count, observed_group_ids_truncated, observed_group_ids) =
+        pseudonymize_bounded_set(&cluster.group_ids, symbols, hasher);
+
+    AnchorRouteEvidence {
+        exact_route_messages,
+        normalized_route_messages,
+        group_correlated_messages,
+        matched_anchor_messages,
+        cluster_messages_including_target: matched_anchor_messages.saturating_add(1),
+        from_me_messages: cluster.from_me_messages,
+        incoming_messages: cluster.incoming_messages,
+        observed_sender_count,
+        observed_senders_truncated,
+        observed_senders,
+        observed_destination_handle_count,
+        observed_destination_handles_truncated,
+        observed_destination_handles,
+        observed_group_id_count,
+        observed_group_ids_truncated,
+        observed_group_ids,
+        service_class_counts: cluster.service_class_counts,
+        route_kind_counts: cluster.route_kind_counts,
+        first_created_at_millis: cluster.first_created_at_millis,
+        last_created_at_millis: cluster.last_created_at_millis,
+    }
+}
+
 fn fixed_chat1_schema_key(field: &rustpush::cloudkit_proto::record::Field) -> Result<String, ()> {
     let name = field
         .identifier
@@ -377,10 +624,10 @@ fn chat1_row(
         style,
         style_class: style_class(style),
         last_read_at_millis: last_read.and_then(apple_nanos_to_unix_millis),
-        server_created_at_millis: seconds_to_millis(
+        server_created_at_millis: apple_seconds_to_unix_millis(
             system_fields.and_then(|fields| fields.created_at),
         ),
-        server_modified_at_millis: seconds_to_millis(
+        server_modified_at_millis: apple_seconds_to_unix_millis(
             system_fields.and_then(|fields| fields.modified_at),
         ),
     })
@@ -394,12 +641,16 @@ pub(super) async fn collect(
     expected_protected_store_identity: &str,
     message_generation: u64,
     message_sources: &[CloudSyncChat1CorrelationSourceInput],
+    anchor_message_sources: &[CloudSyncChat1CorrelationSourceInput],
 ) -> Result<serde_json::Value, &'static str> {
     if !requested().map_err(|_| "probe_enable")?
         || !is_cloud_sync_windows_dev_profile(storage_directory)
         || message_generation == 0
         || message_sources.len() != MAX_MESSAGE_SOURCES
+        || !(MAX_MESSAGE_SOURCES..=MAX_ANCHOR_MESSAGE_SOURCES)
+            .contains(&anchor_message_sources.len())
         || !valid_sources(message_sources, MAX_MESSAGE_SOURCES)
+        || !valid_sources(anchor_message_sources, MAX_ANCHOR_MESSAGE_SOURCES)
     {
         return Err("probe_request");
     }
@@ -442,37 +693,46 @@ pub(super) async fn collect(
         .await
         .map_err(|_| "probe_chat1_zone_key")?;
 
-    let mut symbols = SymbolTable::default();
-    let mut messages = Vec::with_capacity(message_sources.len());
-    for (index, source) in message_sources.iter().enumerate() {
-        let record = verified_message_record(
+    let target_messages = message_sources
+        .iter()
+        .map(|source| {
+            decoded_message_source(
+                storage_directory,
+                expected_account_fingerprint,
+                message_generation,
+                source,
+                &message_zone_key,
+                &hasher,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut decoded_anchor_messages = Vec::with_capacity(anchor_message_sources.len());
+    let mut skipped_anchor_sources = 0u32;
+    for source in anchor_message_sources {
+        match decoded_message_source(
             storage_directory,
             expected_account_fingerprint,
             message_generation,
             source,
+            &message_zone_key,
             &hasher,
-        )?;
-        let record_name = record_identifier_name(&record).ok_or("probe_message_name")?;
-        let message = decode_message(&record, &message_zone_key)?;
-        if identifier(&message.guid).is_none()
-            || identifier(&message.chat_id).is_none()
-            || [&message.sender, &message.destination_caller_id]
-                .iter()
-                .any(|value| {
-                    value.len() > MAX_CHAT1_SELECTIVE_STRING_BYTES
-                        || value.chars().any(char::is_control)
-                })
-        {
-            return Err("probe_message_identity");
+        ) {
+            Ok(decoded) => decoded_anchor_messages.push(decoded.message),
+            Err(_) => skipped_anchor_sources = skipped_anchor_sources.saturating_add(1),
         }
+    }
+
+    let mut symbols = SymbolTable::default();
+    let mut messages = Vec::with_capacity(target_messages.len());
+    for (index, decoded) in target_messages.iter().enumerate() {
+        let message = &decoded.message;
         let proto = &message.msg_proto.0;
-        let msgproto_group_id = message
-            .msg_proto_4
-            .as_ref()
-            .and_then(|value| value.0.group_id.as_deref());
+        let msgproto_group_id = message_group_id(message);
+        let anchor_route_evidence =
+            anchor_route_evidence(message, &decoded_anchor_messages, &mut symbols, &hasher);
         messages.push(MessageRelationshipRow {
             index: u32::try_from(index).map_err(|_| "probe_message_index")?,
-            record: pseudonym_ref(Some(record_name), &mut symbols, &hasher),
+            record: pseudonym_ref(Some(&decoded.record_name), &mut symbols, &hasher),
             chat_id: pseudonym_ref(Some(&message.chat_id), &mut symbols, &hasher),
             sender: pseudonym_ref(Some(&message.sender), &mut symbols, &hasher),
             destination_caller_id: pseudonym_ref(
@@ -488,7 +748,9 @@ pub(super) async fn collect(
             outer_type: message.r#type,
             error: message.error,
             created_at_millis: apple_nanos_to_unix_millis(message.time),
-            server_modified_at_millis: source.server_modified_at_millis,
+            server_modified_at_millis: apple_millis_to_unix_millis(
+                decoded.server_modified_at_millis,
+            ),
             text_present: proto.text.as_deref().is_some_and(|value| !value.is_empty()),
             attributed_body_present: proto
                 .attributed_body
@@ -498,6 +760,7 @@ pub(super) async fn collect(
                 .payload_data
                 .as_ref()
                 .is_some_and(|value| !value.is_empty()),
+            anchor_route_evidence,
         });
     }
 
@@ -615,6 +878,11 @@ pub(super) async fn collect(
         schema: REPORT_SCHEMA,
         content_exposed: false,
         raw_identifiers_exposed: false,
+        anchor_sources: u32::try_from(anchor_message_sources.len())
+            .map_err(|_| "probe_anchor_count")?,
+        decoded_anchor_sources: u32::try_from(decoded_anchor_messages.len())
+            .map_err(|_| "probe_decoded_anchor_count")?,
+        skipped_anchor_sources,
         pages_scanned,
         changes_scanned,
         chat_records: u32::try_from(chats.len()).map_err(|_| "probe_chat_count")?,
@@ -636,6 +904,30 @@ pub(super) async fn collect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn relationship_message(
+        guid: &str,
+        route: &str,
+        sender: &str,
+        destination_caller_id: &str,
+        from_me: bool,
+        apple_time_nanos: i64,
+    ) -> CloudMessage {
+        CloudMessage {
+            chat_id: route.to_owned(),
+            sender: sender.to_owned(),
+            destination_caller_id: destination_caller_id.to_owned(),
+            time: apple_time_nanos,
+            flags: if from_me {
+                MessageFlags::IS_FROM_ME
+            } else {
+                MessageFlags::default()
+            },
+            guid: guid.to_owned(),
+            service: "iMessage".to_owned(),
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn pseudonym_reference_never_serializes_source_value() {
@@ -666,5 +958,133 @@ mod tests {
         assert_eq!(value_shape(Some("+15555550101")), "phone");
         assert_eq!(value_shape(Some("tel:+15555550101")), "uri");
         assert_eq!(value_shape(Some("opaque")), "opaque");
+    }
+
+    #[test]
+    fn apple_epoch_conversions_preserve_containing_millisecond() {
+        assert_eq!(apple_nanos_to_unix_millis(0), Some(APPLE_EPOCH_UNIX_MILLIS));
+        assert_eq!(
+            apple_nanos_to_unix_millis(1_999_999),
+            Some(APPLE_EPOCH_UNIX_MILLIS + 1)
+        );
+        assert_eq!(
+            apple_seconds_to_unix_millis(Some(1.999_999)),
+            Some(APPLE_EPOCH_UNIX_MILLIS + 1_999)
+        );
+        assert_eq!(
+            apple_millis_to_unix_millis(Some(2_345)),
+            Some(APPLE_EPOCH_UNIX_MILLIS + 2_345)
+        );
+        assert_eq!(apple_seconds_to_unix_millis(Some(f64::NAN)), None);
+        assert_eq!(apple_seconds_to_unix_millis(None), None);
+    }
+
+    #[test]
+    fn anchor_cluster_uses_routes_without_serializing_source_values() {
+        let target = relationship_message(
+            "target-guid",
+            "iMessage;-;+15555550101",
+            "local@example.invalid",
+            "local@example.invalid",
+            true,
+            3_000_000,
+        );
+        let anchors = vec![
+            target.clone(),
+            relationship_message(
+                "exact-guid",
+                "iMessage;-;+15555550101",
+                "first@example.invalid",
+                "local@example.invalid",
+                false,
+                1_000_000,
+            ),
+            relationship_message(
+                "normalized-guid",
+                "+15555550101",
+                "second@example.invalid",
+                "local@example.invalid",
+                false,
+                2_000_000,
+            ),
+            relationship_message(
+                "unrelated-guid",
+                "iMessage;-;+15555550999",
+                "unrelated@example.invalid",
+                "local@example.invalid",
+                false,
+                4_000_000,
+            ),
+        ];
+        let hasher = CloudSemanticIdentifierHasher::new(b"anchor-cluster-fixture").unwrap();
+        let mut symbols = SymbolTable::default();
+        let evidence = anchor_route_evidence(&target, &anchors, &mut symbols, &hasher);
+
+        assert_eq!(evidence.exact_route_messages, 1);
+        assert_eq!(evidence.normalized_route_messages, 2);
+        assert_eq!(evidence.group_correlated_messages, 0);
+        assert_eq!(evidence.matched_anchor_messages, 2);
+        assert_eq!(evidence.cluster_messages_including_target, 3);
+        assert_eq!(evidence.from_me_messages, 1);
+        assert_eq!(evidence.incoming_messages, 2);
+        assert_eq!(evidence.observed_sender_count, 3);
+        assert!(!evidence.observed_senders_truncated);
+        assert_eq!(evidence.observed_destination_handle_count, 1);
+        assert_eq!(
+            evidence.first_created_at_millis,
+            Some(APPLE_EPOCH_UNIX_MILLIS + 1)
+        );
+        assert_eq!(
+            evidence.last_created_at_millis,
+            Some(APPLE_EPOCH_UNIX_MILLIS + 3)
+        );
+
+        let encoded = serde_json::to_string(&evidence).unwrap();
+        for private_value in [
+            "+15555550101",
+            "local@example.invalid",
+            "first@example.invalid",
+            "second@example.invalid",
+            "unrelated@example.invalid",
+        ] {
+            assert!(!encoded.contains(private_value));
+        }
+    }
+
+    #[test]
+    fn anchor_cluster_caps_reported_identity_references() {
+        let target = relationship_message(
+            "target-guid",
+            "iMessage;-;+15555550101",
+            "local@example.invalid",
+            "local@example.invalid",
+            true,
+            0,
+        );
+        let anchors = (0..=MAX_REPORTED_CLUSTER_IDENTITIES)
+            .map(|index| {
+                relationship_message(
+                    &format!("anchor-guid-{index}"),
+                    "iMessage;-;+15555550101",
+                    &format!("person-{index}@example.invalid"),
+                    "local@example.invalid",
+                    false,
+                    i64::try_from(index).unwrap() * 1_000_000,
+                )
+            })
+            .collect::<Vec<_>>();
+        let hasher = CloudSemanticIdentifierHasher::new(b"anchor-cap-fixture").unwrap();
+        let mut symbols = SymbolTable::default();
+        let evidence = anchor_route_evidence(&target, &anchors, &mut symbols, &hasher);
+
+        assert_eq!(
+            evidence.observed_sender_count,
+            u32::try_from(MAX_REPORTED_CLUSTER_IDENTITIES + 2).unwrap()
+        );
+        assert!(evidence.observed_senders_truncated);
+        assert_eq!(
+            evidence.observed_senders.len(),
+            MAX_REPORTED_CLUSTER_IDENTITIES
+        );
     }
 }
