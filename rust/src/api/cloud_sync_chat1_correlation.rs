@@ -1915,10 +1915,10 @@ struct SemanticMatchCounts {
     sender_service_style_match_pairs: u32,
     matched_sender_service_style_mask: u8,
     matched_sender_service_style_chat1_records: u32,
-    sender_service_style_candidate_counts: [u16; MAX_MESSAGE_SOURCES],
-    last_seen_target_candidate_counts: [u16; MAX_MESSAGE_SOURCES],
-    anchor_exact_candidate_counts: [u16; MAX_MESSAGE_SOURCES],
-    anchor_normalized_candidate_counts: [u16; MAX_MESSAGE_SOURCES],
+    sender_service_style_candidate_counts: Vec<u16>,
+    last_seen_target_candidate_counts: Vec<u16>,
+    anchor_exact_candidate_counts: Vec<u16>,
+    anchor_normalized_candidate_counts: Vec<u16>,
 }
 
 impl SemanticMatchCounts {
@@ -1962,7 +1962,9 @@ impl SemanticMatchCounts {
         snapshot
     }
 
-    fn observe_candidate_mask(counts: &mut [u16; MAX_MESSAGE_SOURCES], mask: u8) {
+    fn observe_candidate_mask(counts: &mut Vec<u16>, mask: u8) {
+        counts.resize(MAX_MESSAGE_SOURCES, 0);
+        counts.truncate(MAX_MESSAGE_SOURCES);
         for (index, count) in counts.iter_mut().enumerate() {
             if mask & (1u8 << index) != 0 {
                 *count = count.saturating_add(1);
@@ -1970,17 +1972,19 @@ impl SemanticMatchCounts {
         }
     }
 
-    fn candidate_cardinality(counts: &[u16; MAX_MESSAGE_SOURCES]) -> CandidateCardinality {
-        counts
-            .iter()
-            .fold(CandidateCardinality::default(), |mut cardinality, count| {
+    fn candidate_cardinality(counts: &[u16]) -> CandidateCardinality {
+        (0..MAX_MESSAGE_SOURCES).fold(
+            CandidateCardinality::default(),
+            |mut cardinality, index| {
+                let count = counts.get(index).copied().unwrap_or(0);
                 match count {
                     0 => cardinality.zero += 1,
                     1 => cardinality.unique += 1,
                     _ => cardinality.multiple += 1,
                 }
                 cardinality
-            })
+            },
+        )
     }
 
     fn observe(&mut self, fields: &RouteFieldMatches) {
@@ -4293,7 +4297,7 @@ mod tests {
     #[test]
     fn candidate_cardinality_reports_zero_unique_and_multiple_per_target() {
         let mut counts = SemanticMatchCounts::default();
-        counts.sender_service_style_candidate_counts = [0, 1, 2, 3, 1, 0, 7, 1];
+        counts.sender_service_style_candidate_counts = vec![0, 1, 2, 3, 1, 0, 7, 1];
         let cardinality = SemanticMatchCounts::candidate_cardinality(
             &counts.sender_service_style_candidate_counts,
         );
