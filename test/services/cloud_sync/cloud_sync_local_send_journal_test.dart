@@ -2018,6 +2018,60 @@ void main() {
     });
   }
 
+  test('new-chat native confirmation replay stays idempotent across restart',
+      () async {
+    final wire = _wire(chat);
+    chat
+      ..guid = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'
+      ..style = null
+      ..chatIdentifier = null;
+    store.box<Chat>().put(chat);
+    wire.conversation!.senderGuid = chat.guid;
+    final body = AttributedBody.raw('ordinary text');
+    final pending = createPendingInitialIMessage(
+      body, createdAt: _time(2), sender: _handle('me@example.com'),
+    )..chat.target = chat;
+    final fresh = CloudSyncLocalSendIdentity.isFreshLocalSubmission(
+      pending, generatedGuid: wire.id, stableGuid: wire.id,
+    );
+    expect(fresh, isTrue);
+    final initial = CloudSyncLocalSendIdentity.capture(pending, chat, wire.id)!;
+    final identity = journal.captureSubmissionWire(
+      message: pending, chat: chat, wire: wire,
+      initialSourceSha256: initial.sourceSha256,
+    )!;
+    pending.stagingGuid = wire.id;
+    journal.saveSubmission(
+      identity: identity, newlyGeneratedGuid: fresh,
+      persistMessage: () => store.box<Message>().put(pending), now: _time(2),
+    );
+    final rowId = pending.id!;
+    await reopen();
+    int? confirm() => journal.recordNativeSendConfirmation(
+      stableGuid: wire.id, succeeded: true,
+      capturedAuth: _auth(Object()), stillCurrent: () => true, now: _time(4),
+    );
+    final id = confirm();
+    expect(id, isNotNull);
+    // Immediate transport retry must not invent a second intent or message.
+    expect(confirm(), id);
+    expect(store.box<Message>().count(), 1);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 1);
+    await reopen();
+    // Same replay after restart must resolve to the original intent.
+    expect(confirm(), id);
+    expect(store.box<Message>().count(), 1);
+    expect(store.box<CloudSyncLocalSendIntentEntity>().count(), 1);
+    journal.promoteIdsConfirmedDeferred(
+      intentId: id!, currentAuth: _auth(Object()), now: _time(5),
+    );
+    final candidate = journal.readForAdmission(id);
+    expect(candidate.localMessageId, rowId);
+    expect(candidate.message!.guid, wire.id);
+    expect(candidate.message!.chat.target!.guid, chat.guid);
+    expect(journal.readReady(), hasLength(1));
+  });
+
   test('initial-message factory preserves formatting and malformed group guards', () {
     final body = AttributedBody(
       string: 'ordinary text',

@@ -3428,4 +3428,302 @@ mod tests {
         }
         assert_eq!(cases, 31, "table must run all deterministic oracle cases");
     }
+
+    fn remove_record_field(record: &Record, name: &str) -> Record {
+        let mut out = record.clone();
+        out.record_field.retain(|field| {
+            field
+                .identifier
+                .as_ref()
+                .and_then(|identifier| identifier.name.as_deref())
+                != Some(name)
+        });
+        out
+    }
+
+    fn empty_inspect_context() -> (
+        Vec<String>,
+        Vec<NormalizedRouteTarget>,
+        Vec<Option<String>>,
+        Vec<Option<NormalizedRouteTarget>>,
+        Vec<Option<String>>,
+        Vec<Option<NormalizedRouteTarget>>,
+    ) {
+        (
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn missing_scalar_route_fields_freeze_absent_ok_contract() {
+        // Fixture semantics: CloudChat declares cid/gid/ogid/guid/lah/svc as
+        // required (non-Option) strings, so the oracle encoder always emits
+        // them. Whether Apple ever omits them on the wire is unproved here.
+        // This test only freezes the current decoder contract: absence is
+        // Ok(None), never MissingValue, and inspection stays Ok.
+        let record_name = "absence-scalar.invalid";
+        let encryptor = oracle_encryptor(record_name);
+        let chat = oracle_chat();
+        let base = oracle_record(&chat, &encryptor);
+        for name in ["cid", "gid", "ogid", "guid", "lah", "svc"] {
+            let missing = remove_record_field(&base, name);
+            assert_eq!(
+                encrypted_string_field(&missing, &encryptor, name),
+                Ok(None),
+                "missing scalar {name} currently decodes to absent, not failure"
+            );
+        }
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let missing_cid = remove_record_field(&base, "cid");
+        let (
+            targets,
+            normalized_targets,
+            msgproto_targets,
+            normalized_msgproto_targets,
+            sender_targets,
+            normalized_sender_targets,
+        ) = empty_inspect_context();
+        let fields = inspect_chat1_route_fields_with_key(
+            &missing_cid,
+            &encryptor,
+            &targets,
+            &normalized_targets,
+            &msgproto_targets,
+            &normalized_msgproto_targets,
+            &sender_targets,
+            &normalized_sender_targets,
+            &hasher,
+        )
+        .expect("missing cid currently inspects Ok");
+        assert_eq!(fields.chat_identifier, 0);
+    }
+
+    #[test]
+    fn missing_stl_freezes_absent_ok_contract() {
+        // Fixture semantics: style (stl) is a required i64 on CloudChat, so the
+        // oracle always emits it. Apple wire optionality is unproved; freeze
+        // only the current Ok(None) contract.
+        let record_name = "absence-stl.invalid";
+        let encryptor = oracle_encryptor(record_name);
+        let chat = oracle_chat();
+        let base = oracle_record(&chat, &encryptor);
+        let missing = remove_record_field(&base, "stl");
+        assert_eq!(
+            encrypted_i64_field(&missing, &encryptor, "stl"),
+            Ok(None),
+            "missing stl currently decodes to absent, not failure"
+        );
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let (
+            targets,
+            normalized_targets,
+            msgproto_targets,
+            normalized_msgproto_targets,
+            sender_targets,
+            normalized_sender_targets,
+        ) = empty_inspect_context();
+        let fields = inspect_chat1_route_fields_with_key(
+            &missing,
+            &encryptor,
+            &targets,
+            &normalized_targets,
+            &msgproto_targets,
+            &normalized_msgproto_targets,
+            &sender_targets,
+            &normalized_sender_targets,
+            &hasher,
+        )
+        .expect("missing stl currently inspects Ok");
+        assert!(!fields.style_group);
+        assert!(!fields.style_direct);
+        assert!(!fields.style_other);
+    }
+
+    #[test]
+    fn missing_ptcpts_freezes_empty_ok_contract() {
+        // Fixture semantics: participants is Vec (can be empty), so an absent
+        // ptcpts field is plausibly legitimate. Freeze the current Ok(empty)
+        // contract without endorsing it for other fields.
+        let record_name = "absence-ptcpts.invalid";
+        let encryptor = oracle_encryptor(record_name);
+        let chat = oracle_chat();
+        let base = oracle_record(&chat, &encryptor);
+        let missing = remove_record_field(&base, "ptcpts");
+        assert_eq!(
+            encrypted_participant_uris(&missing, &encryptor),
+            Ok(Vec::new()),
+            "missing ptcpts currently decodes to empty, not failure"
+        );
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let (
+            targets,
+            normalized_targets,
+            msgproto_targets,
+            normalized_msgproto_targets,
+            sender_targets,
+            normalized_sender_targets,
+        ) = empty_inspect_context();
+        let fields = inspect_chat1_route_fields_with_key(
+            &missing,
+            &encryptor,
+            &targets,
+            &normalized_targets,
+            &msgproto_targets,
+            &normalized_msgproto_targets,
+            &sender_targets,
+            &normalized_sender_targets,
+            &hasher,
+        )
+        .expect("missing ptcpts currently inspects Ok");
+        assert!(!fields.has_participants);
+    }
+
+    #[test]
+    fn missing_prop_freezes_empty_ok_contract() {
+        // Fixture semantics: properties is Option<CloudProp>, so an absent
+        // prop field is plausibly legitimate. Freeze the current Ok(empty)
+        // contract without endorsing it for scalar fields.
+        let record_name = "absence-prop.invalid";
+        let encryptor = oracle_encryptor(record_name);
+        let chat = oracle_chat();
+        let base = oracle_record(&chat, &encryptor);
+        let missing = remove_record_field(&base, "prop");
+        assert_eq!(
+            encrypted_legacy_identifiers(&missing, &encryptor),
+            Ok(Vec::new()),
+            "missing prop currently decodes to empty, not failure"
+        );
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let (
+            targets,
+            normalized_targets,
+            msgproto_targets,
+            normalized_msgproto_targets,
+            sender_targets,
+            normalized_sender_targets,
+        ) = empty_inspect_context();
+        let fields = inspect_chat1_route_fields_with_key(
+            &missing,
+            &encryptor,
+            &targets,
+            &normalized_targets,
+            &msgproto_targets,
+            &normalized_msgproto_targets,
+            &sender_targets,
+            &normalized_sender_targets,
+            &hasher,
+        )
+        .expect("missing prop currently inspects Ok");
+        assert!(!fields.has_legacy);
+    }
+
+    #[test]
+    fn zero_length_decrypted_prop_freezes_empty_ok_contract() {
+        // Current production code maps an empty prop plaintext to Ok(empty),
+        // unlike empty ptcpts/stl plaintext which is MissingValue. Freeze that
+        // asymmetry without changing it.
+        let record_name = "zero-prop.invalid";
+        let encryptor = oracle_encryptor(record_name);
+        let empty_ciphertext = encryptor.encrypt_data(&[], "prop");
+        let record = Record {
+            record_field: vec![record_field(
+                "prop",
+                Value {
+                    r#type: Some(FieldValueType::EncryptedBytesType as i32),
+                    bytes_value: Some(empty_ciphertext),
+                    is_encrypted: Some(true),
+                    ..Default::default()
+                },
+            )],
+            ..Default::default()
+        };
+        assert_eq!(
+            encrypted_legacy_identifiers(&record, &encryptor),
+            Ok(Vec::new()),
+            "zero-length decrypted prop currently decodes to empty"
+        );
+    }
+
+    #[test]
+    fn prop_empty_list_flag_freezes_none_and_false_ok_contract() {
+        // Current production code rejects only is_encrypted == Some(true) for
+        // EmptyList prop, so None and Some(false) are both Ok(empty). Freeze
+        // that boundary; the None-accepted case is the inconsistency to decide
+        // later (ptcpts outer requires explicit Some(false)).
+        let key = dummy_pcs_key();
+        for flag in [None, Some(false)] {
+            let record = Record {
+                record_field: vec![record_field(
+                    "prop",
+                    Value {
+                        r#type: Some(FieldValueType::EmptyList as i32),
+                        is_encrypted: flag,
+                        ..Default::default()
+                    },
+                )],
+                ..Default::default()
+            };
+            assert_eq!(
+                encrypted_legacy_identifiers(&record, &key),
+                Ok(Vec::new()),
+                "EmptyList prop with flag {flag:?} currently decodes to empty"
+            );
+        }
+        let rejected = Record {
+            record_field: vec![record_field(
+                "prop",
+                Value {
+                    r#type: Some(FieldValueType::EmptyList as i32),
+                    is_encrypted: Some(true),
+                    ..Default::default()
+                },
+            )],
+            ..Default::default()
+        };
+        assert_eq!(
+            encrypted_legacy_identifiers(&rejected, &key),
+            Err(Chat1RouteFailureKind::WireShape),
+            "EmptyList prop with Some(true) stays WireShape"
+        );
+    }
+
+    #[test]
+    fn ptcpts_outer_flag_freezes_false_only_ok_contract() {
+        // Current production code requires is_encrypted == Some(false) for the
+        // outer ptcpts list, so None and Some(true) are WireShape while
+        // Some(false) with an empty list is Ok(empty). Freeze that boundary.
+        let key = dummy_pcs_key();
+        let build = |flag: Option<bool>| Record {
+            record_field: vec![record_field(
+                "ptcpts",
+                Value {
+                    r#type: Some(FieldValueType::EncryptedBytesListType as i32),
+                    is_encrypted: flag,
+                    list_values: Vec::new(),
+                    ..Default::default()
+                },
+            )],
+            ..Default::default()
+        };
+        assert_eq!(
+            encrypted_participant_uris(&build(None), &key),
+            Err(Chat1RouteFailureKind::WireShape),
+            "ptcpts outer flag None stays WireShape"
+        );
+        assert_eq!(
+            encrypted_participant_uris(&build(Some(true)), &key),
+            Err(Chat1RouteFailureKind::WireShape),
+            "ptcpts outer flag Some(true) stays WireShape"
+        );
+        assert_eq!(
+            encrypted_participant_uris(&build(Some(false)), &key),
+            Ok(Vec::new()),
+            "ptcpts outer flag Some(false) with empty list stays Ok(empty)"
+        );
+    }
 }

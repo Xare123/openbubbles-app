@@ -1595,4 +1595,157 @@ mod tests {
         ]);
         assert_eq!(validate_binary(&bytes), Err(Failure::Malformed));
     }
+
+    #[test]
+    fn string_bytes_boundary_discriminates_offset_256_observation() {
+        // Single large Name scalar keeps wire under 1 MiB and slots small,
+        // so LimitExceeded here must be the 16 KiB string bound, not the
+        // wire, slot, node, or live-layout caps.
+        let mut exact = balloon();
+        exact
+            .as_dictionary_mut()
+            .unwrap()
+            .insert("an".into(), s(&"x".repeat(MAX_STRING_BYTES)));
+        let exact_wire = encode(&archived(exact.clone()));
+        assert!(exact_wire.len() < MAX_PAYLOAD_BYTES);
+        let metadata = decode(exact).unwrap();
+        assert_eq!(metadata.name.len(), MAX_STRING_BYTES);
+        assert_eq!(
+            format!("{metadata:?}"),
+            "ExtensionPayloadMetadata([redacted])"
+        );
+        for size in [MAX_STRING_BYTES + 1, 50_507, 80_485] {
+            let mut root = balloon();
+            root.as_dictionary_mut()
+                .unwrap()
+                .insert("an".into(), s(&"x".repeat(size)));
+            let wire = encode(&archived(root));
+            assert!(wire.len() < MAX_PAYLOAD_BYTES);
+            let mut stage = ExtensionDecodeStage::Complete;
+            assert_eq!(
+                decode_extension_payload_inner(&wire, "com.example.synthetic", &mut stage),
+                Err(Failure::LimitExceeded)
+            );
+            assert_eq!(stage, ExtensionDecodeStage::BinaryPreflight);
+            assert_eq!(
+                decode_extension_payload(&wire, "com.example.synthetic"),
+                Err(Failure::LimitExceeded)
+            );
+            assert_eq!(format!("{stage:?}"), "BinaryPreflight");
+        }
+        // DisplayText follows the same 16 KiB scalar bound.
+        let mut exact_text = balloon();
+        exact_text
+            .as_dictionary_mut()
+            .unwrap()
+            .insert("ldtext".into(), s(&"y".repeat(MAX_STRING_BYTES)));
+        assert_eq!(
+            decode(exact_text)
+                .unwrap()
+                .balloon
+                .ld_text
+                .as_deref()
+                .unwrap()
+                .len(),
+            MAX_STRING_BYTES
+        );
+        let mut over_text = balloon();
+        over_text
+            .as_dictionary_mut()
+            .unwrap()
+            .insert("ldtext".into(), s(&"y".repeat(MAX_STRING_BYTES + 1)));
+        let wire = encode(&archived(over_text));
+        assert!(wire.len() < MAX_PAYLOAD_BYTES);
+        let mut stage = ExtensionDecodeStage::Complete;
+        assert_eq!(
+            decode_extension_payload_inner(&wire, "com.example.synthetic", &mut stage),
+            Err(Failure::LimitExceeded)
+        );
+        assert_eq!(stage, ExtensionDecodeStage::BinaryPreflight);
+    }
+
+    #[test]
+    fn live_layout_64kib_boundary_with_retained_controls() {
+        // Retained 4.9 KiB and 11.9 KiB controls succeed, so the observed
+        // type-2 live-layout failures are shape-driven, not size-driven.
+        for size in [4_900, 11_900, MAX_LIVE_LAYOUT_BYTES] {
+            for wrapped in [false, true] {
+                let mut root = balloon();
+                let value = if wrapped {
+                    blob(vec![42; size])
+                } else {
+                    Value::Data(vec![42; size])
+                };
+                root.as_dictionary_mut()
+                    .unwrap()
+                    .insert("liveLayoutInfo".into(), value);
+                let wire = encode(&archived(root.clone()));
+                assert!(wire.len() < MAX_PAYLOAD_BYTES);
+                assert!(decode(root).unwrap().balloon.is_live);
+            }
+        }
+        // Just over 64 KiB fails closed at LiveLayout for both wire shapes.
+        // Wire stays near 64 KiB with no large strings, ruling out the
+        // 1 MiB wire cap and the 16 KiB string bound.
+        for wrapped in [false, true] {
+            let mut root = balloon();
+            let value = if wrapped {
+                blob(vec![42; MAX_LIVE_LAYOUT_BYTES + 1])
+            } else {
+                Value::Data(vec![42; MAX_LIVE_LAYOUT_BYTES + 1])
+            };
+            root.as_dictionary_mut()
+                .unwrap()
+                .insert("liveLayoutInfo".into(), value);
+            let wire = encode(&archived(root));
+            assert!(wire.len() < MAX_PAYLOAD_BYTES);
+            let mut stage = ExtensionDecodeStage::Complete;
+            assert_eq!(
+                decode_extension_payload_inner(&wire, "com.example.synthetic", &mut stage),
+                Err(Failure::LimitExceeded)
+            );
+            assert_eq!(stage, ExtensionDecodeStage::LiveLayout);
+            assert_eq!(
+                decode_extension_payload(&wire, "com.example.synthetic"),
+                Err(Failure::LimitExceeded)
+            );
+        }
+    }
+
+    #[test]
+    fn archive_and_collection_amplification_just_over_limits() {
+        // Archive objects just over 4,096 trips ArchiveGraph while the wire
+        // stays small, ruling out the 1 MiB transport cap.
+        let mut archive = archived(balloon());
+        assert!(objects(&mut archive).len() < MAX_ARCHIVE_OBJECTS);
+        objects(&mut archive).resize(MAX_ARCHIVE_OBJECTS + 1, s("x"));
+        let wire = encode(&archive);
+        assert!(wire.len() < MAX_PAYLOAD_BYTES);
+        let mut stage = ExtensionDecodeStage::Complete;
+        assert_eq!(
+            decode_extension_payload_inner(&wire, "com.example.synthetic", &mut stage),
+            Err(Failure::LimitExceeded)
+        );
+        assert_eq!(stage, ExtensionDecodeStage::ArchiveGraph);
+        // Many tiny strings trip the collection or node budget without any
+        // single large string, ruling out string_bytes and the wire cap.
+        let mut root = balloon();
+        root.as_dictionary_mut().unwrap().insert(
+            "futureField".into(),
+            Value::Array(vec![s("y"); MAX_VISITED_NODES + 1]),
+        );
+        let wire = encode(&archived(root));
+        assert!(wire.len() < MAX_PAYLOAD_BYTES);
+        let mut stage = ExtensionDecodeStage::Complete;
+        assert_eq!(
+            decode_extension_payload_inner(&wire, "com.example.synthetic", &mut stage),
+            Err(Failure::LimitExceeded)
+        );
+        assert_eq!(stage, ExtensionDecodeStage::BinaryPreflight);
+        assert_eq!(
+            decode_extension_payload(&wire, "com.example.synthetic"),
+            Err(Failure::LimitExceeded)
+        );
+        assert_eq!(format!("{stage:?}"), "BinaryPreflight");
+    }
 }
