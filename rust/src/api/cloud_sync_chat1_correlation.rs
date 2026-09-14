@@ -5005,6 +5005,26 @@ mod tests {
             Ok(Some("sender@example.invalid".to_owned()))
         );
     }
+
+    #[test]
+    fn standalone_live_path_refreshes_read_authentication_before_writer_pause() {
+        let source = include_str!("cloud_sync_chat1_correlation.rs");
+        let test_start = source
+            .rfind("async fn current_rust_correlates_exported_chat1_inputs_read_only()")
+            .expect("standalone live test");
+        let body = &source[test_start..];
+        let refresh = body
+            .find("api::cloud_sync_ensure_read_authentication")
+            .expect("explicit read-authentication refresh");
+        let pause = body
+            .find("api::cloud_sync_pause_password_cloudkit_writers")
+            .expect("writer pause");
+        let warm = body
+            .find("api::cloud_sync_warm_read_authentication_under_writer_pause")
+            .expect("container warmup");
+
+        assert!(refresh < pause && pause < warm);
+    }
 }
 
 #[cfg(all(test, target_os = "windows"))]
@@ -5117,6 +5137,42 @@ mod windows_standalone_live_tests {
         serde_json::from_slice(&bytes).expect("chat1_standalone_manifest_decode_failed")
     }
 
+    fn read_authentication_failure_marker(error: &anyhow::Error) -> &'static str {
+        match error.to_string().as_str() {
+            "cloud_sync_native_auth_refresh_writer_busy" => {
+                "chat1_standalone_read_authentication_refresh_writer_busy"
+            }
+            "cloud_sync_native_auth_refresh_session_missing" => {
+                "chat1_standalone_read_authentication_refresh_session_missing"
+            }
+            "cloud_sync_native_auth_refresh_relay_unavailable" => {
+                "chat1_standalone_read_authentication_refresh_relay_unavailable"
+            }
+            "cloud_sync_native_auth_refresh_credentials_rejected" => {
+                "chat1_standalone_read_authentication_refresh_credentials_rejected"
+            }
+            "cloud_sync_native_auth_refresh_transport_failed" => {
+                "chat1_standalone_read_authentication_refresh_transport_failed"
+            }
+            "cloud_sync_native_auth_refresh_state_failed" => {
+                "chat1_standalone_read_authentication_refresh_state_failed"
+            }
+            "cloud_sync_native_auth_refresh_timeout" => {
+                "chat1_standalone_read_authentication_refresh_timeout"
+            }
+            "cloud_sync_native_auth_refresh_failed" => {
+                "chat1_standalone_read_authentication_refresh_failed"
+            }
+            "cloud_sync_native_auth_account_changed" => {
+                "chat1_standalone_read_authentication_account_changed"
+            }
+            "cloud_sync_native_auth_identity_mismatch" => {
+                "chat1_standalone_read_authentication_identity_mismatch"
+            }
+            _ => "chat1_standalone_read_authentication_refresh_unclassified",
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[ignore = "requires the explicit isolated Windows profile and live Apple services"]
     async fn current_rust_correlates_exported_chat1_inputs_read_only() {
@@ -5195,6 +5251,12 @@ mod windows_standalone_live_tests {
         )
         .expect("chat1_standalone_keychain_restore_failed");
         let client = api::make_cloud_messages_client(&cloudkit, &keychain);
+
+        if let Err(error) =
+            api::cloud_sync_ensure_read_authentication(&client, profile_string.clone()).await
+        {
+            panic!("{}", read_authentication_failure_marker(&error));
+        }
 
         let mut pause_token = rand::random::<u64>();
         if pause_token == 0 {
