@@ -33,7 +33,7 @@ impl std::fmt::Debug for CloudChatIdentityObservation {
     }
 }
 
-fn identifier(value: &str) -> Option<String> {
+pub(crate) fn identifier(value: &str) -> Option<String> {
     if value.is_empty()
         || value.len() > 4096
         || value.trim() != value
@@ -71,7 +71,7 @@ pub(crate) fn normalized_chat_identity_variants(value: &str) -> Option<BTreeSet<
     Some(variants)
 }
 
-fn participant(value: &str) -> Option<String> {
+pub(crate) fn participant(value: &str) -> Option<String> {
     let value = identifier(value)?;
     let phone = value
         .strip_prefix('+')

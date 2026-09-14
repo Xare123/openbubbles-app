@@ -451,6 +451,73 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
         result.pagedNormalizedMatchedMessageRoutes,
     'paged_normalized_matched_chat1_records':
         result.pagedNormalizedMatchedChat1Records,
+    'message_group_id_sources': result.messageGroupIdSources,
+    'message_sender_sources': result.messageSenderSources,
+    'paged_imessage_service_records': result.pagedImessageServiceRecords,
+    'paged_other_service_records': result.pagedOtherServiceRecords,
+    'paged_route_participant_match_pairs':
+        result.pagedRouteParticipantMatchPairs,
+    'paged_route_legacy_match_pairs': result.pagedRouteLegacyMatchPairs,
+    'paged_route_lah_match_pairs': result.pagedRouteLahMatchPairs,
+    'paged_msgproto_chat_identifier_match_pairs':
+        result.pagedMsgprotoChatIdentifierMatchPairs,
+    'paged_msgproto_group_id_match_pairs':
+        result.pagedMsgprotoGroupIdMatchPairs,
+    'paged_msgproto_original_group_id_match_pairs':
+        result.pagedMsgprotoOriginalGroupIdMatchPairs,
+    'paged_msgproto_guid_match_pairs': result.pagedMsgprotoGuidMatchPairs,
+    'paged_msgproto_legacy_match_pairs': result.pagedMsgprotoLegacyMatchPairs,
+    'paged_sender_participant_match_pairs':
+        result.pagedSenderParticipantMatchPairs,
+    'paged_sender_lah_match_pairs': result.pagedSenderLahMatchPairs,
+    'paged_matched_route_extra_message_routes':
+        result.pagedMatchedRouteExtraMessageRoutes,
+    'paged_matched_route_extra_chat1_records':
+        result.pagedMatchedRouteExtraChat1Records,
+    'paged_matched_msgproto_targets': result.pagedMatchedMsgprotoTargets,
+    'paged_matched_msgproto_chat1_records':
+        result.pagedMatchedMsgprotoChat1Records,
+    'paged_matched_sender_targets': result.pagedMatchedSenderTargets,
+    'paged_matched_sender_chat1_records': result.pagedMatchedSenderChat1Records,
+    'paged_participant_present_records': result.pagedParticipantPresentRecords,
+    'paged_legacy_present_records': result.pagedLegacyPresentRecords,
+    'paged_lah_present_records': result.pagedLahPresentRecords,
+    'paged_service_present_records': result.pagedServicePresentRecords,
+    'paged_style_direct_records': result.pagedStyleDirectRecords,
+    'paged_style_group_records': result.pagedStyleGroupRecords,
+    'paged_other_style_records': result.pagedStyleOtherRecords,
+    'paged_normalized_route_participant_match_pairs':
+        result.pagedNormalizedRouteParticipantMatchPairs,
+    'paged_normalized_route_legacy_match_pairs':
+        result.pagedNormalizedRouteLegacyMatchPairs,
+    'paged_normalized_route_lah_match_pairs':
+        result.pagedNormalizedRouteLahMatchPairs,
+    'paged_normalized_msgproto_chat_identifier_match_pairs':
+        result.pagedNormalizedMsgprotoChatIdentifierMatchPairs,
+    'paged_normalized_msgproto_group_id_match_pairs':
+        result.pagedNormalizedMsgprotoGroupIdMatchPairs,
+    'paged_normalized_msgproto_original_group_id_match_pairs':
+        result.pagedNormalizedMsgprotoOriginalGroupIdMatchPairs,
+    'paged_normalized_msgproto_guid_match_pairs':
+        result.pagedNormalizedMsgprotoGuidMatchPairs,
+    'paged_normalized_msgproto_legacy_match_pairs':
+        result.pagedNormalizedMsgprotoLegacyMatchPairs,
+    'paged_normalized_sender_participant_match_pairs':
+        result.pagedNormalizedSenderParticipantMatchPairs,
+    'paged_normalized_sender_lah_match_pairs':
+        result.pagedNormalizedSenderLahMatchPairs,
+    'paged_normalized_matched_route_extra_message_routes':
+        result.pagedNormalizedMatchedRouteExtraMessageRoutes,
+    'paged_normalized_matched_route_extra_chat1_records':
+        result.pagedNormalizedMatchedRouteExtraChat1Records,
+    'paged_normalized_matched_msgproto_targets':
+        result.pagedNormalizedMatchedMsgprotoTargets,
+    'paged_normalized_matched_msgproto_chat1_records':
+        result.pagedNormalizedMatchedMsgprotoChat1Records,
+    'paged_normalized_matched_sender_targets':
+        result.pagedNormalizedMatchedSenderTargets,
+    'paged_normalized_matched_sender_chat1_records':
+        result.pagedNormalizedMatchedSenderChat1Records,
     'paged_terminal_reached': result.pagedTerminalReached,
     'paged_budget_exhausted': result.pagedBudgetExhausted,
     'failure_code': result.failureCode?.name,

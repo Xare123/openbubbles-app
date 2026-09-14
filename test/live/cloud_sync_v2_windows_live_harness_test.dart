@@ -331,6 +331,95 @@ void main() {
                     observed?['paged_normalized_matched_message_routes'] == 8,
                 isTrue,
               );
+              for (final key in <String>{
+                'paged_route_participant_match_pairs',
+                'paged_route_legacy_match_pairs',
+                'paged_route_lah_match_pairs',
+                'paged_msgproto_chat_identifier_match_pairs',
+                'paged_msgproto_group_id_match_pairs',
+                'paged_msgproto_original_group_id_match_pairs',
+                'paged_msgproto_guid_match_pairs',
+                'paged_msgproto_legacy_match_pairs',
+                'paged_sender_participant_match_pairs',
+                'paged_sender_lah_match_pairs',
+                'paged_normalized_route_participant_match_pairs',
+                'paged_normalized_route_legacy_match_pairs',
+                'paged_normalized_route_lah_match_pairs',
+                'paged_normalized_msgproto_chat_identifier_match_pairs',
+                'paged_normalized_msgproto_group_id_match_pairs',
+                'paged_normalized_msgproto_original_group_id_match_pairs',
+                'paged_normalized_msgproto_guid_match_pairs',
+                'paged_normalized_msgproto_legacy_match_pairs',
+                'paged_normalized_sender_participant_match_pairs',
+                'paged_normalized_sender_lah_match_pairs',
+              }) {
+                expect(
+                  observed?[key],
+                  inInclusiveRange(0, changes * 8),
+                  reason: key,
+                );
+              }
+              for (final key in <String>{
+                'paged_matched_route_extra_message_routes',
+                'paged_matched_msgproto_targets',
+                'paged_matched_sender_targets',
+                'paged_normalized_matched_route_extra_message_routes',
+                'paged_normalized_matched_msgproto_targets',
+                'paged_normalized_matched_sender_targets',
+              }) {
+                expect(observed?[key], inInclusiveRange(0, 8), reason: key);
+              }
+              for (final key in <String>{
+                'paged_matched_route_extra_chat1_records',
+                'paged_matched_msgproto_chat1_records',
+                'paged_matched_sender_chat1_records',
+                'paged_normalized_matched_route_extra_chat1_records',
+                'paged_normalized_matched_msgproto_chat1_records',
+                'paged_normalized_matched_sender_chat1_records',
+              }) {
+                expect(
+                  observed?[key],
+                  inInclusiveRange(0, observed?['paged_chat_records'] as int),
+                  reason: key,
+                );
+              }
+              final messageGroupIdSources =
+                  observed?['message_group_id_sources'] as int;
+              final messageSenderSources =
+                  observed?['message_sender_sources'] as int;
+              expect(messageGroupIdSources, inInclusiveRange(0, 8));
+              expect(messageSenderSources, inInclusiveRange(0, 8));
+              expect(
+                messageGroupIdSources,
+                lessThanOrEqualTo(observed?['decoded_message_routes'] as int),
+              );
+              expect(
+                messageSenderSources,
+                lessThanOrEqualTo(observed?['decoded_message_routes'] as int),
+              );
+              final pagedImessageService =
+                  observed?['paged_imessage_service_records'] as int;
+              final pagedOtherService =
+                  observed?['paged_other_service_records'] as int;
+              final pagedDirectStyle =
+                  observed?['paged_style_direct_records'] as int;
+              final pagedGroupStyle =
+                  observed?['paged_style_group_records'] as int;
+              final pagedOtherStyle =
+                  observed?['paged_other_style_records'] as int;
+              expect(pagedImessageService, inInclusiveRange(0, changes));
+              expect(pagedOtherService, inInclusiveRange(0, changes));
+              expect(pagedDirectStyle, inInclusiveRange(0, changes));
+              expect(pagedGroupStyle, inInclusiveRange(0, changes));
+              expect(pagedOtherStyle, inInclusiveRange(0, changes));
+              expect(
+                pagedImessageService + pagedOtherService,
+                observed?['paged_service_present_records'],
+              );
+              expect(
+                pagedDirectStyle + pagedGroupStyle + pagedOtherStyle,
+                lessThanOrEqualTo(changes),
+              );
             } else {
               for (final key in <String>{
                 'paged_normalized_chat_identifier_match_pairs',
@@ -340,9 +429,58 @@ void main() {
                 'paged_normalized_semantic_match_pairs',
                 'paged_normalized_matched_message_routes',
                 'paged_normalized_matched_chat1_records',
+                'paged_route_participant_match_pairs',
+                'paged_route_legacy_match_pairs',
+                'paged_route_lah_match_pairs',
+                'paged_msgproto_chat_identifier_match_pairs',
+                'paged_msgproto_group_id_match_pairs',
+                'paged_msgproto_original_group_id_match_pairs',
+                'paged_msgproto_guid_match_pairs',
+                'paged_msgproto_legacy_match_pairs',
+                'paged_sender_participant_match_pairs',
+                'paged_sender_lah_match_pairs',
+                'paged_matched_route_extra_message_routes',
+                'paged_matched_route_extra_chat1_records',
+                'paged_matched_msgproto_targets',
+                'paged_matched_msgproto_chat1_records',
+                'paged_matched_sender_targets',
+                'paged_matched_sender_chat1_records',
+                'paged_participant_present_records',
+                'paged_legacy_present_records',
+                'paged_lah_present_records',
+                'paged_service_present_records',
+                'paged_imessage_service_records',
+                'paged_other_service_records',
+                'paged_style_direct_records',
+                'paged_style_group_records',
+                'paged_other_style_records',
+                'paged_normalized_route_participant_match_pairs',
+                'paged_normalized_route_legacy_match_pairs',
+                'paged_normalized_route_lah_match_pairs',
+                'paged_normalized_msgproto_chat_identifier_match_pairs',
+                'paged_normalized_msgproto_group_id_match_pairs',
+                'paged_normalized_msgproto_original_group_id_match_pairs',
+                'paged_normalized_msgproto_guid_match_pairs',
+                'paged_normalized_msgproto_legacy_match_pairs',
+                'paged_normalized_sender_participant_match_pairs',
+                'paged_normalized_sender_lah_match_pairs',
+                'paged_normalized_matched_route_extra_message_routes',
+                'paged_normalized_matched_route_extra_chat1_records',
+                'paged_normalized_matched_msgproto_targets',
+                'paged_normalized_matched_msgproto_chat1_records',
+                'paged_normalized_matched_sender_targets',
+                'paged_normalized_matched_sender_chat1_records',
               }) {
                 expect(observed?[key], 0, reason: key);
               }
+              expect(
+                observed?['message_group_id_sources'],
+                inInclusiveRange(0, 8),
+              );
+              expect(
+                observed?['message_sender_sources'],
+                inInclusiveRange(0, 8),
+              );
             }
           } else {
             for (final key in <String>{
@@ -365,9 +503,55 @@ void main() {
               'paged_normalized_semantic_match_pairs',
               'paged_normalized_matched_message_routes',
               'paged_normalized_matched_chat1_records',
+              'paged_route_participant_match_pairs',
+              'paged_route_legacy_match_pairs',
+              'paged_route_lah_match_pairs',
+              'paged_msgproto_chat_identifier_match_pairs',
+              'paged_msgproto_group_id_match_pairs',
+              'paged_msgproto_original_group_id_match_pairs',
+              'paged_msgproto_guid_match_pairs',
+              'paged_msgproto_legacy_match_pairs',
+              'paged_sender_participant_match_pairs',
+              'paged_sender_lah_match_pairs',
+              'paged_matched_route_extra_message_routes',
+              'paged_matched_route_extra_chat1_records',
+              'paged_matched_msgproto_targets',
+              'paged_matched_msgproto_chat1_records',
+              'paged_matched_sender_targets',
+              'paged_matched_sender_chat1_records',
+              'paged_participant_present_records',
+              'paged_legacy_present_records',
+              'paged_lah_present_records',
+              'paged_service_present_records',
+              'paged_imessage_service_records',
+              'paged_other_service_records',
+              'paged_style_direct_records',
+              'paged_style_group_records',
+              'paged_other_style_records',
+              'paged_normalized_route_participant_match_pairs',
+              'paged_normalized_route_legacy_match_pairs',
+              'paged_normalized_route_lah_match_pairs',
+              'paged_normalized_msgproto_chat_identifier_match_pairs',
+              'paged_normalized_msgproto_group_id_match_pairs',
+              'paged_normalized_msgproto_original_group_id_match_pairs',
+              'paged_normalized_msgproto_guid_match_pairs',
+              'paged_normalized_msgproto_legacy_match_pairs',
+              'paged_normalized_sender_participant_match_pairs',
+              'paged_normalized_sender_lah_match_pairs',
+              'paged_normalized_matched_route_extra_message_routes',
+              'paged_normalized_matched_route_extra_chat1_records',
+              'paged_normalized_matched_msgproto_targets',
+              'paged_normalized_matched_msgproto_chat1_records',
+              'paged_normalized_matched_sender_targets',
+              'paged_normalized_matched_sender_chat1_records',
             }) {
               expect(observed?[key], 0, reason: key);
             }
+            expect(
+              observed?['message_group_id_sources'],
+              inInclusiveRange(0, 8),
+            );
+            expect(observed?['message_sender_sources'], inInclusiveRange(0, 8));
           }
         } else if (Platform
                 .environment['OPENBUBBLES_INSPECT_CHAT1_CACHE_ONLY'] ==
