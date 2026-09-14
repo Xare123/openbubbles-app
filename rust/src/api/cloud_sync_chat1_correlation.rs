@@ -1983,18 +1983,15 @@ impl SemanticMatchCounts {
     }
 
     fn candidate_cardinality(counts: &[u16]) -> CandidateCardinality {
-        (0..MAX_MESSAGE_SOURCES).fold(
-            CandidateCardinality::default(),
-            |mut cardinality, index| {
-                let count = counts.get(index).copied().unwrap_or(0);
-                match count {
-                    0 => cardinality.zero += 1,
-                    1 => cardinality.unique += 1,
-                    _ => cardinality.multiple += 1,
-                }
-                cardinality
-            },
-        )
+        (0..MAX_MESSAGE_SOURCES).fold(CandidateCardinality::default(), |mut cardinality, index| {
+            let count = counts.get(index).copied().unwrap_or(0);
+            match count {
+                0 => cardinality.zero += 1,
+                1 => cardinality.unique += 1,
+                _ => cardinality.multiple += 1,
+            }
+            cardinality
+        })
     }
 
     fn observe(&mut self, fields: &RouteFieldMatches) {
@@ -5028,6 +5025,9 @@ mod tests {
 }
 
 #[cfg(all(test, target_os = "windows"))]
+mod cloud_sync_chat1_relationship_probe;
+
+#[cfg(all(test, target_os = "windows"))]
 mod windows_standalone_live_tests {
     use super::*;
     use crate::api::api;
@@ -5177,6 +5177,8 @@ mod windows_standalone_live_tests {
     #[ignore = "requires the explicit isolated Windows profile and live Apple services"]
     async fn current_rust_correlates_exported_chat1_inputs_read_only() {
         required_live_environment();
+        let relationship_probe_requested = cloud_sync_chat1_relationship_probe::requested()
+            .expect("chat1_standalone_relationship_probe_enable_rejected");
         let profile = live_profile();
         let manifest = read_manifest(&profile);
         assert_eq!(manifest.schema, 1, "chat1_standalone_manifest_schema");
@@ -5271,22 +5273,40 @@ mod windows_standalone_live_tests {
         );
         let warm =
             api::cloud_sync_warm_read_authentication_under_writer_pause(&client, pause_token).await;
-        let result = if warm.is_ok() {
-            Some(
-                cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause(
-                    &client,
-                    pause_token,
-                    profile_string,
-                    manifest.account_fingerprint,
-                    manifest.protected_store_identity,
-                    manifest.message_generation,
-                    message_sources,
-                    anchor_message_sources,
-                    manifest.chat1_generation,
-                    chat1_sources,
-                )
-                .await,
+        let result_and_probe = if warm.is_ok() {
+            let result = cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause(
+                &client,
+                pause_token,
+                profile_string.clone(),
+                manifest.account_fingerprint.clone(),
+                manifest.protected_store_identity.clone(),
+                manifest.message_generation,
+                message_sources.clone(),
+                anchor_message_sources,
+                manifest.chat1_generation,
+                chat1_sources,
             )
+            .await;
+            let probe = if result.completed
+                && result.failure_code.is_none()
+                && relationship_probe_requested
+            {
+                Some(
+                    cloud_sync_chat1_relationship_probe::collect(
+                        &client,
+                        pause_token,
+                        &profile_string,
+                        &manifest.account_fingerprint,
+                        &manifest.protected_store_identity,
+                        manifest.message_generation,
+                        &message_sources,
+                    )
+                    .await,
+                )
+            } else {
+                None
+            };
+            Some((result, probe))
         } else {
             None
         };
@@ -5294,7 +5314,8 @@ mod windows_standalone_live_tests {
             .await
             .expect("chat1_standalone_writer_resume_failed");
         assert!(warm.is_ok(), "chat1_standalone_read_authentication_failed");
-        let result = result.expect("chat1_standalone_result_missing");
+        let (result, relationship_probe) =
+            result_and_probe.expect("chat1_standalone_result_missing");
 
         let report = serde_json::json!({
             "completed": result.completed,
@@ -5336,6 +5357,11 @@ mod windows_standalone_live_tests {
             "paged_budget_exhausted": result.paged_budget_exhausted,
         });
         println!("OPENBUBBLES_CHAT1_STANDALONE_AGGREGATE={report}");
+        if let Some(relationship_probe) = relationship_probe {
+            let relationship_probe =
+                relationship_probe.expect("chat1_standalone_relationship_probe_failed");
+            println!("OPENBUBBLES_CHAT1_PSEUDONYMOUS_GRAPH={relationship_probe}");
+        }
         assert!(result.completed, "chat1_standalone_correlation_failed");
         assert!(
             result.failure_code.is_none(),
