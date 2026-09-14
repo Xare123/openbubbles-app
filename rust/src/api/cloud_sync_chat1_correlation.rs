@@ -81,9 +81,10 @@ pub enum CloudSyncChat1CorrelationFailureCode {
     AccountChanged,
 }
 
-/// Aggregate-only result. A match means byte-exact equality between a decoded
-/// Message chat route and a verified Chat1 record name; it does not authorize
-/// Chat admission or prove deletion/absence when zero.
+/// Aggregate-only result. Exact-match fields compare a decoded Message route
+/// with a verified Chat1 record name. Semantic-match fields compare its HMAC
+/// with four decrypted Chat1 routing fields. Neither result authorizes Chat
+/// admission, and zero never proves deletion or absence.
 #[derive(Debug)]
 pub struct CloudSyncChat1CorrelationResult {
     pub completed: bool,

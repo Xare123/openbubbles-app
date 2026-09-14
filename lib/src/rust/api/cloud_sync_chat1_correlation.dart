@@ -7,14 +7,16 @@ import '../frb_generated.dart';
 import '../lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `exact_match_counts`, `failure`, `is_bare_digest`, `is_hex_digest`, `is_protected_reference`, `message_decode_request`, `valid_source`, `valid_sources`, `verified_chat1_record_hash`
-// These types are ignored because they are not used by any `pub` functions: `MatchCounts`
+// These functions are ignored because they are not marked as `pub`: `combined`, `decode_verified_chat1_record`, `encrypted_string_field`, `exact_match_counts`, `failure`, `inspect_chat1_route_fields`, `is_bare_digest`, `is_hex_digest`, `is_protected_reference`, `message_decode_request`, `pairs`, `record_identifier_name`, `record_type_name`, `semantic_failure`, `target_mask`, `valid_source`, `valid_sources`, `verified_chat1_record`
+// These types are ignored because they are not used by any `pub` functions: `MatchCounts`, `RouteFieldMatches`, `SemanticMatchCounts`, `VerifiedChat1Record`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`
 
-/// Performs one bounded cached-only comparison under the exact active native
-/// writer pause. The Message decoder may use already-warmed PCS state but this
-/// function performs no CloudKit request, token persistence, projection,
-/// admission, save, delete, keychain synchronization, or identity repair.
+/// Performs one bounded comparison under the exact active native writer pause.
+/// The default path is cached-only. A separately gated semantic diagnostic may
+/// resolve the existing Chat1 PCS configuration with lookup-only reads, then
+/// decrypt only four routing strings. Neither path persists a token, projects,
+/// admits, saves, deletes, synchronizes keychain state, or repairs identity.
 Future<CloudSyncChat1CorrelationResult>
 cloudSyncInspectChat1RecordNameCorrelationUnderWriterPause({
   required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
@@ -50,12 +52,14 @@ enum CloudSyncChat1CorrelationFailureCode {
   messageSourceMismatch,
   messageDecodeFailed,
   chat1SourceMismatch,
+  chat1PcsLookupFailed,
   accountChanged,
 }
 
-/// Aggregate-only result. A match means byte-exact equality between a decoded
-/// Message chat route and a verified Chat1 record name; it does not authorize
-/// Chat admission or prove deletion/absence when zero.
+/// Aggregate-only result. Exact-match fields compare a decoded Message route
+/// with a verified Chat1 record name. Semantic-match fields compare its HMAC
+/// with four decrypted Chat1 routing fields. Neither result authorizes Chat
+/// admission, and zero never proves deletion or absence.
 class CloudSyncChat1CorrelationResult {
   final bool completed;
   final int messageSources;
@@ -66,6 +70,20 @@ class CloudSyncChat1CorrelationResult {
   final int exactMatchPairs;
   final int matchedMessageRoutes;
   final int matchedChat1Records;
+  final bool semanticCorrelationRequested;
+  final bool pcsLookupAttempted;
+  final int chatRecordTypeRecords;
+  final int otherRecordTypeRecords;
+  final int decodedRouteRecords;
+  final int recordDecodeFailures;
+  final int routeFieldDecodeFailures;
+  final int chatIdentifierMatchPairs;
+  final int groupIdMatchPairs;
+  final int originalGroupIdMatchPairs;
+  final int guidMatchPairs;
+  final int semanticMatchPairs;
+  final int matchedSemanticMessageRoutes;
+  final int matchedSemanticChat1Records;
   final CloudSyncChat1CorrelationFailureCode? failureCode;
 
   const CloudSyncChat1CorrelationResult({
@@ -78,6 +96,20 @@ class CloudSyncChat1CorrelationResult {
     required this.exactMatchPairs,
     required this.matchedMessageRoutes,
     required this.matchedChat1Records,
+    required this.semanticCorrelationRequested,
+    required this.pcsLookupAttempted,
+    required this.chatRecordTypeRecords,
+    required this.otherRecordTypeRecords,
+    required this.decodedRouteRecords,
+    required this.recordDecodeFailures,
+    required this.routeFieldDecodeFailures,
+    required this.chatIdentifierMatchPairs,
+    required this.groupIdMatchPairs,
+    required this.originalGroupIdMatchPairs,
+    required this.guidMatchPairs,
+    required this.semanticMatchPairs,
+    required this.matchedSemanticMessageRoutes,
+    required this.matchedSemanticChat1Records,
     this.failureCode,
   });
 
@@ -92,6 +124,20 @@ class CloudSyncChat1CorrelationResult {
       exactMatchPairs.hashCode ^
       matchedMessageRoutes.hashCode ^
       matchedChat1Records.hashCode ^
+      semanticCorrelationRequested.hashCode ^
+      pcsLookupAttempted.hashCode ^
+      chatRecordTypeRecords.hashCode ^
+      otherRecordTypeRecords.hashCode ^
+      decodedRouteRecords.hashCode ^
+      recordDecodeFailures.hashCode ^
+      routeFieldDecodeFailures.hashCode ^
+      chatIdentifierMatchPairs.hashCode ^
+      groupIdMatchPairs.hashCode ^
+      originalGroupIdMatchPairs.hashCode ^
+      guidMatchPairs.hashCode ^
+      semanticMatchPairs.hashCode ^
+      matchedSemanticMessageRoutes.hashCode ^
+      matchedSemanticChat1Records.hashCode ^
       failureCode.hashCode;
 
   @override
@@ -108,6 +154,20 @@ class CloudSyncChat1CorrelationResult {
           exactMatchPairs == other.exactMatchPairs &&
           matchedMessageRoutes == other.matchedMessageRoutes &&
           matchedChat1Records == other.matchedChat1Records &&
+          semanticCorrelationRequested == other.semanticCorrelationRequested &&
+          pcsLookupAttempted == other.pcsLookupAttempted &&
+          chatRecordTypeRecords == other.chatRecordTypeRecords &&
+          otherRecordTypeRecords == other.otherRecordTypeRecords &&
+          decodedRouteRecords == other.decodedRouteRecords &&
+          recordDecodeFailures == other.recordDecodeFailures &&
+          routeFieldDecodeFailures == other.routeFieldDecodeFailures &&
+          chatIdentifierMatchPairs == other.chatIdentifierMatchPairs &&
+          groupIdMatchPairs == other.groupIdMatchPairs &&
+          originalGroupIdMatchPairs == other.originalGroupIdMatchPairs &&
+          guidMatchPairs == other.guidMatchPairs &&
+          semanticMatchPairs == other.semanticMatchPairs &&
+          matchedSemanticMessageRoutes == other.matchedSemanticMessageRoutes &&
+          matchedSemanticChat1Records == other.matchedSemanticChat1Records &&
           failureCode == other.failureCode;
 }
 

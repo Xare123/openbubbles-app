@@ -21807,7 +21807,8 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
 5 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::MessageSourceMismatch,
 6 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::MessageDecodeFailed,
 7 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::Chat1SourceMismatch,
-8 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::AccountChanged,
+8 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::Chat1PcsLookupFailed,
+9 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::AccountChanged,
             _ => unreachable!("Invalid variant for CloudSyncChat1CorrelationFailureCode: {}", inner),
         };
     }
@@ -21825,6 +21826,20 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         let mut var_exactMatchPairs = <u32>::sse_decode(deserializer);
         let mut var_matchedMessageRoutes = <u32>::sse_decode(deserializer);
         let mut var_matchedChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_semanticCorrelationRequested = <bool>::sse_decode(deserializer);
+        let mut var_pcsLookupAttempted = <bool>::sse_decode(deserializer);
+        let mut var_chatRecordTypeRecords = <u32>::sse_decode(deserializer);
+        let mut var_otherRecordTypeRecords = <u32>::sse_decode(deserializer);
+        let mut var_decodedRouteRecords = <u32>::sse_decode(deserializer);
+        let mut var_recordDecodeFailures = <u32>::sse_decode(deserializer);
+        let mut var_routeFieldDecodeFailures = <u32>::sse_decode(deserializer);
+        let mut var_chatIdentifierMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_groupIdMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_originalGroupIdMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_guidMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_semanticMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_matchedSemanticMessageRoutes = <u32>::sse_decode(deserializer);
+        let mut var_matchedSemanticChat1Records = <u32>::sse_decode(deserializer);
         let mut var_failureCode = <Option<
             crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode,
         >>::sse_decode(deserializer);
@@ -21838,6 +21853,20 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
             exact_match_pairs: var_exactMatchPairs,
             matched_message_routes: var_matchedMessageRoutes,
             matched_chat1_records: var_matchedChat1Records,
+            semantic_correlation_requested: var_semanticCorrelationRequested,
+            pcs_lookup_attempted: var_pcsLookupAttempted,
+            chat_record_type_records: var_chatRecordTypeRecords,
+            other_record_type_records: var_otherRecordTypeRecords,
+            decoded_route_records: var_decodedRouteRecords,
+            record_decode_failures: var_recordDecodeFailures,
+            route_field_decode_failures: var_routeFieldDecodeFailures,
+            chat_identifier_match_pairs: var_chatIdentifierMatchPairs,
+            group_id_match_pairs: var_groupIdMatchPairs,
+            original_group_id_match_pairs: var_originalGroupIdMatchPairs,
+            guid_match_pairs: var_guidMatchPairs,
+            semantic_match_pairs: var_semanticMatchPairs,
+            matched_semantic_message_routes: var_matchedSemanticMessageRoutes,
+            matched_semantic_chat1_records: var_matchedSemanticChat1Records,
             failure_code: var_failureCode,
         };
     }
@@ -31592,7 +31621,8 @@ impl flutter_rust_bridge::IntoDart
             Self::MessageSourceMismatch => 5.into_dart(),
             Self::MessageDecodeFailed => 6.into_dart(),
             Self::Chat1SourceMismatch => 7.into_dart(),
-            Self::AccountChanged => 8.into_dart(),
+            Self::Chat1PcsLookupFailed => 8.into_dart(),
+            Self::AccountChanged => 9.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -31627,6 +31657,32 @@ impl flutter_rust_bridge::IntoDart
             self.exact_match_pairs.into_into_dart().into_dart(),
             self.matched_message_routes.into_into_dart().into_dart(),
             self.matched_chat1_records.into_into_dart().into_dart(),
+            self.semantic_correlation_requested
+                .into_into_dart()
+                .into_dart(),
+            self.pcs_lookup_attempted.into_into_dart().into_dart(),
+            self.chat_record_type_records.into_into_dart().into_dart(),
+            self.other_record_type_records.into_into_dart().into_dart(),
+            self.decoded_route_records.into_into_dart().into_dart(),
+            self.record_decode_failures.into_into_dart().into_dart(),
+            self.route_field_decode_failures
+                .into_into_dart()
+                .into_dart(),
+            self.chat_identifier_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.group_id_match_pairs.into_into_dart().into_dart(),
+            self.original_group_id_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.guid_match_pairs.into_into_dart().into_dart(),
+            self.semantic_match_pairs.into_into_dart().into_dart(),
+            self.matched_semantic_message_routes
+                .into_into_dart()
+                .into_dart(),
+            self.matched_semantic_chat1_records
+                .into_into_dart()
+                .into_dart(),
             self.failure_code.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -39294,7 +39350,8 @@ crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::
 crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::MessageSourceMismatch => { 5 }
 crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::MessageDecodeFailed => { 6 }
 crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::Chat1SourceMismatch => { 7 }
-crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::AccountChanged => { 8 }
+crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::Chat1PcsLookupFailed => { 8 }
+crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::AccountChanged => { 9 }
  _ => { unimplemented!(""); }}, serializer);
     }
 }
@@ -39311,6 +39368,20 @@ impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         <u32>::sse_encode(self.exact_match_pairs, serializer);
         <u32>::sse_encode(self.matched_message_routes, serializer);
         <u32>::sse_encode(self.matched_chat1_records, serializer);
+        <bool>::sse_encode(self.semantic_correlation_requested, serializer);
+        <bool>::sse_encode(self.pcs_lookup_attempted, serializer);
+        <u32>::sse_encode(self.chat_record_type_records, serializer);
+        <u32>::sse_encode(self.other_record_type_records, serializer);
+        <u32>::sse_encode(self.decoded_route_records, serializer);
+        <u32>::sse_encode(self.record_decode_failures, serializer);
+        <u32>::sse_encode(self.route_field_decode_failures, serializer);
+        <u32>::sse_encode(self.chat_identifier_match_pairs, serializer);
+        <u32>::sse_encode(self.group_id_match_pairs, serializer);
+        <u32>::sse_encode(self.original_group_id_match_pairs, serializer);
+        <u32>::sse_encode(self.guid_match_pairs, serializer);
+        <u32>::sse_encode(self.semantic_match_pairs, serializer);
+        <u32>::sse_encode(self.matched_semantic_message_routes, serializer);
+        <u32>::sse_encode(self.matched_semantic_chat1_records, serializer);
         <Option<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode>>::sse_encode(self.failure_code, serializer);
     }
 }

@@ -270,6 +270,9 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
   required Object pauseToken,
   required CloudSyncNativeAuthSnapshotReader readCurrentBoundAuth,
 }) async {
+  final semanticCorrelation =
+      Platform.environment['OPENBUBBLES_INSPECT_CHAT1_SEMANTIC_CORRELATION'] ==
+      '1';
   if (pauseToken is! BigInt ||
       pauseToken <= BigInt.zero ||
       pauseToken.bitLength > 64) {
@@ -395,7 +398,10 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
   return <String, Object?>{
     'account_bound': true,
     'scope': 'chat1ManateeZone',
-    'network_read_performed': false,
+    // The semantic diagnostic may perform only the lookup-only PCS reads
+    // needed to decrypt the four bounded routing fields. It never fetches a
+    // record page or persists a cursor.
+    'network_read_performed': semanticCorrelation,
     'content_exposed': false,
     'durable_state_unchanged': durableStateUnchanged,
     'completed': result.completed,
@@ -407,6 +413,20 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     'exact_match_pairs': result.exactMatchPairs,
     'matched_message_routes': result.matchedMessageRoutes,
     'matched_chat1_records': result.matchedChat1Records,
+    'semantic_correlation_requested': result.semanticCorrelationRequested,
+    'pcs_lookup_attempted': result.pcsLookupAttempted,
+    'chat_record_type_records': result.chatRecordTypeRecords,
+    'other_record_type_records': result.otherRecordTypeRecords,
+    'decoded_route_records': result.decodedRouteRecords,
+    'record_decode_failures': result.recordDecodeFailures,
+    'route_field_decode_failures': result.routeFieldDecodeFailures,
+    'chat_identifier_match_pairs': result.chatIdentifierMatchPairs,
+    'group_id_match_pairs': result.groupIdMatchPairs,
+    'original_group_id_match_pairs': result.originalGroupIdMatchPairs,
+    'guid_match_pairs': result.guidMatchPairs,
+    'semantic_match_pairs': result.semanticMatchPairs,
+    'matched_semantic_message_routes': result.matchedSemanticMessageRoutes,
+    'matched_semantic_chat1_records': result.matchedSemanticChat1Records,
     'failure_code': result.failureCode?.name,
   };
 }

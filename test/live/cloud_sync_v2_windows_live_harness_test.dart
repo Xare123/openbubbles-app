@@ -242,7 +242,11 @@ void main() {
         expect(observed?['account_bound'], isTrue);
         if (Platform.environment['OPENBUBBLES_INSPECT_CHAT1_CORRELATION'] ==
             '1') {
-          expect(observed?['network_read_performed'], isFalse);
+          final semanticCorrelation =
+              Platform
+                  .environment['OPENBUBBLES_INSPECT_CHAT1_SEMANTIC_CORRELATION'] ==
+              '1';
+          expect(observed?['network_read_performed'], semanticCorrelation);
           expect(observed?['content_exposed'], isFalse);
           expect(observed?['durable_state_unchanged'], isTrue);
           expect(observed?['completed'], isTrue);
@@ -251,6 +255,54 @@ void main() {
           expect(observed?['chat1_sources'], 50);
           expect(observed?['verified_chat1_records'], 50);
           expect(observed?['failure_code'], isNull);
+          expect(
+            observed?['semantic_correlation_requested'],
+            semanticCorrelation,
+          );
+          expect(observed?['pcs_lookup_attempted'], semanticCorrelation);
+          if (semanticCorrelation) {
+            final chatTypes = observed?['chat_record_type_records'] as int;
+            final otherTypes = observed?['other_record_type_records'] as int;
+            final decoded = observed?['decoded_route_records'] as int;
+            final recordFailures = observed?['record_decode_failures'] as int;
+            final fieldFailures =
+                observed?['route_field_decode_failures'] as int;
+            final semanticPairs = observed?['semantic_match_pairs'] as int;
+            expect(chatTypes + otherTypes, 50);
+            expect(decoded + recordFailures + fieldFailures, chatTypes);
+            expect(
+              (observed?['chat_identifier_match_pairs'] as int) +
+                  (observed?['group_id_match_pairs'] as int) +
+                  (observed?['original_group_id_match_pairs'] as int) +
+                  (observed?['guid_match_pairs'] as int),
+              semanticPairs,
+            );
+            expect(
+              observed?['matched_semantic_message_routes'],
+              inInclusiveRange(0, 8),
+            );
+            expect(
+              observed?['matched_semantic_chat1_records'],
+              inInclusiveRange(0, decoded),
+            );
+          } else {
+            for (final key in <String>{
+              'chat_record_type_records',
+              'other_record_type_records',
+              'decoded_route_records',
+              'record_decode_failures',
+              'route_field_decode_failures',
+              'chat_identifier_match_pairs',
+              'group_id_match_pairs',
+              'original_group_id_match_pairs',
+              'guid_match_pairs',
+              'semantic_match_pairs',
+              'matched_semantic_message_routes',
+              'matched_semantic_chat1_records',
+            }) {
+              expect(observed?[key], 0, reason: key);
+            }
+          }
         } else if (Platform
                 .environment['OPENBUBBLES_INSPECT_CHAT1_CACHE_ONLY'] ==
             '1') {

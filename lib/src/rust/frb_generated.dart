@@ -18873,8 +18873,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   dco_decode_cloud_sync_chat_1_correlation_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 24)
+      throw Exception('unexpected arr length: expect 24 but see ${arr.length}');
     return CloudSyncChat1CorrelationResult(
       completed: dco_decode_bool(arr[0]),
       messageSources: dco_decode_u_32(arr[1]),
@@ -18885,9 +18885,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       exactMatchPairs: dco_decode_u_32(arr[6]),
       matchedMessageRoutes: dco_decode_u_32(arr[7]),
       matchedChat1Records: dco_decode_u_32(arr[8]),
+      semanticCorrelationRequested: dco_decode_bool(arr[9]),
+      pcsLookupAttempted: dco_decode_bool(arr[10]),
+      chatRecordTypeRecords: dco_decode_u_32(arr[11]),
+      otherRecordTypeRecords: dco_decode_u_32(arr[12]),
+      decodedRouteRecords: dco_decode_u_32(arr[13]),
+      recordDecodeFailures: dco_decode_u_32(arr[14]),
+      routeFieldDecodeFailures: dco_decode_u_32(arr[15]),
+      chatIdentifierMatchPairs: dco_decode_u_32(arr[16]),
+      groupIdMatchPairs: dco_decode_u_32(arr[17]),
+      originalGroupIdMatchPairs: dco_decode_u_32(arr[18]),
+      guidMatchPairs: dco_decode_u_32(arr[19]),
+      semanticMatchPairs: dco_decode_u_32(arr[20]),
+      matchedSemanticMessageRoutes: dco_decode_u_32(arr[21]),
+      matchedSemanticChat1Records: dco_decode_u_32(arr[22]),
       failureCode:
           dco_decode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
-            arr[9],
+            arr[23],
           ),
     );
   }
@@ -29168,6 +29182,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_exactMatchPairs = sse_decode_u_32(deserializer);
     var var_matchedMessageRoutes = sse_decode_u_32(deserializer);
     var var_matchedChat1Records = sse_decode_u_32(deserializer);
+    var var_semanticCorrelationRequested = sse_decode_bool(deserializer);
+    var var_pcsLookupAttempted = sse_decode_bool(deserializer);
+    var var_chatRecordTypeRecords = sse_decode_u_32(deserializer);
+    var var_otherRecordTypeRecords = sse_decode_u_32(deserializer);
+    var var_decodedRouteRecords = sse_decode_u_32(deserializer);
+    var var_recordDecodeFailures = sse_decode_u_32(deserializer);
+    var var_routeFieldDecodeFailures = sse_decode_u_32(deserializer);
+    var var_chatIdentifierMatchPairs = sse_decode_u_32(deserializer);
+    var var_groupIdMatchPairs = sse_decode_u_32(deserializer);
+    var var_originalGroupIdMatchPairs = sse_decode_u_32(deserializer);
+    var var_guidMatchPairs = sse_decode_u_32(deserializer);
+    var var_semanticMatchPairs = sse_decode_u_32(deserializer);
+    var var_matchedSemanticMessageRoutes = sse_decode_u_32(deserializer);
+    var var_matchedSemanticChat1Records = sse_decode_u_32(deserializer);
     var var_failureCode =
         sse_decode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
           deserializer,
@@ -29182,6 +29210,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       exactMatchPairs: var_exactMatchPairs,
       matchedMessageRoutes: var_matchedMessageRoutes,
       matchedChat1Records: var_matchedChat1Records,
+      semanticCorrelationRequested: var_semanticCorrelationRequested,
+      pcsLookupAttempted: var_pcsLookupAttempted,
+      chatRecordTypeRecords: var_chatRecordTypeRecords,
+      otherRecordTypeRecords: var_otherRecordTypeRecords,
+      decodedRouteRecords: var_decodedRouteRecords,
+      recordDecodeFailures: var_recordDecodeFailures,
+      routeFieldDecodeFailures: var_routeFieldDecodeFailures,
+      chatIdentifierMatchPairs: var_chatIdentifierMatchPairs,
+      groupIdMatchPairs: var_groupIdMatchPairs,
+      originalGroupIdMatchPairs: var_originalGroupIdMatchPairs,
+      guidMatchPairs: var_guidMatchPairs,
+      semanticMatchPairs: var_semanticMatchPairs,
+      matchedSemanticMessageRoutes: var_matchedSemanticMessageRoutes,
+      matchedSemanticChat1Records: var_matchedSemanticChat1Records,
       failureCode: var_failureCode,
     );
   }
@@ -41492,6 +41534,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.exactMatchPairs, serializer);
     sse_encode_u_32(self.matchedMessageRoutes, serializer);
     sse_encode_u_32(self.matchedChat1Records, serializer);
+    sse_encode_bool(self.semanticCorrelationRequested, serializer);
+    sse_encode_bool(self.pcsLookupAttempted, serializer);
+    sse_encode_u_32(self.chatRecordTypeRecords, serializer);
+    sse_encode_u_32(self.otherRecordTypeRecords, serializer);
+    sse_encode_u_32(self.decodedRouteRecords, serializer);
+    sse_encode_u_32(self.recordDecodeFailures, serializer);
+    sse_encode_u_32(self.routeFieldDecodeFailures, serializer);
+    sse_encode_u_32(self.chatIdentifierMatchPairs, serializer);
+    sse_encode_u_32(self.groupIdMatchPairs, serializer);
+    sse_encode_u_32(self.originalGroupIdMatchPairs, serializer);
+    sse_encode_u_32(self.guidMatchPairs, serializer);
+    sse_encode_u_32(self.semanticMatchPairs, serializer);
+    sse_encode_u_32(self.matchedSemanticMessageRoutes, serializer);
+    sse_encode_u_32(self.matchedSemanticChat1Records, serializer);
     sse_encode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
       self.failureCode,
       serializer,
