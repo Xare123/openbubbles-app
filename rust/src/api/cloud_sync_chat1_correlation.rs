@@ -1348,7 +1348,9 @@ struct SemanticMatchCounts {
     decoded_route_records: u32,
     record_decode_failures: u32,
     route_field_decode_failures: u32,
-    route_field_failure_matrix: [u32; CHAT1_ROUTE_FAILURE_MATRIX_LEN],
+    // Vec avoids exposing a const-sized internal array to the pinned FRB 2.3
+    // parser. Snapshots below always normalize it to the schema length.
+    route_field_failure_matrix: Vec<u32>,
     chat_identifier_match_pairs: u32,
     group_id_match_pairs: u32,
     original_group_id_match_pairs: u32,
@@ -1409,11 +1411,22 @@ struct SemanticMatchCounts {
 impl SemanticMatchCounts {
     fn observe_route_field_failure(&mut self, failure: Chat1RouteFieldFailure) {
         self.route_field_decode_failures = self.route_field_decode_failures.saturating_add(1);
+        if self.route_field_failure_matrix.len() != CHAT1_ROUTE_FAILURE_MATRIX_LEN {
+            self.route_field_failure_matrix
+                .resize(CHAT1_ROUTE_FAILURE_MATRIX_LEN, 0);
+        }
         let slot = self
             .route_field_failure_matrix
             .get_mut(failure.matrix_index())
             .expect("route-field failure matrix index must match schema");
         *slot = slot.saturating_add(1);
+    }
+
+    fn route_field_failure_matrix_snapshot(&self) -> Vec<u32> {
+        let mut snapshot = self.route_field_failure_matrix.clone();
+        snapshot.resize(CHAT1_ROUTE_FAILURE_MATRIX_LEN, 0);
+        snapshot.truncate(CHAT1_ROUTE_FAILURE_MATRIX_LEN);
+        snapshot
     }
 
     fn observe(&mut self, fields: &RouteFieldMatches) {
@@ -1982,7 +1995,7 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
         record_decode_failures: semantic_counts.record_decode_failures,
         route_field_decode_failures: semantic_counts.route_field_decode_failures,
         route_field_failure_matrix_schema: CHAT1_ROUTE_FAILURE_MATRIX_SCHEMA,
-        route_field_failure_matrix: semantic_counts.route_field_failure_matrix.to_vec(),
+        route_field_failure_matrix: semantic_counts.route_field_failure_matrix_snapshot(),
         chat_identifier_match_pairs: semantic_counts.chat_identifier_match_pairs,
         group_id_match_pairs: semantic_counts.group_id_match_pairs,
         original_group_id_match_pairs: semantic_counts.original_group_id_match_pairs,
@@ -2026,8 +2039,7 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
         paged_route_field_decode_failures: paged_counts.semantic.route_field_decode_failures,
         paged_route_field_failure_matrix: paged_counts
             .semantic
-            .route_field_failure_matrix
-            .to_vec(),
+            .route_field_failure_matrix_snapshot(),
         paged_semantic_match_pairs: paged_counts.semantic.semantic_match_pairs,
         paged_matched_message_routes: paged_counts
             .semantic
