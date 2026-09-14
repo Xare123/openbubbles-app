@@ -399,8 +399,8 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     'account_bound': true,
     'scope': 'chat1ManateeZone',
     // The semantic diagnostic performs only the lookup-only PCS reads needed
-    // to decrypt four bounded routing fields. Its separately gated paged lane
-    // may walk bounded pages in memory, but never persists a cursor.
+    // to decrypt bounded routing fields. Its separately gated paged lane may
+    // walk bounded pages in memory, but never persists a cursor.
     'network_read_performed': semanticCorrelation,
     'content_exposed': false,
     'durable_state_unchanged': durableStateUnchanged,
@@ -427,6 +427,37 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     'semantic_match_pairs': result.semanticMatchPairs,
     'matched_semantic_message_routes': result.matchedSemanticMessageRoutes,
     'matched_semantic_chat1_records': result.matchedSemanticChat1Records,
+    'message_group_id_sources': result.messageGroupIdSources,
+    'message_sender_sources': result.messageSenderSources,
+    'route_participant_match_pairs': result.routeParticipantMatchPairs,
+    'route_legacy_match_pairs': result.routeLegacyMatchPairs,
+    'route_lah_match_pairs': result.routeLahMatchPairs,
+    'msgproto_chat_identifier_match_pairs':
+        result.msgprotoChatIdentifierMatchPairs,
+    'msgproto_group_id_match_pairs': result.msgprotoGroupIdMatchPairs,
+    'msgproto_original_group_id_match_pairs':
+        result.msgprotoOriginalGroupIdMatchPairs,
+    'msgproto_guid_match_pairs': result.msgprotoGuidMatchPairs,
+    'msgproto_legacy_match_pairs': result.msgprotoLegacyMatchPairs,
+    'sender_participant_match_pairs': result.senderParticipantMatchPairs,
+    'sender_lah_match_pairs': result.senderLahMatchPairs,
+    'matched_route_extra_message_routes':
+        result.matchedRouteExtraMessageRoutes,
+    'matched_route_extra_chat1_records':
+        result.matchedRouteExtraChat1Records,
+    'matched_msgproto_targets': result.matchedMsgprotoTargets,
+    'matched_msgproto_chat1_records': result.matchedMsgprotoChat1Records,
+    'matched_sender_targets': result.matchedSenderTargets,
+    'matched_sender_chat1_records': result.matchedSenderChat1Records,
+    'participant_present_records': result.participantPresentRecords,
+    'legacy_present_records': result.legacyPresentRecords,
+    'lah_present_records': result.lahPresentRecords,
+    'service_present_records': result.servicePresentRecords,
+    'imessage_service_records': result.imessageServiceRecords,
+    'other_service_records': result.otherServiceRecords,
+    'style_group_records': result.styleGroupRecords,
+    'style_direct_records': result.styleDirectRecords,
+    'style_other_records': result.styleOtherRecords,
     'paged_correlation_requested': result.pagedCorrelationRequested,
     'paged_pages_scanned': result.pagedPagesScanned,
     'paged_changes_scanned': result.pagedChangesScanned,
@@ -451,8 +482,6 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
         result.pagedNormalizedMatchedMessageRoutes,
     'paged_normalized_matched_chat1_records':
         result.pagedNormalizedMatchedChat1Records,
-    'message_group_id_sources': result.messageGroupIdSources,
-    'message_sender_sources': result.messageSenderSources,
     'paged_imessage_service_records': result.pagedImessageServiceRecords,
     'paged_other_service_records': result.pagedOtherServiceRecords,
     'paged_route_participant_match_pairs':
@@ -485,7 +514,7 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     'paged_service_present_records': result.pagedServicePresentRecords,
     'paged_style_direct_records': result.pagedStyleDirectRecords,
     'paged_style_group_records': result.pagedStyleGroupRecords,
-    'paged_other_style_records': result.pagedStyleOtherRecords,
+    'paged_style_other_records': result.pagedStyleOtherRecords,
     'paged_normalized_route_participant_match_pairs':
         result.pagedNormalizedRouteParticipantMatchPairs,
     'paged_normalized_route_legacy_match_pairs':

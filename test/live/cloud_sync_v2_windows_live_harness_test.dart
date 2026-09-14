@@ -291,6 +291,58 @@ void main() {
               observed?['matched_semantic_chat1_records'],
               inInclusiveRange(0, decoded),
             );
+            for (final key in <String>{
+              'route_participant_match_pairs',
+              'route_legacy_match_pairs',
+              'route_lah_match_pairs',
+              'msgproto_chat_identifier_match_pairs',
+              'msgproto_group_id_match_pairs',
+              'msgproto_original_group_id_match_pairs',
+              'msgproto_guid_match_pairs',
+              'msgproto_legacy_match_pairs',
+              'sender_participant_match_pairs',
+              'sender_lah_match_pairs',
+            }) {
+              expect(
+                observed?[key],
+                inInclusiveRange(0, decoded * 8),
+                reason: key,
+              );
+            }
+            for (final key in <String>{
+              'matched_route_extra_message_routes',
+              'matched_msgproto_targets',
+              'matched_sender_targets',
+            }) {
+              expect(observed?[key], inInclusiveRange(0, 8), reason: key);
+            }
+            for (final key in <String>{
+              'matched_route_extra_chat1_records',
+              'matched_msgproto_chat1_records',
+              'matched_sender_chat1_records',
+              'participant_present_records',
+              'legacy_present_records',
+              'lah_present_records',
+              'service_present_records',
+              'imessage_service_records',
+              'other_service_records',
+              'style_direct_records',
+              'style_group_records',
+              'style_other_records',
+            }) {
+              expect(observed?[key], inInclusiveRange(0, decoded), reason: key);
+            }
+            expect(
+              (observed?['imessage_service_records'] as int) +
+                  (observed?['other_service_records'] as int),
+              observed?['service_present_records'],
+            );
+            expect(
+              (observed?['style_direct_records'] as int) +
+                  (observed?['style_group_records'] as int) +
+                  (observed?['style_other_records'] as int),
+              lessThanOrEqualTo(decoded),
+            );
             if (pagedCorrelation) {
               final pages = observed?['paged_pages_scanned'] as int;
               final changes = observed?['paged_changes_scanned'] as int;
@@ -406,7 +458,7 @@ void main() {
               final pagedGroupStyle =
                   observed?['paged_style_group_records'] as int;
               final pagedOtherStyle =
-                  observed?['paged_other_style_records'] as int;
+                  observed?['paged_style_other_records'] as int;
               expect(pagedImessageService, inInclusiveRange(0, changes));
               expect(pagedOtherService, inInclusiveRange(0, changes));
               expect(pagedDirectStyle, inInclusiveRange(0, changes));
@@ -453,7 +505,7 @@ void main() {
                 'paged_other_service_records',
                 'paged_style_direct_records',
                 'paged_style_group_records',
-                'paged_other_style_records',
+                'paged_style_other_records',
                 'paged_normalized_route_participant_match_pairs',
                 'paged_normalized_route_legacy_match_pairs',
                 'paged_normalized_route_lah_match_pairs',
@@ -527,7 +579,7 @@ void main() {
               'paged_other_service_records',
               'paged_style_direct_records',
               'paged_style_group_records',
-              'paged_other_style_records',
+              'paged_style_other_records',
               'paged_normalized_route_participant_match_pairs',
               'paged_normalized_route_legacy_match_pairs',
               'paged_normalized_route_lah_match_pairs',
