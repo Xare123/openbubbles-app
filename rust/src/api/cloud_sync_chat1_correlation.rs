@@ -10,6 +10,7 @@ use std::{
     sync::Arc,
 };
 
+use flutter_rust_bridge::frb;
 use prost::Message as _;
 use rustpush::{
     cloud_messages::{CloudChat, CloudMessagesClient, MESSAGES_SERVICE},
@@ -402,6 +403,7 @@ fn target_mask(
         })
 }
 
+#[frb(ignore)]
 #[derive(Default)]
 struct RouteFieldMatches {
     chat_identifier: u8,
@@ -446,6 +448,7 @@ fn inspect_chat1_route_fields(
     })
 }
 
+#[frb(ignore)]
 #[derive(Default)]
 struct SemanticMatchCounts {
     chat_record_type_records: u32,
