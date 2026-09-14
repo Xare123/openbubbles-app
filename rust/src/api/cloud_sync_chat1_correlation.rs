@@ -22,7 +22,7 @@ use rustpush::{
     cloudkit_operation_gate::acquire_cloudkit_read_authentication,
     cloudkit_proto::{
         record::field::{value::Type as FieldValueType, EncryptedValue, Value},
-        CloudKitRecord, Record,
+        Record,
     },
     pcs::PCSEncryptor,
     DefaultAnisetteProvider,
@@ -57,6 +57,59 @@ const MAX_CHAT1_LEGACY_IDENTIFIERS: usize = 32;
 const MAX_CHAT1_SELECTIVE_STRING_BYTES: usize = 4096;
 const MAX_CHAT1_PROP_BYTES: usize = 16 * 1024;
 const MAX_CHAT1_PARTICIPANT_PLAINTEXT_BYTES: usize = 4 * 1024;
+const CHAT1_ROUTE_FAILURE_MATRIX_SCHEMA: u32 = 1;
+const CHAT1_ROUTE_FAILURE_FIELD_COUNT: usize = 11;
+const CHAT1_ROUTE_FAILURE_KIND_COUNT: usize = 8;
+const CHAT1_ROUTE_FAILURE_MATRIX_LEN: usize =
+    CHAT1_ROUTE_FAILURE_FIELD_COUNT * CHAT1_ROUTE_FAILURE_KIND_COUNT;
+
+/// Stable row order for the aggregate-only route-field failure matrix. The
+/// order is schema, not user data, and must only change with a schema bump.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(usize)]
+enum Chat1RouteFailureField {
+    RecordKey = 0,
+    Cid = 1,
+    Gid = 2,
+    Ogid = 3,
+    Guid = 4,
+    Lah = 5,
+    Svc = 6,
+    Stl = 7,
+    Ptcpts = 8,
+    Prop = 9,
+    CrossField = 10,
+}
+
+/// Stable column order for the aggregate-only route-field failure matrix.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(usize)]
+enum Chat1RouteFailureKind {
+    MissingValue = 0,
+    WireShape = 1,
+    KeySelection = 2,
+    CiphertextKey = 3,
+    Decrypt = 4,
+    PayloadDecode = 5,
+    Validation = 6,
+    Cap = 7,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Chat1RouteFieldFailure {
+    field: Chat1RouteFailureField,
+    kind: Chat1RouteFailureKind,
+}
+
+impl Chat1RouteFieldFailure {
+    const fn new(field: Chat1RouteFailureField, kind: Chat1RouteFailureKind) -> Self {
+        Self { field, kind }
+    }
+
+    const fn matrix_index(self) -> usize {
+        self.field as usize * CHAT1_ROUTE_FAILURE_KIND_COUNT + self.kind as usize
+    }
+}
 
 /// Exact opaque metadata copied from one already-adopted journal row. No raw
 /// record name, route, field value, Apple token, or message body is present.
@@ -125,6 +178,12 @@ pub struct CloudSyncChat1CorrelationResult {
     pub decoded_route_records: u32,
     pub record_decode_failures: u32,
     pub route_field_decode_failures: u32,
+    /// Versioned, row-major aggregate counters. Rows are record_key, cid,
+    /// gid, ogid, guid, lah, svc, stl, ptcpts, prop and cross_field. Columns
+    /// are missing_value, wire_shape, key_selection, ciphertext_key, decrypt,
+    /// payload_decode, validation and cap.
+    pub route_field_failure_matrix_schema: u32,
+    pub route_field_failure_matrix: Vec<u32>,
     pub chat_identifier_match_pairs: u32,
     pub group_id_match_pairs: u32,
     pub original_group_id_match_pairs: u32,
@@ -165,6 +224,7 @@ pub struct CloudSyncChat1CorrelationResult {
     pub paged_tombstones: u32,
     pub paged_record_decode_failures: u32,
     pub paged_route_field_decode_failures: u32,
+    pub paged_route_field_failure_matrix: Vec<u32>,
     pub paged_semantic_match_pairs: u32,
     pub paged_matched_message_routes: u32,
     pub paged_matched_chat1_records: u32,
@@ -241,6 +301,8 @@ fn failure(code: CloudSyncChat1CorrelationFailureCode) -> CloudSyncChat1Correlat
         decoded_route_records: 0,
         record_decode_failures: 0,
         route_field_decode_failures: 0,
+        route_field_failure_matrix_schema: CHAT1_ROUTE_FAILURE_MATRIX_SCHEMA,
+        route_field_failure_matrix: vec![0; CHAT1_ROUTE_FAILURE_MATRIX_LEN],
         chat_identifier_match_pairs: 0,
         group_id_match_pairs: 0,
         original_group_id_match_pairs: 0,
@@ -281,6 +343,7 @@ fn failure(code: CloudSyncChat1CorrelationFailureCode) -> CloudSyncChat1Correlat
         paged_tombstones: 0,
         paged_record_decode_failures: 0,
         paged_route_field_decode_failures: 0,
+        paged_route_field_failure_matrix: vec![0; CHAT1_ROUTE_FAILURE_MATRIX_LEN],
         paged_semantic_match_pairs: 0,
         paged_matched_message_routes: 0,
         paged_matched_chat1_records: 0,
@@ -549,21 +612,10 @@ fn encrypted_string_field(
     record: &Record,
     key: &PCSEncryptor,
     name: &str,
-) -> Result<Option<String>, ()> {
-    let mut matching = record.record_field.iter().filter(|field| {
-        field
-            .identifier
-            .as_ref()
-            .and_then(|identifier| identifier.name.as_deref())
-            == Some(name)
-    });
-    let Some(field) = matching.next() else {
+) -> Result<Option<String>, Chat1RouteFailureKind> {
+    let Some(value) = unique_field_value(record, name)? else {
         return Ok(None);
     };
-    if matching.next().is_some() {
-        return Err(());
-    }
-    let value: &Value = field.value.as_ref().ok_or(())?;
     if value.r#type != Some(FieldValueType::StringType as i32)
         || value.is_encrypted != Some(true)
         || value.signed_value.is_some()
@@ -576,33 +628,41 @@ fn encrypted_string_field(
         || !value.list_values.is_empty()
         || value.package_value.is_some()
     {
-        return Err(());
+        return Err(Chat1RouteFailureKind::WireShape);
     }
     let ciphertext = value
         .bytes_value
         .as_deref()
         .filter(|value| !value.is_empty())
-        .ok_or(())?;
-    key.validate_ciphertext_key(ciphertext).map_err(|_| ())?;
-    let plaintext = key.decrypt_data_checked(ciphertext, name).map_err(|_| ())?;
+        .ok_or(Chat1RouteFailureKind::MissingValue)?;
+    key.validate_ciphertext_key(ciphertext)
+        .map_err(|_| Chat1RouteFailureKind::CiphertextKey)?;
+    let plaintext = key
+        .decrypt_data_checked(ciphertext, name)
+        .map_err(|_| Chat1RouteFailureKind::Decrypt)?;
     if plaintext.len() > MAX_CHAT1_ROUTE_FIELD_BYTES {
-        return Err(());
+        return Err(Chat1RouteFailureKind::Cap);
     }
     let decoded = match catch_unwind(AssertUnwindSafe(|| {
         EncryptedValue::decode(plaintext.as_slice())
     })) {
         Ok(Ok(value)) => value,
-        _ => return Err(()),
+        _ => return Err(Chat1RouteFailureKind::PayloadDecode),
     };
     if decoded.signed_value.is_some() || decoded.date_value.is_some() {
-        return Err(());
+        return Err(Chat1RouteFailureKind::PayloadDecode);
     }
-    let decoded = decoded.string_value.ok_or(())?;
-    identifier(&decoded).ok_or(())?;
+    let decoded = decoded
+        .string_value
+        .ok_or(Chat1RouteFailureKind::Validation)?;
+    identifier(&decoded).ok_or(Chat1RouteFailureKind::Validation)?;
     Ok(Some(decoded))
 }
 
-fn unique_field_value(record: &Record, name: &str) -> Result<Option<Value>, ()> {
+fn unique_field_value(
+    record: &Record,
+    name: &str,
+) -> Result<Option<Value>, Chat1RouteFailureKind> {
     let mut matching = record.record_field.iter().filter(|field| {
         field
             .identifier
@@ -614,12 +674,20 @@ fn unique_field_value(record: &Record, name: &str) -> Result<Option<Value>, ()> 
         return Ok(None);
     };
     if matching.next().is_some() {
-        return Err(());
+        return Err(Chat1RouteFailureKind::WireShape);
     }
-    field.value.clone().ok_or(()).map(Some)
+    field
+        .value
+        .clone()
+        .ok_or(Chat1RouteFailureKind::MissingValue)
+        .map(Some)
 }
 
-fn encrypted_i64_field(record: &Record, key: &PCSEncryptor, name: &str) -> Result<Option<i64>, ()> {
+fn encrypted_i64_field(
+    record: &Record,
+    key: &PCSEncryptor,
+    name: &str,
+) -> Result<Option<i64>, Chat1RouteFailureKind> {
     let Some(value) = unique_field_value(record, name)? else {
         return Ok(None);
     };
@@ -635,31 +703,43 @@ fn encrypted_i64_field(record: &Record, key: &PCSEncryptor, name: &str) -> Resul
         || !value.list_values.is_empty()
         || value.package_value.is_some()
     {
-        return Err(());
+        return Err(Chat1RouteFailureKind::WireShape);
     }
     let ciphertext = value
         .bytes_value
         .as_deref()
         .filter(|value| !value.is_empty())
-        .ok_or(())?;
-    key.validate_ciphertext_key(ciphertext).map_err(|_| ())?;
-    let plaintext = key.decrypt_data_checked(ciphertext, name).map_err(|_| ())?;
-    if plaintext.is_empty() || plaintext.len() > MAX_CHAT1_ROUTE_FIELD_BYTES {
-        return Err(());
+        .ok_or(Chat1RouteFailureKind::MissingValue)?;
+    key.validate_ciphertext_key(ciphertext)
+        .map_err(|_| Chat1RouteFailureKind::CiphertextKey)?;
+    let plaintext = key
+        .decrypt_data_checked(ciphertext, name)
+        .map_err(|_| Chat1RouteFailureKind::Decrypt)?;
+    if plaintext.is_empty() {
+        return Err(Chat1RouteFailureKind::MissingValue);
+    }
+    if plaintext.len() > MAX_CHAT1_ROUTE_FIELD_BYTES {
+        return Err(Chat1RouteFailureKind::Cap);
     }
     let decoded = match catch_unwind(AssertUnwindSafe(|| {
         EncryptedValue::decode(plaintext.as_slice())
     })) {
         Ok(Ok(value)) => value,
-        _ => return Err(()),
+        _ => return Err(Chat1RouteFailureKind::PayloadDecode),
     };
     if decoded.string_value.is_some() || decoded.date_value.is_some() {
-        return Err(());
+        return Err(Chat1RouteFailureKind::PayloadDecode);
     }
-    decoded.signed_value.map(Some).ok_or(())
+    decoded
+        .signed_value
+        .map(Some)
+        .ok_or(Chat1RouteFailureKind::Validation)
 }
 
-fn encrypted_participant_uris(record: &Record, key: &PCSEncryptor) -> Result<Vec<String>, ()> {
+fn encrypted_participant_uris(
+    record: &Record,
+    key: &PCSEncryptor,
+) -> Result<Vec<String>, Chat1RouteFailureKind> {
     let Some(value) = unique_field_value(record, "ptcpts")? else {
         return Ok(Vec::new());
     };
@@ -675,10 +755,10 @@ fn encrypted_participant_uris(record: &Record, key: &PCSEncryptor) -> Result<Vec
         || value.asset_value.is_some()
         || value.package_value.is_some()
     {
-        return Err(());
+        return Err(Chat1RouteFailureKind::WireShape);
     }
     if value.list_values.len() > MAX_CHAT1_PARTICIPANTS {
-        return Err(());
+        return Err(Chat1RouteFailureKind::Cap);
     }
     let mut uris = Vec::with_capacity(value.list_values.len());
     for entry in &value.list_values {
@@ -694,37 +774,45 @@ fn encrypted_participant_uris(record: &Record, key: &PCSEncryptor) -> Result<Vec
             || !entry.list_values.is_empty()
             || entry.package_value.is_some()
         {
-            return Err(());
+            return Err(Chat1RouteFailureKind::WireShape);
         }
         let ciphertext = entry
             .bytes_value
             .as_deref()
             .filter(|value| !value.is_empty())
-            .ok_or(())?;
-        key.validate_ciphertext_key(ciphertext).map_err(|_| ())?;
+            .ok_or(Chat1RouteFailureKind::MissingValue)?;
+        key.validate_ciphertext_key(ciphertext)
+            .map_err(|_| Chat1RouteFailureKind::CiphertextKey)?;
         let plaintext = key
             .decrypt_data_checked(ciphertext, "ptcpts")
-            .map_err(|_| ())?;
-        if plaintext.is_empty() || plaintext.len() > MAX_CHAT1_PARTICIPANT_PLAINTEXT_BYTES {
-            return Err(());
+            .map_err(|_| Chat1RouteFailureKind::Decrypt)?;
+        if plaintext.is_empty() {
+            return Err(Chat1RouteFailureKind::MissingValue);
+        }
+        if plaintext.len() > MAX_CHAT1_PARTICIPANT_PLAINTEXT_BYTES {
+            return Err(Chat1RouteFailureKind::Cap);
         }
         let decoded_participant: CloudParticipant = match catch_unwind(AssertUnwindSafe(|| {
             plist::from_bytes::<CloudParticipant>(&plaintext)
         })) {
             Ok(Ok(value)) => value,
-            _ => return Err(()),
+            _ => return Err(Chat1RouteFailureKind::PayloadDecode),
         };
-        if decoded_participant.uri.len() > MAX_CHAT1_SELECTIVE_STRING_BYTES
-            || participant(&decoded_participant.uri).is_none()
-        {
-            return Err(());
+        if decoded_participant.uri.len() > MAX_CHAT1_SELECTIVE_STRING_BYTES {
+            return Err(Chat1RouteFailureKind::Cap);
+        }
+        if participant(&decoded_participant.uri).is_none() {
+            return Err(Chat1RouteFailureKind::Validation);
         }
         uris.push(decoded_participant.uri);
     }
     Ok(uris)
 }
 
-fn encrypted_legacy_identifiers(record: &Record, key: &PCSEncryptor) -> Result<Vec<String>, ()> {
+fn encrypted_legacy_identifiers(
+    record: &Record,
+    key: &PCSEncryptor,
+) -> Result<Vec<String>, Chat1RouteFailureKind> {
     let Some(value) = unique_field_value(record, "prop")? else {
         return Ok(Vec::new());
     };
@@ -741,7 +829,7 @@ fn encrypted_legacy_identifiers(record: &Record, key: &PCSEncryptor) -> Result<V
             || !value.list_values.is_empty()
             || value.package_value.is_some()
         {
-            return Err(());
+            return Err(Chat1RouteFailureKind::WireShape);
         }
         return Ok(Vec::new());
     }
@@ -757,37 +845,39 @@ fn encrypted_legacy_identifiers(record: &Record, key: &PCSEncryptor) -> Result<V
         || !value.list_values.is_empty()
         || value.package_value.is_some()
     {
-        return Err(());
+        return Err(Chat1RouteFailureKind::WireShape);
     }
     let ciphertext = value
         .bytes_value
         .as_deref()
         .filter(|value| !value.is_empty())
-        .ok_or(())?;
-    key.validate_ciphertext_key(ciphertext).map_err(|_| ())?;
+        .ok_or(Chat1RouteFailureKind::MissingValue)?;
+    key.validate_ciphertext_key(ciphertext)
+        .map_err(|_| Chat1RouteFailureKind::CiphertextKey)?;
     let plaintext = key
         .decrypt_data_checked(ciphertext, "prop")
-        .map_err(|_| ())?;
+        .map_err(|_| Chat1RouteFailureKind::Decrypt)?;
     if plaintext.is_empty() {
         return Ok(Vec::new());
     }
     if plaintext.len() > MAX_CHAT1_PROP_BYTES {
-        return Err(());
+        return Err(Chat1RouteFailureKind::Cap);
     }
     let properties: CloudProp = match catch_unwind(AssertUnwindSafe(|| {
         plist::from_bytes::<CloudProp>(&plaintext)
     })) {
         Ok(Ok(value)) => value,
-        _ => return Err(()),
+        _ => return Err(Chat1RouteFailureKind::PayloadDecode),
     };
     if properties.legacy_group_identifiers.len() > MAX_CHAT1_LEGACY_IDENTIFIERS {
-        return Err(());
+        return Err(Chat1RouteFailureKind::Cap);
     }
     for identifier in &properties.legacy_group_identifiers {
-        if identifier.len() > MAX_CHAT1_SELECTIVE_STRING_BYTES
-            || crate::cloud_sync_chat_identity::identifier(identifier).is_none()
-        {
-            return Err(());
+        if identifier.len() > MAX_CHAT1_SELECTIVE_STRING_BYTES {
+            return Err(Chat1RouteFailureKind::Cap);
+        }
+        if crate::cloud_sync_chat_identity::identifier(identifier).is_none() {
+            return Err(Chat1RouteFailureKind::Validation);
         }
     }
     Ok(properties.legacy_group_identifiers)
@@ -1098,21 +1188,38 @@ fn inspect_chat1_route_fields(
     sender_targets: &[Option<String>],
     normalized_sender_targets: &[Option<NormalizedRouteTarget>],
     hasher: &CloudSemanticIdentifierHasher,
-) -> Result<RouteFieldMatches, ()> {
+) -> Result<RouteFieldMatches, Chat1RouteFieldFailure> {
     let record_key = match catch_unwind(AssertUnwindSafe(|| pcs_keys_for_record(record, zone_key)))
     {
         Ok(Ok(value)) => value,
-        _ => return Err(()),
+        _ => {
+            return Err(Chat1RouteFieldFailure::new(
+                Chat1RouteFailureField::RecordKey,
+                Chat1RouteFailureKind::KeySelection,
+            ))
+        }
     };
-    let chat_identifier = encrypted_string_field(record, &record_key, "cid")?;
-    let group_id = encrypted_string_field(record, &record_key, "gid")?;
-    let original_group_id = encrypted_string_field(record, &record_key, "ogid")?;
-    let guid = encrypted_string_field(record, &record_key, "guid")?;
-    let last_addressed_handle = encrypted_string_field(record, &record_key, "lah")?;
-    let service_name = encrypted_string_field(record, &record_key, "svc")?;
-    let style = encrypted_i64_field(record, &record_key, "stl")?;
-    let participants = encrypted_participant_uris(record, &record_key)?;
-    let legacy_identifiers = encrypted_legacy_identifiers(record, &record_key)?;
+    let map_failure = |field: Chat1RouteFailureField| {
+        move |kind: Chat1RouteFailureKind| Chat1RouteFieldFailure::new(field, kind)
+    };
+    let chat_identifier = encrypted_string_field(record, &record_key, "cid")
+        .map_err(map_failure(Chat1RouteFailureField::Cid))?;
+    let group_id = encrypted_string_field(record, &record_key, "gid")
+        .map_err(map_failure(Chat1RouteFailureField::Gid))?;
+    let original_group_id = encrypted_string_field(record, &record_key, "ogid")
+        .map_err(map_failure(Chat1RouteFailureField::Ogid))?;
+    let guid = encrypted_string_field(record, &record_key, "guid")
+        .map_err(map_failure(Chat1RouteFailureField::Guid))?;
+    let last_addressed_handle = encrypted_string_field(record, &record_key, "lah")
+        .map_err(map_failure(Chat1RouteFailureField::Lah))?;
+    let service_name = encrypted_string_field(record, &record_key, "svc")
+        .map_err(map_failure(Chat1RouteFailureField::Svc))?;
+    let style = encrypted_i64_field(record, &record_key, "stl")
+        .map_err(map_failure(Chat1RouteFailureField::Stl))?;
+    let participants = encrypted_participant_uris(record, &record_key)
+        .map_err(map_failure(Chat1RouteFailureField::Ptcpts))?;
+    let legacy_identifiers = encrypted_legacy_identifiers(record, &record_key)
+        .map_err(map_failure(Chat1RouteFailureField::Prop))?;
     for value in participants
         .iter()
         .chain(legacy_identifiers.iter())
@@ -1120,7 +1227,10 @@ fn inspect_chat1_route_fields(
         .chain(service_name.iter())
     {
         if value.len() > MAX_CHAT1_SELECTIVE_STRING_BYTES {
-            return Err(());
+            return Err(Chat1RouteFieldFailure::new(
+                Chat1RouteFailureField::CrossField,
+                Chat1RouteFailureKind::Cap,
+            ));
         }
     }
     Ok(RouteFieldMatches {
@@ -1238,6 +1348,7 @@ struct SemanticMatchCounts {
     decoded_route_records: u32,
     record_decode_failures: u32,
     route_field_decode_failures: u32,
+    route_field_failure_matrix: [u32; CHAT1_ROUTE_FAILURE_MATRIX_LEN],
     chat_identifier_match_pairs: u32,
     group_id_match_pairs: u32,
     original_group_id_match_pairs: u32,
@@ -1296,6 +1407,15 @@ struct SemanticMatchCounts {
 }
 
 impl SemanticMatchCounts {
+    fn observe_route_field_failure(&mut self, failure: Chat1RouteFieldFailure) {
+        self.route_field_decode_failures = self.route_field_decode_failures.saturating_add(1);
+        let slot = self
+            .route_field_failure_matrix
+            .get_mut(failure.matrix_index())
+            .expect("route-field failure matrix index must match schema");
+        *slot = slot.saturating_add(1);
+    }
+
     fn observe(&mut self, fields: &RouteFieldMatches) {
         self.decoded_route_records += 1;
         self.chat_identifier_match_pairs += fields.chat_identifier.count_ones();
@@ -1535,7 +1655,7 @@ async fn scan_chat1_route_pages(
                         hasher,
                     ) {
                         Ok(fields) => counts.semantic.observe(&fields),
-                        Err(()) => counts.semantic.route_field_decode_failures += 1,
+                        Err(failure) => counts.semantic.observe_route_field_failure(failure),
                     }
                 }
                 CloudMessageRecordKind::EncryptedUpsert
@@ -1781,8 +1901,8 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
             &hasher,
         ) {
             Ok(value) => value,
-            Err(()) => {
-                semantic_counts.route_field_decode_failures += 1;
+            Err(failure) => {
+                semantic_counts.observe_route_field_failure(failure);
                 continue;
             }
         };
@@ -1861,6 +1981,8 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
         decoded_route_records: semantic_counts.decoded_route_records,
         record_decode_failures: semantic_counts.record_decode_failures,
         route_field_decode_failures: semantic_counts.route_field_decode_failures,
+        route_field_failure_matrix_schema: CHAT1_ROUTE_FAILURE_MATRIX_SCHEMA,
+        route_field_failure_matrix: semantic_counts.route_field_failure_matrix.to_vec(),
         chat_identifier_match_pairs: semantic_counts.chat_identifier_match_pairs,
         group_id_match_pairs: semantic_counts.group_id_match_pairs,
         original_group_id_match_pairs: semantic_counts.original_group_id_match_pairs,
@@ -1902,6 +2024,10 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
         paged_tombstones: paged_counts.tombstones,
         paged_record_decode_failures: paged_counts.semantic.record_decode_failures,
         paged_route_field_decode_failures: paged_counts.semantic.route_field_decode_failures,
+        paged_route_field_failure_matrix: paged_counts
+            .semantic
+            .route_field_failure_matrix
+            .to_vec(),
         paged_semantic_match_pairs: paged_counts.semantic.semantic_match_pairs,
         paged_matched_message_routes: paged_counts
             .semantic
@@ -2405,6 +2531,118 @@ mod tests {
     }
 
     #[test]
+    fn route_field_failure_matrix_has_stable_unique_slots_and_exact_totals() {
+        let fields = [
+            Chat1RouteFailureField::RecordKey,
+            Chat1RouteFailureField::Cid,
+            Chat1RouteFailureField::Gid,
+            Chat1RouteFailureField::Ogid,
+            Chat1RouteFailureField::Guid,
+            Chat1RouteFailureField::Lah,
+            Chat1RouteFailureField::Svc,
+            Chat1RouteFailureField::Stl,
+            Chat1RouteFailureField::Ptcpts,
+            Chat1RouteFailureField::Prop,
+            Chat1RouteFailureField::CrossField,
+        ];
+        let kinds = [
+            Chat1RouteFailureKind::MissingValue,
+            Chat1RouteFailureKind::WireShape,
+            Chat1RouteFailureKind::KeySelection,
+            Chat1RouteFailureKind::CiphertextKey,
+            Chat1RouteFailureKind::Decrypt,
+            Chat1RouteFailureKind::PayloadDecode,
+            Chat1RouteFailureKind::Validation,
+            Chat1RouteFailureKind::Cap,
+        ];
+        let mut seen = [false; CHAT1_ROUTE_FAILURE_MATRIX_LEN];
+        let mut counts = SemanticMatchCounts::default();
+        for field in fields {
+            for kind in kinds {
+                let failure = Chat1RouteFieldFailure::new(field, kind);
+                let index = failure.matrix_index();
+                assert!(index < CHAT1_ROUTE_FAILURE_MATRIX_LEN);
+                assert!(!seen[index]);
+                seen[index] = true;
+                counts.observe_route_field_failure(failure);
+            }
+        }
+        assert!(seen.into_iter().all(|value| value));
+        assert_eq!(
+            counts.route_field_decode_failures as usize,
+            CHAT1_ROUTE_FAILURE_MATRIX_LEN
+        );
+        assert_eq!(
+            counts.route_field_failure_matrix.iter().sum::<u32>(),
+            counts.route_field_decode_failures
+        );
+    }
+
+    #[test]
+    fn route_field_failures_classify_shape_missing_key_and_cap_without_content() {
+        let key = dummy_pcs_key();
+        let duplicate = Record {
+            record_field: vec![
+                record_field("cid", Value::default()),
+                record_field("cid", Value::default()),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            encrypted_string_field(&duplicate, &key, "cid"),
+            Err(Chat1RouteFailureKind::WireShape)
+        );
+
+        let missing_value = Record {
+            record_field: vec![Field {
+                identifier: Some(field::Identifier {
+                    name: Some("cid".to_owned()),
+                }),
+                value: None,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            encrypted_string_field(&missing_value, &key, "cid"),
+            Err(Chat1RouteFailureKind::MissingValue)
+        );
+
+        let well_shaped_but_unkeyed = Record {
+            record_field: vec![record_field(
+                "cid",
+                Value {
+                    r#type: Some(FieldValueType::StringType as i32),
+                    bytes_value: Some(vec![1]),
+                    is_encrypted: Some(true),
+                    ..Default::default()
+                },
+            )],
+            ..Default::default()
+        };
+        assert_eq!(
+            encrypted_string_field(&well_shaped_but_unkeyed, &key, "cid"),
+            Err(Chat1RouteFailureKind::CiphertextKey)
+        );
+
+        let oversized_participants = Record {
+            record_field: vec![record_field(
+                "ptcpts",
+                Value {
+                    r#type: Some(FieldValueType::EncryptedBytesListType as i32),
+                    is_encrypted: Some(false),
+                    list_values: vec![Value::default(); MAX_CHAT1_PARTICIPANTS + 1],
+                    ..Default::default()
+                },
+            )],
+            ..Default::default()
+        };
+        assert_eq!(
+            encrypted_participant_uris(&oversized_participants, &key),
+            Err(Chat1RouteFailureKind::Cap)
+        );
+    }
+
+    #[test]
     fn participant_and_prop_shapes_enforce_caps_and_empty_list_contract() {
         let key = dummy_pcs_key();
         let oversized_participants = Record {
@@ -2593,6 +2831,18 @@ mod tests {
         assert_eq!(result.decoded_route_records, 0);
         assert_eq!(result.record_decode_failures, 0);
         assert_eq!(result.route_field_decode_failures, 0);
+        assert_eq!(
+            result.route_field_failure_matrix_schema,
+            CHAT1_ROUTE_FAILURE_MATRIX_SCHEMA
+        );
+        assert_eq!(
+            result.route_field_failure_matrix,
+            vec![0; CHAT1_ROUTE_FAILURE_MATRIX_LEN]
+        );
+        assert_eq!(
+            result.paged_route_field_failure_matrix,
+            vec![0; CHAT1_ROUTE_FAILURE_MATRIX_LEN]
+        );
         assert_eq!(result.chat_identifier_match_pairs, 0);
         assert_eq!(result.group_id_match_pairs, 0);
         assert_eq!(result.original_group_id_match_pairs, 0);
