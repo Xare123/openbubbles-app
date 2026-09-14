@@ -1,12 +1,26 @@
-//! Test-host-only, cached correlation between unresolved Message chat routes
-//! and protected Chat1 record names. Clear identifiers and raw envelopes never
-//! cross Flutter Rust Bridge, and this module cannot fetch, project, or write.
+//! Test-host-only correlation between unresolved Message chat routes and
+//! protected Chat1 records. Clear identifiers and raw envelopes never cross
+//! Flutter Rust Bridge. The optional PCS path is lookup-only and this module
+//! cannot fetch record pages, project, admit, or write.
 
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashSet,
+    panic::{catch_unwind, AssertUnwindSafe},
+    path::PathBuf,
+    sync::Arc,
+};
 
+use prost::Message as _;
 use rustpush::{
-    cloud_messages::CloudMessagesClient,
-    cloudkit_operation_gate::acquire_cloudkit_read_authentication, DefaultAnisetteProvider,
+    cloud_messages::{CloudChat, CloudMessagesClient, MESSAGES_SERVICE},
+    cloudkit::pcs_keys_for_record,
+    cloudkit_operation_gate::acquire_cloudkit_read_authentication,
+    cloudkit_proto::{
+        record::field::{value::Type as FieldValueType, EncryptedValue, Value},
+        CloudKitRecord, Record,
+    },
+    pcs::PCSEncryptor,
+    DefaultAnisetteProvider,
 };
 
 use super::api::{
@@ -22,13 +36,14 @@ use crate::{
     cloud_sync_protector,
     cloud_sync_semantic_identity::CloudSemanticIdentifierHasher,
     cloud_sync_transient_bridge::{
-        cloud_sync_decode_transient_record_cached_only, CloudTransientDecodeOutcome,
-        CloudTransientDecodeRequest, CloudTransientExpectedChangeKind,
+        cloud_sync_decode_transient_record_cached_only, preflight_record_wire_budget,
+        CloudTransientDecodeOutcome, CloudTransientDecodeRequest, CloudTransientExpectedChangeKind,
     },
 };
 
 const MAX_MESSAGE_SOURCES: usize = 8;
 const MAX_CHAT1_SOURCES: usize = 50;
+const MAX_CHAT1_ROUTE_FIELD_BYTES: usize = 64 * 1024;
 
 /// Exact opaque metadata copied from one already-adopted journal row. No raw
 /// record name, route, field value, Apple token, or message body is present.
@@ -61,6 +76,7 @@ pub enum CloudSyncChat1CorrelationFailureCode {
     MessageSourceMismatch,
     MessageDecodeFailed,
     Chat1SourceMismatch,
+    Chat1PcsLookupFailed,
     AccountChanged,
 }
 
@@ -78,6 +94,20 @@ pub struct CloudSyncChat1CorrelationResult {
     pub exact_match_pairs: u32,
     pub matched_message_routes: u32,
     pub matched_chat1_records: u32,
+    pub semantic_correlation_requested: bool,
+    pub pcs_lookup_attempted: bool,
+    pub chat_record_type_records: u32,
+    pub other_record_type_records: u32,
+    pub decoded_route_records: u32,
+    pub record_decode_failures: u32,
+    pub route_field_decode_failures: u32,
+    pub chat_identifier_match_pairs: u32,
+    pub group_id_match_pairs: u32,
+    pub original_group_id_match_pairs: u32,
+    pub guid_match_pairs: u32,
+    pub semantic_match_pairs: u32,
+    pub matched_semantic_message_routes: u32,
+    pub matched_semantic_chat1_records: u32,
     pub failure_code: Option<CloudSyncChat1CorrelationFailureCode>,
 }
 
@@ -92,8 +122,29 @@ fn failure(code: CloudSyncChat1CorrelationFailureCode) -> CloudSyncChat1Correlat
         exact_match_pairs: 0,
         matched_message_routes: 0,
         matched_chat1_records: 0,
+        semantic_correlation_requested: false,
+        pcs_lookup_attempted: false,
+        chat_record_type_records: 0,
+        other_record_type_records: 0,
+        decoded_route_records: 0,
+        record_decode_failures: 0,
+        route_field_decode_failures: 0,
+        chat_identifier_match_pairs: 0,
+        group_id_match_pairs: 0,
+        original_group_id_match_pairs: 0,
+        guid_match_pairs: 0,
+        semantic_match_pairs: 0,
+        matched_semantic_message_routes: 0,
+        matched_semantic_chat1_records: 0,
         failure_code: Some(code),
     }
+}
+
+fn semantic_failure(code: CloudSyncChat1CorrelationFailureCode) -> CloudSyncChat1CorrelationResult {
+    let mut result = failure(code);
+    result.semantic_correlation_requested = true;
+    result.pcs_lookup_attempted = true;
+    result
 }
 
 fn is_bare_digest(value: &str) -> bool {
@@ -168,13 +219,21 @@ fn message_decode_request(
     .map_err(|_| ())
 }
 
-fn verified_chat1_record_hash(
+struct VerifiedChat1Record {
+    record_id_hash: String,
+    record_name: String,
+    record_type: String,
+    raw: Option<Vec<u8>>,
+}
+
+fn verified_chat1_record(
     storage_directory: &str,
     scope: &CloudNativeProtectionScope,
     generation: u64,
     source: &CloudSyncChat1CorrelationSourceInput,
     hasher: &CloudSemanticIdentifierHasher,
-) -> Result<String, ()> {
+    retain_raw: bool,
+) -> Result<VerifiedChat1Record, ()> {
     let envelope = cloud_sync_unprotect_raw_envelope(
         PathBuf::from(storage_directory),
         scope,
@@ -198,6 +257,10 @@ fn verified_chat1_record_hash(
     }
     let record_name = envelope
         .record_name()
+        .filter(|value| !value.is_empty())
+        .ok_or(())?;
+    let record_type = envelope
+        .record_type()
         .filter(|value| !value.is_empty())
         .ok_or(())?;
     let record_id_hash = hasher.server_record_id_hash(record_name);
@@ -228,7 +291,175 @@ fn verified_chat1_record_hash(
     if change_id_hash.value() != source.change_id_hash {
         return Err(());
     }
-    Ok(record_id_hash)
+    Ok(VerifiedChat1Record {
+        record_id_hash,
+        record_name: record_name.to_owned(),
+        record_type: record_type.to_owned(),
+        raw: retain_raw.then(|| envelope.raw().expect("raw checked above").to_vec()),
+    })
+}
+
+fn record_identifier_name(record: &Record) -> Option<&str> {
+    record
+        .record_identifier
+        .as_ref()?
+        .value
+        .as_ref()?
+        .name
+        .as_deref()
+        .filter(|value| !value.is_empty())
+}
+
+fn record_type_name(record: &Record) -> Option<&str> {
+    record
+        .r#type
+        .as_ref()?
+        .name
+        .as_deref()
+        .filter(|value| !value.is_empty())
+}
+
+fn decode_verified_chat1_record(source: &VerifiedChat1Record) -> Result<Record, ()> {
+    let raw = source.raw.as_deref().ok_or(())?;
+    preflight_record_wire_budget(raw).map_err(|_| ())?;
+    let record = Record::decode(raw).map_err(|_| ())?;
+    if record_identifier_name(&record).is_some_and(|value| value != source.record_name)
+        || record_type_name(&record).is_some_and(|value| value != source.record_type)
+    {
+        return Err(());
+    }
+    Ok(record)
+}
+
+fn encrypted_string_field(
+    record: &Record,
+    key: &PCSEncryptor,
+    name: &str,
+) -> Result<Option<String>, ()> {
+    let mut matching = record.record_field.iter().filter(|field| {
+        field
+            .identifier
+            .as_ref()
+            .and_then(|identifier| identifier.name.as_deref())
+            == Some(name)
+    });
+    let Some(field) = matching.next() else {
+        return Ok(None);
+    };
+    if matching.next().is_some() {
+        return Err(());
+    }
+    let value: &Value = field.value.as_ref().ok_or(())?;
+    if value.r#type != Some(FieldValueType::StringType as i32)
+        || value.is_encrypted == Some(false)
+        || value.signed_value.is_some()
+        || value.double_value.is_some()
+        || value.date_value.is_some()
+        || value.string_value.is_some()
+        || value.location_value.is_some()
+        || value.reference_value.is_some()
+        || value.asset_value.is_some()
+        || !value.list_values.is_empty()
+        || value.package_value.is_some()
+    {
+        return Err(());
+    }
+    let ciphertext = value
+        .bytes_value
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .ok_or(())?;
+    key.validate_ciphertext_key(ciphertext).map_err(|_| ())?;
+    let plaintext = key.decrypt_data_checked(ciphertext, name).map_err(|_| ())?;
+    if plaintext.len() > MAX_CHAT1_ROUTE_FIELD_BYTES {
+        return Err(());
+    }
+    let decoded = EncryptedValue::decode(plaintext.as_slice()).map_err(|_| ())?;
+    if decoded.signed_value.is_some() || decoded.date_value.is_some() {
+        return Err(());
+    }
+    Ok(decoded.string_value)
+}
+
+fn target_mask(
+    value: Option<&str>,
+    targets: &[String],
+    hasher: &CloudSemanticIdentifierHasher,
+) -> u8 {
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
+        return 0;
+    };
+    let hashed = hasher.server_record_id_hash(value);
+    targets
+        .iter()
+        .enumerate()
+        .fold(0u8, |mask, (index, target)| {
+            if hashed == *target {
+                mask | (1u8 << index)
+            } else {
+                mask
+            }
+        })
+}
+
+#[derive(Default)]
+struct RouteFieldMatches {
+    chat_identifier: u8,
+    group_id: u8,
+    original_group_id: u8,
+    guid: u8,
+}
+
+impl RouteFieldMatches {
+    fn combined(&self) -> u8 {
+        self.chat_identifier | self.group_id | self.original_group_id | self.guid
+    }
+
+    fn pairs(&self) -> u32 {
+        self.chat_identifier.count_ones()
+            + self.group_id.count_ones()
+            + self.original_group_id.count_ones()
+            + self.guid.count_ones()
+    }
+}
+
+fn inspect_chat1_route_fields(
+    record: &Record,
+    zone_key: &rustpush::cloudkit::PCSZoneConfig,
+    targets: &[String],
+    hasher: &CloudSemanticIdentifierHasher,
+) -> Result<RouteFieldMatches, ()> {
+    let record_key = match catch_unwind(AssertUnwindSafe(|| pcs_keys_for_record(record, zone_key)))
+    {
+        Ok(Ok(value)) => value,
+        _ => return Err(()),
+    };
+    let chat_identifier = encrypted_string_field(record, &record_key, "cid")?;
+    let group_id = encrypted_string_field(record, &record_key, "gid")?;
+    let original_group_id = encrypted_string_field(record, &record_key, "ogid")?;
+    let guid = encrypted_string_field(record, &record_key, "guid")?;
+    Ok(RouteFieldMatches {
+        chat_identifier: target_mask(chat_identifier.as_deref(), targets, hasher),
+        group_id: target_mask(group_id.as_deref(), targets, hasher),
+        original_group_id: target_mask(original_group_id.as_deref(), targets, hasher),
+        guid: target_mask(guid.as_deref(), targets, hasher),
+    })
+}
+
+#[derive(Default)]
+struct SemanticMatchCounts {
+    chat_record_type_records: u32,
+    other_record_type_records: u32,
+    decoded_route_records: u32,
+    record_decode_failures: u32,
+    route_field_decode_failures: u32,
+    chat_identifier_match_pairs: u32,
+    group_id_match_pairs: u32,
+    original_group_id_match_pairs: u32,
+    guid_match_pairs: u32,
+    semantic_match_pairs: u32,
+    matched_message_route_mask: u8,
+    matched_chat1_records: u32,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -264,10 +495,11 @@ fn exact_match_counts(message_routes: &[String], chat1_records: &[String]) -> Ma
     }
 }
 
-/// Performs one bounded cached-only comparison under the exact active native
-/// writer pause. The Message decoder may use already-warmed PCS state but this
-/// function performs no CloudKit request, token persistence, projection,
-/// admission, save, delete, keychain synchronization, or identity repair.
+/// Performs one bounded comparison under the exact active native writer pause.
+/// The default path is cached-only. A separately gated semantic diagnostic may
+/// resolve the existing Chat1 PCS configuration with lookup-only reads, then
+/// decrypt only four routing strings. Neither path persists a token, projects,
+/// admits, saves, deletes, synchronizes keychain state, or repairs identity.
 #[allow(clippy::too_many_arguments)]
 pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
@@ -280,6 +512,8 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
     chat1_generation: u64,
     chat1_sources: Vec<CloudSyncChat1CorrelationSourceInput>,
 ) -> CloudSyncChat1CorrelationResult {
+    let semantic_correlation =
+        std::env::var("OPENBUBBLES_INSPECT_CHAT1_SEMANTIC_CORRELATION").as_deref() == Ok("1");
     if std::env::var("OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST").as_deref() != Ok("1")
         || std::env::var("OPENBUBBLES_INSPECT_CHAT1_CORRELATION").as_deref() != Ok("1")
         || !is_cloud_sync_windows_dev_profile(&storage_directory)
@@ -350,17 +584,85 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
         Ok(scope) => scope,
         Err(_) => return failure(CloudSyncChat1CorrelationFailureCode::InvalidRequest),
     };
+    let chat1_zone_key = if semantic_correlation {
+        let container = match cloud_messages_client
+            .get_cached_container_for_read_authentication(&permit)
+            .await
+        {
+            Ok(value) => value,
+            Err(_) => {
+                return semantic_failure(CloudSyncChat1CorrelationFailureCode::Chat1PcsLookupFailed)
+            }
+        };
+        let zone = container.private_zone("chat1ManateeZone".to_owned());
+        match container
+            .get_zone_encryption_config_lookup_only(
+                &zone,
+                &cloud_messages_client.keychain,
+                &MESSAGES_SERVICE,
+            )
+            .await
+        {
+            Ok(value) => Some(value),
+            Err(_) => {
+                return semantic_failure(CloudSyncChat1CorrelationFailureCode::Chat1PcsLookupFailed)
+            }
+        }
+    } else {
+        None
+    };
     let mut chat1_record_hashes = Vec::with_capacity(chat1_sources.len());
+    let mut semantic_counts = SemanticMatchCounts::default();
     for source in &chat1_sources {
-        match verified_chat1_record_hash(
+        let verified = match verified_chat1_record(
             &storage_directory,
             &chat1_scope,
             chat1_generation,
             source,
             &hasher,
+            semantic_correlation,
         ) {
-            Ok(record_hash) => chat1_record_hashes.push(record_hash),
+            Ok(value) => value,
             Err(()) => return failure(CloudSyncChat1CorrelationFailureCode::Chat1SourceMismatch),
+        };
+        chat1_record_hashes.push(verified.record_id_hash.clone());
+        if !semantic_correlation {
+            continue;
+        }
+        if verified.record_type != CloudChat::record_type() {
+            semantic_counts.other_record_type_records += 1;
+            continue;
+        }
+        semantic_counts.chat_record_type_records += 1;
+        let record = match decode_verified_chat1_record(&verified) {
+            Ok(value) => value,
+            Err(()) => {
+                semantic_counts.record_decode_failures += 1;
+                continue;
+            }
+        };
+        let fields = match inspect_chat1_route_fields(
+            &record,
+            chat1_zone_key.as_ref().expect("semantic lookup completed"),
+            &message_route_hashes,
+            &hasher,
+        ) {
+            Ok(value) => value,
+            Err(()) => {
+                semantic_counts.route_field_decode_failures += 1;
+                continue;
+            }
+        };
+        semantic_counts.decoded_route_records += 1;
+        semantic_counts.chat_identifier_match_pairs += fields.chat_identifier.count_ones();
+        semantic_counts.group_id_match_pairs += fields.group_id.count_ones();
+        semantic_counts.original_group_id_match_pairs += fields.original_group_id.count_ones();
+        semantic_counts.guid_match_pairs += fields.guid.count_ones();
+        semantic_counts.semantic_match_pairs += fields.pairs();
+        let combined = fields.combined();
+        semantic_counts.matched_message_route_mask |= combined;
+        if combined != 0 {
+            semantic_counts.matched_chat1_records += 1;
         }
     }
 
@@ -390,6 +692,20 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
         exact_match_pairs: counts.exact_match_pairs as u32,
         matched_message_routes: counts.matched_message_routes as u32,
         matched_chat1_records: counts.matched_chat1_records as u32,
+        semantic_correlation_requested: semantic_correlation,
+        pcs_lookup_attempted: semantic_correlation,
+        chat_record_type_records: semantic_counts.chat_record_type_records,
+        other_record_type_records: semantic_counts.other_record_type_records,
+        decoded_route_records: semantic_counts.decoded_route_records,
+        record_decode_failures: semantic_counts.record_decode_failures,
+        route_field_decode_failures: semantic_counts.route_field_decode_failures,
+        chat_identifier_match_pairs: semantic_counts.chat_identifier_match_pairs,
+        group_id_match_pairs: semantic_counts.group_id_match_pairs,
+        original_group_id_match_pairs: semantic_counts.original_group_id_match_pairs,
+        guid_match_pairs: semantic_counts.guid_match_pairs,
+        semantic_match_pairs: semantic_counts.semantic_match_pairs,
+        matched_semantic_message_routes: semantic_counts.matched_message_route_mask.count_ones(),
+        matched_semantic_chat1_records: semantic_counts.matched_chat1_records,
         failure_code: None,
     }
 }
@@ -431,6 +747,19 @@ mod tests {
     }
 
     #[test]
+    fn semantic_route_masks_distinguish_pairs_routes_and_records() {
+        let fields = RouteFieldMatches {
+            chat_identifier: 0b0000_0001,
+            group_id: 0b0000_0010,
+            original_group_id: 0b0000_0001,
+            guid: 0,
+        };
+        assert_eq!(fields.pairs(), 3);
+        assert_eq!(fields.combined(), 0b0000_0011);
+        assert_eq!(fields.combined().count_ones(), 2);
+    }
+
+    #[test]
     fn source_validation_rejects_duplicates_malformed_values_and_unbounded_sets() {
         let first = source('R', 'P');
         assert!(valid_sources(std::slice::from_ref(&first), 1));
@@ -463,9 +792,38 @@ mod tests {
         assert_eq!(result.exact_match_pairs, 0);
         assert_eq!(result.matched_message_routes, 0);
         assert_eq!(result.matched_chat1_records, 0);
+        assert!(!result.semantic_correlation_requested);
+        assert!(!result.pcs_lookup_attempted);
+        assert_eq!(result.chat_record_type_records, 0);
+        assert_eq!(result.other_record_type_records, 0);
+        assert_eq!(result.decoded_route_records, 0);
+        assert_eq!(result.record_decode_failures, 0);
+        assert_eq!(result.route_field_decode_failures, 0);
+        assert_eq!(result.chat_identifier_match_pairs, 0);
+        assert_eq!(result.group_id_match_pairs, 0);
+        assert_eq!(result.original_group_id_match_pairs, 0);
+        assert_eq!(result.guid_match_pairs, 0);
+        assert_eq!(result.semantic_match_pairs, 0);
+        assert_eq!(result.matched_semantic_message_routes, 0);
+        assert_eq!(result.matched_semantic_chat1_records, 0);
         assert_eq!(
             result.failure_code,
             Some(CloudSyncChat1CorrelationFailureCode::Chat1SourceMismatch)
+        );
+    }
+
+    #[test]
+    fn semantic_failure_never_contains_partial_observation() {
+        let result = semantic_failure(CloudSyncChat1CorrelationFailureCode::Chat1PcsLookupFailed);
+        assert!(!result.completed);
+        assert!(result.semantic_correlation_requested);
+        assert!(result.pcs_lookup_attempted);
+        assert_eq!(result.semantic_match_pairs, 0);
+        assert_eq!(result.matched_semantic_message_routes, 0);
+        assert_eq!(result.matched_semantic_chat1_records, 0);
+        assert_eq!(
+            result.failure_code,
+            Some(CloudSyncChat1CorrelationFailureCode::Chat1PcsLookupFailed)
         );
     }
 }

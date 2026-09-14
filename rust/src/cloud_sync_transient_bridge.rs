@@ -215,7 +215,12 @@ fn preflight_record_wire_message(
     Ok(())
 }
 
-fn preflight_record_wire_budget(input: &[u8]) -> Result<(), CloudTransientBridgeFailure> {
+/// Applies the same bounded protobuf preflight before any auxiliary diagnostic
+/// decodes a protected CloudKit record. The caller still owns stream, account,
+/// generation, and protected-reference validation.
+pub(crate) fn preflight_record_wire_budget(
+    input: &[u8],
+) -> Result<(), CloudTransientBridgeFailure> {
     preflight_record_wire_message(
         input,
         CloudRecordWireMessage::Record,
