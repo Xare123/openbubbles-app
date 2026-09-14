@@ -7,16 +7,18 @@ import '../frb_generated.dart';
 import '../lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `classify_lah_validation_detail`, `classify_ptcpts_wire_shape_detail`, `combined`, `decode_verified_chat1_record`, `encrypted_i64_field`, `encrypted_legacy_identifiers`, `encrypted_participant_uris`, `encrypted_string_field`, `exact_match_counts`, `failure`, `inspect_chat1_route_fields_with_key`, `inspect_chat1_route_fields`, `is_bare_digest`, `is_hex_digest`, `is_protected_reference`, `matrix_index`, `message_decode_request`, `msgproto_combined`, `msgproto_pairs`, `multi_normalized_optional_target_mask`, `multi_normalized_target_mask`, `multi_optional_target_mask`, `multi_target_mask`, `new`, `normalized_combined`, `normalized_msgproto_combined`, `normalized_msgproto_pairs`, `normalized_optional_target_mask`, `normalized_pairs`, `normalized_route_extra_combined`, `normalized_route_extra_pairs`, `normalized_route_target`, `normalized_sender_combined`, `normalized_sender_pairs`, `normalized_target_mask`, `observe_route_field_failure`, `observe`, `optional_target_mask`, `paged_semantic_failure`, `pairs`, `record_identifier_name`, `record_type_name`, `route_extra_combined`, `route_extra_pairs`, `route_field_failure_matrix_snapshot`, `scan_chat1_route_pages`, `semantic_failure`, `sender_combined`, `sender_pairs`, `target_mask`, `unique_field_value`, `valid_source`, `valid_sources`, `verified_chat1_record`, `with_detail`
-// These types are ignored because they are not used by any `pub` functions: `Chat1RouteFailureDetail`, `Chat1RouteFailureField`, `Chat1RouteFailureKind`, `Chat1RouteFieldFailure`, `MatchCounts`, `NormalizedRouteTarget`, `PagedSemanticCounts`, `RouteFieldMatches`, `SemanticMatchCounts`, `VerifiedChat1Record`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
-// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`, `default`
+// These functions are ignored because they are not marked as `pub`: `candidate_cardinality`, `classify_lah_validation_detail`, `classify_ptcpts_wire_shape_detail`, `combined`, `decode_verified_chat1_record`, `encrypted_chat_properties`, `encrypted_i64_field`, `encrypted_last_addressed_handle`, `encrypted_participant_uris`, `encrypted_string_field_with_empty_policy`, `encrypted_string_field`, `exact_match_counts`, `failure`, `hashed_target_mask`, `inspect_chat1_route_fields_with_key`, `inspect_chat1_route_fields`, `is_bare_digest`, `is_hex_digest`, `is_protected_reference`, `matrix_index`, `message_decode_request`, `message_route_kind`, `msgproto_combined`, `msgproto_pairs`, `multi_normalized_optional_target_mask`, `multi_normalized_target_mask`, `multi_optional_target_mask`, `multi_target_mask`, `new`, `normalized_anchor_target_mask`, `normalized_combined`, `normalized_msgproto_combined`, `normalized_msgproto_pairs`, `normalized_optional_target_mask`, `normalized_pairs`, `normalized_route_extra_combined`, `normalized_route_extra_pairs`, `normalized_route_target`, `normalized_sender_combined`, `normalized_sender_pairs`, `normalized_target_mask`, `observe_candidate_mask`, `observe_decoded_source`, `observe_route_field_failure`, `observe`, `optional_target_mask`, `paged_semantic_failure`, `pairs`, `record_identifier_name`, `record_type_name`, `route_extra_combined`, `route_extra_pairs`, `route_field_failure_matrix_snapshot`, `scan_chat1_route_pages`, `semantic_failure`, `sender_combined`, `sender_pairs`, `service_style_compatible_mask`, `target_mask`, `unique_field_value`, `valid_source`, `valid_sources`, `verified_chat1_record`, `with_detail`
+// These types are ignored because they are not used by any `pub` functions: `CandidateCardinality`, `Chat1RouteFailureDetail`, `Chat1RouteFailureField`, `Chat1RouteFailureKind`, `Chat1RouteFieldFailure`, `MatchCounts`, `MessageAnchorIndex`, `MessageRouteAnchor`, `MessageRouteKind`, `NormalizedRouteTarget`, `PagedSemanticCounts`, `RouteFieldMatches`, `SelectiveChatProperties`, `SemanticMatchCounts`, `VerifiedChat1Record`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`, `default`, `default`, `default`, `default`
 
 /// Performs one bounded comparison under the exact active native writer pause.
 /// The default path is cached-only. A separately gated semantic diagnostic may
 /// resolve the existing Chat1 PCS configuration with lookup-only reads, then
 /// decrypt only selective routing strings (cid/gid/ogid/guid/lah/svc/stl and
-/// participant URIs plus prop legacy identifiers). Neither path persists a
+/// participant URIs plus prop legacy identifiers and lastSeenMessageGuid).
+/// The optional anchor set is decoded only from already-protected local
+/// Message rows and leaves only aggregate cardinalities. Neither path persists a
 /// token, projects, admits, saves, deletes, synchronizes keychain state, or
 /// repairs identity.
 Future<CloudSyncChat1CorrelationResult>
@@ -28,6 +30,7 @@ cloudSyncInspectChat1RecordNameCorrelationUnderWriterPause({
   required String expectedProtectedStoreIdentity,
   required BigInt messageGeneration,
   required List<CloudSyncChat1CorrelationSourceInput> messageSources,
+  required List<CloudSyncChat1CorrelationSourceInput> anchorMessageSources,
   required BigInt chat1Generation,
   required List<CloudSyncChat1CorrelationSourceInput> chat1Sources,
 }) => RustLib.instance.api
@@ -39,6 +42,7 @@ cloudSyncInspectChat1RecordNameCorrelationUnderWriterPause({
       expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
       messageGeneration: messageGeneration,
       messageSources: messageSources,
+      anchorMessageSources: anchorMessageSources,
       chat1Generation: chat1Generation,
       chat1Sources: chat1Sources,
     );
@@ -77,6 +81,11 @@ class CloudSyncChat1CorrelationResult {
   final int distinctMessageRoutes;
   final int messageGroupIdSources;
   final int messageSenderSources;
+  final int anchorMessageSources;
+  final int decodedAnchorMessages;
+  final int skippedAnchorMessages;
+  final int distinctAnchorMessageGuids;
+  final int conflictingAnchorMessageGuids;
   final int chat1Sources;
   final int verifiedChat1Records;
   final int exactMatchPairs;
@@ -190,6 +199,31 @@ class CloudSyncChat1CorrelationResult {
   final int pagedNormalizedMatchedMsgprotoChat1Records;
   final int pagedNormalizedMatchedSenderTargets;
   final int pagedNormalizedMatchedSenderChat1Records;
+  final int pagedLastSeenMessageGuidPresentRecords;
+  final int pagedLastSeenTargetMessageMatchPairs;
+  final int pagedMatchedLastSeenTargetMessages;
+  final int pagedMatchedLastSeenTargetChat1Records;
+  final int pagedLastSeenAnchorExactMatchPairs;
+  final int pagedMatchedAnchorExactTargets;
+  final int pagedMatchedAnchorExactChat1Records;
+  final int pagedLastSeenAnchorNormalizedMatchPairs;
+  final int pagedMatchedAnchorNormalizedTargets;
+  final int pagedMatchedAnchorNormalizedChat1Records;
+  final int pagedSenderServiceStyleMatchPairs;
+  final int pagedMatchedSenderServiceStyleTargets;
+  final int pagedMatchedSenderServiceStyleChat1Records;
+  final int pagedSenderServiceStyleZeroCandidateTargets;
+  final int pagedSenderServiceStyleUniqueCandidateTargets;
+  final int pagedSenderServiceStyleMultipleCandidateTargets;
+  final int pagedLastSeenTargetZeroCandidateTargets;
+  final int pagedLastSeenTargetUniqueCandidateTargets;
+  final int pagedLastSeenTargetMultipleCandidateTargets;
+  final int pagedAnchorExactZeroCandidateTargets;
+  final int pagedAnchorExactUniqueCandidateTargets;
+  final int pagedAnchorExactMultipleCandidateTargets;
+  final int pagedAnchorNormalizedZeroCandidateTargets;
+  final int pagedAnchorNormalizedUniqueCandidateTargets;
+  final int pagedAnchorNormalizedMultipleCandidateTargets;
   final bool pagedTerminalReached;
   final bool pagedBudgetExhausted;
   final CloudSyncChat1CorrelationFailureCode? failureCode;
@@ -201,6 +235,11 @@ class CloudSyncChat1CorrelationResult {
     required this.distinctMessageRoutes,
     required this.messageGroupIdSources,
     required this.messageSenderSources,
+    required this.anchorMessageSources,
+    required this.decodedAnchorMessages,
+    required this.skippedAnchorMessages,
+    required this.distinctAnchorMessageGuids,
+    required this.conflictingAnchorMessageGuids,
     required this.chat1Sources,
     required this.verifiedChat1Records,
     required this.exactMatchPairs,
@@ -307,6 +346,31 @@ class CloudSyncChat1CorrelationResult {
     required this.pagedNormalizedMatchedMsgprotoChat1Records,
     required this.pagedNormalizedMatchedSenderTargets,
     required this.pagedNormalizedMatchedSenderChat1Records,
+    required this.pagedLastSeenMessageGuidPresentRecords,
+    required this.pagedLastSeenTargetMessageMatchPairs,
+    required this.pagedMatchedLastSeenTargetMessages,
+    required this.pagedMatchedLastSeenTargetChat1Records,
+    required this.pagedLastSeenAnchorExactMatchPairs,
+    required this.pagedMatchedAnchorExactTargets,
+    required this.pagedMatchedAnchorExactChat1Records,
+    required this.pagedLastSeenAnchorNormalizedMatchPairs,
+    required this.pagedMatchedAnchorNormalizedTargets,
+    required this.pagedMatchedAnchorNormalizedChat1Records,
+    required this.pagedSenderServiceStyleMatchPairs,
+    required this.pagedMatchedSenderServiceStyleTargets,
+    required this.pagedMatchedSenderServiceStyleChat1Records,
+    required this.pagedSenderServiceStyleZeroCandidateTargets,
+    required this.pagedSenderServiceStyleUniqueCandidateTargets,
+    required this.pagedSenderServiceStyleMultipleCandidateTargets,
+    required this.pagedLastSeenTargetZeroCandidateTargets,
+    required this.pagedLastSeenTargetUniqueCandidateTargets,
+    required this.pagedLastSeenTargetMultipleCandidateTargets,
+    required this.pagedAnchorExactZeroCandidateTargets,
+    required this.pagedAnchorExactUniqueCandidateTargets,
+    required this.pagedAnchorExactMultipleCandidateTargets,
+    required this.pagedAnchorNormalizedZeroCandidateTargets,
+    required this.pagedAnchorNormalizedUniqueCandidateTargets,
+    required this.pagedAnchorNormalizedMultipleCandidateTargets,
     required this.pagedTerminalReached,
     required this.pagedBudgetExhausted,
     this.failureCode,
@@ -320,6 +384,11 @@ class CloudSyncChat1CorrelationResult {
       distinctMessageRoutes.hashCode ^
       messageGroupIdSources.hashCode ^
       messageSenderSources.hashCode ^
+      anchorMessageSources.hashCode ^
+      decodedAnchorMessages.hashCode ^
+      skippedAnchorMessages.hashCode ^
+      distinctAnchorMessageGuids.hashCode ^
+      conflictingAnchorMessageGuids.hashCode ^
       chat1Sources.hashCode ^
       verifiedChat1Records.hashCode ^
       exactMatchPairs.hashCode ^
@@ -426,6 +495,31 @@ class CloudSyncChat1CorrelationResult {
       pagedNormalizedMatchedMsgprotoChat1Records.hashCode ^
       pagedNormalizedMatchedSenderTargets.hashCode ^
       pagedNormalizedMatchedSenderChat1Records.hashCode ^
+      pagedLastSeenMessageGuidPresentRecords.hashCode ^
+      pagedLastSeenTargetMessageMatchPairs.hashCode ^
+      pagedMatchedLastSeenTargetMessages.hashCode ^
+      pagedMatchedLastSeenTargetChat1Records.hashCode ^
+      pagedLastSeenAnchorExactMatchPairs.hashCode ^
+      pagedMatchedAnchorExactTargets.hashCode ^
+      pagedMatchedAnchorExactChat1Records.hashCode ^
+      pagedLastSeenAnchorNormalizedMatchPairs.hashCode ^
+      pagedMatchedAnchorNormalizedTargets.hashCode ^
+      pagedMatchedAnchorNormalizedChat1Records.hashCode ^
+      pagedSenderServiceStyleMatchPairs.hashCode ^
+      pagedMatchedSenderServiceStyleTargets.hashCode ^
+      pagedMatchedSenderServiceStyleChat1Records.hashCode ^
+      pagedSenderServiceStyleZeroCandidateTargets.hashCode ^
+      pagedSenderServiceStyleUniqueCandidateTargets.hashCode ^
+      pagedSenderServiceStyleMultipleCandidateTargets.hashCode ^
+      pagedLastSeenTargetZeroCandidateTargets.hashCode ^
+      pagedLastSeenTargetUniqueCandidateTargets.hashCode ^
+      pagedLastSeenTargetMultipleCandidateTargets.hashCode ^
+      pagedAnchorExactZeroCandidateTargets.hashCode ^
+      pagedAnchorExactUniqueCandidateTargets.hashCode ^
+      pagedAnchorExactMultipleCandidateTargets.hashCode ^
+      pagedAnchorNormalizedZeroCandidateTargets.hashCode ^
+      pagedAnchorNormalizedUniqueCandidateTargets.hashCode ^
+      pagedAnchorNormalizedMultipleCandidateTargets.hashCode ^
       pagedTerminalReached.hashCode ^
       pagedBudgetExhausted.hashCode ^
       failureCode.hashCode;
@@ -441,6 +535,12 @@ class CloudSyncChat1CorrelationResult {
           distinctMessageRoutes == other.distinctMessageRoutes &&
           messageGroupIdSources == other.messageGroupIdSources &&
           messageSenderSources == other.messageSenderSources &&
+          anchorMessageSources == other.anchorMessageSources &&
+          decodedAnchorMessages == other.decodedAnchorMessages &&
+          skippedAnchorMessages == other.skippedAnchorMessages &&
+          distinctAnchorMessageGuids == other.distinctAnchorMessageGuids &&
+          conflictingAnchorMessageGuids ==
+              other.conflictingAnchorMessageGuids &&
           chat1Sources == other.chat1Sources &&
           verifiedChat1Records == other.verifiedChat1Records &&
           exactMatchPairs == other.exactMatchPairs &&
@@ -587,6 +687,56 @@ class CloudSyncChat1CorrelationResult {
               other.pagedNormalizedMatchedSenderTargets &&
           pagedNormalizedMatchedSenderChat1Records ==
               other.pagedNormalizedMatchedSenderChat1Records &&
+          pagedLastSeenMessageGuidPresentRecords ==
+              other.pagedLastSeenMessageGuidPresentRecords &&
+          pagedLastSeenTargetMessageMatchPairs ==
+              other.pagedLastSeenTargetMessageMatchPairs &&
+          pagedMatchedLastSeenTargetMessages ==
+              other.pagedMatchedLastSeenTargetMessages &&
+          pagedMatchedLastSeenTargetChat1Records ==
+              other.pagedMatchedLastSeenTargetChat1Records &&
+          pagedLastSeenAnchorExactMatchPairs ==
+              other.pagedLastSeenAnchorExactMatchPairs &&
+          pagedMatchedAnchorExactTargets ==
+              other.pagedMatchedAnchorExactTargets &&
+          pagedMatchedAnchorExactChat1Records ==
+              other.pagedMatchedAnchorExactChat1Records &&
+          pagedLastSeenAnchorNormalizedMatchPairs ==
+              other.pagedLastSeenAnchorNormalizedMatchPairs &&
+          pagedMatchedAnchorNormalizedTargets ==
+              other.pagedMatchedAnchorNormalizedTargets &&
+          pagedMatchedAnchorNormalizedChat1Records ==
+              other.pagedMatchedAnchorNormalizedChat1Records &&
+          pagedSenderServiceStyleMatchPairs ==
+              other.pagedSenderServiceStyleMatchPairs &&
+          pagedMatchedSenderServiceStyleTargets ==
+              other.pagedMatchedSenderServiceStyleTargets &&
+          pagedMatchedSenderServiceStyleChat1Records ==
+              other.pagedMatchedSenderServiceStyleChat1Records &&
+          pagedSenderServiceStyleZeroCandidateTargets ==
+              other.pagedSenderServiceStyleZeroCandidateTargets &&
+          pagedSenderServiceStyleUniqueCandidateTargets ==
+              other.pagedSenderServiceStyleUniqueCandidateTargets &&
+          pagedSenderServiceStyleMultipleCandidateTargets ==
+              other.pagedSenderServiceStyleMultipleCandidateTargets &&
+          pagedLastSeenTargetZeroCandidateTargets ==
+              other.pagedLastSeenTargetZeroCandidateTargets &&
+          pagedLastSeenTargetUniqueCandidateTargets ==
+              other.pagedLastSeenTargetUniqueCandidateTargets &&
+          pagedLastSeenTargetMultipleCandidateTargets ==
+              other.pagedLastSeenTargetMultipleCandidateTargets &&
+          pagedAnchorExactZeroCandidateTargets ==
+              other.pagedAnchorExactZeroCandidateTargets &&
+          pagedAnchorExactUniqueCandidateTargets ==
+              other.pagedAnchorExactUniqueCandidateTargets &&
+          pagedAnchorExactMultipleCandidateTargets ==
+              other.pagedAnchorExactMultipleCandidateTargets &&
+          pagedAnchorNormalizedZeroCandidateTargets ==
+              other.pagedAnchorNormalizedZeroCandidateTargets &&
+          pagedAnchorNormalizedUniqueCandidateTargets ==
+              other.pagedAnchorNormalizedUniqueCandidateTargets &&
+          pagedAnchorNormalizedMultipleCandidateTargets ==
+              other.pagedAnchorNormalizedMultipleCandidateTargets &&
           pagedTerminalReached == other.pagedTerminalReached &&
           pagedBudgetExhausted == other.pagedBudgetExhausted &&
           failureCode == other.failureCode;

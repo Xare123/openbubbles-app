@@ -18072,6 +18072,7 @@ let api_expected_account_fingerprint = <String>::sse_decode(&mut deserializer);
 let api_expected_protected_store_identity = <String>::sse_decode(&mut deserializer);
 let api_message_generation = <u64>::sse_decode(&mut deserializer);
 let api_message_sources = <Vec<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput>>::sse_decode(&mut deserializer);
+let api_anchor_message_sources = <Vec<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput>>::sse_decode(&mut deserializer);
 let api_chat1_generation = <u64>::sse_decode(&mut deserializer);
 let api_chat1_sources = <Vec<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput>>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
                     transform_result_sse::<_, ()>((move || async move {
@@ -18084,7 +18085,7 @@ let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decod
             }
         }
         let api_cloud_messages_client_guard = api_cloud_messages_client_guard.unwrap();
- let output_ok = Result::<_,()>::Ok(crate::api::cloud_sync_chat1_correlation::cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause(&*api_cloud_messages_client_guard, api_native_writer_pause_token, api_storage_directory, api_expected_account_fingerprint, api_expected_protected_store_identity, api_message_generation, api_message_sources, api_chat1_generation, api_chat1_sources).await)?;   Ok(output_ok)
+ let output_ok = Result::<_,()>::Ok(crate::api::cloud_sync_chat1_correlation::cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause(&*api_cloud_messages_client_guard, api_native_writer_pause_token, api_storage_directory, api_expected_account_fingerprint, api_expected_protected_store_identity, api_message_generation, api_message_sources, api_anchor_message_sources, api_chat1_generation, api_chat1_sources).await)?;   Ok(output_ok)
                     })().await)
                 } })
 }
@@ -21824,6 +21825,11 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         let mut var_distinctMessageRoutes = <u32>::sse_decode(deserializer);
         let mut var_messageGroupIdSources = <u32>::sse_decode(deserializer);
         let mut var_messageSenderSources = <u32>::sse_decode(deserializer);
+        let mut var_anchorMessageSources = <u32>::sse_decode(deserializer);
+        let mut var_decodedAnchorMessages = <u32>::sse_decode(deserializer);
+        let mut var_skippedAnchorMessages = <u32>::sse_decode(deserializer);
+        let mut var_distinctAnchorMessageGuids = <u32>::sse_decode(deserializer);
+        let mut var_conflictingAnchorMessageGuids = <u32>::sse_decode(deserializer);
         let mut var_chat1Sources = <u32>::sse_decode(deserializer);
         let mut var_verifiedChat1Records = <u32>::sse_decode(deserializer);
         let mut var_exactMatchPairs = <u32>::sse_decode(deserializer);
@@ -21932,6 +21938,32 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         let mut var_pagedNormalizedMatchedMsgprotoChat1Records = <u32>::sse_decode(deserializer);
         let mut var_pagedNormalizedMatchedSenderTargets = <u32>::sse_decode(deserializer);
         let mut var_pagedNormalizedMatchedSenderChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedLastSeenMessageGuidPresentRecords = <u32>::sse_decode(deserializer);
+        let mut var_pagedLastSeenTargetMessageMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedLastSeenTargetMessages = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedLastSeenTargetChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedLastSeenAnchorExactMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedAnchorExactTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedAnchorExactChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedLastSeenAnchorNormalizedMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedAnchorNormalizedTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedAnchorNormalizedChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedSenderServiceStyleMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedSenderServiceStyleTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedSenderServiceStyleChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedSenderServiceStyleZeroCandidateTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedSenderServiceStyleUniqueCandidateTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedSenderServiceStyleMultipleCandidateTargets =
+            <u32>::sse_decode(deserializer);
+        let mut var_pagedLastSeenTargetZeroCandidateTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedLastSeenTargetUniqueCandidateTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedLastSeenTargetMultipleCandidateTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedAnchorExactZeroCandidateTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedAnchorExactUniqueCandidateTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedAnchorExactMultipleCandidateTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedAnchorNormalizedZeroCandidateTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedAnchorNormalizedUniqueCandidateTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedAnchorNormalizedMultipleCandidateTargets = <u32>::sse_decode(deserializer);
         let mut var_pagedTerminalReached = <bool>::sse_decode(deserializer);
         let mut var_pagedBudgetExhausted = <bool>::sse_decode(deserializer);
         let mut var_failureCode = <Option<
@@ -21944,6 +21976,11 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
             distinct_message_routes: var_distinctMessageRoutes,
             message_group_id_sources: var_messageGroupIdSources,
             message_sender_sources: var_messageSenderSources,
+            anchor_message_sources: var_anchorMessageSources,
+            decoded_anchor_messages: var_decodedAnchorMessages,
+            skipped_anchor_messages: var_skippedAnchorMessages,
+            distinct_anchor_message_guids: var_distinctAnchorMessageGuids,
+            conflicting_anchor_message_guids: var_conflictingAnchorMessageGuids,
             chat1_sources: var_chat1Sources,
             verified_chat1_records: var_verifiedChat1Records,
             exact_match_pairs: var_exactMatchPairs,
@@ -22063,6 +22100,46 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
             paged_normalized_matched_sender_targets: var_pagedNormalizedMatchedSenderTargets,
             paged_normalized_matched_sender_chat1_records:
                 var_pagedNormalizedMatchedSenderChat1Records,
+            paged_last_seen_message_guid_present_records:
+                var_pagedLastSeenMessageGuidPresentRecords,
+            paged_last_seen_target_message_match_pairs: var_pagedLastSeenTargetMessageMatchPairs,
+            paged_matched_last_seen_target_messages: var_pagedMatchedLastSeenTargetMessages,
+            paged_matched_last_seen_target_chat1_records:
+                var_pagedMatchedLastSeenTargetChat1Records,
+            paged_last_seen_anchor_exact_match_pairs: var_pagedLastSeenAnchorExactMatchPairs,
+            paged_matched_anchor_exact_targets: var_pagedMatchedAnchorExactTargets,
+            paged_matched_anchor_exact_chat1_records: var_pagedMatchedAnchorExactChat1Records,
+            paged_last_seen_anchor_normalized_match_pairs:
+                var_pagedLastSeenAnchorNormalizedMatchPairs,
+            paged_matched_anchor_normalized_targets: var_pagedMatchedAnchorNormalizedTargets,
+            paged_matched_anchor_normalized_chat1_records:
+                var_pagedMatchedAnchorNormalizedChat1Records,
+            paged_sender_service_style_match_pairs: var_pagedSenderServiceStyleMatchPairs,
+            paged_matched_sender_service_style_targets: var_pagedMatchedSenderServiceStyleTargets,
+            paged_matched_sender_service_style_chat1_records:
+                var_pagedMatchedSenderServiceStyleChat1Records,
+            paged_sender_service_style_zero_candidate_targets:
+                var_pagedSenderServiceStyleZeroCandidateTargets,
+            paged_sender_service_style_unique_candidate_targets:
+                var_pagedSenderServiceStyleUniqueCandidateTargets,
+            paged_sender_service_style_multiple_candidate_targets:
+                var_pagedSenderServiceStyleMultipleCandidateTargets,
+            paged_last_seen_target_zero_candidate_targets:
+                var_pagedLastSeenTargetZeroCandidateTargets,
+            paged_last_seen_target_unique_candidate_targets:
+                var_pagedLastSeenTargetUniqueCandidateTargets,
+            paged_last_seen_target_multiple_candidate_targets:
+                var_pagedLastSeenTargetMultipleCandidateTargets,
+            paged_anchor_exact_zero_candidate_targets: var_pagedAnchorExactZeroCandidateTargets,
+            paged_anchor_exact_unique_candidate_targets: var_pagedAnchorExactUniqueCandidateTargets,
+            paged_anchor_exact_multiple_candidate_targets:
+                var_pagedAnchorExactMultipleCandidateTargets,
+            paged_anchor_normalized_zero_candidate_targets:
+                var_pagedAnchorNormalizedZeroCandidateTargets,
+            paged_anchor_normalized_unique_candidate_targets:
+                var_pagedAnchorNormalizedUniqueCandidateTargets,
+            paged_anchor_normalized_multiple_candidate_targets:
+                var_pagedAnchorNormalizedMultipleCandidateTargets,
             paged_terminal_reached: var_pagedTerminalReached,
             paged_budget_exhausted: var_pagedBudgetExhausted,
             failure_code: var_failureCode,
@@ -31853,6 +31930,15 @@ impl flutter_rust_bridge::IntoDart
             self.distinct_message_routes.into_into_dart().into_dart(),
             self.message_group_id_sources.into_into_dart().into_dart(),
             self.message_sender_sources.into_into_dart().into_dart(),
+            self.anchor_message_sources.into_into_dart().into_dart(),
+            self.decoded_anchor_messages.into_into_dart().into_dart(),
+            self.skipped_anchor_messages.into_into_dart().into_dart(),
+            self.distinct_anchor_message_guids
+                .into_into_dart()
+                .into_dart(),
+            self.conflicting_anchor_message_guids
+                .into_into_dart()
+                .into_dart(),
             self.chat1_sources.into_into_dart().into_dart(),
             self.verified_chat1_records.into_into_dart().into_dart(),
             self.exact_match_pairs.into_into_dart().into_dart(),
@@ -32093,6 +32179,81 @@ impl flutter_rust_bridge::IntoDart
                 .into_into_dart()
                 .into_dart(),
             self.paged_normalized_matched_sender_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_last_seen_message_guid_present_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_last_seen_target_message_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_last_seen_target_messages
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_last_seen_target_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_last_seen_anchor_exact_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_anchor_exact_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_anchor_exact_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_last_seen_anchor_normalized_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_anchor_normalized_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_anchor_normalized_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_sender_service_style_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_sender_service_style_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_sender_service_style_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_sender_service_style_zero_candidate_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_sender_service_style_unique_candidate_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_sender_service_style_multiple_candidate_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_last_seen_target_zero_candidate_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_last_seen_target_unique_candidate_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_last_seen_target_multiple_candidate_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_anchor_exact_zero_candidate_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_anchor_exact_unique_candidate_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_anchor_exact_multiple_candidate_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_anchor_normalized_zero_candidate_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_anchor_normalized_unique_candidate_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_anchor_normalized_multiple_candidate_targets
                 .into_into_dart()
                 .into_dart(),
             self.paged_terminal_reached.into_into_dart().into_dart(),
@@ -39780,6 +39941,11 @@ impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         <u32>::sse_encode(self.distinct_message_routes, serializer);
         <u32>::sse_encode(self.message_group_id_sources, serializer);
         <u32>::sse_encode(self.message_sender_sources, serializer);
+        <u32>::sse_encode(self.anchor_message_sources, serializer);
+        <u32>::sse_encode(self.decoded_anchor_messages, serializer);
+        <u32>::sse_encode(self.skipped_anchor_messages, serializer);
+        <u32>::sse_encode(self.distinct_anchor_message_guids, serializer);
+        <u32>::sse_encode(self.conflicting_anchor_message_guids, serializer);
         <u32>::sse_encode(self.chat1_sources, serializer);
         <u32>::sse_encode(self.verified_chat1_records, serializer);
         <u32>::sse_encode(self.exact_match_pairs, serializer);
@@ -39923,6 +40089,76 @@ impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         <u32>::sse_encode(self.paged_normalized_matched_sender_targets, serializer);
         <u32>::sse_encode(
             self.paged_normalized_matched_sender_chat1_records,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_last_seen_message_guid_present_records,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_last_seen_target_message_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_matched_last_seen_target_messages, serializer);
+        <u32>::sse_encode(
+            self.paged_matched_last_seen_target_chat1_records,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_last_seen_anchor_exact_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_matched_anchor_exact_targets, serializer);
+        <u32>::sse_encode(self.paged_matched_anchor_exact_chat1_records, serializer);
+        <u32>::sse_encode(
+            self.paged_last_seen_anchor_normalized_match_pairs,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_matched_anchor_normalized_targets, serializer);
+        <u32>::sse_encode(
+            self.paged_matched_anchor_normalized_chat1_records,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_sender_service_style_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_matched_sender_service_style_targets, serializer);
+        <u32>::sse_encode(
+            self.paged_matched_sender_service_style_chat1_records,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_sender_service_style_zero_candidate_targets,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_sender_service_style_unique_candidate_targets,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_sender_service_style_multiple_candidate_targets,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_last_seen_target_zero_candidate_targets,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_last_seen_target_unique_candidate_targets,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_last_seen_target_multiple_candidate_targets,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_anchor_exact_zero_candidate_targets, serializer);
+        <u32>::sse_encode(self.paged_anchor_exact_unique_candidate_targets, serializer);
+        <u32>::sse_encode(
+            self.paged_anchor_exact_multiple_candidate_targets,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_anchor_normalized_zero_candidate_targets,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_anchor_normalized_unique_candidate_targets,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_anchor_normalized_multiple_candidate_targets,
             serializer,
         );
         <bool>::sse_encode(self.paged_terminal_reached, serializer);
