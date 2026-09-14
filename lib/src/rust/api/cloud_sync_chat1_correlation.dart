@@ -7,10 +7,10 @@ import '../frb_generated.dart';
 import '../lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `combined`, `decode_verified_chat1_record`, `encrypted_string_field`, `exact_match_counts`, `failure`, `inspect_chat1_route_fields`, `is_bare_digest`, `is_hex_digest`, `is_protected_reference`, `message_decode_request`, `pairs`, `record_identifier_name`, `record_type_name`, `semantic_failure`, `target_mask`, `valid_source`, `valid_sources`, `verified_chat1_record`
-// These types are ignored because they are not used by any `pub` functions: `MatchCounts`, `RouteFieldMatches`, `SemanticMatchCounts`, `VerifiedChat1Record`
+// These functions are ignored because they are not marked as `pub`: `combined`, `decode_verified_chat1_record`, `encrypted_string_field`, `exact_match_counts`, `failure`, `inspect_chat1_route_fields`, `is_bare_digest`, `is_hex_digest`, `is_protected_reference`, `message_decode_request`, `observe`, `paged_semantic_failure`, `pairs`, `record_identifier_name`, `record_type_name`, `scan_chat1_route_pages`, `semantic_failure`, `target_mask`, `valid_source`, `valid_sources`, `verified_chat1_record`
+// These types are ignored because they are not used by any `pub` functions: `MatchCounts`, `PagedSemanticCounts`, `RouteFieldMatches`, `SemanticMatchCounts`, `VerifiedChat1Record`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
-// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`, `default`
 
 /// Performs one bounded comparison under the exact active native writer pause.
 /// The default path is cached-only. A separately gated semantic diagnostic may
@@ -53,6 +53,7 @@ enum CloudSyncChat1CorrelationFailureCode {
   messageDecodeFailed,
   chat1SourceMismatch,
   chat1PcsLookupFailed,
+  chat1PagedFetchFailed,
   accountChanged,
 }
 
@@ -84,6 +85,19 @@ class CloudSyncChat1CorrelationResult {
   final int semanticMatchPairs;
   final int matchedSemanticMessageRoutes;
   final int matchedSemanticChat1Records;
+  final bool pagedCorrelationRequested;
+  final int pagedPagesScanned;
+  final int pagedChangesScanned;
+  final int pagedChatRecords;
+  final int pagedOtherRecords;
+  final int pagedTombstones;
+  final int pagedRecordDecodeFailures;
+  final int pagedRouteFieldDecodeFailures;
+  final int pagedSemanticMatchPairs;
+  final int pagedMatchedMessageRoutes;
+  final int pagedMatchedChat1Records;
+  final bool pagedTerminalReached;
+  final bool pagedBudgetExhausted;
   final CloudSyncChat1CorrelationFailureCode? failureCode;
 
   const CloudSyncChat1CorrelationResult({
@@ -110,6 +124,19 @@ class CloudSyncChat1CorrelationResult {
     required this.semanticMatchPairs,
     required this.matchedSemanticMessageRoutes,
     required this.matchedSemanticChat1Records,
+    required this.pagedCorrelationRequested,
+    required this.pagedPagesScanned,
+    required this.pagedChangesScanned,
+    required this.pagedChatRecords,
+    required this.pagedOtherRecords,
+    required this.pagedTombstones,
+    required this.pagedRecordDecodeFailures,
+    required this.pagedRouteFieldDecodeFailures,
+    required this.pagedSemanticMatchPairs,
+    required this.pagedMatchedMessageRoutes,
+    required this.pagedMatchedChat1Records,
+    required this.pagedTerminalReached,
+    required this.pagedBudgetExhausted,
     this.failureCode,
   });
 
@@ -138,6 +165,19 @@ class CloudSyncChat1CorrelationResult {
       semanticMatchPairs.hashCode ^
       matchedSemanticMessageRoutes.hashCode ^
       matchedSemanticChat1Records.hashCode ^
+      pagedCorrelationRequested.hashCode ^
+      pagedPagesScanned.hashCode ^
+      pagedChangesScanned.hashCode ^
+      pagedChatRecords.hashCode ^
+      pagedOtherRecords.hashCode ^
+      pagedTombstones.hashCode ^
+      pagedRecordDecodeFailures.hashCode ^
+      pagedRouteFieldDecodeFailures.hashCode ^
+      pagedSemanticMatchPairs.hashCode ^
+      pagedMatchedMessageRoutes.hashCode ^
+      pagedMatchedChat1Records.hashCode ^
+      pagedTerminalReached.hashCode ^
+      pagedBudgetExhausted.hashCode ^
       failureCode.hashCode;
 
   @override
@@ -168,6 +208,20 @@ class CloudSyncChat1CorrelationResult {
           semanticMatchPairs == other.semanticMatchPairs &&
           matchedSemanticMessageRoutes == other.matchedSemanticMessageRoutes &&
           matchedSemanticChat1Records == other.matchedSemanticChat1Records &&
+          pagedCorrelationRequested == other.pagedCorrelationRequested &&
+          pagedPagesScanned == other.pagedPagesScanned &&
+          pagedChangesScanned == other.pagedChangesScanned &&
+          pagedChatRecords == other.pagedChatRecords &&
+          pagedOtherRecords == other.pagedOtherRecords &&
+          pagedTombstones == other.pagedTombstones &&
+          pagedRecordDecodeFailures == other.pagedRecordDecodeFailures &&
+          pagedRouteFieldDecodeFailures ==
+              other.pagedRouteFieldDecodeFailures &&
+          pagedSemanticMatchPairs == other.pagedSemanticMatchPairs &&
+          pagedMatchedMessageRoutes == other.pagedMatchedMessageRoutes &&
+          pagedMatchedChat1Records == other.pagedMatchedChat1Records &&
+          pagedTerminalReached == other.pagedTerminalReached &&
+          pagedBudgetExhausted == other.pagedBudgetExhausted &&
           failureCode == other.failureCode;
 }
 

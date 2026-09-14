@@ -246,6 +246,11 @@ void main() {
               Platform
                   .environment['OPENBUBBLES_INSPECT_CHAT1_SEMANTIC_CORRELATION'] ==
               '1';
+          final pagedCorrelation =
+              Platform
+                  .environment['OPENBUBBLES_INSPECT_CHAT1_PAGED_CORRELATION'] ==
+              '1';
+          expect(pagedCorrelation && !semanticCorrelation, isFalse);
           expect(observed?['network_read_performed'], semanticCorrelation);
           expect(observed?['content_exposed'], isFalse);
           expect(observed?['durable_state_unchanged'], isTrue);
@@ -260,6 +265,7 @@ void main() {
             semanticCorrelation,
           );
           expect(observed?['pcs_lookup_attempted'], semanticCorrelation);
+          expect(observed?['paged_correlation_requested'], pagedCorrelation);
           if (semanticCorrelation) {
             final chatTypes = observed?['chat_record_type_records'] as int;
             final otherTypes = observed?['other_record_type_records'] as int;
@@ -285,6 +291,26 @@ void main() {
               observed?['matched_semantic_chat1_records'],
               inInclusiveRange(0, decoded),
             );
+            if (pagedCorrelation) {
+              final pages = observed?['paged_pages_scanned'] as int;
+              final changes = observed?['paged_changes_scanned'] as int;
+              expect(pages, inInclusiveRange(1, 20));
+              expect(changes, inInclusiveRange(1, 1000));
+              expect(
+                observed?['paged_matched_message_routes'],
+                inInclusiveRange(0, 8),
+              );
+              expect(
+                observed?['paged_matched_chat1_records'] as int,
+                lessThanOrEqualTo(observed?['paged_chat_records'] as int),
+              );
+              expect(
+                (observed?['paged_terminal_reached'] as bool) ||
+                    (observed?['paged_budget_exhausted'] as bool) ||
+                    observed?['paged_matched_message_routes'] == 8,
+                isTrue,
+              );
+            }
           } else {
             for (final key in <String>{
               'chat_record_type_records',

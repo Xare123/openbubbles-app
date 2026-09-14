@@ -18873,8 +18873,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   dco_decode_cloud_sync_chat_1_correlation_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 24)
-      throw Exception('unexpected arr length: expect 24 but see ${arr.length}');
+    if (arr.length != 37)
+      throw Exception('unexpected arr length: expect 37 but see ${arr.length}');
     return CloudSyncChat1CorrelationResult(
       completed: dco_decode_bool(arr[0]),
       messageSources: dco_decode_u_32(arr[1]),
@@ -18899,9 +18899,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       semanticMatchPairs: dco_decode_u_32(arr[20]),
       matchedSemanticMessageRoutes: dco_decode_u_32(arr[21]),
       matchedSemanticChat1Records: dco_decode_u_32(arr[22]),
+      pagedCorrelationRequested: dco_decode_bool(arr[23]),
+      pagedPagesScanned: dco_decode_u_32(arr[24]),
+      pagedChangesScanned: dco_decode_u_32(arr[25]),
+      pagedChatRecords: dco_decode_u_32(arr[26]),
+      pagedOtherRecords: dco_decode_u_32(arr[27]),
+      pagedTombstones: dco_decode_u_32(arr[28]),
+      pagedRecordDecodeFailures: dco_decode_u_32(arr[29]),
+      pagedRouteFieldDecodeFailures: dco_decode_u_32(arr[30]),
+      pagedSemanticMatchPairs: dco_decode_u_32(arr[31]),
+      pagedMatchedMessageRoutes: dco_decode_u_32(arr[32]),
+      pagedMatchedChat1Records: dco_decode_u_32(arr[33]),
+      pagedTerminalReached: dco_decode_bool(arr[34]),
+      pagedBudgetExhausted: dco_decode_bool(arr[35]),
       failureCode:
           dco_decode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
-            arr[23],
+            arr[36],
           ),
     );
   }
@@ -29196,6 +29209,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_semanticMatchPairs = sse_decode_u_32(deserializer);
     var var_matchedSemanticMessageRoutes = sse_decode_u_32(deserializer);
     var var_matchedSemanticChat1Records = sse_decode_u_32(deserializer);
+    var var_pagedCorrelationRequested = sse_decode_bool(deserializer);
+    var var_pagedPagesScanned = sse_decode_u_32(deserializer);
+    var var_pagedChangesScanned = sse_decode_u_32(deserializer);
+    var var_pagedChatRecords = sse_decode_u_32(deserializer);
+    var var_pagedOtherRecords = sse_decode_u_32(deserializer);
+    var var_pagedTombstones = sse_decode_u_32(deserializer);
+    var var_pagedRecordDecodeFailures = sse_decode_u_32(deserializer);
+    var var_pagedRouteFieldDecodeFailures = sse_decode_u_32(deserializer);
+    var var_pagedSemanticMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedMatchedMessageRoutes = sse_decode_u_32(deserializer);
+    var var_pagedMatchedChat1Records = sse_decode_u_32(deserializer);
+    var var_pagedTerminalReached = sse_decode_bool(deserializer);
+    var var_pagedBudgetExhausted = sse_decode_bool(deserializer);
     var var_failureCode =
         sse_decode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
           deserializer,
@@ -29224,6 +29250,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       semanticMatchPairs: var_semanticMatchPairs,
       matchedSemanticMessageRoutes: var_matchedSemanticMessageRoutes,
       matchedSemanticChat1Records: var_matchedSemanticChat1Records,
+      pagedCorrelationRequested: var_pagedCorrelationRequested,
+      pagedPagesScanned: var_pagedPagesScanned,
+      pagedChangesScanned: var_pagedChangesScanned,
+      pagedChatRecords: var_pagedChatRecords,
+      pagedOtherRecords: var_pagedOtherRecords,
+      pagedTombstones: var_pagedTombstones,
+      pagedRecordDecodeFailures: var_pagedRecordDecodeFailures,
+      pagedRouteFieldDecodeFailures: var_pagedRouteFieldDecodeFailures,
+      pagedSemanticMatchPairs: var_pagedSemanticMatchPairs,
+      pagedMatchedMessageRoutes: var_pagedMatchedMessageRoutes,
+      pagedMatchedChat1Records: var_pagedMatchedChat1Records,
+      pagedTerminalReached: var_pagedTerminalReached,
+      pagedBudgetExhausted: var_pagedBudgetExhausted,
       failureCode: var_failureCode,
     );
   }
@@ -41548,6 +41587,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.semanticMatchPairs, serializer);
     sse_encode_u_32(self.matchedSemanticMessageRoutes, serializer);
     sse_encode_u_32(self.matchedSemanticChat1Records, serializer);
+    sse_encode_bool(self.pagedCorrelationRequested, serializer);
+    sse_encode_u_32(self.pagedPagesScanned, serializer);
+    sse_encode_u_32(self.pagedChangesScanned, serializer);
+    sse_encode_u_32(self.pagedChatRecords, serializer);
+    sse_encode_u_32(self.pagedOtherRecords, serializer);
+    sse_encode_u_32(self.pagedTombstones, serializer);
+    sse_encode_u_32(self.pagedRecordDecodeFailures, serializer);
+    sse_encode_u_32(self.pagedRouteFieldDecodeFailures, serializer);
+    sse_encode_u_32(self.pagedSemanticMatchPairs, serializer);
+    sse_encode_u_32(self.pagedMatchedMessageRoutes, serializer);
+    sse_encode_u_32(self.pagedMatchedChat1Records, serializer);
+    sse_encode_bool(self.pagedTerminalReached, serializer);
+    sse_encode_bool(self.pagedBudgetExhausted, serializer);
     sse_encode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
       self.failureCode,
       serializer,
