@@ -2285,7 +2285,8 @@ mod tests {
         assert_eq!(counts.matched_route_extra_chat1_records, 1);
         assert_eq!(counts.matched_msgproto_mask, 0b0000_0101);
         assert_eq!(counts.matched_msgproto_chat1_records, 1);
-        assert_eq!(counts.matched_sender_mask, 0b0000_0011);
+        // `lah` is diagnostic corroboration only; it must not admit an owner.
+        assert_eq!(counts.matched_sender_mask, 0b0000_0010);
         assert_eq!(counts.matched_sender_chat1_records, 1);
         assert_eq!(counts.participant_present_records, 1);
         assert_eq!(counts.legacy_present_records, 1);
@@ -2299,7 +2300,7 @@ mod tests {
         assert_eq!(counts.normalized_sender_lah_match_pairs, 1);
         assert_eq!(counts.normalized_matched_route_extra_mask, 0b0000_1000);
         assert_eq!(counts.normalized_matched_msgproto_mask, 0b0001_0000);
-        assert_eq!(counts.normalized_matched_sender_mask, 0b0010_0000);
+        assert_eq!(counts.normalized_matched_sender_mask, 0);
     }
 
     #[test]
