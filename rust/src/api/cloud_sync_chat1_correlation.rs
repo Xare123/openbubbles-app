@@ -3294,9 +3294,9 @@ mod tests {
             check(&replace_record_field(&base, "stl", empty_style), &encryptor),
             Chat1RouteFieldFailure::new(
                 Chat1RouteFailureField::Stl,
-                Chat1RouteFailureKind::Validation
+                Chat1RouteFailureKind::MissingValue
             ),
-            "validation for stl"
+            "empty payload for stl"
         );
         cases += 1;
         let bad_participants = vec![
