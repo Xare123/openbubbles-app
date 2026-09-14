@@ -5223,7 +5223,9 @@ void _putPendingInboxEntry(
       isTombstone: change.isTombstone,
       serverModifiedAtMs:
           change.serverModifiedAt?.toUtc().millisecondsSinceEpoch ?? 0,
-      serverModifiedAtFormatVersion: cloudInboxServerModifiedAtUnixEpochFormat,
+      serverModifiedAtFormatVersion: change.serverModifiedAt == null
+          ? null
+          : cloudInboxServerModifiedAtUnixEpochFormat,
       createdAtMs: entry.createdAt.millisecondsSinceEpoch,
       updatedAtMs: now.millisecondsSinceEpoch,
     ),

@@ -732,11 +732,12 @@ Future<void> _exportChat1CorrelationInputManifest({
   );
   await directory.create(recursive: true);
   final destination = File(
-    path.join(directory.path, 'chat1-correlation-input-v1.json'),
+    path.join(directory.path, 'chat1-correlation-input-v2.json'),
   );
   final temporary = File('${destination.path}.$pid.tmp');
   final encoded = jsonEncode(<String, Object?>{
-    'schema': 1,
+    'schema': 2,
+    'server_modified_at_format': 'unix_epoch_milliseconds',
     'content_exposed': false,
     'account_fingerprint': auth.accountFingerprint,
     'protected_store_identity': auth.protectedStoreIdentity,

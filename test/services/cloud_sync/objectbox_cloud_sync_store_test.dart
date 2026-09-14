@@ -759,6 +759,39 @@ void main() {
         );
       },
     );
+
+    test(
+      '${shadowJournal ? 'shadow' : 'semantic'} journal preserves an absent server timestamp',
+      () async {
+        final scope = testScope(
+          persistenceLane: shadowJournal
+              ? CloudSyncPersistenceLane.shadow
+              : CloudSyncPersistenceLane.semantic,
+        );
+        final value = batch(scope, changes: [testChange(1)]);
+
+        if (shadowJournal) {
+          await journalShadow(
+            value,
+            now: testEpoch,
+            budget: CloudShadowJournalBudget(),
+          );
+        } else {
+          await journal(value);
+        }
+
+        var row = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+        expect(row.serverModifiedAtMs, 0);
+        expect(row.serverModifiedAtFormatVersion, isNull);
+        expect(cloudInboxCanonicalServerModifiedAtMillis(row), isNull);
+
+        await reopen();
+        row = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+        expect(row.serverModifiedAtMs, 0);
+        expect(row.serverModifiedAtFormatVersion, isNull);
+        expect(cloudInboxCanonicalServerModifiedAtMillis(row), isNull);
+      },
+    );
   }
 
   test(

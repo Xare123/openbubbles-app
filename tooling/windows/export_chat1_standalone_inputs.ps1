@@ -165,13 +165,14 @@ if ($aggregate.manifest_exported -ne $true -or
     throw 'chat1_export_aggregate_rejected'
 }
 
-$manifestPath = Join-Path $profile 'cloud-sync-v2\diagnostics\chat1-correlation-input-v1.json'
+$manifestPath = Join-Path $profile 'cloud-sync-v2\diagnostics\chat1-correlation-input-v2.json'
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     throw 'chat1_export_manifest_missing'
 }
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $anchorCount = @($manifest.anchor_message_sources).Count
-if ([int]$manifest.schema -ne 1 -or
+if ([int]$manifest.schema -ne 2 -or
+    $manifest.server_modified_at_format -cne 'unix_epoch_milliseconds' -or
     $manifest.content_exposed -ne $false -or
     @($manifest.message_sources).Count -ne 8 -or
     $anchorCount -lt 8 -or $anchorCount -gt 2048 -or

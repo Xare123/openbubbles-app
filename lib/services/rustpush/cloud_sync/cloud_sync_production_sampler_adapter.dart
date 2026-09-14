@@ -1041,7 +1041,7 @@ final class CloudSyncProductionLocalSendAdapter {
           source: identity_api.CloudSyncChatIdentitySourceInput(
             changeIdHash: source.changeIdHash, recordIdHash: source.recordIdHash,
             etagHash: source.etagHash, payloadSha256: source.payloadSha256,
-            serverModifiedAtMillis: source.serverModifiedAtMs <= 0 ? null : source.serverModifiedAtMs,
+            serverModifiedAtMillis: source.serverModifiedAtMs,
             protectedRawEnvelopeReference: source.encryptedPayloadReference),
           stagedCandidate: identity_api.CloudSyncStagedChatIdentityCandidate(
             protectedPayloadReference: staged.protectedEnvelopeReference,

@@ -5041,7 +5041,7 @@ mod windows_standalone_live_tests {
     const MANIFEST_RELATIVE_PATH: &[&str] = &[
         "cloud-sync-v2",
         "diagnostics",
-        "chat1-correlation-input-v1.json",
+        "chat1-correlation-input-v2.json",
     ];
 
     #[derive(Deserialize)]
@@ -5074,6 +5074,7 @@ mod windows_standalone_live_tests {
     #[serde(deny_unknown_fields)]
     struct LiveManifest {
         schema: u32,
+        server_modified_at_format: String,
         content_exposed: bool,
         account_fingerprint: String,
         protected_store_identity: String,
@@ -5184,7 +5185,11 @@ mod windows_standalone_live_tests {
             .expect("chat1_standalone_relationship_probe_enable_rejected");
         let profile = live_profile();
         let manifest = read_manifest(&profile);
-        assert_eq!(manifest.schema, 1, "chat1_standalone_manifest_schema");
+        assert_eq!(manifest.schema, 2, "chat1_standalone_manifest_schema");
+        assert_eq!(
+            manifest.server_modified_at_format, "unix_epoch_milliseconds",
+            "chat1_standalone_manifest_timestamp_format"
+        );
         assert!(
             !manifest.content_exposed,
             "chat1_standalone_content_rejected"

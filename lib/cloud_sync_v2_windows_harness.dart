@@ -2727,9 +2727,7 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                   recordIdHash: source.recordIdHash,
                   etagHash: source.etagHash,
                   payloadSha256: source.payloadSha256,
-                  serverModifiedAtMillis: source.serverModifiedAtMs <= 0
-                      ? null
-                      : source.serverModifiedAtMs,
+                  serverModifiedAtMillis: source.serverModifiedAtMs,
                   protectedRawEnvelopeReference:
                       source.encryptedPayloadReference,
                 ),

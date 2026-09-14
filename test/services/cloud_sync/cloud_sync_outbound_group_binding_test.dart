@@ -117,7 +117,7 @@ void main() {
     expect(proof.source.payloadLength, isNull);
     expect(
       proof.source.serverModifiedAtMillis,
-      inbox.serverModifiedAtMs <= 0 ? null : inbox.serverModifiedAtMs,
+      cloudInboxCanonicalServerModifiedAtMillis(inbox),
     );
     expect(
       proof.source.protectedRawEnvelopeReference,

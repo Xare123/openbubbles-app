@@ -54,6 +54,7 @@ void main() {
     generation: 1,
     fetchSequence: sequence,
     status: status,
+    serverModifiedAtFormatVersion: null,
     createdAtMs: 1,
     updatedAtMs: 1,
   );
@@ -372,6 +373,60 @@ void main() {
     expect(
       () => CloudSyncChatIdentityReadSet.capture(store, scope),
       throwsStateError,
+    );
+  });
+
+  test('rejects an unknown zero timestamp format before native observation', () {
+    store.box<CloudInboxChangeEntity>().put(
+      saved()
+        ..serverModifiedAtMs = 0
+        ..serverModifiedAtFormatVersion = 99,
+    );
+    expect(
+      () => CloudSyncChatIdentityReadSet.capture(store, scope),
+      throwsStateError,
+    );
+  });
+
+  test('preserves explicit Unix zero and negative source timestamps', () {
+    final inbox = store.box<CloudInboxChangeEntity>();
+    inbox.put(
+      saved()
+        ..serverModifiedAtMs = 0
+        ..serverModifiedAtFormatVersion =
+            cloudInboxServerModifiedAtUnixEpochFormat,
+    );
+    expect(
+      CloudSyncChatIdentityReadSet.capture(
+        store,
+        scope,
+      ).retainedSaves.single.serverModifiedAtMs,
+      0,
+    );
+
+    inbox.put(saved()..serverModifiedAtMs = -1);
+    expect(
+      CloudSyncChatIdentityReadSet.capture(
+        store,
+        scope,
+      ).retainedSaves.single.serverModifiedAtMs,
+      -1,
+    );
+  });
+
+  test('preserves explicit legacy Apple-epoch zero source timestamp', () {
+    store.box<CloudInboxChangeEntity>().put(
+      saved()
+        ..serverModifiedAtMs = 0
+        ..serverModifiedAtFormatVersion =
+            cloudInboxServerModifiedAtLegacyAppleEpochFormat,
+    );
+    expect(
+      CloudSyncChatIdentityReadSet.capture(
+        store,
+        scope,
+      ).retainedSaves.single.serverModifiedAtMs,
+      cloudInboxAppleEpochOffsetMillis,
     );
   });
 

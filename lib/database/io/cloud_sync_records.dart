@@ -355,9 +355,13 @@ class CloudInboxChangeEntity {
 /// the row. Unknown formats and int64 overflow fail closed.
 int? cloudInboxCanonicalServerModifiedAtMillis(CloudInboxChangeEntity entity) {
   final stored = entity.serverModifiedAtMs;
-  if (stored == 0) return null;
   return switch (entity.serverModifiedAtFormatVersion) {
-    null || cloudInboxServerModifiedAtLegacyAppleEpochFormat =>
+    null => stored == 0
+        ? null
+        : stored > _cloudInboxInt64Max - cloudInboxAppleEpochOffsetMillis
+          ? throw StateError('cloud_inbox_server_modified_at_overflow')
+          : stored + cloudInboxAppleEpochOffsetMillis,
+    cloudInboxServerModifiedAtLegacyAppleEpochFormat =>
       stored > _cloudInboxInt64Max - cloudInboxAppleEpochOffsetMillis
           ? throw StateError('cloud_inbox_server_modified_at_overflow')
           : stored + cloudInboxAppleEpochOffsetMillis,

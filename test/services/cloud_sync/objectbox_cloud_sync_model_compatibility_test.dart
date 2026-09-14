@@ -40,6 +40,19 @@ void main() {
       throwsStateError,
     );
 
+    row.serverModifiedAtMs = 0;
+    expect(
+      () => cloudInboxCanonicalServerModifiedAtMillis(row),
+      throwsStateError,
+    );
+
+    row.serverModifiedAtFormatVersion =
+        cloudInboxServerModifiedAtUnixEpochFormat;
+    expect(cloudInboxCanonicalServerModifiedAtMillis(row), 0);
+
+    row.serverModifiedAtMs = -1;
+    expect(cloudInboxCanonicalServerModifiedAtMillis(row), -1);
+
     row
       ..serverModifiedAtMs = 9223372036854775807
       ..serverModifiedAtFormatVersion =
@@ -49,8 +62,17 @@ void main() {
       throwsStateError,
     );
 
-    row.serverModifiedAtMs = 0;
+    row
+      ..serverModifiedAtMs = 0
+      ..serverModifiedAtFormatVersion = null;
     expect(cloudInboxCanonicalServerModifiedAtMillis(row), isNull);
+
+    row.serverModifiedAtFormatVersion =
+        cloudInboxServerModifiedAtLegacyAppleEpochFormat;
+    expect(
+      cloudInboxCanonicalServerModifiedAtMillis(row),
+      cloudInboxAppleEpochOffsetMillis,
+    );
   });
 
   test(

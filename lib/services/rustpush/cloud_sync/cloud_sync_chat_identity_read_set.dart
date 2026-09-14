@@ -250,7 +250,7 @@ final class CloudSyncChatIdentitySource {
       encryptedServerRecordId = row.encryptedServerRecordId!,
       encryptedPayloadReference = row.encryptedPayloadRef!,
       payloadSha256 = row.payloadSha256!,
-      serverModifiedAtMs = cloudInboxCanonicalServerModifiedAtMillis(row) ?? 0;
+      serverModifiedAtMs = cloudInboxCanonicalServerModifiedAtMillis(row);
 
   final int sequence;
   final String changeIdHash;
@@ -259,7 +259,7 @@ final class CloudSyncChatIdentitySource {
   final String encryptedServerRecordId;
   final String encryptedPayloadReference;
   final String payloadSha256;
-  final int serverModifiedAtMs;
+  final int? serverModifiedAtMs;
 
   @override
   String toString() => 'CloudSyncChatIdentitySource(redacted)';

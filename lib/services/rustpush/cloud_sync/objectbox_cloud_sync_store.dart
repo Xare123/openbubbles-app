@@ -284,8 +284,9 @@ class ObjectBoxCloudSyncStore
             preflightCode: change.preflightCode?.name,
             serverModifiedAtMs:
                 change.serverModifiedAt?.millisecondsSinceEpoch ?? 0,
-            serverModifiedAtFormatVersion:
-                cloudInboxServerModifiedAtUnixEpochFormat,
+            serverModifiedAtFormatVersion: change.serverModifiedAt == null
+                ? null
+                : cloudInboxServerModifiedAtUnixEpochFormat,
             createdAtMs: transactionNowMs,
             updatedAtMs: transactionNowMs,
           ),
@@ -515,8 +516,9 @@ class ObjectBoxCloudSyncStore
             preflightCode: change.preflightCode?.name,
             serverModifiedAtMs:
                 change.serverModifiedAt?.millisecondsSinceEpoch ?? 0,
-            serverModifiedAtFormatVersion:
-                cloudInboxServerModifiedAtUnixEpochFormat,
+            serverModifiedAtFormatVersion: change.serverModifiedAt == null
+                ? null
+                : cloudInboxServerModifiedAtUnixEpochFormat,
             createdAtMs: transactionNowMs,
             updatedAtMs: transactionNowMs,
           ),
