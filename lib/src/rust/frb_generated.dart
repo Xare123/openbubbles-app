@@ -18873,55 +18873,127 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   dco_decode_cloud_sync_chat_1_correlation_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 44)
-      throw Exception('unexpected arr length: expect 44 but see ${arr.length}');
+    if (arr.length != 112)
+      throw Exception(
+        'unexpected arr length: expect 112 but see ${arr.length}',
+      );
     return CloudSyncChat1CorrelationResult(
       completed: dco_decode_bool(arr[0]),
       messageSources: dco_decode_u_32(arr[1]),
       decodedMessageRoutes: dco_decode_u_32(arr[2]),
       distinctMessageRoutes: dco_decode_u_32(arr[3]),
-      chat1Sources: dco_decode_u_32(arr[4]),
-      verifiedChat1Records: dco_decode_u_32(arr[5]),
-      exactMatchPairs: dco_decode_u_32(arr[6]),
-      matchedMessageRoutes: dco_decode_u_32(arr[7]),
-      matchedChat1Records: dco_decode_u_32(arr[8]),
-      semanticCorrelationRequested: dco_decode_bool(arr[9]),
-      pcsLookupAttempted: dco_decode_bool(arr[10]),
-      chatRecordTypeRecords: dco_decode_u_32(arr[11]),
-      otherRecordTypeRecords: dco_decode_u_32(arr[12]),
-      decodedRouteRecords: dco_decode_u_32(arr[13]),
-      recordDecodeFailures: dco_decode_u_32(arr[14]),
-      routeFieldDecodeFailures: dco_decode_u_32(arr[15]),
-      chatIdentifierMatchPairs: dco_decode_u_32(arr[16]),
-      groupIdMatchPairs: dco_decode_u_32(arr[17]),
-      originalGroupIdMatchPairs: dco_decode_u_32(arr[18]),
-      guidMatchPairs: dco_decode_u_32(arr[19]),
-      semanticMatchPairs: dco_decode_u_32(arr[20]),
-      matchedSemanticMessageRoutes: dco_decode_u_32(arr[21]),
-      matchedSemanticChat1Records: dco_decode_u_32(arr[22]),
-      pagedCorrelationRequested: dco_decode_bool(arr[23]),
-      pagedPagesScanned: dco_decode_u_32(arr[24]),
-      pagedChangesScanned: dco_decode_u_32(arr[25]),
-      pagedChatRecords: dco_decode_u_32(arr[26]),
-      pagedOtherRecords: dco_decode_u_32(arr[27]),
-      pagedTombstones: dco_decode_u_32(arr[28]),
-      pagedRecordDecodeFailures: dco_decode_u_32(arr[29]),
-      pagedRouteFieldDecodeFailures: dco_decode_u_32(arr[30]),
-      pagedSemanticMatchPairs: dco_decode_u_32(arr[31]),
-      pagedMatchedMessageRoutes: dco_decode_u_32(arr[32]),
-      pagedMatchedChat1Records: dco_decode_u_32(arr[33]),
-      pagedNormalizedChatIdentifierMatchPairs: dco_decode_u_32(arr[34]),
-      pagedNormalizedGroupIdMatchPairs: dco_decode_u_32(arr[35]),
-      pagedNormalizedOriginalGroupIdMatchPairs: dco_decode_u_32(arr[36]),
-      pagedNormalizedGuidMatchPairs: dco_decode_u_32(arr[37]),
-      pagedNormalizedSemanticMatchPairs: dco_decode_u_32(arr[38]),
-      pagedNormalizedMatchedMessageRoutes: dco_decode_u_32(arr[39]),
-      pagedNormalizedMatchedChat1Records: dco_decode_u_32(arr[40]),
-      pagedTerminalReached: dco_decode_bool(arr[41]),
-      pagedBudgetExhausted: dco_decode_bool(arr[42]),
+      messageGroupIdSources: dco_decode_u_32(arr[4]),
+      messageSenderSources: dco_decode_u_32(arr[5]),
+      chat1Sources: dco_decode_u_32(arr[6]),
+      verifiedChat1Records: dco_decode_u_32(arr[7]),
+      exactMatchPairs: dco_decode_u_32(arr[8]),
+      matchedMessageRoutes: dco_decode_u_32(arr[9]),
+      matchedChat1Records: dco_decode_u_32(arr[10]),
+      semanticCorrelationRequested: dco_decode_bool(arr[11]),
+      pcsLookupAttempted: dco_decode_bool(arr[12]),
+      chatRecordTypeRecords: dco_decode_u_32(arr[13]),
+      otherRecordTypeRecords: dco_decode_u_32(arr[14]),
+      decodedRouteRecords: dco_decode_u_32(arr[15]),
+      recordDecodeFailures: dco_decode_u_32(arr[16]),
+      routeFieldDecodeFailures: dco_decode_u_32(arr[17]),
+      chatIdentifierMatchPairs: dco_decode_u_32(arr[18]),
+      groupIdMatchPairs: dco_decode_u_32(arr[19]),
+      originalGroupIdMatchPairs: dco_decode_u_32(arr[20]),
+      guidMatchPairs: dco_decode_u_32(arr[21]),
+      semanticMatchPairs: dco_decode_u_32(arr[22]),
+      matchedSemanticMessageRoutes: dco_decode_u_32(arr[23]),
+      matchedSemanticChat1Records: dco_decode_u_32(arr[24]),
+      routeParticipantMatchPairs: dco_decode_u_32(arr[25]),
+      routeLegacyMatchPairs: dco_decode_u_32(arr[26]),
+      routeLahMatchPairs: dco_decode_u_32(arr[27]),
+      msgprotoChatIdentifierMatchPairs: dco_decode_u_32(arr[28]),
+      msgprotoGroupIdMatchPairs: dco_decode_u_32(arr[29]),
+      msgprotoOriginalGroupIdMatchPairs: dco_decode_u_32(arr[30]),
+      msgprotoGuidMatchPairs: dco_decode_u_32(arr[31]),
+      msgprotoLegacyMatchPairs: dco_decode_u_32(arr[32]),
+      senderParticipantMatchPairs: dco_decode_u_32(arr[33]),
+      senderLahMatchPairs: dco_decode_u_32(arr[34]),
+      matchedRouteExtraMessageRoutes: dco_decode_u_32(arr[35]),
+      matchedRouteExtraChat1Records: dco_decode_u_32(arr[36]),
+      matchedMsgprotoTargets: dco_decode_u_32(arr[37]),
+      matchedMsgprotoChat1Records: dco_decode_u_32(arr[38]),
+      matchedSenderTargets: dco_decode_u_32(arr[39]),
+      matchedSenderChat1Records: dco_decode_u_32(arr[40]),
+      participantPresentRecords: dco_decode_u_32(arr[41]),
+      legacyPresentRecords: dco_decode_u_32(arr[42]),
+      lahPresentRecords: dco_decode_u_32(arr[43]),
+      servicePresentRecords: dco_decode_u_32(arr[44]),
+      imessageServiceRecords: dco_decode_u_32(arr[45]),
+      otherServiceRecords: dco_decode_u_32(arr[46]),
+      styleGroupRecords: dco_decode_u_32(arr[47]),
+      styleDirectRecords: dco_decode_u_32(arr[48]),
+      styleOtherRecords: dco_decode_u_32(arr[49]),
+      pagedCorrelationRequested: dco_decode_bool(arr[50]),
+      pagedPagesScanned: dco_decode_u_32(arr[51]),
+      pagedChangesScanned: dco_decode_u_32(arr[52]),
+      pagedChatRecords: dco_decode_u_32(arr[53]),
+      pagedOtherRecords: dco_decode_u_32(arr[54]),
+      pagedTombstones: dco_decode_u_32(arr[55]),
+      pagedRecordDecodeFailures: dco_decode_u_32(arr[56]),
+      pagedRouteFieldDecodeFailures: dco_decode_u_32(arr[57]),
+      pagedSemanticMatchPairs: dco_decode_u_32(arr[58]),
+      pagedMatchedMessageRoutes: dco_decode_u_32(arr[59]),
+      pagedMatchedChat1Records: dco_decode_u_32(arr[60]),
+      pagedRouteParticipantMatchPairs: dco_decode_u_32(arr[61]),
+      pagedRouteLegacyMatchPairs: dco_decode_u_32(arr[62]),
+      pagedRouteLahMatchPairs: dco_decode_u_32(arr[63]),
+      pagedMsgprotoChatIdentifierMatchPairs: dco_decode_u_32(arr[64]),
+      pagedMsgprotoGroupIdMatchPairs: dco_decode_u_32(arr[65]),
+      pagedMsgprotoOriginalGroupIdMatchPairs: dco_decode_u_32(arr[66]),
+      pagedMsgprotoGuidMatchPairs: dco_decode_u_32(arr[67]),
+      pagedMsgprotoLegacyMatchPairs: dco_decode_u_32(arr[68]),
+      pagedSenderParticipantMatchPairs: dco_decode_u_32(arr[69]),
+      pagedSenderLahMatchPairs: dco_decode_u_32(arr[70]),
+      pagedMatchedRouteExtraMessageRoutes: dco_decode_u_32(arr[71]),
+      pagedMatchedRouteExtraChat1Records: dco_decode_u_32(arr[72]),
+      pagedMatchedMsgprotoTargets: dco_decode_u_32(arr[73]),
+      pagedMatchedMsgprotoChat1Records: dco_decode_u_32(arr[74]),
+      pagedMatchedSenderTargets: dco_decode_u_32(arr[75]),
+      pagedMatchedSenderChat1Records: dco_decode_u_32(arr[76]),
+      pagedParticipantPresentRecords: dco_decode_u_32(arr[77]),
+      pagedLegacyPresentRecords: dco_decode_u_32(arr[78]),
+      pagedLahPresentRecords: dco_decode_u_32(arr[79]),
+      pagedServicePresentRecords: dco_decode_u_32(arr[80]),
+      pagedImessageServiceRecords: dco_decode_u_32(arr[81]),
+      pagedOtherServiceRecords: dco_decode_u_32(arr[82]),
+      pagedStyleGroupRecords: dco_decode_u_32(arr[83]),
+      pagedStyleDirectRecords: dco_decode_u_32(arr[84]),
+      pagedStyleOtherRecords: dco_decode_u_32(arr[85]),
+      pagedNormalizedChatIdentifierMatchPairs: dco_decode_u_32(arr[86]),
+      pagedNormalizedGroupIdMatchPairs: dco_decode_u_32(arr[87]),
+      pagedNormalizedOriginalGroupIdMatchPairs: dco_decode_u_32(arr[88]),
+      pagedNormalizedGuidMatchPairs: dco_decode_u_32(arr[89]),
+      pagedNormalizedSemanticMatchPairs: dco_decode_u_32(arr[90]),
+      pagedNormalizedMatchedMessageRoutes: dco_decode_u_32(arr[91]),
+      pagedNormalizedMatchedChat1Records: dco_decode_u_32(arr[92]),
+      pagedNormalizedRouteParticipantMatchPairs: dco_decode_u_32(arr[93]),
+      pagedNormalizedRouteLegacyMatchPairs: dco_decode_u_32(arr[94]),
+      pagedNormalizedRouteLahMatchPairs: dco_decode_u_32(arr[95]),
+      pagedNormalizedMsgprotoChatIdentifierMatchPairs: dco_decode_u_32(arr[96]),
+      pagedNormalizedMsgprotoGroupIdMatchPairs: dco_decode_u_32(arr[97]),
+      pagedNormalizedMsgprotoOriginalGroupIdMatchPairs: dco_decode_u_32(
+        arr[98],
+      ),
+      pagedNormalizedMsgprotoGuidMatchPairs: dco_decode_u_32(arr[99]),
+      pagedNormalizedMsgprotoLegacyMatchPairs: dco_decode_u_32(arr[100]),
+      pagedNormalizedSenderParticipantMatchPairs: dco_decode_u_32(arr[101]),
+      pagedNormalizedSenderLahMatchPairs: dco_decode_u_32(arr[102]),
+      pagedNormalizedMatchedRouteExtraMessageRoutes: dco_decode_u_32(arr[103]),
+      pagedNormalizedMatchedRouteExtraChat1Records: dco_decode_u_32(arr[104]),
+      pagedNormalizedMatchedMsgprotoTargets: dco_decode_u_32(arr[105]),
+      pagedNormalizedMatchedMsgprotoChat1Records: dco_decode_u_32(arr[106]),
+      pagedNormalizedMatchedSenderTargets: dco_decode_u_32(arr[107]),
+      pagedNormalizedMatchedSenderChat1Records: dco_decode_u_32(arr[108]),
+      pagedTerminalReached: dco_decode_bool(arr[109]),
+      pagedBudgetExhausted: dco_decode_bool(arr[110]),
       failureCode:
           dco_decode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
-            arr[43],
+            arr[111],
           ),
     );
   }
@@ -29197,6 +29269,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_messageSources = sse_decode_u_32(deserializer);
     var var_decodedMessageRoutes = sse_decode_u_32(deserializer);
     var var_distinctMessageRoutes = sse_decode_u_32(deserializer);
+    var var_messageGroupIdSources = sse_decode_u_32(deserializer);
+    var var_messageSenderSources = sse_decode_u_32(deserializer);
     var var_chat1Sources = sse_decode_u_32(deserializer);
     var var_verifiedChat1Records = sse_decode_u_32(deserializer);
     var var_exactMatchPairs = sse_decode_u_32(deserializer);
@@ -29216,6 +29290,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_semanticMatchPairs = sse_decode_u_32(deserializer);
     var var_matchedSemanticMessageRoutes = sse_decode_u_32(deserializer);
     var var_matchedSemanticChat1Records = sse_decode_u_32(deserializer);
+    var var_routeParticipantMatchPairs = sse_decode_u_32(deserializer);
+    var var_routeLegacyMatchPairs = sse_decode_u_32(deserializer);
+    var var_routeLahMatchPairs = sse_decode_u_32(deserializer);
+    var var_msgprotoChatIdentifierMatchPairs = sse_decode_u_32(deserializer);
+    var var_msgprotoGroupIdMatchPairs = sse_decode_u_32(deserializer);
+    var var_msgprotoOriginalGroupIdMatchPairs = sse_decode_u_32(deserializer);
+    var var_msgprotoGuidMatchPairs = sse_decode_u_32(deserializer);
+    var var_msgprotoLegacyMatchPairs = sse_decode_u_32(deserializer);
+    var var_senderParticipantMatchPairs = sse_decode_u_32(deserializer);
+    var var_senderLahMatchPairs = sse_decode_u_32(deserializer);
+    var var_matchedRouteExtraMessageRoutes = sse_decode_u_32(deserializer);
+    var var_matchedRouteExtraChat1Records = sse_decode_u_32(deserializer);
+    var var_matchedMsgprotoTargets = sse_decode_u_32(deserializer);
+    var var_matchedMsgprotoChat1Records = sse_decode_u_32(deserializer);
+    var var_matchedSenderTargets = sse_decode_u_32(deserializer);
+    var var_matchedSenderChat1Records = sse_decode_u_32(deserializer);
+    var var_participantPresentRecords = sse_decode_u_32(deserializer);
+    var var_legacyPresentRecords = sse_decode_u_32(deserializer);
+    var var_lahPresentRecords = sse_decode_u_32(deserializer);
+    var var_servicePresentRecords = sse_decode_u_32(deserializer);
+    var var_imessageServiceRecords = sse_decode_u_32(deserializer);
+    var var_otherServiceRecords = sse_decode_u_32(deserializer);
+    var var_styleGroupRecords = sse_decode_u_32(deserializer);
+    var var_styleDirectRecords = sse_decode_u_32(deserializer);
+    var var_styleOtherRecords = sse_decode_u_32(deserializer);
     var var_pagedCorrelationRequested = sse_decode_bool(deserializer);
     var var_pagedPagesScanned = sse_decode_u_32(deserializer);
     var var_pagedChangesScanned = sse_decode_u_32(deserializer);
@@ -29227,6 +29326,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_pagedSemanticMatchPairs = sse_decode_u_32(deserializer);
     var var_pagedMatchedMessageRoutes = sse_decode_u_32(deserializer);
     var var_pagedMatchedChat1Records = sse_decode_u_32(deserializer);
+    var var_pagedRouteParticipantMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedRouteLegacyMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedRouteLahMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedMsgprotoChatIdentifierMatchPairs = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedMsgprotoGroupIdMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedMsgprotoOriginalGroupIdMatchPairs = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedMsgprotoGuidMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedMsgprotoLegacyMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedSenderParticipantMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedSenderLahMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedMatchedRouteExtraMessageRoutes = sse_decode_u_32(deserializer);
+    var var_pagedMatchedRouteExtraChat1Records = sse_decode_u_32(deserializer);
+    var var_pagedMatchedMsgprotoTargets = sse_decode_u_32(deserializer);
+    var var_pagedMatchedMsgprotoChat1Records = sse_decode_u_32(deserializer);
+    var var_pagedMatchedSenderTargets = sse_decode_u_32(deserializer);
+    var var_pagedMatchedSenderChat1Records = sse_decode_u_32(deserializer);
+    var var_pagedParticipantPresentRecords = sse_decode_u_32(deserializer);
+    var var_pagedLegacyPresentRecords = sse_decode_u_32(deserializer);
+    var var_pagedLahPresentRecords = sse_decode_u_32(deserializer);
+    var var_pagedServicePresentRecords = sse_decode_u_32(deserializer);
+    var var_pagedImessageServiceRecords = sse_decode_u_32(deserializer);
+    var var_pagedOtherServiceRecords = sse_decode_u_32(deserializer);
+    var var_pagedStyleGroupRecords = sse_decode_u_32(deserializer);
+    var var_pagedStyleDirectRecords = sse_decode_u_32(deserializer);
+    var var_pagedStyleOtherRecords = sse_decode_u_32(deserializer);
     var var_pagedNormalizedChatIdentifierMatchPairs = sse_decode_u_32(
       deserializer,
     );
@@ -29238,6 +29366,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_pagedNormalizedSemanticMatchPairs = sse_decode_u_32(deserializer);
     var var_pagedNormalizedMatchedMessageRoutes = sse_decode_u_32(deserializer);
     var var_pagedNormalizedMatchedChat1Records = sse_decode_u_32(deserializer);
+    var var_pagedNormalizedRouteParticipantMatchPairs = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedRouteLegacyMatchPairs = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedRouteLahMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedNormalizedMsgprotoChatIdentifierMatchPairs = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedMsgprotoGroupIdMatchPairs = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedMsgprotoOriginalGroupIdMatchPairs = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedMsgprotoGuidMatchPairs = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedMsgprotoLegacyMatchPairs = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedSenderParticipantMatchPairs = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedSenderLahMatchPairs = sse_decode_u_32(deserializer);
+    var var_pagedNormalizedMatchedRouteExtraMessageRoutes = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedMatchedRouteExtraChat1Records = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedMatchedMsgprotoTargets = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedMatchedMsgprotoChat1Records = sse_decode_u_32(
+      deserializer,
+    );
+    var var_pagedNormalizedMatchedSenderTargets = sse_decode_u_32(deserializer);
+    var var_pagedNormalizedMatchedSenderChat1Records = sse_decode_u_32(
+      deserializer,
+    );
     var var_pagedTerminalReached = sse_decode_bool(deserializer);
     var var_pagedBudgetExhausted = sse_decode_bool(deserializer);
     var var_failureCode =
@@ -29249,6 +29419,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       messageSources: var_messageSources,
       decodedMessageRoutes: var_decodedMessageRoutes,
       distinctMessageRoutes: var_distinctMessageRoutes,
+      messageGroupIdSources: var_messageGroupIdSources,
+      messageSenderSources: var_messageSenderSources,
       chat1Sources: var_chat1Sources,
       verifiedChat1Records: var_verifiedChat1Records,
       exactMatchPairs: var_exactMatchPairs,
@@ -29268,6 +29440,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       semanticMatchPairs: var_semanticMatchPairs,
       matchedSemanticMessageRoutes: var_matchedSemanticMessageRoutes,
       matchedSemanticChat1Records: var_matchedSemanticChat1Records,
+      routeParticipantMatchPairs: var_routeParticipantMatchPairs,
+      routeLegacyMatchPairs: var_routeLegacyMatchPairs,
+      routeLahMatchPairs: var_routeLahMatchPairs,
+      msgprotoChatIdentifierMatchPairs: var_msgprotoChatIdentifierMatchPairs,
+      msgprotoGroupIdMatchPairs: var_msgprotoGroupIdMatchPairs,
+      msgprotoOriginalGroupIdMatchPairs: var_msgprotoOriginalGroupIdMatchPairs,
+      msgprotoGuidMatchPairs: var_msgprotoGuidMatchPairs,
+      msgprotoLegacyMatchPairs: var_msgprotoLegacyMatchPairs,
+      senderParticipantMatchPairs: var_senderParticipantMatchPairs,
+      senderLahMatchPairs: var_senderLahMatchPairs,
+      matchedRouteExtraMessageRoutes: var_matchedRouteExtraMessageRoutes,
+      matchedRouteExtraChat1Records: var_matchedRouteExtraChat1Records,
+      matchedMsgprotoTargets: var_matchedMsgprotoTargets,
+      matchedMsgprotoChat1Records: var_matchedMsgprotoChat1Records,
+      matchedSenderTargets: var_matchedSenderTargets,
+      matchedSenderChat1Records: var_matchedSenderChat1Records,
+      participantPresentRecords: var_participantPresentRecords,
+      legacyPresentRecords: var_legacyPresentRecords,
+      lahPresentRecords: var_lahPresentRecords,
+      servicePresentRecords: var_servicePresentRecords,
+      imessageServiceRecords: var_imessageServiceRecords,
+      otherServiceRecords: var_otherServiceRecords,
+      styleGroupRecords: var_styleGroupRecords,
+      styleDirectRecords: var_styleDirectRecords,
+      styleOtherRecords: var_styleOtherRecords,
       pagedCorrelationRequested: var_pagedCorrelationRequested,
       pagedPagesScanned: var_pagedPagesScanned,
       pagedChangesScanned: var_pagedChangesScanned,
@@ -29279,6 +29476,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       pagedSemanticMatchPairs: var_pagedSemanticMatchPairs,
       pagedMatchedMessageRoutes: var_pagedMatchedMessageRoutes,
       pagedMatchedChat1Records: var_pagedMatchedChat1Records,
+      pagedRouteParticipantMatchPairs: var_pagedRouteParticipantMatchPairs,
+      pagedRouteLegacyMatchPairs: var_pagedRouteLegacyMatchPairs,
+      pagedRouteLahMatchPairs: var_pagedRouteLahMatchPairs,
+      pagedMsgprotoChatIdentifierMatchPairs:
+          var_pagedMsgprotoChatIdentifierMatchPairs,
+      pagedMsgprotoGroupIdMatchPairs: var_pagedMsgprotoGroupIdMatchPairs,
+      pagedMsgprotoOriginalGroupIdMatchPairs:
+          var_pagedMsgprotoOriginalGroupIdMatchPairs,
+      pagedMsgprotoGuidMatchPairs: var_pagedMsgprotoGuidMatchPairs,
+      pagedMsgprotoLegacyMatchPairs: var_pagedMsgprotoLegacyMatchPairs,
+      pagedSenderParticipantMatchPairs: var_pagedSenderParticipantMatchPairs,
+      pagedSenderLahMatchPairs: var_pagedSenderLahMatchPairs,
+      pagedMatchedRouteExtraMessageRoutes:
+          var_pagedMatchedRouteExtraMessageRoutes,
+      pagedMatchedRouteExtraChat1Records:
+          var_pagedMatchedRouteExtraChat1Records,
+      pagedMatchedMsgprotoTargets: var_pagedMatchedMsgprotoTargets,
+      pagedMatchedMsgprotoChat1Records: var_pagedMatchedMsgprotoChat1Records,
+      pagedMatchedSenderTargets: var_pagedMatchedSenderTargets,
+      pagedMatchedSenderChat1Records: var_pagedMatchedSenderChat1Records,
+      pagedParticipantPresentRecords: var_pagedParticipantPresentRecords,
+      pagedLegacyPresentRecords: var_pagedLegacyPresentRecords,
+      pagedLahPresentRecords: var_pagedLahPresentRecords,
+      pagedServicePresentRecords: var_pagedServicePresentRecords,
+      pagedImessageServiceRecords: var_pagedImessageServiceRecords,
+      pagedOtherServiceRecords: var_pagedOtherServiceRecords,
+      pagedStyleGroupRecords: var_pagedStyleGroupRecords,
+      pagedStyleDirectRecords: var_pagedStyleDirectRecords,
+      pagedStyleOtherRecords: var_pagedStyleOtherRecords,
       pagedNormalizedChatIdentifierMatchPairs:
           var_pagedNormalizedChatIdentifierMatchPairs,
       pagedNormalizedGroupIdMatchPairs: var_pagedNormalizedGroupIdMatchPairs,
@@ -29290,6 +29516,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           var_pagedNormalizedMatchedMessageRoutes,
       pagedNormalizedMatchedChat1Records:
           var_pagedNormalizedMatchedChat1Records,
+      pagedNormalizedRouteParticipantMatchPairs:
+          var_pagedNormalizedRouteParticipantMatchPairs,
+      pagedNormalizedRouteLegacyMatchPairs:
+          var_pagedNormalizedRouteLegacyMatchPairs,
+      pagedNormalizedRouteLahMatchPairs: var_pagedNormalizedRouteLahMatchPairs,
+      pagedNormalizedMsgprotoChatIdentifierMatchPairs:
+          var_pagedNormalizedMsgprotoChatIdentifierMatchPairs,
+      pagedNormalizedMsgprotoGroupIdMatchPairs:
+          var_pagedNormalizedMsgprotoGroupIdMatchPairs,
+      pagedNormalizedMsgprotoOriginalGroupIdMatchPairs:
+          var_pagedNormalizedMsgprotoOriginalGroupIdMatchPairs,
+      pagedNormalizedMsgprotoGuidMatchPairs:
+          var_pagedNormalizedMsgprotoGuidMatchPairs,
+      pagedNormalizedMsgprotoLegacyMatchPairs:
+          var_pagedNormalizedMsgprotoLegacyMatchPairs,
+      pagedNormalizedSenderParticipantMatchPairs:
+          var_pagedNormalizedSenderParticipantMatchPairs,
+      pagedNormalizedSenderLahMatchPairs:
+          var_pagedNormalizedSenderLahMatchPairs,
+      pagedNormalizedMatchedRouteExtraMessageRoutes:
+          var_pagedNormalizedMatchedRouteExtraMessageRoutes,
+      pagedNormalizedMatchedRouteExtraChat1Records:
+          var_pagedNormalizedMatchedRouteExtraChat1Records,
+      pagedNormalizedMatchedMsgprotoTargets:
+          var_pagedNormalizedMatchedMsgprotoTargets,
+      pagedNormalizedMatchedMsgprotoChat1Records:
+          var_pagedNormalizedMatchedMsgprotoChat1Records,
+      pagedNormalizedMatchedSenderTargets:
+          var_pagedNormalizedMatchedSenderTargets,
+      pagedNormalizedMatchedSenderChat1Records:
+          var_pagedNormalizedMatchedSenderChat1Records,
       pagedTerminalReached: var_pagedTerminalReached,
       pagedBudgetExhausted: var_pagedBudgetExhausted,
       failureCode: var_failureCode,
@@ -41597,6 +41854,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.messageSources, serializer);
     sse_encode_u_32(self.decodedMessageRoutes, serializer);
     sse_encode_u_32(self.distinctMessageRoutes, serializer);
+    sse_encode_u_32(self.messageGroupIdSources, serializer);
+    sse_encode_u_32(self.messageSenderSources, serializer);
     sse_encode_u_32(self.chat1Sources, serializer);
     sse_encode_u_32(self.verifiedChat1Records, serializer);
     sse_encode_u_32(self.exactMatchPairs, serializer);
@@ -41616,6 +41875,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.semanticMatchPairs, serializer);
     sse_encode_u_32(self.matchedSemanticMessageRoutes, serializer);
     sse_encode_u_32(self.matchedSemanticChat1Records, serializer);
+    sse_encode_u_32(self.routeParticipantMatchPairs, serializer);
+    sse_encode_u_32(self.routeLegacyMatchPairs, serializer);
+    sse_encode_u_32(self.routeLahMatchPairs, serializer);
+    sse_encode_u_32(self.msgprotoChatIdentifierMatchPairs, serializer);
+    sse_encode_u_32(self.msgprotoGroupIdMatchPairs, serializer);
+    sse_encode_u_32(self.msgprotoOriginalGroupIdMatchPairs, serializer);
+    sse_encode_u_32(self.msgprotoGuidMatchPairs, serializer);
+    sse_encode_u_32(self.msgprotoLegacyMatchPairs, serializer);
+    sse_encode_u_32(self.senderParticipantMatchPairs, serializer);
+    sse_encode_u_32(self.senderLahMatchPairs, serializer);
+    sse_encode_u_32(self.matchedRouteExtraMessageRoutes, serializer);
+    sse_encode_u_32(self.matchedRouteExtraChat1Records, serializer);
+    sse_encode_u_32(self.matchedMsgprotoTargets, serializer);
+    sse_encode_u_32(self.matchedMsgprotoChat1Records, serializer);
+    sse_encode_u_32(self.matchedSenderTargets, serializer);
+    sse_encode_u_32(self.matchedSenderChat1Records, serializer);
+    sse_encode_u_32(self.participantPresentRecords, serializer);
+    sse_encode_u_32(self.legacyPresentRecords, serializer);
+    sse_encode_u_32(self.lahPresentRecords, serializer);
+    sse_encode_u_32(self.servicePresentRecords, serializer);
+    sse_encode_u_32(self.imessageServiceRecords, serializer);
+    sse_encode_u_32(self.otherServiceRecords, serializer);
+    sse_encode_u_32(self.styleGroupRecords, serializer);
+    sse_encode_u_32(self.styleDirectRecords, serializer);
+    sse_encode_u_32(self.styleOtherRecords, serializer);
     sse_encode_bool(self.pagedCorrelationRequested, serializer);
     sse_encode_u_32(self.pagedPagesScanned, serializer);
     sse_encode_u_32(self.pagedChangesScanned, serializer);
@@ -41627,6 +41911,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.pagedSemanticMatchPairs, serializer);
     sse_encode_u_32(self.pagedMatchedMessageRoutes, serializer);
     sse_encode_u_32(self.pagedMatchedChat1Records, serializer);
+    sse_encode_u_32(self.pagedRouteParticipantMatchPairs, serializer);
+    sse_encode_u_32(self.pagedRouteLegacyMatchPairs, serializer);
+    sse_encode_u_32(self.pagedRouteLahMatchPairs, serializer);
+    sse_encode_u_32(self.pagedMsgprotoChatIdentifierMatchPairs, serializer);
+    sse_encode_u_32(self.pagedMsgprotoGroupIdMatchPairs, serializer);
+    sse_encode_u_32(self.pagedMsgprotoOriginalGroupIdMatchPairs, serializer);
+    sse_encode_u_32(self.pagedMsgprotoGuidMatchPairs, serializer);
+    sse_encode_u_32(self.pagedMsgprotoLegacyMatchPairs, serializer);
+    sse_encode_u_32(self.pagedSenderParticipantMatchPairs, serializer);
+    sse_encode_u_32(self.pagedSenderLahMatchPairs, serializer);
+    sse_encode_u_32(self.pagedMatchedRouteExtraMessageRoutes, serializer);
+    sse_encode_u_32(self.pagedMatchedRouteExtraChat1Records, serializer);
+    sse_encode_u_32(self.pagedMatchedMsgprotoTargets, serializer);
+    sse_encode_u_32(self.pagedMatchedMsgprotoChat1Records, serializer);
+    sse_encode_u_32(self.pagedMatchedSenderTargets, serializer);
+    sse_encode_u_32(self.pagedMatchedSenderChat1Records, serializer);
+    sse_encode_u_32(self.pagedParticipantPresentRecords, serializer);
+    sse_encode_u_32(self.pagedLegacyPresentRecords, serializer);
+    sse_encode_u_32(self.pagedLahPresentRecords, serializer);
+    sse_encode_u_32(self.pagedServicePresentRecords, serializer);
+    sse_encode_u_32(self.pagedImessageServiceRecords, serializer);
+    sse_encode_u_32(self.pagedOtherServiceRecords, serializer);
+    sse_encode_u_32(self.pagedStyleGroupRecords, serializer);
+    sse_encode_u_32(self.pagedStyleDirectRecords, serializer);
+    sse_encode_u_32(self.pagedStyleOtherRecords, serializer);
     sse_encode_u_32(self.pagedNormalizedChatIdentifierMatchPairs, serializer);
     sse_encode_u_32(self.pagedNormalizedGroupIdMatchPairs, serializer);
     sse_encode_u_32(self.pagedNormalizedOriginalGroupIdMatchPairs, serializer);
@@ -41634,6 +41943,40 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.pagedNormalizedSemanticMatchPairs, serializer);
     sse_encode_u_32(self.pagedNormalizedMatchedMessageRoutes, serializer);
     sse_encode_u_32(self.pagedNormalizedMatchedChat1Records, serializer);
+    sse_encode_u_32(self.pagedNormalizedRouteParticipantMatchPairs, serializer);
+    sse_encode_u_32(self.pagedNormalizedRouteLegacyMatchPairs, serializer);
+    sse_encode_u_32(self.pagedNormalizedRouteLahMatchPairs, serializer);
+    sse_encode_u_32(
+      self.pagedNormalizedMsgprotoChatIdentifierMatchPairs,
+      serializer,
+    );
+    sse_encode_u_32(self.pagedNormalizedMsgprotoGroupIdMatchPairs, serializer);
+    sse_encode_u_32(
+      self.pagedNormalizedMsgprotoOriginalGroupIdMatchPairs,
+      serializer,
+    );
+    sse_encode_u_32(self.pagedNormalizedMsgprotoGuidMatchPairs, serializer);
+    sse_encode_u_32(self.pagedNormalizedMsgprotoLegacyMatchPairs, serializer);
+    sse_encode_u_32(
+      self.pagedNormalizedSenderParticipantMatchPairs,
+      serializer,
+    );
+    sse_encode_u_32(self.pagedNormalizedSenderLahMatchPairs, serializer);
+    sse_encode_u_32(
+      self.pagedNormalizedMatchedRouteExtraMessageRoutes,
+      serializer,
+    );
+    sse_encode_u_32(
+      self.pagedNormalizedMatchedRouteExtraChat1Records,
+      serializer,
+    );
+    sse_encode_u_32(self.pagedNormalizedMatchedMsgprotoTargets, serializer);
+    sse_encode_u_32(
+      self.pagedNormalizedMatchedMsgprotoChat1Records,
+      serializer,
+    );
+    sse_encode_u_32(self.pagedNormalizedMatchedSenderTargets, serializer);
+    sse_encode_u_32(self.pagedNormalizedMatchedSenderChat1Records, serializer);
     sse_encode_bool(self.pagedTerminalReached, serializer);
     sse_encode_bool(self.pagedBudgetExhausted, serializer);
     sse_encode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(

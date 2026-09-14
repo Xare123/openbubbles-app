@@ -656,7 +656,7 @@ fn encrypted_i64_field(record: &Record, key: &PCSEncryptor, name: &str) -> Resul
     if decoded.string_value.is_some() || decoded.date_value.is_some() {
         return Err(());
     }
-    decoded.signed_value.ok_or(())
+    decoded.signed_value.map(Some).ok_or(())
 }
 
 fn encrypted_participant_uris(record: &Record, key: &PCSEncryptor) -> Result<Vec<String>, ()> {
@@ -1113,12 +1113,12 @@ fn inspect_chat1_route_fields(
     let style = encrypted_i64_field(record, &record_key, "stl")?;
     let participants = encrypted_participant_uris(record, &record_key)?;
     let legacy_identifiers = encrypted_legacy_identifiers(record, &record_key)?;
-    for value in participants.iter().chain(legacy_identifiers.iter()).chain(
-        last_addressed_handle
-            .as_deref()
-            .iter()
-            .chain(service_name.as_deref().iter()),
-    ) {
+    for value in participants
+        .iter()
+        .chain(legacy_identifiers.iter())
+        .chain(last_addressed_handle.iter())
+        .chain(service_name.iter())
+    {
         if value.len() > MAX_CHAT1_SELECTIVE_STRING_BYTES {
             return Err(());
         }

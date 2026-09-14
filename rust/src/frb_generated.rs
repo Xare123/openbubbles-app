@@ -21822,6 +21822,8 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         let mut var_messageSources = <u32>::sse_decode(deserializer);
         let mut var_decodedMessageRoutes = <u32>::sse_decode(deserializer);
         let mut var_distinctMessageRoutes = <u32>::sse_decode(deserializer);
+        let mut var_messageGroupIdSources = <u32>::sse_decode(deserializer);
+        let mut var_messageSenderSources = <u32>::sse_decode(deserializer);
         let mut var_chat1Sources = <u32>::sse_decode(deserializer);
         let mut var_verifiedChat1Records = <u32>::sse_decode(deserializer);
         let mut var_exactMatchPairs = <u32>::sse_decode(deserializer);
@@ -21841,6 +21843,31 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         let mut var_semanticMatchPairs = <u32>::sse_decode(deserializer);
         let mut var_matchedSemanticMessageRoutes = <u32>::sse_decode(deserializer);
         let mut var_matchedSemanticChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_routeParticipantMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_routeLegacyMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_routeLahMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_msgprotoChatIdentifierMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_msgprotoGroupIdMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_msgprotoOriginalGroupIdMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_msgprotoGuidMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_msgprotoLegacyMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_senderParticipantMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_senderLahMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_matchedRouteExtraMessageRoutes = <u32>::sse_decode(deserializer);
+        let mut var_matchedRouteExtraChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_matchedMsgprotoTargets = <u32>::sse_decode(deserializer);
+        let mut var_matchedMsgprotoChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_matchedSenderTargets = <u32>::sse_decode(deserializer);
+        let mut var_matchedSenderChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_participantPresentRecords = <u32>::sse_decode(deserializer);
+        let mut var_legacyPresentRecords = <u32>::sse_decode(deserializer);
+        let mut var_lahPresentRecords = <u32>::sse_decode(deserializer);
+        let mut var_servicePresentRecords = <u32>::sse_decode(deserializer);
+        let mut var_imessageServiceRecords = <u32>::sse_decode(deserializer);
+        let mut var_otherServiceRecords = <u32>::sse_decode(deserializer);
+        let mut var_styleGroupRecords = <u32>::sse_decode(deserializer);
+        let mut var_styleDirectRecords = <u32>::sse_decode(deserializer);
+        let mut var_styleOtherRecords = <u32>::sse_decode(deserializer);
         let mut var_pagedCorrelationRequested = <bool>::sse_decode(deserializer);
         let mut var_pagedPagesScanned = <u32>::sse_decode(deserializer);
         let mut var_pagedChangesScanned = <u32>::sse_decode(deserializer);
@@ -21852,6 +21879,31 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         let mut var_pagedSemanticMatchPairs = <u32>::sse_decode(deserializer);
         let mut var_pagedMatchedMessageRoutes = <u32>::sse_decode(deserializer);
         let mut var_pagedMatchedChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedRouteParticipantMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedRouteLegacyMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedRouteLahMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedMsgprotoChatIdentifierMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedMsgprotoGroupIdMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedMsgprotoOriginalGroupIdMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedMsgprotoGuidMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedMsgprotoLegacyMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedSenderParticipantMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedSenderLahMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedRouteExtraMessageRoutes = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedRouteExtraChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedMsgprotoTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedMsgprotoChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedSenderTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedMatchedSenderChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedParticipantPresentRecords = <u32>::sse_decode(deserializer);
+        let mut var_pagedLegacyPresentRecords = <u32>::sse_decode(deserializer);
+        let mut var_pagedLahPresentRecords = <u32>::sse_decode(deserializer);
+        let mut var_pagedServicePresentRecords = <u32>::sse_decode(deserializer);
+        let mut var_pagedImessageServiceRecords = <u32>::sse_decode(deserializer);
+        let mut var_pagedOtherServiceRecords = <u32>::sse_decode(deserializer);
+        let mut var_pagedStyleGroupRecords = <u32>::sse_decode(deserializer);
+        let mut var_pagedStyleDirectRecords = <u32>::sse_decode(deserializer);
+        let mut var_pagedStyleOtherRecords = <u32>::sse_decode(deserializer);
         let mut var_pagedNormalizedChatIdentifierMatchPairs = <u32>::sse_decode(deserializer);
         let mut var_pagedNormalizedGroupIdMatchPairs = <u32>::sse_decode(deserializer);
         let mut var_pagedNormalizedOriginalGroupIdMatchPairs = <u32>::sse_decode(deserializer);
@@ -21859,6 +21911,24 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         let mut var_pagedNormalizedSemanticMatchPairs = <u32>::sse_decode(deserializer);
         let mut var_pagedNormalizedMatchedMessageRoutes = <u32>::sse_decode(deserializer);
         let mut var_pagedNormalizedMatchedChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedRouteParticipantMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedRouteLegacyMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedRouteLahMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMsgprotoChatIdentifierMatchPairs =
+            <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMsgprotoGroupIdMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMsgprotoOriginalGroupIdMatchPairs =
+            <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMsgprotoGuidMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMsgprotoLegacyMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedSenderParticipantMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedSenderLahMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMatchedRouteExtraMessageRoutes = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMatchedRouteExtraChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMatchedMsgprotoTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMatchedMsgprotoChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMatchedSenderTargets = <u32>::sse_decode(deserializer);
+        let mut var_pagedNormalizedMatchedSenderChat1Records = <u32>::sse_decode(deserializer);
         let mut var_pagedTerminalReached = <bool>::sse_decode(deserializer);
         let mut var_pagedBudgetExhausted = <bool>::sse_decode(deserializer);
         let mut var_failureCode = <Option<
@@ -21869,6 +21939,8 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
             message_sources: var_messageSources,
             decoded_message_routes: var_decodedMessageRoutes,
             distinct_message_routes: var_distinctMessageRoutes,
+            message_group_id_sources: var_messageGroupIdSources,
+            message_sender_sources: var_messageSenderSources,
             chat1_sources: var_chat1Sources,
             verified_chat1_records: var_verifiedChat1Records,
             exact_match_pairs: var_exactMatchPairs,
@@ -21888,6 +21960,31 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
             semantic_match_pairs: var_semanticMatchPairs,
             matched_semantic_message_routes: var_matchedSemanticMessageRoutes,
             matched_semantic_chat1_records: var_matchedSemanticChat1Records,
+            route_participant_match_pairs: var_routeParticipantMatchPairs,
+            route_legacy_match_pairs: var_routeLegacyMatchPairs,
+            route_lah_match_pairs: var_routeLahMatchPairs,
+            msgproto_chat_identifier_match_pairs: var_msgprotoChatIdentifierMatchPairs,
+            msgproto_group_id_match_pairs: var_msgprotoGroupIdMatchPairs,
+            msgproto_original_group_id_match_pairs: var_msgprotoOriginalGroupIdMatchPairs,
+            msgproto_guid_match_pairs: var_msgprotoGuidMatchPairs,
+            msgproto_legacy_match_pairs: var_msgprotoLegacyMatchPairs,
+            sender_participant_match_pairs: var_senderParticipantMatchPairs,
+            sender_lah_match_pairs: var_senderLahMatchPairs,
+            matched_route_extra_message_routes: var_matchedRouteExtraMessageRoutes,
+            matched_route_extra_chat1_records: var_matchedRouteExtraChat1Records,
+            matched_msgproto_targets: var_matchedMsgprotoTargets,
+            matched_msgproto_chat1_records: var_matchedMsgprotoChat1Records,
+            matched_sender_targets: var_matchedSenderTargets,
+            matched_sender_chat1_records: var_matchedSenderChat1Records,
+            participant_present_records: var_participantPresentRecords,
+            legacy_present_records: var_legacyPresentRecords,
+            lah_present_records: var_lahPresentRecords,
+            service_present_records: var_servicePresentRecords,
+            imessage_service_records: var_imessageServiceRecords,
+            other_service_records: var_otherServiceRecords,
+            style_group_records: var_styleGroupRecords,
+            style_direct_records: var_styleDirectRecords,
+            style_other_records: var_styleOtherRecords,
             paged_correlation_requested: var_pagedCorrelationRequested,
             paged_pages_scanned: var_pagedPagesScanned,
             paged_changes_scanned: var_pagedChangesScanned,
@@ -21899,6 +21996,32 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
             paged_semantic_match_pairs: var_pagedSemanticMatchPairs,
             paged_matched_message_routes: var_pagedMatchedMessageRoutes,
             paged_matched_chat1_records: var_pagedMatchedChat1Records,
+            paged_route_participant_match_pairs: var_pagedRouteParticipantMatchPairs,
+            paged_route_legacy_match_pairs: var_pagedRouteLegacyMatchPairs,
+            paged_route_lah_match_pairs: var_pagedRouteLahMatchPairs,
+            paged_msgproto_chat_identifier_match_pairs: var_pagedMsgprotoChatIdentifierMatchPairs,
+            paged_msgproto_group_id_match_pairs: var_pagedMsgprotoGroupIdMatchPairs,
+            paged_msgproto_original_group_id_match_pairs:
+                var_pagedMsgprotoOriginalGroupIdMatchPairs,
+            paged_msgproto_guid_match_pairs: var_pagedMsgprotoGuidMatchPairs,
+            paged_msgproto_legacy_match_pairs: var_pagedMsgprotoLegacyMatchPairs,
+            paged_sender_participant_match_pairs: var_pagedSenderParticipantMatchPairs,
+            paged_sender_lah_match_pairs: var_pagedSenderLahMatchPairs,
+            paged_matched_route_extra_message_routes: var_pagedMatchedRouteExtraMessageRoutes,
+            paged_matched_route_extra_chat1_records: var_pagedMatchedRouteExtraChat1Records,
+            paged_matched_msgproto_targets: var_pagedMatchedMsgprotoTargets,
+            paged_matched_msgproto_chat1_records: var_pagedMatchedMsgprotoChat1Records,
+            paged_matched_sender_targets: var_pagedMatchedSenderTargets,
+            paged_matched_sender_chat1_records: var_pagedMatchedSenderChat1Records,
+            paged_participant_present_records: var_pagedParticipantPresentRecords,
+            paged_legacy_present_records: var_pagedLegacyPresentRecords,
+            paged_lah_present_records: var_pagedLahPresentRecords,
+            paged_service_present_records: var_pagedServicePresentRecords,
+            paged_imessage_service_records: var_pagedImessageServiceRecords,
+            paged_other_service_records: var_pagedOtherServiceRecords,
+            paged_style_group_records: var_pagedStyleGroupRecords,
+            paged_style_direct_records: var_pagedStyleDirectRecords,
+            paged_style_other_records: var_pagedStyleOtherRecords,
             paged_normalized_chat_identifier_match_pairs:
                 var_pagedNormalizedChatIdentifierMatchPairs,
             paged_normalized_group_id_match_pairs: var_pagedNormalizedGroupIdMatchPairs,
@@ -21908,6 +22031,32 @@ impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
             paged_normalized_semantic_match_pairs: var_pagedNormalizedSemanticMatchPairs,
             paged_normalized_matched_message_routes: var_pagedNormalizedMatchedMessageRoutes,
             paged_normalized_matched_chat1_records: var_pagedNormalizedMatchedChat1Records,
+            paged_normalized_route_participant_match_pairs:
+                var_pagedNormalizedRouteParticipantMatchPairs,
+            paged_normalized_route_legacy_match_pairs: var_pagedNormalizedRouteLegacyMatchPairs,
+            paged_normalized_route_lah_match_pairs: var_pagedNormalizedRouteLahMatchPairs,
+            paged_normalized_msgproto_chat_identifier_match_pairs:
+                var_pagedNormalizedMsgprotoChatIdentifierMatchPairs,
+            paged_normalized_msgproto_group_id_match_pairs:
+                var_pagedNormalizedMsgprotoGroupIdMatchPairs,
+            paged_normalized_msgproto_original_group_id_match_pairs:
+                var_pagedNormalizedMsgprotoOriginalGroupIdMatchPairs,
+            paged_normalized_msgproto_guid_match_pairs: var_pagedNormalizedMsgprotoGuidMatchPairs,
+            paged_normalized_msgproto_legacy_match_pairs:
+                var_pagedNormalizedMsgprotoLegacyMatchPairs,
+            paged_normalized_sender_participant_match_pairs:
+                var_pagedNormalizedSenderParticipantMatchPairs,
+            paged_normalized_sender_lah_match_pairs: var_pagedNormalizedSenderLahMatchPairs,
+            paged_normalized_matched_route_extra_message_routes:
+                var_pagedNormalizedMatchedRouteExtraMessageRoutes,
+            paged_normalized_matched_route_extra_chat1_records:
+                var_pagedNormalizedMatchedRouteExtraChat1Records,
+            paged_normalized_matched_msgproto_targets: var_pagedNormalizedMatchedMsgprotoTargets,
+            paged_normalized_matched_msgproto_chat1_records:
+                var_pagedNormalizedMatchedMsgprotoChat1Records,
+            paged_normalized_matched_sender_targets: var_pagedNormalizedMatchedSenderTargets,
+            paged_normalized_matched_sender_chat1_records:
+                var_pagedNormalizedMatchedSenderChat1Records,
             paged_terminal_reached: var_pagedTerminalReached,
             paged_budget_exhausted: var_pagedBudgetExhausted,
             failure_code: var_failureCode,
@@ -31696,6 +31845,8 @@ impl flutter_rust_bridge::IntoDart
             self.message_sources.into_into_dart().into_dart(),
             self.decoded_message_routes.into_into_dart().into_dart(),
             self.distinct_message_routes.into_into_dart().into_dart(),
+            self.message_group_id_sources.into_into_dart().into_dart(),
+            self.message_sender_sources.into_into_dart().into_dart(),
             self.chat1_sources.into_into_dart().into_dart(),
             self.verified_chat1_records.into_into_dart().into_dart(),
             self.exact_match_pairs.into_into_dart().into_dart(),
@@ -31727,6 +31878,53 @@ impl flutter_rust_bridge::IntoDart
             self.matched_semantic_chat1_records
                 .into_into_dart()
                 .into_dart(),
+            self.route_participant_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.route_legacy_match_pairs.into_into_dart().into_dart(),
+            self.route_lah_match_pairs.into_into_dart().into_dart(),
+            self.msgproto_chat_identifier_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.msgproto_group_id_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.msgproto_original_group_id_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.msgproto_guid_match_pairs.into_into_dart().into_dart(),
+            self.msgproto_legacy_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.sender_participant_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.sender_lah_match_pairs.into_into_dart().into_dart(),
+            self.matched_route_extra_message_routes
+                .into_into_dart()
+                .into_dart(),
+            self.matched_route_extra_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.matched_msgproto_targets.into_into_dart().into_dart(),
+            self.matched_msgproto_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.matched_sender_targets.into_into_dart().into_dart(),
+            self.matched_sender_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.participant_present_records
+                .into_into_dart()
+                .into_dart(),
+            self.legacy_present_records.into_into_dart().into_dart(),
+            self.lah_present_records.into_into_dart().into_dart(),
+            self.service_present_records.into_into_dart().into_dart(),
+            self.imessage_service_records.into_into_dart().into_dart(),
+            self.other_service_records.into_into_dart().into_dart(),
+            self.style_group_records.into_into_dart().into_dart(),
+            self.style_direct_records.into_into_dart().into_dart(),
+            self.style_other_records.into_into_dart().into_dart(),
             self.paged_correlation_requested
                 .into_into_dart()
                 .into_dart(),
@@ -31748,6 +31946,73 @@ impl flutter_rust_bridge::IntoDart
             self.paged_matched_chat1_records
                 .into_into_dart()
                 .into_dart(),
+            self.paged_route_participant_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_route_legacy_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_route_lah_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_msgproto_chat_identifier_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_msgproto_group_id_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_msgproto_original_group_id_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_msgproto_guid_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_msgproto_legacy_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_sender_participant_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_sender_lah_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_route_extra_message_routes
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_route_extra_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_msgproto_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_msgproto_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_sender_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_matched_sender_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_participant_present_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_legacy_present_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_lah_present_records.into_into_dart().into_dart(),
+            self.paged_service_present_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_imessage_service_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_other_service_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_style_group_records.into_into_dart().into_dart(),
+            self.paged_style_direct_records.into_into_dart().into_dart(),
+            self.paged_style_other_records.into_into_dart().into_dart(),
             self.paged_normalized_chat_identifier_match_pairs
                 .into_into_dart()
                 .into_dart(),
@@ -31767,6 +32032,54 @@ impl flutter_rust_bridge::IntoDart
                 .into_into_dart()
                 .into_dart(),
             self.paged_normalized_matched_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_route_participant_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_route_legacy_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_route_lah_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_msgproto_chat_identifier_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_msgproto_group_id_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_msgproto_original_group_id_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_msgproto_guid_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_msgproto_legacy_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_sender_participant_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_sender_lah_match_pairs
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_matched_route_extra_message_routes
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_matched_route_extra_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_matched_msgproto_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_matched_msgproto_chat1_records
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_matched_sender_targets
+                .into_into_dart()
+                .into_dart(),
+            self.paged_normalized_matched_sender_chat1_records
                 .into_into_dart()
                 .into_dart(),
             self.paged_terminal_reached.into_into_dart().into_dart(),
@@ -39452,6 +39765,8 @@ impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         <u32>::sse_encode(self.message_sources, serializer);
         <u32>::sse_encode(self.decoded_message_routes, serializer);
         <u32>::sse_encode(self.distinct_message_routes, serializer);
+        <u32>::sse_encode(self.message_group_id_sources, serializer);
+        <u32>::sse_encode(self.message_sender_sources, serializer);
         <u32>::sse_encode(self.chat1_sources, serializer);
         <u32>::sse_encode(self.verified_chat1_records, serializer);
         <u32>::sse_encode(self.exact_match_pairs, serializer);
@@ -39471,6 +39786,31 @@ impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         <u32>::sse_encode(self.semantic_match_pairs, serializer);
         <u32>::sse_encode(self.matched_semantic_message_routes, serializer);
         <u32>::sse_encode(self.matched_semantic_chat1_records, serializer);
+        <u32>::sse_encode(self.route_participant_match_pairs, serializer);
+        <u32>::sse_encode(self.route_legacy_match_pairs, serializer);
+        <u32>::sse_encode(self.route_lah_match_pairs, serializer);
+        <u32>::sse_encode(self.msgproto_chat_identifier_match_pairs, serializer);
+        <u32>::sse_encode(self.msgproto_group_id_match_pairs, serializer);
+        <u32>::sse_encode(self.msgproto_original_group_id_match_pairs, serializer);
+        <u32>::sse_encode(self.msgproto_guid_match_pairs, serializer);
+        <u32>::sse_encode(self.msgproto_legacy_match_pairs, serializer);
+        <u32>::sse_encode(self.sender_participant_match_pairs, serializer);
+        <u32>::sse_encode(self.sender_lah_match_pairs, serializer);
+        <u32>::sse_encode(self.matched_route_extra_message_routes, serializer);
+        <u32>::sse_encode(self.matched_route_extra_chat1_records, serializer);
+        <u32>::sse_encode(self.matched_msgproto_targets, serializer);
+        <u32>::sse_encode(self.matched_msgproto_chat1_records, serializer);
+        <u32>::sse_encode(self.matched_sender_targets, serializer);
+        <u32>::sse_encode(self.matched_sender_chat1_records, serializer);
+        <u32>::sse_encode(self.participant_present_records, serializer);
+        <u32>::sse_encode(self.legacy_present_records, serializer);
+        <u32>::sse_encode(self.lah_present_records, serializer);
+        <u32>::sse_encode(self.service_present_records, serializer);
+        <u32>::sse_encode(self.imessage_service_records, serializer);
+        <u32>::sse_encode(self.other_service_records, serializer);
+        <u32>::sse_encode(self.style_group_records, serializer);
+        <u32>::sse_encode(self.style_direct_records, serializer);
+        <u32>::sse_encode(self.style_other_records, serializer);
         <bool>::sse_encode(self.paged_correlation_requested, serializer);
         <u32>::sse_encode(self.paged_pages_scanned, serializer);
         <u32>::sse_encode(self.paged_changes_scanned, serializer);
@@ -39482,6 +39822,34 @@ impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         <u32>::sse_encode(self.paged_semantic_match_pairs, serializer);
         <u32>::sse_encode(self.paged_matched_message_routes, serializer);
         <u32>::sse_encode(self.paged_matched_chat1_records, serializer);
+        <u32>::sse_encode(self.paged_route_participant_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_route_legacy_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_route_lah_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_msgproto_chat_identifier_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_msgproto_group_id_match_pairs, serializer);
+        <u32>::sse_encode(
+            self.paged_msgproto_original_group_id_match_pairs,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_msgproto_guid_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_msgproto_legacy_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_sender_participant_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_sender_lah_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_matched_route_extra_message_routes, serializer);
+        <u32>::sse_encode(self.paged_matched_route_extra_chat1_records, serializer);
+        <u32>::sse_encode(self.paged_matched_msgproto_targets, serializer);
+        <u32>::sse_encode(self.paged_matched_msgproto_chat1_records, serializer);
+        <u32>::sse_encode(self.paged_matched_sender_targets, serializer);
+        <u32>::sse_encode(self.paged_matched_sender_chat1_records, serializer);
+        <u32>::sse_encode(self.paged_participant_present_records, serializer);
+        <u32>::sse_encode(self.paged_legacy_present_records, serializer);
+        <u32>::sse_encode(self.paged_lah_present_records, serializer);
+        <u32>::sse_encode(self.paged_service_present_records, serializer);
+        <u32>::sse_encode(self.paged_imessage_service_records, serializer);
+        <u32>::sse_encode(self.paged_other_service_records, serializer);
+        <u32>::sse_encode(self.paged_style_group_records, serializer);
+        <u32>::sse_encode(self.paged_style_direct_records, serializer);
+        <u32>::sse_encode(self.paged_style_other_records, serializer);
         <u32>::sse_encode(
             self.paged_normalized_chat_identifier_match_pairs,
             serializer,
@@ -39495,6 +39863,52 @@ impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1Corre
         <u32>::sse_encode(self.paged_normalized_semantic_match_pairs, serializer);
         <u32>::sse_encode(self.paged_normalized_matched_message_routes, serializer);
         <u32>::sse_encode(self.paged_normalized_matched_chat1_records, serializer);
+        <u32>::sse_encode(
+            self.paged_normalized_route_participant_match_pairs,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_normalized_route_legacy_match_pairs, serializer);
+        <u32>::sse_encode(self.paged_normalized_route_lah_match_pairs, serializer);
+        <u32>::sse_encode(
+            self.paged_normalized_msgproto_chat_identifier_match_pairs,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_normalized_msgproto_group_id_match_pairs,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_normalized_msgproto_original_group_id_match_pairs,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_normalized_msgproto_guid_match_pairs, serializer);
+        <u32>::sse_encode(
+            self.paged_normalized_msgproto_legacy_match_pairs,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_normalized_sender_participant_match_pairs,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_normalized_sender_lah_match_pairs, serializer);
+        <u32>::sse_encode(
+            self.paged_normalized_matched_route_extra_message_routes,
+            serializer,
+        );
+        <u32>::sse_encode(
+            self.paged_normalized_matched_route_extra_chat1_records,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_normalized_matched_msgproto_targets, serializer);
+        <u32>::sse_encode(
+            self.paged_normalized_matched_msgproto_chat1_records,
+            serializer,
+        );
+        <u32>::sse_encode(self.paged_normalized_matched_sender_targets, serializer);
+        <u32>::sse_encode(
+            self.paged_normalized_matched_sender_chat1_records,
+            serializer,
+        );
         <bool>::sse_encode(self.paged_terminal_reached, serializer);
         <bool>::sse_encode(self.paged_budget_exhausted, serializer);
         <Option<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode>>::sse_encode(self.failure_code, serializer);
