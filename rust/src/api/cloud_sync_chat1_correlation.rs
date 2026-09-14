@@ -1,7 +1,8 @@
 //! Test-host-only correlation between unresolved Message chat routes and
 //! protected Chat1 records. Clear identifiers and raw envelopes never cross
-//! Flutter Rust Bridge. The optional PCS path is lookup-only and this module
-//! cannot fetch record pages, project, admit, or write.
+//! Flutter Rust Bridge. The optional PCS path is lookup-only; its separately
+//! gated paged lane can perform bounded in-memory reads but cannot persist a
+//! cursor, project, admit, or write.
 
 use std::{
     collections::HashSet,
@@ -13,9 +14,7 @@ use std::{
 use flutter_rust_bridge::frb;
 use prost::Message as _;
 use rustpush::{
-    cloud_messages::{
-        CloudChat, CloudMessageRecordKind, CloudMessagesClient, MESSAGES_SERVICE,
-    },
+    cloud_messages::{CloudChat, CloudMessageRecordKind, CloudMessagesClient, MESSAGES_SERVICE},
     cloudkit::pcs_keys_for_record,
     cloudkit_operation_gate::acquire_cloudkit_read_authentication,
     cloudkit_proto::{
@@ -32,6 +31,7 @@ use super::api::{
 };
 use crate::{
     cloud_sync_canonical_dto::CloudCanonicalPayload,
+    cloud_sync_chat_identity::normalized_chat_identity_variants,
     cloud_sync_native_fetch::{
         cloud_sync_unprotect_raw_envelope, CloudNativeProtectionScope, CloudNativeRawEnvelopeKind,
         CloudNativeStream,
@@ -126,6 +126,13 @@ pub struct CloudSyncChat1CorrelationResult {
     pub paged_semantic_match_pairs: u32,
     pub paged_matched_message_routes: u32,
     pub paged_matched_chat1_records: u32,
+    pub paged_normalized_chat_identifier_match_pairs: u32,
+    pub paged_normalized_group_id_match_pairs: u32,
+    pub paged_normalized_original_group_id_match_pairs: u32,
+    pub paged_normalized_guid_match_pairs: u32,
+    pub paged_normalized_semantic_match_pairs: u32,
+    pub paged_normalized_matched_message_routes: u32,
+    pub paged_normalized_matched_chat1_records: u32,
     pub paged_terminal_reached: bool,
     pub paged_budget_exhausted: bool,
     pub failure_code: Option<CloudSyncChat1CorrelationFailureCode>,
@@ -167,6 +174,13 @@ fn failure(code: CloudSyncChat1CorrelationFailureCode) -> CloudSyncChat1Correlat
         paged_semantic_match_pairs: 0,
         paged_matched_message_routes: 0,
         paged_matched_chat1_records: 0,
+        paged_normalized_chat_identifier_match_pairs: 0,
+        paged_normalized_group_id_match_pairs: 0,
+        paged_normalized_original_group_id_match_pairs: 0,
+        paged_normalized_guid_match_pairs: 0,
+        paged_normalized_semantic_match_pairs: 0,
+        paged_normalized_matched_message_routes: 0,
+        paged_normalized_matched_chat1_records: 0,
         paged_terminal_reached: false,
         paged_budget_exhausted: false,
         failure_code: Some(code),
@@ -444,12 +458,63 @@ fn target_mask(
 }
 
 #[frb(ignore)]
+struct NormalizedRouteTarget {
+    variant_hashes: HashSet<String>,
+}
+
+fn normalized_route_target(
+    value: &str,
+    hasher: &CloudSemanticIdentifierHasher,
+) -> Result<NormalizedRouteTarget, ()> {
+    let variant_hashes = normalized_chat_identity_variants(value)
+        .ok_or(())?
+        .into_iter()
+        .map(|variant| hasher.server_record_id_hash(&variant))
+        .collect::<HashSet<_>>();
+    if variant_hashes.is_empty() {
+        return Err(());
+    }
+    Ok(NormalizedRouteTarget { variant_hashes })
+}
+
+fn normalized_target_mask(
+    value: Option<&str>,
+    targets: &[NormalizedRouteTarget],
+    hasher: &CloudSemanticIdentifierHasher,
+) -> u8 {
+    let Some(variants) = value.and_then(normalized_chat_identity_variants) else {
+        return 0;
+    };
+    let field_hashes = variants
+        .into_iter()
+        .map(|variant| hasher.server_record_id_hash(&variant))
+        .collect::<HashSet<_>>();
+    targets
+        .iter()
+        .enumerate()
+        .fold(0u8, |mask, (index, target)| {
+            if field_hashes
+                .iter()
+                .any(|hash| target.variant_hashes.contains(hash))
+            {
+                mask | (1u8 << index)
+            } else {
+                mask
+            }
+        })
+}
+
+#[frb(ignore)]
 #[derive(Default)]
 struct RouteFieldMatches {
     chat_identifier: u8,
     group_id: u8,
     original_group_id: u8,
     guid: u8,
+    normalized_chat_identifier: u8,
+    normalized_group_id: u8,
+    normalized_original_group_id: u8,
+    normalized_guid: u8,
 }
 
 impl RouteFieldMatches {
@@ -463,12 +528,27 @@ impl RouteFieldMatches {
             + self.original_group_id.count_ones()
             + self.guid.count_ones()
     }
+
+    fn normalized_combined(&self) -> u8 {
+        self.normalized_chat_identifier
+            | self.normalized_group_id
+            | self.normalized_original_group_id
+            | self.normalized_guid
+    }
+
+    fn normalized_pairs(&self) -> u32 {
+        self.normalized_chat_identifier.count_ones()
+            + self.normalized_group_id.count_ones()
+            + self.normalized_original_group_id.count_ones()
+            + self.normalized_guid.count_ones()
+    }
 }
 
 fn inspect_chat1_route_fields(
     record: &Record,
     zone_key: &rustpush::cloudkit::PCSZoneConfig,
     targets: &[String],
+    normalized_targets: &[NormalizedRouteTarget],
     hasher: &CloudSemanticIdentifierHasher,
 ) -> Result<RouteFieldMatches, ()> {
     let record_key = match catch_unwind(AssertUnwindSafe(|| pcs_keys_for_record(record, zone_key)))
@@ -485,6 +565,22 @@ fn inspect_chat1_route_fields(
         group_id: target_mask(group_id.as_deref(), targets, hasher),
         original_group_id: target_mask(original_group_id.as_deref(), targets, hasher),
         guid: target_mask(guid.as_deref(), targets, hasher),
+        normalized_chat_identifier: normalized_target_mask(
+            chat_identifier.as_deref(),
+            normalized_targets,
+            hasher,
+        ),
+        normalized_group_id: normalized_target_mask(
+            group_id.as_deref(),
+            normalized_targets,
+            hasher,
+        ),
+        normalized_original_group_id: normalized_target_mask(
+            original_group_id.as_deref(),
+            normalized_targets,
+            hasher,
+        ),
+        normalized_guid: normalized_target_mask(guid.as_deref(), normalized_targets, hasher),
     })
 }
 
@@ -503,6 +599,13 @@ struct SemanticMatchCounts {
     semantic_match_pairs: u32,
     matched_message_route_mask: u8,
     matched_chat1_records: u32,
+    normalized_chat_identifier_match_pairs: u32,
+    normalized_group_id_match_pairs: u32,
+    normalized_original_group_id_match_pairs: u32,
+    normalized_guid_match_pairs: u32,
+    normalized_semantic_match_pairs: u32,
+    normalized_matched_message_route_mask: u8,
+    normalized_matched_chat1_records: u32,
 }
 
 impl SemanticMatchCounts {
@@ -517,6 +620,18 @@ impl SemanticMatchCounts {
         self.matched_message_route_mask |= combined;
         if combined != 0 {
             self.matched_chat1_records += 1;
+        }
+        self.normalized_chat_identifier_match_pairs +=
+            fields.normalized_chat_identifier.count_ones();
+        self.normalized_group_id_match_pairs += fields.normalized_group_id.count_ones();
+        self.normalized_original_group_id_match_pairs +=
+            fields.normalized_original_group_id.count_ones();
+        self.normalized_guid_match_pairs += fields.normalized_guid.count_ones();
+        self.normalized_semantic_match_pairs += fields.normalized_pairs();
+        let normalized_combined = fields.normalized_combined();
+        self.normalized_matched_message_route_mask |= normalized_combined;
+        if normalized_combined != 0 {
+            self.normalized_matched_chat1_records += 1;
         }
     }
 }
@@ -570,6 +685,7 @@ async fn scan_chat1_route_pages(
     permit: &rustpush::cloudkit_operation_gate::CloudKitReadAuthenticationPermit<'_>,
     zone_key: &rustpush::cloudkit::PCSZoneConfig,
     targets: &[String],
+    normalized_targets: &[NormalizedRouteTarget],
     hasher: &CloudSemanticIdentifierHasher,
 ) -> Result<PagedSemanticCounts, ()> {
     let mut counts = PagedSemanticCounts::default();
@@ -622,7 +738,13 @@ async fn scan_chat1_route_pages(
                         counts.semantic.record_decode_failures += 1;
                         continue;
                     }
-                    match inspect_chat1_route_fields(&record, zone_key, targets, hasher) {
+                    match inspect_chat1_route_fields(
+                        &record,
+                        zone_key,
+                        targets,
+                        normalized_targets,
+                        hasher,
+                    ) {
                         Ok(fields) => counts.semantic.observe(&fields),
                         Err(()) => counts.semantic.route_field_decode_failures += 1,
                     }
@@ -637,7 +759,11 @@ async fn scan_chat1_route_pages(
             counts.terminal_reached = true;
             break;
         }
-        if counts.semantic.matched_message_route_mask.count_ones() as usize == targets.len() {
+        if (counts.semantic.matched_message_route_mask
+            | counts.semantic.normalized_matched_message_route_mask)
+            .count_ones() as usize
+            == targets.len()
+        {
             break;
         }
         continuation_token = next_token;
@@ -708,6 +834,7 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
     };
 
     let mut message_route_hashes = Vec::with_capacity(message_sources.len());
+    let mut normalized_message_targets = Vec::with_capacity(message_sources.len());
     for source in &message_sources {
         let request = match message_decode_request(
             &storage_directory,
@@ -734,6 +861,11 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
             _ => return failure(CloudSyncChat1CorrelationFailureCode::MessageDecodeFailed),
         };
         message_route_hashes.push(hasher.server_record_id_hash(route));
+        let normalized_target = match normalized_route_target(route, &hasher) {
+            Ok(value) => value,
+            Err(()) => return failure(CloudSyncChat1CorrelationFailureCode::MessageDecodeFailed),
+        };
+        normalized_message_targets.push(normalized_target);
     }
 
     let chat1_scope = match CloudNativeProtectionScope::new(
@@ -804,6 +936,7 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
             &record,
             chat1_zone_key.as_ref().expect("semantic lookup completed"),
             &message_route_hashes,
+            &normalized_message_targets,
             &hasher,
         ) {
             Ok(value) => value,
@@ -821,6 +954,7 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
             &permit,
             chat1_zone_key.as_ref().expect("semantic lookup completed"),
             &message_route_hashes,
+            &normalized_message_targets,
             &hasher,
         )
         .await
@@ -883,15 +1017,33 @@ pub async fn cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause
         paged_other_records: paged_counts.semantic.other_record_type_records,
         paged_tombstones: paged_counts.tombstones,
         paged_record_decode_failures: paged_counts.semantic.record_decode_failures,
-        paged_route_field_decode_failures: paged_counts
-            .semantic
-            .route_field_decode_failures,
+        paged_route_field_decode_failures: paged_counts.semantic.route_field_decode_failures,
         paged_semantic_match_pairs: paged_counts.semantic.semantic_match_pairs,
         paged_matched_message_routes: paged_counts
             .semantic
             .matched_message_route_mask
             .count_ones(),
         paged_matched_chat1_records: paged_counts.semantic.matched_chat1_records,
+        paged_normalized_chat_identifier_match_pairs: paged_counts
+            .semantic
+            .normalized_chat_identifier_match_pairs,
+        paged_normalized_group_id_match_pairs: paged_counts
+            .semantic
+            .normalized_group_id_match_pairs,
+        paged_normalized_original_group_id_match_pairs: paged_counts
+            .semantic
+            .normalized_original_group_id_match_pairs,
+        paged_normalized_guid_match_pairs: paged_counts.semantic.normalized_guid_match_pairs,
+        paged_normalized_semantic_match_pairs: paged_counts
+            .semantic
+            .normalized_semantic_match_pairs,
+        paged_normalized_matched_message_routes: paged_counts
+            .semantic
+            .normalized_matched_message_route_mask
+            .count_ones(),
+        paged_normalized_matched_chat1_records: paged_counts
+            .semantic
+            .normalized_matched_chat1_records,
         paged_terminal_reached: paged_counts.terminal_reached,
         paged_budget_exhausted: paged_counts.budget_exhausted,
         failure_code: None,
@@ -941,10 +1093,16 @@ mod tests {
             group_id: 0b0000_0010,
             original_group_id: 0b0000_0001,
             guid: 0,
+            normalized_chat_identifier: 0b0000_0100,
+            normalized_group_id: 0b0000_1000,
+            normalized_original_group_id: 0b0000_0100,
+            normalized_guid: 0,
         };
         assert_eq!(fields.pairs(), 3);
         assert_eq!(fields.combined(), 0b0000_0011);
         assert_eq!(fields.combined().count_ones(), 2);
+        assert_eq!(fields.normalized_pairs(), 3);
+        assert_eq!(fields.normalized_combined(), 0b0000_1100);
         let mut counts = SemanticMatchCounts::default();
         counts.observe(&fields);
         counts.observe(&RouteFieldMatches {
@@ -952,11 +1110,47 @@ mod tests {
             group_id: 0b0000_0100,
             original_group_id: 0,
             guid: 0,
+            normalized_guid: 0b0001_0000,
+            ..Default::default()
         });
         assert_eq!(counts.decoded_route_records, 2);
         assert_eq!(counts.semantic_match_pairs, 4);
         assert_eq!(counts.matched_message_route_mask, 0b0000_0111);
         assert_eq!(counts.matched_chat1_records, 2);
+        assert_eq!(counts.normalized_semantic_match_pairs, 4);
+        assert_eq!(counts.normalized_matched_message_route_mask, 0b0001_1100);
+        assert_eq!(counts.normalized_matched_chat1_records, 2);
+    }
+
+    #[test]
+    fn normalized_target_masks_fold_known_wrappers_without_guessing_future_schemes() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let targets = [
+            normalized_route_target("iMessage;-;User@Example.INVALID", &hasher).unwrap(),
+            normalized_route_target("iMessage;-;+15555550101", &hasher).unwrap(),
+            normalized_route_target("iMessage;+;AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", &hasher)
+                .unwrap(),
+        ];
+        assert_eq!(
+            normalized_target_mask(Some("mailto:user@example.invalid"), &targets, &hasher),
+            0b0000_0001
+        );
+        assert_eq!(
+            normalized_target_mask(Some("TEL:+15555550101"), &targets, &hasher),
+            0b0000_0010
+        );
+        assert_eq!(
+            normalized_target_mask(
+                Some("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+                &targets,
+                &hasher,
+            ),
+            0b0000_0100
+        );
+        assert_eq!(
+            normalized_target_mask(Some("future:user@example.invalid"), &targets, &hasher),
+            0
+        );
     }
 
     #[test]
@@ -1010,6 +1204,9 @@ mod tests {
         assert_eq!(result.paged_pages_scanned, 0);
         assert_eq!(result.paged_changes_scanned, 0);
         assert_eq!(result.paged_semantic_match_pairs, 0);
+        assert_eq!(result.paged_normalized_semantic_match_pairs, 0);
+        assert_eq!(result.paged_normalized_matched_message_routes, 0);
+        assert_eq!(result.paged_normalized_matched_chat1_records, 0);
         assert!(!result.paged_terminal_reached);
         assert!(!result.paged_budget_exhausted);
         assert_eq!(
@@ -1035,9 +1232,8 @@ mod tests {
 
     #[test]
     fn paged_failure_marks_the_explicit_lane_without_partial_observation() {
-        let result = paged_semantic_failure(
-            CloudSyncChat1CorrelationFailureCode::Chat1PagedFetchFailed,
-        );
+        let result =
+            paged_semantic_failure(CloudSyncChat1CorrelationFailureCode::Chat1PagedFetchFailed);
         assert!(!result.completed);
         assert!(result.semantic_correlation_requested);
         assert!(result.pcs_lookup_attempted);
@@ -1047,6 +1243,13 @@ mod tests {
         assert_eq!(result.paged_semantic_match_pairs, 0);
         assert_eq!(result.paged_matched_message_routes, 0);
         assert_eq!(result.paged_matched_chat1_records, 0);
+        assert_eq!(result.paged_normalized_chat_identifier_match_pairs, 0);
+        assert_eq!(result.paged_normalized_group_id_match_pairs, 0);
+        assert_eq!(result.paged_normalized_original_group_id_match_pairs, 0);
+        assert_eq!(result.paged_normalized_guid_match_pairs, 0);
+        assert_eq!(result.paged_normalized_semantic_match_pairs, 0);
+        assert_eq!(result.paged_normalized_matched_message_routes, 0);
+        assert_eq!(result.paged_normalized_matched_chat1_records, 0);
         assert!(!result.paged_terminal_reached);
         assert!(!result.paged_budget_exhausted);
         assert_eq!(

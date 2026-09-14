@@ -53,6 +53,24 @@ fn identifier(value: &str) -> Option<String> {
     )
 }
 
+/// Conservative, comparison-only spellings for one Apple chat identity.
+///
+/// This folds case, removes a leading `tel:`/`mailto:` URI scheme, and exposes
+/// the payload of Apple's two known iMessage service-route wrappers. It never
+/// rewrites a stored identity and must not be used by itself as merge or write
+/// authority.
+pub(crate) fn normalized_chat_identity_variants(value: &str) -> Option<BTreeSet<String>> {
+    let normalized = identifier(value)?;
+    let mut variants = BTreeSet::from([normalized.clone()]);
+    for prefix in ["imessage;-;", "imessage;+;"] {
+        if let Some(unwrapped) = normalized.strip_prefix(prefix) {
+            variants.insert(identifier(unwrapped)?);
+            break;
+        }
+    }
+    Some(variants)
+}
+
 fn participant(value: &str) -> Option<String> {
     let value = identifier(value)?;
     let phone = value
@@ -294,6 +312,42 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn normalized_variants_fold_only_known_comparison_wrappers() {
+        assert_eq!(
+            normalized_chat_identity_variants("iMessage;-;MAILTO:User@Example.INVALID"),
+            Some(BTreeSet::from([
+                "imessage;-;mailto:user@example.invalid".to_owned(),
+                "user@example.invalid".to_owned(),
+            ]))
+        );
+        assert_eq!(
+            normalized_chat_identity_variants(
+                "iMessage;+;AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+            ),
+            Some(BTreeSet::from([
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".to_owned(),
+                "imessage;+;aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".to_owned(),
+            ]))
+        );
+        assert_eq!(
+            normalized_chat_identity_variants("TEL:+15555550101"),
+            Some(BTreeSet::from(["+15555550101".to_owned()]))
+        );
+        assert_eq!(
+            normalized_chat_identity_variants("future:Opaque"),
+            Some(BTreeSet::from(["future:opaque".to_owned()]))
+        );
+        for invalid in ["", " leading", "trailing ", "control\nvalue", "iMessage;-;"] {
+            assert_eq!(
+                normalized_chat_identity_variants(invalid),
+                None,
+                "{invalid:?}"
+            );
+        }
+    }
+
     #[test]
     fn missing_or_uninterpretable_identity_never_proves_disjointness() {
         for field in ["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts"] {

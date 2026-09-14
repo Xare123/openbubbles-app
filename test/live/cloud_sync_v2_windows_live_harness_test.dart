@@ -294,6 +294,8 @@ void main() {
             if (pagedCorrelation) {
               final pages = observed?['paged_pages_scanned'] as int;
               final changes = observed?['paged_changes_scanned'] as int;
+              final pagedNormalizedPairs =
+                  observed?['paged_normalized_semantic_match_pairs'] as int;
               expect(pages, inInclusiveRange(1, 20));
               expect(changes, inInclusiveRange(1, 1000));
               expect(
@@ -305,11 +307,42 @@ void main() {
                 lessThanOrEqualTo(observed?['paged_chat_records'] as int),
               );
               expect(
+                (observed?['paged_normalized_chat_identifier_match_pairs']
+                        as int) +
+                    (observed?['paged_normalized_group_id_match_pairs']
+                        as int) +
+                    (observed?['paged_normalized_original_group_id_match_pairs']
+                        as int) +
+                    (observed?['paged_normalized_guid_match_pairs'] as int),
+                pagedNormalizedPairs,
+              );
+              expect(
+                observed?['paged_normalized_matched_message_routes'],
+                inInclusiveRange(0, 8),
+              );
+              expect(
+                observed?['paged_normalized_matched_chat1_records'] as int,
+                lessThanOrEqualTo(observed?['paged_chat_records'] as int),
+              );
+              expect(
                 (observed?['paged_terminal_reached'] as bool) ||
                     (observed?['paged_budget_exhausted'] as bool) ||
-                    observed?['paged_matched_message_routes'] == 8,
+                    observed?['paged_matched_message_routes'] == 8 ||
+                    observed?['paged_normalized_matched_message_routes'] == 8,
                 isTrue,
               );
+            } else {
+              for (final key in <String>{
+                'paged_normalized_chat_identifier_match_pairs',
+                'paged_normalized_group_id_match_pairs',
+                'paged_normalized_original_group_id_match_pairs',
+                'paged_normalized_guid_match_pairs',
+                'paged_normalized_semantic_match_pairs',
+                'paged_normalized_matched_message_routes',
+                'paged_normalized_matched_chat1_records',
+              }) {
+                expect(observed?[key], 0, reason: key);
+              }
             }
           } else {
             for (final key in <String>{
@@ -325,6 +358,13 @@ void main() {
               'semantic_match_pairs',
               'matched_semantic_message_routes',
               'matched_semantic_chat1_records',
+              'paged_normalized_chat_identifier_match_pairs',
+              'paged_normalized_group_id_match_pairs',
+              'paged_normalized_original_group_id_match_pairs',
+              'paged_normalized_guid_match_pairs',
+              'paged_normalized_semantic_match_pairs',
+              'paged_normalized_matched_message_routes',
+              'paged_normalized_matched_chat1_records',
             }) {
               expect(observed?[key], 0, reason: key);
             }

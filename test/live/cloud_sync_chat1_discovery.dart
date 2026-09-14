@@ -398,9 +398,9 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
   return <String, Object?>{
     'account_bound': true,
     'scope': 'chat1ManateeZone',
-    // The semantic diagnostic may perform only the lookup-only PCS reads
-    // needed to decrypt the four bounded routing fields. It never fetches a
-    // record page or persists a cursor.
+    // The semantic diagnostic performs only the lookup-only PCS reads needed
+    // to decrypt four bounded routing fields. Its separately gated paged lane
+    // may walk bounded pages in memory, but never persists a cursor.
     'network_read_performed': semanticCorrelation,
     'content_exposed': false,
     'durable_state_unchanged': durableStateUnchanged,
@@ -438,6 +438,19 @@ Future<Map<String, Object?>> correlateCachedChat1Routes({
     'paged_semantic_match_pairs': result.pagedSemanticMatchPairs,
     'paged_matched_message_routes': result.pagedMatchedMessageRoutes,
     'paged_matched_chat1_records': result.pagedMatchedChat1Records,
+    'paged_normalized_chat_identifier_match_pairs':
+        result.pagedNormalizedChatIdentifierMatchPairs,
+    'paged_normalized_group_id_match_pairs':
+        result.pagedNormalizedGroupIdMatchPairs,
+    'paged_normalized_original_group_id_match_pairs':
+        result.pagedNormalizedOriginalGroupIdMatchPairs,
+    'paged_normalized_guid_match_pairs': result.pagedNormalizedGuidMatchPairs,
+    'paged_normalized_semantic_match_pairs':
+        result.pagedNormalizedSemanticMatchPairs,
+    'paged_normalized_matched_message_routes':
+        result.pagedNormalizedMatchedMessageRoutes,
+    'paged_normalized_matched_chat1_records':
+        result.pagedNormalizedMatchedChat1Records,
     'paged_terminal_reached': result.pagedTerminalReached,
     'paged_budget_exhausted': result.pagedBudgetExhausted,
     'failure_code': result.failureCode?.name,
