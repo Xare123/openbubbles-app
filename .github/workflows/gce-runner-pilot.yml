@@ -460,6 +460,7 @@ jobs:
           set -euo pipefail
           files=(
             lib/src/rust/api/api.dart
+            lib/src/rust/api/cloud_sync_chat1_correlation.dart
             lib/src/rust/frb_generated.dart
             lib/src/rust/frb_generated.io.dart
             lib/src/rust/frb_generated.web.dart
@@ -467,7 +468,7 @@ jobs:
             rust/src/frb_generated.io.rs
             rust/src/frb_generated.web.rs
           )
-          if git diff --quiet -- "${files[@]}"; then
+          if [[ -z "$(git status --porcelain -- "${files[@]}")" ]]; then
             echo 'drift=false' >> "$GITHUB_OUTPUT"
             echo 'Generated bridge bindings are reproducible.' >> "$GITHUB_STEP_SUMMARY"
           else
@@ -475,6 +476,7 @@ jobs:
             echo 'Generated bridge binding drift detected.' >&2
             git diff --stat -- "${files[@]}" >&2
             git diff --name-only -- "${files[@]}" >&2
+            git status --short -- "${files[@]}" >&2
             {
               echo '### Generated bridge binding drift'
               echo
@@ -606,6 +608,7 @@ jobs:
           retention-days: 7
           path: |
             lib/src/rust/api/api.dart
+            lib/src/rust/api/cloud_sync_chat1_correlation.dart
             lib/src/rust/frb_generated.dart
             lib/src/rust/frb_generated.io.dart
             lib/src/rust/frb_generated.web.dart
