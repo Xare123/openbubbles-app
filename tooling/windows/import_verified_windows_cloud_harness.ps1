@@ -27,8 +27,46 @@ Set-StrictMode -Version Latest
 # Hard prohibitions: no Apple or profile database reads, no app launch, no
 # network access, and no message-content inspection. Only the archive,
 # provenance, staging area, runner directory, signtool, and receipt move.
-. (Join-Path $PSScriptRoot 'verify_windows_cloud_bundle.ps1') -FunctionsOnlyForTest
-. (Join-Path $PSScriptRoot 'run_cloud_sync_v2_dev.ps1') -FunctionsOnlyForTest
+#
+# Both dependency scripts have top-level param blocks. Dot-sourcing them is
+# intentional so their helper functions enter this script scope, but it also
+# overwrites same-named importer parameters. Preserve and restore the complete
+# invocation state so direct `-File` execution cannot silently become a
+# functions-only no-op.
+$importerInvocationState = @{
+    ArchivePath = $ArchivePath
+    ProvenancePath = $ProvenancePath
+    ExpectedArchiveSha256 = $ExpectedArchiveSha256
+    ExpectedSourceSha = $ExpectedSourceSha
+    ExpectedPilotSha = $ExpectedPilotSha
+    Repository = $Repository
+    ProfileRoot = $ProfileRoot
+    RunnerDirectory = $RunnerDirectory
+    ReceiptPath = $ReceiptPath
+    SignTool = $SignTool
+    SigningThumbprint = $SigningThumbprint
+    ExpectedNativeEncoderTestCount = $ExpectedNativeEncoderTestCount
+    FunctionsOnlyForTest = [bool]$FunctionsOnlyForTest
+}
+try {
+    . (Join-Path $PSScriptRoot 'verify_windows_cloud_bundle.ps1') -FunctionsOnlyForTest
+    . (Join-Path $PSScriptRoot 'run_cloud_sync_v2_dev.ps1') -FunctionsOnlyForTest
+}
+finally {
+    $ArchivePath = $importerInvocationState.ArchivePath
+    $ProvenancePath = $importerInvocationState.ProvenancePath
+    $ExpectedArchiveSha256 = $importerInvocationState.ExpectedArchiveSha256
+    $ExpectedSourceSha = $importerInvocationState.ExpectedSourceSha
+    $ExpectedPilotSha = $importerInvocationState.ExpectedPilotSha
+    $Repository = $importerInvocationState.Repository
+    $ProfileRoot = $importerInvocationState.ProfileRoot
+    $RunnerDirectory = $importerInvocationState.RunnerDirectory
+    $ReceiptPath = $importerInvocationState.ReceiptPath
+    $SignTool = $importerInvocationState.SignTool
+    $SigningThumbprint = $importerInvocationState.SigningThumbprint
+    $ExpectedNativeEncoderTestCount = $importerInvocationState.ExpectedNativeEncoderTestCount
+    $FunctionsOnlyForTest = $importerInvocationState.FunctionsOnlyForTest
+}
 
 function Fail-Import {
     param([Parameter(Mandatory)][string] $Message)

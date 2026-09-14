@@ -52,7 +52,7 @@ try {
     Assert-Check $blocked
     $report = [pscustomobject]@{
         account_bound = $true; scope = 'chat1ManateeZone'
-        network_read_performed = $false; content_exposed = $false
+        network_read_performed = $true; content_exposed = $false
         durable_state_unchanged = $true; completed = $true
         message_sources = 8; chat1_sources = 50; verified_chat1_records = 50
         route_field_failure_matrix_schema = 1
@@ -66,6 +66,18 @@ try {
         failure_code = $null
     }
     Assert-Chat1Aggregate $report 'correlation'
+    Assert-Chat1AggregateLaunch $report '0123456789abcdef0123456789abcdef'
+    $report | Add-Member -NotePropertyName launch_id `
+        -NotePropertyValue '0123456789abcdef0123456789abcdef'
+    Assert-Chat1AggregateLaunch $report '0123456789abcdef0123456789abcdef'
+    $launchRejected = $false
+    try {
+        Assert-Chat1AggregateLaunch $report 'fedcba9876543210fedcba9876543210'
+    } catch {
+        $launchRejected = $_.Exception.Message -eq
+            'chat1_live_aggregate_binding_rejected'
+    }
+    Assert-Check $launchRejected
     $discovery = [pscustomobject]@{
         account_bound = $true; scope = 'chat1ManateeZone'
         zero_mutation_counters = $true; canonical_counts_unchanged = $true
@@ -83,6 +95,25 @@ try {
     Assert-Check ($aggregate['scope'] -ceq 'chat1ManateeZone' -and $aggregate['message_sources'] -eq 8)
     Assert-Check ($aggregate['route_field_failure_matrix'].Count -eq 88 -and
         $aggregate['paged_route_field_failure_matrix'].Count -eq 88)
+    $identityStart = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
+    Add-Chat1TestHostIdentity -Start $identityStart -BuildIdentifier '0123456789ab'
+    Assert-Check ($identityStart.Environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] -ceq '1')
+    Assert-Check (@($identityStart.ArgumentList) -contains
+        '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_DEV_PROFILE=true')
+    Assert-Check (@($identityStart.ArgumentList) -contains
+        '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true')
+    Assert-Check (@($identityStart.ArgumentList) -contains
+        '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true')
+    Assert-Check (@($identityStart.ArgumentList) -contains
+        '--dart-define=OPENBUBBLES_BUILD_COMMIT=0123456789ab')
+    $badIdentityRejected = $false
+    try {
+        Add-Chat1TestHostIdentity -Start $identityStart -BuildIdentifier 'dirty-build'
+    } catch {
+        $badIdentityRejected = $_.Exception.Message -eq
+            'chat1_live_build_identifier_rejected'
+    }
+    Assert-Check $badIdentityRejected
     $exe = (Get-Process -Id $PID).Path
     $start = [Diagnostics.ProcessStartInfo]::new($exe)
     $start.UseShellExecute = $false; $start.CreateNoWindow = $true

@@ -77,6 +77,25 @@ function Assert-Chat1NoWriterEnv {
     }
 }
 
+function Add-Chat1TestHostIdentity {
+    param(
+        [Parameter(Mandatory)][Diagnostics.ProcessStartInfo] $Start,
+        [Parameter(Mandatory)][string] $BuildIdentifier
+    )
+    if ($BuildIdentifier -cnotmatch '^[0-9a-f]{12}$') {
+        throw 'chat1_live_build_identifier_rejected'
+    }
+    $Start.Environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] = '1'
+    foreach ($define in @(
+        'OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_DEV_PROFILE=true',
+        'OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true',
+        'OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true',
+        "OPENBUBBLES_BUILD_COMMIT=$BuildIdentifier"
+    )) {
+        $Start.ArgumentList.Add("--dart-define=$define")
+    }
+}
+
 function Assert-Chat1TargetHashes([string] $File) {
     Assert-Chat1PlainPath $File
     $leaf = Get-Item -LiteralPath $File -Force
@@ -178,7 +197,10 @@ function Assert-Chat1Aggregate($Report, [string] $DiagnosticMode) {
         }
         return
     }
-    if ($Report.network_read_performed -ne $false -or
+    # Correlation deliberately performs bounded, lookup-only PCS reads. The
+    # durable-state and content tripwires below are what make this lane safe;
+    # claiming no network read here would reject every real correlation run.
+    if ($Report.network_read_performed -ne $true -or
         ($Report.content_exposed -ne $true -and
             $Report.content_exposed -ne $false)) {
         throw 'chat1_live_aggregate_binding_rejected'
@@ -223,6 +245,18 @@ function Copy-Chat1Aggregate($Report) {
         }
     }
     return $aggregate
+}
+
+function Assert-Chat1AggregateLaunch($Report, [string] $ExpectedLaunch) {
+    $property = $Report.PSObject.Properties['launch_id']
+    if ($null -eq $property -or [string]::IsNullOrWhiteSpace(
+        [string]$property.Value
+    )) {
+        return
+    }
+    if ([string]$property.Value -cne $ExpectedLaunch) {
+        throw 'chat1_live_aggregate_binding_rejected'
+    }
 }
 
 if ($functionsOnly) { return }
@@ -341,7 +375,9 @@ try {
         $start.Environment['OPENBUBBLES_CHAT1_TARGET_MESSAGE_HASHES'] = $targetHashes
     }
     $start.Environment['PATH'] = "$runnerDirectory;$($start.Environment['PATH'])"
-    foreach ($arg in @($snapshot, 'test', '--no-pub', '--concurrency=1', '--reporter=expanded',
+    foreach ($arg in @($snapshot, 'test')) { $start.ArgumentList.Add($arg) }
+    Add-Chat1TestHostIdentity -Start $start -BuildIdentifier $buildIdentifier
+    foreach ($arg in @('--no-pub', '--concurrency=1', '--reporter=expanded',
         'test/live/cloud_sync_v2_windows_live_harness_test.dart')) { $start.ArgumentList.Add($arg) }
     $process = [Diagnostics.Process]::Start($start)
     $null = $process.Handle
@@ -393,7 +429,7 @@ try {
     $lines = @(Get-Content -LiteralPath $rawPath | Where-Object { $_.StartsWith($marker) })
     if ($lines.Count -ne 1) { throw 'chat1_live_aggregate_unreadable' }
     $report = $lines[0].Substring($marker.Length) | ConvertFrom-Json
-    if ($report.launch_id -and $report.launch_id -cne $launch) { throw 'chat1_live_aggregate_binding_rejected' }
+    Assert-Chat1AggregateLaunch $report $launch
     Assert-Chat1Aggregate $report $Mode
     $aggregate = Copy-Chat1Aggregate $report
     $aggregate['launch_id'] = $launch

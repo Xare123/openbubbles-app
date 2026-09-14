@@ -210,6 +210,29 @@ $realReceiptHash = ''
 if ($realReceiptExisted) { $realReceiptHash = (Get-FileHash -LiteralPath $realReceiptDefault -Algorithm SHA256).Hash }
 $fakeSignTool = New-FakeSignTool -Tag 'fake-signtool.exe'
 
+# A fresh process exercises the script's real entrypoint. This guards against
+# dependency dot-sourcing overwriting the importer's parameters and turning a
+# requested import into a successful functions-only no-op.
+$entrypointOutput = & (Join-Path $PSHOME 'pwsh.exe') -NoProfile -File $Importer `
+    -ArchivePath (Join-Path $Scratch 'entrypoint-missing.zip') `
+    -ProvenancePath (Join-Path $Scratch 'entrypoint-missing-provenance.json') `
+    -ExpectedArchiveSha256 ('0' * 64) `
+    -ExpectedSourceSha ('0' * 40) `
+    -ExpectedPilotSha ('0' * 40) `
+    -Repository $WorktreeRoot `
+    -ReceiptPath (Join-Path $Scratch 'entrypoint-receipt.json') `
+    -SignTool $fakeSignTool `
+    -SigningThumbprint $Thumb 2>&1 | Out-String
+$entrypointExitCode = $LASTEXITCODE
+if ($entrypointExitCode -ne 0 -and $entrypointOutput -like '*IMPORT-FAIL:*archive not found*') {
+    Write-Host 'PASS direct-entrypoint-executes'
+    $script:Pass++
+}
+else {
+    Write-Host ("FAIL direct-entrypoint-executes (exit={0}, output={1})" -f $entrypointExitCode, $entrypointOutput.Trim())
+    $script:FailCount++
+}
+
 # 1. Success: fresh install, unsigned app gets signed, objectbox untouched, receipt bound.
 $f = New-ReadOnlyHarnessFixture -Tag 'success'
 Reset-Mocks
