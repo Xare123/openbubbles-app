@@ -22,7 +22,7 @@ use rustpush::{
     cloudkit_operation_gate::acquire_cloudkit_read_authentication,
     cloudkit_proto::{
         record::field::{value::Type as FieldValueType, EncryptedValue, Value},
-        Record,
+        CloudKitRecord, Record,
     },
     pcs::PCSEncryptor,
     DefaultAnisetteProvider,
