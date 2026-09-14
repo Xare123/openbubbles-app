@@ -496,6 +496,21 @@ final class CloudSyncManualSemanticPullSampler {
   Future<T> runConfirmedReadOnlyObservation<T>(
     Future<T> Function(CloudSyncNativeAuthSnapshot auth, Object pauseToken)
     action,
+  ) => runConfirmedAccountBoundReadOnlyObservation(
+    (auth, pauseToken, _) => action(auth, pauseToken),
+  );
+
+  /// Extends [runConfirmedReadOnlyObservation] with a session-scoped reader
+  /// that returns the current native snapshot only while it remains exactly
+  /// bound to the callback's authenticated account, session, client, and
+  /// protected store. The callback must not retain either capability.
+  Future<T> runConfirmedAccountBoundReadOnlyObservation<T>(
+    Future<T> Function(
+      CloudSyncNativeAuthSnapshot auth,
+      Object pauseToken,
+      CloudSyncNativeAuthSnapshotReader readCurrentBoundAuth,
+    )
+    action,
   ) => _runConfirmedSessionWithContext((session) async {
     await _requireSameAuth(session.ensuredAuth);
     _validatePreflight(await _readPreflight());
@@ -507,7 +522,12 @@ final class CloudSyncManualSemanticPullSampler {
       throw StateError('account_changed');
     }
     await _requireSameAuth(auth);
-    final result = await action(auth, session.pauseToken);
+    Future<CloudSyncNativeAuthSnapshot?> readCurrentBoundAuth() async {
+      final current = await _readAuthSnapshot();
+      return auth.sameIdentity(current) ? current : null;
+    }
+
+    final result = await action(auth, session.pauseToken, readCurrentBoundAuth);
     await _requireSameAuth(auth);
     CloudKitOperationInterlock.throwIfActiveFenceLost();
     return result;

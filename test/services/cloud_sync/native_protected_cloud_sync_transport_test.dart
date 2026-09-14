@@ -569,6 +569,142 @@ void main() {
     expect(bindings.unboundFetchCalls, 0);
   });
 
+  group('permit-bound Chat1 discovery FRB binding', () {
+    late _Chat1DiscoveryBridge bridge;
+    late _FakeCloudMessagesClient client;
+
+    setUp(() {
+      bridge = _Chat1DiscoveryBridge();
+      client = _FakeCloudMessagesClient();
+    });
+
+    test('routes only Chat1 through the dedicated protected API', () async {
+      final discovery = FrbNativeProtectedCloudSyncBindings.chat1Discovery(
+        nativeWriterPauseToken: BigInt.from(77),
+        api: bridge,
+      );
+
+      final result = await discovery.fetchProtectedPage(
+        cloudMessagesClient: client,
+        storageDirectory: 'private-storage',
+        expectedAccountFingerprint: _hash('A'),
+        stream: 'chat1ManateeZone',
+        generation: 3,
+        previousCheckpointReference: _reference('N'),
+        maximumChanges: 50,
+      );
+
+      expect(result.failure?.safeCode, 'unknown');
+      expect(bridge.discoveryCalls, 1);
+      expect(bridge.ordinaryCalls, 0);
+      expect(bridge.boundCalls, 0);
+      expect(bridge.client, same(client));
+      expect(bridge.nativeWriterPauseToken, BigInt.from(77));
+      expect(bridge.storageDirectory, 'private-storage');
+      expect(bridge.expectedAccountFingerprint, _hash('A'));
+      expect(bridge.generation, BigInt.from(3));
+      expect(bridge.previousCheckpointReference, _reference('N'));
+      expect(bridge.maximumChanges, 50);
+    });
+
+    test('rejects every other stream and an expanded budget locally', () async {
+      final discovery = FrbNativeProtectedCloudSyncBindings.chat1Discovery(
+        nativeWriterPauseToken: BigInt.one,
+        api: bridge,
+      );
+
+      for (final (stream, maximumChanges) in const <(String, int)>[
+        ('chats', 50),
+        ('messages', 50),
+        ('chat1ManateeZone', 51),
+        ('chat1ManateeZone', 0),
+      ]) {
+        await expectLater(
+          discovery.fetchProtectedPage(
+            cloudMessagesClient: client,
+            storageDirectory: 'private-storage',
+            expectedAccountFingerprint: _hash('A'),
+            stream: stream,
+            generation: 1,
+            previousCheckpointReference: null,
+            maximumChanges: maximumChanges,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              'cloud_sync_chat1_discovery_scope_invalid',
+            ),
+          ),
+          reason: '$stream/$maximumChanges',
+        );
+      }
+      expect(bridge.discoveryCalls, 0);
+      expect(bridge.ordinaryCalls, 0);
+      expect(bridge.boundCalls, 0);
+    });
+
+    test('cannot be reused as the semantic writer-pause binding', () async {
+      final discovery = FrbNativeProtectedCloudSyncBindings.chat1Discovery(
+        nativeWriterPauseToken: BigInt.one,
+        api: bridge,
+      );
+
+      await expectLater(
+        discovery.fetchProtectedPageUnderWriterPause(
+          cloudMessagesClient: client,
+          nativeWriterPauseToken: BigInt.from(2),
+          storageDirectory: 'private-storage',
+          expectedAccountFingerprint: _hash('A'),
+          stream: 'chats',
+          generation: 1,
+          previousCheckpointReference: null,
+          maximumChanges: 1,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_chat1_discovery_semantic_fetch_forbidden',
+          ),
+        ),
+      );
+      expect(bridge.discoveryCalls, 0);
+      expect(bridge.ordinaryCalls, 0);
+      expect(bridge.boundCalls, 0);
+    });
+
+    test('ordinary binding keeps the existing unbound route', () async {
+      final ordinary = FrbNativeProtectedCloudSyncBindings(api: bridge);
+
+      await ordinary.fetchProtectedPage(
+        cloudMessagesClient: client,
+        storageDirectory: 'private-storage',
+        expectedAccountFingerprint: _hash('A'),
+        stream: 'chat1ManateeZone',
+        generation: 1,
+        previousCheckpointReference: null,
+        maximumChanges: 50,
+      );
+
+      expect(bridge.discoveryCalls, 0);
+      expect(bridge.ordinaryCalls, 1);
+      expect(bridge.boundCalls, 0);
+    });
+
+    test('rejects invalid captured pause capabilities at construction', () {
+      for (final token in <BigInt>[BigInt.zero, BigInt.one << 64]) {
+        expect(
+          () => FrbNativeProtectedCloudSyncBindings.chat1Discovery(
+            nativeWriterPauseToken: token,
+            api: bridge,
+          ),
+          throwsArgumentError,
+        );
+      }
+    });
+  });
+
   test(
     'accepts the expanded protected-zone allowlist without remapping',
     () async {
@@ -4797,6 +4933,123 @@ final class _FakePreparedHandle
 
 final class _FakeCloudMessagesClient
     implements frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _Chat1DiscoveryBridge implements RustLibApi {
+  static const _result = frb_api.CloudSyncProtectedFetchResult(
+    failure: frb_api.CloudSyncProtectedFailure(
+      category: frb_api.CloudSyncProtectedFailureCategory.unknown,
+      safeCode: frb_api.CloudSyncProtectedSafeCode.unknown,
+    ),
+  );
+
+  int discoveryCalls = 0;
+  int ordinaryCalls = 0;
+  int boundCalls = 0;
+  frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider? client;
+  BigInt? nativeWriterPauseToken;
+  String? storageDirectory;
+  String? expectedAccountFingerprint;
+  BigInt? generation;
+  String? previousCheckpointReference;
+  int? maximumChanges;
+
+  void _capture({
+    required frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider
+    cloudMessagesClient,
+    BigInt? nativeWriterPauseToken,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required BigInt generation,
+    String? previousCheckpointReference,
+    required int maximumChanges,
+  }) {
+    client = cloudMessagesClient;
+    this.nativeWriterPauseToken = nativeWriterPauseToken;
+    this.storageDirectory = storageDirectory;
+    this.expectedAccountFingerprint = expectedAccountFingerprint;
+    this.generation = generation;
+    this.previousCheckpointReference = previousCheckpointReference;
+    this.maximumChanges = maximumChanges;
+  }
+
+  @override
+  Future<frb_api.CloudSyncProtectedFetchResult>
+  crateApiApiCloudSyncFetchProtectedChat1DiscoveryUnderWriterPause({
+    required frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider
+    cloudMessagesClient,
+    required BigInt nativeWriterPauseToken,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required BigInt generation,
+    String? previousCheckpointReference,
+    required int maximumChanges,
+  }) async {
+    discoveryCalls++;
+    _capture(
+      cloudMessagesClient: cloudMessagesClient,
+      nativeWriterPauseToken: nativeWriterPauseToken,
+      storageDirectory: storageDirectory,
+      expectedAccountFingerprint: expectedAccountFingerprint,
+      generation: generation,
+      previousCheckpointReference: previousCheckpointReference,
+      maximumChanges: maximumChanges,
+    );
+    return _result;
+  }
+
+  @override
+  Future<frb_api.CloudSyncProtectedFetchResult>
+  crateApiApiCloudSyncFetchProtectedPage({
+    required frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider
+    cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String stream,
+    required BigInt generation,
+    String? previousCheckpointReference,
+    required int maximumChanges,
+  }) async {
+    ordinaryCalls++;
+    _capture(
+      cloudMessagesClient: cloudMessagesClient,
+      storageDirectory: storageDirectory,
+      expectedAccountFingerprint: expectedAccountFingerprint,
+      generation: generation,
+      previousCheckpointReference: previousCheckpointReference,
+      maximumChanges: maximumChanges,
+    );
+    return _result;
+  }
+
+  @override
+  Future<frb_api.CloudSyncProtectedFetchResult>
+  crateApiApiCloudSyncFetchProtectedPageUnderWriterPause({
+    required frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider
+    cloudMessagesClient,
+    required BigInt nativeWriterPauseToken,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String stream,
+    required BigInt generation,
+    String? previousCheckpointReference,
+    required int maximumChanges,
+  }) async {
+    boundCalls++;
+    _capture(
+      cloudMessagesClient: cloudMessagesClient,
+      nativeWriterPauseToken: nativeWriterPauseToken,
+      storageDirectory: storageDirectory,
+      expectedAccountFingerprint: expectedAccountFingerprint,
+      generation: generation,
+      previousCheckpointReference: previousCheckpointReference,
+      maximumChanges: maximumChanges,
+    );
+    return _result;
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

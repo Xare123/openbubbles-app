@@ -605,6 +605,48 @@ void main() {
   }
 
   test(
+    'account-bound observation reader tracks exact live identity without fetching',
+    () async {
+      var auth = _auth();
+      final original = auth;
+      final nativePause = _RecordingNativeWriterPause();
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: nativePause,
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => auth,
+        createStore: (_) async =>
+            throw StateError('must not create zone store'),
+        createRawTransport: (_, _, _) async =>
+            throw StateError('must not fetch'),
+        createInboxApplier: (_, _, _) async =>
+            throw StateError('must not project'),
+      );
+
+      final result = await sampler.runConfirmedAccountBoundReadOnlyObservation((
+        observed,
+        pause,
+        readCurrentBoundAuth,
+      ) async {
+        expect(observed, same(original));
+        expect(pause, same(nativePause.token));
+        expect(await readCurrentBoundAuth(), same(original));
+        auth = _auth(session: 'replacement');
+        expect(await readCurrentBoundAuth(), isNull);
+        auth = original;
+        expect(await readCurrentBoundAuth(), same(original));
+        return 17;
+      });
+
+      expect(result, 17);
+      expect(nativePause.pauseCalls, 1);
+      expect(nativePause.resumeCalls, 1);
+      expect(sampler.isActive, isFalse);
+    },
+  );
+
+  test(
     'oversized settled outbox stops before store or transport creation',
     () async {
       var storeCalls = 0;

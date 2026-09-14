@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/api.dart';
+import 'api/cloud_sync_chat1_correlation.dart';
 import 'api/cloud_sync_chat_identity.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -64,7 +65,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.3.0';
 
   @override
-  int get rustContentHash => 2107084012;
+  int get rustContentHash => -345452360;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -1710,6 +1711,19 @@ abstract class RustLibApi extends BaseApi {
     required JoinedOsConfig config,
     required VerifyBody body,
     required String code,
+  });
+
+  Future<CloudSyncChat1CorrelationResult>
+  crateApiCloudSyncChat1CorrelationCloudSyncInspectChat1RecordNameCorrelationUnderWriterPause({
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required BigInt nativeWriterPauseToken,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required BigInt messageGeneration,
+    required List<CloudSyncChat1CorrelationSourceInput> messageSources,
+    required BigInt chat1Generation,
+    required List<CloudSyncChat1CorrelationSourceInput> chat1Sources,
   });
 
   Future<CloudSyncChatIdentityResult>
@@ -14557,6 +14571,88 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
+  Future<CloudSyncChat1CorrelationResult>
+  crateApiCloudSyncChat1CorrelationCloudSyncInspectChat1RecordNameCorrelationUnderWriterPause({
+    required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+    required BigInt nativeWriterPauseToken,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required BigInt messageGeneration,
+    required List<CloudSyncChat1CorrelationSourceInput> messageSources,
+    required BigInt chat1Generation,
+    required List<CloudSyncChat1CorrelationSourceInput> chat1Sources,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
+            cloudMessagesClient,
+            serializer,
+          );
+          sse_encode_u_64(nativeWriterPauseToken, serializer);
+          sse_encode_String(storageDirectory, serializer);
+          sse_encode_String(expectedAccountFingerprint, serializer);
+          sse_encode_String(expectedProtectedStoreIdentity, serializer);
+          sse_encode_u_64(messageGeneration, serializer);
+          sse_encode_list_cloud_sync_chat_1_correlation_source_input(
+            messageSources,
+            serializer,
+          );
+          sse_encode_u_64(chat1Generation, serializer);
+          sse_encode_list_cloud_sync_chat_1_correlation_source_input(
+            chat1Sources,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 316,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_cloud_sync_chat_1_correlation_result,
+          decodeErrorData: null,
+        ),
+        constMeta:
+            kCrateApiCloudSyncChat1CorrelationCloudSyncInspectChat1RecordNameCorrelationUnderWriterPauseConstMeta,
+        argValues: [
+          cloudMessagesClient,
+          nativeWriterPauseToken,
+          storageDirectory,
+          expectedAccountFingerprint,
+          expectedProtectedStoreIdentity,
+          messageGeneration,
+          messageSources,
+          chat1Generation,
+          chat1Sources,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiCloudSyncChat1CorrelationCloudSyncInspectChat1RecordNameCorrelationUnderWriterPauseConstMeta =>
+      const TaskConstMeta(
+        debugName:
+            "cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause",
+        argNames: [
+          "cloudMessagesClient",
+          "nativeWriterPauseToken",
+          "storageDirectory",
+          "expectedAccountFingerprint",
+          "expectedProtectedStoreIdentity",
+          "messageGeneration",
+          "messageSources",
+          "chat1Generation",
+          "chat1Sources",
+        ],
+      );
+
+  @override
   Future<CloudSyncChatIdentityResult>
   crateApiCloudSyncChatIdentityCloudSyncObserveProtectedChatIdentity({
     required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
@@ -14596,7 +14692,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 316,
+            funcId: 317,
             port: port_,
           );
         },
@@ -17613,6 +17709,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncChat1CorrelationFailureCode
+  dco_decode_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_cloud_sync_chat_1_correlation_failure_code(raw);
+  }
+
+  @protected
   CloudSyncChatIdentityComparison
   dco_decode_box_autoadd_cloud_sync_chat_identity_comparison(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -18753,6 +18858,55 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       completedPayloadSha256: dco_decode_String(arr[2]),
       logicalEntityKeyHash: dco_decode_String(arr[3]),
       serverRecordIdHash: dco_decode_String(arr[4]),
+    );
+  }
+
+  @protected
+  CloudSyncChat1CorrelationFailureCode
+  dco_decode_cloud_sync_chat_1_correlation_failure_code(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return CloudSyncChat1CorrelationFailureCode.values[raw as int];
+  }
+
+  @protected
+  CloudSyncChat1CorrelationResult
+  dco_decode_cloud_sync_chat_1_correlation_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    return CloudSyncChat1CorrelationResult(
+      completed: dco_decode_bool(arr[0]),
+      messageSources: dco_decode_u_32(arr[1]),
+      decodedMessageRoutes: dco_decode_u_32(arr[2]),
+      distinctMessageRoutes: dco_decode_u_32(arr[3]),
+      chat1Sources: dco_decode_u_32(arr[4]),
+      verifiedChat1Records: dco_decode_u_32(arr[5]),
+      exactMatchPairs: dco_decode_u_32(arr[6]),
+      matchedMessageRoutes: dco_decode_u_32(arr[7]),
+      matchedChat1Records: dco_decode_u_32(arr[8]),
+      failureCode:
+          dco_decode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+            arr[9],
+          ),
+    );
+  }
+
+  @protected
+  CloudSyncChat1CorrelationSourceInput
+  dco_decode_cloud_sync_chat_1_correlation_source_input(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return CloudSyncChat1CorrelationSourceInput(
+      changeIdHash: dco_decode_String(arr[0]),
+      recordIdHash: dco_decode_String(arr[1]),
+      etagHash: dco_decode_opt_String(arr[2]),
+      payloadSha256: dco_decode_String(arr[3]),
+      payloadLength: dco_decode_opt_box_autoadd_u_64(arr[4]),
+      serverModifiedAtMillis: dco_decode_opt_box_autoadd_i_64(arr[5]),
+      protectedRawEnvelopeReference: dco_decode_String(arr[6]),
     );
   }
 
@@ -20545,6 +20699,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<CloudSyncChat1CorrelationSourceInput>
+  dco_decode_list_cloud_sync_chat_1_correlation_source_input(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_cloud_sync_chat_1_correlation_source_input)
+        .toList();
+  }
+
+  @protected
   List<CloudSyncNativeSendReceipt>
   dco_decode_list_cloud_sync_native_send_receipt(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -22122,6 +22285,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return raw == null
         ? null
         : dco_decode_box_autoadd_cloud_sync_attachment_upload_receipt_evidence(
+            raw,
+          );
+  }
+
+  @protected
+  CloudSyncChat1CorrelationFailureCode?
+  dco_decode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
             raw,
           );
   }
@@ -27595,6 +27771,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncChat1CorrelationFailureCode
+  sse_decode_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_cloud_sync_chat_1_correlation_failure_code(
+      deserializer,
+    ));
+  }
+
+  @protected
   CloudSyncChatIdentityComparison
   sse_decode_box_autoadd_cloud_sync_chat_identity_comparison(
     SseDeserializer deserializer,
@@ -28953,6 +29140,75 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       completedPayloadSha256: var_completedPayloadSha256,
       logicalEntityKeyHash: var_logicalEntityKeyHash,
       serverRecordIdHash: var_serverRecordIdHash,
+    );
+  }
+
+  @protected
+  CloudSyncChat1CorrelationFailureCode
+  sse_decode_cloud_sync_chat_1_correlation_failure_code(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return CloudSyncChat1CorrelationFailureCode.values[inner];
+  }
+
+  @protected
+  CloudSyncChat1CorrelationResult
+  sse_decode_cloud_sync_chat_1_correlation_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_completed = sse_decode_bool(deserializer);
+    var var_messageSources = sse_decode_u_32(deserializer);
+    var var_decodedMessageRoutes = sse_decode_u_32(deserializer);
+    var var_distinctMessageRoutes = sse_decode_u_32(deserializer);
+    var var_chat1Sources = sse_decode_u_32(deserializer);
+    var var_verifiedChat1Records = sse_decode_u_32(deserializer);
+    var var_exactMatchPairs = sse_decode_u_32(deserializer);
+    var var_matchedMessageRoutes = sse_decode_u_32(deserializer);
+    var var_matchedChat1Records = sse_decode_u_32(deserializer);
+    var var_failureCode =
+        sse_decode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+          deserializer,
+        );
+    return CloudSyncChat1CorrelationResult(
+      completed: var_completed,
+      messageSources: var_messageSources,
+      decodedMessageRoutes: var_decodedMessageRoutes,
+      distinctMessageRoutes: var_distinctMessageRoutes,
+      chat1Sources: var_chat1Sources,
+      verifiedChat1Records: var_verifiedChat1Records,
+      exactMatchPairs: var_exactMatchPairs,
+      matchedMessageRoutes: var_matchedMessageRoutes,
+      matchedChat1Records: var_matchedChat1Records,
+      failureCode: var_failureCode,
+    );
+  }
+
+  @protected
+  CloudSyncChat1CorrelationSourceInput
+  sse_decode_cloud_sync_chat_1_correlation_source_input(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_changeIdHash = sse_decode_String(deserializer);
+    var var_recordIdHash = sse_decode_String(deserializer);
+    var var_etagHash = sse_decode_opt_String(deserializer);
+    var var_payloadSha256 = sse_decode_String(deserializer);
+    var var_payloadLength = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_serverModifiedAtMillis = sse_decode_opt_box_autoadd_i_64(
+      deserializer,
+    );
+    var var_protectedRawEnvelopeReference = sse_decode_String(deserializer);
+    return CloudSyncChat1CorrelationSourceInput(
+      changeIdHash: var_changeIdHash,
+      recordIdHash: var_recordIdHash,
+      etagHash: var_etagHash,
+      payloadSha256: var_payloadSha256,
+      payloadLength: var_payloadLength,
+      serverModifiedAtMillis: var_serverModifiedAtMillis,
+      protectedRawEnvelopeReference: var_protectedRawEnvelopeReference,
     );
   }
 
@@ -31281,6 +31537,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<CloudSyncChat1CorrelationSourceInput>
+  sse_decode_list_cloud_sync_chat_1_correlation_source_input(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <CloudSyncChat1CorrelationSourceInput>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(
+        sse_decode_cloud_sync_chat_1_correlation_source_input(deserializer),
+      );
+    }
+    return ans_;
+  }
+
+  @protected
   List<CloudSyncNativeSendReceipt>
   sse_decode_list_cloud_sync_native_send_receipt(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -33498,6 +33771,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_cloud_sync_attachment_upload_receipt_evidence(
+        deserializer,
+      ));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  CloudSyncChat1CorrelationFailureCode?
+  sse_decode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
         deserializer,
       ));
     } else {
@@ -39804,6 +40093,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+    CloudSyncChat1CorrelationFailureCode self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_cloud_sync_chat_1_correlation_failure_code(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_chat_identity_comparison(
     CloudSyncChatIdentityComparison self,
     SseSerializer serializer,
@@ -41168,6 +41466,51 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.completedPayloadSha256, serializer);
     sse_encode_String(self.logicalEntityKeyHash, serializer);
     sse_encode_String(self.serverRecordIdHash, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_sync_chat_1_correlation_failure_code(
+    CloudSyncChat1CorrelationFailureCode self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_sync_chat_1_correlation_result(
+    CloudSyncChat1CorrelationResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.completed, serializer);
+    sse_encode_u_32(self.messageSources, serializer);
+    sse_encode_u_32(self.decodedMessageRoutes, serializer);
+    sse_encode_u_32(self.distinctMessageRoutes, serializer);
+    sse_encode_u_32(self.chat1Sources, serializer);
+    sse_encode_u_32(self.verifiedChat1Records, serializer);
+    sse_encode_u_32(self.exactMatchPairs, serializer);
+    sse_encode_u_32(self.matchedMessageRoutes, serializer);
+    sse_encode_u_32(self.matchedChat1Records, serializer);
+    sse_encode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+      self.failureCode,
+      serializer,
+    );
+  }
+
+  @protected
+  void sse_encode_cloud_sync_chat_1_correlation_source_input(
+    CloudSyncChat1CorrelationSourceInput self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.changeIdHash, serializer);
+    sse_encode_String(self.recordIdHash, serializer);
+    sse_encode_opt_String(self.etagHash, serializer);
+    sse_encode_String(self.payloadSha256, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.payloadLength, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.serverModifiedAtMillis, serializer);
+    sse_encode_String(self.protectedRawEnvelopeReference, serializer);
   }
 
   @protected
@@ -42873,6 +43216,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_cloud_sync_attachment_source_entry(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_cloud_sync_chat_1_correlation_source_input(
+    List<CloudSyncChat1CorrelationSourceInput> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_cloud_sync_chat_1_correlation_source_input(item, serializer);
     }
   }
 
@@ -44852,6 +45207,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_cloud_sync_attachment_upload_receipt_evidence(
+        self,
+        serializer,
+      );
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+    CloudSyncChat1CorrelationFailureCode? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
         self,
         serializer,
       );

@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/api.dart';
+import 'api/cloud_sync_chat1_correlation.dart';
 import 'api/cloud_sync_chat_identity.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -1568,6 +1569,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncChat1CorrelationFailureCode
+  dco_decode_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncChatIdentityComparison
   dco_decode_box_autoadd_cloud_sync_chat_identity_comparison(dynamic raw);
 
@@ -2090,6 +2097,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_cloud_sync_attachment_upload_receipt_evidence(dynamic raw);
 
   @protected
+  CloudSyncChat1CorrelationFailureCode
+  dco_decode_cloud_sync_chat_1_correlation_failure_code(dynamic raw);
+
+  @protected
+  CloudSyncChat1CorrelationResult
+  dco_decode_cloud_sync_chat_1_correlation_result(dynamic raw);
+
+  @protected
+  CloudSyncChat1CorrelationSourceInput
+  dco_decode_cloud_sync_chat_1_correlation_source_input(dynamic raw);
+
+  @protected
   CloudSyncChatIdentityComparison
   dco_decode_cloud_sync_chat_identity_comparison(dynamic raw);
 
@@ -2546,6 +2565,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   List<CloudSyncAttachmentSourceEntry>
   dco_decode_list_cloud_sync_attachment_source_entry(dynamic raw);
+
+  @protected
+  List<CloudSyncChat1CorrelationSourceInput>
+  dco_decode_list_cloud_sync_chat_1_correlation_source_input(dynamic raw);
 
   @protected
   List<CloudSyncNativeSendReceipt>
@@ -3103,6 +3126,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentUploadReceiptEvidence?
   dco_decode_opt_box_autoadd_cloud_sync_attachment_upload_receipt_evidence(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncChat1CorrelationFailureCode?
+  dco_decode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
     dynamic raw,
   );
 
@@ -5282,6 +5311,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncChat1CorrelationFailureCode
+  sse_decode_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncChatIdentityComparison
   sse_decode_box_autoadd_cloud_sync_chat_identity_comparison(
     SseDeserializer deserializer,
@@ -5974,6 +6009,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncChat1CorrelationFailureCode
+  sse_decode_cloud_sync_chat_1_correlation_failure_code(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncChat1CorrelationResult
+  sse_decode_cloud_sync_chat_1_correlation_result(SseDeserializer deserializer);
+
+  @protected
+  CloudSyncChat1CorrelationSourceInput
+  sse_decode_cloud_sync_chat_1_correlation_source_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncChatIdentityComparison
   sse_decode_cloud_sync_chat_identity_comparison(SseDeserializer deserializer);
 
@@ -6512,6 +6563,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   List<CloudSyncAttachmentSourceEntry>
   sse_decode_list_cloud_sync_attachment_source_entry(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<CloudSyncChat1CorrelationSourceInput>
+  sse_decode_list_cloud_sync_chat_1_correlation_source_input(
     SseDeserializer deserializer,
   );
 
@@ -7151,6 +7208,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncAttachmentUploadReceiptEvidence?
   sse_decode_opt_box_autoadd_cloud_sync_attachment_upload_receipt_evidence(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncChat1CorrelationFailureCode?
+  sse_decode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
     SseDeserializer deserializer,
   );
 
@@ -9747,6 +9810,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+    CloudSyncChat1CorrelationFailureCode self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_chat_identity_comparison(
     CloudSyncChatIdentityComparison self,
     SseSerializer serializer,
@@ -10561,6 +10630,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_sync_chat_1_correlation_failure_code(
+    CloudSyncChat1CorrelationFailureCode self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_chat_1_correlation_result(
+    CloudSyncChat1CorrelationResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_chat_1_correlation_source_input(
+    CloudSyncChat1CorrelationSourceInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_chat_identity_comparison(
     CloudSyncChatIdentityComparison self,
     SseSerializer serializer,
@@ -11184,6 +11271,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_cloud_sync_attachment_source_entry(
     List<CloudSyncAttachmentSourceEntry> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_sync_chat_1_correlation_source_input(
+    List<CloudSyncChat1CorrelationSourceInput> self,
     SseSerializer serializer,
   );
 
@@ -11958,6 +12051,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_cloud_sync_attachment_upload_receipt_evidence(
     CloudSyncAttachmentUploadReceiptEvidence? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_chat_1_correlation_failure_code(
+    CloudSyncChat1CorrelationFailureCode? self,
     SseSerializer serializer,
   );
 

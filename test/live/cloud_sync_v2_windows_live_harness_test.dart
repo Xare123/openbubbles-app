@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
 import 'cloud_sync_edit_echo_verification.dart';
+import 'cloud_sync_chat1_discovery.dart';
 import 'cloud_sync_parent_coverage.dart';
 
 void main() {
@@ -31,7 +32,8 @@ void main() {
     if (!enabled) return;
     if (Platform.environment['OPENBUBBLES_INSPECT_RETAINED'] == '1') {
       harness.cloudSyncV2RetainedInspectionOffset(
-        Platform.environment['OPENBUBBLES_INSPECT_RETAINED_OFFSET']);
+        Platform.environment['OPENBUBBLES_INSPECT_RETAINED_OFFSET'],
+      );
     }
     TestWidgetsFlutterBinding.ensureInitialized();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -83,6 +85,7 @@ void main() {
         'inspect-edit-conflict',
         'inspect-retained',
         'inspect-chat-parents',
+        'inspect-chat1-discovery',
       };
       expect(operation, isIn(allowedOperations));
       final harnessKey = GlobalKey<harness.CloudSyncV2WindowsHarnessState>();
@@ -95,11 +98,25 @@ void main() {
                 .singleWhere(
                   (candidate) => switch (operation) {
                     'inspect-edit-conflict' =>
-                      candidate == harness.CloudSyncV2WindowsHarnessOperation.interactive,
+                      candidate ==
+                          harness
+                              .CloudSyncV2WindowsHarnessOperation
+                              .interactive,
                     'inspect-retained' =>
-                      candidate == harness.CloudSyncV2WindowsHarnessOperation.interactive,
+                      candidate ==
+                          harness
+                              .CloudSyncV2WindowsHarnessOperation
+                              .interactive,
                     'inspect-chat-parents' =>
-                      candidate == harness.CloudSyncV2WindowsHarnessOperation.interactive,
+                      candidate ==
+                          harness
+                              .CloudSyncV2WindowsHarnessOperation
+                              .interactive,
+                    'inspect-chat1-discovery' =>
+                      candidate ==
+                          harness
+                              .CloudSyncV2WindowsHarnessOperation
+                              .interactive,
                     'view-projection' =>
                       candidate ==
                           harness
@@ -141,10 +158,19 @@ void main() {
       expect(decoded, isA<Map<String, dynamic>>());
       final status = (decoded as Map<String, dynamic>).cast<String, Object?>();
       expect(status['launch_id'], launchId);
-      if (Platform.environment['OPENBUBBLES_VERIFY_EDIT_CLAIM'] case final requestId?) {
-        final proof = await tester.runAsync(() => harnessKey.currentState!.observeEditEchoForTestHost(
-          (auth, pause) => verifyEditEcho(store: Database.store, profile: profile,
-            requestId: requestId, auth: auth, pauseToken: pause)));
+      if (Platform.environment['OPENBUBBLES_VERIFY_EDIT_CLAIM']
+          case final requestId?) {
+        final proof = await tester.runAsync(
+          () => harnessKey.currentState!.observeEditEchoForTestHost(
+            (auth, pause) => verifyEditEcho(
+              store: Database.store,
+              profile: profile,
+              requestId: requestId,
+              auth: auth,
+              pauseToken: pause,
+            ),
+          ),
+        );
         debugPrint('windows_edit_echo_proof=${jsonEncode(proof)}');
         expect(proof?['exact_current_text'], isTrue);
         expect(proof?['exact_edit_text_and_milliseconds'], isTrue);
@@ -157,23 +183,91 @@ void main() {
         }
       }
       if (Platform.environment['OPENBUBBLES_INSPECT_RETAINED'] == '1') {
-        final observed = await tester.runAsync(() => harnessKey.currentState!.inspectRetainedForTestHost());
+        final observed = await tester.runAsync<Map<String, Object?>>(
+          () => harnessKey.currentState!.inspectRetainedForTestHost(),
+        );
         debugPrint('windows_retained_observation=${jsonEncode(observed)}');
         expect(observed?['durable_state_unchanged'], isTrue);
       }
       if (Platform.environment['OPENBUBBLES_INSPECT_CHAT_PARENTS'] == '1') {
         expect(operation, 'inspect-chat-parents');
-        final observed = await tester.runAsync(() => harnessKey.currentState!.observeChatParentsForTestHost(
-          (auth, pause) => observeCachedParentCoverage(store: Database.store,
-              profile: profile, auth: auth, pauseToken: pause as BigInt)));
+        final observed = await tester.runAsync(
+          () => harnessKey.currentState!.observeChatParentsForTestHost(
+            (auth, pause) => observeCachedParentCoverage(
+              store: Database.store,
+              profile: profile,
+              auth: auth,
+              pauseToken: pause as BigInt,
+            ),
+          ),
+        );
         debugPrint('windows_parent_coverage=${jsonEncode(observed)}');
         expect(observed?['durable_state_unchanged'], isTrue);
+      }
+      if (Platform.environment['OPENBUBBLES_INSPECT_CHAT1_DISCOVERY'] == '1') {
+        expect(operation, 'inspect-chat1-discovery');
+        final observed = await tester.runAsync<Map<String, Object?>>(
+          () => harnessKey.currentState!.observeChat1DiscoveryForTestHost((
+            auth,
+            pause,
+            readCurrentBoundAuth,
+          ) async {
+            if (Platform.environment['OPENBUBBLES_INSPECT_CHAT1_CORRELATION'] ==
+                '1') {
+              return correlateCachedChat1Routes(
+                store: Database.store,
+                profile: profile,
+                auth: auth,
+                pauseToken: pause,
+                readCurrentBoundAuth: readCurrentBoundAuth,
+              );
+            }
+            if (Platform.environment['OPENBUBBLES_INSPECT_CHAT1_CACHE_ONLY'] ==
+                '1') {
+              return inspectCachedChat1Journal(
+                store: Database.store,
+                auth: auth,
+              );
+            }
+            return observeChat1Discovery(
+              store: Database.store,
+              profile: profile,
+              auth: auth,
+              pauseToken: pause,
+              readCurrentBoundAuth: readCurrentBoundAuth,
+            );
+          }),
+        );
+        debugPrint('windows_chat1_discovery=${jsonEncode(observed)}');
+        expect(observed?['account_bound'], isTrue);
+        if (Platform.environment['OPENBUBBLES_INSPECT_CHAT1_CORRELATION'] ==
+            '1') {
+          expect(observed?['network_read_performed'], isFalse);
+          expect(observed?['content_exposed'], isFalse);
+          expect(observed?['durable_state_unchanged'], isTrue);
+          expect(observed?['completed'], isTrue);
+          expect(observed?['message_sources'], 8);
+          expect(observed?['decoded_message_routes'], 8);
+          expect(observed?['chat1_sources'], 50);
+          expect(observed?['verified_chat1_records'], 50);
+          expect(observed?['failure_code'], isNull);
+        } else if (Platform
+                .environment['OPENBUBBLES_INSPECT_CHAT1_CACHE_ONLY'] ==
+            '1') {
+          expect(observed?['network_read_performed'], isFalse);
+        } else {
+          expect(observed?['zero_mutation_counters'], isTrue);
+          expect(observed?['canonical_counts_unchanged'], isTrue);
+          expect(observed?['outbox_count_unchanged'], isTrue);
+        }
       }
       if (Platform.environment['OPENBUBBLES_INSPECT_EDIT_CONFLICT'] == '1') {
         final comparison = await tester.runAsync(
           () => harnessKey.currentState!.inspectEditConflictForTestHost(),
         );
-        debugPrint('windows_edit_conflict_comparison=${jsonEncode(comparison)}');
+        debugPrint(
+          'windows_edit_conflict_comparison=${jsonEncode(comparison)}',
+        );
         if (Platform.environment['OPENBUBBLES_EDIT_CONFLICT_COPY'] != null) {
           expect(comparison?['copy_recovery_rejected'], isNot(true));
           final proof = comparison?['copy_replay'] as Map<String, Object?>?;
@@ -187,7 +281,8 @@ void main() {
       if (status['safe_code'] == 'cloud_sync_native_auth_refresh_failed' &&
           Platform.environment['OPENBUBBLES_DIAGNOSE_READ_AUTH'] == '1') {
         final diagnostic = await tester.runAsync(
-          () => harnessKey.currentState!.diagnoseReadAuthenticationForTestHost(),
+          () =>
+              harnessKey.currentState!.diagnoseReadAuthenticationForTestHost(),
         );
         debugPrint('windows_read_auth_diagnostic=$diagnostic');
       }

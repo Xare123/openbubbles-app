@@ -3499,9 +3499,30 @@ final class FrbNativeProtectedCloudSyncBindings
         CloudKitWriterAttachmentReconciliationBinding {
   FrbNativeProtectedCloudSyncBindings({RustLibApi? api})
     // ignore: invalid_use_of_internal_member
-    : _api = api ?? RustLib.instance.api;
+    : _api = api ?? RustLib.instance.api,
+      _chat1DiscoveryWriterPauseToken = null;
+
+  /// Test-host-only binding for the permit-bound raw Chat1 discovery lane.
+  ///
+  /// The transport deliberately remains in the shadow persistence lane. The
+  /// read-pause capability is captured here so the ordinary unbound fetch
+  /// surface cannot be used as a fallback and the semantic three-zone route
+  /// remains unchanged.
+  FrbNativeProtectedCloudSyncBindings.chat1Discovery({
+    required BigInt nativeWriterPauseToken,
+    RustLibApi? api,
+  })
+    // ignore: invalid_use_of_internal_member
+    : _api = api ?? RustLib.instance.api,
+       _chat1DiscoveryWriterPauseToken = nativeWriterPauseToken {
+    if (nativeWriterPauseToken <= BigInt.zero ||
+        nativeWriterPauseToken.bitLength > 64) {
+      throw ArgumentError('native_writer_pause_token_invalid');
+    }
+  }
 
   final RustLibApi _api;
+  final BigInt? _chat1DiscoveryWriterPauseToken;
 
   @override
   Future<frb_api.CloudSyncProtectedOutboundStageResult> stageOutboundMessage({
@@ -3823,15 +3844,37 @@ final class FrbNativeProtectedCloudSyncBindings
     required String? previousCheckpointReference,
     required int maximumChanges,
   }) async {
-    final result = await _api.crateApiApiCloudSyncFetchProtectedPage(
-      cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
-      storageDirectory: storageDirectory,
-      expectedAccountFingerprint: expectedAccountFingerprint,
-      stream: stream,
-      generation: BigInt.from(generation),
-      previousCheckpointReference: previousCheckpointReference,
-      maximumChanges: maximumChanges,
-    );
+    final discoveryToken = _chat1DiscoveryWriterPauseToken;
+    final frb_api.CloudSyncProtectedFetchResult result;
+    if (discoveryToken == null) {
+      result = await _api.crateApiApiCloudSyncFetchProtectedPage(
+        cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+        storageDirectory: storageDirectory,
+        expectedAccountFingerprint: expectedAccountFingerprint,
+        stream: stream,
+        generation: BigInt.from(generation),
+        previousCheckpointReference: previousCheckpointReference,
+        maximumChanges: maximumChanges,
+      );
+    } else {
+      if (stream != 'chat1ManateeZone' ||
+          maximumChanges <= 0 ||
+          maximumChanges > 50) {
+        throw StateError('cloud_sync_chat1_discovery_scope_invalid');
+      }
+      result = await _api
+          .crateApiApiCloudSyncFetchProtectedChat1DiscoveryUnderWriterPause(
+            cloudMessagesClient: _requireCloudMessagesClient(
+              cloudMessagesClient,
+            ),
+            nativeWriterPauseToken: discoveryToken,
+            storageDirectory: storageDirectory,
+            expectedAccountFingerprint: expectedAccountFingerprint,
+            generation: BigInt.from(generation),
+            previousCheckpointReference: previousCheckpointReference,
+            maximumChanges: maximumChanges,
+          );
+    }
     return NativeProtectedFetchResult(
       page: result.page == null ? null : _pageFromFrb(result.page!),
       failure: result.failure == null ? null : _failureFromFrb(result.failure!),
@@ -3849,6 +3892,9 @@ final class FrbNativeProtectedCloudSyncBindings
     required String? previousCheckpointReference,
     required int maximumChanges,
   }) async {
+    if (_chat1DiscoveryWriterPauseToken != null) {
+      throw StateError('cloud_sync_chat1_discovery_semantic_fetch_forbidden');
+    }
     final result = await _api
         .crateApiApiCloudSyncFetchProtectedPageUnderWriterPause(
           cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),

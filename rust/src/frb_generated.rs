@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.3.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 2107084012;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -345452360;
 
 // Section: executor
 
@@ -18056,6 +18056,38 @@ fn wire__crate__api__api__verify_2fa_sms_impl(
         },
     )
 }
+fn wire__crate__api__cloud_sync_chat1_correlation__cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec,_,_,_>(flutter_rust_bridge::for_generated::TaskInfo{ debug_name: "cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause", port: Some(port_), mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal }, move || {
+            let message = unsafe { flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_) };
+            let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_cloud_messages_client = <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < CloudMessagesClient < DefaultAnisetteProvider > >>>>::sse_decode(&mut deserializer);
+let api_native_writer_pause_token = <u64>::sse_decode(&mut deserializer);
+let api_storage_directory = <String>::sse_decode(&mut deserializer);
+let api_expected_account_fingerprint = <String>::sse_decode(&mut deserializer);
+let api_expected_protected_store_identity = <String>::sse_decode(&mut deserializer);
+let api_message_generation = <u64>::sse_decode(&mut deserializer);
+let api_message_sources = <Vec<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput>>::sse_decode(&mut deserializer);
+let api_chat1_generation = <u64>::sse_decode(&mut deserializer);
+let api_chat1_sources = <Vec<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput>>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
+                    transform_result_sse::<_, ()>((move || async move {
+                        let mut api_cloud_messages_client_guard = None;
+let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_cloud_messages_client, 0, false)]);
+        for i in decode_indices_ {
+            match i {
+                0 => api_cloud_messages_client_guard = Some(api_cloud_messages_client.lockable_decode_async_ref().await),
+                _ => unreachable!(),
+            }
+        }
+        let api_cloud_messages_client_guard = api_cloud_messages_client_guard.unwrap();
+ let output_ok = Result::<_,()>::Ok(crate::api::cloud_sync_chat1_correlation::cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause(&*api_cloud_messages_client_guard, api_native_writer_pause_token, api_storage_directory, api_expected_account_fingerprint, api_expected_protected_store_identity, api_message_generation, api_message_sources, api_chat1_generation, api_chat1_sources).await)?;   Ok(output_ok)
+                    })().await)
+                } })
+}
 fn wire__crate__api__cloud_sync_chat_identity__cloud_sync_observe_protected_chat_identity_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -21762,6 +21794,77 @@ impl SseDecode for crate::api::api::CloudSyncAttachmentUploadReceiptEvidence {
     }
 }
 
+impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::TestHostRequired,
+1 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::InvalidRequest,
+2 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::ReadAuthenticationScope,
+3 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::ActiveAccountMismatch,
+4 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::ProtectorUnavailable,
+5 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::MessageSourceMismatch,
+6 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::MessageDecodeFailed,
+7 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::Chat1SourceMismatch,
+8 => crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::AccountChanged,
+            _ => unreachable!("Invalid variant for CloudSyncChat1CorrelationFailureCode: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_completed = <bool>::sse_decode(deserializer);
+        let mut var_messageSources = <u32>::sse_decode(deserializer);
+        let mut var_decodedMessageRoutes = <u32>::sse_decode(deserializer);
+        let mut var_distinctMessageRoutes = <u32>::sse_decode(deserializer);
+        let mut var_chat1Sources = <u32>::sse_decode(deserializer);
+        let mut var_verifiedChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_exactMatchPairs = <u32>::sse_decode(deserializer);
+        let mut var_matchedMessageRoutes = <u32>::sse_decode(deserializer);
+        let mut var_matchedChat1Records = <u32>::sse_decode(deserializer);
+        let mut var_failureCode = <Option<
+            crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode,
+        >>::sse_decode(deserializer);
+        return crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationResult {
+            completed: var_completed,
+            message_sources: var_messageSources,
+            decoded_message_routes: var_decodedMessageRoutes,
+            distinct_message_routes: var_distinctMessageRoutes,
+            chat1_sources: var_chat1Sources,
+            verified_chat1_records: var_verifiedChat1Records,
+            exact_match_pairs: var_exactMatchPairs,
+            matched_message_routes: var_matchedMessageRoutes,
+            matched_chat1_records: var_matchedChat1Records,
+            failure_code: var_failureCode,
+        };
+    }
+}
+
+impl SseDecode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_changeIdHash = <String>::sse_decode(deserializer);
+        let mut var_recordIdHash = <String>::sse_decode(deserializer);
+        let mut var_etagHash = <Option<String>>::sse_decode(deserializer);
+        let mut var_payloadSha256 = <String>::sse_decode(deserializer);
+        let mut var_payloadLength = <Option<u64>>::sse_decode(deserializer);
+        let mut var_serverModifiedAtMillis = <Option<i64>>::sse_decode(deserializer);
+        let mut var_protectedRawEnvelopeReference = <String>::sse_decode(deserializer);
+        return crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput {
+            change_id_hash: var_changeIdHash,
+            record_id_hash: var_recordIdHash,
+            etag_hash: var_etagHash,
+            payload_sha256: var_payloadSha256,
+            payload_length: var_payloadLength,
+            server_modified_at_millis: var_serverModifiedAtMillis,
+            protected_raw_envelope_reference: var_protectedRawEnvelopeReference,
+        };
+    }
+}
+
 impl SseDecode for crate::api::cloud_sync_chat_identity::CloudSyncChatIdentityComparison {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -24168,6 +24271,20 @@ impl SseDecode for Vec<crate::api::api::CloudSyncAttachmentSourceEntry> {
     }
 }
 
+impl SseDecode
+    for Vec<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::api::CloudSyncNativeSendReceipt> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -26256,6 +26373,19 @@ impl SseDecode for Option<crate::api::api::CloudSyncAttachmentUploadReceiptEvide
                     deserializer,
                 ),
             );
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode
+    for Option<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -29432,7 +29562,8 @@ fn pde_ffi_dispatcher_primary_impl(
 313 => wire__crate__api__api__validate_targets_facetime_impl(port, ptr, rust_vec_len, data_len),
 314 => wire__crate__api__api__verify_2fa_impl(port, ptr, rust_vec_len, data_len),
 315 => wire__crate__api__api__verify_2fa_sms_impl(port, ptr, rust_vec_len, data_len),
-316 => wire__crate__api__cloud_sync_chat_identity__cloud_sync_observe_protected_chat_identity_impl(port, ptr, rust_vec_len, data_len),
+316 => wire__crate__api__cloud_sync_chat1_correlation__cloud_sync_inspect_chat1_record_name_correlation_under_writer_pause_impl(port, ptr, rust_vec_len, data_len),
+317 => wire__crate__api__cloud_sync_chat_identity__cloud_sync_observe_protected_chat_identity_impl(port, ptr, rust_vec_len, data_len),
                         _ => unreachable!(),
                     }
 }
@@ -31444,6 +31575,109 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncAttachmentUploa
     for crate::api::api::CloudSyncAttachmentUploadReceiptEvidence
 {
     fn into_into_dart(self) -> crate::api::api::CloudSyncAttachmentUploadReceiptEvidence {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart
+    for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode
+{
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::TestHostRequired => 0.into_dart(),
+            Self::InvalidRequest => 1.into_dart(),
+            Self::ReadAuthenticationScope => 2.into_dart(),
+            Self::ActiveAccountMismatch => 3.into_dart(),
+            Self::ProtectorUnavailable => 4.into_dart(),
+            Self::MessageSourceMismatch => 5.into_dart(),
+            Self::MessageDecodeFailed => 6.into_dart(),
+            Self::Chat1SourceMismatch => 7.into_dart(),
+            Self::AccountChanged => 8.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode
+{
+}
+impl
+    flutter_rust_bridge::IntoIntoDart<
+        crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode,
+    > for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode
+{
+    fn into_into_dart(
+        self,
+    ) -> crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart
+    for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationResult
+{
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.completed.into_into_dart().into_dart(),
+            self.message_sources.into_into_dart().into_dart(),
+            self.decoded_message_routes.into_into_dart().into_dart(),
+            self.distinct_message_routes.into_into_dart().into_dart(),
+            self.chat1_sources.into_into_dart().into_dart(),
+            self.verified_chat1_records.into_into_dart().into_dart(),
+            self.exact_match_pairs.into_into_dart().into_dart(),
+            self.matched_message_routes.into_into_dart().into_dart(),
+            self.matched_chat1_records.into_into_dart().into_dart(),
+            self.failure_code.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationResult
+{
+}
+impl
+    flutter_rust_bridge::IntoIntoDart<
+        crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationResult,
+    > for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationResult
+{
+    fn into_into_dart(
+        self,
+    ) -> crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationResult {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart
+    for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput
+{
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.change_id_hash.into_into_dart().into_dart(),
+            self.record_id_hash.into_into_dart().into_dart(),
+            self.etag_hash.into_into_dart().into_dart(),
+            self.payload_sha256.into_into_dart().into_dart(),
+            self.payload_length.into_into_dart().into_dart(),
+            self.server_modified_at_millis.into_into_dart().into_dart(),
+            self.protected_raw_envelope_reference
+                .into_into_dart()
+                .into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput
+{
+}
+impl
+    flutter_rust_bridge::IntoIntoDart<
+        crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput,
+    > for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput
+{
+    fn into_into_dart(
+        self,
+    ) -> crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput {
         self
     }
 }
@@ -39049,6 +39283,51 @@ impl SseEncode for crate::api::api::CloudSyncAttachmentUploadReceiptEvidence {
     }
 }
 
+impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(match self {crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::TestHostRequired => { 0 }
+crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::InvalidRequest => { 1 }
+crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::ReadAuthenticationScope => { 2 }
+crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::ActiveAccountMismatch => { 3 }
+crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::ProtectorUnavailable => { 4 }
+crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::MessageSourceMismatch => { 5 }
+crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::MessageDecodeFailed => { 6 }
+crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::Chat1SourceMismatch => { 7 }
+crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode::AccountChanged => { 8 }
+ _ => { unimplemented!(""); }}, serializer);
+    }
+}
+
+impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.completed, serializer);
+        <u32>::sse_encode(self.message_sources, serializer);
+        <u32>::sse_encode(self.decoded_message_routes, serializer);
+        <u32>::sse_encode(self.distinct_message_routes, serializer);
+        <u32>::sse_encode(self.chat1_sources, serializer);
+        <u32>::sse_encode(self.verified_chat1_records, serializer);
+        <u32>::sse_encode(self.exact_match_pairs, serializer);
+        <u32>::sse_encode(self.matched_message_routes, serializer);
+        <u32>::sse_encode(self.matched_chat1_records, serializer);
+        <Option<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode>>::sse_encode(self.failure_code, serializer);
+    }
+}
+
+impl SseEncode for crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.change_id_hash, serializer);
+        <String>::sse_encode(self.record_id_hash, serializer);
+        <Option<String>>::sse_encode(self.etag_hash, serializer);
+        <String>::sse_encode(self.payload_sha256, serializer);
+        <Option<u64>>::sse_encode(self.payload_length, serializer);
+        <Option<i64>>::sse_encode(self.server_modified_at_millis, serializer);
+        <String>::sse_encode(self.protected_raw_envelope_reference, serializer);
+    }
+}
+
 impl SseEncode for crate::api::cloud_sync_chat_identity::CloudSyncChatIdentityComparison {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -40871,6 +41150,18 @@ impl SseEncode for Vec<crate::api::api::CloudSyncAttachmentSourceEntry> {
     }
 }
 
+impl SseEncode
+    for Vec<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationSourceInput>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::api::CloudSyncNativeSendReceipt> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -42507,6 +42798,18 @@ impl SseEncode for Option<crate::api::api::CloudSyncAttachmentUploadReceiptEvide
             <crate::api::api::CloudSyncAttachmentUploadReceiptEvidence>::sse_encode(
                 value, serializer,
             );
+        }
+    }
+}
+
+impl SseEncode
+    for Option<crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::cloud_sync_chat1_correlation::CloudSyncChat1CorrelationFailureCode>::sse_encode(value, serializer);
         }
     }
 }
