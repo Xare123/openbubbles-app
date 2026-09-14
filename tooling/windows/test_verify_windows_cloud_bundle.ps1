@@ -143,6 +143,82 @@ function New-EditedProv {
     return $p
 }
 
+function New-NativeFixture {
+    param([Parameter(Mandatory)][string] $Tag)
+    $dir = Join-Path $Scratch $Tag
+    Assert-UnderScratch -Path $dir
+    if (Test-Path -LiteralPath $dir) { throw "fixture dir exists: $dir" }
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    $script:TrackedDirs += $dir
+    $zipPath = Join-Path $dir 'native.zip'
+    $binaries = [ordered]@{
+        'native-compose-tests.exe' = New-PeHeaderBytes -Machine 0xAA64
+        'objectbox.dll' = New-PeHeaderBytes -Machine 0xAA64
+        'rust_lib_bluebubbles.dll' = New-PeHeaderBytes -Machine 0xAA64
+    }
+    $fs = [IO.File]::Create($zipPath)
+    try {
+        $zip = New-Object IO.Compression.ZipArchive($fs, [IO.Compression.ZipArchiveMode]::Create)
+        try {
+            foreach ($entry in $binaries.GetEnumerator()) {
+                $item = $zip.CreateEntry($entry.Key)
+                $stream = $item.Open()
+                try { $stream.Write($entry.Value, 0, $entry.Value.Length) } finally { $stream.Dispose() }
+            }
+        } finally { $zip.Dispose() }
+    } finally { $fs.Dispose() }
+    $src = 'dddddddddddddddddddddddddddddddddddddddd'
+    $pilot = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+    $manifest = @($binaries.GetEnumerator() | ForEach-Object {
+        [ordered]@{
+            relative_path = $_.Key
+            size_bytes = $_.Value.Length
+            sha256 = (Get-FileHash -InputStream ([IO.MemoryStream]::new($_.Value)) -Algorithm SHA256).Hash.ToLowerInvariant()
+            pe_machine = 'ARM64'
+        }
+    })
+    $prov = [ordered]@{
+        schema_version = 2
+        purpose = 'windows-cloudkit-fast-loop-native-test-host'
+        source_commit = $src
+        source_tree = 'ffffffffffffffffffffffffffffffffffffffff'
+        submodule_commits = @(' eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee rustpush')
+        sidecar_commit = $pilot
+        build = [ordered]@{
+            target = 'rust/Cargo.toml --lib; flutter test'; artifact_mode = 'native-test-host'
+            configuration = 'debug'; architecture = 'arm64'; variant = 'read-only'; build_identifier = $null
+            native_media_graph_excluded = $true; signing_applied = $false
+            findmy_value_free_diagnostics_compiled = $true; writer_defines_present = $false
+            automatic_send_runtime_present = $false
+        }
+        verification = [ordered]@{
+            powershell_contract_tests = 'passed'; focused_dart_tests = 'passed'
+            all_pe_files_arm64 = $true; rust_bridge_load_unload = 'passed'
+            native_timestamp_compose_tests = 'passed'; native_timestamp_compose_expected_count = 7
+            native_content_free_diagnostic_tests = [ordered]@{ result = 'passed'; expected_names = 1..5 | ForEach-Object { "diagnostic-$_" }; expected_test_count = 5; executable = 'bundle/native-compose-tests.exe' }
+            native_read_discovery_tests = [ordered]@{ result = 'passed'; expected_names = @('discovery-1', 'discovery-2'); expected_test_count = 2; executable = 'bundle/native-compose-tests.exe' }
+            native_extension_payload_tests = [ordered]@{ result = 'passed'; scope = 'cloud_sync_extension_payload::tests::'; minimum_passed = 29; spot_names = @('extension-spot'); executable = 'bundle/native-compose-tests.exe' }
+            native_canonical_converter_tests = [ordered]@{ result = 'passed'; scope = 'cloud_sync_canonical_converter::tests::'; minimum_passed = 81; spot_names = @('converter-spot'); executable = 'bundle/native-compose-tests.exe' }
+            native_canonical_dto_tests = [ordered]@{ result = 'passed'; scope = 'cloud_sync_canonical_dto::tests::'; minimum_passed = 24; spot_names = @('dto-spot'); executable = 'bundle/native-compose-tests.exe' }
+            native_repair_digest_test = [ordered]@{ result = 'passed'; expected_names = @('repair-1', 'repair-2'); executable = 'bundle/native-compose-tests.exe' }
+            native_system_event_tests = [ordered]@{ result = 'passed'; expected_names = 1..5 | ForEach-Object { "system-$_" }; expected_test_count = 5; executable = 'bundle/native-compose-tests.exe' }
+            native_local_write_encoder_tests = [ordered]@{ result = 'passed'; native_library = 'bundle/rust_lib_bluebubbles.dll'; expected_test_count = 51; full_file_run = $true }
+            invalid_launch_diagnostic = [ordered]@{ proof_status = 'not-run-no-gui-assembly' }
+            account_profile_or_database_in_bundle = $false
+        }
+        qualification = [ordered]@{
+            cloud_artifact_signing = 'not-applied'; local_policy_load = 'not-tested'; gui_assembly_receipt = 'not-issued'
+            retained_native_base_reused = $false; live_cloudkit_tested = $false
+        }
+        source_inputs = @([ordered]@{ path = 'rust/src/lib.rs'; sha256 = 'a' * 64 })
+        files = $manifest
+    }
+    $provPath = Join-Path $dir 'provenance.json'
+    ($prov | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath $provPath -Encoding utf8
+    Register-RunFile $zipPath; Register-RunFile $provPath
+    return @{ Zip = $zipPath; Prov = $provPath; ZipHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant(); Src = $src; Pilot = $pilot }
+}
+
 function New-CollisionFixture {
     param([Parameter(Mandatory)][string] $Tag, [Parameter(Mandatory)] $Base)
     $d = Join-Path $Scratch $Tag
@@ -265,6 +341,19 @@ Assert-Fails -Name 'unbuilt-replay-variant-rejected' -Body {
 $wsProv = New-EditedProv -Tag 'writer-string' -SourceProv $f.Prov -Edit { param($o) $o.build.writer_defines_present = 'true' }
 Assert-Fails -Name 'writer-string-flag-rejected' -Body { Invoke-VerifyWindowsCloudBundle -ArchivePath $f.Zip -ProvenancePath $wsProv -ExpectedArchiveSha256 $f.ZipHash -ExpectedSourceSha $f.Src -ExpectedPilotSha $f.Pilot -ExpectedVariant 'local-write' }
 Assert-Fails -Name 'variant-allowlist' -Body { Invoke-VerifyWindowsCloudBundle -ArchivePath $f.Zip -ProvenancePath $f.Prov -ExpectedArchiveSha256 $f.ZipHash -ExpectedSourceSha $f.Src -ExpectedPilotSha $f.Pilot -ExpectedVariant 'bogus-variant' }
+
+$native = New-NativeFixture -Tag 'native-schema-two'
+try {
+    Invoke-VerifyWindowsCloudBundle -ArchivePath $native.Zip -ProvenancePath $native.Prov -ExpectedArchiveSha256 $native.ZipHash -ExpectedSourceSha $native.Src -ExpectedPilotSha $native.Pilot -ExpectedVariant 'read-only' -ExpectedArtifactMode 'native-test-host' | Out-Null
+    Write-Host 'PASS native-schema-two-positive'; $script:Pass++
+} catch { Write-Host "FAIL native-schema-two-positive ($_)"; $script:FailCount++ }
+Assert-Fails -Name 'native-mode-confusion-rejected' -Body {
+    Invoke-VerifyWindowsCloudBundle -ArchivePath $native.Zip -ProvenancePath $native.Prov -ExpectedArchiveSha256 $native.ZipHash -ExpectedSourceSha $native.Src -ExpectedPilotSha $native.Pilot -ExpectedVariant 'read-only' -ExpectedArtifactMode 'harness'
+}
+$nativeProof = New-EditedProv -Tag 'native-proof-tamper' -SourceProv $native.Prov -Edit { param($o) $o.verification.invalid_launch_diagnostic.proof_status = 'observed' }
+Assert-Fails -Name 'native-gui-proof-confusion-rejected' -Body {
+    Invoke-VerifyWindowsCloudBundle -ArchivePath $native.Zip -ProvenancePath $nativeProof -ExpectedArchiveSha256 $native.ZipHash -ExpectedSourceSha $native.Src -ExpectedPilotSha $native.Pilot -ExpectedVariant 'read-only' -ExpectedArtifactMode 'native-test-host'
+}
 
 Write-Host ("RESULT pass={0} fail={1}" -f $script:Pass, $script:FailCount)
 } finally {
