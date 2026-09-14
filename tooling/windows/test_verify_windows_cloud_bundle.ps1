@@ -6,6 +6,7 @@ param(
     [string] $RealSourceSha = '',
     [string] $RealPilotSha = '',
     [string] $RealVariant = '',
+    [ValidateSet('harness', 'native-test-host')][string] $RealArtifactMode = 'harness',
     [ValidateRange(1, 10000)][int] $RealNativeEncoderTestCount = 51
 )
 $ErrorActionPreference = 'Stop'
@@ -183,7 +184,7 @@ function New-CollisionFixture {
 # 1. Real-bundle positive is opt-in (parent runs it); otherwise explicit skip.
 if ($RealArchivePath -and $RealProvenancePath -and $RealArchiveSha256 -and $RealSourceSha -and $RealPilotSha -and $RealVariant) {
     try {
-        $s = Invoke-VerifyWindowsCloudBundle -ArchivePath $RealArchivePath -ProvenancePath $RealProvenancePath -ExpectedArchiveSha256 $RealArchiveSha256 -ExpectedSourceSha $RealSourceSha -ExpectedPilotSha $RealPilotSha -ExpectedVariant $RealVariant -ExpectedNativeEncoderTestCount $RealNativeEncoderTestCount
+        $s = Invoke-VerifyWindowsCloudBundle -ArchivePath $RealArchivePath -ProvenancePath $RealProvenancePath -ExpectedArchiveSha256 $RealArchiveSha256 -ExpectedSourceSha $RealSourceSha -ExpectedPilotSha $RealPilotSha -ExpectedVariant $RealVariant -ExpectedArtifactMode $RealArtifactMode -ExpectedNativeEncoderTestCount $RealNativeEncoderTestCount
         Write-Host ("PASS positive-real-bundle (files={0})" -f $s.Files); $script:Pass++
     } catch { Write-Host "FAIL positive-real-bundle ($_)" ; $script:FailCount++ }
 } else {
