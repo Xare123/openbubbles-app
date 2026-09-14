@@ -749,7 +749,10 @@ mod tests {
         let tombstone = reverse_tombstone(&source, &mappings, &hasher).expect("mapped tombstone");
         assert_eq!(tombstone.server_record_id_hash, server_hash);
         assert_eq!(tombstone.logical_entity_key_hash, logical_hash);
-        assert_eq!(tombstone.deleted_at_millis, Some(-2_000));
+        assert_eq!(
+            tombstone.deleted_at_millis,
+            Some(APPLE_EPOCH_OFFSET_MILLIS - 2_000)
+        );
         assert!(tombstone.server_confirmed);
         assert_eq!(format!("{tombstone:?}"), "CloudSemanticTombstone(redacted)");
 

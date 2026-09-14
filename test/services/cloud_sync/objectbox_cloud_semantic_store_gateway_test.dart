@@ -5015,6 +5015,7 @@ CloudInboxEntry _entry({
   String? encryptedServerRecordId,
   String? protectedSystemFieldsReference,
   String? encryptedPayloadReference,
+  DateTime? serverModifiedAt,
 }) {
   final change = CloudFetchedChange(
     changeId: changeId ?? _digestValue('C'),
@@ -5029,6 +5030,7 @@ CloudInboxEntry _entry({
         encryptedPayloadReference ?? _protectedReference('W'),
     payloadSha256: tombstone ? null : payloadSha256 ?? _sha256('payload'),
     isTombstone: tombstone,
+    serverModifiedAt: serverModifiedAt,
   );
   return CloudInboxEntry(
     scope: scope,
