@@ -660,6 +660,15 @@ fn encrypted_string_field(
     key: &PCSEncryptor,
     name: &str,
 ) -> Result<Option<String>, Chat1RouteFailureKind> {
+    encrypted_string_field_with_empty_policy(record, key, name, false)
+}
+
+fn encrypted_string_field_with_empty_policy(
+    record: &Record,
+    key: &PCSEncryptor,
+    name: &str,
+    empty_is_absent: bool,
+) -> Result<Option<String>, Chat1RouteFailureKind> {
     let Some(value) = unique_field_value(record, name)? else {
         return Ok(None);
     };
@@ -702,8 +711,21 @@ fn encrypted_string_field(
     let decoded = decoded
         .string_value
         .ok_or(Chat1RouteFailureKind::Validation)?;
+    if decoded.is_empty() && empty_is_absent {
+        return Ok(None);
+    }
     identifier(&decoded).ok_or(Chat1RouteFailureKind::Validation)?;
     Ok(Some(decoded))
+}
+
+fn encrypted_last_addressed_handle(
+    record: &Record,
+    key: &PCSEncryptor,
+) -> Result<Option<String>, Chat1RouteFailureKind> {
+    // Live Chat1 records prove Apple emits an encrypted empty string for `lah`.
+    // `lah` is corroboration only, never an ownership/admission signal, so an
+    // empty value is equivalent to absence. Keep every other scalar strict.
+    encrypted_string_field_with_empty_policy(record, key, "lah", true)
 }
 
 fn classify_lah_validation_detail(record: &Record, key: &PCSEncryptor) -> Chat1RouteFailureDetail {
@@ -826,7 +848,7 @@ fn encrypted_participant_uris(
         return Ok(Vec::new());
     };
     if value.r#type != Some(FieldValueType::EncryptedBytesListType as i32)
-        || value.is_encrypted != Some(false)
+        || value.is_encrypted == Some(true)
         || value.bytes_value.is_some()
         || value.signed_value.is_some()
         || value.double_value.is_some()
@@ -845,7 +867,7 @@ fn encrypted_participant_uris(
     let mut uris = Vec::with_capacity(value.list_values.len());
     for entry in &value.list_values {
         if entry.r#type != Some(FieldValueType::EncryptedBytesType as i32)
-            || entry.is_encrypted != Some(true)
+            || entry.is_encrypted == Some(false)
             || entry.signed_value.is_some()
             || entry.double_value.is_some()
             || entry.date_value.is_some()
@@ -914,10 +936,8 @@ fn classify_ptcpts_wire_shape_detail(record: &Record) -> Chat1RouteFailureDetail
     if value.r#type != Some(FieldValueType::EncryptedBytesListType as i32) {
         return Chat1RouteFailureDetail::PtcptsOuterType;
     }
-    match value.is_encrypted {
-        None => return Chat1RouteFailureDetail::PtcptsOuterFlagAbsent,
-        Some(true) => return Chat1RouteFailureDetail::PtcptsOuterFlagTrue,
-        Some(false) => {}
+    if value.is_encrypted == Some(true) {
+        return Chat1RouteFailureDetail::PtcptsOuterFlagTrue;
     }
     if value.bytes_value.is_some()
         || value.signed_value.is_some()
@@ -935,10 +955,8 @@ fn classify_ptcpts_wire_shape_detail(record: &Record) -> Chat1RouteFailureDetail
         if entry.r#type != Some(FieldValueType::EncryptedBytesType as i32) {
             return Chat1RouteFailureDetail::PtcptsEntryType;
         }
-        match entry.is_encrypted {
-            None => return Chat1RouteFailureDetail::PtcptsEntryFlagAbsent,
-            Some(false) => return Chat1RouteFailureDetail::PtcptsEntryFlagFalse,
-            Some(true) => {}
+        if entry.is_encrypted == Some(false) {
+            return Chat1RouteFailureDetail::PtcptsEntryFlagFalse;
         }
         if entry.signed_value.is_some()
             || entry.double_value.is_some()
@@ -1382,7 +1400,7 @@ fn inspect_chat1_route_fields_with_key(
     let guid = encrypted_string_field(record, record_key, "guid")
         .map_err(map_failure(Chat1RouteFailureField::Guid))?;
     let last_addressed_handle =
-        encrypted_string_field(record, record_key, "lah").map_err(|kind| {
+        encrypted_last_addressed_handle(record, record_key).map_err(|kind| {
             if kind == Chat1RouteFailureKind::Validation {
                 Chat1RouteFieldFailure::with_detail(
                     Chat1RouteFailureField::Lah,
@@ -3021,10 +3039,6 @@ mod tests {
                 Chat1RouteFailureDetail::PtcptsOuterType,
             ),
             (
-                outer(list(None, Vec::new())),
-                Chat1RouteFailureDetail::PtcptsOuterFlagAbsent,
-            ),
-            (
                 outer(list(Some(true), Vec::new())),
                 Chat1RouteFailureDetail::PtcptsOuterFlagTrue,
             ),
@@ -3045,13 +3059,6 @@ mod tests {
             (
                 outer(list(
                     Some(false),
-                    vec![entry(FieldValueType::EncryptedBytesType, None)],
-                )),
-                Chat1RouteFailureDetail::PtcptsEntryFlagAbsent,
-            ),
-            (
-                outer(list(
-                    Some(false),
                     vec![entry(FieldValueType::EncryptedBytesType, Some(false))],
                 )),
                 Chat1RouteFailureDetail::PtcptsEntryFlagFalse,
@@ -3067,6 +3074,19 @@ mod tests {
                 Chat1RouteFailureDetail::PtcptsEntryPayload,
             ),
         ];
+        assert_eq!(
+            classify_ptcpts_wire_shape_detail(&outer(list(None, Vec::new()))),
+            Chat1RouteFailureDetail::PtcptsOther,
+            "an omitted outer flag is now a valid live wire shape"
+        );
+        assert_eq!(
+            classify_ptcpts_wire_shape_detail(&outer(list(
+                Some(false),
+                vec![entry(FieldValueType::EncryptedBytesType, None)],
+            ))),
+            Chat1RouteFailureDetail::PtcptsOther,
+            "an omitted entry flag is now a valid production-preflight shape"
+        );
         for (record, expected) in &ptcpts_cases {
             assert_eq!(classify_ptcpts_wire_shape_detail(record), *expected);
             counts.observe_route_field_failure(Chat1RouteFieldFailure::with_detail(
@@ -3089,8 +3109,8 @@ mod tests {
         assert_eq!(lah_base_index, 46);
         assert_eq!(ptcpts_base_index, 65);
         assert_eq!(counts.route_field_failure_matrix[lah_base_index], 5);
-        assert_eq!(counts.route_field_failure_matrix[ptcpts_base_index], 10);
-        assert_eq!(counts.route_field_decode_failures, 15);
+        assert_eq!(counts.route_field_failure_matrix[ptcpts_base_index], 8);
+        assert_eq!(counts.route_field_decode_failures, 13);
         assert_eq!(
             counts.route_field_failure_matrix[..CHAT1_ROUTE_FAILURE_BASE_MATRIX_LEN]
                 .iter()
@@ -3115,7 +3135,7 @@ mod tests {
             0
         );
 
-        let wire_shape_record = outer(list(None, Vec::new()));
+        let wire_shape_record = outer(list(Some(true), Vec::new()));
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let (
             targets,
@@ -3144,7 +3164,7 @@ mod tests {
             Chat1RouteFieldFailure::with_detail(
                 Chat1RouteFailureField::Ptcpts,
                 Chat1RouteFailureKind::WireShape,
-                Chat1RouteFailureDetail::PtcptsOuterFlagAbsent,
+                Chat1RouteFailureDetail::PtcptsOuterFlagTrue,
             )
         );
     }
@@ -4124,10 +4144,9 @@ mod tests {
     }
 
     #[test]
-    fn ptcpts_outer_flag_freezes_false_only_ok_contract() {
-        // Current production code requires is_encrypted == Some(false) for the
-        // outer ptcpts list, so None and Some(true) are WireShape while
-        // Some(false) with an empty list is Ok(empty). Freeze that boundary.
+    fn ptcpts_outer_flag_matches_live_optional_encryption_contract() {
+        // Production preflight rejects only Some(true), and the terminal live
+        // Chat1 walk observed the omitted outer flag on 147 of 165 records.
         let key = dummy_pcs_key();
         let build = |flag: Option<bool>| Record {
             record_field: vec![record_field(
@@ -4141,20 +4160,90 @@ mod tests {
             )],
             ..Default::default()
         };
-        assert_eq!(
-            encrypted_participant_uris(&build(None), &key),
-            Err(Chat1RouteFailureKind::WireShape),
-            "ptcpts outer flag None stays WireShape"
-        );
+        for flag in [None, Some(false)] {
+            assert_eq!(
+                encrypted_participant_uris(&build(flag), &key),
+                Ok(Vec::new()),
+                "ptcpts outer flag {flag:?} is valid for an empty list"
+            );
+        }
         assert_eq!(
             encrypted_participant_uris(&build(Some(true)), &key),
             Err(Chat1RouteFailureKind::WireShape),
             "ptcpts outer flag Some(true) stays WireShape"
         );
+    }
+
+    #[test]
+    fn ptcpts_entry_flag_matches_production_preflight_contract() {
+        let encryptor = oracle_encryptor("ptcpts-entry-flag.invalid");
+        let encoded = vec![CloudParticipant {
+            uri: "member@example.invalid".to_owned(),
+        }]
+        .to_value_encrypted(&encryptor, "ptcpts")
+        .expect("participant fixture must encode");
+
+        for flag in [None, Some(true)] {
+            let mut value = encoded.clone();
+            value.is_encrypted = Some(false);
+            value.list_values[0].is_encrypted = flag;
+            let record = Record {
+                record_field: vec![record_field("ptcpts", value)],
+                ..Default::default()
+            };
+            assert_eq!(
+                encrypted_participant_uris(&record, &encryptor),
+                Ok(vec!["member@example.invalid".to_owned()]),
+                "ptcpts entry flag {flag:?} is accepted after full decryption and validation"
+            );
+        }
+
+        let mut rejected = encoded;
+        rejected.is_encrypted = Some(false);
+        rejected.list_values[0].is_encrypted = Some(false);
+        let record = Record {
+            record_field: vec![record_field("ptcpts", rejected)],
+            ..Default::default()
+        };
         assert_eq!(
-            encrypted_participant_uris(&build(Some(false)), &key),
-            Ok(Vec::new()),
-            "ptcpts outer flag Some(false) with empty list stays Ok(empty)"
+            encrypted_participant_uris(&record, &encryptor),
+            Err(Chat1RouteFailureKind::WireShape)
+        );
+    }
+
+    #[test]
+    fn encrypted_empty_lah_is_absent_without_weakening_other_strings() {
+        let encryptor = oracle_encryptor("empty-lah.invalid");
+        let empty_lah = String::new()
+            .to_value_encrypted(&encryptor, "lah")
+            .expect("empty lah fixture must encode");
+        let record =
+            replace_record_field(&oracle_record(&oracle_chat(), &encryptor), "lah", empty_lah);
+
+        assert_eq!(
+            encrypted_string_field(&record, &encryptor, "lah"),
+            Err(Chat1RouteFailureKind::Validation),
+            "generic encrypted strings remain strict"
+        );
+        assert_eq!(
+            encrypted_last_addressed_handle(&record, &encryptor),
+            Ok(None),
+            "empty lah is diagnostic absence"
+        );
+
+        let empty_cid = String::new()
+            .to_value_encrypted(&encryptor, "cid")
+            .expect("empty cid fixture must encode");
+        let empty_cid_record = replace_record_field(&record, "cid", empty_cid);
+        assert_eq!(
+            encrypted_string_field(&empty_cid_record, &encryptor, "cid"),
+            Err(Chat1RouteFailureKind::Validation),
+            "cid must not inherit the lah exception"
+        );
+
+        assert_eq!(
+            encrypted_last_addressed_handle(&oracle_record(&oracle_chat(), &encryptor), &encryptor,),
+            Ok(Some("sender@example.invalid".to_owned()))
         );
     }
 }

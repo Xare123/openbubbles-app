@@ -4255,3 +4255,183 @@ cannot authorize or perform adoption.
   lease adoption/cleanup and separate shadow state, followed by a live bounded
   read only after matching-runtime qualification. The existing raw/general API
   and semantic auxiliary decode remain off-limits as shortcuts.
+
+### September 13-14 matching qualification and first protected Chat1 page
+
+- Windows native-only 34789713162 and full GCE Canary 34789714678 completed
+  successfully for exact source c6091ddf92e13c902fc61bd911606def5ac373a7.
+  Windows passed 666 Dart tests plus the selected native/discovery contracts.
+  GCE passed every actual selected suite and regenerated all seven bindings
+  byte-for-byte. Cleanup and independent inventories found no remaining VM or
+  runner registration; no production credentials were used or exposed.
+- Parent verified the separately signed Windows DLL SHA256
+  `9B0B7899BBD31D1EE6C6A15482208055C8C9FED52CF858761CDACD622A0C0C79`, valid
+  signer thumbprint `8240557965890665F3B49E5FEC83D511CA4F2C9D`, and vendor
+  ObjectBox SHA256
+  `9C8583C4015AB9E4CE2ED3D2D581811FA059E03BB528CB8C8387ADCDFDA8D8A5`.
+- Added an explicit Windows test-host Chat1 caller under the existing account,
+  protected-store, native-session and client-identity fence. It adopts the
+  held writer-pause capability, fixes the scope to
+  `com.apple.messages.cloud/private/chat1ManateeZone/messages/schema2/shadow`,
+  journals into the shadow lane, rejects semantic application and returns only
+  bounded counts/safe categories. Focused Dart qualification passed 178 tests
+  with one intentional live-only skip; the edited live files analyze clean.
+- The first live protected Chat1 request fetched exactly one page: generation 1,
+  sequence 0 -> 50, token present, 50 fetched/journaled, zero rejected, and no
+  canonical or outbox mutation. This proves the auxiliary zone is present and
+  safely readable with the matched runtime. It does not prove missing-parent
+  correlation, semantic meaning, complete-zone coverage or production readiness.
+- A subsequent cache-only run acquired the same profile mutex and exact signed
+  runtime, performed no network read and passed. It found 50 distinct pending
+  saves, each with protected identity/raw references and a payload digest; no
+  duplicate record hashes, tombstones or system references. Every row is still
+  deliberately classified `unsupportedRecordType` / `malformedRecord`, so no
+  Chat1 data entered the ordinary decoder or canonical message store.
+- The next smallest diagnostic is native-only record-name correlation against
+  the eight sampled missing Message parent routes. It must verify each retained
+  record-name HMAC, keep clear identifiers and decrypted envelopes inside Rust,
+  return counts/booleans only and remain test-host/permit/account bound. Try this
+  before any bounded field-shape inspection; do not weaken auxiliary semantic
+  rejection or infer deletion from a zero match.
+
+### September 13-14 Chat1 correlation boundary
+
+- Exact source `97f63b5f5d8e4d89aa5b0a6deefb85060999f9e7` passed Windows
+  34797113685 and full GCE Canary 34797113773. Parent independently verified the
+  engineering bundle, ARM64 PE architecture and matching source provenance. The
+  separately signed Rust DLL SHA256 is
+  `5B22D174FC50A680DDCE0A64CECD3018F4E551C387B9237600426E84A94E5B12`;
+  Authenticode is valid under the retained development certificate. GCE selected
+  suites, Android packaging, JVM tests, GitHub-hosted signing and teardown all
+  passed. Independent inventory found no remaining VM or current-run runner.
+- A mutex-held live cache-only correlation used the retained profile and exact
+  signed runtime. It verified eight distinct missing-message route sources and
+  50 Chat1 records, performed no network request, exposed no content and left
+  durable state unchanged. It found zero exact record-name match pairs. That is
+  decisive against record-name equality for this sample, but is not evidence of
+  Chat1 irrelevance, remote absence or deletion.
+- Native source `e79d1663d4c5c577117b86d4ff298c4a78dc30e8` adds the next
+  bounded diagnostic: lookup-only Chat1 PCS acquisition followed by decryption
+  of only `cid`, `gid`, `ogid` and `guid` from `chatEncryptedv2` records. Clear
+  values and envelopes stay inside Rust; only aggregate counts cross the bridge.
+  It cannot page the zone, admit records, persist tokens, send, write or repair
+  identity. App-Rust 34799734371 and bindings-only 34799735662 were dispatched
+  for this exact source. Matching generated bindings and a newly qualified,
+  separately signed Windows DLL are required before the live call.
+
+### September 13-14 encrypted-route result and bounded page walk
+
+- Exact source `19022ea7bf6d4ea1fe32a60c1b5797eeccc15491` passed Windows
+  34801034688 and full GCE Canary 34801034710. Parent independently verified the
+  schema-2 native bundle and its exact three-file manifest, then copied and
+  separately signed only the ARM64 Rust DLL. Signed SHA256 is
+  `7D768E4686E62BF21E595C8BAD796A7F3EFE49454A9F42B1F6484A2FDBE886B6`;
+  Authenticode and ARM64 PE checks passed. GCE passed every selected suite,
+  Android package/native-library identity, JVM tests, GitHub-hosted signing and
+  cleanup.
+- A mutex-held live semantic correlation used the retained profile and exact
+  runtime. It made one lookup-only PCS request, decoded all 50 first-page
+  `chatEncryptedv2` records and the bounded `cid`, `gid`, `ogid` and `guid`
+  fields, returned no record or routing-field decode failures, and found zero
+  direct or semantic route pairs for all eight target routes. No content crossed
+  the Rust boundary and durable state remained unchanged. This closes only the
+  first-page hypothesis; the discovery fetch was capped and returned a
+  continuation token.
+- Exact source `2a22acde04031a6a97fb74acb30ae2b48798f1d6` added a bounded,
+  in-memory continuation walk. It starts fresh, holds the existing read permit
+  and writer pause, scans at most 20 pages / 1,000 changes, decrypts only the
+  four routing fields and stops at terminal state, complete eight-route coverage
+  or budget. It persists no diagnostic cursor/raw record and cannot project,
+  admit, send, write or repair identity. App-Rust 34803552482 passed bridge
+  compilation and every selected Rust suite; bindings-only 34803554103 produced
+  the expected three-file generated drift. Parent imported exactly those three
+  generated files and verified their artifact hashes.
+- Coherent source and bindings
+  `a951e1251c658e81e9ef6533e5b3e8874b28bae7` passed Windows 34804132572 and
+  full GCE Canary 34804133857 through pilot
+  `629df1f5d70b2c63c51212b362b05d569df2c3d4`. Parent verified the schema-2
+  archive, provenance and exact three-file ARM64 bundle, then copied and signed
+  only its Rust DLL. Signed DLL SHA256 is
+  `9220F65671F4DBF385BF065C47D35139904DA9FA6BC3A748697BF7A3801832AA`;
+  Authenticode and ARM64 PE checks passed. Full GCE suites, packaging, Android
+  JVM tests, GitHub-hosted signing and teardown passed; current-run VM and
+  runner registrations are absent.
+- The mutex-held live paged diagnostic reached terminal state after four pages /
+  167 changes. It observed 165 valid `chatEncryptedv2` records and two
+  tombstones, with zero other types, record-decode failures or routing-field
+  failures. Exact and raw semantic comparisons both produced zero matches for
+  all eight target routes. No content crossed the bridge and durable state was
+  unchanged. This closes raw equality across the entire current Chat1 zone; it
+  does not prove Chat1 irrelevant, deleted or remotely absent. Private log:
+  `build-evidence/chat1-paged-correlation-live-34804132572.log`, SHA256
+  `DAB31525F0FD23E8878D7BC3DE163251B0439F8E46D971AAFBB887214ADF3EBD`.
+- Source `6a1507e9ee3f1908eef650c4378d1300e0f463ad` now adds the smallest
+  deterministic next test: comparison-only variants for known iMessage route
+  wrappers, `tel:` / `mailto:` schemes and case. All variant values remain in
+  Rust and only aggregate counts cross FRB. It neither rewrites stored identity
+  nor grants merge, projection or write authority. App-Rust 34806640078 and
+  bindings-only 34806647641 are active on isolated T2D lanes; matching bindings
+  and a separately verified/signed native runtime remain required before one
+  bounded live repeat.
+
+### September 14 normalized closure and parent-field compile repair
+
+- Coherent source `a2f72eff9edce5cc377ca62c472e5f8bc3aa5c4d` passed full GCE
+  34807869942 and Windows ARM64 fast-loop 34807865131. The mutex-held live retry
+  reached terminal state over four pages / 167 changes, with 165 valid Chat1
+  records, two tombstones and no decode failures. Raw and normalized
+  `cid/gid/ogid/guid` equality families were all zero for the eight target routes.
+  Content exposure was false and durable state remained unchanged. This closes
+  only those tested equality families for the current zone.
+- Source `2da86926b73cd43c30106c396f8bfcd9be617d40` added the next bounded
+  parent signals: participant URIs, property legacy group identifiers,
+  last-addressed handle, message `msgProto4.groupId`, sender, service and style.
+  Windows workflow 34814691311 passed its platform checks, but bridge run
+  34814691313 found two stale generated files. GCE 34814740085 and 34814739930
+  then exposed three real Rust compile errors before any selected tests or APK.
+  Both GCE cleanup jobs passed; no live diagnostic was run.
+- Repair `a48a61565e5ffeff521458ce9771eea84f012864` fixes the optional integer
+  result and homogeneous iterator types, and imports only the exact regenerated
+  Dart/Rust bridge files that drifted. Mis-keyed dispatches 34815902074 and
+  34815902111 were canceled; their cleanup paths completed. Correct app-Rust
+  34815927602 and bindings-only 34815927569 now qualify the verified SHA on two
+  bounded T2D lanes. Push workflows 34815886008, 34815889414 and 34815886570 are
+  also active. No APK/Pixel or Apple-account operation is authorized by these
+  compile gates.
+
+### September 14 terminal parent-field run isolates two wire-shape mismatches
+
+- Coherent source and generated bindings
+  `cb5e81410f135f969fc15cffee957ad79ab63abd` passed Windows ARM64 fast-loop run
+  34843955881. Job 103977295987 completed successfully after 26m06s. It passed
+  666 focused Dart tests, 51 packaged native local-send encoder tests, source and
+  launcher contracts, ARM64 PE checks and the invalid-launch guard. No Apple
+  profile or database was bundled, and no writer or automatic-send capability
+  was compiled into the harness.
+- Parent verified archive SHA256
+  `DCEFCAE4A829914D5715C6324F21489DBE53EFE7605B3C57E1A2C2C2E7B8B88B`, source
+  `cb5e81410`, sidecar `629df1f5d70b2c63c51212b362b05d569df2c3d4`, ARM64 architecture, pinned
+  ObjectBox bytes and local signature before importing it into the clean
+  detached `chat1-live-a93671` checkout.
+- Mutex-held live correlation launch `61909185c0e0f5736b8e5c44569236bf`
+  completed in about 34 seconds. It was account-bound, performed the intended
+  read, exposed no content and left durable state unchanged. It reached terminal
+  Chat1 state in four pages / 167 changes: 165 Chat records and two tombstones,
+  with zero record-decode failures and no page-budget exhaustion. Cleanup
+  confirmed all four owned processes stopped.
+- Every one of the 165 records failed before selective comparison for exactly
+  one of two reasons: 18 `lah` values decrypted to an empty string, and 147
+  `ptcpts` outer lists omitted an explicit false encryption flag. First-page
+  counts were eight and 42 respectively. No authentication, PCS, paging, cursor,
+  record-envelope or transport failure occurred.
+- Source comparison found that production participant preflight already rejects
+  only an explicitly true outer flag and only an explicitly false inner flag.
+  It therefore accepts omitted flags. Canonical conversion also treats empty
+  `lah` as non-authoritative. The diagnostic alone was stricter. The smallest
+  repair is to accept empty `lah` as absent for that field only and mirror the
+  production participant-flag contract while retaining all type, payload, cap,
+  decrypt and participant validation checks. Matrix positions remain stable.
+- The completed Muse worker was reviewed and closed. Its aggregate-only
+  relationship-shape classifier is deferred, not integrated, because this live
+  result found an earlier and narrower blocker. No unique files or commits were
+  produced by that worker.

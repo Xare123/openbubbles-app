@@ -75,9 +75,14 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Latest read/shape proof | Run-once `1789332457042301` added one row; 3m15s drain remote report `1789332557626821` plus local sweep `1789332723873549` added 13 distinct rows and one Attachment record. Retained total 6338; remote streams empty; outbox 21 -> 21. All 14 new rows have placeholder-only base text and separate extension display text/icon metadata; full rendering is not proved. Date probe shows all eight failed attachments have only createdAt populated, outside Dart range and matching the Apple-ns scale. Source write/cutoff paths establish the unit, not magnitude alone. |
 | Date repair live proof / next boundary | All eight exact pre-repair record HMACs now decode with valid dates and one existing parent each. Normal 3m28s drain applied 86 Attachment records; retained total 6252, outbox 21 -> 21, remote streams empty. Copy audit proves all eight sampled sources transitioned retained -> applied with unchanged source identity/etag, bound canonical rows/parents, and successful production download-source resolution. Media bytes were not downloaded. Reports `1789335099312100` (remote) / `1789335274615314` (local sweep). Next: correlate missing Message chat references with cached protected Chat evidence; do not synthesize participants or treat missing as deleted. |
 | Parent coverage result | Complete current-generation cached Chat scan: 794 physical records, 700 decoded, 81 tombstones and 13 out-of-scope. Eight sampled missing routes match neither current native identities nor legacy normalization; four applied controls correctly find proven parents. Five samples are bare UUIDs; three are explicit direct phone/email routes. No alias/index regression is established by these samples, and no remote-absence/deletion inference is made. |
-| Pending raw discovery candidate | Separate opt-in protected Chat1 discovery API implemented, not compiled or live-qualified. It requires a read permit, fixes the zone to chat1ManateeZone and caps pages at 50; default semantic fetch still rejects all auxiliary streams, and auxiliary semantic decode remains forbidden. Rustpush dependency c4dd64b5afc086e87d508fed04090f8cd0abc555 is pushed to the fork. New FRB binding generation and native qualification are required before calling it. No general-container fallback. |
-| Binding/runtime transition | All seven generated bridge files from GCE 34788562396 are imported together. That run passed 633 Rust tests but correctly failed binding drift because the new API output was not committed. Rustpush-only 34788563781 passed all 308 tests. Both cleanup jobs and independent inventories passed. SSE/diagnostic normalization checks and 31 local source-contract/harness tests passed after import. Current generated Dart must NOT be used with the old 4e7121a18 DLL. A matching Windows build and reproducible full qualification are next. |
-| Active qualification / exact resume | Source c6091ddf92e13c902fc61bd911606def5ac373a7, pilot 3ac9ccadb26859e118ba471fa860739f12e34db8. Windows 34789713162 and full GCE Canary 34789714678 are active. GCE t2d-standard-60, primary lane, us-west1-b; expected VM/runner gce-34789714678-1. Existing signing path and 75-minute lifetime unchanged. Verify actual outcomes, binding reproducibility, signed artifacts and cleanup. Windows lane now pins native-fetch/source-contract inputs and runs the two discovery policy tests plus timestamp spot cases. |
+| Protected Chat1 discovery proof | Separate opt-in, permit-bound Chat1 discovery is compiled and live-qualified for source c6091ddf92e13c902fc61bd911606def5ac373a7. A Windows test-host read fetched exactly one capped page: 50 distinct saves, generation 1, sequence 0 -> 50, protected token present, 0 rejected and no canonical/outbox mutation. A subsequent mutex-held cache-only inspection made no network request and found 50 pending raw rows, all with protected identity/raw references and payload digests, no duplicates, tombstones or system references. All 50 remain deliberately quarantined as `unsupportedRecordType`/`malformedRecord`; semantic admission is still forbidden. |
+| Matching bindings/runtime | All seven generated bridge files are paired with the signed c6091ddf Windows DLL, SHA256 `9B0B7899BBD31D1EE6C6A15482208055C8C9FED52CF858761CDACD622A0C0C79`, signer thumbprint `8240557965890665F3B49E5FEC83D511CA4F2C9D`. Windows 34789713162 passed 666 Dart tests plus selected native/discovery contracts; full GCE Canary 34789714678 passed every actual selected suite and regenerated bindings byte-for-byte. Vendor ObjectBox SHA256 remains `9C8583C4015AB9E4CE2ED3D2D581811FA059E03BB528CB8C8387ADCDFDA8D8A5`. |
+| Qualification cleanup | Both 34789713162 and 34789714678 completed successfully. GCE cleanup and independent inventory found no remaining VM or runner registration; no production credentials were used or exposed. The current test-host caller and cache inventory are local uncommitted follow-up changes, covered by 178 focused tests with one intentional live skip and a successful live cache-only execution. |
+| Cached Chat1 correlation result | Exact source `97f63b5f5d8e4d89aa5b0a6deefb85060999f9e7` passed Windows 34797113685 and full GCE Canary 34797113773. The separately signed ARM64 DLL SHA256 is `5B22D174FC50A680DDCE0A64CECD3018F4E551C387B9237600426E84A94E5B12`. A mutex-held, cache-only live run verified eight distinct missing-message routes and 50 Chat1 records without network, content exposure or durable mutation. Exact record-name correlation produced zero pairs. This falsifies only the record-name-equals-route hypothesis; it does not establish that Chat1 is irrelevant or remotely absent. |
+| Encrypted Chat1 routing-field result | Exact source `19022ea7bf6d4ea1fe32a60c1b5797eeccc15491` passed Windows 34801034688 and full GCE Canary 34801034710. The exact signed ARM64 DLL SHA256 is `7D768E4686E62BF21E595C8BAD796A7F3EFE49454A9F42B1F6484A2FDBE886B6`. A mutex-held live diagnostic made one PCS lookup, decoded all 50 first-page `chatEncryptedv2` records and their `cid`, `gid`, `ogid` and `guid` fields without exposing content or mutating durable state. It found zero direct or semantic route pairs for the eight targets. This is conclusive only for the first capped page. |
+| Bounded paged Chat1 result | Exact source and bindings `a951e1251c658e81e9ef6533e5b3e8874b28bae7` passed Windows 34804132572 and full GCE Canary 34804133857 through pilot `629df1f5d70b2c63c51212b362b05d569df2c3d4`; signing and teardown passed. The verified copied ARM64 DLL was separately signed, SHA256 `9220F65671F4DBF385BF065C47D35139904DA9FA6BC3A748697BF7A3801832AA`. A mutex-held live walk reached terminal state after four pages / 167 changes: 165 valid `chatEncryptedv2` records, two tombstones, no other records or decode failures, and zero exact or raw semantic matches for all eight target routes. No content crossed the bridge and durable state remained unchanged. This closes the entire current Chat1-zone raw-equality hypothesis, not Chat1 relevance or remote existence. |
+| Normalized comparison result | Exact source `a2f72eff9edce5cc377ca62c472e5f8bc3aa5c4d` passed full GCE 34807869942 and Windows fast loop 34807865131. Its mutex-held live retry reached the same terminal four-page / 167-change Chat1 state and found zero normalized `cid`, `gid`, `ogid` or `guid` matches for the eight routes, with no record/field decode failures, content exposure or durable mutation. This closes only those equality families for the current zone. |
+| Parent-field live result / current blocker | Exact source and bindings `cb5e81410f135f969fc15cffee957ad79ab63abd` passed Windows fast loop 34843955881. Artifact SHA256 `DCEFCAE4A829914D5715C6324F21489DBE53EFE7605B3C57E1A2C2C2E7B8B88B`; the imported ARM64 runtime was signature-checked before launch. Live run `61909185c0e0f5736b8e5c44569236bf` reached terminal Chat1 state in four pages / 167 changes: 165 Chat records and two tombstones, with account binding, network read, no content exposure and unchanged durable state. All 165 records failed only two diagnostic assumptions: 18 encrypted empty `lah` values and 147 `ptcpts` lists whose outer false flag is omitted. The production preflight already accepts the omitted flag, and canonical conversion treats empty `lah` as non-authoritative. Repair those two diagnostic-only shape assumptions without loosening other route fields or admission. |
 
 Prior tables and obsolete next steps were preserved verbatim in the September 12
 consolidation entry of the [investigation log](cloud_sync_v2/history/CLOUD_SYNC_V2_INVESTIGATION_LOG_FROM_2026-09-07.md).
@@ -389,26 +394,30 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Generate coherent bindings and qualify the separate protected Chat1 discovery
-   path, then inspect that existing zone without changing normal cursors or
-   enabling semantic decode. The cached-parent comparison already passed its
-   controls and found no match for eight sampled missing routes. Do not repeat
-   that same scan or call the unbound raw API as a shortcut.
-   Implement the explicit test-host caller using the existing protected lease
-   and shadow-journal contracts; do not leave unadopted references or use the
-   current new bindings with an old DLL. No live Chat1 request has happened.
-2. Resolve measured internal preflight limits using the new fixed bound labels.
+1. Align the Chat1 parent-field diagnostic with two live Apple wire shapes on
+   exact source `cb5e81410`: encrypted empty `lah` means absent for that field
+   only, and omitted `ptcpts` encryption flags follow the already-qualified
+   production preflight contract. Preserve strict validation for every other
+   route field, all caps, aggregate-only output and the append-only matrix schema.
+   Compile/test, generate coherent bindings if required, then produce and import
+   one matching signed ARM64 Windows harness.
+2. Repeat the same mutex-held eight-route terminal comparison once. Selective
+   matches permit the smallest candidate-bound parent-admission proof using the
+   existing full observation. Zero selective matches requires aggregate-only
+   relationship-shape classification before any content-bearing inspection.
+   Do not repeat raw/normalized `cid/gid/ogid/guid` equality or paging alone.
+3. Resolve measured internal preflight limits using the new fixed bound labels.
    Keep limits tied to memory/work budgets and field semantics. Do not discard
    protected records or treat a diagnostic label as corrupted user data.
-3. Verify repeat/cold-restart reads, terminal stream state, duplicate suppression,
+4. Verify repeat/cold-restart reads, terminal stream state, duplicate suppression,
    legible text, and representative current media/documents. Separate excluded
    telephony and tombstones from actionable iMessage projection work.
-4. On the Pixel, qualify the installed candidate and ordinary composer, background/
+5. On the Pixel, qualify the installed candidate and ordinary composer, background/
    lock/reconnect, registration repair, and independent-client display. Preserve
    Alpha; do not infer completion from Windows tests.
-5. Finish approved group/media/mutation and mid-flight recovery cases. The direct
+6. Finish approved group/media/mutation and mid-flight recovery cases. The direct
    single-part Windows chain is proved, not the full cross-device matrix.
-6. Qualify fresh-stream newest-first ordering without reversing existing cursors.
+7. Qualify fresh-stream newest-first ordering without reversing existing cursors.
    FaceTime and Find My retain their separate live gates listed above.
 
 ## Current ownership and continuation rules
@@ -421,10 +430,13 @@ CloudKit readback or independent Apple-device display.
   safe-error tests. The Windows lane now includes these downstream checks.
 - Parent owns account operations and integration. Completed agents have been
   reviewed/closed. Exact active agent/job handles belong in the candidate table.
-- Current local profile/test processes are closed; no agents remain active.
-  The active Windows write request is completed unsend-34 (reconcile-only).
-  C: had about 64 GiB free at the last checkpoint. Preserve the paired-copy
-  audit/evidence and prior native rollback artifacts; no cleanup was performed.
+- Current local live processes are closed and cleanup for launch
+  `61909185c0e0f5736b8e5c44569236bf` confirmed all four owned processes stopped.
+  Windows run 34843955881 is complete. The only retained child agent was reviewed
+  and closed; its proposed relationship-shape fallback remains deferred because
+  the live result identified an earlier, narrower schema mismatch. No agent or
+  cloud job is active at this checkpoint. C: had about 54.4 GiB free. Preserve
+  the exact bundle, receipt, live aggregate and prior rollback evidence.
 - Preserve the qualified DLLs, source manifests and rollback evidence. Current
   generated bindings already include extensionMetadataJson; a metadata JSON
   schema change inside that string is not a new FRB ABI by itself.

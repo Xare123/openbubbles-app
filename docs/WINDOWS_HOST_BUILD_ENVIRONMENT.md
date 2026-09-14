@@ -31,12 +31,66 @@ are in this DLL. Attachment-date repair 4e7121a18 is now also live-qualified:
 eight exact failures became ready, and a normal replay applied 86 attachments.
 Copied-source tests verify the eight samples' canonical parent links and
 production download-source resolution. No file-byte or Pixel display claim.
-The Chat1 discovery bindings from GCE 34788562396 are now imported, so current
-generated Dart is ahead of this qualified DLL. Do not run a live harness with
-the old DLL until restoring its exact bindings or qualifying a new matched
-runtime. All seven generated files were imported and both normalization guards
-passed. GCE passed 633 Rust tests; its expected drift gate requires committing
-the generated output and rerunning qualification. Rustpush-only passed 308 tests.
+The Chat1 discovery bindings are now matched to source
+`c6091ddf92e13c902fc61bd911606def5ac373a7`. Windows 34789713162 produced the
+separately signed DLL at
+`C:\Codex\OpenBubblesReview\artifacts\windows-native-34789713162\signed`, SHA256
+`9B0B7899BBD31D1EE6C6A15482208055C8C9FED52CF858761CDACD622A0C0C79`.
+Full GCE Canary 34789714678 passed its actual suites and regenerated all seven
+bindings byte-for-byte. A mutex-held Windows test-host read then fetched one
+bounded 50-row Chat1 page without canonical/outbox mutation; a cache-only repeat
+confirmed 50 distinct protected raw saves without a network call. The rows remain
+unsupported/quarantined. Do not substitute the older 4e7121a18 DLL or enable
+auxiliary semantic decode.
+
+The next exact pair, source `97f63b5f5d8e4d89aa5b0a6deefb85060999f9e7`,
+passed Windows 34797113685 and full GCE Canary 34797113773. Its separately signed
+ARM64 DLL SHA256 is
+`5B22D174FC50A680DDCE0A64CECD3018F4E551C387B9237600426E84A94E5B12`.
+A mutex-held cache-only correlation verified all eight target route hashes and all
+50 Chat1 records, performed no network read, exposed no content and left durable
+state unchanged. It found zero exact record-name matches, closing only that
+hypothesis.
+
+Exact source `19022ea7bf6d4ea1fe32a60c1b5797eeccc15491` then passed
+Windows 34801034688 and full GCE Canary 34801034710. Its schema-2 native bundle
+was independently verified and the copied Rust DLL separately signed; signed
+SHA256 is `7D768E4686E62BF21E595C8BAD796A7F3EFE49454A9F42B1F6484A2FDBE886B6`.
+The live mutex-held diagnostic made one PCS lookup, decoded all 50 first-page
+`chatEncryptedv2` records and all four bounded routing fields, and found zero
+direct or semantic matches without content exposure or durable mutation. This
+does not cover records beyond that capped page.
+
+Exact source and generated bindings
+`a951e1251c658e81e9ef6533e5b3e8874b28bae7` passed Windows 34804132572 and
+full GCE Canary 34804133857 through pilot
+`629df1f5d70b2c63c51212b362b05d569df2c3d4`. The independently verified copied
+ARM64 DLL was separately signed, SHA256
+`9220F65671F4DBF385BF065C47D35139904DA9FA6BC3A748697BF7A3801832AA`.
+A mutex-held live walk reached the current Chat1 terminal state in four pages /
+167 changes: 165 valid records, two tombstones, no decode failures and zero raw
+route-field matches for all eight targets. Durable state and content exposure
+remained unchanged. Do not repeat raw paging or infer remote absence.
+
+Exact normalized source `a2f72eff9edce5cc377ca62c472e5f8bc3aa5c4d`
+passed full GCE 34807869942 and Windows fast-loop 34807865131. Its live retry
+reached terminal state over four pages / 167 changes and found zero normalized
+`cid`, `gid`, `ogid` or `guid` matches, without decode failures, content exposure
+or durable mutation. That exact signed/runtime lineage does not cover the next
+source.
+
+Exact source `cb5e81410f135f969fc15cffee957ad79ab63abd` passed Windows
+ARM64 fast loop 34843955881. Its read-only engineering archive SHA256 is
+`DCEFCAE4A829914D5715C6324F21489DBE53EFE7605B3C57E1A2C2C2E7B8B88B` and was
+imported into the clean detached `chat1-live-a93671` checkout only after source,
+manifest, architecture, ObjectBox and signature checks. Live launch
+`61909185c0e0f5736b8e5c44569236bf` reached terminal Chat1 state in four pages /
+167 changes, with 165 Chat records and two tombstones. It exposed no content,
+left durable state unchanged and cleaned up all four owned processes. All 165
+route-field failures reduced to 18 encrypted empty `lah` values and 147 omitted
+outer `ptcpts` false flags. The next runtime must contain the narrow diagnostic
+compatibility repair and be rebuilt, reimported and reverified before another
+live call. Do not reuse the `cb5e81410` DLL after that source change.
 The Find My launcher remains pinned
 to its separately qualified 3496034e3 runtime until deliberately updated.
 
