@@ -413,7 +413,19 @@ jobs:
             pwsh --version
             exit 0
           fi
-          sudo snap install powershell --classic
+          version="7.6.6"
+          archive="${RUNNER_TEMP}/powershell-${version}-linux-x64.tar.gz"
+          install_dir="${RUNNER_TEMP}/powershell-${version}"
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
+            "https://github.com/PowerShell/PowerShell/releases/download/v${version}/powershell-${version}-linux-x64.tar.gz" \
+            --output "$archive"
+          echo "ddbc4a2d113bbd46d283cfedcbcd117a70caefd7673f41f2b4e0000badf103bc  $archive" \
+            | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir"
+          chmod +x "$install_dir/pwsh"
+          echo "$install_dir" >> "$GITHUB_PATH"
+          export PATH="$install_dir:$PATH"
           pwsh --version
 
       - name: Install pinned Flutter Rust Bridge generator
