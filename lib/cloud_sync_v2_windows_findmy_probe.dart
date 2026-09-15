@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:crypto/crypto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart'
     show AnyhowException;
 import 'package:path/path.dart' as path;
@@ -236,6 +237,55 @@ final class FindMyProbeRead<T> {
   final bool freshRequestCompleted;
 }
 
+/// Report key carrying the redacted per-person binding for the selected entry.
+/// Null means binding unavailable (fail closed); never a raw identifier.
+const findMyProbeSelectedIdentityDigestKey = 'selected_identity_digest';
+
+/// Domain separation prefix for the selected-identity digest message.
+const findMyProbeSelectedIdentityDomain =
+    'windows-findmy-probe-v1/selected-person/v1';
+
+/// Canonical preimage for the selected-identity digest, or null when no
+/// stable identity material exists. Pure string logic (no bridge types) so it
+/// stays unit-testable. Handle canonical form is trimmed lowercase; server
+/// row IDs are matched exactly and hashed exactly.
+String? findMySelectedIdentityCanonical({
+  required List<String> acceptedHandles,
+  required List<String> fromHandles,
+  required String rowId,
+  String? requestedHandle,
+  String? requestedId,
+}) {
+  final requested = (requestedHandle ?? '').trim().toLowerCase();
+  if (requested.isNotEmpty) return 'handle:$requested';
+  if (requestedId != null && rowId == requestedId) return 'id:$rowId';
+  for (final handle in [...acceptedHandles, ...fromHandles]) {
+    final canonical = handle.trim().toLowerCase();
+    if (canonical.isNotEmpty) return 'handle:$canonical';
+  }
+  return null;
+}
+
+/// Privacy-safe binding for the uniquely matched selected person.
+///
+/// Computes HMAC-SHA256 inside this trusted probe boundary, keyed by the
+/// per-launch [launchId] already echoed in the report (fresh key per launch,
+/// no cross-launch linkability), over the domain-separated [canonical]
+/// preimage. Only the lowercase 64-hex digest is published; raw handles and
+/// server IDs never leave this boundary in this field. An operator holding
+/// the expected handle (or the requested person ID) recomputes the same
+/// digest offline and compares without the identifier ever appearing in the
+/// report. Pure function of its inputs for testability.
+String findMySelectedIdentityDigest({
+  required String launchId,
+  required String canonical,
+}) {
+  final mac = Hmac(sha256, utf8.encode(launchId));
+  return mac
+      .convert(utf8.encode('$findMyProbeSelectedIdentityDomain:$canonical'))
+      .toString();
+}
+
 final class FindMyProbeReads {
   const FindMyProbeReads({
     required this.refreshDevices,
@@ -302,6 +352,7 @@ Future<Map<String, Object?>> runWindowsFindMyProbe({
     'requested': request.hasSelection,
     'selected_match': false,
     'location_found': false,
+    findMyProbeSelectedIdentityDigestKey: null,
   };
 
   Future<List<T>?> readSection<T>(
@@ -394,6 +445,22 @@ Future<Map<String, Object?>> runWindowsFindMyProbe({
         }
         final id = matches.single.id;
         selected['selected_match'] = true;
+        // Bind the roster match to a redacted digest now; the reconcile below
+        // clears it unless the follow-up selection read observes the same row.
+        // Only the digest leaves this boundary, never the handle or row ID.
+        final canonical = findMySelectedIdentityCanonical(
+          acceptedHandles: matches.single.invitationAcceptedHandles,
+          fromHandles: matches.single.invitationFromHandles,
+          rowId: id,
+          requestedHandle: request.selectedHandle,
+          requestedId: request.selectedPersonId,
+        );
+        selected[findMyProbeSelectedIdentityDigestKey] = canonical == null
+            ? null
+            : findMySelectedIdentityDigest(
+                launchId: launchId,
+                canonical: canonical,
+              );
         await readSection(
           () => reads.selectFriend(id),
           (value) {
@@ -413,6 +480,22 @@ Future<Map<String, Object?>> runWindowsFindMyProbe({
             };
           },
         );
+        final bound = selected['state'] == 'observed' &&
+            selected['selected_match'] == true;
+        if (!bound) {
+          // The digest is only meaningful for the row the aggregates
+          // describe. Clear it on failed reads and on observed-but-unmatched
+          // follow-ups (empty or different-row results); otherwise a stale
+          // roster digest would masquerade as a binding for unproven data.
+          // Likewise, matched-without-coordinates is reserved for a proven
+          // follow-up read that returned the same row without coordinates.
+          selected = {
+            ...selected,
+            'selected_match': false,
+            'location_found': false,
+            findMyProbeSelectedIdentityDigestKey: null,
+          };
+        }
       }(),
     ]);
   }

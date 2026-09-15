@@ -354,6 +354,7 @@ void main() {
         'requested',
         'selected_match',
         'location_found',
+        'selected_identity_digest',
         'classes',
         'native_family_share_true_count',
         'native_location_present_count',
