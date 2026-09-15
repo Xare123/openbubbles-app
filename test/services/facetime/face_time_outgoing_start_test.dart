@@ -31,12 +31,18 @@ void main() {
     );
     final method = source.substring(start, end);
 
-    expect(method.indexOf('await api.createFacetime('), greaterThan(-1));
-    expect(method.indexOf('showOutgoingFaceTimeOverlay('), greaterThan(-1));
-    expect(
-      method.indexOf('await api.createFacetime('),
-      lessThan(method.indexOf('showOutgoingFaceTimeOverlay(')),
+    final createIndex = method.indexOf('await api.createFacetime(');
+    expect(createIndex, greaterThan(-1));
+    // A duplicate retry may resurface the pending ticket's overlay earlier
+    // in file order, but the first admission of a NEW ringing overlay still
+    // requires a succeeded session creation.
+    final firstAdmission = method.indexOf(
+      'showOutgoingFaceTimeOverlay(',
+      createIndex,
     );
+    expect(firstAdmission, greaterThan(createIndex));
+    // The duplicate-retry resurface path is pinned by its own test below.
+    expect(method.indexOf('showOutgoingFaceTimeOverlay('), greaterThan(-1));
     expect(method, contains('await _outgoingCalls.complete(call, () async {'));
     expect(method, contains('faceTimeOutgoingStartFailureMessage(error)'));
   });
@@ -178,6 +184,38 @@ void main() {
       expect(source, contains('"launch-facetime", outgoingCall.metadata'));
       expect(source, isNot(contains('currentOutgoingCall = null;')));
       expect(source, isNot(contains('outgoingCallMeta = {}')));
+    },
+  );
+
+  test(
+    'duplicate retry while ringing resurfaces UI instead of dropping silently',
+    () {
+      final source = File(
+        'lib/services/rustpush/rustpush_service.dart',
+      ).readAsStringSync();
+      final start = source.indexOf('Future<void> placeOutgoingCall(');
+      final finish = source.indexOf(
+        '// returns handle to show poster of',
+        start,
+      );
+      final setup = source.substring(start, finish);
+      final nullStart = setup.indexOf('if (call == null) {');
+      final nullFinish = setup.indexOf('late final String link;', nullStart);
+      expect(nullStart, greaterThanOrEqualTo(0));
+      expect(nullFinish, greaterThan(nullStart));
+      final nullBlock = setup.substring(nullStart, nullFinish);
+      // Retry resurfaces the pending ringing overlay when its launch
+      // metadata is ready, else a notice. Either way the user sees state.
+      expect(nullBlock, contains('showOutgoingFaceTimeOverlay('));
+      expect(nullBlock, contains('showSnackbar('));
+      expect(nullBlock, contains('A FaceTime call is already ringing'));
+      // The retry must never start a second invitation or timer.
+      expect(nullBlock, isNot(contains('api.createFacetime(')));
+      expect(nullBlock, isNot(contains('armTimeout(')));
+      expect(nullBlock, isNot(contains('_outgoingCalls.begin(')));
+      // Resurface needs the pending ticket to carry its launch metadata.
+      expect(setup, contains("'caller': caller"));
+      expect(setup, contains("'targets': targets"));
     },
   );
 }

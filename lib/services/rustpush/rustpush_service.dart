@@ -5035,8 +5035,44 @@ class RustPushService extends GetxService {
     final desc = targets
         .map((p) => RustPushBBUtils.rustHandleToBB(p).displayName)
         .join(" & ");
+    final pendingOutgoing = _outgoingCalls.current;
     final call = _outgoingCalls.begin(outgoingguid, outgoingguid.obs);
-    if (call == null) return; // An outgoing setup/ring already owns the invitation.
+    if (call == null) {
+      // An outgoing setup/ring already owns the invitation. Never start a
+      // second invitation, but never drop the retry silently either:
+      // resurface the pending ringing UI (a remote hangup hides the overlay
+      // while this ticket still owns the 30-second window, which otherwise
+      // reads as "cannot call at all"). A not-yet-prepared ticket only gets
+      // a notice naming the in-flight call.
+      if (pendingOutgoing != null &&
+          _outgoingCalls.isPending(pendingOutgoing)) {
+        final pendingMeta = pendingOutgoing.metadata;
+        final pendingDesc = pendingMeta['desc'];
+        final pendingLink = pendingMeta['link'];
+        final pendingCaller = pendingMeta['caller'];
+        final rawTargets = pendingMeta['targets'];
+        final pendingTargets = rawTargets is List
+            ? rawTargets.whereType<String>().toList()
+            : <String>[];
+        if (pendingDesc is String &&
+            pendingLink is String &&
+            pendingCaller is String &&
+            pendingTargets.isNotEmpty) {
+          showOutgoingFaceTimeOverlay(
+            pendingOutgoing.state,
+            pendingDesc,
+            pendingCaller,
+            pendingTargets,
+            null,
+            pendingLink,
+            null,
+          );
+        } else {
+          showSnackbar('FaceTime', 'A FaceTime call is already ringing...');
+        }
+      }
+      return;
+    }
     late final String link;
 
     try {
@@ -5074,6 +5110,8 @@ class RustPushService extends GetxService {
         'callUuid': outgoingguid,
         'desc': desc,
         'name': displayName,
+        'caller': caller,
+        'targets': targets,
         'answer': true
       });
 
