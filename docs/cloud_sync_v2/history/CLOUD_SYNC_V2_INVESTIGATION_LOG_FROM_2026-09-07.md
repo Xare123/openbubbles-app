@@ -4724,3 +4724,51 @@ cannot authorize or perform adoption.
   not establish independent recipient UI behavior, ordinary Pixel composer
   behavior, Android lock/reconnect/process-death recovery, groups, media writes
   or the separate FaceTime and Find My gates.
+
+### September 15 exact signed Pixel candidate installation
+
+- GCE runner-pilot run 34929558345 built and signed Canary from exact source
+  `10d58a5bd89fab82fe64fd6adee802634db1a162`. Artifact 10382240064 passed the
+  full selected suites, automatic-writer qualification, Rust, rustpush,
+  protector and Android JVM tests, package/native-library verification,
+  signing and runner cleanup.
+- The downloaded `app-canary-debug.apk` is 452,930,083 bytes with SHA256
+  `B2B8EDDAFA1FAEC044E9B492BE7CBE888E568F928A77C678D6758C3C11A162DB`.
+  An in-place `adb install --no-streaming -r` succeeded. The installed base APK
+  has the same hash, package `com.bluebubbles.messaging.cloudkitcanary`, version
+  1.15.0 (20002227), signing identity `292b62eb`, and preserved first-install
+  timestamp. Alpha was not modified.
+- Canary reopened its existing ObjectBox store and displayed retained chats.
+  Startup reported receipt replay deferred followed by automatic writer ready.
+  It also posted an `iMessage registration needs attention` notification saying
+  sending is unavailable. Until source and timestamped logs distinguish a stale
+  persisted recovery notification from a current registration failure, the
+  ordinary Pixel send is deliberately not attempted.
+- Preserve the immediately preceding verified Canary APK as rollback until this
+  candidate passes registration, ordinary send/readback and restart-dedupe.
+  Other superseded APKs are disposable only after exact hash/provenance review.
+
+### September 15 semantic evidence vocabulary repair and replacement candidate
+
+- The installed 10d Canary reached semantic pull but aborted safely before pass
+  1 with `cloud_sync_protocol_evidence_event_type_invalid`. The emitted event
+  was not malformed CloudKit data: `fetchStarted` and `inboxApplyStarted` are
+  valid `CloudSyncEventType` values used by the production pipeline, but both
+  were absent from the fixed evidence-label vocabulary.
+- Commit `0feaa063a1489621d6828e711305d602f12a31cc` adds only those two missing
+  labels and a regression test that constructs evidence for every enum value.
+  A clean detached checkout passed all 11 focused evidence tests.
+- Full GCE run 34938077867 passed all five selected suite outcomes, automatic-
+  writer checks, Android JVM tests, native/package verification, GitHub-hosted
+  signing and cleanup. The ephemeral instance `gce-34938077867-1` and runner
+  registration were absent after cleanup.
+- Signed artifact 10384629324 downloaded as a 452,930,083-byte Canary APK with
+  SHA256 `8A99FBEB7A2B28D25E352A7DB18DFC11A35EA1DBF9ADBD724945127D22F222A6`.
+  Local verification confirms APK signature schemes v2/v3, signer certificate
+  SHA256 `0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79`,
+  package `com.bluebubbles.messaging.cloudkitcanary`, version 1.15.0
+  (20002227), and all three required ARM64 native libraries.
+- No ADB target was available after qualification, so the APK remains
+  uninstalled. The next falsification is an in-place Canary upgrade followed by
+  a semantic pull proving the invalid-event code is absent and pass 1 advances.
+  Build success is not Pixel-live proof, and Alpha remains out of scope.
