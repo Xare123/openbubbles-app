@@ -7,6 +7,39 @@ tags: [cloudkit, catch-up, dependency-replay, presentation, audit]
 timestamp: 2026-09-12
 ---
 
+# September 15 implementation follow-up
+
+The original rejection of an unbound direction flip remains correct. The
+subsequent Windows wire probe established a narrower safe path: Apple returned
+a bounded newest-first page only for a fresh no-token stream, while changing
+direction on an established cursor did not bootstrap recent history.
+
+Exact source `78d0f8cf2e5e0d49560766c79644f4ecec869a4b` implements that narrow
+path. It persists a closed `forward` or `newestFirst` value on each checkpoint
+before request one. Fresh exact semantic V2 Chats, Messages and Attachments
+checkpoints bind newest-first. Any existing read evidence binds an unclassified
+checkpoint forward, and Chat1 remains forward. The engine carries direction
+through every page and CAS-checks it again when journaling. Reset preserves it;
+malformed stored values fail closed. Native newest-first requires the writer
+pause, and the legacy raw transport rejects it.
+
+Focused Dart qualification passed 274 tests, including eight direction tests,
+140 engine tests and 105 native-transport tests. Exact-source GCE app-Rust run
+[34982392496](https://github.com/Xare123/openbubbles-app/actions/runs/34982392496)
+regenerated and checked the bridge, passed 682/682 library tests and the
+aggregate gate, and removed its ephemeral runner. Full exact-source run
+[34983806715](https://github.com/Xare123/openbubbles-app/actions/runs/34983806715)
+then passed every selected Dart/Rust/protector suite, automatic-upload checks,
+APK/native identity verification, Android JVM tests, GitHub-hosted signing and
+cleanup. Signed artifact 10404276881 is independently verified locally as
+package `com.bluebubbles.messaging.cloudkitcanary`, version 1.15.0 (20002227),
+SHA256 `6707AE4BD99F418406DDCCCE25AD339FDF54078D64BE4FF93804D471F3C66DB4`,
+with valid v2/v3 signatures and the expected Canary certificate. Pixel
+multi-page, restart, cancellation and incremental-follow-up proof is still
+required. This follow-up supersedes only the historical claim that the durable
+product implementation did not exist; it does not rewrite the original
+evidence or weaken its safety decision.
+
 # Priority 1 follow-up: local chat-list reconciliation
 
 The original audit below is retained as baseline evidence. Its three chat-list

@@ -54,19 +54,19 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 | Item | Current evidence |
 | --- | --- |
-| Latest CI-qualified APK | Exact source `81b17b36b9361936fc92c7e6d64bb91eb2ee3d90`; [GCE 34961566410](https://github.com/Xare123/openbubbles-app/actions/runs/34961566410) passed the full Dart and Rust suites, automatic-writer checks, rustpush production tests, the Cloud Sync protector harness, Android JVM tests, package/native verification, GitHub-hosted signing and cleanup. Signed artifact 10394532278 downloaded as 452,942,371-byte `app-canary-debug.apk`, SHA256 `57046E3AF204A7A52E2537EC554A00C4C97485FDBD9976BA62F46A61B55EFA3C`. Local `apksigner` verifies v2/v3 with certificate SHA256 `0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79`; `aapt2` verifies package `com.bluebubbles.messaging.cloudkitcanary`, version 1.15.0 (20002227), and all three required ARM64 native libraries are present. Independent inventories show no GCE instance or self-hosted runner after cleanup. |
-| Last observed Pixel | Exact source `10d58a5bd89fab82fe64fd6adee802634db1a162` remains the last live-installed candidate with retained chats observed. It exposed the semantic evidence-vocabulary failure below. The newly qualified `81b17b36b` APK has not yet been installed because no ADB device is currently connected. Alpha remains untouched. |
-| Semantic-pull regression and repair | The 10d Pixel run safely aborted before pass 1 with `cloud_sync_protocol_evidence_event_type_invalid`: production emitted valid `fetchStarted` and `inboxApplyStarted` events that the fixed evidence vocabulary omitted. Exact source `0feaa063a` repaired the vocabulary and is an ancestor of the current `81b17b36b` candidate. The current full qualification passed the regression coverage, but Pixel live proof remains pending. |
-| Recent-first | Local recent-chat visibility implemented/tested. A live read-only Windows wire probe now proves Apple returns a bounded newest-first page for a fresh no-token stream. Account-wide durable direction is NOT implemented. Persist direction before the first request and bind continuation/restart; keep existing cursors unchanged. |
+| Latest CI-qualified APK | Exact source `78d0f8cf2e5e0d49560766c79644f4ecec869a4b`; [GCE 34983806715](https://github.com/Xare123/openbubbles-app/actions/runs/34983806715) passed the full Dart and Rust suites, automatic-writer checks, rustpush production tests, the Cloud Sync protector harness, Android JVM tests, package/native verification, GitHub-hosted signing and cleanup. Signed artifact 10404276881 downloaded as 452,938,275-byte `app-canary-debug.apk`, SHA256 `6707AE4BD99F418406DDCCCE25AD339FDF54078D64BE4FF93804D471F3C66DB4`. Independent local `apksig` verification reports v2/v3 valid, zero errors and certificate SHA256 `0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79`; `aapt2` verifies package `com.bluebubbles.messaging.cloudkitcanary`, version 1.15.0 (20002227), and all four required ARM64 native libraries are present. Independent inventories show no GCE instance or matching self-hosted runner after cleanup. |
+| Last observed Pixel | Exact source `10d58a5bd89fab82fe64fd6adee802634db1a162` remains the last live-installed candidate with retained chats observed. It exposed the semantic evidence-vocabulary failure below. The newly qualified `78d0f8cf2` APK has not yet been installed because no ADB device is currently connected. Alpha remains untouched. |
+| Semantic-pull regression and repair | The 10d Pixel run safely aborted before pass 1 with `cloud_sync_protocol_evidence_event_type_invalid`: production emitted valid `fetchStarted` and `inboxApplyStarted` events that the fixed evidence vocabulary omitted. Exact source `0feaa063a` repaired the vocabulary and is an ancestor of the current `78d0f8cf2` candidate. The current full qualification passed the regression coverage, but Pixel live proof remains pending. |
+| Recent-first | `TEST-PROVEN` on exact source `78d0f8cf2`: a live read-only Windows wire probe proves Apple returns a bounded newest-first page for a fresh no-token stream, and the product now durably binds direction before request one. Fresh exact Chats, Messages and Attachments streams use newest-first; Chat1 and every existing cursor remain forward. Direction is carried through each continuation, restart, reset and journal CAS. GCE app-Rust 34982392496 passed 682/682 tests; full GCE 34983806715 passed every selected suite, packaging, signing and cleanup. Pixel lifecycle proof remains open. |
 | Windows writes | `LIVE-PROVEN` for a fresh direct single-part chain on exact source `07e58fd0b`. Parent-35 sent with exact readback, edit-36 and unsend-37 each submitted and confirmed one CloudKit update, and a new-process unsend replay submitted zero IDS/CloudKit work. The post-run store has exactly three additional confirmed outbox operations, both new mutations are terminal, and the retained database was unchanged by the metadata-only audit. Evidence: `build-evidence/windows-chain-20260915-07e58fd0`. Pixel, groups, independent recipient UI and persistent registration health remain open. |
 | Outbound lease integrity | A content-free inspector on an exact temporary copy of the retained Windows profile found 24/24 outbox rows confirmed, three still-required protected mutation leases present, all three source envelopes bound to their leases, zero missing required outbound leases, zero duplicate/unmatched mutation claims, and correct lease release after the one terminal protected send and one terminal attachment upload. Writer authority remained stable at epoch 18. The original 48,805-file profile snapshot was unchanged. This is restart-state integrity evidence, not a new Apple submission. |
 | Release state | Full production is not established. Remaining gates below apply. |
 | Logging repair | Logger lifetime and explicit Find My target are qualified in native 3496034e3. Awaiting `doFirstTimeInit` in the Windows hosts fixes startup ordering. Native Find My init/refresh diagnostics now show absent `locations`, not a coordinate-join failure. |
 | Find My live boundary | Exact retained Windows launch `1bed3346c9374c3b81f402075da59746` used the signed `7d38f1dd8` runtime and completed fresh People and Devices service reads. People returned one uniquely selected row but no native location; the service marked that row opted out of sharing and supplied no coordinate or locate-in-progress signal. Devices returned zero rows. Items were deliberately not invoked because their initialization side effects are not yet reviewed. The UI is not discarding coordinates in this capture; the native response contains none. Commit `d13d88797` repairs test provenance and makes the offline qualifier accept only the exact verified successful launcher envelope; 54 qualifier, 11 preflight, launcher and Flutter contract tests pass. |
 | Current native qualification | Windows 34779665447 passed fccca0bb5 / pilot 5fd8d03fe: 151 selected Rust tests, 658 Dart tests, 51 packaged-DLL codec cases. Parent verified 53 source inputs/12 logs/three ARM64 binaries; signed DLL `501f40e89d6268d52cd7e678a21b669d8952ca18c0421fba31ed1d0b2bb90e3f`. Local 51 codec and 24 harness tests passed; later date-shape harness has 25 passing tests. App Control remains enabled; vendor ObjectBox unchanged. |
-| Next integration | Connect the Pixel, verify the target package, and upgrade Canary in place with the exact `81b17b36b` APK. Do not uninstall, clear app data, reset registration, or touch Alpha. Run one semantic pull and prove the invalid-event safe code is absent and pass 1 advances. If registration is healthy, then run one authorized ordinary-composer send, exact CloudKit readback, cold restart/no-duplicate replay, background/lock/reconnect, and representative media/document checks on this same installed hash. |
-| Latest full Canary qualification | GCE 34961566410 completed successfully: every selected suite passed, the producer and signed APK artifacts were uploaded, Android JVM tests passed, GitHub-hosted signing passed, and cleanup deleted the ephemeral runner. Independent post-run inventories found zero GCE instances and zero self-hosted runner registrations. This establishes build/test/signing integrity, not Pixel lifecycle or end-user behavior. |
-| Current artifact boundary | The signed APK is locally hash-, signature-, package-, version- and ARM64-inventory-verified. Installation and live semantic-pull evidence are intentionally pending a connected Pixel. Preserve the prior installed Canary and its retained database; the new APK is an in-place candidate, not authorization for a clean install. |
+| Next integration | Connect the Pixel, verify the target package, and upgrade Canary in place with the exact `78d0f8cf2` APK. Do not uninstall, clear app data, reset registration, or touch Alpha. Run one semantic pull and prove a fresh eligible bootstrap persists newest-first before request one, exposes recent chats first and continues across pages without changing established cursors. Then qualify restart/cancellation/incremental follow-up. If registration is healthy, run one authorized ordinary-composer send, exact CloudKit readback, cold restart/no-duplicate replay, background/lock/reconnect, and representative media/document checks on this same installed hash. |
+| Latest full Canary qualification | GCE 34983806715 completed successfully in 33m02s on exact source `78d0f8cf2`: every selected suite passed, the producer and signed APK artifacts were uploaded, Android JVM tests passed, GitHub-hosted signing passed, and cleanup deleted the ephemeral runner. Independent post-run inventories found zero GCE instances and no matching self-hosted runner registration. This establishes build/test/signing integrity, not Pixel lifecycle or end-user behavior. |
+| Current artifact boundary | The exact signed APK is retained at `build-evidence/gce-full-78d0f-34983806715/app-canary-debug.apk` and is locally hash-, signature-, package-, version- and ARM64-inventory-verified. Installation and live semantic-pull evidence are intentionally pending a connected Pixel. Preserve the prior installed Canary and its retained database; the new APK is an in-place candidate, not authorization for a clean install. |
 | Current qualified runtime | Source `4e7121a18e8c011ae5472831111af86a61280178`, pilot 5fd8d03fe: Windows 34782347926 passed 153 selected native / 658 Dart / 51 DLL-codec tests. Parent verified 53 inputs/12 logs/three ARM64 PEs, separately signed DLL `80f97298fad435f53b30cd4dc2b0479e3f350fb47136e644673b3a052d08b3c8`, and passed 51 local codec + 25 harness tests. GCE 34782416330 passed all 631 Rust tests and completed cleanup. No active build or new APK. |
 | Fast Windows loop | Current Dart plus the verified native DLL opens the retained projection in 8.65 seconds. The stale Windows relay ticket was updated to the Pixel's working ticket after proving the same physical relay and preserving Windows installation IDs/keys. Fresh exact-source session `9fd22af4898c86559573004e9c07d21d` on September 15 ran two independent 7d38 processes to a stable terminal result: fetched/applied 0/0, retained 6,252, outbox 24 -> 24, all zones empty-terminal, zero stderr, remote writes disabled and owned-process cleanup confirmed. The initial attempt correctly rejected an older 07e native bundle as byte-incompatible before profile access. |
 | Current merge repair | Real native-source/copy qualification passed the bounded production recovery and normal applier, preserving local history. Live Windows report `obcs2-semantic-1789278811033254.json` applied two pending messages; fresh-process repeat `1789278895014946` fetched/applied zero, with no conflict. Both observed empty terminal reads in all zones and kept outbox 15 -> 15 with remote writes disabled. Full native-crate qualification remains. |
@@ -392,7 +392,8 @@ CloudKit readback or independent Apple-device display.
 - [x] That run completed cleanup; later GCE inventory was empty.
 - [x] Fresh Canary visibly projects readable chats/messages.
 - [x] Source-specific Windows text/reaction/image checks and direct single-part send/edit/edit/unsend, exact echoed history/retraction, completed restart.
-- [ ] Full integrated pacing-source qualification and exact signed installation.
+- [x] Exact source `78d0f8cf2` passed full integrated GCE qualification, package/native verification, Android JVM tests and GitHub-hosted signing (34983806715).
+- [ ] Install that exact signed hash on Pixel in place and qualify live behavior without touching Alpha.
 - [ ] Complete remote history and classify/repair actionable retained saves.
 - [ ] Repeat with stable cursors, no duplicates and readable media/documents.
 - [ ] Pause/resume, background/lock, reconnect, cold restart and token/account recovery.
@@ -401,7 +402,9 @@ CloudKit readback or independent Apple-device display.
 - [ ] Restart reconciliation with zero duplicate IDS/CloudKit operations.
 - [ ] Approved group text/attachments/reactions and supported mutations.
 - [ ] Pixel/group mutation chains, mid-flight conflict/unknown-outcome recovery and deletion semantics.
-- [ ] Newest-history bootstrap with durably bound direction and existing cursors preserved. Server-side fresh-stream ordering is live-proven; product persistence and lifecycle qualification remain.
+- [x] Newest-history bootstrap source implementation with direction durably bound before request one, existing cursors preserved and exact app-Rust qualification (GCE 34982392496, 682/682).
+- [x] Full exact-source GCE packaging/signing qualification for newest-history bootstrap (34983806715).
+- [ ] Pixel multi-page, restart, cancellation and incremental-follow-up qualification for newest-history bootstrap.
 - [ ] Accurate status for fetched, projected, retained, media and outgoing reconciliation.
 - [ ] Measured Regular/Turbo behavior, then real FaceTime call qualification.
 - [ ] Find My People location retrieval and ongoing/stale-location behavior with the user's confirmed sharing intact.
@@ -422,12 +425,13 @@ CloudKit readback or independent Apple-device display.
    under current epoch 18; do not weaken owner checks or relabel their outcome.
 5. Keep the now-live-proven `07e58fd0b` Windows chain unchanged: parent, edit
    and unsend completed, and the new-process unsend replay submitted zero work.
-6. Qualify the exact signed Canary on Pixel: upgrade, ordinary composer,
+6. Qualify exact signed source `78d0f8cf2` on Pixel: upgrade, ordinary composer,
    background/lock/reconnect, process death, registration repair, independent
    client display, legible text and representative media/documents. Preserve Alpha.
-7. Implement and qualify the now-live-proven newest-first fresh bootstrap with
-   direction persisted before request one and bound to every continuation and
-   restart. Do not reinterpret an existing cursor. Then finish approved
+7. Keep the implemented newest-first fresh bootstrap unchanged: direction is
+   persisted before request one and bound to every continuation, restart,
+   reset and journal commit; existing cursors are never reinterpreted. Complete
+   Pixel lifecycle qualification, then finish approved
    group/media/mutation/conflict cases.
 8. Retain the eight unresolvable missing-parent sources unless stronger unique
    evidence appears; normal stream completion must not depend on guessing them.
@@ -465,11 +469,36 @@ CloudKit readback or independent Apple-device display.
   identifier. A newer report from a different executable can no longer qualify
   a stale `-SkipBuild -MessageFeedProbe` bundle.
 - Evidence is retained under
-  `build-evidence/windows-feed-probe-20260915-07e58fd0/`. The remaining product
-  work is to persist fresh-stream direction atomically before request one,
-  preserve it through continuation/restart, and qualify multi-page catch-up,
-  incremental follow-up, cancellation and crash recovery without touching
-  existing cursor direction.
+  `build-evidence/windows-feed-probe-20260915-07e58fd0/`. Exact source
+  `78d0f8cf2` now persists fresh-stream direction atomically before request one
+  and preserves it through continuation, restart, reset and journal commit.
+  Remaining work is live Pixel qualification of multi-page catch-up,
+  incremental follow-up, cancellation and crash recovery while proving existing
+  cursor direction remains untouched.
+
+### September 15 durable newest-first implementation
+
+- `CloudSyncFetchDirection` has two closed values: `forward` and `newestFirst`.
+  ObjectBox property ID `24:4160469815668187907` stores that choice on the
+  checkpoint; unknown values fail closed.
+- A fresh exact semantic V2 checkpoint for Chats, Messages or Attachments binds
+  `newestFirst`. Any prior read evidence, including a token, pending token,
+  sequence or journal row, binds an unclassified legacy checkpoint to `forward`.
+  Outbound-only mutation history does not forfeit a fresh newest-first bootstrap.
+  Chat1 remains forward.
+- The engine supplies the persisted direction on every page and compares it
+  again inside the write transaction that journals the batch. Reset preserves
+  the bound direction. Native newest-first transport requires the writer pause;
+  the legacy raw transport rejects it.
+- Focused Dart qualification passed 274 tests, including eight direction tests,
+  140 engine tests and 105 native-transport tests. GCE app-Rust run 34982392496
+  regenerated and checked the bridge, then passed all 682 library tests and the
+  aggregate gate on exact source `78d0f8cf2`; cleanup removed the runner. Full
+  GCE run 34983806715 then passed every selected Dart/Rust/protector suite,
+  automatic-upload qualification, APK/native identity checks, Android JVM
+  tests, GitHub-hosted signing and cleanup on the same exact source. The signed
+  APK is independently verified locally. This is source/test/build evidence,
+  not a claim of completed Pixel lifecycle behavior.
 
 ### September 15 exhaustive retained-projection split
 
