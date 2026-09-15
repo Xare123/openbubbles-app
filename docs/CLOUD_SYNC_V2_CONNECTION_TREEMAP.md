@@ -4,7 +4,7 @@ title: Cloud Sync V2 Current Connection Treemap
 description: Current source of truth for CloudKit V2 architecture, safety boundaries, qualification state, and next gates.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-14
+timestamp: 2026-09-15
 ---
 
 # Cloud Sync V2 current connection treemap
@@ -58,7 +58,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Last observed Pixel | Canary 883f001868ac64a160c20018b2fb46e3aedb029e, version 1.15.0 (20002227). Fresh-account messages visibly restored. At 2026-09-13 04:01:18Z, Messages still fetched; Chats/Attachments had terminal empty reads. Outbox stayed 0 -> 0. Later ADB inventories were empty; recheck before device actions. |
 | Qualified source / next candidate | Native fccca0bb5 is Windows-qualified; five formerly rejected extension records contain raw JPEG icons and now decode. Replay/sweep added 14 distinct extension-message rows and one attachment record. Next source `4e7121a18e8c011ae5472831111af86a61280178` fixes attachment creation dates passed through as Apple nanoseconds instead of Unix milliseconds. That native repair is not yet qualified. |
 | Recent-first | Local recent-chat visibility implemented/tested. Account-wide newest-history fetching is NOT implemented. Persist a fresh-stream direction before its first request and bind continuation/restart before enabling legacy-style order. Existing cursors keep their direction. |
-| Windows writes | Parent-31, edits-32/33 and unsend-34 passed a direct single-part chain: native receipts and one exact CloudKit confirmation per mutation. Fresh read proved all three history entries/text/milliseconds and one retracted part. Completed-unsend restart submitted zero updates. Evidence: private `windows-chain-20260913/qualification.json` and `windows-chain-echo-20260913/exact-chain-proof.json` under build-evidence. First attempt hit IDS 6005 before claim/send; explicit same-identity refresh worked. Pixel, groups, independent UI and persistent registration health remain open. |
+| Windows writes | `LIVE-PROVEN` for a fresh direct single-part chain on exact source `07e58fd0b`. Parent-35 sent with exact readback, edit-36 and unsend-37 each submitted and confirmed one CloudKit update, and a new-process unsend replay submitted zero IDS/CloudKit work. The post-run store has exactly three additional confirmed outbox operations, both new mutations are terminal, and the retained database was unchanged by the metadata-only audit. Evidence: `build-evidence/windows-chain-20260915-07e58fd0`. Pixel, groups, independent recipient UI and persistent registration health remain open. |
 | Release state | Full production is not established. Remaining gates below apply. |
 | Logging repair | Logger lifetime and explicit Find My target are qualified in native 3496034e3. Awaiting `doFirstTimeInit` in the Windows hosts fixes startup ordering. Native Find My init/refresh diagnostics now show absent `locations`, not a coordinate-join failure. |
 | Current native qualification | Windows 34779665447 passed fccca0bb5 / pilot 5fd8d03fe: 151 selected Rust tests, 658 Dart tests, 51 packaged-DLL codec cases. Parent verified 53 source inputs/12 logs/three ARM64 binaries; signed DLL `501f40e89d6268d52cd7e678a21b669d8952ca18c0421fba31ed1d0b2bb90e3f`. Local 51 codec and 24 harness tests passed; later date-shape harness has 25 passing tests. App Control remains enabled; vendor ObjectBox unchanged. |
@@ -89,7 +89,13 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Standalone parent-correlation boundary | Windows ARM64 run 34873675005 qualified exact source `df8c75bceed50622ddbb1f7cd3f717854034c9e1`; its three-file native-test-host bundle passed provenance, ARM64, ObjectBox and 51-codec verification. GCE 34873674805 passed all 673 Rust tests and clean teardown; its overall failure was only the exact one-line generated private-helper comment drift, now imported. Two standalone live attempts advanced past protected-manifest identity validation but failed before Chat1 fetch at `chat1_standalone_read_authentication_failed`; both preserved all 212 Cloud Sync files and 155,026,542 bytes byte-for-byte. The test host had restored state but omitted production's explicit read-authentication refresh before writer pause. Candidate `fdd2beb595a4599c8783fbc8be5ed3e286415e69` adds refresh-before-pause ordering, bounded safe failure markers and a cross-platform source-order regression test. Windows 34877349884 and GCE 34877349816 must pass before another live attempt. |
 | Exact relationship-probe qualification | Source `b39c785b36579586843616cbbac5bd639f4fb85f` passed GCE app-Rust 34889517605 with reproducible bindings, the full selected Rust suite and clean ephemeral-runner teardown; bindings workflow 34889470902 also passed Rust, rustpush, Anisette and protector-harness checks. Windows ARM64 run 34889520601 passed in 24m53s and produced artifact 10366986676, archive digest `805fe7e50bd858f1a56c2812f4cf4f3aa71af245bd8ae87d864dc76080563da3`. Parent independently verified its three ARM64 binaries, source/pilot provenance and pinned ObjectBox library, then signed only the executable and OpenBubbles DLL with the existing local development certificate. |
 | Exact b39 live result | The standalone relationship probe authenticated, scanned 2,048 protected Message anchors, decoded 1,622, skipped 426 safely, and reached the terminal Chat1 page after four pages / 167 changes: 165 Chat records plus two tombstones. It exposed no plaintext or raw identifier and left the 212-file, 155,026,542-byte profile byte-for-byte unchanged. Five target messages had zero Chat1 candidates. Three incoming bare-route messages each retained the same two candidates (Chat1 indexes 79 and 164); sender membership, service/style and `dcId`-to-`lah` corroborated both equally, while route/group/last-seen relationships matched neither. A second no-build analysis proved Chat1 participants exclude the local `dcId`: only one remote participant was observed for either candidate, so the two-versus-three-member difference cannot safely select a parent. |
-| Timestamp epoch compatibility candidate | The local candidate converts native CloudKit `Date.time` from Apple-reference seconds to Unix milliseconds at both native decode paths, removes the b39 diagnostic's compensating double conversion, and bumps the attachment cache manifest to v2. ObjectBox property 28 stores a nullable timestamp-format marker: absent/0 remains a legacy Apple-epoch row and 1 is canonical Unix. Reads normalize through one checked helper without rewriting legacy rows, checkpoints, generations, sequences or cursors; unknown formats and overflow fail closed. Focused ObjectBox upgrade/store/gateway tests (221), downstream repair/identity/recovery tests (180), production-adapter/harness/materialization tests (72), and four native Rust epoch/cache tests pass locally. Exact-source GCE, Windows live replay and Pixel upgrade qualification remain. |
+| Timestamp epoch compatibility candidate | Product source `08ee7bf8c719ee629ac0a1e3b4f963e656edc5ad` converts native CloudKit `Date.time` from Apple-reference seconds to Unix milliseconds at both native decode paths and removes the b39 diagnostic's compensating double conversion. ObjectBox property 28 is nullable: null preserves an actually absent server timestamp, an unversioned nonzero row remains a legacy Apple-epoch value, explicit format 0 preserves the real Apple epoch at zero, and format 1 preserves Unix zero and negative values. Unknown formats and overflow fail closed. The attachment cache and standalone Chat1 input manifests are versioned; Chat1 schema v2 names `server_modified_at_format: unix_epoch_milliseconds`, so a v1 Apple-epoch export cannot be silently reinterpreted. Focused local qualification passed 295 Flutter tests, 42 Rust correlation tests, Rust standalone-host compilation, focused analysis with no errors, and PowerShell parser validation. Rust 34906185049 and Windows 34906185093 passed on the product source. Build 34906185018 and Windows native-test-host 34906247493 each exposed the same test-fixture mismatch: a synthesized inbox row omitted the newly meaningful format property and therefore represented explicit Apple-epoch zero instead of an absent timestamp. Test-only source `9712487afc9c418d2fe04b5b84f3f0a28c8c7dc9` marks that fixture null without loosening production behavior. Windows 34907920177, Build 34907920178, full Canary GCE 34908830021 and read-only Windows native-test-host 34908829840 all completed successfully against 9712487af. Pixel upgrade qualification remains. |
+
+| Retired-receipt recovery repair | Commits `306d00700` and `ea7560b83` distinguish terminal readback receipts from unfinished mutation authority. Fetch recovery may tolerate an absent retired local-send/upload receipt, but every write still performs a fresh strict recovery. Local-send retirement now recomputes the exact operation/scope/payload/generation/UUID binding. The focused 172-test suite and targeted analysis pass. |
+| Latest ordinary Windows proof | The dual-provenance launcher ran current Dart `ea7560b83` against qualified native `9712487af` without rebuilding. Session `2c544457b08a06406aabcfa8fc5cb10a` completed two fresh stable read-only passes: fetched/applied 0/0, retained 94 Chats + 5,046 Messages + 1,112 Attachments, outbox 21 -> 21, all zones terminal, no content exposed and remote saves/deletes disabled. This is `LIVE-PROVEN` for Windows read recovery, not Android or write proof. |
+| Exact receipt-reconstruction repair | `LIVE-PROVEN` on Windows at `bbfa149f1`. Build 34923170226, GCE 34923191959 and Windows fast loop 34923533854 all passed. The verified imported harness reconstructed exactly three committed protection receipts. Reopening the state-1 edit returned `cloud_sync_windows_mutation_send_unconfirmed_no_retry`, changed no mutation state and issued no resend. |
+| Historical mutation disposition | The unfinished state-1 edit, state-3 edit and state-3 unsend were written at authority epoch 2; current stable V2 authority is epoch 18 after the fresh qualification chain. The state-3 replay stopped before network I/O at `cloud_sync_local_mutation_owner_changed`. Preserve these rows as unresolved evidence. Never rebind stale intent across epochs merely to complete a test; a future reconciler may perform readback only. |
+| Fresh same-epoch chain gate | `LIVE-PROVEN` on Windows. Commit `07e58fd0b` passed 18 focused tests and Windows fast-loop run 34926960736 in 25m9s. Artifact 10380667192 was independently verified as 78 files / 335,925,603 bytes with exact source/pilot provenance, 51 native codec cases and archive SHA256 `ea87e2931a58cf6f84093478ca6a41c9bc8734170be746d8c7b81a80d8cd7a39`, then imported and locally signed through the rollback-protected importer. Parent-35, edit-36 and unsend-37 completed; edit and unsend each submitted/confirmed one update. A fresh-process unsend replay was reconciliation-only with zero submissions. Outbox moved 21 -> 24 and all 24 rows are confirmed; terminal mutations moved 6 -> 8. Final unsend projection, source binding and receipt markers pass. Independent recipient UI and Pixel lifecycle remain required. |
 
 Prior tables and obsolete next steps were preserved verbatim in the September 12
 consolidation entry of the [investigation log](cloud_sync_v2/history/CLOUD_SYNC_V2_INVESTIGATION_LOG_FROM_2026-09-07.md).
@@ -101,9 +107,9 @@ Historical tests do not establish current-device behavior.
 | --- | --- | --- |
 | History read | Fresh Canary visibly restores chats/messages. | Terminal ingestion, actionable retained repair or explained unavailability, repeat/incremental/restart proof. |
 | Media/documents/reactions read | Earlier representative live results; current materialization/filtering implemented. | Current Pixel photos, video, transcript GIFs, documents and incremental updates. GIFs need not appear in profile media. |
-| Direct writes | Bounded Windows text, reaction, image, edit and unsend protocol results. | Ordinary Pixel composition, restart recovery and independent client display. |
+| Direct writes | Fresh exact-source Windows parent send, edit, unsend and new-process no-submit replay, plus earlier reaction and image protocol results. | Ordinary Pixel composition, restart recovery, group/media cases and independent client display. |
 | Groups | Restored-group binding implemented/tested. | Approved two-recipient text, attachments, reactions and supported mutations. No personal group substitution. |
-| Edits/deletes | Direct single-part Windows send/edit/edit/unsend, exact echoed history/retraction and completed restart. | Pixel, groups, conflicts, independent display, supported tombstones and mid-flight recovery. |
+| Edits/deletes | Direct single-part Windows send/edit/unsend, exact CloudKit confirmation/local reflection, terminal retraction and zero-submit restart replay. | Pixel, groups, conflicts, independent display, supported tombstones and mid-flight recovery. |
 | Lifecycle | Identity/reset fences and bounded Android worker implemented/tested. | Current background/lock, reconnect, process death, token expiry and account repair. |
 | Progress/speed | Card and smaller Regular workload implemented. | Integrated qualification, Pixel UX and measured performance. |
 | Newest history first | Local recent-chat admission fixed. | Durable fresh-stream direction plus multi-page/restart/incremental qualification. |
@@ -401,37 +407,23 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Exact source `b39c785b3` is qualified by GCE app-Rust 34889517605,
-   bindings 34889470902 and Windows ARM64 34889520601. Its standalone live run
-   authenticated, reached terminal Chat1 state and preserved the protected
-   profile byte-for-byte.
-2. Close the eight-message missing-parent sample without guessing. The complete
-   current Chat1 zone, direct/normalized identifiers, last-seen links, 1,622
-   usable Message anchors, sender, local handle, service/style and target-local
-   participant coverage do not produce a unique parent. Either obtain stronger
-   deterministic evidence from a target-centered retained Message cohort, or
-   classify these exact sources as retained/unresolvable and prove the normal
-   stream can terminate around them. Never choose by participant count or time
-   proximity alone.
-3. Qualify the separately reviewable timestamp-format candidate. Its nullable
-   ObjectBox marker keeps pre-property rows distinguishable, native decode now
-   emits canonical Unix milliseconds, all durable reads normalize without a
-   physical migration, and attachment cache manifests are versioned. Run the
-   complete exact-source GCE suite, then prove Windows replay and Pixel upgrade
-   behavior before treating the repair as live-proven.
-4. Resolve measured internal preflight limits using the new fixed bound labels.
-   Keep limits tied to memory/work budgets and field semantics. Do not discard
-   protected records or treat a diagnostic label as corrupted user data.
-5. Verify repeat/cold-restart reads, terminal stream state, duplicate suppression,
-   legible text, and representative current media/documents. Separate excluded
-   telephony and tombstones from actionable iMessage projection work.
-6. On the Pixel, qualify the installed candidate and ordinary composer, background/
-   lock/reconnect, registration repair, and independent-client display. Preserve
-   Alpha; do not infer completion from Windows tests.
-7. Finish approved group/media/mutation and mid-flight recovery cases. The direct
-   single-part Windows chain is proved, not the full cross-device matrix.
-8. Qualify fresh-stream newest-first ordering without reversing existing cursors.
-   FaceTime and Find My retain their separate live gates listed above.
+1. Keep the now-live-proven Windows read path unchanged: `ea7560b83` completed
+   two stable ordinary passes with all zones terminal and outbox 21 -> 21.
+2. Keep the `bbfa149f1` receipt repair unchanged: full Build, GCE and Windows
+   qualification passed, and live state-1 recovery proved zero resend.
+3. Preserve the three epoch-2 historical mutations. They cannot safely execute
+   under current epoch 18; do not weaken owner checks or relabel their outcome.
+4. Keep the now-live-proven `07e58fd0b` Windows chain unchanged: parent, edit
+   and unsend completed, and the new-process unsend replay submitted zero work.
+5. Qualify the exact signed Canary on Pixel: upgrade, ordinary composer,
+   background/lock/reconnect, process death, registration repair, independent
+   client display, legible text and representative media/documents. Preserve Alpha.
+6. Finish approved group/media/mutation/conflict cases and newest-first fresh
+   bootstrap without changing existing cursor direction.
+7. Retain the eight unresolvable missing-parent sources unless stronger unique
+   evidence appears; normal stream completion must not depend on guessing them.
+8. FaceTime and Find My remain separate live gates and are not evidence for
+   CloudKit completion.
 
 ## Current ownership and continuation rules
 
@@ -449,12 +441,12 @@ CloudKit readback or independent Apple-device display.
   `1cec35e558d6dc76a0040286129c59eb`,
   `4842d0299701cd6b74748f714e04b894` and
   `dd0cf181df5b3751342e8a2f78dc07ad` confirmed all four owned processes from
-  each launch stopped; raw stdout was removed. GCE app-Rust 34849044238 and
-  Windows ARM64 34849043947 are complete, no live Apple call is active, zero
-  GCE instances and zero repository self-hosted runners remained after the
-  named runs. The exact b39 process also exited and preserved its profile; C:
-  had about 40.8 GiB free at the latest checkpoint. Preserve the exact bundle,
-  receipt, bounded aggregates and prior rollback evidence.
+  each launch stopped; raw stdout was removed. GCE app-Rust 34849044238,
+  Windows ARM64 34849043947 and Windows writer run 34926960736 are complete.
+  The four 07e live-chain processes exited, no Apple call remains active, and
+  the exact profile audit changed no database bytes. C: had 12.66 GiB free at
+  the latest checkpoint, so further full or repeated builds stay cloud-only.
+  Preserve the exact bundle, receipt, bounded aggregates and rollback evidence.
 - Preserve the qualified DLLs, source manifests and rollback evidence. Current
   generated bindings already include extensionMetadataJson; a metadata JSON
   schema change inside that string is not a new FRB ABI by itself.

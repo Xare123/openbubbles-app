@@ -4624,3 +4624,103 @@ cannot authorize or perform adoption.
   caught by these checks and corrected. Exact-source GCE, Windows live replay
   and Pixel existing-database upgrade proof remain; this is not yet a release
   claim.
+
+### September 14 retired-receipt recovery and ordinary Windows replay
+
+- Commit `306d00700` makes protected fetch recovery tolerant only of missing
+  outbound receipts that no longer carry write authority. Strict write recovery
+  is always fresh. Proven terminal local-send and attachment-upload source bytes
+  remain in complete liveness even after their historical receipt stops being a
+  recovery prerequisite.
+- A Muse audit found the first local-send retirement predicate trusted stored
+  marker equality without recomputing the current outbox binding. Parent accepted
+  the finding and committed `ea7560b83`, which binds retirement to the exact
+  deterministic operation, scope, generation, key, payload, creation time,
+  confirmation state and Apple request/operation identities. The four focused
+  suites pass all 172 tests; targeted analysis reports no issues.
+- The dual-provenance Windows launcher passed 17 contract tests and a real source
+  compatibility check. It ran current Dart `ea7560b83` with the unchanged,
+  qualified native host `9712487af`. Session
+  `2c544457b08a06406aabcfa8fc5cb10a` completed two fresh stable ordinary
+  read-only passes. Both fetched/applied 0/0, retained 94 Chats, 5,046 Messages
+  and 1,112 Attachments, observed terminal empty reads for all zones and kept
+  outbox 21 -> 21. Remote saves/deletes were disabled, no content was exposed,
+  raw output was removed and owned-process cleanup was confirmed.
+- A content-free post-run inventory finds 21 confirmed outbox rows and five
+  absent historical outbound receipts. The terminal local-send and upload-plan
+  receipts are now proven retired. The strict write block is exactly three
+  mutation rows: one state-1 edit, one state-3 edit and one state-3 unsend. All
+  three protected files exist; each reference hash and embedded lease owner
+  matches its durable lease binding. No receipt was synthesized and no row was
+  retried, promoted, deleted or remotely submitted.
+- The exact reconstruction candidate is now source-implemented across native,
+  generated FRB, Dart transport, lifecycle and ObjectBox. Native validation
+  reopens the exact protected source and independently binds the account/store,
+  purpose, source/reference/payload hashes, payload length, embedded lease owner,
+  mutation/target GUID hashes and target part. The repair writes only the exact
+  committed receipt; it provides no send, retry, state transition, release or
+  acknowledgement authority. Changed claims, active manifests and tampered
+  sources fail without a receipt.
+- Local qualification passed 299 focused Flutter tests, two native adversarial
+  tests and targeted analysis. The next falsification is full exact-source GCE
+  qualification, then live Windows fast-loop recovery of the same three rows.
+  The state-1 edit must remain outcome-unknown with zero resend; only the state-3
+  edit/unsend may finalize after exact predecessor proof. A fresh process must
+  prove zero duplicate IDS or CloudKit operations before any Pixel candidate.
+
+### September 14 exact receipt repair and fresh-chain restart
+
+- Commit `bbfa149f1` passed Build 34923170226, GCE 34923191959 and Windows
+  fast-loop 34923533854. The imported local-write artifact passed exact source,
+  ARM64, provenance, native-library and 51-case native verification.
+- Strict recovery reconstructed exactly three missing committed lease receipts.
+  Reopening the state-1 edit returned the required no-retry safe code, changed
+  no durable mutation state and issued no IDS or CloudKit resend.
+- Metadata-only inspection tied the unfinished state-1 edit, state-3 edit and
+  state-3 unsend to writer epoch 2. Current stable V2 authority is epoch 14.
+  The state-3 attempt therefore stopped before network I/O at
+  `cloud_sync_local_mutation_owner_changed`. Those historical rows remain
+  unresolved evidence and will not be rebound across epochs.
+- A fresh approved parent request created no claim and sent no message because
+  IDS returned transient alias-removal status 5052 during registration. The
+  ordinary setup path already retries this exact condition once. Commit
+  `07e58fd0b` applies the same bounded five-second retry to the Windows harness,
+  duplicates the FRB-owned user for each attempt and changes no send authority.
+  Focused analysis and all 18 Windows-write tests pass. Exact-source Windows
+  fast-loop run 34926960736 is in progress.
+
+### September 15 exact same-epoch write chain
+
+- Windows fast-loop run 34926960736 completed successfully in 25m9s against
+  source `07e58fd0b1cd1c0d8c38e20829ca7a67a5c653b0` and pilot
+  `629df1f5d70b2c63c51212b362b05d569df2c3d4`. Artifact 10380667192 contains
+  78 files / 335,925,603 bytes and passed 669 Dart tests, 51 packaged native
+  codec cases, launcher contracts, ARM64 inventory and provenance checks. The
+  internal archive SHA256 is
+  `ea87e2931a58cf6f84093478ca6a41c9bc8734170be746d8c7b81a80d8cd7a39`.
+- Parent independently verified source, pilot, variant, writer flags, file
+  hashes, signatures and the pinned ObjectBox runtime, then imported the bundle
+  into the clean detached 07e worktree through the rollback-protected importer.
+  The receipt, executable and Rust DLL all bind to the same exact archive.
+- Fresh request `qualification-20260915-chain-parent-35` completed after the
+  bounded 5052 retry path. It recorded positive IDS confirmation, one admitted
+  send, exact readback, finalized its protected outbox lease and left no chat
+  readback pending.
+- Edit-36 and unsend-37 each completed with one CloudKit submission, one exact
+  confirmation, zero not-applied/diverged/unresolved operations and complete
+  local reflection. A new process reopened unsend-37 and performed
+  reconciliation only: zero CloudKit submissions and zero confirmations.
+- The content-free post-run audit changed no retained database bytes. Outbox
+  count moved from 21 to 24 and all 24 rows are confirmed. Local-send rows moved
+  14 to 15. Mutation rows moved 9 to 11, with terminal state-5 rows moving 6 to
+  8. The new edit and unsend are terminal; the final unsend projection matches
+  the bound target and route, carries positive IDS/source/reflection evidence,
+  and created no initial-send intent. Writer authority is stable at epoch 18.
+- The three historical epoch-2 mutation rows remain deliberately unresolved:
+  one state-1 edit, one state-3 edit and one state-3 unsend. Their protected
+  files and lease envelopes remain intact. They were not rebound, resent,
+  promoted or deleted.
+- This closes the exact Windows direct-send/edit/unsend/restart gate. It does
+  not establish independent recipient UI behavior, ordinary Pixel composer
+  behavior, Android lock/reconnect/process-death recovery, groups, media writes
+  or the separate FaceTime and Find My gates.
