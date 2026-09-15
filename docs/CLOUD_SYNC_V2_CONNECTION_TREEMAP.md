@@ -431,6 +431,12 @@ CloudKit readback or independent Apple-device display.
    evidence appears; normal stream completion must not depend on guessing them.
 9. FaceTime and Find My remain separate live gates and are not evidence for
    CloudKit completion.
+10. Do not count a synthetic FaceTime observer replay as product qualification.
+    The September 15 sidecar prototype was rejected after parent review because
+    it could not ingest the app's native trace and could falsely complete without
+    the final `connected -> ended` transition. Extend the existing native trace
+    path only when it can consume source-emitted evidence without inventing call
+    direction, session identity, duration, or hangup semantics.
 
 ### September 15 exhaustive retained-projection split
 
