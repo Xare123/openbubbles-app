@@ -4,6 +4,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observabilit
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_read_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_user_copy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'cloud_sync_semantic_drain_controller_test.dart' as fixtures;
 
@@ -311,6 +312,69 @@ void main() {
       expect(evidence.flushed, isTrue);
       return result();
     });
+  });
+
+  test(
+    'presentation helpers classify relay without touching the run',
+    () async {
+      final p = CloudSyncProgress();
+      expect(
+        p.userNotice(readingElsewhere: false).state,
+        CloudSyncUserState.ready,
+      );
+      await p.start(CloudSyncSpeed.regular, () async {
+        throw StateError('cloud_sync_native_auth_refresh_relay_unavailable');
+      });
+      final local = p.userNotice(readingElsewhere: false);
+      expect(local.state, CloudSyncUserState.relayUnavailable);
+      expect(local.canStart, isTrue);
+      final elsewhere = p.userNotice(readingElsewhere: true);
+      expect(elsewhere.state, CloudSyncUserState.runningElsewhere);
+      expect(elsewhere.canStart, isFalse);
+    },
+  );
+
+  test('restart, settling, and offline stay presentation only', () async {
+    final p = CloudSyncProgress();
+    await p.start(CloudSyncSpeed.regular, () async {
+      throw StateError('cloud_sync_v2_pcs_restart_required');
+    });
+    expect(
+      p.userNotice(readingElsewhere: false).state,
+      CloudSyncUserState.needsRestart,
+    );
+    expect(
+      p.userNotice(readingElsewhere: true).state,
+      CloudSyncUserState.needsRestart,
+    );
+    var retried = false;
+    await p.start(CloudSyncSpeed.regular, () async {
+      retried = true;
+      return result();
+    });
+    expect(retried, isFalse, reason: 'A poisoned session must stay blocked');
+    final recovered = CloudSyncProgress();
+    await recovered.start(CloudSyncSpeed.regular, () async {
+      throw StateError('network');
+    });
+    expect(
+      recovered.userNotice(readingElsewhere: false).state,
+      CloudSyncUserState.offlineRetry,
+    );
+    await recovered.start(CloudSyncSpeed.regular, () async {
+      throw StateError('cloud_sync_v2_pcs_preparation_quiescing');
+    });
+    expect(
+      recovered.userNotice(readingElsewhere: true).state,
+      CloudSyncUserState.settling,
+    );
+    await recovered.start(CloudSyncSpeed.regular, () async {
+      throw StateError('cloudkit_interlock_busy');
+    });
+    expect(
+      recovered.userNotice(readingElsewhere: false).state,
+      CloudSyncUserState.runningElsewhere,
+    );
   });
 }
 

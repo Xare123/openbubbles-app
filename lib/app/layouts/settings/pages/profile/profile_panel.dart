@@ -7,6 +7,7 @@ import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/posterkit.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/profile_scaffold.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_progress_card.dart';
+import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_profile_entry.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/registration_repair_dialog.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/theming/avatar/avatar_crop.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dart';
@@ -501,20 +502,43 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                       ) : const SizedBox.shrink()),
                     ]
                 ),
-                if (pushService.cloudSyncV2ProgressVisible)
+                SettingsHeader(
+                    iosSubtitle: iosSubtitle,
+                    materialSubtitle: materialSubtitle,
+                    text: CloudSyncProfileEntry.showV2Card(
+                            v2Visible: pushService.cloudSyncV2ProgressVisible)
+                        ? "iCloud Message Sync"
+                        : "Backup"),
+                if (CloudSyncProfileEntry.showV2Card(
+                  v2Visible: pushService.cloudSyncV2ProgressVisible,
+                ))
                   SettingsSection(backgroundColor: tileColor, children: [
                     CloudSyncProgressCard(
+                      showTitle: false,
                       progress: pushService.cloudSyncV2Progress,
                       isAvailable: () => pushService.cloudSyncV2ProgressAvailable,
                       isReading: () => pushService.cloudSyncV2HistoryReadActive,
                       onStart: pushService.startCloudSyncV2Progress,
+                      unavailableMessage: () =>
+                          pushService.cloudSyncV2ProgressUnavailableMessage,
                     ),
                   ]),
-                SettingsHeader(
-                    iosSubtitle: iosSubtitle,
-                    materialSubtitle: materialSubtitle,
-                    text: "Backup"),
-                Obx(() => SettingsSection(
+                Obx(() {
+                  // Normal iCloud sync entry: the V2 history card above is the
+                  // normal path when its capability gate allows it. An enabled
+                  // legacy account keeps its full legacy section below,
+                  // including the off switch, unchanged; nothing here turns
+                  // legacy off, resets it, or migrates its queue. While V2 is
+                  // visible, fresh legacy opt-in is hidden, not moved to
+                  // another path.
+                  final showLegacy = CloudSyncProfileEntry.showLegacySection(
+                    v2Visible: pushService.cloudSyncV2ProgressVisible,
+                    legacyEnabled: ss.settings.cloudSyncingEnabled.value,
+                  );
+                  if (!showLegacy) {
+                    return const SizedBox.shrink();
+                  }
+                  return SettingsSection(
                     backgroundColor: tileColor,
                     children: [
                       SettingsSwitch(
@@ -599,9 +623,10 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                               ((ss.prefs.getInt("lastSynced") ?? 0) == 0 ? "Not Synced" : "Synced ${buildChatListDateMaterial(DateTime.fromMillisecondsSinceEpoch(ss.prefs.getInt("lastSynced")!))}")
                             )
                           ),
-                      ),
-                    ]
-                )),
+                     ),
+                   ]
+                  );
+                }),
                 if (kIsDesktop)
                 SettingsHeader(
                     iosSubtitle: iosSubtitle,

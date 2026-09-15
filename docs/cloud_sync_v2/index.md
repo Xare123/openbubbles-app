@@ -11,6 +11,10 @@ timestamp: 2026-09-13
 
 ## Start here
 
+- [Normal user sync guide (candidate rollout)](USER_SYNC_GUIDE.md): Profile-based
+  iCloud Message Sync path, Regular vs Turbo, progress meaning, and the
+  developer/public boundary. Candidate rollout pending integrated UI
+  qualification; not proof of production readiness.
 - [Current connection treemap](../CLOUD_SYNC_V2_CONNECTION_TREEMAP.md):
   authoritative current architecture, safety boundaries, release gates, and
   next falsification test.

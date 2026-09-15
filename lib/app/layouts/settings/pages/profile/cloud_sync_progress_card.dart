@@ -3,20 +3,32 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
 
-/// Uses the account settings' inherited colors and typography. No app globals,
-/// so accessibility and lifecycle behavior can be tested without native auth.
+/// iCloud sync status card. Uses the account settings' inherited colors and
+/// typography, so the existing iOS-style settings theme is preserved. No app
+/// globals, so accessibility and lifecycle behavior can be tested without
+/// native auth.
+///
+/// Plain-language status comes from the progress user notice. Raw diagnostic
+/// codes and journal/replay vocabulary stay inside Sync details.
 class CloudSyncProgressCard extends StatefulWidget {
   const CloudSyncProgressCard({
     super.key,
     required this.progress,
     required this.isAvailable,
     required this.onStart,
+    this.showTitle = true,
     this.isReading,
+    this.unavailableMessage,
   });
   final CloudSyncProgress progress;
   final bool Function() isAvailable;
   final Future<void> Function(CloudSyncSpeed) onStart;
+  final bool showTitle;
   final bool Function()? isReading;
+
+  /// Optional exact readiness reason wired by the parent service seam.
+  /// Falls back to a generic checklist when null or empty.
+  final String? Function()? unavailableMessage;
 
   @override
   State<CloudSyncProgressCard> createState() => _CloudSyncProgressCardState();
@@ -105,71 +117,59 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
       final available = widget.isAvailable();
       final elsewhere = readingElsewhere;
       final busy = p.active || elsewhere;
+      final notice = p.userNotice(readingElsewhere: elsewhere);
+      final unavailableReason = widget.unavailableMessage?.call();
       return Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'iCloud history sync',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            Semantics(
-              liveRegion: true,
-              child: Text(elsewhere ? 'History sync is running' : p.title),
-            ),
+            if (widget.showTitle) ...[
+              Text(
+                'iCloud Message Sync',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+            ],
+            Semantics(liveRegion: true, child: Text(notice.headline)),
+            const SizedBox(height: 4),
+            Text(notice.body),
+            if (notice.action != null) ...[
+              const SizedBox(height: 4),
+              Text(notice.action!),
+            ],
             if (busy) ...[
               const SizedBox(height: 8),
               LinearProgressIndicator(
                 value: p.fraction,
-                semanticsLabel: 'History total unknown',
+                semanticsLabel: 'Syncing, total size unknown',
               ),
             ],
             const SizedBox(height: 8),
-            if (elsewhere)
-              const Text(
-                'Another history sync is active. Start / resume becomes available when it finishes.',
-              ),
             if (!elsewhere)
               Text(
-                '${p.fetched} records downloaded, ${p.reprojected} saved records restored',
+                '${p.fetched} downloaded, ${p.reprojected} restored to your chats',
               ),
             if (p.hasStarted && !elsewhere)
               Text('Elapsed ${elapsedLabel(p.elapsed)}'),
             const SizedBox(height: 8),
             Text(
               p.mediaActive > 0
-                  ? 'Materializing media: ${p.mediaActive} active'
-                  : 'Media downloads on demand',
+                  ? 'Downloading photos and files: ${p.mediaActive} active'
+                  : 'Photos and files download when you open them',
             ),
-            if (p.safeFailure != null)
-              Text(
-                p.safeFailure ==
-                        'cloud_sync_native_auth_refresh_relay_unavailable'
-                    ? 'Your saved relay is unavailable. Check its connection or update its pairing code, then tap Start / resume. '
-                          'Your downloaded history is still saved.'
-                    : p.restartRequired
-                    ? 'iCloud encryption preparation timed out. Native work may still be running. '
-                          'Further sync and account teardown are blocked for safety. '
-                          'Fully close and restart OpenBubbles before resuming.'
-                    : 'Diagnostic code: ${p.safeFailure}. Resolve the cause before resuming. '
-                          'If native pause release is unconfirmed, restart OpenBubbles.',
-              ),
             if (p.refreshFailed)
               const Text(
                 'History was saved, but the chat list could not refresh. Restart OpenBubbles to refresh it.',
               ),
             const SizedBox(height: 8),
-            if (!busy)
-              const Text(
-                'Prepares iCloud encryption, then resumes saved checkpoints. '
-                'Apple may ask you to verify a device password. After an app restart, tap Start / resume.',
-              ),
             if (!available && !busy)
-              const Text(
-                'Unavailable: requires the authorized Canary build, Developer Mode, '
-                'an iCloud account, and no other sync in progress.',
+              Text(
+                (unavailableReason?.isNotEmpty ?? false)
+                    ? unavailableReason!
+                    : 'Not available right now. This needs the authorized test build, '
+                          'your iCloud account signed in, no other sync running, '
+                          'and the older sync method switched off.',
               ),
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
@@ -188,7 +188,7 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
               children: [
                 if (!p.active)
                   FilledButton.icon(
-                    onPressed: available && !busy && !p.restartRequired
+                    onPressed: available && !busy && notice.canStart
                         ? () => widget.onStart(speed)
                         : null,
                     icon: const Icon(Icons.sync),
@@ -213,6 +213,8 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
               title: const Text('Sync details'),
               expandedCrossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (p.safeFailure != null)
+                  Text('Diagnostic code: ${p.safeFailure}'),
                 Text(
                   '${p.pages} pages journaled, ${p.batches} batches finished',
                 ),
@@ -221,7 +223,7 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
                 ),
                 if (elsewhere)
                   const Text(
-                    'Counters below describe the last foreground run, not the active background reader.',
+                    'Counters below describe the last run on this screen, not the active sync.',
                   ),
                 if (p.fetchedPerSecond case final rate?)
                   Text('Average: ${rate.toStringAsFixed(1)} new records/s'),
@@ -244,13 +246,13 @@ class _CloudSyncProgressCardState extends State<CloudSyncProgressCard> {
                 const SizedBox(height: 8),
                 Text(
                   '${p.mediaCompleted} completed, ${p.mediaFailed} failed download attempts this app session. '
-                  'Remote head does not mean all media is downloaded.',
+                  'Reaching the newest iCloud change does not mean every photo is downloaded.',
                 ),
                 const SizedBox(height: 8),
                 const Text(
                   'No history is skipped or reset. Leaving this page does not stop sync. '
-                  'Backgrounding the app pauses foreground catch-up at a safe boundary. '
-                  'Only the existing opted-in Android worker runs background reads; this screen does not enable it or keep the app alive. '
+                  'If the app goes to the background, catch-up pauses at a safe point. '
+                  'Only the existing opt-in Android worker does background reads; this screen does not enable it or keep the app alive. '
                   'Session counters restart at zero after an app restart. '
                   'Downloads and opted-in background work are separate.',
                 ),

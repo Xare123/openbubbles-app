@@ -6,6 +6,7 @@ import 'cloud_sync_read_budget.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_semantic_drain_controller.dart';
 import 'cloud_sync_semantic_pull_report.dart';
+import 'cloud_sync_user_copy.dart';
 
 export 'cloud_sync_observability.dart' show CloudSyncProgressPhase;
 
@@ -110,6 +111,21 @@ class CloudSyncProgress extends ChangeNotifier
           : 'Remote head reached; local dependencies remain',
     CloudSyncProgressPhase.error => 'Sync needs attention',
   };
+
+  /// Presentation-only entry point for the settings card. This never steers
+  /// a run; it delegates to the pure copy mapper in cloud_sync_user_copy.dart
+  /// so engine and control semantics stay untouched. [readingElsewhere] comes
+  /// from the card because only the service seam knows whether another
+  /// reader owns the current work.
+  CloudSyncUserNotice userNotice({required bool readingElsewhere}) =>
+      describeCloudSyncUserNotice(
+        phase: phase,
+        safeFailure: safeFailure,
+        restartRequired: restartRequired,
+        pauseRequested: pauseRequested,
+        readingElsewhere: readingElsewhere,
+        projectionComplete: projectionComplete,
+      );
 
   @override
   void activity(CloudSyncProgressPhase next, [String? zoneName]) {

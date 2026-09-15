@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:bluebubbles/app/layouts/settings/pages/profile/cloud_sync_progress_card.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_user_copy.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -12,6 +13,28 @@ import 'package:flutter_test/flutter_test.dart';
 import 'cloud_sync_progress_test.dart' as fixtures;
 
 void main() {
+  testWidgets(
+    'Profile header can own the title without duplicating it in the card',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: CloudSyncProgressCard(
+                showTitle: false,
+                progress: CloudSyncProgress(),
+                isAvailable: () => true,
+                onStart: (_) async {},
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.text('iCloud Message Sync'), findsNothing);
+      expect(find.text('Ready to sync'), findsOneWidget);
+      expect(find.text('Start / resume'), findsOneWidget);
+    },
+  );
   Widget host(
     CloudSyncProgress progress,
     Future<void> Function(CloudSyncSpeed) start, {
@@ -19,6 +42,7 @@ void main() {
     double scale = 1,
     bool Function()? isReading,
     bool Function()? availability,
+    String? Function()? unavailableMessage,
   }) => MaterialApp(
     theme: ThemeData(fontFamily: 'Inter'),
     debugShowCheckedModeBanner: false,
@@ -31,6 +55,7 @@ void main() {
             isAvailable: availability ?? () => available,
             isReading: isReading,
             onStart: start,
+            unavailableMessage: unavailableMessage,
           ),
         ),
       ),
@@ -53,9 +78,10 @@ void main() {
           availability: () => !reading,
         ),
       );
-      expect(find.text('History sync is running'), findsOneWidget);
+      expect(find.text('Sync is already running'), findsOneWidget);
+      expect(find.textContaining('Another sync is finishing'), findsOneWidget);
       expect(find.text('Ready to sync'), findsNothing);
-      expect(find.textContaining('0 records downloaded'), findsNothing);
+      expect(find.textContaining('restored to your chats'), findsNothing);
       expect(
         tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
         isNull,
@@ -127,10 +153,7 @@ void main() {
       throw StateError('cloud_sync_v2_pcs_restart_required');
     });
     await tester.pumpWidget(host(p, (_) async => fail('must not retry')));
-    expect(
-      find.textContaining('Native work may still be running'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('may still be running'), findsOneWidget);
     expect(find.textContaining('Fully close and restart'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(find.text('Paused'), findsNothing);
@@ -247,7 +270,7 @@ void main() {
       await tester.ensureVisible(find.text('Start / resume'));
       await tester.tap(find.text('Start / resume'));
       expect(tester.takeException(), isNull);
-      expect(find.textContaining('Developer Mode'), findsOneWidget);
+      expect(find.textContaining('authorized test build'), findsOneWidget);
       expect(find.textContaining('After an app restart'), findsOneWidget);
     },
   );
@@ -281,6 +304,7 @@ void main() {
     expect(find.textContaining('240 row visits'), findsOneWidget);
     final render =
         boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    await tester.pump(const Duration(milliseconds: 500));
     await tester.runAsync(() async {
       final image = await render.toImage();
       final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -293,5 +317,214 @@ void main() {
     done.complete(fixtures.result());
     await tester.pump();
     await work;
+  });
+
+  testWidgets('auth failure explains device verification and hides the code', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    await p.start(CloudSyncSpeed.regular, () async {
+      throw StateError('cloud_sync_native_auth_credentials_rejected');
+    });
+    await tester.pumpWidget(host(p, (_) async {}));
+    expect(find.text('iCloud Message Sync'), findsOneWidget);
+    expect(find.text('Sign-in or device check needed'), findsOneWidget);
+    expect(find.textContaining('trusted Apple device'), findsOneWidget);
+    expect(
+      find.textContaining('cloud_sync_native_auth_credentials_rejected'),
+      findsNothing,
+    );
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNotNull,
+    );
+    expect(
+      p.userNotice(readingElsewhere: false).state,
+      CloudSyncUserState.needsAuth,
+    );
+    await tester.tap(find.text('Sync details'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      find.textContaining('cloud_sync_native_auth_credentials_rejected'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('offline failure asks for a connection check with resume on', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    await p.start(CloudSyncSpeed.regular, () async {
+      throw StateError('network');
+    });
+    await tester.pumpWidget(host(p, (_) async {}));
+    expect(find.text('Connection issue, try again'), findsOneWidget);
+    expect(find.textContaining('Check that you are online'), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNotNull,
+    );
+    expect(
+      p.userNotice(readingElsewhere: false).state,
+      CloudSyncUserState.offlineRetry,
+    );
+  });
+
+  testWidgets('canceled preparation pauses without an error', (tester) async {
+    final p = CloudSyncProgress();
+    var ranCatchUp = false;
+    final work = p.startPrepared(
+      CloudSyncSpeed.regular,
+      validate: () {},
+      preparePcs: () async => false,
+      readOnlyCatchUp: () async {
+        ranCatchUp = true;
+        return fixtures.result();
+      },
+    );
+    await work;
+    expect(ranCatchUp, isFalse);
+    expect(p.safeFailure, isNull);
+    expect(p.phase, CloudSyncProgressPhase.paused);
+    await tester.pumpWidget(host(p, (_) async {}));
+    expect(find.text('Paused'), findsOneWidget);
+    expect(find.text('Sync needs attention'), findsNothing);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets('busy run hides start and locks pause while it finishes', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    final done = Completer<CloudSyncSemanticDrainResult>();
+    final work = p.start(CloudSyncSpeed.regular, () => done.future);
+    await tester.pumpWidget(host(p, (_) async {}));
+    expect(find.text('Start / resume'), findsNothing);
+    expect(find.text('Pause catch-up'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator))
+          .value,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator))
+          .semanticsLabel,
+      'Syncing, total size unknown',
+    );
+    await tester.tap(find.text('Pause catch-up'));
+    await tester.pump();
+    expect(find.text('Pausing...'), findsOneWidget);
+    expect(
+      tester.widget<OutlinedButton>(find.byType(OutlinedButton)).onPressed,
+      isNull,
+    );
+    done.complete(fixtures.result());
+    await tester.pump();
+    await work;
+  });
+
+  testWidgets('parent readiness reason overrides the default checklist', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      host(
+        CloudSyncProgress(),
+        (_) async => fail('not authorized'),
+        available: false,
+        unavailableMessage: () => 'Sign in with the canary profile first.',
+      ),
+    );
+    expect(find.text('Sign in with the canary profile first.'), findsOneWidget);
+    expect(find.textContaining('authorized test build'), findsNothing);
+  });
+
+  testWidgets('remote head never claims media is fully downloaded', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    await p.start(CloudSyncSpeed.regular, () async => fixtures.result());
+    await tester.pumpWidget(host(p, (_) async {}));
+    expect(find.text('Caught up to the newest iCloud change'), findsOneWidget);
+    expect(
+      find.textContaining('does not mean everything is on the phone yet'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('every photo is downloaded'), findsNothing);
+    await tester.tap(find.text('Sync details'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      find.textContaining('does not mean every photo is downloaded'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('long error copy fits a narrow large-text screen', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final p = CloudSyncProgress();
+    await p.start(CloudSyncSpeed.regular, () async {
+      throw StateError('cloud_sync_native_auth_credentials_rejected');
+    });
+    await tester.pumpWidget(host(p, (_) async {}, scale: 1.6));
+    expect(find.text('Sign-in or device check needed'), findsOneWidget);
+    await tester.ensureVisible(find.text('Sync details'));
+    await tester.tap(find.text('Sync details'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('settling and restart beat the running-elsewhere headline', (
+    tester,
+  ) async {
+    final settling = CloudSyncProgress();
+    await settling.start(CloudSyncSpeed.regular, () async {
+      throw StateError('cloud_sync_v2_pcs_preparation_quiescing');
+    });
+    await tester.pumpWidget(
+      host(settling, (_) async {}, isReading: () => true),
+    );
+    expect(find.text('Sync is still settling'), findsOneWidget);
+    expect(find.text('Sync is already running'), findsNothing);
+
+    final restart = CloudSyncProgress();
+    await restart.start(CloudSyncSpeed.regular, () async {
+      throw StateError('cloud_sync_v2_pcs_restart_required');
+    });
+    await tester.pumpWidget(host(restart, (_) async {}, isReading: () => true));
+    expect(find.text('Restart needed before resuming'), findsOneWidget);
+    expect(find.text('Sync is already running'), findsNothing);
+  });
+
+  testWidgets('account-change stays generic with the code in details', (
+    tester,
+  ) async {
+    final p = CloudSyncProgress();
+    await p.start(CloudSyncSpeed.regular, () async {
+      throw StateError('cloud_sync_native_auth_account_changed');
+    });
+    await tester.pumpWidget(host(p, (_) async {}));
+    expect(find.text('Sync needs attention'), findsOneWidget);
+    expect(find.text('Sign-in or device check needed'), findsNothing);
+    expect(
+      find.textContaining('cloud_sync_native_auth_account_changed'),
+      findsNothing,
+    );
+    await tester.tap(find.text('Sync details'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      find.textContaining('cloud_sync_native_auth_account_changed'),
+      findsOneWidget,
+    );
   });
 }

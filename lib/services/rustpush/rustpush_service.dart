@@ -63,6 +63,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart'
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_message_update_executor.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_profile_readiness.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_read_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_pcs_operation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
@@ -9547,10 +9548,13 @@ class RustPushService extends GetxService {
     }
   }
 
-  bool get cloudSyncV2PcsPreparationAvailable {
+  bool get cloudSyncV2PcsPreparationAvailable =>
+      _cloudSyncV2DeveloperRuntimeAllowed &&
+      _cloudSyncV2ProfilePcsPreparationAvailable;
+
+  bool get _cloudSyncV2ProfilePcsPreparationAvailable {
     if (!CloudSyncDevGate.manualSemanticPullEnabled ||
         !_cloudSyncV2CanaryRuntimeAllowed ||
-        !_cloudSyncV2DeveloperRuntimeAllowed ||
         !ls.isUiThread ||
         loggingOut || _serviceClosing ||
         _cloudSyncV2PcsPreparationQuiescing ||
@@ -9577,14 +9581,23 @@ class RustPushService extends GetxService {
   /// CloudKit V2. This never enables legacy sync and has no reset path.
   Future<CloudSyncV2PcsPreparationOutcome>
   prepareCloudSyncV2PcsConfirmed({void Function()? validateContinuation}) {
+    if (!_cloudSyncV2DeveloperRuntimeAllowed) {
+      throw StateError('cloud_sync_developer_mode_required');
+    }
+    return _prepareCloudSyncV2ProfilePcs(
+      validateContinuation: validateContinuation,
+    );
+  }
+
+  /// Shared encryption flow for Profile. It uses the same existing trusted
+  /// device prompt without enabling legacy sync or any diagnostic controls.
+  Future<CloudSyncV2PcsPreparationOutcome>
+  _prepareCloudSyncV2ProfilePcs({void Function()? validateContinuation}) {
     if (!CloudSyncDevGate.manualSemanticPullEnabled) {
       throw StateError('cloud_sync_semantic_pull_disabled');
     }
     if (!_cloudSyncV2CanaryRuntimeAllowed) {
       throw StateError('cloud_sync_canary_package_required');
-    }
-    if (!_cloudSyncV2DeveloperRuntimeAllowed) {
-      throw StateError('cloud_sync_developer_mode_required');
     }
     if (!ls.isUiThread) {
       throw StateError('cloud_sync_v2_pcs_ui_required');
@@ -9598,7 +9611,7 @@ class RustPushService extends GetxService {
     if (ss.settings.cloudSyncingEnabled.value || isSyncing.value != null) {
       throw StateError('legacy_sync_active');
     }
-    if (!cloudSyncV2PcsPreparationAvailable) {
+    if (!_cloudSyncV2ProfilePcsPreparationAvailable) {
       throw StateError('cloud_sync_v2_pcs_preparation_unavailable');
     }
 
@@ -9820,13 +9833,71 @@ class RustPushService extends GetxService {
         abi == ffi.Abi.windowsX64;
   }
 
-  // Normal settings placement does not bypass rollout or developer safety gates.
+  // Normal settings uses the same rollout fence, not the diagnostic-mode flag.
+  // Public/Alpha/Beta release enablement is still a separate reviewed change.
   bool get cloudSyncV2ProgressVisible =>
       CloudSyncDevGate.manualSemanticPullEnabled && _cloudSyncV2CanaryRuntimeAllowed;
 
+  final _cloudSyncV2ProfilePreflightCache = CloudSyncProfilePreflightCache();
+
+  CloudSyncProfileReadiness get _cloudSyncV2ProfileReadiness =>
+      _readCloudSyncV2ProfileReadiness();
+
+  CloudSyncProfileReadiness _readCloudSyncV2ProfileReadiness({bool fresh = false}) {
+    var localReady = false;
+    var coordinatorActive = true;
+    var outboxSettled = false;
+    if (cloudSyncV2ProgressVisible && ss.settings.finishedSetup.value &&
+        state?.icloudServices?.cloudMessagesClient != null &&
+        !loggingOut && !_serviceClosing) {
+      try {
+        final read = fresh
+            ? _cloudSyncV2ProfilePreflightCache.readFresh
+            : _cloudSyncV2ProfilePreflightCache.readForDisplay;
+        final local = read(
+          client: state!.icloudServices!.cloudMessagesClient!,
+          store: Database.store,
+          storage: statePath,
+          read: ObjectBoxCloudSyncPreflightReader.fromDatabase().read,
+        );
+        localReady = local.objectBoxReady;
+        coordinatorActive = local.coordinatorLeaseActive;
+        outboxSettled = local.outboxCount == 0 ||
+            local.settledOutboxFingerprint != null;
+      } catch (_) {
+        // Unknown local state must not become permission to start a reader.
+      }
+    }
+    final abi = ffi.Abi.current();
+    return CloudSyncProfileReadiness.evaluate(
+      featureAvailable: cloudSyncV2ProgressVisible,
+      platformSupported: abi == ffi.Abi.androidArm64 ||
+          abi == ffi.Abi.windowsArm64 || abi == ffi.Abi.windowsX64,
+      restartNeeded: cloudSyncV2Progress.restartRequired ||
+          _cloudSyncV2PcsPreparationQuiescing,
+      accountReady: ss.settings.finishedSetup.value &&
+          !loggingOut && !_serviceClosing && statePath.isNotEmpty &&
+          state?.icloudServices?.keychain != null &&
+          state?.icloudServices?.cloudMessagesClient != null,
+      foreground: ls.isUiThread && ls.currentState == AppLifecycleState.resumed,
+      legacyEnabledOrRunning: ss.settings.cloudSyncingEnabled.value ||
+          isSyncing.value != null,
+      operationActive: _cloudSyncV2PcsPreparationInFlight != null ||
+          cloudSyncV2HistoryReadActive || _cloudSyncV2OutboundQuiescing ||
+          _cloudSyncV2OutboundConfirmation != null ||
+          _cloudSyncV2OutboundProvisioningInFlight != null ||
+          _cloudSyncV2OutboundInFlight != null,
+      localStateReady: localReady,
+      coordinatorActive: coordinatorActive,
+      outboxSettled: outboxSettled,
+    );
+  }
+
   bool get cloudSyncV2ProgressAvailable =>
-      cloudSyncV2PcsPreparationAvailable && cloudSyncV2ManualSemanticPullAvailable &&
-      ls.currentState == AppLifecycleState.resumed;
+      _cloudSyncV2ProfileReadiness == CloudSyncProfileReadiness.ready;
+
+  String? get cloudSyncV2ProgressUnavailableMessage =>
+      _cloudSyncV2ProfileReadiness.message;
 
   bool get cloudSyncV2HistoryReadActive =>
       _cloudSyncV2SemanticPullInFlight != null || _cloudSyncV2SemanticPullQuiescing;
@@ -9835,6 +9906,9 @@ class RustPushService extends GetxService {
     final expectedClient = state?.icloudServices?.cloudMessagesClient;
     final expectedStorage = statePath;
     void validate() {
+      if (!cloudSyncV2ProgressVisible) {
+        throw StateError('cloud_sync_semantic_pull_disabled');
+      }
       _validateCloudSyncV2QueuedRead(
         expectedClient: expectedClient, expectedStorage: expectedStorage);
       if (!ls.isUiThread || ls.currentState != AppLifecycleState.resumed) {
@@ -9844,10 +9918,17 @@ class RustPushService extends GetxService {
     }
     return cloudSyncV2Progress.startPrepared(speed,
       validate: validate,
-      preparePcs: () async => await prepareCloudSyncV2PcsConfirmed(
-        validateContinuation: validate) != CloudSyncV2PcsPreparationOutcome.cancelled,
+      preparePcs: () async {
+        // A displayed Ready state may be cached. Admission never is.
+        final readiness = _readCloudSyncV2ProfileReadiness(fresh: true);
+        if (readiness != CloudSyncProfileReadiness.ready) {
+          throw StateError(readiness.safeCode);
+        }
+        return await _prepareCloudSyncV2ProfilePcs(
+          validateContinuation: validate) != CloudSyncV2PcsPreparationOutcome.cancelled;
+      },
       readOnlyCatchUp: () async {
-        final result = await runCloudSyncV2AutomaticSemanticCatchUpReadOnly(
+        final result = await _runCloudSyncV2ProfileCatchUpReadOnly(
           progress: cloudSyncV2Progress);
         // Match the existing confirmed catch-up UI's local list refresh.
         try {
@@ -9979,14 +10060,21 @@ class RustPushService extends GetxService {
   /// retain their existing budget and cancellation behavior.
   Future<CloudSyncSemanticDrainResult>
   runCloudSyncV2AutomaticSemanticCatchUpReadOnly({CloudSyncProgress? progress}) {
+    if (!_cloudSyncV2DeveloperRuntimeAllowed) {
+      throw StateError('cloud_sync_developer_mode_required');
+    }
+    return _runCloudSyncV2ProfileCatchUpReadOnly(progress: progress);
+  }
+
+  /// Normal Profile reads share the same bounded runner and identity fences,
+  /// but do not require Developer Mode or start the outbound worker.
+  Future<CloudSyncSemanticDrainResult>
+  _runCloudSyncV2ProfileCatchUpReadOnly({CloudSyncProgress? progress}) {
     if (!CloudSyncDevGate.manualSemanticPullEnabled) {
       throw StateError('cloud_sync_semantic_pull_disabled');
     }
     if (!_cloudSyncV2CanaryRuntimeAllowed) {
       throw StateError('cloud_sync_canary_package_required');
-    }
-    if (!_cloudSyncV2DeveloperRuntimeAllowed) {
-      throw StateError('cloud_sync_developer_mode_required');
     }
     if (_cloudSyncV2SemanticPullQuiescing || loggingOut) {
       throw StateError('cloud_sync_semantic_pull_quiescing');

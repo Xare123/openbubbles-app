@@ -323,14 +323,14 @@ void main() {
       final stop = source.indexOf('/// Content-free lifecycle state', start);
       final wrapper = source.substring(start, stop);
       expect(wrapper, contains('startPrepared('));
-      expect(wrapper, contains('prepareCloudSyncV2PcsConfirmed('));
+      expect(wrapper, contains('_prepareCloudSyncV2ProfilePcs('));
       expect(wrapper, contains('validateContinuation: validate'));
       expect(wrapper, contains('_validateCloudSyncV2QueuedRead('));
       expect(wrapper, contains('AppLifecycleState.resumed'));
       expect(wrapper, contains('CloudSyncV2PcsPreparationOutcome.cancelled'));
       expect(
         wrapper,
-        contains('runCloudSyncV2AutomaticSemanticCatchUpReadOnly('),
+        contains('_runCloudSyncV2ProfileCatchUpReadOnly('),
       );
       expect(
         wrapper,
