@@ -658,6 +658,10 @@ void main() {
     ).readAsStringSync();
     expect(harness, contains('var users = refreshAuthentication'));
     expect(harness, contains('api.cloudSyncWindowsAuthenticateSender('));
+    expect(harness, contains(r"RegExp(r'(^|\D)5052(\D|$)').hasMatch(error.message)"));
+    expect(harness, contains('attempt >= 1'));
+    expect(harness, contains('windows-write-ids-registration-retry'));
+    expect(harness, contains('api.duplicateUser(user: user)'));
     expect(
       harness,
       isNot(contains("File(path.join(fs.appDocDir.path, 'id.plist')).delete")),

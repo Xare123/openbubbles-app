@@ -42,6 +42,8 @@ import 'package:bluebubbles/src/rust/lib.dart' as rustlib;
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge.dart'
+    show AnyhowException;
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show ExternalLibrary;
 import 'package:path/path.dart' as path;
@@ -2139,13 +2141,36 @@ class CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                   'windows-write-ids-registration',
                   state: 'running',
                 );
-                final registration = await api.registerIds(
-                  path: fs.appDocDir.path,
-                  config: config,
-                  aps: connection,
-                  identity: identity,
-                  users: [user],
-                );
+                late final (List<api.IdsUser>?, api.SupportAlert?) registration;
+                for (var attempt = 0; ; attempt++) {
+                  try {
+                    registration = await api.registerIds(
+                      path: fs.appDocDir.path,
+                      config: config,
+                      aps: connection,
+                      identity: identity,
+                      // FRB transfers ownership. Preserve the authenticated
+                      // user so Apple's one allowed 5052 retry gets an exact
+                      // duplicate, matching the ordinary setup flow.
+                      users: [api.duplicateUser(user: user)],
+                    );
+                    break;
+                  } catch (error) {
+                    final aliasWasRemoved =
+                        error is AnyhowException &&
+                        RegExp(r'(^|\D)5052(\D|$)').hasMatch(error.message);
+                    if (!aliasWasRemoved || attempt >= 1) rethrow;
+                    await _setRuntimeStage(
+                      'windows-write-ids-registration-retry',
+                      state: 'running',
+                    );
+                    await Future<void>.delayed(const Duration(seconds: 5));
+                    await _setRuntimeStage(
+                      'windows-write-ids-registration',
+                      state: 'running',
+                    );
+                  }
+                }
                 if (registration.$1 == null || registration.$2 != null) {
                   throw StateError(
                     'cloud_sync_windows_sender_registration_failed',
