@@ -17,6 +17,8 @@ void main() {
     Future<void> Function(CloudSyncSpeed) start, {
     bool available = true,
     double scale = 1,
+    bool Function()? isReading,
+    bool Function()? availability,
   }) => MaterialApp(
     theme: ThemeData(fontFamily: 'Inter'),
     debugShowCheckedModeBanner: false,
@@ -26,7 +28,8 @@ void main() {
         body: SingleChildScrollView(
           child: CloudSyncProgressCard(
             progress: progress,
-            isAvailable: () => available,
+            isAvailable: availability ?? () => available,
+            isReading: isReading,
             onStart: start,
           ),
         ),
@@ -34,17 +37,87 @@ void main() {
     ),
   );
 
-  testWidgets('unavailable relay explains recovery without requesting account reset', (tester) async {
-    final p = CloudSyncProgress();
-    await p.start(CloudSyncSpeed.regular, () async {
-      throw StateError('cloud_sync_native_auth_refresh_relay_unavailable');
-    });
-    await tester.pumpWidget(host(p, (_) async {}));
-    expect(find.textContaining('Your saved relay is unavailable'), findsOneWidget);
-    expect(find.textContaining('Fully close and restart'), findsNothing);
-    expect(p.restartRequired, isFalse);
-    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNotNull);
-  });
+  testWidgets(
+    'external sync state refreshes without a user tap and cannot start a second run',
+    (tester) async {
+      final p = CloudSyncProgress();
+      var reading = true;
+      var starts = 0;
+      await tester.pumpWidget(
+        host(
+          p,
+          (_) async {
+            starts++;
+          },
+          isReading: () => reading,
+          availability: () => !reading,
+        ),
+      );
+      expect(find.text('History sync is running'), findsOneWidget);
+      expect(find.text('Ready to sync'), findsNothing);
+      expect(find.textContaining('0 records downloaded'), findsNothing);
+      expect(
+        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+        isNull,
+      );
+      expect(
+        tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged,
+        isNull,
+      );
+      reading = false;
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('Ready to sync'), findsOneWidget);
+      expect(
+        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+        isNotNull,
+      );
+      expect(starts, 0);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 2));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'elapsed display updates while waiting and stops owning a timer on page exit',
+    (tester) async {
+      var now = DateTime.utc(2026, 9, 15);
+      final p = CloudSyncProgress(clock: () => now);
+      final done = Completer<CloudSyncSemanticDrainResult>();
+      final work = p.start(CloudSyncSpeed.regular, () => done.future);
+      await tester.pumpWidget(host(p, (_) async {}));
+      expect(find.text('Elapsed 0m 00s'), findsOneWidget);
+      now = now.add(const Duration(seconds: 65));
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('Elapsed 1m 05s'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(p.active, isTrue);
+      done.complete(fixtures.result());
+      await tester.pump();
+      await work;
+    },
+  );
+
+  testWidgets(
+    'unavailable relay explains recovery without requesting account reset',
+    (tester) async {
+      final p = CloudSyncProgress();
+      await p.start(CloudSyncSpeed.regular, () async {
+        throw StateError('cloud_sync_native_auth_refresh_relay_unavailable');
+      });
+      await tester.pumpWidget(host(p, (_) async {}));
+      expect(
+        find.textContaining('Your saved relay is unavailable'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Fully close and restart'), findsNothing);
+      expect(p.restartRequired, isFalse);
+      expect(
+        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+        isNotNull,
+      );
+    },
+  );
 
   testWidgets('uncertain PCS explains restart and disables resume', (
     tester,
@@ -123,14 +196,8 @@ void main() {
           started = speed;
         }),
       );
-      expect(
-        find.textContaining('Regular is the default: smaller chunks'),
-        findsOneWidget,
-      );
-      expect(
-        find.textContaining('more frequent opportunities for other work'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('Regular leaves more room'), findsOneWidget);
+      expect(find.textContaining('Turbo uses larger batches'), findsOneWidget);
       await tester.ensureVisible(find.byType(SwitchListTile));
       await tester.tap(find.byType(SwitchListTile));
       await tester.pumpAndSettle();

@@ -6,7 +6,7 @@ import 'package:bluebubbles/helpers/backend/settings_helpers.dart';
 import 'package:bluebubbles/main.dart';
 import 'package:bluebubbles/services/backend/sync/chat_sync_manager.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
-import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_chat_presentation_repair.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_progress.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
@@ -1055,7 +1055,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                   style: context.theme.textTheme.titleLarge,
                                 ),
                                 content: Text(
-                                  "This continues through checkpointed batches until it reaches the current CloudKit head or pauses safely at a hard session cap. CloudKit change history is checkpoint-ordered rather than safely date-seekable, so it resumes without skipping earlier changes. You can leave this screen while OpenBubbles remains running. It will not upload or delete CloudKit records, delete local messages, or apply tombstones.",
+                                  "This prepares iCloud encryption and continues through checkpointed batches until the current CloudKit head or pauses safely at a hard session cap. New sync streams request newest history first; existing streams resume their saved checkpoint. View progress or pause in Profile > iCloud history sync. It will not upload or delete CloudKit records, delete local messages, or apply tombstones.",
                                   style: context.theme.textTheme.bodyLarge,
                                 ),
                                 actions: [
@@ -1074,43 +1074,18 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                             if (cloudSyncV2Running.value) return;
                             cloudSyncV2Running.value = true;
                             try {
-                              final result = await pushService
-                                  .runCloudSyncV2AutomaticSemanticCatchUpConfirmed();
-                              var chatListRefreshMessage =
-                                  "Chat list refreshed.";
-                              try {
-                                final repairedChatOrderRows =
-                                    await repairCloudSyncChatLatestMessageDates()
-                                        .timeout(const Duration(seconds: 30));
-                                Logger.info(
-                                  "Cloud Sync V2 local chat ordering cache repaired rows=$repairedChatOrderRows",
-                                );
-                                // The ObjectBox count watcher intentionally ignores its
-                                // first zero-to-nonzero transition and only adds one chat
-                                // for a multi-chat transaction. A semantic pull can make
-                                // exactly that transition, so refresh the presentation
-                                // once after the durable pull has completed.
-                                await chats
-                                    .init(force: true)
-                                    .timeout(const Duration(seconds: 30));
-                              } catch (error) {
-                                final safeCode = cloudSyncV2SafeFailureCode(error);
-                                Logger.warn(
-                                  "Cloud Sync V2 local chat refresh failed code=$safeCode",
-                                );
-                                chatListRefreshMessage =
-                                    "CloudKit catch-up completed, but the chat list could not refresh. Restart OpenBubbles to display any newly available history.";
+                              await pushService.startCloudSyncV2Progress(CloudSyncSpeed.regular);
+                              final progress = pushService.cloudSyncV2Progress;
+                              if (progress.safeFailure != null) {
+                                Logger.warn('Cloud Sync V2 semantic pull stopped safely code=${progress.safeFailure}');
                               }
-                              final presentation =
-                                  cloudSyncV2SemanticCanaryPresentation(result.lastReport);
-                              final progress = result.reachedPassLimit
-                                  ? "Paused safely at the session cap after ${result.passes} pass(es). Start sync again to resume from the saved checkpoint."
-                                  : result.remoteDrained
-                                      ? "Remote CloudKit change history reached its current head after ${result.passes} pass(es)."
-                                      : "Stopped safely after ${result.passes} pass(es).";
                               showSnackbar(
-                                presentation.title,
-                                "${presentation.message} $progress $chatListRefreshMessage",
+                                progress.title,
+                                progress.safeFailure != null
+                                    ? 'Diagnostic code: ${progress.safeFailure}. See Profile > iCloud history sync for recovery.'
+                                    : progress.refreshFailed
+                                        ? 'History was saved, but the chat list could not refresh. Restart OpenBubbles to refresh it.'
+                                        : 'See Profile > iCloud history sync for counts and sync details.',
                               );
                             } catch (error) {
                               if (_showCloudSyncV2Busy(error)) return;

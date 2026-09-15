@@ -7,6 +7,7 @@ import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/attach
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/attachment/other_file.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/attachment/video_player.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/interactive/url_preview.dart';
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/reply/reply_bubble.dart';
 import 'package:bluebubbles/app/layouts/fullscreen_media/fullscreen_holder.dart';
 import 'package:bluebubbles/app/components/circle_progress_bar.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
@@ -166,7 +167,11 @@ class _AttachmentHolderState extends CustomState<AttachmentHolder, void, Message
             child: ConstrainedBox(
               constraints: BoxConstraints(
                 maxWidth: ns.width(context) * 0.5,
-                maxHeight: context.height * 0.6,
+                // Keep downloaded reply media compact. Download/error prompts
+                // need their natural height, including accessibility text.
+                maxHeight: content is PlatformFile && ReplyScope.maybeOf(context) != null
+                    ? 100
+                    : context.height * 0.6,
                 minHeight: 40,
                 minWidth: 100,
               ),

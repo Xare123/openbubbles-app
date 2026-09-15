@@ -31,6 +31,32 @@ extension CloudSyncSpeedBudget on CloudSyncSpeed {
 /// Owned by the service so navigating away does not cancel or duplicate a run.
 class CloudSyncProgress extends ChangeNotifier
     implements CloudSyncProgressSink {
+  CloudSyncProgress({DateTime Function()? clock})
+    : _clock = clock ?? DateTime.now;
+
+  final DateTime Function() _clock;
+  DateTime? _startedAt;
+  DateTime? _finishedAt;
+
+  Duration get elapsed {
+    final started = _startedAt;
+    if (started == null) return Duration.zero;
+    final duration = (_finishedAt ?? _clock()).difference(started);
+    return duration.isNegative ? Duration.zero : duration;
+  }
+
+  bool get hasStarted => _startedAt != null;
+
+  // Whole-run averages include authentication and waiting. These are separate
+  // units: fresh records fetched and visits to previously retained rows.
+  double? get fetchedPerSecond => _perSecond(fetched);
+  double? get replayVisitsPerSecond => _perSecond(projectionExamined);
+
+  double? _perSecond(int count) {
+    final milliseconds = elapsed.inMilliseconds;
+    return milliseconds < 1000 ? null : count * 1000 / milliseconds;
+  }
+
   CloudSyncProgressPhase phase = CloudSyncProgressPhase.idle;
   CloudSyncSpeed speed = CloudSyncSpeed.regular;
   bool active = false;
@@ -180,6 +206,8 @@ class CloudSyncProgress extends ChangeNotifier
     if (existing != null) return existing;
     if (restartRequired) return Future<void>.value();
     active = true;
+    _startedAt = _clock();
+    _finishedAt = null;
     pauseRequested = false;
     safeFailure = null;
     speed = selected;
@@ -217,6 +245,7 @@ class CloudSyncProgress extends ChangeNotifier
           phase = CloudSyncProgressPhase.error;
         }
       } finally {
+        _finishedAt = _clock();
         cancelWindow = null;
         active = false;
         _operation = null;

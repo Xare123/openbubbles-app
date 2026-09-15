@@ -195,13 +195,10 @@ class _ReplyBubbleState extends CustomState<ReplyBubble, void, MessageWidgetCont
                               ),
                             ),
                           ),
-                        ) : ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 100),
-                          child: ReplyScope(
-                            child: AttachmentHolder(
-                              parentController: controller,
-                              message: part,
-                            ),
+                        ) : ReplyScope(
+                          child: AttachmentHolder(
+                            parentController: controller,
+                            message: part,
                           ),
                         ),
                       ),

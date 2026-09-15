@@ -685,14 +685,14 @@ void main() {
     expect(semantic, contains('cloudSyncV2ManualSemanticPullAvailable'));
     expect(
       semantic,
-      contains('runCloudSyncV2AutomaticSemanticCatchUpConfirmed()'),
+      contains('startCloudSyncV2Progress(CloudSyncSpeed.regular)'),
     );
     expect(semantic, isNot(contains('Choose catch-up size')));
     expect(semantic, contains('continues through checkpointed batches'));
     expect(semantic, contains('pauses safely at a hard session cap'));
     expect(
       semantic,
-      contains('checkpoint-ordered rather than safely date-seekable'),
+      contains('existing streams resume their saved checkpoint'),
     );
     expect(semantic, contains('Local canonical chats, messages, reactions'));
     expect(semantic, contains('No CloudKit uploads or deletes'));
@@ -701,40 +701,23 @@ void main() {
       semantic,
       contains('tombstones are retained as read-only acknowledgements'),
     );
-    expect(semantic, contains('cloudSyncV2SemanticCanaryPresentation('));
-    expect(semantic, contains('result.lastReport'));
+    expect(semantic, contains('pushService.cloudSyncV2Progress'));
+    expect(semantic, contains('Profile > iCloud history sync'));
+    expect(semantic, isNot(contains('runCloudSyncV2AutomaticSemanticCatchUpConfirmed()')));
     final semanticRun = semantic.indexOf(
-      'runCloudSyncV2AutomaticSemanticCatchUpConfirmed()',
+      'startCloudSyncV2Progress(CloudSyncSpeed.regular)',
     );
-    final chatOrderRepair = semantic.indexOf(
-      'repairCloudSyncChatLatestMessageDates()',
-      semanticRun,
-    );
-    final chatRefresh = semantic.indexOf('.init(force: true)', chatOrderRepair);
     final semanticPresentation = semantic.indexOf(
-      'cloudSyncV2SemanticCanaryPresentation(',
+      'showSnackbar(',
       semanticRun,
     );
     expect(semanticRun, greaterThanOrEqualTo(0));
-    expect(chatOrderRepair, greaterThan(semanticRun));
-    expect(chatRefresh, greaterThan(chatOrderRepair));
-    expect(semanticPresentation, greaterThan(chatRefresh));
-    expect(
-      semantic.substring(chatOrderRepair, chatRefresh),
-      contains('.timeout(const Duration(seconds: 30))'),
-    );
-    expect(
-      semantic.substring(chatRefresh, semanticPresentation),
-      contains('.timeout(const Duration(seconds: 30))'),
-    );
-    expect(semantic, contains('Chat list refreshed.'));
-    expect(
-      semantic,
-      contains(
-        'CloudKit catch-up completed, but the chat list could not refresh. Restart OpenBubbles to display any newly available history.',
-      ),
-    );
-    expect(semantic, contains('Cloud Sync V2 local chat refresh failed code='));
+    expect(semanticPresentation, greaterThan(semanticRun));
+    // Preparation, progress ownership and bounded chat refresh belong to the
+    // shared service, which has separate behavioral and composition coverage.
+    expect(semantic, isNot(contains('repairCloudSyncChatLatestMessageDates()')));
+    expect(semantic, contains('progress.safeFailure'));
+    expect(semantic, contains('progress.refreshFailed'));
     final semanticCatch = semantic.indexOf(
       '} catch (error) {',
       semanticPresentation,
@@ -747,7 +730,7 @@ void main() {
       'cloudSyncV2SafeFailureCode(error)',
       semanticCatch,
     );
-    expect(semanticCatch, greaterThan(chatRefresh));
+    expect(semanticCatch, greaterThan(semanticPresentation));
     expect(busyPresentation, greaterThan(semanticCatch));
     expect(genericFailure, greaterThan(busyPresentation));
     final presentationStart = source.indexOf(

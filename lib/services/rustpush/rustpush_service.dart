@@ -9828,6 +9828,9 @@ class RustPushService extends GetxService {
       cloudSyncV2PcsPreparationAvailable && cloudSyncV2ManualSemanticPullAvailable &&
       ls.currentState == AppLifecycleState.resumed;
 
+  bool get cloudSyncV2HistoryReadActive =>
+      _cloudSyncV2SemanticPullInFlight != null || _cloudSyncV2SemanticPullQuiescing;
+
   Future<void> startCloudSyncV2Progress(CloudSyncSpeed speed) {
     final expectedClient = state?.icloudServices?.cloudMessagesClient;
     final expectedStorage = statePath;
@@ -9848,8 +9851,8 @@ class RustPushService extends GetxService {
           progress: cloudSyncV2Progress);
         // Match the existing confirmed catch-up UI's local list refresh.
         try {
-          await repairCloudSyncChatLatestMessageDates();
-          await chats.init(force: true);
+          await repairCloudSyncChatLatestMessageDates().timeout(const Duration(seconds: 30));
+          await chats.init(force: true).timeout(const Duration(seconds: 30));
         } catch (_) {
           cloudSyncV2Progress.refreshFailed = true;
         }
@@ -10071,10 +10074,12 @@ class RustPushService extends GetxService {
       _cloudSyncV2SemanticPullInFlight = future;
       try {
         final result = await future;
-        return CloudSyncAndroidBackgroundPolicy.classifyReadResult(
+        final outcome = CloudSyncAndroidBackgroundPolicy.classifyReadResult(
           remoteDrained: result.remoteDrained,
           report: result.lastReport,
         );
+        Logger.info('Cloud Sync V2 Android background outcome=${outcome.wireValue}');
+        return outcome;
       } finally {
         if (identical(_cloudSyncV2SemanticPullInFlight, future)) {
           _cloudSyncV2SemanticPullInFlight = null;

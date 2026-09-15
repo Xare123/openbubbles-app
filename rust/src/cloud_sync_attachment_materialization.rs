@@ -136,7 +136,36 @@ struct SharedFileWriter {
 
 struct SharedFileWriterState {
     file: File,
+    maximum_bytes: u64,
     remaining_bytes: u64,
+}
+
+#[derive(Debug)]
+struct AttachmentSizeLimit {
+    maximum_bytes: u64,
+    written_bytes: u64,
+    incoming_bytes: u64,
+}
+
+impl std::fmt::Display for AttachmentSizeLimit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("attachment_size_limit")
+    }
+}
+
+impl std::error::Error for AttachmentSizeLimit {}
+
+impl SharedFileWriterState {
+    fn size_limit_error(&self, incoming_bytes: u64) -> io::Error {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            AttachmentSizeLimit {
+                maximum_bytes: self.maximum_bytes,
+                written_bytes: self.maximum_bytes.saturating_sub(self.remaining_bytes),
+                incoming_bytes,
+            },
+        )
+    }
 }
 
 impl SharedFileWriter {
@@ -144,6 +173,7 @@ impl SharedFileWriter {
         Self {
             state: Arc::new(Mutex::new(SharedFileWriterState {
                 file,
+                maximum_bytes,
                 remaining_bytes: maximum_bytes,
             })),
         }
@@ -164,19 +194,16 @@ impl Write for SharedFileWriter {
             .state
             .lock()
             .map_err(|_| io::Error::other("attachment_writer_lock"))?;
-        let requested = u64::try_from(buffer.len())
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "attachment_size_limit"))?;
+        let requested =
+            u64::try_from(buffer.len()).map_err(|_| state.size_limit_error(u64::MAX))?;
         if requested > state.remaining_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "attachment_size_limit",
-            ));
+            return Err(state.size_limit_error(requested));
         }
         let written = state.file.write(buffer)?;
         state.remaining_bytes = state
             .remaining_bytes
             .checked_sub(written as u64)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "attachment_size_limit"))?;
+            .ok_or_else(|| state.size_limit_error(written as u64))?;
         Ok(written)
     }
 
@@ -626,6 +653,13 @@ fn map_download_failure(error: &PushError) -> CloudNativeAttachmentMaterializati
         | PushError::TooManyRequests => {
             CloudNativeAttachmentMaterializationFailure::RetryableUpstream
         }
+        PushError::IoError(error)
+            if error
+                .get_ref()
+                .is_some_and(|source| source.is::<AttachmentSizeLimit>()) =>
+        {
+            CloudNativeAttachmentMaterializationFailure::SizeMismatch
+        }
         // The closed CloudKit/MMCS reader reports malformed or incomplete
         // server-described asset metadata as InvalidData/InvalidInput. That is
         // an unusable protected source, not a local-disk failure and must not
@@ -667,7 +701,16 @@ fn download_failure_diagnostic(error: &PushError) -> String {
                 .and_then(|error| error.r#type);
             format!("cloudkit:server={server:?},client={client:?}")
         }
-        PushError::IoError(error) => format!("io:{:?}", error.kind()),
+        PushError::IoError(error) => match error
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<AttachmentSizeLimit>())
+        {
+            Some(limit) => format!(
+                "size:limit,maximum={},written={},incoming={}",
+                limit.maximum_bytes, limit.written_bytes, limit.incoming_bytes,
+            ),
+            None => format!("io:{:?}", error.kind()),
+        },
         PushError::RequestError(error) => format!(
             "request:timeout={},connect={},status={:?}",
             error.is_timeout(),
@@ -1866,11 +1909,50 @@ mod tests {
         let mut writer = SharedFileWriter::new(file, 3);
 
         writer.write_all(&[1_u8, 2, 3]).unwrap();
-        assert!(writer.write_all(&[4_u8]).is_err());
+        let error = PushError::IoError(writer.write_all(&[4_u8]).unwrap_err());
+        assert_eq!(
+            map_download_failure(&error),
+            CloudNativeAttachmentMaterializationFailure::SizeMismatch
+        );
+        assert_eq!(
+            download_failure_diagnostic(&error),
+            "size:limit,maximum=3,written=3,incoming=1"
+        );
         writer.sync_all().unwrap();
         drop(writer);
 
         assert_eq!(fs::read(body).unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn size_limit_classification_requires_the_typed_writer_error() {
+        // Arbitrary server error text cannot masquerade as our bounded writer.
+        let error = PushError::IoError(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "attachment_size_limit",
+        ));
+        assert_eq!(
+            map_download_failure(&error),
+            CloudNativeAttachmentMaterializationFailure::SourceUnusable
+        );
+        assert_eq!(download_failure_diagnostic(&error), "io:InvalidData");
+        let limit = AttachmentSizeLimit {
+            maximum_bytes: 8,
+            written_bytes: 2,
+            incoming_bytes: 7,
+        };
+        let error = PushError::DoNotRetry(Box::new(PushError::IoError(io::Error::new(
+            io::ErrorKind::InvalidData,
+            limit,
+        ))));
+        assert_eq!(
+            map_download_failure(&error),
+            CloudNativeAttachmentMaterializationFailure::SizeMismatch
+        );
+        assert_eq!(
+            download_failure_diagnostic(&error),
+            "size:limit,maximum=8,written=2,incoming=7"
+        );
     }
 
     #[test]

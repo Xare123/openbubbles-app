@@ -23,55 +23,100 @@ CloudSyncSemanticDrainResult result({
 
 void main() {
   test(
-    'Regular uses smaller sessions and longer gaps than Turbo',
-    () {
-      const regular = CloudSyncSpeed.regular;
-      const turbo = CloudSyncSpeed.turbo;
-      expect(regular.readBudget, same(CloudSyncReadBudget.regular));
-      expect(turbo.readBudget, same(CloudSyncReadBudget.standard));
-      expect(regular.readBudget.pagesPerPass, 1);
-      expect(regular.readBudget.retainedReplayEntries, 32);
-      expect(turbo.readBudget.pagesPerPass, 4);
-      expect(turbo.readBudget.retainedReplayEntries, 150);
-      expect(regular.passesPerBatch, 1);
-      expect(turbo.passesPerBatch, 16);
-      expect(regular.maximumBatches, 512);
-      expect(turbo.maximumBatches, 16);
-      expect(regular.pauseBetweenBatches, const Duration(milliseconds: 250));
-      expect(turbo.pauseBetweenBatches, const Duration(milliseconds: 1));
+    'elapsed time and separate average rates freeze at completion and reset on resume',
+    () async {
+      var now = DateTime.utc(2026, 9, 15);
+      final p = CloudSyncProgress(clock: () => now);
+      expect(p.hasStarted, isFalse);
+      expect(p.elapsed, Duration.zero);
+      expect(p.fetchedPerSecond, isNull);
+      final done = Completer<CloudSyncSemanticDrainResult>();
+      final work = p.start(CloudSyncSpeed.regular, () => done.future);
+      await Future<void>.delayed(Duration.zero);
+      p.event(
+        'messageManateeZone',
+        CloudSyncEvent(
+          type: CloudSyncEventType.fetchCompleted,
+          scopeDiagnosticKey: 'safe',
+          at: now,
+          count: 30,
+        ),
+      );
+      p.projectionWindow(60, 7);
+      now = now.add(const Duration(seconds: 10));
+      expect(p.elapsed, const Duration(seconds: 10));
+      expect(p.fetchedPerSecond, 3);
+      expect(p.replayVisitsPerSecond, 6);
+      expect(p.fraction, isNull);
+      done.complete(result());
+      await work;
+      now = now.add(const Duration(minutes: 5));
+      expect(p.elapsed, const Duration(seconds: 10));
+      expect(p.fetchedPerSecond, 3);
+      await p.start(CloudSyncSpeed.regular, () async {
+        expect(p.elapsed, Duration.zero);
+        expect(p.fetchedPerSecond, isNull);
+        expect(p.projectionExamined, 0);
+        now = now.subtract(const Duration(seconds: 1));
+        expect(p.elapsed, Duration.zero);
+        return result();
+      });
     },
   );
 
-  test('fresh page-volume caps remain 25600 Regular and 51200 Turbo per zone', () {
-    int freshCap(CloudSyncSpeed speed) =>
-        speed.maximumBatches *
-        speed.passesPerBatch *
-        speed.readBudget.freshEntriesPerPass;
-
-    expect(CloudSyncReadBudget.regular.freshEntriesPerPass, 50);
-    expect(CloudSyncReadBudget.standard.freshEntriesPerPass, 200);
-    expect(freshCap(CloudSyncSpeed.regular), 25600);
-    expect(freshCap(CloudSyncSpeed.turbo), 51200);
+  test('Regular uses smaller sessions and longer gaps than Turbo', () {
+    const regular = CloudSyncSpeed.regular;
+    const turbo = CloudSyncSpeed.turbo;
+    expect(regular.readBudget, same(CloudSyncReadBudget.regular));
+    expect(turbo.readBudget, same(CloudSyncReadBudget.standard));
+    expect(regular.readBudget.pagesPerPass, 1);
+    expect(regular.readBudget.retainedReplayEntries, 32);
+    expect(turbo.readBudget.pagesPerPass, 4);
+    expect(turbo.readBudget.retainedReplayEntries, 150);
+    expect(regular.passesPerBatch, 1);
+    expect(turbo.passesPerBatch, 16);
+    expect(regular.maximumBatches, 512);
+    expect(turbo.maximumBatches, 16);
+    expect(regular.pauseBetweenBatches, const Duration(milliseconds: 250));
+    expect(turbo.pauseBetweenBatches, const Duration(milliseconds: 1));
   });
 
-  test('read budgets accept limits and reject invalid page or replay counts', () {
-    for (final budget in const [
-      CloudSyncReadBudget.standard,
-      CloudSyncReadBudget.regular,
-      CloudSyncReadBudget(pagesPerPass: 1, retainedReplayEntries: 0),
-      CloudSyncReadBudget(pagesPerPass: 4, retainedReplayEntries: 150),
-    ]) {
-      expect(budget.validate, returnsNormally);
-    }
-    for (final budget in const [
-      CloudSyncReadBudget(pagesPerPass: 0),
-      CloudSyncReadBudget(pagesPerPass: 5),
-      CloudSyncReadBudget(retainedReplayEntries: -1),
-      CloudSyncReadBudget(retainedReplayEntries: 151),
-    ]) {
-      expect(budget.validate, throwsArgumentError);
-    }
-  });
+  test(
+    'fresh page-volume caps remain 25600 Regular and 51200 Turbo per zone',
+    () {
+      int freshCap(CloudSyncSpeed speed) =>
+          speed.maximumBatches *
+          speed.passesPerBatch *
+          speed.readBudget.freshEntriesPerPass;
+
+      expect(CloudSyncReadBudget.regular.freshEntriesPerPass, 50);
+      expect(CloudSyncReadBudget.standard.freshEntriesPerPass, 200);
+      expect(freshCap(CloudSyncSpeed.regular), 25600);
+      expect(freshCap(CloudSyncSpeed.turbo), 51200);
+    },
+  );
+
+  test(
+    'read budgets accept limits and reject invalid page or replay counts',
+    () {
+      for (final budget in const [
+        CloudSyncReadBudget.standard,
+        CloudSyncReadBudget.regular,
+        CloudSyncReadBudget(pagesPerPass: 1, retainedReplayEntries: 0),
+        CloudSyncReadBudget(pagesPerPass: 4, retainedReplayEntries: 150),
+      ]) {
+        expect(budget.validate, returnsNormally);
+      }
+      for (final budget in const [
+        CloudSyncReadBudget(pagesPerPass: 0),
+        CloudSyncReadBudget(pagesPerPass: 5),
+        CloudSyncReadBudget(retainedReplayEntries: -1),
+        CloudSyncReadBudget(retainedReplayEntries: 151),
+      ]) {
+        expect(budget.validate, throwsArgumentError);
+      }
+    },
+  );
 
   test(
     'one owner joins repeated starts and navigation does not own cancellation',

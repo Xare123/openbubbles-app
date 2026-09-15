@@ -4947,3 +4947,132 @@ cannot authorize or perform adoption.
   intact, but the platform destructive-action guard rejected its removal. Keep
   it classified as pending cleanup; do not treat that copy as another account
   profile or upload it because it contains personal data.
+
+### September 15 exact 78d Pixel upgrade and live semantic pull
+
+- The independently verified signed artifact from full GCE run 34983806715 was
+  installed in place on the Pixel 10 Pro Canary package over wired ADB. The
+  package, 1.15.0 (20002227) version and signing certificate match the qualified
+  artifact. Existing setup, registration, chats and retained CloudKit state
+  survived. Alpha was not touched, and no uninstall, data clear, checkpoint
+  reset or registration repair was performed.
+- After the user recovered the encryption setting with an off/on cycle, the
+  content-free Canary status reported setup and authentication ready, legacy
+  sync and logout inactive, coordinator ownership active and outbox settled.
+- Reports `obcs2-semantic-1789486767100501.json`,
+  `obcs2-semantic-1789486866607721.json` and
+  `obcs2-semantic-1789486960673517.json` bind to exact source `78d0f8cf2`.
+  Each kept outbox 1 -> 1 with remote writes disabled and fetched zero because
+  the Apple cursors were already at their terminal head. Retained local
+  projection reduced Messages 7,439 -> 7,409 -> 7,369 and Attachments
+  1,330 -> 1,302 -> 1,242 while Chats remained 94. The third report applied
+  40 Messages and 60 Attachments. These were intermediate progress reports.
+- The same foreground operation reached terminal report
+  `obcs2-semantic-1789489102934586.json` at 09:18 local: two passes, remote
+  drained, fetched zero, applied 203, retained 8,502, deferred/quarantined zero
+  and outbox 1 -> 1. Remote saves/deletes remained disabled. It applied 192
+  Message and 11 Attachment rows, released the coordinator and kept
+  authentication ready.
+- The retained total is classified rather than silently discarded. Chats retain
+  94 rows, including 13 out-of-scope saves and 81 tombstones. Messages retain
+  7,177 rows with 718 blocking saves. Attachments retain 1,231 rows with 1,116
+  blocking saves. This is terminal Apple-head and bounded-projection evidence,
+  not proof that every historical record can be projected.
+- The log showed sustained local Message and Attachment projection with
+  no authentication or CloudKit-fatal error. It also exposed one Find My
+  message null assertion at `find_my.dart:75` and a follow-on deactivated route
+  lookup at `stateful_boilerplate.dart:164`; the engine continued. A repeated
+  `ListTile` background/ink warning is a UI styling warning, not a CloudKit
+  crash. These defects require separate source repair and focused tests after
+  the exact-source live run ends.
+- The removable Canary ADB receiver reports the active UI pull through
+  `semantic_pull_active`, but its controller-owned `pull_state` remains `idle`
+  because the operation was launched in the UI. This is an observability gap for
+  qualification tooling and must not be interpreted as an idle engine.
+- Android background wake first returned `outcome=retry` at 09:23 after a
+  transient HTTP-server/timeout boundary. WorkManager retried without changing
+  registration or the outbox. Report `obcs2-semantic-1789489571217410.json`
+  then completed at 09:26 with one pass, all three zones empty-terminal,
+  fetched/applied zero, retained 8,502 and outbox 1 -> 1. The background policy
+  classifies this safe terminal read as complete. Its success return does not
+  currently emit an explicit `outcome=complete` line, so that missing line is a
+  logging seam, not proof of a continuing retry.
+- Post-wake status was stable with semantic engine inactive, authentication
+  ready, coordinator inactive, outbox settled and semantic pull available. The
+  next unchanged-artifact lifecycle gate is a controlled cold restart followed
+  by a no-duplicate incremental pull.
+- A separate Pixel UI defect appeared when one failed attachment materialization
+  (`cloud_attachment_source_invalid`) rendered its error state: Flutter reported
+  a vertical RenderFlex overflow. Nearby attachments downloaded successfully.
+  Reproduce the narrow/high-text-scale failure state and fix the layout without
+  hiding or reclassifying the underlying materialization error.
+- After two stable idle preflight checks, Canary was force-stopped and cold
+  launched without uninstall, data clear, cache clear, registration repair or
+  legacy-sync change. The new process retained setup and authentication and
+  reached writer-ready state with the settled outbox intact.
+- That fresh process scheduled one bounded background read without a competing
+  manual start. Report `obcs2-semantic-1789490381477658.json` finished at
+  09:39 local on exact build `78d0f8cf2`: one pass, every zone empty-terminal,
+  fetched/applied zero, retained 8,502, remote saves/deletes false and outbox
+  1 -> 1. This qualifies cold process restart plus read-side no-duplicate
+  incremental behavior for the installed artifact. It does not yet qualify a
+  locked-network reconnect or outbound replay after a new Pixel write.
+- Startup first attempted native receipt replay before writer-owner preparation
+  and logged one deferred warning. The later owner-preparation path awaited the
+  replay and then logged `automatic writer ready`; no second warning followed.
+  Preserve this ordering evidence and improve its diagnostics separately rather
+  than treating the recovered first attempt as a duplicate-send failure.
+
+### September 15 reply overflow, shared sync progress and native size diagnosis
+
+- The failed attachment was reproduced in the actual ReplyBubble and
+  AttachmentHolder widget tree: 58-pixel overflow at ordinary text scaling and
+  106 at double scaling; ordinary message holders passed. The repair moves the
+  100-pixel reply limit to already-downloaded media. Failed/pending prompts may
+  grow, while the decoded-thumbnail test proves compact reply media remains.
+- Profile progress now reports elapsed time and separate whole-run averages for
+  newly fetched records and retained-row visits, frozen at completion and reset
+  for a new run. It never derives a percentage from a configured cap. A mounted
+  one-second status refresh recognizes another reader and re-enables resume
+  after it finishes; page closure disposes that timer without canceling service
+  work. Main status copy now shows downloaded/restored counts with detailed
+  counters under Sync details.
+- The developer catch-up action now enters the same prepared Profile flow.
+  This removes its duplicate refresh/presentation path, exposes progress for
+  developer starts and uses the no-upload-wake read method. The shared local
+  ordering/list refresh has bounded 30-second waits. The Android background
+  success path logs its actual classified outcome, matching the error path.
+- Local qualification passed 70 Flutter tests across attachment layout,
+  progress model, progress widgets, PCS preparation and production composition.
+  The subsequent shorter card copy passed all eight widget tests. Initial test
+  compilation caught an import appended below declarations; it was corrected
+  before the passing run. Analysis reported no errors, five existing Profile
+  warnings and 14 existing lint/deprecation infos. Existing unrelated lint
+  cleanup was not included. The status card was rendered for visual review.
+- Wired ADB disconnected; the discovered wireless endpoint reconnected. Its
+  native log contained four failed attempts for one media asset after exact
+  decryption and unique Ford-key-qualified selection. Each ended in MMCS with
+  `io:InvalidData`. This is later than metadata/source selection. The local
+  bounded destination can also emit that kind when bytes exceed the canonical
+  size, so the current trace does not establish a malformed Apple response.
+- Native candidate replaces only that writer's generic size-limit I/O error
+  with a typed error. It maps to the existing SizeMismatch result and gives
+  content-free maximum/written/incoming counts. An arbitrary I/O error string
+  cannot impersonate the typed error. The byte cap, final integrity check and
+  atomic cache admission remain intact. Formatting passed; its native tests
+  await GCE and it is not installed.
+- Muse child 01a0a5eb-40aa-7f63-8557-e59c97d7141b and Terra child
+  01a0a5f5-68d8-7fb3-9d19-f1dd20c14b2c both failed before work with 429 and
+  were closed. The repair task identified the actual cause as the local
+  OpenCodex 2.55.0 root-task budget guard, not an upstream provider throttle.
+  Its 2.56.0 upgrade is awaiting a request-free pause. No further child retry
+  is authorized by this checkpoint before its explicit live notice.
+- All local test/analysis handles are terminal; no GCE build was dispatched.
+  Fresh inventories show zero GCE instances and zero registered runners.
+  C: is 37.5 GiB free. No evidence, user data, transcript or rollback artifact
+  was deleted. Supported transcript deletion is unavailable. Preserve this
+  source candidate and installed `78d0f8cf2` while the proxy restarts.
+- Final wireless preflight at the pause found another existing semantic reader
+  active, coordinator owned, authentication ready and outbox settled. It was
+  left running; a local proxy restart does not terminate the phone operation.
+  Resume by reading its terminal state before starting any additional work.
