@@ -408,6 +408,93 @@ try {
 }
 catch { Write-Host "FAIL receipt-binding-truthful ($_)"; $script:FailCount++ }
 
+# 9b. Default read-only preservation: the issued receipt pins harness/read-only binding.
+try {
+    $bindDoc = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+    $bindOk = $true
+    if ($bindDoc.origin.variant -cne 'read-only') { Write-Host 'FAIL receipt-default-variant (expected read-only)'; $bindOk = $false }
+    if ($bindDoc.origin.artifact_mode -cne 'harness') { Write-Host 'FAIL receipt-default-mode (expected harness)'; $bindOk = $false }
+    if ($bindDoc.build_identifier -cne $f.BuildId) { Write-Host 'FAIL receipt-default-build-id'; $bindOk = $false }
+    if ($bindDoc.build_identifier -like '*-*') { Write-Host 'FAIL receipt-default-build-id (read-only must be bare 12-char, no suffix)'; $bindOk = $false }
+    if ($bindOk) { Write-Host 'PASS receipt-default-read-only-preserved'; $script:Pass++ } else { $script:FailCount++ }
+}
+catch { Write-Host "FAIL receipt-default-read-only-preserved ($_ )"; $script:FailCount++ }
+
+# 9c. Configuration/build-id binding mirrors Get-HarnessConfigurationIdentifier.
+try {
+    $cfgOk = $true
+    $bare = $f.Src.Substring(0, 12)
+    if ((Get-HarnessConfigurationIdentifier -SourceIdentifier $bare) -cne $bare) { Write-Host 'FAIL config-binding-default'; $cfgOk = $false }
+    if ((Get-HarnessConfigurationIdentifier -SourceIdentifier $bare -WriterBuild) -cne ($bare + '-local-write')) { Write-Host 'FAIL config-binding-writer'; $cfgOk = $false }
+    if ($fw.BuildId -cne ($bare + '-local-write')) { Write-Host 'FAIL config-binding-fixture (local-write build id must carry suffix)'; $cfgOk = $false }
+    if ($f.BuildId -cne $bare) { Write-Host 'FAIL config-binding-fixture (read-only build id must be bare)'; $cfgOk = $false }
+    try { Get-HarnessConfigurationIdentifier -SourceIdentifier $bare -WriterBuild -ReplayBuild | Out-Null; Write-Host 'FAIL config-binding-conflict (no throw)'; $cfgOk = $false } catch { if ("$_" -notlike '*Conflicting harness configurations*') { Write-Host "FAIL config-binding-conflict (wrong error: $_)"; $cfgOk = $false } }
+    if ($cfgOk) { Write-Host 'PASS config-build-id-binding'; $script:Pass++ } else { $script:FailCount++ }
+}
+catch { Write-Host "FAIL config-build-id-binding ($_ )"; $script:FailCount++ }
+
+# 9d. Explicit local-write acceptance at the verifier layer
+# (artifact_mode=harness, build_variant=local-write).
+try {
+    $lwResult = Invoke-VerifyWindowsCloudBundle -ArchivePath $fw.Zip -ProvenancePath $fw.Prov -ExpectedArchiveSha256 $fw.ZipHash -ExpectedSourceSha $fw.Src -ExpectedPilotSha $fw.Pilot -ExpectedVariant 'local-write' -ExpectedArtifactMode 'harness'
+    $lwOk = $true
+    if ($lwResult.BuildId -cne $fw.BuildId) { Write-Host 'FAIL verifier-local-write-accept (build id)'; $lwOk = $false }
+    if ($lwResult.Variant -cne 'local-write') { Write-Host 'FAIL verifier-local-write-accept (variant)'; $lwOk = $false }
+    if ($lwResult.ArtifactMode -cne 'harness') { Write-Host 'FAIL verifier-local-write-accept (mode)'; $lwOk = $false }
+    if ($lwOk) { Write-Host 'PASS verifier-local-write-accept'; $script:Pass++ } else { $script:FailCount++ }
+}
+catch { Write-Host "FAIL verifier-local-write-accept ($_ )"; $script:FailCount++ }
+
+# 9e. Provenance variant enforcement + wrong-variant rejection (both directions, verifier layer).
+try { Invoke-VerifyWindowsCloudBundle -ArchivePath $fw.Zip -ProvenancePath $fw.Prov -ExpectedArchiveSha256 $fw.ZipHash -ExpectedSourceSha $fw.Src -ExpectedPilotSha $fw.Pilot -ExpectedVariant 'read-only' -ExpectedArtifactMode 'harness' | Out-Null; Write-Host 'FAIL verifier-rejects-writer-as-readonly (no throw)'; $script:FailCount++ } catch { if ("$_" -like '*VERIFY-FAIL*') { Write-Host 'PASS verifier-rejects-writer-as-readonly'; $script:Pass++ } else { Write-Host "FAIL verifier-rejects-writer-as-readonly (wrong error: $_)"; $script:FailCount++ } }
+try { Invoke-VerifyWindowsCloudBundle -ArchivePath $f.Zip -ProvenancePath $f.Prov -ExpectedArchiveSha256 $f.ZipHash -ExpectedSourceSha $f.Src -ExpectedPilotSha $f.Pilot -ExpectedVariant 'local-write' -ExpectedArtifactMode 'harness' | Out-Null; Write-Host 'FAIL verifier-rejects-readonly-as-writer (no throw)'; $script:FailCount++ } catch { if ("$_" -like '*VERIFY-FAIL*') { Write-Host 'PASS verifier-rejects-readonly-as-writer'; $script:Pass++ } else { Write-Host "FAIL verifier-rejects-readonly-as-writer (wrong error: $_)"; $script:FailCount++ } }
+
+# 9f. Importer-layer wrong-variant rejection: a local-write bundle cannot enter
+# through the default read-only path.
+Reset-Mocks
+$script:MockBuildId = $f.BuildId
+$script:RustThumbprint = $Thumb
+$lwRepo = New-TestRepo -Tag 't-lw-explicit-repo'
+$lwReceipt = Join-Path $Scratch 't-lw-explicit-receipt.json'
+try { Import-VerifiedWindowsCloudHarness -ArchivePath $fw.Zip -ProvenancePath $fw.Prov -ExpectedArchiveSha256 $fw.ZipHash -ExpectedSourceSha $fw.Src -ExpectedPilotSha $fw.Pilot -Repository $lwRepo -ReceiptPath $lwReceipt -SignTool $fakeSignTool -SigningThumbprint $Thumb | Out-Null; Write-Host 'FAIL importer-rejects-local-write (no throw)'; $script:FailCount++ } catch { if ("$_" -like '*IMPORT-FAIL*') { Write-Host 'PASS importer-rejects-local-write'; $script:Pass++ } else { Write-Host "FAIL importer-rejects-local-write (wrong error: $_)"; $script:FailCount++ } }
+if ((-not (Test-Path -LiteralPath (Get-TestRunnerDir -Repo $lwRepo))) -and (-not (Test-Path -LiteralPath $lwReceipt -PathType Leaf))) { Write-Host 'PASS importer-rejects-local-write-no-side-effects'; $script:Pass++ } else { Write-Host 'FAIL importer-rejects-local-write-no-side-effects'; $script:FailCount++ }
+
+# 9g. An explicitly selected local-write harness imports with the suffixed
+# configuration identifier and stamps the same variant into its receipt.
+Reset-Mocks
+$script:MockBuildId = $f.BuildId
+$script:RustThumbprint = $Thumb
+$lwPositiveRepo = New-TestRepo -Tag 't-lw-positive-repo'
+$lwPositiveRunner = Get-TestRunnerDir -Repo $lwPositiveRepo
+$lwPositiveReceipt = Join-Path $Scratch 't-lw-positive-receipt.json'
+$lwPositiveApp = Join-Path $lwPositiveRunner 'bluebubbles_app.exe'
+$lwPositiveRust = Join-Path $lwPositiveRunner 'rust_lib_bluebubbles.dll'
+$lwPositiveObjectBox = Join-Path $lwPositiveRunner 'objectbox.dll'
+$script:SigStore[$lwPositiveApp] = 'NotSigned'
+$script:SigStore[$lwPositiveRust] = 'Valid'
+$script:SigStore[$lwPositiveObjectBox] = 'Valid'
+try {
+    $lwImport = Import-VerifiedWindowsCloudHarness -ArchivePath $fw.Zip -ProvenancePath $fw.Prov -ExpectedArchiveSha256 $fw.ZipHash -ExpectedSourceSha $fw.Src -ExpectedPilotSha $fw.Pilot -ExpectedVariant 'local-write' -Repository $lwPositiveRepo -ReceiptPath $lwPositiveReceipt -SignTool $fakeSignTool -SigningThumbprint $Thumb
+    $lwImportOk = $true
+    if ($lwImport.BuildIdentifier -cne $fw.BuildId) { Write-Host 'FAIL importer-local-write-positive (build id)'; $lwImportOk = $false }
+    $lwReceiptDoc = Get-Content -LiteralPath $lwPositiveReceipt -Raw | ConvertFrom-Json
+    if ($lwReceiptDoc.origin.variant -cne 'local-write') { Write-Host 'FAIL importer-local-write-positive (receipt variant)'; $lwImportOk = $false }
+    if ($lwReceiptDoc.build_identifier -cne $fw.BuildId) { Write-Host 'FAIL importer-local-write-positive (receipt build id)'; $lwImportOk = $false }
+    if (-not (Test-HarnessBuildReceipt -ReceiptPath $lwPositiveReceipt -BuildIdentifier $fw.BuildId -Runner $lwPositiveApp -RustLibrary $lwPositiveRust)) { Write-Host 'FAIL importer-local-write-positive (receipt compatibility)'; $lwImportOk = $false }
+    if ($script:SignCalls -notcontains $lwPositiveApp -or $script:SignCalls -contains $lwPositiveObjectBox) { Write-Host 'FAIL importer-local-write-positive (signing boundary)'; $lwImportOk = $false }
+    if ($lwImportOk) { Write-Host 'PASS importer-local-write-positive'; $script:Pass++ } else { $script:FailCount++ }
+}
+catch { Write-Host "FAIL importer-local-write-positive ($_ )"; $script:FailCount++ }
+
+# 9h. The explicit writer path rejects a read-only bundle without installing it.
+Reset-Mocks
+$script:MockBuildId = $f.BuildId
+$script:RustThumbprint = $Thumb
+$roAsWriterRepo = New-TestRepo -Tag 't-ro-as-writer-repo'
+$roAsWriterReceipt = Join-Path $Scratch 't-ro-as-writer-receipt.json'
+Assert-ImportFails -Name 'importer-rejects-readonly-as-writer' -Body { Import-VerifiedWindowsCloudHarness -ArchivePath $f.Zip -ProvenancePath $f.Prov -ExpectedArchiveSha256 $f.ZipHash -ExpectedSourceSha $f.Src -ExpectedPilotSha $f.Pilot -ExpectedVariant 'local-write' -Repository $roAsWriterRepo -ReceiptPath $roAsWriterReceipt -SignTool $fakeSignTool -SigningThumbprint $Thumb }
+if ((-not (Test-Path -LiteralPath (Get-TestRunnerDir -Repo $roAsWriterRepo))) -and (-not (Test-Path -LiteralPath $roAsWriterReceipt -PathType Leaf))) { Write-Host 'PASS importer-rejects-readonly-as-writer-no-side-effects'; $script:Pass++ } else { Write-Host 'FAIL importer-rejects-readonly-as-writer-no-side-effects'; $script:FailCount++ }
+
 # 10. The real profile receipt is never touched.
 $realAfter = Test-Path -LiteralPath $realReceiptDefault -PathType Leaf
 $realHashAfter = ''

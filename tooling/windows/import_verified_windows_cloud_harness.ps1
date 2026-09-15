@@ -5,6 +5,8 @@ param(
     [string] $ExpectedArchiveSha256,
     [string] $ExpectedSourceSha,
     [string] $ExpectedPilotSha,
+    [ValidateSet('read-only', 'local-write')]
+    [string] $ExpectedVariant = 'read-only',
     [string] $Repository = '',
     [string] $ProfileRoot = '',
     [string] $RunnerDirectory = '',
@@ -20,7 +22,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 # Bounded, fail-closed importer for cloud-built Windows harness bundles.
-# Scope: verify a read-only harness archive, stage it under the target build
+# Scope: verify an explicitly selected harness archive, stage it under the target build
 # parent, install it into the runner Debug directory, preserve the vendor
 # ObjectBox runtime, locally sign unsigned binaries, and issue a receipt that
 # stays compatible with Test-HarnessBuildReceipt while binding origin hashes.
@@ -39,6 +41,7 @@ $importerInvocationState = @{
     ExpectedArchiveSha256 = $ExpectedArchiveSha256
     ExpectedSourceSha = $ExpectedSourceSha
     ExpectedPilotSha = $ExpectedPilotSha
+    ExpectedVariant = $ExpectedVariant
     Repository = $Repository
     ProfileRoot = $ProfileRoot
     RunnerDirectory = $RunnerDirectory
@@ -58,6 +61,7 @@ finally {
     $ExpectedArchiveSha256 = $importerInvocationState.ExpectedArchiveSha256
     $ExpectedSourceSha = $importerInvocationState.ExpectedSourceSha
     $ExpectedPilotSha = $importerInvocationState.ExpectedPilotSha
+    $ExpectedVariant = $importerInvocationState.ExpectedVariant
     $Repository = $importerInvocationState.Repository
     $ProfileRoot = $importerInvocationState.ProfileRoot
     $RunnerDirectory = $importerInvocationState.RunnerDirectory
@@ -123,7 +127,9 @@ function Write-ImportHarnessReceipt {
         [Parameter(Mandatory)][string] $SourceCommit,
         [Parameter(Mandatory)][string] $PilotCommit,
         [Parameter(Mandatory)][string] $ArchiveSha256,
-        [Parameter(Mandatory)][string] $ProvenanceSha256
+        [Parameter(Mandatory)][string] $ProvenanceSha256,
+        [ValidateSet('read-only', 'local-write')]
+        [Parameter(Mandatory)][string] $Variant
     )
     $runnerHash = (Get-FileHash -LiteralPath $Runner -Algorithm SHA256).Hash.ToLowerInvariant()
     $rustHash = (Get-FileHash -LiteralPath $RustLibrary -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -143,7 +149,7 @@ function Write-ImportHarnessReceipt {
                 archive_sha256 = $ArchiveSha256
                 provenance_sha256 = $ProvenanceSha256
                 artifact_mode = 'harness'
-                variant = 'read-only'
+                variant = $Variant
                 runner_post_sign_sha256 = $runnerHash
                 rust_library_post_sign_sha256 = $rustHash
             }
@@ -163,6 +169,8 @@ function Import-VerifiedWindowsCloudHarness {
         [Parameter(Mandatory)][string] $ExpectedArchiveSha256,
         [Parameter(Mandatory)][string] $ExpectedSourceSha,
         [Parameter(Mandatory)][string] $ExpectedPilotSha,
+        [ValidateSet('read-only', 'local-write')]
+        [string] $ExpectedVariant = 'read-only',
         [Parameter(Mandatory)][string] $Repository,
         [string] $RunnerDirectory = '',
         [Parameter(Mandatory)][string] $ReceiptPath,
@@ -193,7 +201,10 @@ function Import-VerifiedWindowsCloudHarness {
     $receiptFull = Get-ImportFullPath -Path $ReceiptPath
     $receiptParent = Split-Path -Parent $receiptFull
     if (-not (Test-Path -LiteralPath $receiptParent -PathType Container)) { New-Item -ItemType Directory -Path $receiptParent -Force | Out-Null }
-    $expectedBuildId = $ExpectedSourceSha.Substring(0, 12)
+    $expectedSourceId = $ExpectedSourceSha.Substring(0, 12)
+    $writerBuild = $ExpectedVariant -ceq 'local-write'
+    $expectedBuildId = Get-HarnessConfigurationIdentifier `
+        -SourceIdentifier $expectedSourceId -WriterBuild:$writerBuild
     $runTag = [guid]::NewGuid().ToString('N')
     $staging = Join-Path $buildParent ('.harness-import-stage-' + $runTag)
     $rollbackSibling = Join-Path $buildParent ((Split-Path -Leaf $runnerFull) + '.rollback-' + $runTag)
@@ -206,10 +217,11 @@ function Import-VerifiedWindowsCloudHarness {
     $hadReceipt = Test-Path -LiteralPath $receiptFull -PathType Leaf
     try {
         $resolvedId = Resolve-HarnessBuildIdentifier -Repository $repoFull
-        if ($resolvedId -cne $expectedBuildId) { Fail-Import "source tree is not the exact clean read-only revision (resolved '$resolvedId', expected '$expectedBuildId')" }
-        $configId = Get-HarnessConfigurationIdentifier -SourceIdentifier $resolvedId
-        if ($configId -cne $expectedBuildId) { Fail-Import "harness configuration is not read-only (got '$configId')" }
-        $verifyResult = Invoke-VerifyWindowsCloudBundle -ArchivePath $ArchivePath -ProvenancePath $ProvenancePath -ExpectedArchiveSha256 $ExpectedArchiveSha256 -ExpectedSourceSha $ExpectedSourceSha -ExpectedPilotSha $ExpectedPilotSha -ExpectedVariant 'read-only' -ExpectedArtifactMode 'harness' -ExpectedNativeEncoderTestCount $ExpectedNativeEncoderTestCount
+        if ($resolvedId -cne $expectedSourceId) { Fail-Import "source tree is not the exact clean revision (resolved '$resolvedId', expected '$expectedSourceId')" }
+        $configId = Get-HarnessConfigurationIdentifier `
+            -SourceIdentifier $resolvedId -WriterBuild:$writerBuild
+        if ($configId -cne $expectedBuildId) { Fail-Import "harness configuration does not match '$ExpectedVariant' (got '$configId')" }
+        $verifyResult = Invoke-VerifyWindowsCloudBundle -ArchivePath $ArchivePath -ProvenancePath $ProvenancePath -ExpectedArchiveSha256 $ExpectedArchiveSha256 -ExpectedSourceSha $ExpectedSourceSha -ExpectedPilotSha $ExpectedPilotSha -ExpectedVariant $ExpectedVariant -ExpectedArtifactMode 'harness' -ExpectedNativeEncoderTestCount $ExpectedNativeEncoderTestCount
         if ($verifyResult.BuildId -cne $expectedBuildId) { Fail-Import "verified build identifier mismatch (got '$($verifyResult.BuildId)')" }
         $provenanceHash = (Get-FileHash -LiteralPath $ProvenancePath -Algorithm SHA256).Hash.ToLowerInvariant()
         $provenanceDoc = Get-Content -LiteralPath $ProvenancePath -Raw | ConvertFrom-Json
@@ -316,7 +328,7 @@ function Import-VerifiedWindowsCloudHarness {
         if ($rustState.Status -ne [System.Management.Automation.SignatureStatus]::Valid) { Fail-Import 'rust library signature is invalid' }
         $actualThumbprint = [string]$rustState.SignerCertificate.Thumbprint
         if ($actualThumbprint -ne $SigningThumbprint) { Fail-Import 'rust library signer thumbprint mismatch' }
-        $hashes = Write-ImportHarnessReceipt -ReceiptPath $receiptFull -BuildIdentifier $expectedBuildId -Runner $runnerExe -RustLibrary $rustLib -SourceCommit $ExpectedSourceSha -PilotCommit $ExpectedPilotSha -ArchiveSha256 $ExpectedArchiveSha256.ToLowerInvariant() -ProvenanceSha256 $provenanceHash
+        $hashes = Write-ImportHarnessReceipt -ReceiptPath $receiptFull -BuildIdentifier $expectedBuildId -Runner $runnerExe -RustLibrary $rustLib -SourceCommit $ExpectedSourceSha -PilotCommit $ExpectedPilotSha -ArchiveSha256 $ExpectedArchiveSha256.ToLowerInvariant() -ProvenanceSha256 $provenanceHash -Variant $ExpectedVariant
         $receiptWritten = $true
         if (-not (Test-HarnessBuildReceipt -ReceiptPath $receiptFull -BuildIdentifier $expectedBuildId -Runner $runnerExe -RustLibrary $rustLib)) { Fail-Import 'issued receipt does not match the installed harness (receipt mismatch)' }
         $receiptDoc = Get-Content -LiteralPath $receiptFull -Raw | ConvertFrom-Json
@@ -328,11 +340,12 @@ function Import-VerifiedWindowsCloudHarness {
         if ($receiptDoc.origin.pilot_commit -cne $ExpectedPilotSha) { Fail-Import 'issued receipt pilot binding mismatch' }
         if ($receiptDoc.origin.archive_sha256 -cne $ExpectedArchiveSha256.ToLowerInvariant()) { Fail-Import 'issued receipt archive binding mismatch' }
         if ($receiptDoc.origin.provenance_sha256 -cne $provenanceHash) { Fail-Import 'issued receipt provenance binding mismatch' }
+        if ($receiptDoc.origin.variant -cne $ExpectedVariant) { Fail-Import 'issued receipt variant binding mismatch' }
         if ($receiptDoc.origin.runner_post_sign_sha256 -cne $hashes.RunnerSha256) { Fail-Import 'issued receipt post-sign runner binding mismatch' }
         if ($receiptDoc.origin.rust_library_post_sign_sha256 -cne $hashes.RustLibrarySha256) { Fail-Import 'issued receipt post-sign rust binding mismatch' }
         if ($movedBuild -and (Test-Path -LiteralPath $rollbackSibling)) { Remove-Item -LiteralPath $rollbackSibling -Recurse -Force }
         if ($movedReceipt -and (Test-Path -LiteralPath $receiptBackup)) { Remove-Item -LiteralPath $receiptBackup -Force }
-        Write-Host ("OK import build={0} src={1} files={2} receipt={3}" -f $expectedBuildId, $ExpectedSourceSha.Substring(0, 12), $manifest.Count, $receiptFull)
+        Write-Host ("OK import build={0} src={1} variant={2} files={3} receipt={4}" -f $expectedBuildId, $ExpectedSourceSha.Substring(0, 12), $ExpectedVariant, $manifest.Count, $receiptFull)
         return [pscustomobject]@{ BuildIdentifier = $expectedBuildId; ReceiptPath = $receiptFull; RunnerSha256 = $hashes.RunnerSha256; RustLibrarySha256 = $hashes.RustLibrarySha256 }
     }
     catch {
@@ -382,5 +395,5 @@ if (-not $FunctionsOnlyForTest) {
         if ($ProfileRoot) { $resolvedReceipt = Join-Path $ProfileRoot 'cloud-sync-v2\windows-harness-build-receipt.json' }
         else { $resolvedReceipt = Join-Path $env:APPDATA 'OpenBubbles\cloudkit-v2-dev\cloud-sync-v2\windows-harness-build-receipt.json' }
     }
-    Import-VerifiedWindowsCloudHarness -ArchivePath $ArchivePath -ProvenancePath $ProvenancePath -ExpectedArchiveSha256 $ExpectedArchiveSha256 -ExpectedSourceSha $ExpectedSourceSha -ExpectedPilotSha $ExpectedPilotSha -Repository $resolvedRepository -RunnerDirectory $resolvedRunner -ReceiptPath $resolvedReceipt -SignTool $SignTool -SigningThumbprint $SigningThumbprint -ExpectedNativeEncoderTestCount $ExpectedNativeEncoderTestCount | Out-Null
+    Import-VerifiedWindowsCloudHarness -ArchivePath $ArchivePath -ProvenancePath $ProvenancePath -ExpectedArchiveSha256 $ExpectedArchiveSha256 -ExpectedSourceSha $ExpectedSourceSha -ExpectedPilotSha $ExpectedPilotSha -ExpectedVariant $ExpectedVariant -Repository $resolvedRepository -RunnerDirectory $resolvedRunner -ReceiptPath $resolvedReceipt -SignTool $SignTool -SigningThumbprint $SigningThumbprint -ExpectedNativeEncoderTestCount $ExpectedNativeEncoderTestCount | Out-Null
 }
