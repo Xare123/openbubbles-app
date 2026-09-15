@@ -1122,7 +1122,7 @@ void main() {
     expect(live, containsAll([_lease('d'), _lease('1'), _lease('2')]));
   });
 
-  test('lease recovery does not resurrect a result receipt released after readback', () async {
+  test('lease recovery retires plan and result receipts after exact readback', () async {
     final plan = _planA();
     final result = _resultA();
     final prepared = toUploaded(seedConfirmedIntent(), plan, result, _attemptA);
@@ -1147,7 +1147,8 @@ void main() {
     final leases = await restored.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096);
     expect(leases, isNot(contains(result.leaseReference)),
       reason: 'Native acknowledgement removed this exact result receipt after verified child readback.');
-    expect(leases, contains(plan.leaseReference));
+    expect(leases, isNot(contains(plan.leaseReference)),
+      reason: 'The exact child readback also retires the completed upload-plan receipt.');
     final live = await restored.readLiveProtectedReferences(maximumCount: 4096);
     expect(live.isComplete, isTrue);
     expect(live.references, containsAll([plan.protectedEnvelopeReference, result.protectedEnvelopeReference]));
@@ -1181,14 +1182,16 @@ void main() {
       box.put(changed);
       try {
         final required = await restored.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096);
-        expect(required, contains(result.leaseReference), reason: mutation.key);
+        expect(required, containsAll([plan.leaseReference, result.leaseReference]),
+          reason: mutation.key);
       } finally {
         box.put(original);
       }
     }
     box.remove(original.id);
     expect(await restored.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
-      contains(result.leaseReference), reason: 'Missing final operation is not proof of release.');
+      containsAll([plan.leaseReference, result.leaseReference]),
+      reason: 'Missing final operation is not proof of release.');
     box.put(original);
   });
 

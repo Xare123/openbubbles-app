@@ -615,7 +615,15 @@ class ObjectBoxCloudSyncStore
           );
         }
         for (final intent in sources.find()) {
-          references.add(_localSendSource(intent)!.leaseReference);
+          final source = _localSendSource(intent)!;
+          // Exact readback is committed atomically with final outbox receipt
+          // release. The protected source blob remains in the complete
+          // liveness snapshot, but its crash-handoff lease is no longer an
+          // outbound recovery prerequisite.
+          if (_localSendSourceLeaseReleasedAfterReadbackLocked(intent)) {
+            continue;
+          }
+          references.add(source.leaseReference);
           if (references.length > maximumCount) {
             throw _storageFailure(
               'protected_outbound_lease_recovery_bound_exceeded',
@@ -669,13 +677,20 @@ class ObjectBoxCloudSyncStore
       }
       for (final upload in uploads.getAll()) {
         validateCloudAttachmentUploadRow(upload);
-        references.add(upload.planLeaseReference);
         final resultLease = upload.resultLeaseReference;
-        if (resultLease != null &&
-            !CloudSyncAttachmentUploadJournal.resultLeaseReleasedAfterReadback(
+        final readbackComplete =
+            resultLease != null &&
+            CloudSyncAttachmentUploadJournal.resultLeaseReleasedAfterReadback(
               _store,
               upload,
-            )) {
+            );
+        // The plan and result leases are both crash-handoff ownership. Exact
+        // final-record readback retires both requirements while the protected
+        // plan/result references remain covered by the complete liveness scan.
+        if (!readbackComplete) {
+          references.add(upload.planLeaseReference);
+        }
+        if (resultLease != null && !readbackComplete) {
           references.add(resultLease);
         }
         if (references.length > maximumCount) {
@@ -700,6 +715,40 @@ class ObjectBoxCloudSyncStore
       sourceSha256: intent.sourceSha256,
     );
     return source;
+  }
+
+  bool _localSendSourceLeaseReleasedAfterReadbackLocked(
+    CloudSyncLocalSendIntentEntity intent,
+  ) {
+    final binding = intent.confirmedReadbackBindingSha256;
+    final operationId = intent.admittedOperationId;
+    if (intent.state != 2 ||
+        binding == null ||
+        binding != intent.admittedBindingSha256 ||
+        operationId == null) {
+      return false;
+    }
+    final query = _outbox
+        .query(CloudOutboxOperationEntity_.operationId.equals(operationId))
+        .build();
+    final CloudOutboxOperationEntity? operation;
+    try {
+      operation = query.findUnique();
+    } finally {
+      query.close();
+    }
+    return operation != null &&
+        operation.accountFingerprint == intent.accountFingerprint &&
+        operation.zone == 'messageManateeZone' &&
+        operation.action == CloudOutboxAction.save.index &&
+        operation.state == CloudOutboxStatus.confirmed.index &&
+        operation.confirmedAtMs > 0 &&
+        operation.protectedLeaseReference == null &&
+        operation.leaseIdHash == null &&
+        operation.leaseExpiresAtMs == 0 &&
+        operation.nextEligibleAtMs == 0 &&
+        operation.lastErrorCategory == null &&
+        operation.createdAtMs == intent.createdAtMs;
   }
 
   @override

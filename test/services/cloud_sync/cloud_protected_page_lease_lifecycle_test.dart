@@ -141,7 +141,7 @@ void main() {
   );
 
   test(
-    'missing outbound receipt fails closed without releasing adoption',
+    'read recovery preserves a missing outbound owner and still permits fetch',
     () async {
       store = _AdoptionStore(
         const {},
@@ -154,8 +154,32 @@ void main() {
         transport: transport,
       );
 
+      await lifecycle.ensureRecoveredBeforeFetch();
+      expect(store.outboundAdopted, {_leaseB});
+      expect(
+        transport.events.where((event) => event.startsWith('ack:')),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'write recovery remains strict after cached read recovery tolerated a missing outbound receipt',
+    () async {
+      store = _AdoptionStore(
+        const {},
+        outboundAdopted: {_leaseB},
+        timeline: timeline,
+      );
+      transport.absentRecoveryReferences.add(_leaseB);
+      lifecycle = CloudProtectedPageLeaseLifecycle(
+        store: store,
+        transport: transport,
+      );
+
+      await lifecycle.ensureRecoveredBeforeFetch();
       await expectLater(
-        lifecycle.ensureRecoveredBeforeFetch(),
+        lifecycle.ensureRecoveredBeforeWrite(),
         throwsA(
           isA<CloudSyncFailure>().having(
             (failure) => failure.safeCode,
@@ -164,6 +188,11 @@ void main() {
           ),
         ),
       );
+
+      expect(transport.recoverySets, [
+        {_leaseB},
+        {_leaseB},
+      ]);
       expect(store.outboundAdopted, {_leaseB});
       expect(
         transport.events.where((event) => event.startsWith('ack:')),

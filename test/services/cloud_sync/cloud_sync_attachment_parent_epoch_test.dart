@@ -782,6 +782,56 @@ void main() {
     final marked = store.box<CloudSyncLocalSendIntentEntity>().get(intent)!;
     expect(marked.confirmedReadbackBindingSha256, isNotNull);
     expect(marked.confirmedReadbackBindingSha256, marked.admittedBindingSha256);
+    final protectedSource = CloudSyncLocalSendSourceBinding.decode(
+      marked.protectedSourceBinding!,
+    );
+    final restored = liveStore();
+    expect(
+      await restored.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
+      isNot(contains(protectedSource.leaseReference)),
+      reason: 'Exact parent readback retires only its crash-handoff receipt.',
+    );
+    expect(
+      (await restored.readLiveProtectedReferences(maximumCount: 4096)).references,
+      contains(protectedSource.protectedReference),
+      reason: 'Historical protected source bytes remain under liveness policy.',
+    );
+
+    final confirmedQuery = outbox
+        .query(CloudOutboxOperationEntity_.operationId.equals(operationId))
+        .build();
+    final confirmedRow = confirmedQuery.findUnique()!;
+    confirmedQuery.close();
+    confirmedRow.createdAtMs++;
+    outbox.put(confirmedRow);
+    expect(
+      await restored.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
+      contains(protectedSource.leaseReference),
+      reason: 'Outbox drift is not exact terminal readback proof.',
+    );
+    confirmedRow.createdAtMs--;
+    outbox.put(confirmedRow);
+
+    outbox.remove(confirmedRow.id);
+    expect(
+      await restored.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
+      contains(protectedSource.leaseReference),
+      reason: 'A missing final outbox row is not receipt-release proof.',
+    );
+    outbox.put(confirmedRow);
+
+    final intentBox = store.box<CloudSyncLocalSendIntentEntity>();
+    final withoutMarker = intentBox.get(intent)!
+      ..confirmedReadbackBindingSha256 = null;
+    intentBox.put(withoutMarker);
+    expect(
+      await restored.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
+      contains(protectedSource.leaseReference),
+      reason: 'Generic confirmation without exact readback retains the receipt.',
+    );
+    withoutMarker.confirmedReadbackBindingSha256 =
+        withoutMarker.admittedBindingSha256;
+    intentBox.put(withoutMarker);
   });
 
   test('store retained admission admits a rotated state-1 parent with live proof', () async {

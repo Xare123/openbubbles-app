@@ -33,19 +33,27 @@ final class CloudProtectedPageLeaseLifecycle {
   Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) =>
       _transport.runProtectedStoreExclusive(action);
 
+  /// Fetches may proceed when an outbound owner still names a native lease
+  /// receipt that is already absent. The complete protected-reference
+  /// snapshot remains authoritative for blob liveness, and this recovery path
+  /// never releases an outbound owner. A later write always performs a fresh,
+  /// strict recovery pass and fails closed on the same missing receipt.
   Future<void> ensureRecoveredBeforeFetch() {
     final existing = _recoveries[_recoveryIdentity];
     if (existing != null) return existing;
-    return _startRecovery();
+    return _startRecovery(allowMissingOutboundReceipts: true);
   }
 
   /// Writes need a fresh recovery pass even when startup recovery succeeded.
   /// A native lease commit can fail later in the same process, leaving a new
   /// durable outbound adoption marker that the cached startup pass never saw.
-  Future<void> ensureRecoveredBeforeWrite() => _startRecovery();
+  Future<void> ensureRecoveredBeforeWrite() =>
+      _startRecovery(allowMissingOutboundReceipts: false);
 
-  Future<void> _startRecovery() {
-    final recovery = _recover();
+  Future<void> _startRecovery({required bool allowMissingOutboundReceipts}) {
+    final recovery = _recover(
+      allowMissingOutboundReceipts: allowMissingOutboundReceipts,
+    );
     _recoveries[_recoveryIdentity] = recovery;
     recovery.catchError((Object _) {
       if (identical(_recoveries[_recoveryIdentity], recovery)) {
@@ -55,10 +63,16 @@ final class CloudProtectedPageLeaseLifecycle {
     return recovery;
   }
 
-  Future<void> _recover() =>
-      runProtectedStoreExclusive(_recoverWhileStoreExclusive);
+  Future<void> _recover({required bool allowMissingOutboundReceipts}) =>
+      runProtectedStoreExclusive(
+        () => _recoverWhileStoreExclusive(
+          allowMissingOutboundReceipts: allowMissingOutboundReceipts,
+        ),
+      );
 
-  Future<void> _recoverWhileStoreExclusive() async {
+  Future<void> _recoverWhileStoreExclusive({
+    required bool allowMissingOutboundReceipts,
+  }) async {
     final adoptedPages = await _store.readAdoptedProtectedPageLeaseReferences(
       maximumCount: maximumAdoptedLeases,
     );
@@ -120,7 +134,7 @@ final class CloudProtectedPageLeaseLifecycle {
       final absentOutbound = result.absentAdoptedLeaseReferences.intersection(
         adoptedOutbound,
       );
-      if (absentOutbound.isNotEmpty) {
+      if (absentOutbound.isNotEmpty && !allowMissingOutboundReceipts) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.localStorage,
           safeCode: 'protected_outbound_lease_missing',
