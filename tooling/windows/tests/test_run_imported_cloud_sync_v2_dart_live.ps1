@@ -172,13 +172,14 @@ Assert-Fails 'status-report-path-rejected' {
 $nativeDiagnostics = Get-DartApplierContentFreeNativeDiagnostics -Stdout @'
 CloudKit V2 transient message retained_shape absent_mask=042 without_value_mask=000 guid_empty=false chat_empty=false sender_empty=false from_me=true body_present=false attributed_present=true extension_class=apple_other reply_present=false account=must-not-escape
 CloudKit V2 transient message retained_shape absent_mask=042 without_value_mask=000 guid_empty=false chat_empty=false sender_empty=false from_me=true body_present=false attributed_present=true extension_class=apple_other reply_present=false
-CloudKit V2 transient message retained_route_shape outer_type_class=class_1 service_class=imessage destination_empty=false destination_matches_sender=false proto4_present=true group_id_state=nonempty group_matches_sender=false group_matches_destination=false account=must-not-escape
-CloudKit V2 transient message retained_route_shape outer_type_class=class_1 service_class=imessage destination_empty=false destination_matches_sender=false proto4_present=true group_id_state=nonempty group_matches_sender=false group_matches_destination=false
+CloudKit V2 transient message retained_route_shape outer_type_class=class_1 service_class=imessage chat_empty=true sender_empty=false from_me=false destination_empty=false destination_matches_sender=false proto4_present=true group_id_state=nonempty group_matches_sender=false group_matches_destination=false account=must-not-escape
+CloudKit V2 transient message retained_route_shape outer_type_class=class_1 service_class=imessage chat_empty=true sender_empty=false from_me=false destination_empty=false destination_matches_sender=false proto4_present=true group_id_state=nonempty group_matches_sender=false group_matches_destination=false
 CloudKit V2 transient message retained_shape outer_type_class=system_4 absent_mask=042 without_value_mask=000
 CloudKit V2 retained conversion outcome=CloudCanonicalConversionOutcome::Quarantined(MalformedRequiredIdentity)
 CloudKit V2 transient message unsupported_service source=top_level_svc service_class=rcs top_level_service_class=rcs msg_proto_4_service_class=sms message_kind=normal
 '@
 Assert-Check 'native-shape-diagnostics-aggregated' (
+    $nativeDiagnostics.schema_version -eq 3 -and
     $nativeDiagnostics.retained_message_shapes.Count -eq 1 -and
     $nativeDiagnostics.retained_message_shapes[0].count -eq 2 -and
     $nativeDiagnostics.retained_route_shapes.Count -eq 1 -and

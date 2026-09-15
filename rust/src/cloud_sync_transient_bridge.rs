@@ -2779,9 +2779,12 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 // Fixed enums and equality/presence booleans only. This line is
                 // intentionally separate so host tooling can retain the route
                 // evidence aggregate without retaining identifiers or content.
-                debug!("CloudKit V2 transient message retained_route_shape outer_type_class={} service_class={} destination_empty={} destination_matches_sender={} proto4_present={} group_id_state={} group_matches_sender={} group_matches_destination={}",
+                debug!("CloudKit V2 transient message retained_route_shape outer_type_class={} service_class={} chat_empty={} sender_empty={} from_me={} destination_empty={} destination_matches_sender={} proto4_present={} group_id_state={} group_matches_sender={} group_matches_destination={}",
                     message_outer_type_class(&record),
                     cloud_service_class(Some(&message.service)),
+                    message.chat_id.is_empty(),
+                    message.sender.is_empty(),
+                    message.flags.contains(rustpush::cloud_messages::MessageFlags::IS_FROM_ME),
                     message.destination_caller_id.is_empty(),
                     nonempty_identity_equal(&message.destination_caller_id, &message.sender),
                     proto_4.is_some(),

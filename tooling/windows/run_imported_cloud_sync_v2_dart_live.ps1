@@ -508,15 +508,17 @@ function Get-DartApplierContentFreeNativeDiagnostics {
     }
 
     $retainedRoutePattern =
-        'CloudKit V2 transient message retained_route_shape outer_type_class=(class_[0-7]|unsupported|missing|malformed) service_class=(absent|empty|imessage|imessage_case_variant|sms|rcs|facetime|other) destination_empty=(true|false) destination_matches_sender=(true|false) proto4_present=(true|false) group_id_state=(absent|empty|nonempty) group_matches_sender=(true|false) group_matches_destination=(true|false)'
+        'CloudKit V2 transient message retained_route_shape outer_type_class=(class_[0-7]|unsupported|missing|malformed) service_class=(absent|empty|imessage|imessage_case_variant|sms|rcs|facetime|other) chat_empty=(true|false) sender_empty=(true|false) from_me=(true|false) destination_empty=(true|false) destination_matches_sender=(true|false) proto4_present=(true|false) group_id_state=(absent|empty|nonempty) group_matches_sender=(true|false) group_matches_destination=(true|false)'
     foreach ($match in [regex]::Matches(
         $Stdout, $retainedRoutePattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant
     )) {
-        $key = 'outer_type={0};service={1};destination_empty={2};destination_matches_sender={3};proto4_present={4};group_id_state={5};group_matches_sender={6};group_matches_destination={7}' -f
+        $key = 'outer_type={0};service={1};chat_empty={2};sender_empty={3};from_me={4};destination_empty={5};destination_matches_sender={6};proto4_present={7};group_id_state={8};group_matches_sender={9};group_matches_destination={10}' -f
             $match.Groups[1].Value, $match.Groups[2].Value,
             $match.Groups[3].Value, $match.Groups[4].Value,
             $match.Groups[5].Value, $match.Groups[6].Value,
-            $match.Groups[7].Value, $match.Groups[8].Value
+            $match.Groups[7].Value, $match.Groups[8].Value,
+            $match.Groups[9].Value, $match.Groups[10].Value,
+            $match.Groups[11].Value
         $retainedRouteShapes[$key] = [long]($retainedRouteShapes[$key] ?? 0) + 1
     }
 
@@ -552,7 +554,7 @@ function Get-DartApplierContentFreeNativeDiagnostics {
     }
 
     return [pscustomobject][ordered]@{
-        schema_version = 2
+        schema_version = 3
         retained_message_shapes = [object[]]@(
             ConvertTo-DartApplierDiagnosticCountRows $retainedShapes
         )
