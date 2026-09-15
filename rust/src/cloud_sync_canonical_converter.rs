@@ -2899,11 +2899,6 @@ pub(crate) fn convert_message(
     let service = match message.service.as_str() {
         "iMessage" => CloudCanonicalService::IMessage,
         "SMS" | "RCS" => {
-            if message.guid.is_empty() || message.chat_id.is_empty() {
-                return CloudCanonicalConversionOutcome::Quarantined(
-                    CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
-                );
-            }
             let expected_service = message.service.as_str();
             if let Some(nested_service) = message
                 .msg_proto_4
@@ -5996,6 +5991,19 @@ mod tests {
                 CloudCanonicalQuarantineReason::MalformedRequiredIdentity
             )
         );
+
+        let mut carrier = normal_message(Some("hello"));
+        carrier.service = "SMS".to_owned();
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-carrier-missing-required-field", None),
+                &presence,
+                &carrier,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRequiredIdentity
+            )
+        );
     }
 
     #[test]
@@ -6158,6 +6166,25 @@ mod tests {
     #[test]
     fn carrier_service_transitions_remain_out_of_scope_while_imessage_is_strict() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        for (service_name, expected) in [
+            ("SMS", CloudCanonicalOutOfScopeService::SmsFamily),
+            ("RCS", CloudCanonicalOutOfScopeService::Rcs),
+        ] {
+            let mut carrier = normal_message(Some("hello"));
+            carrier.service = service_name.to_owned();
+            carrier.guid.clear();
+            carrier.chat_id.clear();
+            assert_eq!(
+                convert_message(
+                    &context(&hasher, "server-carrier-empty-identity", None),
+                    &message_presence(),
+                    &carrier,
+                ),
+                CloudCanonicalConversionOutcome::OutOfScopeService(expected),
+                "carrier service={service_name}"
+            );
+        }
+
         let mut sms = normal_message(Some("hello"));
         sms.service = "SMS".to_owned();
         sms.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
@@ -6206,6 +6233,8 @@ mod tests {
             service: Some("iMessage".to_owned()),
             ..Default::default()
         }));
+        sms.guid.clear();
+        sms.chat_id.clear();
         assert_eq!(
             convert_message(
                 &context(&hasher, "server-sms-non-carrier-proto4", None),

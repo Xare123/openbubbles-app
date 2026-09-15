@@ -1292,7 +1292,10 @@ class TransactionalCloudInboxApplier
           await Future<void>.delayed(Duration.zero);
           continue;
         }
-        if (entry.lastFailure != CloudFailureCategory.unsupportedService) {
+        // A fresh typed carrier disposition can correct the old converter's
+        // empty-identity classification. No other retained debt is erasable.
+        if (entry.lastFailure != CloudFailureCategory.unsupportedService &&
+            entry.lastFailure != CloudFailureCategory.malformedRecord) {
           _recordDiagnostic(
             'retained_projection_out_of_scope_previous_failure_rejected',
           );

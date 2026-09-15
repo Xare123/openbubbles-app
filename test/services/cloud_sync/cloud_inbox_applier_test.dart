@@ -568,6 +568,51 @@ void main() {
     },
   );
 
+  test(
+    'fresh carrier proof reclassifies a historical malformed row without canonical mutation',
+    () async {
+      final inbox = retainedEntry(
+        1,
+      ).copyWith(lastFailure: CloudFailureCategory.malformedRecord);
+      store.retainedEntries.add(inbox);
+      decoder.outOfScopeServices[inbox.change.changeId] =
+          CloudSemanticOutOfScopeService.smsFamily;
+      final diagnostics = <String>[];
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+        diagnosticRecorder: diagnostics.add,
+      );
+
+      final result = await applier.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 256,
+      );
+
+      expect(result.examined, 1);
+      expect(result.reprojected, 0);
+      expect(result.retained, 1);
+      expect(result.hasRemaining, isFalse);
+      expect(
+        store.retainedEntries.single.lastFailure,
+        CloudFailureCategory.outOfScopeService,
+      );
+      expect(store.retainedEntries.single.attemptCount, 1);
+      expect(store.retainedFailureRecordCount, 1);
+      expect(store.retainedTransactionCount, 0);
+      expect(store.transaction.entityApplyCount, 0);
+      expect(store.transaction.appliedChanges, isEmpty);
+      expect(diagnostics, [
+        'retained_projection_examined',
+        'semantic_out_of_scope_sms_family',
+        'retained_projection_out_of_scope_service',
+      ]);
+    },
+  );
+
   for (final stillExcluded in [false, true]) {
     test(
       'explicit historical Chat window preserves or projects its current decode: excluded=$stillExcluded',
@@ -2101,16 +2146,26 @@ class _MemorySemanticStore
     final index = retainedEntries.indexWhere(
       (candidate) => candidate.change.changeId == entry.change.changeId,
     );
-    if (index < 0 ||
-        retainedEntries[index].status != CloudInboxStatus.retainedUnprojected) {
+    if (index < 0) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'retained_projection_row_changed',
+      );
+    }
+    final durable = retainedEntries[index];
+    final priorFailure = durable.lastFailure;
+    if (durable.status != CloudInboxStatus.retainedUnprojected ||
+        priorFailure != entry.lastFailure ||
+        (priorFailure != CloudFailureCategory.unsupportedService &&
+            priorFailure != CloudFailureCategory.malformedRecord)) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.conflict,
         safeCode: 'retained_projection_row_changed',
       );
     }
     retainedFailureRecordCount++;
-    retainedEntries[index] = retainedEntries[index].copyWith(
-      attemptCount: retainedEntries[index].attemptCount + 1,
+    retainedEntries[index] = durable.copyWith(
+      attemptCount: durable.attemptCount + 1,
       lastFailure: CloudFailureCategory.outOfScopeService,
     );
   }

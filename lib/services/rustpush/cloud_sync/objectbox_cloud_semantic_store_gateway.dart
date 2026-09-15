@@ -547,11 +547,16 @@ final class ObjectBoxCloudSemanticStoreGateway
     required CloudCoordinatorLeaseFence leaseFence,
   }) {
     try {
+      final previousFailure = entry.lastFailure;
+      final previousFailureMayBeReclassified =
+          previousFailure == CloudFailureCategory.unsupportedService ||
+          previousFailure == CloudFailureCategory.malformedRecord;
       if (entry.change.type != CloudChangeType.save ||
           entry.change.isTombstone ||
-          entry.lastFailure != CloudFailureCategory.unsupportedService) {
+          !previousFailureMayBeReclassified) {
         throw _failure('retained_projection_out_of_scope_entry_invalid');
       }
+      final previousFailureName = previousFailure!.name;
       ObjectBoxCloudSemanticFence.validateEntryContext(
         entry: entry,
         leaseFence: leaseFence,
@@ -570,8 +575,7 @@ final class ObjectBoxCloudSemanticStoreGateway
         final row = durable.inbox;
         if (row.changeType != CloudChangeType.save.name ||
             row.isTombstone ||
-            row.failureCategory !=
-                CloudFailureCategory.unsupportedService.name) {
+            row.failureCategory != previousFailureName) {
           throw _failure('retained_projection_out_of_scope_row_invalid');
         }
         final updatedAtMs = sampledAtMs > row.updatedAtMs

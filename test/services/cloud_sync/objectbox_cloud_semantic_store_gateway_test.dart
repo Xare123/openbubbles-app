@@ -4267,6 +4267,67 @@ void main() {
   );
 
   test(
+    'fresh carrier proof durably reclassifies the exact historical malformed row',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final retained = inboxBox.getAll().single
+        ..status = CloudInboxStatus.retainedUnprojected.index
+        ..retryCount = 2
+        ..failureCategory = CloudFailureCategory.malformedRecord.name
+        ..nextEligibleAtMs = 0
+        ..completedAtMs = now.millisecondsSinceEpoch;
+      inboxBox.put(retained);
+      final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+      final checkpointBefore = checkpointBox.getAll().single;
+
+      final candidates = await gateway.readRetainedProjectionCandidates(
+        scope: scope,
+        generation: entry.generation,
+        leaseFence: leaseFence,
+        limit: 8,
+      );
+      expect(candidates, hasLength(1));
+      expect(
+        candidates.single.lastFailure,
+        CloudFailureCategory.malformedRecord,
+      );
+
+      await gateway.recordRetainedProjectionOutOfScopeService(
+        entry: candidates.single,
+        leaseFence: leaseFence,
+      );
+
+      final reclassified = inboxBox.getAll().single;
+      expect(
+        reclassified.failureCategory,
+        CloudFailureCategory.outOfScopeService.name,
+      );
+      expect(reclassified.retryCount, 3);
+      expect(reclassified.nextEligibleAtMs, 0);
+      expect(reclassified.status, CloudInboxStatus.retainedUnprojected.index);
+      final checkpointAfter = checkpointBox.getAll().single;
+      expect(checkpointAfter.fetchedSequence, checkpointBefore.fetchedSequence);
+      expect(checkpointAfter.appliedSequence, checkpointBefore.appliedSequence);
+      expect(
+        checkpointAfter.mutationRevisionCounter,
+        checkpointBefore.mutationRevisionCounter,
+      );
+      expect(objectBox.box<CloudSyncRunEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 0);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  test(
     'out-of-scope reclassification rejects forged caller and durable categories',
     () async {
       final entry = _entry(scope: scope);
@@ -4288,7 +4349,6 @@ void main() {
       for (final callerCategory in <CloudFailureCategory?>[
         null,
         CloudFailureCategory.dependency,
-        CloudFailureCategory.malformedRecord,
         CloudFailureCategory.outOfScopeService,
       ]) {
         final forged = entry.copyWith(
@@ -4306,6 +4366,19 @@ void main() {
           ),
         );
       }
+
+      final claimedMalformed = entry.copyWith(
+        status: CloudInboxStatus.retainedUnprojected,
+        lastFailure: CloudFailureCategory.malformedRecord,
+        completedAt: now,
+      );
+      await expectLater(
+        gateway.recordRetainedProjectionOutOfScopeService(
+          entry: claimedMalformed,
+          leaseFence: leaseFence,
+        ),
+        throwsA(_failureCode('retained_projection_out_of_scope_row_invalid')),
+      );
 
       final claimedUnsupported = entry.copyWith(
         status: CloudInboxStatus.retainedUnprojected,
