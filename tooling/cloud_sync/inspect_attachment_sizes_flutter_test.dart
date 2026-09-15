@@ -7,6 +7,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_materialization.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_source_resolver.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -35,9 +36,47 @@ void main() {
         await source.copy('${copy.path}/data.mdb');
         store = await openStore(directory: copy.path);
         final result = <Map<String, Object?>>[];
+        final counts = <String, int>{};
+        final leases = <Map<String, Object?>>[];
+        final checkpoints = <Map<String, Object?>>[];
         store.runInTransaction(TxMode.read, () {
+          counts.addAll({
+            'chats': store!.box<Chat>().count(),
+            'messages': store.box<Message>().count(),
+            'attachments': store.box<Attachment>().count(),
+            'outbox': store.box<CloudOutboxOperationEntity>().count(),
+          });
+          final now = DateTime.now().millisecondsSinceEpoch;
+          for (final lease in store.box<CloudSyncLeaseEntity>().getAll()) {
+            leases.add({
+              'operationFence':
+                  lease.scopeKey == CloudKitOperationInterlock.fenceScopeKey,
+              'generation': lease.generation,
+              'ageSeconds': (now - lease.acquiredAtMs) ~/ 1000,
+              'remainingSeconds': (lease.expiresAtMs - now) ~/ 1000,
+              'durationSeconds':
+                  (lease.expiresAtMs - lease.acquiredAtMs) ~/ 1000,
+            });
+          }
+          for (final row in store.box<CloudSyncCheckpointEntity>().getAll()) {
+            checkpoints.add({
+              'zone':
+                  const {
+                    'chatManateeZone',
+                    'messageManateeZone',
+                    'attachmentManateeZone',
+                  }.contains(row.zone)
+                  ? row.zone
+                  : 'other',
+              'generation': row.generation,
+              'fetchedSequence': row.fetchedSequence,
+              'appliedSequence': row.appliedSequence,
+              'pendingBatch': row.pendingBatchId != null,
+              'pendingToken': row.pendingFetchedTokenCiphertext != null,
+            });
+          }
           final attempts =
-              store!.box<CloudAttachmentMaterializationEntity>().getAll()
+              store.box<CloudAttachmentMaterializationEntity>().getAll()
                 ..sort((a, b) => b.updatedAtMs.compareTo(a.updatedAtMs));
           final snapshots = store.box<CloudSemanticSnapshotEntity>().getAll();
           final attachments = store.box<Attachment>().getAll();
@@ -139,7 +178,7 @@ void main() {
         expect((await sha256.bind(source.openRead()).first).toString(), before);
         // ignore: avoid_print
         print(
-          'ATTACHMENT_SIZE_REPORT=${jsonEncode({'sourceUnchanged': true, 'remoteCalls': 0, 'attempts': result})}',
+          'ATTACHMENT_SIZE_REPORT=${jsonEncode({'sourceUnchanged': true, 'remoteCalls': 0, 'counts': counts, 'leases': leases, 'checkpoints': checkpoints, 'attempts': result})}',
         );
       } finally {
         store?.close();

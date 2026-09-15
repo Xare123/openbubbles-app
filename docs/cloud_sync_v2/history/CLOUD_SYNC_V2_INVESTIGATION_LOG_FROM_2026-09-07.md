@@ -5131,3 +5131,90 @@ cannot authorize or perform adoption.
   candidate 242/type10 shape, but real topic/framing remains unverified. A
   bounded observation design is under cross-review. No key requests, sharing
   changes, key imports or server writes were made.
+
+### September 15 authenticated extent compiled, hosted packages ready
+
+- Native 35005611468 exposed an untyped callback inference error. Rustpush
+  `6ca98b8` and app `b9c567f89` add the explicit callback type. Windows native
+  host 35006456632 passed. Bridge 35006453847 passed 685 app tests and 316/317
+  rustpush tests; only a source-contract assertion expected the old reader
+  method name. No body-verification test failed.
+- Rustpush `5522fa0` corrects that assertion and retains the closed-reader,
+  exact-index, singleton-length and no-authorize-get checks. App `1e2aa395d`
+  adopts it; bridge 35008514692 passed 685 app, 317 rustpush, 11 Anisette and
+  40 protector tests. Local packaging/control tests passed 16 cases.
+- Candidate `710003e7b9feb8b74bf3cd795da22da3be0e56bb` also enables the removable
+  Canary ADB controls in the existing Build workflow. Dispatching the dedicated
+  unregistered canary workflow returned 404 and created no run. Existing Build
+  35008622263 with canary_only=true succeeded, including signing, identity and
+  native-library checks. Its artifact is 10413547986. This is packaging evidence,
+  not a claim that the workflow ran the full Flutter/JVM qualification suite.
+- Windows artifact 10413045788 from 35006456632 is source-bound to b9c567f89;
+  import requires its exact clean source checkout. Both artifacts remain
+  unimported/uninstalled at this checkpoint. Installed Pixel is still 78d0f8cf2.
+  The next live check is the exact previously failed media object, followed by
+  completed-byte, rendered-image and cache/restart verification.
+- Six known native child handles no longer resolve after compaction. Closing
+  the completed reviewer likewise returned not_found. The app independently
+  shows the Find My observer task interrupted/notLoaded, with four unique
+  uncommitted files preserved. Its dependency feature/allocation review is
+  incomplete and none of that observer is integrated. The MMCS agent worktree
+  is clean and retained for current qualification. Session deletion is not
+  supported; no protected evidence or user data was deleted. C: 35.14 GiB free.
+- No new GCE work was started. Both hosted qualification handles are terminal
+  success. Do not rerun them merely because a prior observation was interrupted.
+
+### September 15 installed media candidate and restart evidence
+
+- Downloaded artifact 10413547986 matches GitHub digest
+  `8fed78313129c6b5cf2a677aacfd37a74cde1a20db54d1a0d562e9d51d812505`.
+  Extracted 452,934,107-byte APK is
+  `8d87ec693bbbcbb9d31b0ab886e254cc2ef5c1a9253c3fc7acac9dc3233ad90b`.
+  Java apksigner independently verifies v2/v3 and the established Canary
+  certificate; package/version/native inventory and absent dotenv asset pass.
+  Wired in-place install succeeded at 13:45 local. On-device APK hash matches;
+  Alpha version and install/update timestamps remain unchanged.
+- Operator error: a raw status-plus-install command did not branch on the
+  second status. Background semantic sync had restarted, but installation
+  continued. The parent disclosed the overlap immediately after detecting it.
+  No forced lease reset, logout, reinstall, data clearing or credential repair
+  followed. Fresh process preserved setup and regained authentication.
+- New status temporarily had no semantic activity but an unexpired coordinator
+  lease. A Muse source review found exact owner/generation protection and a
+  five-minute TTL. At 20:51:12Z the live coordinator flag became false, with
+  auth ready, settled outbox and semantic read available. This proves expiry
+  recovery for this interruption, not every crash or in-flight write outcome.
+- Stable 135,282,688-byte capture `device-evidence/20260915-restart-710003e`
+  was hash-qualified before/after/transfer. Offline cloned inspection preserves
+  the source and shows 700 chats, 11,841 messages, 2,413 attachments, outbox 3,
+  no pending checkpoint batch/token. Two upload admissions appear in old-build
+  logs at 20:45:30Z before installation; the older outbox-1 report is not the
+  immediate pre-install baseline. Both lingering lease rows have 300-second
+  duration. The known HEIC remains tempStreaming with metadata 1,048,576 and
+  verified 0, awaiting an actual retry on the new build.
+- Host-only assert-idle now fails on busy, unavailable or malformed state,
+  with 24 offline cases. It is explicitly a snapshot rather than an atomic
+  installation lease. The initial inspector run lacked process-local ObjectBox
+  PATH and failed load; rerunning with the pinned ARM64 vendor DLL passed.
+- Windows artifact 10413045788 matches GitHub digest
+  `33bfbaa890720cb23d3ef15fcc7e573a170e940186799776d2b986dfb1e3c081`.
+  Inner archive `fd42c97f55025eedb7eb11c7bbc22e8a6c5210f493d829366481c9edf6325b34`
+  passed the three-file/ARM64/source/pilot/codec verifier. Exact source-only
+  checkout `scratch/native-import-b9c567f-20260915` admitted import. The existing
+  importer signed only the executable and app DLL; ObjectBox stayed byte-exact.
+  Signed DLL SHA256 is
+  `140ab5c25b39daca8263f60e2085433557311676d8e1885d17d74a0af49b56d7`.
+  All 29 native attachment cache/extent tests passed on this local Windows host.
+  No live Apple call was made by this Windows test.
+- User was asked to open Gizelle's profile and retry one previously failed
+  photo, without another history pull. No fresh media attempt is yet observed.
+- Schrodinger and Kierkegaard were reviewed and closed through supported
+  controls, then absent from the active native registry. Find My's five-file
+  unique observer patch remains isolated/uncompiled and is not in the installed
+  APK. No transcript deletion API exists; no sessions were removed.
+- Host guard cases pass 24/24 and existing Canary-control cases pass 12/12;
+  the extended offline inspector passes targeted analysis with no issues.
+  The temporary screenshot of the Messages list was removed after inspection;
+  no original image or app data was deleted. C: 34.08 GiB free. All started
+  build/test handles are terminal; the next step awaits one user-selected photo
+  attempt, not another build or full history pull.

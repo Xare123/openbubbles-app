@@ -55,7 +55,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Item | Current evidence |
 | --- | --- |
 | Latest CI-qualified APK | Exact source `78d0f8cf2e5e0d49560766c79644f4ecec869a4b`; [GCE 34983806715](https://github.com/Xare123/openbubbles-app/actions/runs/34983806715) passed the full Dart and Rust suites, automatic-writer checks, rustpush production tests, the Cloud Sync protector harness, Android JVM tests, package/native verification, GitHub-hosted signing and cleanup. Signed artifact 10404276881 downloaded as 452,938,275-byte `app-canary-debug.apk`, SHA256 `6707AE4BD99F418406DDCCCE25AD339FDF54078D64BE4FF93804D471F3C66DB4`. Independent local `apksig` verification reports v2/v3 valid, zero errors and certificate SHA256 `0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79`; `aapt2` verifies package `com.bluebubbles.messaging.cloudkitcanary`, version 1.15.0 (20002227), and all four required ARM64 native libraries are present. Independent inventories show no GCE instance or matching self-hosted runner after cleanup. |
-| Last observed Pixel | The independently verified signed `78d0f8cf2` APK is installed in place as Canary on the Pixel 10 Pro. Package, version and signing certificate match the qualified artifact; existing registration, chats and retained CloudKit state survived the upgrade. Alpha remains untouched. A live UI-started semantic pull is active with authentication ready, legacy sync disabled, a settled outbox and no CloudKit-fatal or authentication error observed. |
+| Last observed Pixel | Signed `710003e7b` is now installed in place as Canary. Downloaded and device APK SHA256 both equal `8d87ec693bbbcbb9d31b0ab886e254cc2ef5c1a9253c3fc7acac9dc3233ad90b`; v2/v3 signature and stable certificate independently pass. All four required ARM64 libraries are present and no dotenv asset is packaged. Alpha version/install/update timestamps are unchanged. The install unintentionally overlapped a background read because the host printed but did not enforce its second busy check. The new process retained registration/chats and recovered the old five-minute coordinator lease by expiry at 20:51Z without reset or lease edits. Status is authenticated/idle/settled. The exact failed-photo retry and a new terminal read remain pending. |
 | Semantic-pull regression and repair | The 10d Pixel run safely aborted before pass 1 with `cloud_sync_protocol_evidence_event_type_invalid`: production emitted valid `fetchStarted` and `inboxApplyStarted` events that the fixed evidence vocabulary omitted. Exact source `0feaa063a` repaired the vocabulary and is an ancestor of the current `78d0f8cf2` candidate. The current full qualification passed the regression coverage, but Pixel live proof remains pending. |
 | Recent-first | `TEST-PROVEN` on exact source `78d0f8cf2`: a live read-only Windows wire probe proves Apple returns a bounded newest-first page for a fresh no-token stream, and the product now durably binds direction before request one. Fresh exact Chats, Messages and Attachments streams use newest-first; Chat1 and every existing cursor remain forward. Direction is carried through each continuation, restart, reset and journal CAS. GCE app-Rust 34982392496 passed 682/682 tests; full GCE 34983806715 passed every selected suite, packaging, signing and cleanup. Pixel lifecycle proof remains open. |
 | Windows writes | `LIVE-PROVEN` for a fresh direct single-part chain on exact source `07e58fd0b`. Parent-35 sent with exact readback, edit-36 and unsend-37 each submitted and confirmed one CloudKit update, and a new-process unsend replay submitted zero IDS/CloudKit work. The post-run store has exactly three additional confirmed outbox operations, both new mutations are terminal, and the retained database was unchanged by the metadata-only audit. Evidence: `build-evidence/windows-chain-20260915-07e58fd0`. Pixel, groups, independent recipient UI and persistent registration health remain open. |
@@ -65,9 +65,9 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Find My live boundary | Exact retained Windows launch `1bed3346c9374c3b81f402075da59746` used the signed `7d38f1dd8` runtime and completed fresh People and Devices service reads. People returned one uniquely selected row but no native location; the service marked that row opted out of sharing and supplied no coordinate or locate-in-progress signal. Devices returned zero rows. Items were deliberately not invoked because their initialization side effects are not yet reviewed. The UI is not discarding coordinates in this capture; the native response contains none. Commit `d13d88797` repairs test provenance and makes the offline qualifier accept only the exact verified successful launcher envelope; 54 qualifier, 11 preflight, launcher and Flutter contract tests pass. |
 | Current native qualification | Windows 34779665447 passed fccca0bb5 / pilot 5fd8d03fe: 151 selected Rust tests, 658 Dart tests, 51 packaged-DLL codec cases. Parent verified 53 source inputs/12 logs/three ARM64 binaries; signed DLL `501f40e89d6268d52cd7e678a21b669d8952ca18c0421fba31ed1d0b2bb90e3f`. Local 51 codec and 24 harness tests passed; later date-shape harness has 25 passing tests. App Control remains enabled; vendor ObjectBox unchanged. |
 | Next integration | The exact-source foreground pull, bounded Android background wake and controlled cold-restart incremental read are terminal with Apple cursors drained, authentication ready, outbox 1 -> 1 and remote writes disabled. Next qualify profile Regular/Turbo status, cancellation and lock/reconnect. If registration remains healthy, run one authorized ordinary-composer send, exact CloudKit readback, restart/no-duplicate replay and representative media/document checks on this same installed hash. |
-| Current source changes | Committed `ee9bf7c7e` repairs reply overflow and shared sync progress. GitHub Rust validation 34999813864 passed 683 app, 308 rustpush, 11 Anisette and 40 protector tests; Windows host 35000180863 also passed. The next candidate handles the verified HEIC metadata/body size disagreement using authenticated Ford lengths, with 80 focused Flutter cases passing. Native integration tests and live media validation remain. No replacement APK is installed. |
+| Current source changes | Installed candidate `710003e7b9feb8b74bf3cd795da22da3be0e56bb` includes reply overflow/shared progress, authenticated media-body extent and removable Canary ADB controls. Rustpush is `5522fa0ced1c1fe7ed70262ac230261889ca06c5`. GitHub bridge 35008514692 passed 685 app, 317 rustpush, 11 Anisette and 40 protector tests; 80 targeted Flutter and 16 packaging/control cases pass locally. Build 35008622263 successfully packaged/signed the independently verified Canary artifact 10413547986. This workflow did not run the full Flutter/JVM suite. Windows 35006456632 artifact 10413045788 is independently verified/imported against exact `b9c567f89`; 29 attachment tests passed from that signed native executable on the local PC. This is native cache/extent evidence, not a live Apple download. |
 | Latest full Canary qualification | GCE 34983806715 completed successfully in 33m02s on exact source `78d0f8cf2`: every selected suite passed, the producer and signed APK artifacts were uploaded, Android JVM tests passed, GitHub-hosted signing passed, and cleanup deleted the ephemeral runner. Independent post-run inventories found zero GCE instances and no matching self-hosted runner registration. This establishes build/test/signing integrity, not Pixel lifecycle or end-user behavior. |
-| Current artifact boundary | The exact signed APK is retained at `build-evidence/gce-full-78d0f-34983806715/app-canary-debug.apk`, independently verified and installed in place on Canary. Preserve the installed app and retained database. This is not authorization for a clean install, data clear, checkpoint reset or Alpha change. |
+| Current artifact boundary | Installed signed `710003e7b` is retained at project-root `build-evidence/github-canary-710003e-35008622263/extracted/app-canary-debug.apk`; previous `78d0f8cf2` is retained as rollback evidence, not the current installation. Preserve app data and retained database. No clean install, data clear, checkpoint reset or Alpha change is authorized by this qualification. |
 | Current qualified runtime | Source `4e7121a18e8c011ae5472831111af86a61280178`, pilot 5fd8d03fe: Windows 34782347926 passed 153 selected native / 658 Dart / 51 DLL-codec tests. Parent verified 53 inputs/12 logs/three ARM64 PEs, separately signed DLL `80f97298fad435f53b30cd4dc2b0479e3f350fb47136e644673b3a052d08b3c8`, and passed 51 local codec + 25 harness tests. GCE 34782416330 passed all 631 Rust tests and completed cleanup. No active build or new APK. |
 | Fast Windows loop | Current Dart plus the verified native DLL opens the retained projection in 8.65 seconds. The stale Windows relay ticket was updated to the Pixel's working ticket after proving the same physical relay and preserving Windows installation IDs/keys. Fresh exact-source session `9fd22af4898c86559573004e9c07d21d` on September 15 ran two independent 7d38 processes to a stable terminal result: fetched/applied 0/0, retained 6,252, outbox 24 -> 24, all zones empty-terminal, zero stderr, remote writes disabled and owned-process cleanup confirmed. The initial attempt correctly rejected an older 07e native bundle as byte-incompatible before profile access. |
 | Current merge repair | Real native-source/copy qualification passed the bounded production recovery and normal applier, preserving local history. Live Windows report `obcs2-semantic-1789278811033254.json` applied two pending messages; fresh-process repeat `1789278895014946` fetched/applied zero, with no conflict. Both observed empty terminal reads in all zones and kept outbox 15 -> 15 with remote writes disabled. Full native-crate qualification remains. |
@@ -317,8 +317,10 @@ cross-device convergence
   -> independent Apple device confirmation
 ```
 
-Do not rebuild a Canary for every code edit. GCE handles exact-source Dart,
-Rust, bridge-generation, identity, projection, and reconciliation tests.
+Do not rebuild a Canary for every code edit. Use GitHub-hosted jobs for native
+compilation and focused local Flutter tests. GCE credits are exhausted and
+new paid GCE work requires renewed approval. The established GCE lanes below
+remain a reference, not authorization to dispatch them.
 Windows ARM64 bundles are built on the isolated GitHub runner and imported
 only after archive, native-codec, source/configuration and launch verification.
 The retained `6abbeede2` runtime proves its bounded direct write, not newer
@@ -657,16 +659,42 @@ CloudKit readback or independent Apple-device display.
   Restart requires consistent source and body evidence; the UI reports actual
   downloaded bytes. Local tests pass 39 state/materializer/coordinator and 41
   source/adapter/file cases; focused analysis and sensitive-log scan pass.
-  Native candidate `c43760e` is committed in the rustpush fork and integrated
-  into the app checkout, but has not yet passed compiled qualification.
+  Rustpush `5522fa0` and app candidate `710003e7b` now pass native qualification:
+  bridge 35008514692 has 685 app/317 rustpush/11 Anisette/40 protector cases.
+  Canary 35008622263 and Windows native-host 35006456632 are successful.
+  Both packages were independently verified. The Canary is installed in place;
+  the Windows native package is imported and separately signed, with original
+  ObjectBox preserved. Local signed-host attachment tests pass 29/29. Live
+  failed-photo recovery remains the next discriminating test.
 - GCE free credits are exhausted: no paid GCE starts without renewed user
   approval. Before this restriction, three VM starts failed with regional
   resource exhaustion; all cleanup completed with zero instances/runners.
   Use GitHub-hosted native validation and Windows fast-loop builds. Do not
   create duplicate runs by pushing both feature and trusted-source branches.
-- The installed `78d0f8cf2` stays pinned. Latest Pixel report
-  `obcs2-semantic-1789492100550617.json` has remote head drained, fetched/applied
-  0/0, retained 8,502 and outbox 1 -> 1, with authentication ready after release.
+- Last old-build report `obcs2-semantic-1789498769734234.json` reached remote
+  head with fetched/applied 0/0, retained 8,502 and outbox 1 -> 1. Later old-build
+  automatic upload logs show two admissions before the upgrade. A stable
+  post-upgrade copy has 700 chats, 11,841 messages, 2,413 attachments, outbox 3,
+  no pending checkpoint batch/token and intact failed-HEIC source metadata.
+  Do not compare this outbox to the older report as an upgrade side effect.
+- Host `canary_adb_control.ps1 -Action assert-idle` now throws on busy, missing
+  or malformed status rather than returning a successful status-print command.
+  Its 24 offline cases pass. It is a point-in-time guard, not an atomic lease;
+  never continue a lifecycle command after guard failure. Do not clear a live
+  or unexpired coordinator lease to expedite a test.
+- Post-compaction agent reconciliation: six known native child handles return
+  `not_found`; a close retry is unsupported for those handles, not shutdown
+  proof. The app reports Find My child `01a0a60c-f4ac-7812-9cc1-c0a940a6f96a`
+  interrupted/notLoaded. Preserve its four unique uncommitted observer files
+  in `agent-worktrees/findmy-ids-shape-20260915`. The integrated MMCS worktree
+  is clean and retained until package/live qualification. No session deletion
+  API is available; no transcripts or worktrees were removed. C: is 35.14 GiB
+  free before artifact download. No build remains active. Follow-up Muse
+  Schrodinger completed isolated observer dependency/parser corrections;
+  parent deferred integration pending native compilation and full observer
+  review. Muse Kierkegaard traced crash recovery to five-minute lease expiry,
+  confirmed by live status; no product lease-recovery change was warranted.
+  Both were closed successfully and no longer resolve as active native agents.
 
 ## Current ownership and continuation rules
 

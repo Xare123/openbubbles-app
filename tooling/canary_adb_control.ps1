@@ -2,7 +2,7 @@
 .SYNOPSIS
   ADB host driver for the removable Canary-debug control channel.
 .DESCRIPTION
-  Status, route and semantic actions never launch the app. They require an
+  Status, assert-idle, route and semantic actions never launch the app. They require an
   already-ready Canary engine, so they cannot wake normal app lifecycle or a
   configured writer. Only open-dev/open-sync explicitly launch MainActivity;
   those actions use a ping/result readiness handshake rather than a fixed
@@ -11,7 +11,7 @@
 #>
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('ping', 'status', 'route', 'open-dev', 'open-sync', 'semantic-status', 'semantic-start', 'logs')]
+  [ValidateSet('ping', 'status', 'assert-idle', 'route', 'open-dev', 'open-sync', 'semantic-status', 'semantic-start', 'logs')]
   [string]$Action,
   [switch]$Confirm,
   [string]$Package = 'com.bluebubbles.messaging.cloudkitcanary',
@@ -120,6 +120,27 @@ function Assert-Forwarded {
   }
 }
 
+function Assert-CanaryIdleStatus {
+  param([object]$Result)
+  # This is a point-in-time guard, not a lease or permission to interrupt a
+  # later operation. Never continue a lifecycle action after it throws.
+  if ($null -eq $Result -or $Result.code -cne 'adb_status' -or
+      $Result.ok -isnot [bool] -or $Result.ok -cne $true -or
+      $null -eq $Result.data) {
+    throw 'Canary idle state is unavailable; lifecycle action refused.'
+  }
+  foreach ($name in @('legacy_sync_active', 'logout_active',
+      'semantic_pull_active', 'semantic_pull_quiescing', 'coordinator_active')) {
+    $value = $Result.data.$name
+    if ($value -isnot [bool] -or $value) {
+      throw "Canary is busy or its state is unknown ($name); lifecycle action refused."
+    }
+  }
+  if ($Result.data.outbox_state -cnotin @('empty', 'settled')) {
+    throw 'Canary has unfinished outbound work; lifecycle action refused.'
+  }
+}
+
 function Wait-DartReady {
   $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
   while ([DateTime]::UtcNow -lt $deadline) {
@@ -151,6 +172,7 @@ if ($Action -eq 'logs') {
 $nativeFor = @{
   'ping' = 'ping'
   'status' = 'status'
+  'assert-idle' = 'status'
   'route' = 'query_route'
   'open-dev' = 'open_developer_settings'
   'open-sync' = 'open_cloud_sync_v2'
@@ -204,6 +226,7 @@ if ($Action -eq 'semantic-start') {
 $ack = Send-Control -NativeAction $native -Sequence $seq
 Assert-Forwarded $ack
 $result = Wait-Result -Sequence $seq
+if ($Action -eq 'assert-idle') { Assert-CanaryIdleStatus -Result $result }
 Write-Output ("code=" + $result.code + " ok=" + $result.ok)
 Write-Output ($result.data | ConvertTo-Json -Depth 3)
 if ($result.ok -eq $true) { exit 0 }
