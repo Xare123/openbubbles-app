@@ -4919,3 +4919,31 @@ cannot authorize or perform adoption.
   contract pass. The real report now qualifies as partial with fixed codes
   `absent-coordinates`, `empty-inventory`, `items-not-invoked` and
   `selection-matched-no-location`.
+
+### September 15 retained outbound-lease integrity gate
+
+- Tooling commit `a849ae04a` adds a content-free, opt-in Windows inspector for
+  every durable outbound lease owner: page fetches, outbox rows, local-send
+  source bindings, edit/unsend intents, record-map readbacks and attachment
+  upload plans/results. Terminal source references are classified separately
+  from leases that must still exist, so correct cleanup cannot be mislabeled as
+  loss. The live mode fails if a required lease, protected mutation source,
+  envelope binding or mutation claim is missing or duplicated.
+- The inspector was compiled and analyzed with no issues, skipped by default,
+  then run only against a temporary exact copy of the retained Windows profile.
+  It found 24 outbox rows, all confirmed; 15 local-send rows; 11 mutation rows;
+  one attachment-upload row; zero pending record-map leases; and stable writer
+  authority at epoch 18. All three required leases belong to the preserved
+  historical epoch-2 mutation rows, all are present, and every protected file
+  matches its lease envelope. There are zero required-lease absences, missing
+  protected sources, mismatched envelopes, duplicate claims or unmatched
+  claims. The terminal protected send and terminal attachment upload both have
+  their expected released-reference evidence and no stale required lease.
+- A complete SHA256/length snapshot proved the original profile remained
+  unchanged across the first cloned run: 48,805 files before and after, zero
+  changes. The exact temporary copy is
+  `C:\Codex\OpenBubblesReview\temp\lease-inspector-20260915-1145`, 48,805
+  files / 600,028,057 bytes. It is disposable because the source snapshot is
+  intact, but the platform destructive-action guard rejected its removal. Keep
+  it classified as pending cleanup; do not treat that copy as another account
+  profile or upload it because it contains personal data.
