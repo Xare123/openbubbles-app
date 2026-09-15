@@ -1019,7 +1019,8 @@ try {
             -Runner $runner `
             -RustLibrary $rustLibrary
     }
-    elseif ($ProjectionViewer -or $ProjectionDetailViewer -or $LocalWrite -or $FindMyProbe) {
+    elseif ($ProjectionViewer -or $ProjectionDetailViewer -or $LocalWrite -or
+        $MessageFeedProbe -or $FindMyProbe) {
         if (-not (Test-HarnessBuildReceipt `
             -ReceiptPath $buildReceiptPath `
             -BuildIdentifier $buildIdentifier `
@@ -1141,6 +1142,12 @@ try {
         else {
             $RunOnceTimeoutSeconds
         }
+        $expectedRuntimeBuildIdentifier = if ($FindMyProbe -or $MessageFeedProbe) {
+            $buildIdentifier
+        }
+        else {
+            $null
+        }
         Wait-HarnessOperation `
             -Process $process `
             -ExpectedExecutable $runner `
@@ -1148,7 +1155,7 @@ try {
             -LaunchStartedUtc $launchStartedUtc `
             -BaselineWriteUtc $statusBaselineWriteUtc `
             -ExpectedLaunchId $launchId `
-            -ExpectedBuildIdentifier $(if ($FindMyProbe) { $buildIdentifier } else { $null }) `
+            -ExpectedBuildIdentifier $expectedRuntimeBuildIdentifier `
             -ExpectedOperation $(if ($Drain) {
                 'drain'
             } elseif ($AttachmentProbe) {

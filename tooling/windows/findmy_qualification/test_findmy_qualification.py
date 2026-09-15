@@ -167,6 +167,25 @@ def _report(**overrides):
     }
     report.update(overrides)
     return report
+
+
+def _testhost_report(probe=None, **overrides):
+    report = {
+        "version": "findmy-windows-testhost-v1",
+        "launch_id": LAUNCH,
+        "process_id": 1234,
+        "native_sha256": "cd" * 32,
+        "mode": "service-reads-with-authorized-local-and-auth-housekeeping",
+        "abi_verified": True,
+        "select_sole_person": True,
+        "state": "finished",
+        "stage": "findmy-probe-complete",
+        "probe": probe if probe is not None else _report(),
+    }
+    report.update(overrides)
+    return report
+
+
 def _norm(key):
     return "".join(ch for ch in str(key).lower() if ch.isalnum())
 
@@ -424,6 +443,45 @@ class QualificationContractTests(unittest.TestCase):
             fq.qualify_report(bad)
         self.assertNotIn("synthetic-canary", str(caught.exception))
 
+    def test_exact_live_testhost_wrapper_is_accepted(self):
+        direct = fq.qualify_report(_report())
+        wrapped = fq.qualify_report(_testhost_report())
+        self.assertEqual(wrapped, direct)
+
+    def test_live_testhost_wrapper_unknown_key_rejected(self):
+        wrapped = _testhost_report(debug_note="synthetic-canary")
+        with self.assertRaisesRegex(fq.QualificationError,
+                                    "input_rejected_unknown_key"):
+            fq.qualify_report(wrapped)
+
+    def test_live_testhost_wrapper_requires_verified_finished_state(self):
+        invalid = (
+            {"abi_verified": False},
+            {"state": "failed"},
+            {"stage": "findmy-probe-reads-failed"},
+            {"mode": "unbounded"},
+            {"process_id": 0},
+            {"process_id": True},
+            {"select_sole_person": 1},
+        )
+        for override in invalid:
+            with self.subTest(override=override):
+                with self.assertRaises(fq.QualificationError):
+                    fq.qualify_report(_testhost_report(**override))
+
+    def test_live_testhost_wrapper_binds_nested_probe_launch(self):
+        replaced = _report(launch_id="10" * 16)
+        with self.assertRaisesRegex(fq.QualificationError,
+                                    "input_rejected_identity"):
+            fq.qualify_report(_testhost_report(probe=replaced))
+
+    def test_live_testhost_wrapper_rejects_forbidden_nested_field(self):
+        probe = _report()
+        probe["people"]["password"] = "synthetic-secret"
+        with self.assertRaisesRegex(fq.QualificationError,
+                                    "input_rejected_forbidden_field"):
+            fq.qualify_report(_testhost_report(probe=probe))
+
     def test_section_unknown_key_rejected(self):
         bad = _report()
         bad["devices"]["extra"] = 1
@@ -556,6 +614,19 @@ class QualificationContractTests(unittest.TestCase):
             with redirect_stdout(buffer):
                 code = fq.main(["--report", str(path),
                                 "--expected-person-sha256", EXPECTED])
+            self.assertEqual(code, 0)
+            output = json.loads(buffer.getvalue())
+            self.assertEqual(output["launch_id"], LAUNCH)
+            self.assertEqual(output["result"], "partial")
+
+    def test_cli_accepts_synthetic_live_testhost_report(self):
+        with tempfile.TemporaryDirectory(
+                prefix="findmy-qual-wrapper-synthetic-") as tmp:
+            path = Path(tmp) / "report.json"
+            path.write_text(json.dumps(_testhost_report()), encoding="utf-8")
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = fq.main(["--report", str(path)])
             self.assertEqual(code, 0)
             output = json.loads(buffer.getvalue())
             self.assertEqual(output["launch_id"], LAUNCH)

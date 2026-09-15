@@ -4798,3 +4798,152 @@ cannot authorize or perform adoption.
   classify `msgProto4.groupId`, `dcId`, outer type and unique Chat1 ownership
   without retaining identifiers or content. Sender-only routing is unsafe
   because an incoming sender can also be a member of a group conversation.
+
+### September 15 exact service split and bounded carrier reclassification
+
+- Re-analysis of the same 539 content-free route shapes found 531 top-level
+  `SMS` records and only eight iMessage records. The SMS rows comprise 483
+  incoming and 48 outgoing records; 475 carry a nonempty `msgProto4.groupId`
+  and 56 do not. The eight iMessage rows comprise seven incoming and one
+  outgoing record, all without group evidence. This explains why the previous
+  490/49 direction split was insufficient: almost the entire apparent
+  malformed-identity backlog is carrier data that the semantic iMessage lane
+  must deliberately exclude.
+- Commit `7d38f1dd8900110e298ee091fc8e715a8d988212` retains strict field-presence
+  validation but no longer requires nonempty `guid`/`chatID` values before
+  returning a typed SMS/RCS out-of-scope disposition. A nested non-carrier
+  service remains an unsupported-service quarantine, and iMessage plus
+  iMessage Lite identity rules remain strict.
+- Retained replay can relabel a historical malformed row only when the fresh
+  decoder produces that typed carrier disposition and both caller and locked
+  ObjectBox row carry the exact same eligible prior category. Dependency,
+  conflict, tombstone, changed-row and forged-category paths remain closed.
+  Reclassification rotates the exact row only; it does not open a canonical
+  transaction, advance a checkpoint or alter the outbox.
+- Local qualification passed all 145 focused applier/ObjectBox tests, including
+  restart durability, exact-row fencing, forged-category rejection and zero
+  canonical mutation. The initial GCE dispatch 34957336240 was rejected before
+  VM creation because the operator supplied an incorrect expanded commit SHA;
+  cleanup passed. Correct exact-source app-Rust run 34957446005 then passed all
+  682 Rust tests and reproduced the committed bridge bindings. Its build job
+  completed in 6m01s. Runner cleanup passed, and independent GCE-instance and
+  GitHub-runner inventories found no residue. The read-only app-Rust lane built
+  no APK and received no production account or CloudKit credentials.
+- The separate 183-row `canonical_message_chat_unavailable` branch is not fixed
+  by this service correction. Its eight sampled records have nonempty matching
+  `chatID`/`msgProto4.groupId` route evidence, but terminal Chat1 correlation
+  still proves no unique owner. Visible provisional-Chat creation remains
+  closed until deletion/tombstone semantics rule out resurrecting a removed
+  conversation.
+- Exact Windows native-test-host run 34957628962 completed successfully in
+  24m35s against source `7d38f1dd8900110e298ee091fc8e715a8d988212`
+  and pilot `629df1f5d70b2c63c51212b362b05d569df2c3d4`. Artifact
+  10392807158 passed 671 Dart tests, 51 packaged native codec cases, ARM64 and
+  pinned-ObjectBox checks. Its declared and actual archive SHA256 both equal
+  `7e5a7071e8cfe610bf8d4fbcc7577b0fe39b2ddaa71ef9e8ac25ad02412a279a`;
+  provenance SHA256 is
+  `97bdc2a056477983ba9b52b6dd019f7f485a6c49c3e3b23ad48c25bb8edad5b6`.
+- The independently verified bundle was imported through the protected
+  native-test-host importer. Before any live mutation, the isolated Windows
+  ObjectBox and Cloud Sync V2 native store were backed up locally as
+  `build-evidence/cloudkit-v2-pre-7d38-live-20260915.zip`, SHA256
+  `54DA744F2BEA11DB3DD76DAF193ACBA6B31216E27F959FD66A9BB2C68BAA0C43`.
+  The backup contains personal data and must never be uploaded.
+- Two initial harness launches failed before semantic work because the clean
+  detached worktree lacked ignored Flutter package metadata and then the
+  pinned `telephony_plus` submodule. Restoring only compatible generated
+  metadata and exact submodule commit
+  `5210e940dd92ae371f8c74eaeb552d0704034244` made the non-live compile gate
+  pass with the source worktree still clean. This was harness setup debt, not a
+  CloudKit or account regression.
+- Live drain `2b31b210b1d2d500044db1c9acd958be`, report
+  `obcs2-semantic-1789469940365007.json`, completed on exact source. Remote
+  streams were already drained; fetched/applied remained 0/0, retained totals
+  stayed 94 Chats + 5,046 Messages + 1,112 Attachments, outbox stayed 24, and
+  remote saves/deletes remained disabled. The exact-row transaction relabeled
+  573 Message saves from `malformedRecord` to typed carrier
+  `outOfScopeService`, reducing blocking Message saves from 1,359 to 786.
+- The earlier 531-row forecast covered only the newly recognized
+  present-but-empty carrier identities. The additional 42 are the malformed
+  subset of 110 rows that the prior decoder already typed as carrier but could
+  not relabel under its unsupported-only durable gate. The other 68 still fail
+  the exact eligible prior-category check and remain unchanged. Thus 573 equals
+  531 newly typed rows plus 42 stale-label corrections; no unrelated category
+  moved.
+- Fresh-process drain `911bb545a8c357f6942e57e5bfe5dc3a`, report
+  `obcs2-semantic-1789470215197415.json`, proved idempotence: no transition
+  diagnostic, no fetch/apply, and unchanged Message counts of 3,763
+  out-of-scope, 307 malformed, 474 dependency and five unsupported. Retained
+  totals, outbox 24 and the remote-write-disabled posture were unchanged. The
+  remaining 786 Message and 1,011 Attachment blocking saves require separate
+  evidence; this result does not authorize broader admission or relabeling.
+
+### September 15 full 81b Canary qualification and Find My live evidence
+
+- Full GCE run 34961566410 built exact source
+  `81b17b36b9361936fc92c7e6d64bb91eb2ee3d90` with the conditional writer and
+  automatic uploads enabled. The full Dart suite, all 682 Rust tests,
+  rustpush production tests, Cloud Sync protector harness, reproducible bridge
+  bindings, Android JVM tests, package/native verification and GitHub-hosted
+  signing passed. The producer job took 29m46s; the complete workflow including
+  VM creation, signing and teardown took 33m13s.
+- Signed artifact 10394532278 downloaded as a 452,942,371-byte
+  `app-canary-debug.apk`, SHA256
+  `57046E3AF204A7A52E2537EC554A00C4C97485FDBD9976BA62F46A61B55EFA3C`.
+  Local verification confirms package
+  `com.bluebubbles.messaging.cloudkitcanary`, version 1.15.0 (20002227), APK
+  signature schemes v2/v3, the expected Canary certificate, and the Rust,
+  Irondash and super-native-extensions libraries for ARM64. Independent
+  post-run inventories contain no GCE instance and no self-hosted runner.
+- The Pixel was not reachable over wired or wireless ADB after artifact
+  verification. Installation and all Android lifecycle/read/write claims
+  remain pending. Alpha was not touched.
+- Retained Windows Find My launch
+  `1bed3346c9374c3b81f402075da59746` used the separately verified signed
+  `7d38f1dd8` native runtime. Fresh People and Devices requests completed.
+  People returned one uniquely selected row but no native location; its native
+  response marked sharing opted out and supplied no coordinate, permission or
+  locate-in-progress signal. Devices returned zero rows. Items remained
+  deliberately not invoked because their initialization side effects are not
+  yet qualified. This establishes that this capture lacks coordinates at the
+  native response, not that the user's wife actually stopped sharing.
+- The live launcher writes a `findmy-windows-testhost-v1` envelope around its
+  nested `windows-findmy-probe-v1` report. The offline qualifier documented the
+  launcher report as accepted but rejected the envelope as an unknown schema.
+  Commit `d13d88797` pins the launcher to the exact signed runtime and adds a
+  strict envelope extractor that requires ABI verification, a finished valid
+  terminal stage, typed process/native fields and matching launch IDs before
+  qualifying the nested probe. Unknown, failed, replaced and forbidden-field
+  envelopes fail closed. All 54 qualifier tests, 11 retained-preflight tests,
+  the synthetic process/mutex/cleanup launcher contract and the Flutter host
+  contract pass. The real report now qualifies as partial with fixed codes
+  `absent-coordinates`, `empty-inventory`, `items-not-invoked` and
+  `selection-matched-no-location`.
+
+### September 15 retained outbound-lease integrity gate
+
+- Tooling commit `a849ae04a` adds a content-free, opt-in Windows inspector for
+  every durable outbound lease owner: page fetches, outbox rows, local-send
+  source bindings, edit/unsend intents, record-map readbacks and attachment
+  upload plans/results. Terminal source references are classified separately
+  from leases that must still exist, so correct cleanup cannot be mislabeled as
+  loss. The live mode fails if a required lease, protected mutation source,
+  envelope binding or mutation claim is missing or duplicated.
+- The inspector was compiled and analyzed with no issues, skipped by default,
+  then run only against a temporary exact copy of the retained Windows profile.
+  It found 24 outbox rows, all confirmed; 15 local-send rows; 11 mutation rows;
+  one attachment-upload row; zero pending record-map leases; and stable writer
+  authority at epoch 18. All three required leases belong to the preserved
+  historical epoch-2 mutation rows, all are present, and every protected file
+  matches its lease envelope. There are zero required-lease absences, missing
+  protected sources, mismatched envelopes, duplicate claims or unmatched
+  claims. The terminal protected send and terminal attachment upload both have
+  their expected released-reference evidence and no stale required lease.
+- A complete SHA256/length snapshot proved the original profile remained
+  unchanged across the first cloned run: 48,805 files before and after, zero
+  changes. The exact temporary copy is
+  `C:\Codex\OpenBubblesReview\temp\lease-inspector-20260915-1145`, 48,805
+  files / 600,028,057 bytes. It is disposable because the source snapshot is
+  intact, but the platform destructive-action guard rejected its removal. Keep
+  it classified as pending cleanup; do not treat that copy as another account
+  profile or upload it because it contains personal data.

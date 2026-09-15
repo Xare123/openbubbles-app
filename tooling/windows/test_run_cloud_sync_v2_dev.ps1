@@ -235,8 +235,11 @@ try {
         -Message 'A read-only receipt must never qualify a writer or replay build.'
     & $launcher -FunctionsOnlyForTest -BuildOnly -LocalWrite
     Assert-True `
-        -Condition ($launcherSource.Contains('elseif ($ProjectionViewer -or $ProjectionDetailViewer -or $LocalWrite -or $FindMyProbe)')) `
-        -Message 'Writer reuse must use the exact binary-and-configuration receipt check.'
+        -Condition ($launcherSource.Contains('$MessageFeedProbe -or $FindMyProbe)')) `
+        -Message 'Writer and live feed-probe reuse must use the exact binary-and-configuration receipt check.'
+    Assert-True `
+        -Condition ($launcherSource.Contains('$expectedRuntimeBuildIdentifier = if ($FindMyProbe -or $MessageFeedProbe)')) `
+        -Message 'Live feed-probe status must be bound to the exact harness build identifier.'
     $buildOnlyMatches = [regex]::Matches(
         $launcherSource,
         '(?m)^\s+if \(\$BuildOnly\) \{\s*$'
