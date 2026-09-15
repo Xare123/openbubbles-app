@@ -1,6 +1,17 @@
 import 'cloud_sync_models.dart';
 import 'cloud_sync_store.dart';
 
+/// Optional, local-only receipt reconstruction under the protected-store lock.
+/// Implementations must validate the exact encrypted source against every claim
+/// field before reconstructing metadata. This never retries IDS, writes to
+/// CloudKit, advances a mutation state, or releases an outbound owner. Repeating
+/// an already completed exact repair must be idempotent.
+abstract interface class CloudProtectedMutationLeaseRepairTransport {
+  Future<void> repairProtectedMutationLeaseReceipt(
+    CloudProtectedMutationLeaseRepairClaim claim,
+  );
+}
+
 /// Apple protocol and cryptography boundary.
 ///
 /// The Rust adapter is responsible for authentication, PCS, encryption, and

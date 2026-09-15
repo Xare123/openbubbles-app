@@ -1,4 +1,5 @@
 import 'cloud_shadow_journal_budget.dart';
+import 'cloud_sync_local_mutation_source_binding.dart';
 import 'cloud_sync_models.dart';
 
 class CloudCoordinatorLeaseFence {
@@ -558,6 +559,28 @@ abstract interface class CloudProtectedPageLeaseAdoptionStore {
   );
 }
 
+/// Exact local mutation-source ownership, not evidence of IDS delivery or
+/// permission to send. The immutable binding contains no message content.
+final class CloudProtectedMutationLeaseRepairClaim {
+  const CloudProtectedMutationLeaseRepairClaim({required this.source});
+
+  final CloudSyncLocalMutationSourceBinding source;
+
+  @override
+  String toString() => 'CloudProtectedMutationLeaseRepairClaim(redacted)';
+}
+
+/// Optional metadata-repair capability. Read all candidate rows in one read
+/// transaction and validate their durable bindings. Missing coverage is allowed
+/// here; the lifecycle must require exact coverage before any repair call.
+abstract interface class CloudProtectedMutationLeaseRepairStore {
+  Future<List<CloudProtectedMutationLeaseRepairClaim>>
+  readProtectedMutationLeaseRepairClaims(
+    Set<String> missingLeaseReferences, {
+    required int maximumCount,
+  });
+}
+
 /// Optional capability for native protected leases still owned by outbound
 /// operations. These are intentionally separate from page leases so page
 /// cleanup can never acknowledge an outbox receipt prematurely. A confirmed
@@ -587,9 +610,9 @@ abstract interface class CloudConfirmedOutboundReceiptStore {
 /// Native reconciliation happens before this boundary. Implementations must
 /// commit the exact receipt without network or protected-reference resolution,
 /// keep the original update-stage lease and the new mapping-owned readback
-  /// lease independently live, and clear them only after the caller confirms
-  /// both native commits succeeded. Native receipt acknowledgement happens
-  /// after this durable transaction so a crash cannot strand either lease.
+/// lease independently live, and clear them only after the caller confirms
+/// both native commits succeeded. Native receipt acknowledgement happens
+/// after this durable transaction so a crash cannot strand either lease.
 abstract interface class CloudMessageUpdateReadbackStore {
   Future<CloudMessageUpdateReadbackCommitSnapshot>
   commitMessageUpdateReadbackReceipt(

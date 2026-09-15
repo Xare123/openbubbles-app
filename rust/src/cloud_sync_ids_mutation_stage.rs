@@ -104,6 +104,45 @@ pub(crate) fn open_staged_mutation_source_envelope(
         &stage.protected_reference,
     )
     .map_err(|_| Failure::ProtectedStorage)?;
+    decode_staged_mutation_source_value(&value, local_source_sha256, stage)
+}
+
+/// Validates the exact still-protected mutation source before reconstructing a
+/// missing committed-lease receipt. This accepts already-unprotected local
+/// bytes only from the protected-store repair boundary. It never sends,
+/// prepares, stages, commits, or authorizes an IDS/CloudKit operation.
+pub(crate) fn validate_mutation_source_for_lease_receipt_repair(
+    protected_value: &str,
+    local_source_sha256: &str,
+    stage: &NativeIdsMutationSourceStage,
+    expected_mutation_guid_hash: &str,
+    expected_target_guid_hash: &str,
+    expected_target_part: u64,
+) -> Result<(), Failure> {
+    validate_source_sha(expected_mutation_guid_hash)?;
+    validate_source_sha(expected_target_guid_hash)?;
+    if expected_mutation_guid_hash == expected_target_guid_hash {
+        return Err(Failure::BindingMismatch);
+    }
+    let envelope =
+        decode_staged_mutation_source_value(protected_value, local_source_sha256, stage)?;
+    let opened = open_mutation_source(&envelope)?;
+    if stable_guid_hash(opened.mutation_guid())? != expected_mutation_guid_hash
+        || stable_guid_hash(opened.target_guid())? != expected_target_guid_hash
+        || opened.target_part() != expected_target_part
+    {
+        return Err(Failure::BindingMismatch);
+    }
+    Ok(())
+}
+
+fn decode_staged_mutation_source_value(
+    value: &str,
+    local_source_sha256: &str,
+    stage: &NativeIdsMutationSourceStage,
+) -> Result<Vec<u8>, Failure> {
+    validate_source_sha(local_source_sha256)?;
+    validate_stage(stage)?;
     if value.len() > MAX_WRAPPER_BYTES.div_ceil(3) * 4 {
         return Err(Failure::OversizedMessage);
     }
@@ -212,6 +251,12 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+fn stable_guid_hash(guid: &str) -> Result<String, Failure> {
+    let encoded = serde_json::to_vec(&["cloud-sync-local-send-guid-v1", guid])
+        .map_err(|_| Failure::MalformedMessage)?;
+    Ok(sha256_hex(&encoded))
 }
 
 #[cfg(test)]
@@ -423,5 +468,68 @@ mod tests {
             Failure::MalformedMessage
         );
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn receipt_repair_validator_binds_exact_source_and_mutation_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().to_path_buf();
+        let account = "A".repeat(43);
+        let source_hash = "a".repeat(64);
+        let message = fixture(false);
+        let stage =
+            stage_ids_mutation_source(path.clone(), account.clone(), &source_hash, &message)
+                .unwrap();
+        let protected_value = cloud_sync_open_protected_ids_mutation_source(
+            path,
+            account,
+            &stage.protected_reference,
+        )
+        .unwrap();
+        let mutation_hash = stable_guid_hash(&message.id).unwrap();
+        let opened = open_mutation_source(&encode_mutation_source(&message).unwrap()).unwrap();
+        let target_hash = stable_guid_hash(opened.target_guid()).unwrap();
+
+        assert_eq!(
+            validate_mutation_source_for_lease_receipt_repair(
+                &protected_value,
+                &source_hash,
+                &stage,
+                &mutation_hash,
+                &target_hash,
+                opened.target_part(),
+            ),
+            Ok(())
+        );
+        for mutation in 0..4 {
+            let wrong_source = "b".repeat(64);
+            let wrong_mutation = "c".repeat(64);
+            let wrong_target = "d".repeat(64);
+            let result = validate_mutation_source_for_lease_receipt_repair(
+                &protected_value,
+                if mutation == 0 {
+                    &wrong_source
+                } else {
+                    &source_hash
+                },
+                &stage,
+                if mutation == 1 {
+                    &wrong_mutation
+                } else {
+                    &mutation_hash
+                },
+                if mutation == 2 {
+                    &wrong_target
+                } else {
+                    &target_hash
+                },
+                if mutation == 3 {
+                    opened.target_part() + 1
+                } else {
+                    opened.target_part()
+                },
+            );
+            assert!(result.is_err(), "mutation {mutation}");
+        }
     }
 }

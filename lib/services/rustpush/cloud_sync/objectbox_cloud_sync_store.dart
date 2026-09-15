@@ -43,6 +43,7 @@ class ObjectBoxCloudSyncStore
         CloudCoordinatorLeaseStatusReader,
         CloudProtectedPageLeaseAdoptionStore,
         CloudProtectedOutboundLeaseAdoptionStore,
+        CloudProtectedMutationLeaseRepairStore,
         CloudConfirmedOutboundReceiptStore,
         CloudMessageCreateReadbackStore,
         CloudMessageUpdateReadbackStore {
@@ -567,6 +568,59 @@ class ObjectBoxCloudSyncStore
     });
   }
 
+  /// Read-only source claims. No row is promoted and no lease is released.
+  @override
+  Future<List<CloudProtectedMutationLeaseRepairClaim>>
+  readProtectedMutationLeaseRepairClaims(
+    Set<String> missingLeaseReferences, {
+    required int maximumCount,
+  }) async {
+    // Snapshot caller-owned input before entering the single read transaction.
+    final requested = Set<String>.unmodifiable(missingLeaseReferences);
+    if (maximumCount <= 0 ||
+        maximumCount > 4096 ||
+        requested.length > maximumCount ||
+        requested.any((reference) => !_isProtectedPageLease(reference))) {
+      throw ArgumentError('protected_mutation_lease_repair_request_invalid');
+    }
+    return _store.runInTransaction(TxMode.read, () {
+      if (requested.isEmpty) {
+        return const <CloudProtectedMutationLeaseRepairClaim>[];
+      }
+      // State 1 stays outcome-unknown. Selecting its source is ownership
+      // recovery only, never authorization to resend. State 5 owns no lease.
+      final query = _store
+          .box<CloudSyncLocalMutationIntentEntity>()
+          .query(CloudSyncLocalMutationIntentEntity_.state.notEquals(5))
+          .build();
+      try {
+        if (query.count() > maximumCount) {
+          throw _storageFailure(
+            'protected_mutation_lease_repair_bound_exceeded',
+          );
+        }
+        final leases = <String>{};
+        final references = <String>{};
+        final claims = <CloudProtectedMutationLeaseRepairClaim>[];
+        for (final row in query.find()) {
+          final source = validateCloudSyncMutationRow(row);
+          if (!leases.add(source.leaseReference) ||
+              !references.add(source.protectedReference)) {
+            throw _storageFailure('protected_mutation_lease_repair_duplicate');
+          }
+          if (requested.contains(source.leaseReference)) {
+            claims.add(CloudProtectedMutationLeaseRepairClaim(source: source));
+          }
+        }
+        return List<CloudProtectedMutationLeaseRepairClaim>.unmodifiable(
+          claims,
+        );
+      } finally {
+        query.close();
+      }
+    });
+  }
+
   /// Returns protected leases owned by outbox rows or local send sources.
   ///
   /// These references are intentionally returned separately from page leases:
@@ -925,9 +979,7 @@ class ObjectBoxCloudSyncStore
       scanPaged(
         (_store.box<CloudSyncLocalMutationIntentEntity>().query(
           CloudSyncLocalMutationIntentEntity_.state.notEquals(5),
-            )
-              ..order(CloudSyncLocalMutationIntentEntity_.id))
-            .build(),
+        )..order(CloudSyncLocalMutationIntentEntity_.id)).build(),
         (intent) =>
             capture(validateCloudSyncMutationRow(intent).protectedReference),
       );
@@ -3891,10 +3943,7 @@ class ObjectBoxCloudSyncStore
           intentQuery.close();
         }
       } else {
-        journal.recordConfirmedReadbackInTransaction(
-          _store,
-          currentOperation,
-        );
+        journal.recordConfirmedReadbackInTransaction(_store, currentOperation);
       }
       entity.protectedLeaseReference = null;
       mapping
@@ -6090,9 +6139,7 @@ class ObjectBoxCloudSyncStore
     return entity;
   }
 
-  void _validatePendingMessageCreateMappingLease(
-    CloudRecordMapEntity mapping,
-  ) {
+  void _validatePendingMessageCreateMappingLease(CloudRecordMapEntity mapping) {
     final lease = mapping.protectedReadbackLeaseReference;
     final operationId = mapping.pendingUpdateOperationId;
     final currentEtag = mapping.etagHash;

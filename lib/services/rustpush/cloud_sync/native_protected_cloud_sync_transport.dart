@@ -351,6 +351,25 @@ abstract interface class NativeProtectedCloudSyncBindings {
   });
 }
 
+/// Optional generated-binding seam for reconstructing only local protected
+/// mutation lease metadata. Keeping this separate preserves fail-closed
+/// behavior for older/test bindings that do not expose the repair surface.
+abstract interface class NativeProtectedMutationLeaseRepairBindings {
+  Future<NativeProtectedLeaseResult> repairProtectedMutationLeaseReceipt({
+    required String storageDirectory,
+    required String accountFingerprint,
+    required String protectedStoreIdentity,
+    required String mutationGuidHash,
+    required String targetGuidHash,
+    required int targetPart,
+    required String sourceSha256,
+    required String protectedReference,
+    required String leaseReference,
+    required String payloadSha256,
+    required int payloadLength,
+  });
+}
+
 abstract interface class NativeProtectedCloudSyncWriteBindings {
   Future<frb_api.CloudSyncProtectedOutboundStageResult> stageOutboundMessage({
     required Object cloudMessagesClient,
@@ -691,6 +710,7 @@ final class NativeProtectedCloudSyncTransport
     implements
         CloudSyncTransport,
         CloudProtectedPageLeaseTransport,
+        CloudProtectedMutationLeaseRepairTransport,
         CloudSyncOutboundChatStagingTransport,
         CloudSyncOutboundAttachmentParentStagingTransport,
         CloudSyncMessageUpdateTransport,
@@ -2517,6 +2537,38 @@ final class NativeProtectedCloudSyncTransport
   }
 
   @override
+  Future<void> repairProtectedMutationLeaseReceipt(
+    CloudProtectedMutationLeaseRepairClaim claim,
+  ) async {
+    final source = claim.source;
+    if (source.protectedStoreIdentity != _protectedStoreIdentity) {
+      throw _localStorage('protected_mutation_lease_repair_context_mismatch');
+    }
+    final bindings = _bindings;
+    if (bindings is! NativeProtectedMutationLeaseRepairBindings) {
+      throw _localStorage('protected_mutation_lease_repair_unavailable');
+    }
+    final result = await _runProtectedStoreOperation(
+      () => (bindings as NativeProtectedMutationLeaseRepairBindings)
+          .repairProtectedMutationLeaseReceipt(
+            storageDirectory: _storageDirectory,
+            accountFingerprint: source.accountFingerprint,
+            protectedStoreIdentity: source.protectedStoreIdentity,
+            mutationGuidHash: source.mutationGuidHash,
+            targetGuidHash: source.targetGuidHash,
+            targetPart: source.targetPart,
+            sourceSha256: source.sourceSha256,
+            protectedReference: source.protectedReference,
+            leaseReference: source.leaseReference,
+            payloadSha256: source.payloadSha256,
+            payloadLength: source.payloadLength,
+          ),
+    );
+    final failure = result.failure;
+    if (failure != null) throw _mapFailure(failure);
+  }
+
+  @override
   Future<void> commitProtectedPageLease(
     String leaseReference,
     Set<String> retainedReferences,
@@ -3487,6 +3539,7 @@ final class NativeProtectedCloudSyncTransport
 final class FrbNativeProtectedCloudSyncBindings
     implements
         NativeProtectedCloudSyncBindings,
+        NativeProtectedMutationLeaseRepairBindings,
         NativeProtectedCloudSyncWriteBindings,
         NativeProtectedCloudSyncMessageCreateReadbackBindings,
         NativeProtectedCloudSyncMessageUpdateBindings,
@@ -3923,6 +3976,41 @@ final class FrbNativeProtectedCloudSyncBindings
       pageLeaseReference: leaseReference,
       retainedReferences: retainedReferences,
     );
+    return NativeProtectedLeaseResult(
+      failure: result.failure == null ? null : _failureFromFrb(result.failure!),
+    );
+  }
+
+  @override
+  Future<NativeProtectedLeaseResult> repairProtectedMutationLeaseReceipt({
+    required String storageDirectory,
+    required String accountFingerprint,
+    required String protectedStoreIdentity,
+    required String mutationGuidHash,
+    required String targetGuidHash,
+    required int targetPart,
+    required String sourceSha256,
+    required String protectedReference,
+    required String leaseReference,
+    required String payloadSha256,
+    required int payloadLength,
+  }) async {
+    final result = _api
+        .crateApiApiCloudSyncRepairProtectedMutationSourceLeaseReceipt(
+          storageDirectory: storageDirectory,
+          claim: frb_api.CloudSyncProtectedMutationLeaseRepairClaim(
+            accountFingerprint: accountFingerprint,
+            protectedStoreIdentity: protectedStoreIdentity,
+            mutationGuidHash: mutationGuidHash,
+            targetGuidHash: targetGuidHash,
+            targetPart: BigInt.from(targetPart),
+            sourceSha256: sourceSha256,
+            protectedReference: protectedReference,
+            leaseReference: leaseReference,
+            payloadSha256: payloadSha256,
+            payloadLength: BigInt.from(payloadLength),
+          ),
+        );
     return NativeProtectedLeaseResult(
       failure: result.failure == null ? null : _failureFromFrb(result.failure!),
     );

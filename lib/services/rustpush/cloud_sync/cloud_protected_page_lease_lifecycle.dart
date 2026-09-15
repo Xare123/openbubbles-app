@@ -37,7 +37,7 @@ final class CloudProtectedPageLeaseLifecycle {
   /// receipt that is already absent. The complete protected-reference
   /// snapshot remains authoritative for blob liveness, and this recovery path
   /// never releases an outbound owner. A later write always performs a fresh,
-  /// strict recovery pass and fails closed on the same missing receipt.
+  /// strict recovery pass with optional exact local mutation receipt repair.
   Future<void> ensureRecoveredBeforeFetch() {
     final existing = _recoveries[_recoveryIdentity];
     if (existing != null) return existing;
@@ -100,6 +100,8 @@ final class CloudProtectedPageLeaseLifecycle {
     final live = await _readCompleteLivenessSnapshot();
     final remaining = adopted.toSet();
     var passes = 0;
+    var repairAttempted = false;
+    final repairedAwaitingRecovery = <String>{};
     while (true) {
       if (passes++ >= maximumAdoptedLeases) {
         throw CloudSyncFailure(
@@ -135,10 +137,13 @@ final class CloudProtectedPageLeaseLifecycle {
         adoptedOutbound,
       );
       if (absentOutbound.isNotEmpty && !allowMissingOutboundReceipts) {
-        throw CloudSyncFailure(
-          category: CloudFailureCategory.localStorage,
-          safeCode: 'protected_outbound_lease_missing',
-        );
+        if (repairAttempted) throw _missingOutboundReceipt();
+        repairAttempted = true;
+        await _repairMissingMutationReceipts(absentOutbound, live);
+        repairedAwaitingRecovery.addAll(absentOutbound);
+        // Do not consume any result from the pre-repair pass. Native recovery
+        // must observe the reconstructed receipts before recovery can proceed.
+        continue;
       }
       if (resolved.isNotEmpty) {
         final resolvedPages = resolved.intersection(adoptedPages);
@@ -163,7 +168,15 @@ final class CloudProtectedPageLeaseLifecycle {
         }
         remaining.removeAll(resolved);
       }
-      if (!result.hasMore) return;
+      repairedAwaitingRecovery.removeAll(
+        result.finalizedAdoptedLeaseReferences,
+      );
+      if (!result.hasMore) {
+        if (repairedAwaitingRecovery.isNotEmpty) {
+          throw _missingOutboundReceipt();
+        }
+        return;
+      }
       if (resolved.isEmpty &&
           result.rolledBackCount == 0 &&
           result.removedTemporaryFilesCount == 0) {
@@ -174,6 +187,55 @@ final class CloudProtectedPageLeaseLifecycle {
       }
     }
   }
+
+  Future<void> _repairMissingMutationReceipts(
+    Set<String> missing,
+    CloudProtectedReferenceSnapshot live,
+  ) async {
+    final store = _store;
+    final transport = _transport;
+    if (store is! CloudProtectedMutationLeaseRepairStore ||
+        transport is! CloudProtectedMutationLeaseRepairTransport) {
+      throw _missingOutboundReceipt();
+    }
+    try {
+      final claims = List<CloudProtectedMutationLeaseRepairClaim>.unmodifiable(
+        await (store as CloudProtectedMutationLeaseRepairStore)
+            .readProtectedMutationLeaseRepairClaims(
+              Set.unmodifiable(missing),
+              maximumCount: maximumAdoptedLeases,
+            ),
+      );
+      final leases = <String>{};
+      final references = <String>{};
+      // Validate the entire batch before repairing even one receipt. The
+      // native implementation still must prove every exact source field.
+      if (claims.length != missing.length) throw _missingOutboundReceipt();
+      for (final claim in claims) {
+        final source = claim.source;
+        if (!missing.contains(source.leaseReference) ||
+            !leases.add(source.leaseReference) ||
+            !references.add(source.protectedReference) ||
+            source.protectedStoreIdentity != _recoveryIdentity ||
+            !live.references.contains(source.protectedReference)) {
+          throw _missingOutboundReceipt();
+        }
+      }
+      for (final claim in claims) {
+        await (transport as CloudProtectedMutationLeaseRepairTransport)
+            .repairProtectedMutationLeaseReceipt(claim);
+      }
+    } catch (_) {
+      // Partial local repair is safe and idempotent. Preserve every durable
+      // owner and the original failure code; never promote/retry a mutation.
+      throw _missingOutboundReceipt();
+    }
+  }
+
+  CloudSyncFailure _missingOutboundReceipt() => CloudSyncFailure(
+    category: CloudFailureCategory.localStorage,
+    safeCode: 'protected_outbound_lease_missing',
+  );
 
   Future<void> commitJournaledPage(
     CloudFetchBatch batch, {

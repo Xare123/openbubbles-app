@@ -450,6 +450,29 @@ pub(crate) struct CloudNativeRecoverySummary {
     has_more: bool,
 }
 
+/// Content-free claim for reconstructing one missing committed lease receipt
+/// from the exact protected mutation source that still owns that lease. This
+/// is local crash metadata only, never IDS retry or CloudKit write authority.
+#[derive(Clone)]
+pub(crate) struct CloudNativeMutationLeaseRepairClaim {
+    pub(crate) account_fingerprint: String,
+    pub(crate) protected_store_identity: String,
+    pub(crate) mutation_guid_hash: String,
+    pub(crate) target_guid_hash: String,
+    pub(crate) target_part: u64,
+    pub(crate) source_sha256: String,
+    pub(crate) protected_reference: String,
+    pub(crate) lease_reference: String,
+    pub(crate) payload_sha256: String,
+    pub(crate) payload_length: u64,
+}
+
+impl Debug for CloudNativeMutationLeaseRepairClaim {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CloudNativeMutationLeaseRepairClaim(redacted)")
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CloudNativeGarbageCollectionSummary {
     scanned: usize,
@@ -1165,6 +1188,134 @@ impl PlatformCloudNativeProtectedStore {
     ) -> Result<(), CloudNativeStoreFailure> {
         let _guard = Self::operation_guard()?;
         self.verify_committed_lease_exact_unlocked(lease, retained_references)
+    }
+
+    fn repair_committed_mutation_source_lease_receipt(
+        &self,
+        claim: &CloudNativeMutationLeaseRepairClaim,
+    ) -> Result<(), CloudNativeStoreFailure> {
+        const MAX_DART_SAFE_TARGET_PART: u64 = 9_007_199_254_740_991;
+
+        if !is_bare_digest(&claim.account_fingerprint)
+            || !is_protected_store_identity(&claim.protected_store_identity)
+            || !is_hex_digest(&claim.mutation_guid_hash)
+            || !is_hex_digest(&claim.target_guid_hash)
+            || claim.mutation_guid_hash == claim.target_guid_hash
+            || claim.target_part > MAX_DART_SAFE_TARGET_PART
+            || !is_hex_digest(&claim.source_sha256)
+            || !is_hex_digest(&claim.payload_sha256)
+            || claim.payload_length == 0
+            || claim.payload_length > MAX_IDS_SEND_SOURCE_PAYLOAD_BYTES
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let lease = CloudNativePageLease::parse(&claim.lease_reference)
+            .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        let reference = CloudCanonicalProtectedReference::new(claim.protected_reference.clone())
+            .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        let retained = HashSet::from([claim.protected_reference.clone()]);
+        Self::validate_reference_set(&retained, 1)?;
+
+        let _guard = Self::operation_guard()?;
+        let actual_store_identity = cloud_sync_protector::protected_store_identity(
+            self.storage_directory.to_string_lossy().into_owned(),
+        )
+        .map_err(Self::map_protection_error)?;
+        if actual_store_identity != claim.protected_store_identity {
+            return Err(CloudNativeStoreFailure::ContextMismatch);
+        }
+        // An active manifest is an ordinary interrupted commit and must be
+        // handled by recovery. Receipt reconstruction is only for the narrower
+        // state where the exact retained source exists but both manifest and
+        // committed receipt are absent.
+        if self
+            .lease_path(&lease)?
+            .try_exists()
+            .map_err(|_| CloudNativeStoreFailure::Io)?
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+
+        let path = self.reference_path(&reference)?;
+        let bytes = fs::read(&path).map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        if bytes.is_empty()
+            || bytes.len() > MAX_PROTECTED_FILE_BYTES
+            || !Self::reference_file_matches(&reference, &bytes)
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let newline = bytes
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+        let owner = std::str::from_utf8(&bytes[..newline])
+            .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        let expected_owner = claim
+            .lease_reference
+            .strip_prefix("obcs2.lease.")
+            .ok_or(CloudNativeStoreFailure::InvalidReference)?;
+        if owner != format!("OBCS2-LEASE:{expected_owner}") {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let ciphertext = std::str::from_utf8(&bytes[newline + 1..])
+            .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        if ciphertext.is_empty() {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let scope = CloudNativeProtectionScope::new(
+            claim.account_fingerprint.clone(),
+            CloudNativeStream::Messages,
+        )
+        .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        let value = cloud_sync_protector::unprotect(
+            self.storage_directory.to_string_lossy().into_owned(),
+            scope.account_fingerprint.clone(),
+            scope.container.clone(),
+            scope.database.clone(),
+            scope.zone.clone(),
+            scope.stream_kind.clone(),
+            scope.schema_version,
+            CloudNativeProtectionPurpose::IdsMutationSource
+                .value()
+                .to_owned(),
+            ciphertext.to_owned(),
+        )
+        .map_err(Self::map_protection_error)?;
+        let stage = crate::cloud_sync_ids_mutation_stage::NativeIdsMutationSourceStage {
+            protected_reference: claim.protected_reference.clone(),
+            lease_reference: claim.lease_reference.clone(),
+            payload_sha256: claim.payload_sha256.clone(),
+            payload_length: claim.payload_length,
+        };
+        crate::cloud_sync_ids_mutation_stage::validate_mutation_source_for_lease_receipt_repair(
+            &value,
+            &claim.source_sha256,
+            &stage,
+            &claim.mutation_guid_hash,
+            &claim.target_guid_hash,
+            claim.target_part,
+        )
+        .map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+
+        // Re-read immediately before publishing the receipt. The process lock
+        // excludes native peers; this equality check also fails closed if an
+        // external process replaced the protected file during validation.
+        let current = fs::read(&path).map_err(|_| CloudNativeStoreFailure::InvalidReference)?;
+        if current != bytes
+            || self
+                .lease_path(&lease)?
+                .try_exists()
+                .map_err(|_| CloudNativeStoreFailure::Io)?
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+
+        let entry = CloudNativeLeaseManifestEntry {
+            reference,
+            expected_digest: sha256_hex(&bytes),
+        };
+        self.write_committed_receipt(&lease, std::slice::from_ref(&entry))?;
+        self.verify_committed_lease_exact_unlocked(&lease, &retained)
     }
 
     fn reference_file_matches(reference: &CloudCanonicalProtectedReference, bytes: &[u8]) -> bool {
@@ -4637,6 +4788,15 @@ pub(crate) fn cloud_sync_verify_committed_lease_exact(
         .map_err(map_store_failure)
 }
 
+pub(crate) fn cloud_sync_repair_committed_mutation_source_lease_receipt(
+    storage_directory: PathBuf,
+    claim: &CloudNativeMutationLeaseRepairClaim,
+) -> Result<(), CloudNativeFetchFailure> {
+    PlatformCloudNativeProtectedStore::new(storage_directory)
+        .repair_committed_mutation_source_lease_receipt(claim)
+        .map_err(map_store_failure)
+}
+
 /// Native-only result of staging one outbound message and its stable CloudKit
 /// record name in a single crash-recoverable protected-store lease.
 pub(crate) struct CloudNativeProtectedOutboundStage {
@@ -6466,6 +6626,258 @@ mod tests {
             store.verify_committed_lease_exact(&batch.lease, &HashSet::new()),
             Err(CloudNativeStoreFailure::InvalidReference)
         ));
+    }
+
+    fn mutation_repair_fixture(unsend: bool) -> rustpush::MessageInst {
+        use rustpush::{
+            ConversationData, EditMessage, IndexedMessagePart, Message as IdsMessage, MessageInst,
+            MessagePart, MessageParts, UnsendMessage,
+        };
+        let target = "5BC3779B-7898-4A15-A768-2EA04D3ABAA0".to_owned();
+        MessageInst {
+            id: "629802B8-9331-49C7-999A-69F057D8040C".to_owned(),
+            sender: Some("mailto:test@example.invalid".to_owned()),
+            conversation: Some(ConversationData {
+                participants: vec!["tel:+15555550123".to_owned()],
+                cv_name: None,
+                sender_guid: None,
+                after_guid: None,
+            }),
+            message: if unsend {
+                IdsMessage::Unsend(UnsendMessage {
+                    tuuid: target,
+                    edit_part: 0,
+                })
+            } else {
+                IdsMessage::Edit(EditMessage {
+                    tuuid: target,
+                    edit_part: 0,
+                    new_parts: MessageParts(vec![IndexedMessagePart {
+                        part: MessagePart::Text("replacement".to_owned(), Default::default()),
+                        idx: Some(0),
+                        ext: None,
+                    }]),
+                })
+            },
+            sent_timestamp: 1,
+            send_delivered: false,
+            target: None,
+            verification_failed: false,
+            certified_context: None,
+        }
+    }
+
+    fn stable_mutation_guid_hash(guid: &str) -> String {
+        sha256_hex(
+            &serde_json::to_vec(&["cloud-sync-local-send-guid-v1", guid])
+                .expect("stable GUID domain serializes"),
+        )
+    }
+
+    #[test]
+    fn missing_mutation_lease_receipt_repairs_only_from_exact_protected_source() {
+        for unsend in [false, true] {
+            let directory = tempdir().unwrap();
+            let path = directory.path().to_path_buf();
+            let account = "A".repeat(43);
+            let source_hash = "a".repeat(64);
+            let message = mutation_repair_fixture(unsend);
+            let stage = crate::cloud_sync_ids_mutation_stage::stage_ids_mutation_source(
+                path.clone(),
+                account.clone(),
+                &source_hash,
+                &message,
+            )
+            .unwrap();
+            let lease = CloudNativePageLease::parse(&stage.lease_reference).unwrap();
+            let store = PlatformCloudNativeProtectedStore::new(path.clone());
+            fs::remove_file(store.lease_path(&lease).unwrap()).unwrap();
+            let opened = crate::cloud_sync_ids_mutation_source::open_mutation_source(
+                &crate::cloud_sync_ids_mutation_source::encode_mutation_source(&message).unwrap(),
+            )
+            .unwrap();
+            let claim = CloudNativeMutationLeaseRepairClaim {
+                account_fingerprint: account,
+                protected_store_identity: cloud_sync_protector::protected_store_identity(
+                    path.to_string_lossy().into_owned(),
+                )
+                .unwrap(),
+                mutation_guid_hash: stable_mutation_guid_hash(&message.id),
+                target_guid_hash: stable_mutation_guid_hash(opened.target_guid()),
+                target_part: opened.target_part(),
+                source_sha256: source_hash,
+                protected_reference: stage.protected_reference.clone(),
+                lease_reference: stage.lease_reference.clone(),
+                payload_sha256: stage.payload_sha256.clone(),
+                payload_length: stage.payload_length,
+            };
+
+            store
+                .repair_committed_mutation_source_lease_receipt(&claim)
+                .unwrap();
+            store
+                .repair_committed_mutation_source_lease_receipt(&claim)
+                .unwrap();
+            store
+                .verify_committed_lease_exact(
+                    &lease,
+                    &HashSet::from([stage.protected_reference.clone()]),
+                )
+                .unwrap();
+
+            let mut changed = claim.clone();
+            changed.target_part += 1;
+            assert!(matches!(
+                store.repair_committed_mutation_source_lease_receipt(&changed),
+                Err(CloudNativeStoreFailure::InvalidReference)
+            ));
+        }
+    }
+
+    #[test]
+    fn mutation_lease_receipt_repair_rejects_every_changed_claim_without_receipt() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().to_path_buf();
+        let account = "A".repeat(43);
+        let source_hash = "a".repeat(64);
+        let message = mutation_repair_fixture(false);
+        let stage = crate::cloud_sync_ids_mutation_stage::stage_ids_mutation_source(
+            path.clone(),
+            account.clone(),
+            &source_hash,
+            &message,
+        )
+        .unwrap();
+        let lease = CloudNativePageLease::parse(&stage.lease_reference).unwrap();
+        let store = PlatformCloudNativeProtectedStore::new(path.clone());
+        fs::remove_file(store.lease_path(&lease).unwrap()).unwrap();
+        let opened = crate::cloud_sync_ids_mutation_source::open_mutation_source(
+            &crate::cloud_sync_ids_mutation_source::encode_mutation_source(&message).unwrap(),
+        )
+        .unwrap();
+        let claim = CloudNativeMutationLeaseRepairClaim {
+            account_fingerprint: account,
+            protected_store_identity: cloud_sync_protector::protected_store_identity(
+                path.to_string_lossy().into_owned(),
+            )
+            .unwrap(),
+            mutation_guid_hash: stable_mutation_guid_hash(&message.id),
+            target_guid_hash: stable_mutation_guid_hash(opened.target_guid()),
+            target_part: opened.target_part(),
+            source_sha256: source_hash,
+            protected_reference: stage.protected_reference.clone(),
+            lease_reference: stage.lease_reference.clone(),
+            payload_sha256: stage.payload_sha256.clone(),
+            payload_length: stage.payload_length,
+        };
+        let receipt_path = store.committed_lease_path(&lease).unwrap();
+        assert!(!receipt_path.exists());
+
+        let mut changed_claims = Vec::new();
+        let mut changed = claim.clone();
+        changed.account_fingerprint = "B".repeat(43);
+        changed_claims.push(("account", changed));
+        let mut changed = claim.clone();
+        changed.protected_store_identity = format!("obcs2.store.{}", "B".repeat(43));
+        changed_claims.push(("store", changed));
+        let mut changed = claim.clone();
+        changed.mutation_guid_hash = "c".repeat(64);
+        changed_claims.push(("mutation", changed));
+        let mut changed = claim.clone();
+        changed.target_guid_hash = "d".repeat(64);
+        changed_claims.push(("target", changed));
+        let mut changed = claim.clone();
+        changed.target_part += 1;
+        changed_claims.push(("part", changed));
+        let mut changed = claim.clone();
+        changed.source_sha256 = "e".repeat(64);
+        changed_claims.push(("source", changed));
+        let mut changed = claim.clone();
+        changed.protected_reference = format!("obcs2.ref.{}", "E".repeat(43));
+        changed_claims.push(("protected reference", changed));
+        let mut changed = claim.clone();
+        changed.lease_reference = format!("obcs2.lease.{}", "f".repeat(32));
+        changed_claims.push(("lease", changed));
+        let mut changed = claim.clone();
+        changed.payload_sha256 = "0".repeat(64);
+        changed_claims.push(("payload digest", changed));
+        let mut changed = claim.clone();
+        changed.payload_length += 1;
+        changed_claims.push(("payload length", changed));
+        let mut changed = claim.clone();
+        changed.target_guid_hash = changed.mutation_guid_hash.clone();
+        changed_claims.push(("same mutation and target", changed));
+
+        for (label, changed) in changed_claims {
+            assert!(
+                store
+                    .repair_committed_mutation_source_lease_receipt(&changed)
+                    .is_err(),
+                "changed {label} unexpectedly repaired"
+            );
+            assert!(!receipt_path.exists(), "changed {label} wrote a receipt");
+        }
+
+        store
+            .repair_committed_mutation_source_lease_receipt(&claim)
+            .unwrap();
+        assert!(receipt_path.is_file());
+    }
+
+    #[test]
+    fn mutation_lease_receipt_repair_refuses_active_manifest_and_tampered_source() {
+        for tamper_source in [false, true] {
+            let directory = tempdir().unwrap();
+            let path = directory.path().to_path_buf();
+            let account = "A".repeat(43);
+            let source_hash = "a".repeat(64);
+            let message = mutation_repair_fixture(true);
+            let stage = crate::cloud_sync_ids_mutation_stage::stage_ids_mutation_source(
+                path.clone(),
+                account.clone(),
+                &source_hash,
+                &message,
+            )
+            .unwrap();
+            let lease = CloudNativePageLease::parse(&stage.lease_reference).unwrap();
+            let store = PlatformCloudNativeProtectedStore::new(path.clone());
+            let opened = crate::cloud_sync_ids_mutation_source::open_mutation_source(
+                &crate::cloud_sync_ids_mutation_source::encode_mutation_source(&message).unwrap(),
+            )
+            .unwrap();
+            let claim = CloudNativeMutationLeaseRepairClaim {
+                account_fingerprint: account,
+                protected_store_identity: cloud_sync_protector::protected_store_identity(
+                    path.to_string_lossy().into_owned(),
+                )
+                .unwrap(),
+                mutation_guid_hash: stable_mutation_guid_hash(&message.id),
+                target_guid_hash: stable_mutation_guid_hash(opened.target_guid()),
+                target_part: opened.target_part(),
+                source_sha256: source_hash,
+                protected_reference: stage.protected_reference.clone(),
+                lease_reference: stage.lease_reference.clone(),
+                payload_sha256: stage.payload_sha256.clone(),
+                payload_length: stage.payload_length,
+            };
+            let receipt_path = store.committed_lease_path(&lease).unwrap();
+            if tamper_source {
+                fs::remove_file(store.lease_path(&lease).unwrap()).unwrap();
+                let reference = CloudCanonicalProtectedReference::new(
+                    stage.protected_reference.clone(),
+                )
+                .unwrap();
+                fs::write(store.reference_path(&reference).unwrap(), b"tampered").unwrap();
+            }
+
+            assert!(store
+                .repair_committed_mutation_source_lease_receipt(&claim)
+                .is_err());
+            assert!(!receipt_path.exists());
+            if !tamper_source {
+                assert!(store.lease_path(&lease).unwrap().is_file());
+            }
+        }
     }
 
     #[test]

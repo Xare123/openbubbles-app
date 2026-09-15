@@ -687,6 +687,19 @@ CloudSyncProtectedLeaseResult cloudSyncCommitProtectedPageLease({
   retainedReferences: retainedReferences,
 );
 
+/// Reconstructs only the exact missing local committed-lease receipt after
+/// validating the retained protected mutation source and all journal-bound
+/// identities. No Apple client is accepted and no network operation occurs.
+CloudSyncProtectedLeaseResult
+cloudSyncRepairProtectedMutationSourceLeaseReceipt({
+  required String storageDirectory,
+  required CloudSyncProtectedMutationLeaseRepairClaim claim,
+}) => RustLib.instance.api
+    .crateApiApiCloudSyncRepairProtectedMutationSourceLeaseReceipt(
+      storageDirectory: storageDirectory,
+      claim: claim,
+    );
+
 CloudSyncProtectedLeaseResult cloudSyncAcknowledgeCommittedPageLease({
   required String storageDirectory,
   required String pageLeaseReference,
@@ -4463,6 +4476,64 @@ class CloudSyncProtectedLeaseResult {
       other is CloudSyncProtectedLeaseResult &&
           runtimeType == other.runtimeType &&
           failure == other.failure;
+}
+
+/// Exact local-only claim for repairing one absent mutation-source lease
+/// receipt. The protected source remains opaque and this grants no IDS retry
+/// or CloudKit write authority.
+class CloudSyncProtectedMutationLeaseRepairClaim {
+  final String accountFingerprint;
+  final String protectedStoreIdentity;
+  final String mutationGuidHash;
+  final String targetGuidHash;
+  final BigInt targetPart;
+  final String sourceSha256;
+  final String protectedReference;
+  final String leaseReference;
+  final String payloadSha256;
+  final BigInt payloadLength;
+
+  const CloudSyncProtectedMutationLeaseRepairClaim({
+    required this.accountFingerprint,
+    required this.protectedStoreIdentity,
+    required this.mutationGuidHash,
+    required this.targetGuidHash,
+    required this.targetPart,
+    required this.sourceSha256,
+    required this.protectedReference,
+    required this.leaseReference,
+    required this.payloadSha256,
+    required this.payloadLength,
+  });
+
+  @override
+  int get hashCode =>
+      accountFingerprint.hashCode ^
+      protectedStoreIdentity.hashCode ^
+      mutationGuidHash.hashCode ^
+      targetGuidHash.hashCode ^
+      targetPart.hashCode ^
+      sourceSha256.hashCode ^
+      protectedReference.hashCode ^
+      leaseReference.hashCode ^
+      payloadSha256.hashCode ^
+      payloadLength.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncProtectedMutationLeaseRepairClaim &&
+          runtimeType == other.runtimeType &&
+          accountFingerprint == other.accountFingerprint &&
+          protectedStoreIdentity == other.protectedStoreIdentity &&
+          mutationGuidHash == other.mutationGuidHash &&
+          targetGuidHash == other.targetGuidHash &&
+          targetPart == other.targetPart &&
+          sourceSha256 == other.sourceSha256 &&
+          protectedReference == other.protectedReference &&
+          leaseReference == other.leaseReference &&
+          payloadSha256 == other.payloadSha256 &&
+          payloadLength == other.payloadLength;
 }
 
 class CloudSyncProtectedOutboundStage {

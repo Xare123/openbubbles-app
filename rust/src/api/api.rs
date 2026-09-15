@@ -2430,6 +2430,29 @@ pub struct CloudSyncProtectedLeaseResult {
     pub failure: Option<CloudSyncProtectedFailure>,
 }
 
+/// Exact local-only claim for repairing one absent mutation-source lease
+/// receipt. The protected source remains opaque and this grants no IDS retry
+/// or CloudKit write authority.
+#[derive(Clone)]
+pub struct CloudSyncProtectedMutationLeaseRepairClaim {
+    pub account_fingerprint: String,
+    pub protected_store_identity: String,
+    pub mutation_guid_hash: String,
+    pub target_guid_hash: String,
+    pub target_part: u64,
+    pub source_sha256: String,
+    pub protected_reference: String,
+    pub lease_reference: String,
+    pub payload_sha256: String,
+    pub payload_length: u64,
+}
+
+impl std::fmt::Debug for CloudSyncProtectedMutationLeaseRepairClaim {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncProtectedMutationLeaseRepairClaim(redacted)")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CloudSyncProtectedRecovery {
     pub finalized_adopted_lease_references: Vec<String>,
@@ -7649,6 +7672,35 @@ pub fn cloud_sync_commit_protected_page_lease(
     )
     .err()
     .map(|failure| map_cloud_sync_protected_failure(&failure));
+    CloudSyncProtectedLeaseResult { failure }
+}
+
+/// Reconstructs only the exact missing local committed-lease receipt after
+/// validating the retained protected mutation source and all journal-bound
+/// identities. No Apple client is accepted and no network operation occurs.
+#[frb(sync)]
+pub fn cloud_sync_repair_protected_mutation_source_lease_receipt(
+    storage_directory: String,
+    claim: CloudSyncProtectedMutationLeaseRepairClaim,
+) -> CloudSyncProtectedLeaseResult {
+    let failure =
+        crate::cloud_sync_native_fetch::cloud_sync_repair_committed_mutation_source_lease_receipt(
+            PathBuf::from(storage_directory),
+            &crate::cloud_sync_native_fetch::CloudNativeMutationLeaseRepairClaim {
+                account_fingerprint: claim.account_fingerprint,
+                protected_store_identity: claim.protected_store_identity,
+                mutation_guid_hash: claim.mutation_guid_hash,
+                target_guid_hash: claim.target_guid_hash,
+                target_part: claim.target_part,
+                source_sha256: claim.source_sha256,
+                protected_reference: claim.protected_reference,
+                lease_reference: claim.lease_reference,
+                payload_sha256: claim.payload_sha256,
+                payload_length: claim.payload_length,
+            },
+        )
+        .err()
+        .map(|failure| map_cloud_sync_protected_failure(&failure));
     CloudSyncProtectedLeaseResult { failure }
 }
 

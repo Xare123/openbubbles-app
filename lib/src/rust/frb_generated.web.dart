@@ -1646,6 +1646,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_box_autoadd_cloud_sync_protected_garbage_collection(dynamic raw);
 
   @protected
+  CloudSyncProtectedMutationLeaseRepairClaim
+  dco_decode_box_autoadd_cloud_sync_protected_mutation_lease_repair_claim(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncProtectedOutboundStage
   dco_decode_box_autoadd_cloud_sync_protected_outbound_stage(dynamic raw);
 
@@ -2254,6 +2260,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudSyncProtectedLeaseResult dco_decode_cloud_sync_protected_lease_result(
     dynamic raw,
   );
+
+  @protected
+  CloudSyncProtectedMutationLeaseRepairClaim
+  dco_decode_cloud_sync_protected_mutation_lease_repair_claim(dynamic raw);
 
   @protected
   CloudSyncProtectedOutboundStage
@@ -5414,6 +5424,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncProtectedMutationLeaseRepairClaim
+  sse_decode_box_autoadd_cloud_sync_protected_mutation_lease_repair_claim(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncProtectedOutboundStage
   sse_decode_box_autoadd_cloud_sync_protected_outbound_stage(
     SseDeserializer deserializer,
@@ -6200,6 +6216,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudSyncProtectedLeaseResult sse_decode_cloud_sync_protected_lease_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncProtectedMutationLeaseRepairClaim
+  sse_decode_cloud_sync_protected_mutation_lease_repair_claim(
     SseDeserializer deserializer,
   );
 
@@ -9914,6 +9936,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_protected_mutation_lease_repair_claim(
+    CloudSyncProtectedMutationLeaseRepairClaim self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_protected_outbound_stage(
     CloudSyncProtectedOutboundStage self,
     SseSerializer serializer,
@@ -10844,6 +10872,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_protected_lease_result(
     CloudSyncProtectedLeaseResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_protected_mutation_lease_repair_claim(
+    CloudSyncProtectedMutationLeaseRepairClaim self,
     SseSerializer serializer,
   );
 
