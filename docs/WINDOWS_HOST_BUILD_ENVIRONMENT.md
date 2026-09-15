@@ -11,6 +11,19 @@ timestamp: 2026-09-13
 
 ## Fastest current Dart loop, September 13
 
+September 14 update: `run_imported_cloud_sync_v2_dart_live.ps1` now separates
+the current Dart source from the qualified native source. It permits reuse only
+when the native source is an ancestor and the committed native/FRB/ObjectBox/
+pubspec boundary is byte-unchanged. Host receipts are checked against the native
+source; reports remain bound to current Dart. Its 17 PowerShell contract tests
+pass, and the real compatibility check accepted Dart `ea7560b83` over native
+`9712487af`. Session `2c544457b08a06406aabcfa8fc5cb10a` then completed two
+stable ordinary read-only passes in about 103 seconds total. Each retained
+94 Chats, 5,046 Messages and 1,112 Attachments, observed all zones terminal,
+kept outbox 21 -> 21, disabled remote writes, removed raw output and confirmed
+owned-process cleanup. This is the preferred loop when only Dart/test code has
+changed; any native-boundary change still requires a rebuilt and reverified host.
+
 Current handoff: Windows native-only run 34782347926 is qualified
 for source `4e7121a18`. Its separate signed directory is
 `C:\Codex\OpenBubblesReview\artifacts\windows-native-34782347926\signed`;
@@ -536,6 +549,33 @@ it does not establish that every unsigned binary will be accepted.
 The first fresh send test reached recipient lookup but failed with IDS `6005`.
 It never created a claim or sent a message. That is an account-registration
 boundary, not another loader failure or evidence of a CloudKit write failure.
+
+## Exact Chat1 compatibility harness (September 14)
+
+[Windows ARM64 run 34849043947](https://github.com/Xare123/openbubbles-app/actions/runs/34849043947)
+qualified source `908ccc0040ed4bb60d2611db945e0b304eff639c` with pilot
+`629df1f5d70b2c63c51212b362b05d569df2c3d4` in 23m57s. The read-only harness
+passed 666 Dart tests, 51 packaged native codec cases, launcher contracts,
+invalid-launch handling and ARM64 checks. Artifact 10351037466 was downloaded
+and independently hash-checked; archive and sidecar SHA256 are both
+`6647710ec763084e741541a7cfd9f6a2a272d1395bc7afcf698280a0f96498d6`.
+
+The bounded importer verified 78 files and 335,772,787 bytes before placing the
+bundle into the clean detached runtime at
+`C:\Codex\OpenBubblesReview\worktrees\chat1-live-a93671`. Its receipt under the
+private Windows profile binds the installed app and Rust DLL to the exact source
+and pilot. Both local signatures are valid; the pinned ObjectBox DLL remains the
+unmodified accepted vendor binary.
+
+Live launch `dd0cf181df5b3751342e8a2f78dc07ad` completed an account-bound,
+read-only Chat1 walk: four pages, 167 changes, 165 decoded Chat records, two
+tombstones, terminal state and zero record/route-field failures. No content was
+retained by the launcher and durable state was unchanged. The run found 76
+normalized sender-to-participant pairs spanning three sender targets and 31 Chat
+records. This is a real relationship signal but is too ambiguous for admission.
+The Windows loop should now test complete participant-set/style/service/time
+candidate cardinality before any Android build. It does not replace Pixel
+lifecycle or independent-client qualification.
 
 ## Not covered here
 
