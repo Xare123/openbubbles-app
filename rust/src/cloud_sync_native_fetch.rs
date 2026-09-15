@@ -5651,6 +5651,7 @@ mod tests {
             generation: 7,
             previous_checkpoint_reference: checkpoint,
             maximum_changes: 50,
+            newest_first: false,
         }
     }
 
@@ -5830,6 +5831,7 @@ mod tests {
             generation: 7,
             previous_checkpoint_reference: Some(&reference),
             maximum_changes: 50,
+            newest_first: false,
         };
         assert_eq!(
             decode_previous_checkpoint(&store, &wrong_scope_request),
