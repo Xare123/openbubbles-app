@@ -397,6 +397,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_local_send_chat_not_ready',
   'cloud_sync_local_send_parent_not_ready',
   'cloud_sync_local_mutation_predecessor_not_ready',
+  'cloud_sync_local_mutation_owner_changed',
   'cloud_sync_local_mutation_auth_changed',
   'cloud_sync_local_send_journal_required',
   'cloud_sync_local_send_readback_not_ready',
