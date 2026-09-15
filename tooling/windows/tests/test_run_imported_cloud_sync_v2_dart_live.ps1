@@ -102,6 +102,16 @@ try {
 catch { $degradedAccepted = $false }
 Assert-Check 'retained-degraded-accepted' $degradedAccepted
 
+$projectionSweep = New-TestReport
+$projectionSweep.mode = 'manual-semantic-local-projection-sweep'
+$projectionAccepted = $true
+try {
+    $null = Assert-DartApplierReport -Report $projectionSweep `
+        -ExpectedBuildIdentifier ('a' * 12) -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-1))
+}
+catch { $projectionAccepted = $false }
+Assert-Check 'projection-sweep-report-accepted' $projectionAccepted
+
 $badOutbox = New-TestReport
 $badOutbox.outboxCountAfter = [long]2
 Assert-Fails 'outbox-change-rejected' {
@@ -159,6 +169,26 @@ Assert-Fails 'status-report-path-rejected' {
     })
 } 'dart_applier_status_report_binding_rejected'
 
+$nativeDiagnostics = Get-DartApplierContentFreeNativeDiagnostics -Stdout @'
+CloudKit V2 transient message retained_shape absent_mask=042 without_value_mask=000 guid_empty=false chat_empty=false sender_empty=false from_me=true body_present=false attributed_present=true extension_class=apple_other reply_present=false account=must-not-escape
+CloudKit V2 transient message retained_shape absent_mask=042 without_value_mask=000 guid_empty=false chat_empty=false sender_empty=false from_me=true body_present=false attributed_present=true extension_class=apple_other reply_present=false
+CloudKit V2 transient message retained_route_shape outer_type_class=class_1 service_class=imessage destination_empty=false destination_matches_sender=false proto4_present=true group_id_state=nonempty group_matches_sender=false group_matches_destination=false account=must-not-escape
+CloudKit V2 transient message retained_route_shape outer_type_class=class_1 service_class=imessage destination_empty=false destination_matches_sender=false proto4_present=true group_id_state=nonempty group_matches_sender=false group_matches_destination=false
+CloudKit V2 transient message retained_shape outer_type_class=system_4 absent_mask=042 without_value_mask=000
+CloudKit V2 retained conversion outcome=CloudCanonicalConversionOutcome::Quarantined(MalformedRequiredIdentity)
+CloudKit V2 transient message unsupported_service source=top_level_svc service_class=rcs top_level_service_class=rcs msg_proto_4_service_class=sms message_kind=normal
+'@
+Assert-Check 'native-shape-diagnostics-aggregated' (
+    $nativeDiagnostics.retained_message_shapes.Count -eq 1 -and
+    $nativeDiagnostics.retained_message_shapes[0].count -eq 2 -and
+    $nativeDiagnostics.retained_route_shapes.Count -eq 1 -and
+    $nativeDiagnostics.retained_route_shapes[0].count -eq 2 -and
+    $nativeDiagnostics.system_event_shapes.Count -eq 1 -and
+    $nativeDiagnostics.conversion_outcomes.Count -eq 1 -and
+    $nativeDiagnostics.unsupported_services.Count -eq 1)
+Assert-Check 'native-shape-diagnostics-redacted' (
+    -not (($nativeDiagnostics | ConvertTo-Json -Depth 8) -match 'must-not-escape'))
+
 $first = [pscustomobject]@{
     fetched = 0; applied = 0; all_zones_empty_terminal = $true
     chat_order_cache_repaired = 0; outbox_before = 3; outbox_after = 3
@@ -202,9 +232,25 @@ try {
             'C:\runtime\rust_lib_bluebubbles.dll')
     Assert-Check 'child-build-identity-bound' (
         $arguments -ccontains
-            '--dart-define=OPENBUBBLES_BUILD_COMMIT=aaaaaaaaaaaa' -and
+             '--dart-define=OPENBUBBLES_BUILD_COMMIT=aaaaaaaaaaaa' -and
         $arguments -ccontains '--no-pub' -and
         $arguments -ccontains '--concurrency=1')
+    $drainStart = New-DartApplierStartInfo `
+        -Dart 'C:\tools\dart.exe' `
+        -FlutterToolsSnapshot 'C:\tools\flutter_tools.snapshot' `
+        -Repository 'C:\repo' `
+        -NativeLibrary 'C:\runtime\rust_lib_bluebubbles.dll' `
+        -RuntimeDirectory 'C:\runtime' `
+        -LaunchId ('c' * 32) `
+        -BuildIdentifier ('a' * 12) `
+        -Operation drain `
+        -ReplayExcludedChats
+    $drainArguments = @($drainStart.ArgumentList)
+    Assert-Check 'child-drain-bound' (
+        $drainStart.Environment['OPENBUBBLES_LIVE_HARNESS_OPERATION'] -ceq 'drain' -and
+        $drainStart.Environment['OPENBUBBLES_LIVE_HARNESS_LAUNCH_ID'] -ceq ('c' * 32) -and
+        $drainArguments -ccontains
+            '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_REPLAY_EXCLUDED_CHATS=true')
 }
 finally {
     Remove-Item Env:OPENBUBBLES_CLOUDKIT_WRITER_OWNER -ErrorAction SilentlyContinue

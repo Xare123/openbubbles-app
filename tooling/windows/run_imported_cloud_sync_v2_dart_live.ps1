@@ -9,6 +9,8 @@ param(
     [string] $SigningThumbprint = '8240557965890665F3B49E5FEC83D511CA4F2C9D',
     [string] $Repository = '',
     [string] $FlutterRoot = 'C:\Codex\Toolchains\flutter-3.44.8-arm64',
+    [switch] $Drain,
+    [switch] $ReplayExcludedChats,
     [ValidateRange(2, 6)][int] $MaximumPasses = 4,
     [ValidateRange(60, 900)][int] $TimeoutSeconds = 600,
     [switch] $FunctionsOnlyForTest
@@ -29,6 +31,8 @@ $dartApplierInvocation = [ordered]@{
     SigningThumbprint = $SigningThumbprint
     Repository = $Repository
     FlutterRoot = $FlutterRoot
+    Drain = [bool]$Drain
+    ReplayExcludedChats = [bool]$ReplayExcludedChats
     MaximumPasses = $MaximumPasses
     TimeoutSeconds = $TimeoutSeconds
     FunctionsOnlyForTest = [bool]$FunctionsOnlyForTest
@@ -43,14 +47,21 @@ $ExpectedProvenanceSha256 = $dartApplierInvocation.ExpectedProvenanceSha256
 $SigningThumbprint = $dartApplierInvocation.SigningThumbprint
 $Repository = $dartApplierInvocation.Repository
 $FlutterRoot = $dartApplierInvocation.FlutterRoot
+$Drain = $dartApplierInvocation.Drain
+$ReplayExcludedChats = $dartApplierInvocation.ReplayExcludedChats
 $MaximumPasses = $dartApplierInvocation.MaximumPasses
 $TimeoutSeconds = $dartApplierInvocation.TimeoutSeconds
 $FunctionsOnlyForTest = $dartApplierInvocation.FunctionsOnlyForTest
 
-# Runs the ordinary Dart/ObjectBox semantic applier against the exact imported
-# native library without rebuilding Windows or Android. Each pass is a fresh
-# Flutter test process. It retains content-free report summaries only and
-# deletes raw stdout/stderr on success and failure.
+if ($ReplayExcludedChats -and -not $Drain) {
+    throw 'ReplayExcludedChats requires Drain.'
+}
+
+# Runs either the ordinary Dart/ObjectBox semantic applier or its confirmed
+# drain against the exact imported native library without rebuilding Windows or
+# Android. Each pass is a fresh Flutter test process. It retains content-free
+# report and native-shape summaries only and deletes raw stdout/stderr on
+# success and failure.
 
 $script:DartApplierConsent = 'OPENBUBBLES_RUN_IMPORTED_DART_APPLIER_LIVE'
 $script:DartApplierNativeBoundaryPaths = @(
@@ -67,7 +78,8 @@ $script:DartApplierNativeBoundaryPaths = @(
 $script:DartApplierTestName =
     'isolated Windows profile executes one explicit harness operation'
 $script:DartApplierReportModes = @(
-    'manual-semantic-read-only-cloudkit'
+    'manual-semantic-read-only-cloudkit',
+    'manual-semantic-local-projection-sweep'
 )
 $script:DartApplierRequiredRootFields = @(
     'schemaVersion', 'timestampUtc', 'platform', 'architecture',
@@ -359,7 +371,9 @@ function New-DartApplierStartInfo {
         [Parameter(Mandatory)][string] $NativeLibrary,
         [Parameter(Mandatory)][string] $RuntimeDirectory,
         [Parameter(Mandatory)][string] $LaunchId,
-        [Parameter(Mandatory)][string] $BuildIdentifier
+        [Parameter(Mandatory)][string] $BuildIdentifier,
+        [ValidateSet('run-once', 'drain')][string] $Operation = 'run-once',
+        [switch] $ReplayExcludedChats
     )
     $start = [Diagnostics.ProcessStartInfo]::new($Dart)
     $start.WorkingDirectory = $Repository
@@ -374,7 +388,7 @@ function New-DartApplierStartInfo {
     }
     $start.Environment['OPENBUBBLES_RUN_LIVE_WINDOWS_HARNESS'] = '1'
     $start.Environment['OPENBUBBLES_CLOUD_SYNC_V2_TEST_HOST'] = '1'
-    $start.Environment['OPENBUBBLES_LIVE_HARNESS_OPERATION'] = 'run-once'
+    $start.Environment['OPENBUBBLES_LIVE_HARNESS_OPERATION'] = $Operation
     $start.Environment['OPENBUBBLES_LIVE_HARNESS_LAUNCH_ID'] = $LaunchId
     $start.Environment['OPENBUBBLES_TEST_NATIVE_LIBRARY'] = $NativeLibrary
     $start.Environment['PATH'] = "$RuntimeDirectory;$($start.Environment['PATH'])"
@@ -387,6 +401,11 @@ function New-DartApplierStartInfo {
         "--dart-define=OPENBUBBLES_BUILD_COMMIT=$BuildIdentifier",
         'test/live/cloud_sync_v2_windows_live_harness_test.dart'
     )) { $start.ArgumentList.Add($argument) }
+    if ($ReplayExcludedChats) {
+        $start.ArgumentList.Add(
+            '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_REPLAY_EXCLUDED_CHATS=true'
+        )
+    }
     return $start
 }
 
@@ -456,6 +475,102 @@ function Get-DartApplierReportNameFromStatus {
     return $Matches[1]
 }
 
+function ConvertTo-DartApplierDiagnosticCountRows {
+    param([Parameter(Mandatory)][hashtable] $Counts)
+    return @($Counts.GetEnumerator() | Sort-Object Key | ForEach-Object {
+        [pscustomobject][ordered]@{
+            shape = [string]$_.Key
+            count = [long]$_.Value
+        }
+    })
+}
+
+function Get-DartApplierContentFreeNativeDiagnostics {
+    param([Parameter(Mandatory)][string] $Stdout)
+    $retainedShapes = @{}
+    $retainedRouteShapes = @{}
+    $systemEventShapes = @{}
+    $conversionOutcomes = @{}
+    $unsupportedServices = @{}
+
+    $retainedPattern =
+        'CloudKit V2 transient message retained_shape absent_mask=([0-9a-f]{3}) without_value_mask=([0-9a-f]{3}) guid_empty=(true|false) chat_empty=(true|false) sender_empty=(true|false) from_me=(true|false) body_present=(true|false) attributed_present=(true|false) extension_class=(no_payload|empty_payload|url_balloon|apple_other|other_provider|provider_absent) reply_present=(true|false)'
+    foreach ($match in [regex]::Matches(
+        $Stdout, $retainedPattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant
+    )) {
+        $key = 'absent={0};without_value={1};guid_empty={2};chat_empty={3};sender_empty={4};from_me={5};body_present={6};attributed_present={7};extension_class={8};reply_present={9}' -f
+            $match.Groups[1].Value, $match.Groups[2].Value,
+            $match.Groups[3].Value, $match.Groups[4].Value,
+            $match.Groups[5].Value, $match.Groups[6].Value,
+            $match.Groups[7].Value, $match.Groups[8].Value,
+            $match.Groups[9].Value, $match.Groups[10].Value
+        $retainedShapes[$key] = [long]($retainedShapes[$key] ?? 0) + 1
+    }
+
+    $retainedRoutePattern =
+        'CloudKit V2 transient message retained_route_shape outer_type_class=(class_[0-7]|unsupported|missing|malformed) service_class=(absent|empty|imessage|imessage_case_variant|sms|rcs|facetime|other) destination_empty=(true|false) destination_matches_sender=(true|false) proto4_present=(true|false) group_id_state=(absent|empty|nonempty) group_matches_sender=(true|false) group_matches_destination=(true|false)'
+    foreach ($match in [regex]::Matches(
+        $Stdout, $retainedRoutePattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant
+    )) {
+        $key = 'outer_type={0};service={1};destination_empty={2};destination_matches_sender={3};proto4_present={4};group_id_state={5};group_matches_sender={6};group_matches_destination={7}' -f
+            $match.Groups[1].Value, $match.Groups[2].Value,
+            $match.Groups[3].Value, $match.Groups[4].Value,
+            $match.Groups[5].Value, $match.Groups[6].Value,
+            $match.Groups[7].Value, $match.Groups[8].Value
+        $retainedRouteShapes[$key] = [long]($retainedRouteShapes[$key] ?? 0) + 1
+    }
+
+    $systemEventPattern =
+        'CloudKit V2 transient message retained_shape outer_type_class=([a-z0-9_]{1,32}) absent_mask=([0-9a-f]{3}) without_value_mask=([0-9a-f]{3})'
+    foreach ($match in [regex]::Matches(
+        $Stdout, $systemEventPattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant
+    )) {
+        $key = 'outer_type_class={0};absent={1};without_value={2}' -f
+            $match.Groups[1].Value, $match.Groups[2].Value, $match.Groups[3].Value
+        $systemEventShapes[$key] = [long]($systemEventShapes[$key] ?? 0) + 1
+    }
+
+    $outcomePattern =
+        'CloudKit V2 retained conversion outcome=CloudCanonicalConversionOutcome::(Quarantined|Deferred)\(([A-Za-z][A-Za-z0-9]{0,63})\)'
+    foreach ($match in [regex]::Matches(
+        $Stdout, $outcomePattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant
+    )) {
+        $key = 'class={0};reason={1}' -f $match.Groups[1].Value, $match.Groups[2].Value
+        $conversionOutcomes[$key] = [long]($conversionOutcomes[$key] ?? 0) + 1
+    }
+
+    $servicePattern =
+        'CloudKit V2 transient message unsupported_service source=(top_level_svc|msgProto4_service) service_class=(absent|empty|imessage|imessage_case_variant|sms|rcs|facetime|other) top_level_service_class=(absent|empty|imessage|imessage_case_variant|sms|rcs|facetime|other) msg_proto_4_service_class=(absent|empty|imessage|imessage_case_variant|sms|rcs|facetime|other) message_kind=(normal|system|unknown|reaction)'
+    foreach ($match in [regex]::Matches(
+        $Stdout, $servicePattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant
+    )) {
+        $key = 'source={0};service={1};top={2};proto4={3};kind={4}' -f
+            $match.Groups[1].Value, $match.Groups[2].Value,
+            $match.Groups[3].Value, $match.Groups[4].Value,
+            $match.Groups[5].Value
+        $unsupportedServices[$key] = [long]($unsupportedServices[$key] ?? 0) + 1
+    }
+
+    return [pscustomobject][ordered]@{
+        schema_version = 2
+        retained_message_shapes = [object[]]@(
+            ConvertTo-DartApplierDiagnosticCountRows $retainedShapes
+        )
+        retained_route_shapes = [object[]]@(
+            ConvertTo-DartApplierDiagnosticCountRows $retainedRouteShapes
+        )
+        system_event_shapes = [object[]]@(
+            ConvertTo-DartApplierDiagnosticCountRows $systemEventShapes
+        )
+        conversion_outcomes = [object[]]@(
+            ConvertTo-DartApplierDiagnosticCountRows $conversionOutcomes
+        )
+        unsupported_services = [object[]]@(
+            ConvertTo-DartApplierDiagnosticCountRows $unsupportedServices
+        )
+    }
+}
+
 function Invoke-DartApplierPass {
     param(
         [Parameter(Mandatory)][int] $Pass,
@@ -468,7 +583,9 @@ function Invoke-DartApplierPass {
         [Parameter(Mandatory)][string[]] $AllowedExecutables,
         [Parameter(Mandatory)][string] $BuildIdentifier,
         [Parameter(Mandatory)][string] $EvidenceDirectory,
-        [Parameter(Mandatory)][int] $TimeoutSeconds
+        [Parameter(Mandatory)][int] $TimeoutSeconds,
+        [ValidateSet('run-once', 'drain')][string] $Operation = 'run-once',
+        [switch] $ReplayExcludedChats
     )
     $launchId = [Convert]::ToHexString(
         [Security.Cryptography.RandomNumberGenerator]::GetBytes(16)
@@ -485,6 +602,8 @@ function Invoke-DartApplierPass {
         RuntimeDirectory = $HostInfo.Directory
         LaunchId = $launchId
         BuildIdentifier = $BuildIdentifier
+        Operation = $Operation
+        ReplayExcludedChats = [bool]$ReplayExcludedChats
     }
     $start = New-DartApplierStartInfo @startArguments
     $process = $null
@@ -559,11 +678,23 @@ function Invoke-DartApplierPass {
         $testerIds = @($owned.Values | Where-Object {
             $_.Path.Equals($Tester, [StringComparison]::OrdinalIgnoreCase)
         } | ForEach-Object { [int]$_.Process.Id })
+        $acceptedTerminal = if ($Operation -ceq 'drain') {
+            ($status.state -ceq 'finished' -and
+                @(
+                    'semantic-drain-complete',
+                    'semantic-drain-remote-complete-projection-partial'
+                ) -ccontains [string]$status.stage) -or
+            ($status.state -ceq 'resumable' -and
+                $status.stage -ceq 'semantic-drain-pass-limit')
+        }
+        else {
+            $status.state -ceq 'finished' -and
+                $status.stage -ceq 'semantic-pull'
+        }
         if ($status.version -cne 'cloud-sync-v2-windows-harness-status-v2' -or
             $status.launch_id -cne $launchId -or
             $status.build_identifier -cne $BuildIdentifier -or
-            $status.state -cne 'finished' -or
-            $status.stage -cne 'semantic-pull' -or
+            -not $acceptedTerminal -or
             $testerIds -notcontains [int]$status.process_id) {
             Fail-DartApplierLive 'dart_applier_status_binding_rejected'
         }
@@ -586,6 +717,37 @@ function Invoke-DartApplierPass {
         else {
             Fail-DartApplierLive 'dart_applier_status_detail_rejected'
         }
+        $remoteDrained = $null
+        $retainedSaveProjectionComplete = $null
+        $projectionSweepAttempted = $null
+        $reachedPassLimit = $false
+        if ($Operation -ceq 'drain') {
+            foreach ($field in @(
+                'remote_drained', 'retained_save_projection_complete',
+                'projection_sweep_attempted', 'pass_limit'
+            )) {
+                if ([string]$status.detail -cnotmatch
+                    "(?:^|\s)$field=(true|false)(?:\s|$)") {
+                    Fail-DartApplierLive 'dart_applier_status_detail_rejected'
+                }
+                $value = $Matches[1] -ceq 'true'
+                switch ($field) {
+                    'remote_drained' { $remoteDrained = $value }
+                    'retained_save_projection_complete' {
+                        $retainedSaveProjectionComplete = $value
+                    }
+                    'projection_sweep_attempted' {
+                        $projectionSweepAttempted = $value
+                    }
+                    'pass_limit' { $reachedPassLimit = $value }
+                }
+            }
+            if (($status.stage -ceq 'semantic-drain-pass-limit') -ne
+                $reachedPassLimit) {
+                Fail-DartApplierLive 'dart_applier_status_detail_rejected'
+            }
+        }
+        $nativeDiagnostics = Get-DartApplierContentFreeNativeDiagnostics -Stdout $stdout
         return [pscustomobject][ordered]@{
             pass = $Pass
             launch_id = $launchId
@@ -599,6 +761,11 @@ function Invoke-DartApplierPass {
             outbox_before = $summary.outbox_before
             outbox_after = $summary.outbox_after
             chat_order_cache_repaired = $chatOrder
+            remote_drained = $remoteDrained
+            retained_save_projection_complete = $retainedSaveProjectionComplete
+            projection_sweep_attempted = $projectionSweepAttempted
+            reached_pass_limit = $reachedPassLimit
+            native_diagnostics = $nativeDiagnostics
             stdout_bytes = $stdoutBytes
             stdout_sha256 = $stdoutHash
             stderr_bytes = $stderrBytes
@@ -705,7 +872,12 @@ try {
         objectbox_sha256 = $hostInfo.Hashes['objectbox.dll']
         harness_test_sha256 = (Get-FileHash -LiteralPath $harnessTest -Algorithm SHA256).Hash.ToLowerInvariant()
         launcher_sha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        operation = 'ordinary-dart-objectbox-run-once'
+        operation = $(if ($Drain) {
+            'confirmed-dart-objectbox-drain-with-projection-sweep'
+        } else {
+            'ordinary-dart-objectbox-run-once'
+        })
+        replay_excluded_chats = [bool]$ReplayExcludedChats
         remote_writes_enabled = $false
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $evidenceDirectory 'qualification.json') -Encoding UTF8
 
@@ -717,6 +889,8 @@ try {
     )
     $passes = [Collections.Generic.List[object]]::new()
     $stable = $false
+    $drainTerminal = $false
+    $operation = if ($Drain) { 'drain' } else { 'run-once' }
     for ($pass = 1; $pass -le $MaximumPasses; $pass++) {
         $passArguments = @{
             Pass = $pass
@@ -730,10 +904,19 @@ try {
             BuildIdentifier = $buildIdentifier
             EvidenceDirectory = $evidenceDirectory
             TimeoutSeconds = $TimeoutSeconds
+            Operation = $operation
+            ReplayExcludedChats = [bool]$ReplayExcludedChats
         }
         $result = Invoke-DartApplierPass @passArguments
         $passes.Add($result)
         $result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $evidenceDirectory "pass-$pass.json") -Encoding UTF8
+        if ($Drain) {
+            if (-not $result.reached_pass_limit) {
+                $drainTerminal = $true
+                break
+            }
+            continue
+        }
         if ($passes.Count -ge 2 -and
             (Test-DartApplierStablePair `
                 -Previous $passes[$passes.Count - 2] `
@@ -742,26 +925,50 @@ try {
             break
         }
     }
+    $completed = if ($Drain) { $drainTerminal } else { $stable }
     [ordered]@{
         version = 1
         session_id = $sessionId
-        completed = $stable
+        completed = $completed
         passes = $passes.Count
-        stable_repeat = $stable
+        operation = $operation
+        stable_repeat = $(if ($Drain) { $null } else { $stable })
+        remote_drained = $(if ($Drain -and $passes.Count -gt 0) {
+            $passes[$passes.Count - 1].remote_drained
+        } else { $null })
+        retained_save_projection_complete = $(if ($Drain -and $passes.Count -gt 0) {
+            $passes[$passes.Count - 1].retained_save_projection_complete
+        } else { $null })
+        projection_sweep_attempted = $(if ($Drain -and $passes.Count -gt 0) {
+            $passes[$passes.Count - 1].projection_sweep_attempted
+        } else { $null })
         content_exposed = $false
         remote_writes_enabled = $false
         results = @($passes)
     } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $evidenceDirectory 'result.json') -Encoding UTF8
-    if (-not $stable) {
-        Fail-DartApplierLive 'dart_applier_stable_repeat_unproven'
+    if (-not $completed) {
+        Fail-DartApplierLive $(if ($Drain) {
+            'dart_applier_drain_terminal_unproven'
+        } else {
+            'dart_applier_stable_repeat_unproven'
+        })
     }
+    $last = $passes[$passes.Count - 1]
     Write-Output ([ordered]@{
         completed = $true
         session_id = $sessionId
         passes = $passes.Count
-        stable_repeat = $true
-        retained_total = $passes[$passes.Count - 1].retained_total
-        outbox_count = $passes[$passes.Count - 1].outbox_after
+        operation = $operation
+        stable_repeat = $(if ($Drain) { $null } else { $true })
+        remote_drained = $(if ($Drain) { $last.remote_drained } else { $null })
+        retained_save_projection_complete = $(if ($Drain) {
+            $last.retained_save_projection_complete
+        } else { $null })
+        projection_sweep_attempted = $(if ($Drain) {
+            $last.projection_sweep_attempted
+        } else { $null })
+        retained_total = $last.retained_total
+        outbox_count = $last.outbox_after
         content_exposed = $false
         remote_writes_enabled = $false
     } | ConvertTo-Json -Compress)

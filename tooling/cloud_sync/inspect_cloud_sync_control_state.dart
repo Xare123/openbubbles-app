@@ -1476,13 +1476,26 @@ final class _InboxGroupAccumulator {
   final zones = <String>{};
   final statuses = <String, int>{};
   final failureCategories = <String, int>{};
+  int? minFetchSequence;
+  int? maxFetchSequence;
   int retainedSaves = 0;
   int retainedUnclassifiedTombstones = 0;
   int retainedOther = 0;
+  int retainedProjectionCandidates = 0;
+  int? minRetainedProjectionCandidateSequence;
+  int? maxRetainedProjectionCandidateSequence;
   _BarrierMetadata? firstBarrier;
 
   void add(CloudInboxChangeEntity row, {required DateTime now}) {
     rowCount += 1;
+    minFetchSequence =
+        minFetchSequence == null || row.fetchSequence < minFetchSequence!
+        ? row.fetchSequence
+        : minFetchSequence;
+    maxFetchSequence =
+        maxFetchSequence == null || row.fetchSequence > maxFetchSequence!
+        ? row.fetchSequence
+        : maxFetchSequence;
     zones.add(_allowlistedOrInvalid(row.zone, _cloudZones));
     final status = _statusName(row.status);
     statuses.update(status, (count) => count + 1, ifAbsent: () => 1);
@@ -1504,6 +1517,20 @@ final class _InboxGroupAccumulator {
       } else if (row.changeType == CloudChangeType.save.name &&
           !row.isTombstone) {
         retainedSaves++;
+        if (row.failureCategory !=
+            CloudFailureCategory.outOfScopeService.name) {
+          retainedProjectionCandidates++;
+          minRetainedProjectionCandidateSequence =
+              minRetainedProjectionCandidateSequence == null ||
+                  row.fetchSequence < minRetainedProjectionCandidateSequence!
+              ? row.fetchSequence
+              : minRetainedProjectionCandidateSequence;
+          maxRetainedProjectionCandidateSequence =
+              maxRetainedProjectionCandidateSequence == null ||
+                  row.fetchSequence > maxRetainedProjectionCandidateSequence!
+              ? row.fetchSequence
+              : maxRetainedProjectionCandidateSequence;
+        }
       } else {
         retainedOther++;
       }
@@ -1519,11 +1546,18 @@ final class _InboxGroupAccumulator {
     'groupOrdinal': groupOrdinal,
     'zones': zones.toList()..sort(),
     'rows': rowCount,
+    'minFetchSequence': minFetchSequence,
+    'maxFetchSequence': maxFetchSequence,
     'statuses': statuses,
     'failureCategories': failureCategories,
     'retainedSaves': retainedSaves,
     'retainedUnclassifiedTombstones': retainedUnclassifiedTombstones,
     'retainedOther': retainedOther,
+    'retainedProjectionCandidates': retainedProjectionCandidates,
+    'minRetainedProjectionCandidateSequence':
+        minRetainedProjectionCandidateSequence,
+    'maxRetainedProjectionCandidateSequence':
+        maxRetainedProjectionCandidateSequence,
     'firstBarrier': firstBarrier?.toJson(),
   };
 }

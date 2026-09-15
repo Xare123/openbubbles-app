@@ -4772,3 +4772,29 @@ cannot authorize or perform adoption.
   uninstalled. The next falsification is an in-place Canary upgrade followed by
   a semantic pull proving the invalid-event code is absent and pass 1 advances.
   Build success is not Pixel-live proof, and Alpha remains out of scope.
+
+### September 15 exhaustive retained projection and empty-route evidence
+
+- The Windows live launcher gained explicit `drain` and excluded-Chat replay
+  modes, exact terminal-stage checks and content-free native diagnostic
+  aggregation. Its contract suite passes 21 cases. Raw process output is still
+  removed after bounded evidence extraction.
+- Exact read-only drain `ad42f0997054fef22da1547807361a93` examined 1,359
+  Message saves in 43 batches and 1,011 Attachment saves in 32 batches. It
+  reached remote terminal state and attempted the retained projection sweep,
+  while preserving all 6,252 retained rows and 24 confirmed outbox rows. It
+  performed no remote write and exposed no content.
+- Excluded-Chat replay `11bcb9af66e228e0ca630ae1696e1b90` examined all 13
+  excluded Chat saves: three were iMessage Lite and ten were RCS. None can
+  provide the missing iMessage parent relationship.
+- Diagnostic drain `1373eeba766d871af6f790e0401b494f` proved that all 539
+  `MalformedRequiredIdentity` messages contain every required CloudKit field,
+  but their decrypted `chatID` value is empty. The set contains 490 incoming
+  records with a sender and 49 outgoing records with no sender. This branch is
+  distinct from the 183 converted messages retained as
+  `canonical_message_chat_unavailable` and from the earlier eight-record Chat1
+  correlation sample.
+- No routing fallback is yet authorized. The next bounded experiment must
+  classify `msgProto4.groupId`, `dcId`, outer type and unique Chat1 ownership
+  without retaining identifiers or content. Sender-only routing is unsafe
+  because an incoming sender can also be a member of a group conversation.

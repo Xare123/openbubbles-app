@@ -425,6 +425,30 @@ CloudKit readback or independent Apple-device display.
 8. FaceTime and Find My remain separate live gates and are not evidence for
    CloudKit completion.
 
+### September 15 exhaustive retained-projection split
+
+- The exact Windows `drain` lane now follows the production exhaustive retained
+  sweep instead of treating two empty fetch/apply passes as projection stability.
+  Read-only session `ad42f0997054fef22da1547807361a93` drained every current
+  zone and attempted all retained saves without changing the 24 confirmed
+  outbox rows, issuing a remote write or exposing message content.
+- Replaying all 13 excluded Chat saves in session
+  `11bcb9af66e228e0ca630ae1696e1b90` classified three as iMessage Lite and ten
+  as RCS. They do not contain the missing iMessage parents.
+- Content-free native shape capture in session
+  `1373eeba766d871af6f790e0401b494f` separates two projection branches:
+  539 messages fail native conversion because all required CloudKit fields are
+  present but decrypted `chatID` is explicitly empty; a separate 183 converted
+  messages have nonempty route evidence but no uniquely proven canonical Chat.
+  Of the 539 empty-route records, 490 are incoming with a sender and 49 are
+  outgoing with no sender. This is not the earlier eight-record Chat1 sample.
+- Do not remove the empty-identity guard or substitute sender alone. Before an
+  alternate route is admitted, measure content-free `msgProto4.groupId`,
+  `dcId`, outer message type and unique Chat1 ownership cardinality. A group ID
+  may bind only one proven group owner; an incoming sender may bind only one
+  proven direct owner after group evidence is excluded. Ambiguous or outgoing
+  unaddressed records remain retained.
+
 ## Current ownership and continuation rules
 
 - `cloud_sync_extension_metadata.rs` is the pure JSON/schema boundary shared by

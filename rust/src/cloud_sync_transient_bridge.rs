@@ -704,6 +704,18 @@ fn message_extension_class(provider: Option<&str>, payload: Option<&[u8]>) -> &'
     }
 }
 
+fn optional_string_state(value: Option<&str>) -> &'static str {
+    match value {
+        None => "absent",
+        Some("") => "empty",
+        Some(_) => "nonempty",
+    }
+}
+
+fn nonempty_identity_equal(left: &str, right: &str) -> bool {
+    !left.is_empty() && !right.is_empty() && left == right
+}
+
 /// Shape only, not a permissive reply parser. At most eight components are
 /// inspected; no target, part text, or account identifier leaves this helper.
 #[derive(Debug, PartialEq, Eq)]
@@ -2761,6 +2773,21 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                     proto.attributed_body.as_ref().is_some_and(|value| !value.is_empty()),
                     message_extension_class(proto.balloon_bundle_id.as_deref(), proto.payload_data.as_deref()),
                     message.msg_proto_2.as_ref().is_some_and(|value| value.0.reply.is_some()));
+                let proto_4 = message.msg_proto_4.as_ref().map(|value| &value.0);
+                let group_id = proto_4.and_then(|value| value.group_id.as_deref());
+                let group_value = group_id.unwrap_or_default();
+                // Fixed enums and equality/presence booleans only. This line is
+                // intentionally separate so host tooling can retain the route
+                // evidence aggregate without retaining identifiers or content.
+                debug!("CloudKit V2 transient message retained_route_shape outer_type_class={} service_class={} destination_empty={} destination_matches_sender={} proto4_present={} group_id_state={} group_matches_sender={} group_matches_destination={}",
+                    message_outer_type_class(&record),
+                    cloud_service_class(Some(&message.service)),
+                    message.destination_caller_id.is_empty(),
+                    nonempty_identity_equal(&message.destination_caller_id, &message.sender),
+                    proto_4.is_some(),
+                    optional_string_state(group_id),
+                    nonempty_identity_equal(group_value, &message.sender),
+                    nonempty_identity_equal(group_value, &message.destination_caller_id));
                 // Keep the value-free shape distinct from the typed, redacted
                 // outcome; a body/request debug formatter is never permitted.
                 debug!("CloudKit V2 retained conversion outcome={converted:?}");
@@ -5378,6 +5405,26 @@ mod tests {
             );
             assert_eq!(message_extension_class(provider, None), "no_payload");
         }
+    }
+
+    #[test]
+    fn retained_route_diagnostic_helpers_expose_only_fixed_state_and_equality() {
+        let private_sender = "private-sender@example.invalid";
+        let private_group = "private-group-guid";
+        assert_eq!(optional_string_state(None), "absent");
+        assert_eq!(optional_string_state(Some("")), "empty");
+        assert_eq!(optional_string_state(Some(private_group)), "nonempty");
+        assert!(!nonempty_identity_equal("", ""));
+        assert!(!nonempty_identity_equal(private_sender, private_group));
+        assert!(nonempty_identity_equal(private_sender, private_sender));
+
+        let rendered = format!(
+            "group_id_state={} destination_matches_sender={}",
+            optional_string_state(Some(private_group)),
+            nonempty_identity_equal(private_sender, private_group),
+        );
+        assert!(!rendered.contains(private_sender));
+        assert!(!rendered.contains(private_group));
     }
 
     #[test]
