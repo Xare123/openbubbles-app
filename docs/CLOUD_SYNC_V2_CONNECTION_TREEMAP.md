@@ -96,6 +96,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Exact receipt-reconstruction repair | `LIVE-PROVEN` on Windows at `bbfa149f1`. Build 34923170226, GCE 34923191959 and Windows fast loop 34923533854 all passed. The verified imported harness reconstructed exactly three committed protection receipts. Reopening the state-1 edit returned `cloud_sync_windows_mutation_send_unconfirmed_no_retry`, changed no mutation state and issued no resend. |
 | Historical mutation disposition | The unfinished state-1 edit, state-3 edit and state-3 unsend were written at authority epoch 2; current stable V2 authority is epoch 18 after the fresh qualification chain. The state-3 replay stopped before network I/O at `cloud_sync_local_mutation_owner_changed`. Preserve these rows as unresolved evidence. Never rebind stale intent across epochs merely to complete a test; a future reconciler may perform readback only. |
 | Fresh same-epoch chain gate | `LIVE-PROVEN` on Windows. Commit `07e58fd0b` passed 18 focused tests and Windows fast-loop run 34926960736 in 25m9s. Artifact 10380667192 was independently verified as 78 files / 335,925,603 bytes with exact source/pilot provenance, 51 native codec cases and archive SHA256 `ea87e2931a58cf6f84093478ca6a41c9bc8734170be746d8c7b81a80d8cd7a39`, then imported and locally signed through the rollback-protected importer. Parent-35, edit-36 and unsend-37 completed; edit and unsend each submitted/confirmed one update. A fresh-process unsend replay was reconciliation-only with zero submissions. Outbox moved 21 -> 24 and all 24 rows are confirmed; terminal mutations moved 6 -> 8. Final unsend projection, source binding and receipt markers pass. Independent recipient UI and Pixel lifecycle remain required. |
+| Carrier backlog correction | `LIVE-PROVEN` on the isolated Windows profile for exact source `7d38f1dd8`. The first exhaustive read-only drain reclassified 573 retained Message saves from stale `malformedRecord` to typed carrier `outOfScopeService`: 531 newly recognized empty-identity SMS records plus 42 records already typed as carrier by the prior decoder but carrying an older malformed label. All 68 rows outside the exact eligible prior-category fence remained unchanged. A fresh-process repeat emitted no further transition and preserved 94 Chats, 5,046 Messages, 1,112 Attachments and outbox 24. Both runs fetched/applied 0/0 and disabled remote writes. Remaining blocking saves are 786 Messages and 1,011 Attachments. |
 
 Prior tables and obsolete next steps were preserved verbatim in the September 12
 consolidation entry of the [investigation log](cloud_sync_v2/history/CLOUD_SYNC_V2_INVESTIGATION_LOG_FROM_2026-09-07.md).
@@ -407,22 +408,26 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Keep the now-live-proven Windows read path unchanged: `ea7560b83` completed
+1. Keep the exact carrier correction `7d38f1dd8` unchanged. GCE and Windows
+   qualification passed; live drain reclassified exactly 573 stale malformed
+   carrier rows, and a fresh-process repeat proved zero further transition,
+   zero fetch/apply and outbox 24 -> 24 with remote writes disabled.
+2. Keep the now-live-proven Windows read path unchanged: `ea7560b83` completed
    two stable ordinary passes with all zones terminal and outbox 21 -> 21.
-2. Keep the `bbfa149f1` receipt repair unchanged: full Build, GCE and Windows
+3. Keep the `bbfa149f1` receipt repair unchanged: full Build, GCE and Windows
    qualification passed, and live state-1 recovery proved zero resend.
-3. Preserve the three epoch-2 historical mutations. They cannot safely execute
+4. Preserve the three epoch-2 historical mutations. They cannot safely execute
    under current epoch 18; do not weaken owner checks or relabel their outcome.
-4. Keep the now-live-proven `07e58fd0b` Windows chain unchanged: parent, edit
+5. Keep the now-live-proven `07e58fd0b` Windows chain unchanged: parent, edit
    and unsend completed, and the new-process unsend replay submitted zero work.
-5. Qualify the exact signed Canary on Pixel: upgrade, ordinary composer,
+6. Qualify the exact signed Canary on Pixel: upgrade, ordinary composer,
    background/lock/reconnect, process death, registration repair, independent
    client display, legible text and representative media/documents. Preserve Alpha.
-6. Finish approved group/media/mutation/conflict cases and newest-first fresh
+7. Finish approved group/media/mutation/conflict cases and newest-first fresh
    bootstrap without changing existing cursor direction.
-7. Retain the eight unresolvable missing-parent sources unless stronger unique
+8. Retain the eight unresolvable missing-parent sources unless stronger unique
    evidence appears; normal stream completion must not depend on guessing them.
-8. FaceTime and Find My remain separate live gates and are not evidence for
+9. FaceTime and Find My remain separate live gates and are not evidence for
    CloudKit completion.
 
 ### September 15 exhaustive retained-projection split
@@ -437,17 +442,53 @@ CloudKit readback or independent Apple-device display.
   as RCS. They do not contain the missing iMessage parents.
 - Content-free native shape capture in session
   `1373eeba766d871af6f790e0401b494f` separates two projection branches:
-  539 messages fail native conversion because all required CloudKit fields are
-  present but decrypted `chatID` is explicitly empty; a separate 183 converted
-  messages have nonempty route evidence but no uniquely proven canonical Chat.
-  Of the 539 empty-route records, 490 are incoming with a sender and 49 are
-  outgoing with no sender. This is not the earlier eight-record Chat1 sample.
-- Do not remove the empty-identity guard or substitute sender alone. Before an
-  alternate route is admitted, measure content-free `msgProto4.groupId`,
-  `dcId`, outer message type and unique Chat1 ownership cardinality. A group ID
-  may bind only one proven group owner; an incoming sender may bind only one
-  proven direct owner after group evidence is excluded. Ambiguous or outgoing
-  unaddressed records remain retained.
+  539 messages have every required CloudKit field present but an explicitly
+  empty decrypted `chatID`; a separate 183 converted messages have nonempty
+  route evidence but no uniquely proven canonical Chat.
+- The exact 539-row matrix changes the diagnosis: 531 are top-level `SMS`
+  records, split into 483 incoming and 48 outgoing. Their `msgProto4.groupId`
+  is absent for 56 and nonempty for 475. Only eight are iMessage records, seven
+  incoming and one outgoing; all eight lack group evidence. The earlier
+  490-incoming/49-outgoing total was correct but hid this service split.
+- Candidate `7d38f1dd8` keeps required-field presence strict and keeps iMessage
+  identity strict. It classifies only `SMS`/`RCS` rows with present-but-empty
+  identities as typed out-of-scope service, preserves a nested non-carrier
+  mismatch as `unsupportedService`, and permits only an exact durable
+  `malformedRecord` or `unsupportedService` -> `outOfScopeService` transition
+  after a fresh typed decode. It advances no checkpoint and mutates no
+  canonical entity. The focused Dart/ObjectBox gate passes 145 tests. Exact
+  GCE app-Rust run 34957446005 passed all 682 Rust tests and reproduced the
+  committed bridge bindings; its build job took 6m01s. Cleanup passed, and
+  independent GCE-instance and GitHub-runner inventories found no residue.
+- Windows native-test-host run 34957628962 passed in 24m35s for exact source
+  `7d38f1dd8900110e298ee091fc8e715a8d988212`: 671 Dart tests, 51 packaged
+  native codec cases, ARM64/provenance checks and pinned ObjectBox verification.
+  The archive and provenance digests were independently verified before the
+  rollback-protected import into the isolated profile.
+- Live session `2b31b210b1d2d500044db1c9acd958be`, report
+  `obcs2-semantic-1789469940365007.json`, performed the exhaustive local
+  projection sweep with fetched/applied 0/0 and outbox 24 -> 24. It changed
+  only 573 exact retained failure labels: all moved from `malformedRecord` to
+  `outOfScopeService`; dependency, unsupported-service, canonical, checkpoint
+  and outbox state did not move. The 573 are the 531 newly typed empty-identity
+  SMS rows plus 42 of the prior 110 carrier-typed rows whose durable label was
+  also malformed. The other 68 prior rows failed the exact category fence.
+- Fresh-process session `911bb545a8c357f6942e57e5bfe5dc3a`, report
+  `obcs2-semantic-1789470215197415.json`, emitted no additional out-of-scope
+  transition. Counts stayed at 3,763 out-of-scope, 307 malformed, 474
+  dependency and five unsupported Message saves; outbox stayed 24 and remote
+  saves/deletes remained disabled. This is the restart/idempotence proof for
+  the bounded carrier correction, not proof that the remaining retained rows
+  are safe to project.
+- Do not sender-route the remaining eight empty-route iMessages. They have no
+  group corroboration and remain retained. They are also distinct from the
+  eight sampled records inside the separate 183-row parent-unavailable branch.
+- In that 183-row branch, the sampled eight have nonempty `chatID` and matching
+  `msgProto4.groupId`: five are bare UUID routes and three are qualified direct
+  routes. Terminal Chat1 correlation found no unique owner. Do not synthesize
+  a visible Chat until deletion/tombstone semantics can prove that doing so
+  will not resurrect a removed conversation; retaining an orphan is safer than
+  misrouting it.
 
 ## Current ownership and continuation rules
 
