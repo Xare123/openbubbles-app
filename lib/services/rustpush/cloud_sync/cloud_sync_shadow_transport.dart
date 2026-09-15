@@ -34,6 +34,7 @@ final class AccountBoundShadowTransport
     required String? previousToken,
     required int generation,
     required int limit,
+    CloudSyncFetchDirection fetchDirection = CloudSyncFetchDirection.forward,
   }) async {
     await _requireSameAccount();
     final batch = await _delegate.fetchChanges(
@@ -41,6 +42,7 @@ final class AccountBoundShadowTransport
       previousToken: previousToken,
       generation: generation,
       limit: limit,
+      fetchDirection: fetchDirection,
     );
     await _requireSameAccount();
     return batch;

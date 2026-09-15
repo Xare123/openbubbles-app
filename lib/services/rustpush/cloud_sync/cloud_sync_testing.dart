@@ -160,6 +160,7 @@ class FakeCloudSyncTransport
   int quiescenceCallCount = 0;
   int mutationUnknownSignalCount = 0;
   final List<String?> observedFetchTokens = [];
+  final List<CloudSyncFetchDirection> observedFetchDirections = [];
   final List<List<String>> observedPushOperationIds = [];
   final List<List<String?>> observedAppleRequestUuids = [];
   final List<List<String?>> observedAppleOperationUuids = [];
@@ -262,9 +263,11 @@ class FakeCloudSyncTransport
     required String? previousToken,
     required int generation,
     required int limit,
+    CloudSyncFetchDirection fetchDirection = CloudSyncFetchDirection.forward,
   }) async {
     fetchCallCount++;
     observedFetchTokens.add(previousToken);
+    observedFetchDirections.add(fetchDirection);
     if (fetchHandler != null) {
       return fetchHandler!(scope, previousToken, generation, limit);
     }

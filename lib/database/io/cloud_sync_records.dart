@@ -196,6 +196,10 @@ class CloudSyncCheckpointEntity {
   /// Local persistence lane only. Null identifies pre-lane legacy rows.
   String? persistenceLane;
 
+  /// Durable CloudKit continuation-token direction. Null identifies a
+  /// pre-direction checkpoint that must be classified before its next fetch.
+  String? fetchDirection;
+
   /// Base64 application ciphertext. Never a raw CloudKit continuation token.
   String? fetchedTokenCiphertext;
 
@@ -229,6 +233,7 @@ class CloudSyncCheckpointEntity {
     required this.streamKind,
     this.schemaVersion = cloudSyncSchemaVersion,
     this.persistenceLane,
+    this.fetchDirection,
     this.fetchedTokenCiphertext,
     this.pendingFetchedTokenCiphertext,
     this.pendingBatchId,
@@ -356,9 +361,10 @@ class CloudInboxChangeEntity {
 int? cloudInboxCanonicalServerModifiedAtMillis(CloudInboxChangeEntity entity) {
   final stored = entity.serverModifiedAtMs;
   return switch (entity.serverModifiedAtFormatVersion) {
-    null => stored == 0
-        ? null
-        : stored > _cloudInboxInt64Max - cloudInboxAppleEpochOffsetMillis
+    null =>
+      stored == 0
+          ? null
+          : stored > _cloudInboxInt64Max - cloudInboxAppleEpochOffsetMillis
           ? throw StateError('cloud_inbox_server_modified_at_overflow')
           : stored + cloudInboxAppleEpochOffsetMillis,
     cloudInboxServerModifiedAtLegacyAppleEpochFormat =>

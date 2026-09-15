@@ -262,6 +262,7 @@ Future<Map<String, Object?>> cloudSyncWindowsProbeMessageFeed({
         generation: BigInt.from(current.generation),
         previousCheckpointReference: reference,
         maximumChanges: 200,
+        newestFirst: false,
       );
       final page = result.page;
       if (page == null) {

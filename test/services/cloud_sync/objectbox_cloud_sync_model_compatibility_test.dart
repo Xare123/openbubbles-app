@@ -874,7 +874,10 @@ void main() {
       );
       expect(
         entities,
-        containsPair('CloudSyncLocalMutationIntentEntity', '35:5717746217656693252'),
+        containsPair(
+          'CloudSyncLocalMutationIntentEntity',
+          '35:5717746217656693252',
+        ),
       );
       expect(model['lastEntityId'], '35:5717746217656693252');
       expect(model['modelVersion'], 5);
@@ -907,12 +910,13 @@ void main() {
           (value as Map<String, dynamic>)['name'] as String:
               value['id'] as String,
       };
-      expect(checkpoint['lastPropertyId'], '23:8346271905819443021');
+      expect(checkpoint['lastPropertyId'], '24:4160469815668187907');
       expect(
         checkpointProperties['pendingFetchedTokenCiphertext'],
         '22:7163548097042261884',
       );
       expect(checkpointProperties['pendingBatchId'], '23:8346271905819443021');
+      expect(checkpointProperties['fetchDirection'], '24:4160469815668187907');
 
       Map<String, Map<String, dynamic>> propertiesFor(String entityName) {
         final entity = (model['entities'] as List<dynamic>)
@@ -1022,7 +1026,8 @@ void main() {
       final current = getObjectBoxModel();
       final previousMap = current.model.toMap();
       (previousMap['entities'] as List).removeWhere(
-        (entity) => entity['name'] == 'CloudAttachmentUploadEntity' ||
+        (entity) =>
+            entity['name'] == 'CloudAttachmentUploadEntity' ||
             entity['name'] == 'CloudSyncLocalMutationIntentEntity',
       );
       // Exact counters from the qualified pre-upload model, not a fresh store

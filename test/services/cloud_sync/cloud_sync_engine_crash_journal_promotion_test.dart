@@ -275,6 +275,7 @@ class _CrashOnceAfterJournalStore extends InMemoryCloudSyncStore {
     required CloudCoordinatorLeaseFence leaseFence,
     required int expectedGeneration,
     required String? expectedFetchedToken,
+    CloudSyncFetchDirection? expectedFetchDirection,
   }) async {
     journalCallCount++;
     final inserted = await super.journalFetchedBatch(
@@ -283,6 +284,7 @@ class _CrashOnceAfterJournalStore extends InMemoryCloudSyncStore {
       leaseFence: leaseFence,
       expectedGeneration: expectedGeneration,
       expectedFetchedToken: expectedFetchedToken,
+      expectedFetchDirection: expectedFetchDirection,
     );
     if (journalCallCount == 1) {
       throw StateError('simulated_process_crash_after_journal_commit');

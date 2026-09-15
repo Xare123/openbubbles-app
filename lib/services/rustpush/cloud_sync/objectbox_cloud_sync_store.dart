@@ -181,6 +181,7 @@ class ObjectBoxCloudSyncStore
     required CloudCoordinatorLeaseFence leaseFence,
     required int expectedGeneration,
     required String? expectedFetchedToken,
+    CloudSyncFetchDirection? expectedFetchDirection,
   }) async {
     final preflightNowMs = _nowMs();
     final leaseKey = _scopedDigest(batch.scope, 'coordinator-lease', 'v1');
@@ -243,6 +244,11 @@ class ObjectBoxCloudSyncStore
       if (checkpoint.generation != expectedGeneration ||
           checkpoint.fetchedTokenCiphertext != checkpointCiphertextSnapshot) {
         throw _storageFailure('checkpoint_compare_and_swap_failed');
+      }
+      if (expectedFetchDirection != null &&
+          _fetchDirectionFromName(checkpoint.fetchDirection) !=
+              expectedFetchDirection) {
+        throw _storageFailure('checkpoint_fetch_direction_changed');
       }
       if (checkpoint.generation != batch.generation) {
         throw _storageFailure('generation_mismatch');
@@ -340,6 +346,7 @@ class ObjectBoxCloudSyncStore
     required CloudCoordinatorLeaseFence leaseFence,
     required int expectedGeneration,
     required String? expectedFetchedToken,
+    CloudSyncFetchDirection? expectedFetchDirection,
   }) async {
     budget.validate();
     // Avoid touching the keystore if a migrated/pre-existing journal is
@@ -428,6 +435,11 @@ class ObjectBoxCloudSyncStore
           checkpoint.generation != batch.generation ||
           checkpoint.fetchedTokenCiphertext != checkpointCiphertextSnapshot) {
         throw _storageFailure('checkpoint_compare_and_swap_failed');
+      }
+      if (expectedFetchDirection != null &&
+          _fetchDirectionFromName(checkpoint.fetchDirection) !=
+              expectedFetchDirection) {
+        throw _storageFailure('checkpoint_fetch_direction_changed');
       }
 
       final current = _shadowJournalUsageLocked(batch.scope, budget);
@@ -4524,6 +4536,7 @@ class ObjectBoxCloudSyncStore
       if (existing.generation <= 0) {
         throw _storageFailure('checkpoint_generation_invalid');
       }
+      _bindCheckpointFetchDirectionLocked(scope, existing, nowMs: nowMs);
       return existing;
     }
     final created = CloudSyncCheckpointEntity(
@@ -4535,6 +4548,7 @@ class ObjectBoxCloudSyncStore
       streamKind: scope.streamKind.name,
       schemaVersion: scope.schemaVersion,
       persistenceLane: scope.persistenceLane.name,
+      fetchDirection: _initialFetchDirection(scope).name,
       updatedAtMs: nowMs,
     );
     created.id = _checkpoints.put(created);
@@ -4550,6 +4564,7 @@ class ObjectBoxCloudSyncStore
     _validateCheckpointScope(entity, scope);
     return CloudSyncCheckpoint(
       scope: scope,
+      fetchDirection: _fetchDirectionFromName(entity.fetchDirection),
       fetchedToken: fetchedToken,
       generation: entity.generation,
       lastBatchId: entity.lastBatchId,
@@ -4581,6 +4596,58 @@ class ObjectBoxCloudSyncStore
       throw _storageFailure('scope_collision');
     }
   }
+
+  void _bindCheckpointFetchDirectionLocked(
+    CloudSyncScope scope,
+    CloudSyncCheckpointEntity checkpoint, {
+    required int nowMs,
+  }) {
+    final stored = checkpoint.fetchDirection;
+    if (stored != null) {
+      _fetchDirectionFromName(stored);
+      return;
+    }
+    final direction =
+        _isNewestFirstBootstrapScope(scope) &&
+            !_checkpointHasPriorReadEvidenceLocked(scope, checkpoint)
+        ? CloudSyncFetchDirection.newestFirst
+        : CloudSyncFetchDirection.forward;
+    checkpoint
+      ..fetchDirection = direction.name
+      ..updatedAtMs = nowMs;
+    _checkpoints.put(checkpoint);
+  }
+
+  CloudSyncFetchDirection _initialFetchDirection(CloudSyncScope scope) =>
+      _isNewestFirstBootstrapScope(scope)
+      ? CloudSyncFetchDirection.newestFirst
+      : CloudSyncFetchDirection.forward;
+
+  bool _isNewestFirstBootstrapScope(CloudSyncScope scope) =>
+      scope.container == _messagesCloudContainer &&
+      scope.database == _messagesCloudDatabase &&
+      scope.streamKind == CloudSyncStreamKind.messages &&
+      scope.schemaVersion == cloudSyncSchemaVersion &&
+      scope.persistenceLane == CloudSyncPersistenceLane.semanticV2 &&
+      _messagesCloudSemanticZones.contains(scope.zone);
+
+  bool _checkpointHasPriorReadEvidenceLocked(
+    CloudSyncScope scope,
+    CloudSyncCheckpointEntity checkpoint,
+  ) =>
+      checkpoint.generation != 1 ||
+      checkpoint.fetchedTokenCiphertext != null ||
+      checkpoint.pendingFetchedTokenCiphertext != null ||
+      checkpoint.pendingBatchId != null ||
+      checkpoint.lastBatchId != null ||
+      checkpoint.fetchedSequence != 0 ||
+      checkpoint.appliedSequence != 0 ||
+      checkpoint.lastSuccessfulAtMs != 0 ||
+      checkpoint.lastAttemptAtMs != 0 ||
+      checkpoint.lastErrorCategory != null ||
+      checkpoint.backoffAttempt != 0 ||
+      checkpoint.nextEligibleAtMs != 0 ||
+      _findInboxForScopeLocked(scope).isNotEmpty;
 
   CloudInboxEntry _inboxFromEntity(
     CloudSyncScope scope,
@@ -6284,6 +6351,16 @@ class ObjectBoxCloudSyncStore
       if (value.name == name) return value;
     }
     throw _storageFailure('persistence_lane_invalid');
+  }
+
+  CloudSyncFetchDirection _fetchDirectionFromName(String? name) {
+    if (name == null || name.isEmpty) {
+      throw _storageFailure('checkpoint_fetch_direction_missing');
+    }
+    for (final value in CloudSyncFetchDirection.values) {
+      if (value.name == name) return value;
+    }
+    throw _storageFailure('checkpoint_fetch_direction_invalid');
   }
 
   CloudChangeType _changeTypeFromName(String name) {

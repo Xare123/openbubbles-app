@@ -561,17 +561,30 @@ void main() {
         ),
       );
       expect(semanticFetch, contains('Some(&permit)'));
-      expect(semanticFetch, contains('maximum_changes,\n        false,'));
+      expect(semanticFetch, contains('newest_first: bool'));
+      expect(
+        semanticFetch,
+        contains('maximum_changes,\n        newest_first,\n        false,'),
+      );
 
       final native = File(
         'rust/src/cloud_sync_native_fetch.rs',
       ).readAsStringSync();
-      expect(native, contains('.sync_messages_page_for_read_authentication('));
       expect(
         native,
-        contains('.sync_attachments_page_for_read_authentication('),
+        contains('.sync_messages_page_for_read_authentication_with_direction('),
       );
-      expect(native, contains('.sync_chats_page_for_read_authentication('));
+      expect(
+        native,
+        contains(
+          '.sync_attachments_page_for_read_authentication_with_direction(',
+        ),
+      );
+      expect(
+        native,
+        contains('.sync_chats_page_for_read_authentication_with_direction('),
+      );
+      expect(native, contains('request.newest_first'));
     },
   );
 
@@ -597,7 +610,10 @@ void main() {
       expect(discovery, contains('Some(&permit)'));
       expect(discovery, contains('"chat1ManateeZone".to_owned()'));
       expect(discovery, isNot(contains('stream: String')));
-      expect(discovery, contains('maximum_changes,\n        true,'));
+      expect(
+        discovery,
+        contains('maximum_changes,\n        false,\n        true,'),
+      );
       expect(discovery, isNot(contains('cloud_sync_fetch_raw_page')));
       final native = File(
         'rust/src/cloud_sync_native_fetch.rs',

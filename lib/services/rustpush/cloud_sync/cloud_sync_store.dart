@@ -47,6 +47,7 @@ abstract interface class CloudSyncStore {
     required CloudCoordinatorLeaseFence leaseFence,
     required int expectedGeneration,
     required String? expectedFetchedToken,
+    CloudSyncFetchDirection? expectedFetchDirection,
   });
 
   /// Returns deterministic pending-journal usage for one full account scope.
@@ -72,6 +73,7 @@ abstract interface class CloudSyncStore {
     required CloudCoordinatorLeaseFence leaseFence,
     required int expectedGeneration,
     required String? expectedFetchedToken,
+    CloudSyncFetchDirection? expectedFetchDirection,
   });
 
   /// Persists pull backoff so a process restart cannot create a retry storm.

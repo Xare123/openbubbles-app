@@ -318,10 +318,7 @@ void main() {
           ),
         );
         await runV2(() => transport.quiesceNativeOperations());
-        expect(
-        await transport.releasePreparedSubmission(prepared),
-        isTrue,
-        );
+        expect(await transport.releasePreparedSubmission(prepared), isTrue);
         expect(bindings.releaseCalls, 1);
         await expectLater(
           runV2(
@@ -848,6 +845,7 @@ final class _ReleaseFakeBindings
     required int generation,
     required String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   }) => throw UnimplementedError();
 
   @override
@@ -860,6 +858,7 @@ final class _ReleaseFakeBindings
     required int generation,
     required String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   }) => throw UnimplementedError();
 
   @override

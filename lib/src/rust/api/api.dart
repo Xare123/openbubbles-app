@@ -618,6 +618,7 @@ Future<CloudSyncProtectedFetchResult> cloudSyncFetchProtectedPage({
   required BigInt generation,
   String? previousCheckpointReference,
   required int maximumChanges,
+  required bool newestFirst,
 }) => RustLib.instance.api.crateApiApiCloudSyncFetchProtectedPage(
   cloudMessagesClient: cloudMessagesClient,
   storageDirectory: storageDirectory,
@@ -626,6 +627,7 @@ Future<CloudSyncProtectedFetchResult> cloudSyncFetchProtectedPage({
   generation: generation,
   previousCheckpointReference: previousCheckpointReference,
   maximumChanges: maximumChanges,
+  newestFirst: newestFirst,
 );
 
 /// Fetches and protects one bounded semantic CloudKit page while holding a
@@ -642,6 +644,7 @@ cloudSyncFetchProtectedPageUnderWriterPause({
   required BigInt generation,
   String? previousCheckpointReference,
   required int maximumChanges,
+  required bool newestFirst,
 }) =>
     RustLib.instance.api.crateApiApiCloudSyncFetchProtectedPageUnderWriterPause(
       cloudMessagesClient: cloudMessagesClient,
@@ -652,6 +655,7 @@ cloudSyncFetchProtectedPageUnderWriterPause({
       generation: generation,
       previousCheckpointReference: previousCheckpointReference,
       maximumChanges: maximumChanges,
+      newestFirst: newestFirst,
     );
 
 /// Explicit raw-only discovery of the existing auxiliary Chat1 zone. This

@@ -22,6 +22,7 @@ abstract interface class CloudSyncTransport {
     required String? previousToken,
     required int generation,
     required int limit,
+    CloudSyncFetchDirection fetchDirection = CloudSyncFetchDirection.forward,
   });
 
   /// Must return one explicit outcome per attempted operation. An omitted,

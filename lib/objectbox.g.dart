@@ -1591,7 +1591,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(21, 4610418443336266937),
     name: 'CloudSyncCheckpointEntity',
-    lastPropertyId: const obx_int.IdUid(23, 8346271905819443021),
+    lastPropertyId: const obx_int.IdUid(24, 4160469815668187907),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1732,6 +1732,12 @@ final _entities = <obx_int.ModelEntity>[
       obx_int.ModelProperty(
         id: const obx_int.IdUid(23, 8346271905819443021),
         name: 'pendingBatchId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(24, 4160469815668187907),
+        name: 'fetchDirection',
         type: 9,
         flags: 0,
       ),
@@ -5599,7 +5605,10 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final pendingBatchIdOffset = object.pendingBatchId == null
                 ? null
                 : fbb.writeString(object.pendingBatchId!);
-            fbb.startTable(24);
+            final fetchDirectionOffset = object.fetchDirection == null
+                ? null
+                : fbb.writeString(object.fetchDirection!);
+            fbb.startTable(25);
             fbb.addInt64(0, object.id);
             fbb.addOffset(1, checkpointKeyOffset);
             fbb.addOffset(2, accountFingerprintOffset);
@@ -5623,6 +5632,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
             fbb.addOffset(20, persistenceLaneOffset);
             fbb.addOffset(21, pendingFetchedTokenCiphertextOffset);
             fbb.addOffset(22, pendingBatchIdOffset);
+            fbb.addOffset(23, fetchDirectionOffset);
             fbb.finish(fbb.endTable());
             return object.id;
           },
@@ -5662,6 +5672,9 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final persistenceLaneParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 44);
+            final fetchDirectionParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 50);
             final fetchedTokenCiphertextParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 18);
@@ -5737,6 +5750,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
               streamKind: streamKindParam,
               schemaVersion: schemaVersionParam,
               persistenceLane: persistenceLaneParam,
+              fetchDirection: fetchDirectionParam,
               fetchedTokenCiphertext: fetchedTokenCiphertextParam,
               pendingFetchedTokenCiphertext: pendingFetchedTokenCiphertextParam,
               pendingBatchId: pendingBatchIdParam,
@@ -9202,6 +9216,12 @@ class CloudSyncCheckpointEntity_ {
   static final pendingBatchId =
       obx.QueryStringProperty<CloudSyncCheckpointEntity>(
         _entities[12].properties[22],
+      );
+
+  /// See [CloudSyncCheckpointEntity.fetchDirection].
+  static final fetchDirection =
+      obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[23],
       );
 }
 

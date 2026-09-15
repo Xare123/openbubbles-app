@@ -418,6 +418,7 @@ void main() {
       expect(bindings.unboundFetchCalls, 1);
       expect(bindings.boundFetchCalls, 0);
       expect(bindings.previousCheckpointReference, _reference('O'));
+      expect(bindings.newestFirst, isFalse);
       expect(batch.batchId, _hash('B'));
       expect(batch.nextToken, _reference('N'));
       expect(batch.protectedPageLeaseReference, _lease('1'));
@@ -435,6 +436,29 @@ void main() {
       expect(change.preflightFailure, isNull);
     },
   );
+
+  test('forwards newest-first only through a semantic writer pause', () async {
+    bindings.fetchResult = _validEmptyFetchResult();
+    final boundTransport = NativeProtectedCloudSyncTransport(
+      cloudMessagesClient: Object(),
+      storageDirectory: 'private-storage',
+      protectedStoreIdentity: _storeIdentity,
+      nativeWriterPauseToken: BigInt.one,
+      bindings: bindings,
+    );
+
+    await boundTransport.fetchChanges(
+      _semanticScope(),
+      previousToken: null,
+      generation: 1,
+      limit: 1,
+      fetchDirection: CloudSyncFetchDirection.newestFirst,
+    );
+
+    expect(bindings.boundFetchCalls, 1);
+    expect(bindings.unboundFetchCalls, 0);
+    expect(bindings.newestFirst, isTrue);
+  });
 
   test(
     'forwards the exact native writer-pause capability to protected fetch',
@@ -592,6 +616,7 @@ void main() {
         generation: 3,
         previousCheckpointReference: _reference('N'),
         maximumChanges: 50,
+        newestFirst: false,
       );
 
       expect(result.failure?.safeCode, 'unknown');
@@ -628,6 +653,7 @@ void main() {
             generation: 1,
             previousCheckpointReference: null,
             maximumChanges: maximumChanges,
+            newestFirst: false,
           ),
           throwsA(
             isA<StateError>().having(
@@ -660,6 +686,7 @@ void main() {
           generation: 1,
           previousCheckpointReference: null,
           maximumChanges: 1,
+          newestFirst: false,
         ),
         throwsA(
           isA<StateError>().having(
@@ -685,6 +712,7 @@ void main() {
         generation: 1,
         previousCheckpointReference: null,
         maximumChanges: 50,
+        newestFirst: false,
       );
 
       expect(bridge.discoveryCalls, 0);
@@ -4698,6 +4726,7 @@ final class _FakeBindings
   String? stream;
   String? previousCheckpointReference;
   int? maximumChanges;
+  bool? newestFirst;
   List<String>? adoptedLeaseReferences;
   List<String>? liveReferences;
   bool? liveReferenceEnumerationComplete;
@@ -4739,6 +4768,7 @@ final class _FakeBindings
     required int generation,
     required String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   }) async {
     await _before('fetch');
     unboundFetchCalls++;
@@ -4747,6 +4777,7 @@ final class _FakeBindings
     this.stream = stream;
     this.previousCheckpointReference = previousCheckpointReference;
     this.maximumChanges = maximumChanges;
+    this.newestFirst = newestFirst;
     return fetchResult;
   }
 
@@ -4760,6 +4791,7 @@ final class _FakeBindings
     required int generation,
     required String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   }) async {
     await _before('fetch');
     boundFetchCalls++;
@@ -4768,6 +4800,7 @@ final class _FakeBindings
     this.stream = stream;
     this.previousCheckpointReference = previousCheckpointReference;
     this.maximumChanges = maximumChanges;
+    this.newestFirst = newestFirst;
     return fetchResult;
   }
 
@@ -5011,6 +5044,7 @@ final class _Chat1DiscoveryBridge implements RustLibApi {
     required BigInt generation,
     String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   }) async {
     ordinaryCalls++;
     _capture(
@@ -5036,6 +5070,7 @@ final class _Chat1DiscoveryBridge implements RustLibApi {
     required BigInt generation,
     String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   }) async {
     boundCalls++;
     _capture(

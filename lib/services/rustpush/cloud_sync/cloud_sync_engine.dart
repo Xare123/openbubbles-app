@@ -765,8 +765,10 @@ class CloudSyncEngine {
         await _renewCoordinatorLeaseOrThrow();
         if (_inboxApplier is CloudOwnWriterPrecisionBarrierRecovery) {
           await (_inboxApplier as CloudOwnWriterPrecisionBarrierRecovery)
-              .requeueOwnWriterPrecisionBarrier(scope,
-                leaseFence: _requireActiveLeaseFence());
+              .requeueOwnWriterPrecisionBarrier(
+                scope,
+                leaseFence: _requireActiveLeaseFence(),
+              );
         }
         final recovered = await _store.recoverRetainedInboxBarriers(
           scope,
@@ -1311,14 +1313,16 @@ class CloudSyncEngine {
       // The startup inbox pass already attempted the page. Keeping the old
       // token means refetching here would be unsafe and would only create a
       // duplicate page while its predecessor is retryable/deferred.
-      final hardQuarantine = _store is CloudQuarantinedInboxBarrierReader &&
+      final hardQuarantine =
+          _store is CloudQuarantinedInboxBarrierReader &&
           await (_store as CloudQuarantinedInboxBarrierReader)
               .hasQuarantinedInboxBarrier(scope);
       return _PullResult(
         fetched: 0,
         succeeded: false,
         failureCategory: hardQuarantine
-            ? CloudFailureCategory.conflict : CloudFailureCategory.dependency,
+            ? CloudFailureCategory.conflict
+            : CloudFailureCategory.dependency,
         failureSafeCode: 'checkpoint_pending_page_unresolved',
       );
     }
@@ -1378,6 +1382,7 @@ class CloudSyncEngine {
                 previousToken: checkpoint.fetchedToken,
                 generation: checkpoint.generation,
                 limit: fetchLimit,
+                fetchDirection: checkpoint.fetchDirection,
               )
               .timeout(
                 config.fetchOperationTimeout,
@@ -1537,6 +1542,7 @@ class CloudSyncEngine {
             leaseFence: leaseFence,
             expectedGeneration: checkpoint.generation,
             expectedFetchedToken: checkpoint.fetchedToken,
+            expectedFetchDirection: checkpoint.fetchDirection,
           );
           journalUsage = admission.usage;
           final blockReason = admission.blockReason;
@@ -1571,6 +1577,7 @@ class CloudSyncEngine {
             leaseFence: leaseFence,
             expectedGeneration: checkpoint.generation,
             expectedFetchedToken: checkpoint.fetchedToken,
+            expectedFetchDirection: checkpoint.fetchDirection,
           );
         }
       } catch (_) {

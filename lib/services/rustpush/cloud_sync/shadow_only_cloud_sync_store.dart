@@ -62,6 +62,7 @@ final class ShadowOnlyCloudSyncStore
     required CloudCoordinatorLeaseFence leaseFence,
     required int expectedGeneration,
     required String? expectedFetchedToken,
+    CloudSyncFetchDirection? expectedFetchDirection,
   }) => _delegate.journalShadowFetchedBatch(
     batch,
     now: now,
@@ -69,6 +70,7 @@ final class ShadowOnlyCloudSyncStore
     leaseFence: leaseFence,
     expectedGeneration: expectedGeneration,
     expectedFetchedToken: expectedFetchedToken,
+    expectedFetchDirection: expectedFetchDirection,
   );
 
   @override
@@ -130,6 +132,7 @@ final class ShadowOnlyCloudSyncStore
     required CloudCoordinatorLeaseFence leaseFence,
     required int expectedGeneration,
     required String? expectedFetchedToken,
+    CloudSyncFetchDirection? expectedFetchDirection,
   }) => _blocked();
 
   @override

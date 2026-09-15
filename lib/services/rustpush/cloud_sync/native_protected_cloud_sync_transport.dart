@@ -303,6 +303,7 @@ abstract interface class NativeProtectedCloudSyncBindings {
     required int generation,
     required String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   });
 
   Future<NativeProtectedFetchResult> fetchProtectedPageUnderWriterPause({
@@ -314,6 +315,7 @@ abstract interface class NativeProtectedCloudSyncBindings {
     required int generation,
     required String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   });
 
   Future<NativeProtectedLeaseResult> commitProtectedPageLease({
@@ -2304,6 +2306,7 @@ final class NativeProtectedCloudSyncTransport
     required String? previousToken,
     required int generation,
     required int limit,
+    CloudSyncFetchDirection fetchDirection = CloudSyncFetchDirection.forward,
   }) async {
     final stream = _validateScopeAndStream(scope);
     final pauseToken = _nativeWriterPauseToken;
@@ -2328,6 +2331,10 @@ final class NativeProtectedCloudSyncTransport
         );
       }
     }
+    if (fetchDirection == CloudSyncFetchDirection.newestFirst &&
+        pauseToken == null) {
+      throw _malformed('newest_first_requires_semantic_writer_pause');
+    }
     if (generation <= 0) {
       throw _malformed('invalid_generation');
     }
@@ -2350,6 +2357,7 @@ final class NativeProtectedCloudSyncTransport
           generation: generation,
           previousCheckpointReference: previousToken,
           maximumChanges: maximumChanges,
+          newestFirst: fetchDirection == CloudSyncFetchDirection.newestFirst,
         );
       }
       return _bindings.fetchProtectedPage(
@@ -2360,6 +2368,7 @@ final class NativeProtectedCloudSyncTransport
         generation: generation,
         previousCheckpointReference: previousToken,
         maximumChanges: maximumChanges,
+        newestFirst: fetchDirection == CloudSyncFetchDirection.newestFirst,
       );
     });
     final page = result.page;
@@ -3896,6 +3905,7 @@ final class FrbNativeProtectedCloudSyncBindings
     required int generation,
     required String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   }) async {
     final discoveryToken = _chat1DiscoveryWriterPauseToken;
     final frb_api.CloudSyncProtectedFetchResult result;
@@ -3908,9 +3918,11 @@ final class FrbNativeProtectedCloudSyncBindings
         generation: BigInt.from(generation),
         previousCheckpointReference: previousCheckpointReference,
         maximumChanges: maximumChanges,
+        newestFirst: newestFirst,
       );
     } else {
-      if (stream != 'chat1ManateeZone' ||
+      if (newestFirst ||
+          stream != 'chat1ManateeZone' ||
           maximumChanges <= 0 ||
           maximumChanges > 50) {
         throw StateError('cloud_sync_chat1_discovery_scope_invalid');
@@ -3944,6 +3956,7 @@ final class FrbNativeProtectedCloudSyncBindings
     required int generation,
     required String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   }) async {
     if (_chat1DiscoveryWriterPauseToken != null) {
       throw StateError('cloud_sync_chat1_discovery_semantic_fetch_forbidden');
@@ -3958,6 +3971,7 @@ final class FrbNativeProtectedCloudSyncBindings
           generation: BigInt.from(generation),
           previousCheckpointReference: previousCheckpointReference,
           maximumChanges: maximumChanges,
+          newestFirst: newestFirst,
         );
     return NativeProtectedFetchResult(
       page: result.page == null ? null : _pageFromFrb(result.page!),

@@ -3199,6 +3199,7 @@ fn wire__crate__api__api__cloud_sync_fetch_protected_page_impl(
             let api_generation = <u64>::sse_decode(&mut deserializer);
             let api_previous_checkpoint_reference = <Option<String>>::sse_decode(&mut deserializer);
             let api_maximum_changes = <u32>::sse_decode(&mut deserializer);
+            let api_newest_first = <bool>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, ()>(
@@ -3233,6 +3234,7 @@ fn wire__crate__api__api__cloud_sync_fetch_protected_page_impl(
                                 api_generation,
                                 api_previous_checkpoint_reference,
                                 api_maximum_changes,
+                                api_newest_first,
                             )
                             .await,
                         )?;
@@ -3278,6 +3280,7 @@ fn wire__crate__api__api__cloud_sync_fetch_protected_page_under_writer_pause_imp
             let api_generation = <u64>::sse_decode(&mut deserializer);
             let api_previous_checkpoint_reference = <Option<String>>::sse_decode(&mut deserializer);
             let api_maximum_changes = <u32>::sse_decode(&mut deserializer);
+            let api_newest_first = <bool>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, ()>(
@@ -3313,6 +3316,7 @@ fn wire__crate__api__api__cloud_sync_fetch_protected_page_under_writer_pause_imp
                                 api_generation,
                                 api_previous_checkpoint_reference,
                                 api_maximum_changes,
+                                api_newest_first,
                             )
                             .await,
                         )?;

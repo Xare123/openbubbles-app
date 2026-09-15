@@ -40,6 +40,14 @@ enum CloudSyncPersistenceLane {
   static const CloudSyncPersistenceLane semanticV2 = semantic;
 }
 
+/// Direction permanently bound to one durable CloudKit checkpoint.
+///
+/// Apple continuation tokens are directional. Changing this value after the
+/// first fetch can skip records or replay an unrelated part of the change
+/// stream, so stores must bind it before request one and preserve it across
+/// restart and rebootstrap.
+enum CloudSyncFetchDirection { forward, newestFirst }
+
 /// Account and CloudKit-zone boundary for every V2 record and operation.
 ///
 /// [accountFingerprint] must be a one-way, application-scoped fingerprint.
@@ -562,6 +570,7 @@ class CloudInboxEntry {
 class CloudSyncCheckpoint {
   CloudSyncCheckpoint({
     required this.scope,
+    this.fetchDirection = CloudSyncFetchDirection.forward,
     this.fetchedToken,
     this.generation = 1,
     this.lastBatchId,
@@ -593,6 +602,7 @@ class CloudSyncCheckpoint {
   }
 
   final CloudSyncScope scope;
+  final CloudSyncFetchDirection fetchDirection;
   final String? fetchedToken;
   final int generation;
   final String? lastBatchId;
@@ -616,6 +626,7 @@ class CloudSyncCheckpoint {
   final CloudFailureCategory? lastFailure;
 
   CloudSyncCheckpoint copyWith({
+    CloudSyncFetchDirection? fetchDirection,
     String? fetchedToken,
     bool clearFetchedToken = false,
     int? generation,
@@ -635,6 +646,7 @@ class CloudSyncCheckpoint {
   }) {
     return CloudSyncCheckpoint(
       scope: scope,
+      fetchDirection: fetchDirection ?? this.fetchDirection,
       fetchedToken: clearFetchedToken
           ? null
           : fetchedToken ?? this.fetchedToken,
@@ -1100,8 +1112,7 @@ class CloudOutboxCreateReceipt {
     final hasRawReference = protectedCurrentRawRecordReference != null;
     final hasRawLease = protectedCurrentRawRecordLeaseReference != null;
     final hasRawGeneration = rawGeneration != null;
-    if (hasRawReference != hasRawLease ||
-        hasRawReference != hasRawGeneration) {
+    if (hasRawReference != hasRawLease || hasRawReference != hasRawGeneration) {
       throw ArgumentError(
         'cloud_outbox_create_receipt_raw_capability_incomplete',
       );
@@ -1114,9 +1125,7 @@ class CloudOutboxCreateReceipt {
               protectedCurrentRawRecordLeaseReference!,
             ) ||
             rawGeneration! <= 0)) {
-      throw ArgumentError(
-        'cloud_outbox_create_receipt_raw_capability_invalid',
-      );
+      throw ArgumentError('cloud_outbox_create_receipt_raw_capability_invalid');
     }
   }
 

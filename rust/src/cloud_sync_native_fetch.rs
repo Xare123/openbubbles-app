@@ -2975,6 +2975,7 @@ pub(crate) struct CloudNativeFetchRequest<'a> {
     generation: u64,
     previous_checkpoint_reference: Option<&'a str>,
     maximum_changes: u32,
+    newest_first: bool,
 }
 
 impl<'a> CloudNativeFetchRequest<'a> {
@@ -2984,6 +2985,7 @@ impl<'a> CloudNativeFetchRequest<'a> {
         generation: u64,
         previous_checkpoint_reference: Option<&'a str>,
         maximum_changes: u32,
+        newest_first: bool,
     ) -> Self {
         Self {
             stream,
@@ -2991,6 +2993,7 @@ impl<'a> CloudNativeFetchRequest<'a> {
             generation,
             previous_checkpoint_reference,
             maximum_changes,
+            newest_first,
         }
     }
 }
@@ -3002,6 +3005,7 @@ impl Debug for CloudNativeFetchRequest<'_> {
             .field("stream", &self.stream)
             .field("generation", &self.generation)
             .field("maximum_changes", &self.maximum_changes)
+            .field("newest_first", &self.newest_first)
             .field(
                 "has_previous_checkpoint",
                 &self.previous_checkpoint_reference.is_some(),
@@ -4297,28 +4301,31 @@ async fn cloud_sync_fetch_protected_page_with_store(
         match (request.stream, read_authentication_permit) {
             (CloudNativeStream::Chats, Some(permit)) => {
                 cloud_messages_client
-                    .sync_chats_page_for_read_authentication(
+                    .sync_chats_page_for_read_authentication_with_direction(
                         permit,
                         continuation_token,
                         Some(request.maximum_changes),
+                        request.newest_first,
                     )
                     .await
             }
             (CloudNativeStream::Messages, Some(permit)) => {
                 cloud_messages_client
-                    .sync_messages_page_for_read_authentication(
+                    .sync_messages_page_for_read_authentication_with_direction(
                         permit,
                         continuation_token,
                         Some(request.maximum_changes),
+                        request.newest_first,
                     )
                     .await
             }
             (CloudNativeStream::Attachments, Some(permit)) => {
                 cloud_messages_client
-                    .sync_attachments_page_for_read_authentication(
+                    .sync_attachments_page_for_read_authentication_with_direction(
                         permit,
                         continuation_token,
                         Some(request.maximum_changes),
+                        request.newest_first,
                     )
                     .await
             }
@@ -4341,17 +4348,29 @@ async fn cloud_sync_fetch_protected_page_with_store(
             ) => unreachable!("permit-bound semantic stream was rejected before fetch"),
             (CloudNativeStream::Chats, None) => {
                 cloud_messages_client
-                    .sync_chats_page(continuation_token, Some(request.maximum_changes))
+                    .sync_chats_page_with_direction(
+                        continuation_token,
+                        Some(request.maximum_changes),
+                        request.newest_first,
+                    )
                     .await
             }
             (CloudNativeStream::Messages, None) => {
                 cloud_messages_client
-                    .sync_messages_page(continuation_token, Some(request.maximum_changes))
+                    .sync_messages_page_with_direction(
+                        continuation_token,
+                        Some(request.maximum_changes),
+                        request.newest_first,
+                    )
                     .await
             }
             (CloudNativeStream::Attachments, None) => {
                 cloud_messages_client
-                    .sync_attachments_page(continuation_token, Some(request.maximum_changes))
+                    .sync_attachments_page_with_direction(
+                        continuation_token,
+                        Some(request.maximum_changes),
+                        request.newest_first,
+                    )
                     .await
             }
             (CloudNativeStream::MessageUpdate, None) => {

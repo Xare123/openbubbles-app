@@ -7416,6 +7416,7 @@ pub async fn cloud_sync_windows_probe_message_feed(
         generation,
         Some(&checkpoint_reference),
         200,
+        false,
     );
     crate::cloud_sync_native_fetch::cloud_sync_windows_probe_feed(
         cloud_messages_client,
@@ -7440,6 +7441,7 @@ pub async fn cloud_sync_fetch_protected_page(
     generation: u64,
     previous_checkpoint_reference: Option<String>,
     maximum_changes: u32,
+    newest_first: bool,
 ) -> CloudSyncProtectedFetchResult {
     cloud_sync_fetch_protected_page_inner(
         cloud_messages_client,
@@ -7450,6 +7452,7 @@ pub async fn cloud_sync_fetch_protected_page(
         generation,
         previous_checkpoint_reference,
         maximum_changes,
+        newest_first,
         false,
     )
     .await
@@ -7469,6 +7472,7 @@ pub async fn cloud_sync_fetch_protected_page_under_writer_pause(
     generation: u64,
     previous_checkpoint_reference: Option<String>,
     maximum_changes: u32,
+    newest_first: bool,
 ) -> CloudSyncProtectedFetchResult {
     let permit = match acquire_cloudkit_read_authentication(native_writer_pause_token) {
         Ok(permit) => permit,
@@ -7491,6 +7495,7 @@ pub async fn cloud_sync_fetch_protected_page_under_writer_pause(
         generation,
         previous_checkpoint_reference,
         maximum_changes,
+        newest_first,
         false,
     )
     .await
@@ -7539,6 +7544,7 @@ pub async fn cloud_sync_fetch_protected_chat1_discovery_under_writer_pause(
         generation,
         previous_checkpoint_reference,
         maximum_changes,
+        false,
         true,
     )
     .await
@@ -7554,6 +7560,7 @@ async fn cloud_sync_fetch_protected_page_inner(
     generation: u64,
     previous_checkpoint_reference: Option<String>,
     maximum_changes: u32,
+    newest_first: bool,
     chat1_discovery: bool,
 ) -> CloudSyncProtectedFetchResult {
     use crate::cloud_sync_native_fetch::{
@@ -7570,6 +7577,22 @@ async fn cloud_sync_fetch_protected_page_inner(
             )),
         };
     };
+    if newest_first
+        && !matches!(
+            stream,
+            CloudNativeStream::Chats
+                | CloudNativeStream::Messages
+                | CloudNativeStream::Attachments
+        )
+    {
+        return CloudSyncProtectedFetchResult {
+            page: None,
+            failure: Some(local_cloud_sync_protected_failure(
+                CloudSyncProtectedFailureCategory::MalformedRecord,
+                CloudSyncProtectedSafeCode::InvalidRequest,
+            )),
+        };
+    }
     let auth =
         match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
             .await
@@ -7627,6 +7650,7 @@ async fn cloud_sync_fetch_protected_page_inner(
         generation,
         previous_checkpoint_reference.as_deref(),
         maximum_changes,
+        newest_first,
     );
     let outcome = if chat1_discovery {
         let Some(permit) = read_authentication_permit else {

@@ -282,6 +282,59 @@ void main() {
   }
 
   test(
+    'semantic V2 main-zone bootstrap keeps newest-first across continuation',
+    () async {
+      scope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintA,
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'messageManateeZone',
+        streamKind: CloudSyncStreamKind.messages,
+        schemaVersion: 2,
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+      );
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'newest-first-page-1',
+          generation: 1,
+          nextToken: 'newest-first-token-1',
+          hasMore: true,
+        ),
+      );
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(2)],
+          batchId: 'newest-first-page-2',
+          generation: 1,
+          nextToken: 'newest-first-token-2',
+          hasMore: false,
+        ),
+      );
+
+      await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+        maximumFetchPagesPerRun: 2,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(transport.observedFetchTokens, [null, 'newest-first-token-1']);
+      expect(transport.observedFetchDirections, [
+        CloudSyncFetchDirection.newestFirst,
+        CloudSyncFetchDirection.newestFirst,
+      ]);
+      expect(
+        (await store.readCheckpoint(scope)).fetchDirection,
+        CloudSyncFetchDirection.newestFirst,
+      );
+    },
+  );
+
+  test(
     'production create lane leaves conditional message updates pending',
     () async {
       scope = CloudSyncScope(
@@ -894,42 +947,85 @@ void main() {
   });
 
   for (final hard in [true, false]) {
-  test('pending head hard=$hard precedence over unrelated retained debt on restart', () async {
-    final barrierApplier = _RetainedProjectionEngineApplier(
-      onReproject: (scope, generation, leaseFence, limit) async {
-        final retained = (await store.inboxEntries(scope)).where(
-          (row) => row.status == CloudInboxStatus.retainedUnprojected).length;
-        return CloudRetainedProjectionResult(examined: retained, reprojected: 0,
-          retained: retained, hasRemaining: retained > 0);
-      });
-    transport.enqueueFetchBatch(CloudFetchBatch(scope: scope,
-      changes: [testChange(1), testChange(2)], batchId: 'retained-and-quarantined',
-      generation: 1, nextToken: 'blocked-token', hasMore: true));
-    barrierApplier.resultsBySequence[1] = const CloudInboxApplyResult.quarantined(
-      failureCategory: CloudFailureCategory.malformedRecord);
-    barrierApplier.resultsBySequence[2] = hard ? const CloudInboxApplyResult.quarantined(
-      failureCategory: CloudFailureCategory.conflict,
-      safeCode: 'canonical_message_edit_history_conflict')
-      : const CloudInboxApplyResult.deferred(failureCategory: CloudFailureCategory.dependency,
-          safeCode: 'semantic_parent_missing');
-    const flags = CloudSyncFeatureFlags(readOnlyFetch: true, semanticApply: true);
-    await engine(flags: flags, inboxApplierOverride: barrierApplier)
-        .synchronize(trigger: CloudSyncTrigger.manual);
-    final fetches = transport.fetchCallCount;
-    for (var i = 0; i < 2; i++) {
-      final result = await engine(flags: flags, coordinatorId: 'hard-barrier-$i',
-          maximumInboxEntriesPerRun: i == 0 ? 1 : 512,
-          inboxApplierOverride: barrierApplier)
-          .synchronize(trigger: CloudSyncTrigger.manual);
-      expect(result.failureCategory, hard ? CloudFailureCategory.conflict : CloudFailureCategory.dependency);
-      expect(result.failureSafeCode, hard ? 'checkpoint_pending_page_unresolved' : 'retained_projection_incomplete');
-      expect(result.counters.fetched, 0);
-      expect(result.counters.applied, 0);
-      expect(transport.fetchCallCount, fetches);
-      expect((await store.inboxEntries(scope)).last.status,
-        hard ? CloudInboxStatus.quarantined : CloudInboxStatus.pending);
-    }
-  });
+    test(
+      'pending head hard=$hard precedence over unrelated retained debt on restart',
+      () async {
+        final barrierApplier = _RetainedProjectionEngineApplier(
+          onReproject: (scope, generation, leaseFence, limit) async {
+            final retained = (await store.inboxEntries(scope))
+                .where(
+                  (row) => row.status == CloudInboxStatus.retainedUnprojected,
+                )
+                .length;
+            return CloudRetainedProjectionResult(
+              examined: retained,
+              reprojected: 0,
+              retained: retained,
+              hasRemaining: retained > 0,
+            );
+          },
+        );
+        transport.enqueueFetchBatch(
+          CloudFetchBatch(
+            scope: scope,
+            changes: [testChange(1), testChange(2)],
+            batchId: 'retained-and-quarantined',
+            generation: 1,
+            nextToken: 'blocked-token',
+            hasMore: true,
+          ),
+        );
+        barrierApplier.resultsBySequence[1] =
+            const CloudInboxApplyResult.quarantined(
+              failureCategory: CloudFailureCategory.malformedRecord,
+            );
+        barrierApplier.resultsBySequence[2] = hard
+            ? const CloudInboxApplyResult.quarantined(
+                failureCategory: CloudFailureCategory.conflict,
+                safeCode: 'canonical_message_edit_history_conflict',
+              )
+            : const CloudInboxApplyResult.deferred(
+                failureCategory: CloudFailureCategory.dependency,
+                safeCode: 'semantic_parent_missing',
+              );
+        const flags = CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        );
+        await engine(
+          flags: flags,
+          inboxApplierOverride: barrierApplier,
+        ).synchronize(trigger: CloudSyncTrigger.manual);
+        final fetches = transport.fetchCallCount;
+        for (var i = 0; i < 2; i++) {
+          final result = await engine(
+            flags: flags,
+            coordinatorId: 'hard-barrier-$i',
+            maximumInboxEntriesPerRun: i == 0 ? 1 : 512,
+            inboxApplierOverride: barrierApplier,
+          ).synchronize(trigger: CloudSyncTrigger.manual);
+          expect(
+            result.failureCategory,
+            hard
+                ? CloudFailureCategory.conflict
+                : CloudFailureCategory.dependency,
+          );
+          expect(
+            result.failureSafeCode,
+            hard
+                ? 'checkpoint_pending_page_unresolved'
+                : 'retained_projection_incomplete',
+          );
+          expect(result.counters.fetched, 0);
+          expect(result.counters.applied, 0);
+          expect(transport.fetchCallCount, fetches);
+          expect(
+            (await store.inboxEntries(scope)).last.status,
+            hard ? CloudInboxStatus.quarantined : CloudInboxStatus.pending,
+          );
+        }
+      },
+    );
   }
 
   test(
@@ -1021,7 +1117,10 @@ void main() {
       expect(result.retainedUnprojectedBacklog, 197);
       expect(result.failureSafeCode, 'retained_projection_incomplete');
       expect(result.observedEmptyTerminalRead, isFalse);
-      expect(applier.appliedSequences, List.generate(200, (index) => index + 1));
+      expect(
+        applier.appliedSequences,
+        List.generate(200, (index) => index + 1),
+      );
       final rows = await store.inboxEntries(scope);
       expect(rows, hasLength(200));
       expect(
@@ -5668,6 +5767,7 @@ class _CrashAfterFirstJournalStore extends InMemoryCloudSyncStore {
     required CloudCoordinatorLeaseFence leaseFence,
     required int expectedGeneration,
     required String? expectedFetchedToken,
+    CloudSyncFetchDirection? expectedFetchDirection,
   }) async {
     journalCallCount++;
     final inserted = await super.journalFetchedBatch(
@@ -5676,6 +5776,7 @@ class _CrashAfterFirstJournalStore extends InMemoryCloudSyncStore {
       leaseFence: leaseFence,
       expectedGeneration: expectedGeneration,
       expectedFetchedToken: expectedFetchedToken,
+      expectedFetchDirection: expectedFetchDirection,
     );
     if (journalCallCount == 1) {
       throw StateError('simulated_process_crash_after_page_one_journal');

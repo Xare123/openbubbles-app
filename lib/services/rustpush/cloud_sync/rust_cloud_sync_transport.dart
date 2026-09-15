@@ -160,7 +160,14 @@ final class RustCloudSyncTransport implements CloudSyncTransport {
     required String? previousToken,
     required int generation,
     required int limit,
+    CloudSyncFetchDirection fetchDirection = CloudSyncFetchDirection.forward,
   }) async {
+    if (fetchDirection != CloudSyncFetchDirection.forward) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.cancelled,
+        safeCode: 'newest_first_requires_native_protected_transport',
+      );
+    }
     final stream = _streamForScope(scope);
     final token = _decodeToken(previousToken);
     final result = await _bindings.fetchRawPage(

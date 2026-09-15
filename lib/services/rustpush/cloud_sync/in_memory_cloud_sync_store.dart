@@ -36,9 +36,13 @@ class InMemoryCloudSyncStore
   Future<bool> hasQuarantinedInboxBarrier(CloudSyncScope scope) =>
       _lock.synchronized(() async {
         final generation = _checkpoint(scope).generation;
-        for (final row in _inbox[scope.storageKey]?.values ?? <CloudInboxEntry>[]) {
-          if (row.generation != generation || row.status == CloudInboxStatus.applied ||
-              row.status == CloudInboxStatus.retainedUnprojected) { continue; }
+        for (final row
+            in _inbox[scope.storageKey]?.values ?? <CloudInboxEntry>[]) {
+          if (row.generation != generation ||
+              row.status == CloudInboxStatus.applied ||
+              row.status == CloudInboxStatus.retainedUnprojected) {
+            continue;
+          }
           return row.status == CloudInboxStatus.quarantined;
         }
         return false;
@@ -114,6 +118,7 @@ class InMemoryCloudSyncStore
     required CloudCoordinatorLeaseFence leaseFence,
     required int expectedGeneration,
     required String? expectedFetchedToken,
+    CloudSyncFetchDirection? expectedFetchDirection,
   }) {
     return _lock.synchronized(() async {
       _requireCommitFenceLocked(
@@ -121,6 +126,7 @@ class InMemoryCloudSyncStore
         leaseFence: leaseFence,
         expectedGeneration: expectedGeneration,
         expectedFetchedToken: expectedFetchedToken,
+        expectedFetchDirection: expectedFetchDirection,
         now: now,
       );
       return _journalFetchedBatchLocked(batch, now: now);
@@ -146,6 +152,7 @@ class InMemoryCloudSyncStore
     required CloudCoordinatorLeaseFence leaseFence,
     required int expectedGeneration,
     required String? expectedFetchedToken,
+    CloudSyncFetchDirection? expectedFetchDirection,
   }) {
     budget.validate();
     return _lock.synchronized(() async {
@@ -154,6 +161,7 @@ class InMemoryCloudSyncStore
         leaseFence: leaseFence,
         expectedGeneration: expectedGeneration,
         expectedFetchedToken: expectedFetchedToken,
+        expectedFetchDirection: expectedFetchDirection,
         now: now,
       );
       _requireGeneration(batch, checkpoint);
@@ -1575,6 +1583,7 @@ class InMemoryCloudSyncStore
     required CloudCoordinatorLeaseFence leaseFence,
     required int expectedGeneration,
     required String? expectedFetchedToken,
+    CloudSyncFetchDirection? expectedFetchDirection,
     required DateTime now,
   }) {
     final checkpoint = _checkpoint(scope);
@@ -1584,6 +1593,13 @@ class InMemoryCloudSyncStore
       throw CloudSyncFailure(
         category: CloudFailureCategory.localStorage,
         safeCode: 'checkpoint_compare_and_swap_failed',
+      );
+    }
+    if (expectedFetchDirection != null &&
+        checkpoint.fetchDirection != expectedFetchDirection) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'checkpoint_fetch_direction_changed',
       );
     }
     return checkpoint;
@@ -1643,9 +1659,26 @@ class InMemoryCloudSyncStore
   CloudSyncCheckpoint _checkpoint(CloudSyncScope scope) {
     return _checkpoints.putIfAbsent(
       scope.storageKey,
-      () => CloudSyncCheckpoint(scope: scope),
+      () => CloudSyncCheckpoint(
+        scope: scope,
+        fetchDirection: _initialFetchDirection(scope),
+      ),
     );
   }
+
+  CloudSyncFetchDirection _initialFetchDirection(CloudSyncScope scope) =>
+      scope.container == 'com.apple.messages.cloud' &&
+          scope.database == 'private' &&
+          scope.streamKind == CloudSyncStreamKind.messages &&
+          scope.schemaVersion == 2 &&
+          scope.persistenceLane == CloudSyncPersistenceLane.semanticV2 &&
+          const <String>{
+            'chatManateeZone',
+            'messageManateeZone',
+            'attachmentManateeZone',
+          }.contains(scope.zone)
+      ? CloudSyncFetchDirection.newestFirst
+      : CloudSyncFetchDirection.forward;
 
   bool _hasUnmarkedPendingInbox(
     CloudSyncScope scope,

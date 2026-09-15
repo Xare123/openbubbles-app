@@ -387,6 +387,7 @@ abstract class RustLibApi extends BaseApi {
     required BigInt generation,
     String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   });
 
   Future<CloudSyncProtectedFetchResult>
@@ -399,6 +400,7 @@ abstract class RustLibApi extends BaseApi {
     required BigInt generation,
     String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   });
 
   Future<CloudSyncRawFetchResult> crateApiApiCloudSyncFetchRawPage({
@@ -4422,6 +4424,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required BigInt generation,
     String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -4437,6 +4440,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_u_64(generation, serializer);
           sse_encode_opt_String(previousCheckpointReference, serializer);
           sse_encode_u_32(maximumChanges, serializer);
+          sse_encode_bool(newestFirst, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -4457,6 +4461,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           generation,
           previousCheckpointReference,
           maximumChanges,
+          newestFirst,
         ],
         apiImpl: this,
       ),
@@ -4474,6 +4479,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "generation",
           "previousCheckpointReference",
           "maximumChanges",
+          "newestFirst",
         ],
       );
 
@@ -4488,6 +4494,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required BigInt generation,
     String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -4504,6 +4511,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_u_64(generation, serializer);
           sse_encode_opt_String(previousCheckpointReference, serializer);
           sse_encode_u_32(maximumChanges, serializer);
+          sse_encode_bool(newestFirst, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -4526,6 +4534,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           generation,
           previousCheckpointReference,
           maximumChanges,
+          newestFirst,
         ],
         apiImpl: this,
       ),
@@ -4545,6 +4554,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "generation",
           "previousCheckpointReference",
           "maximumChanges",
+          "newestFirst",
         ],
       );
 

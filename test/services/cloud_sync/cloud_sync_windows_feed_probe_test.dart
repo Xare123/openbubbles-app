@@ -91,6 +91,7 @@ void main() {
       expect(source, isNot(contains(forbidden)));
     }
     expect(source, contains('cloudSyncFetchProtectedPageUnderWriterPause('));
+    expect(source, contains('newestFirst: false'));
     expect(source, contains('cloudSyncRollbackProtectedPageLease('));
     expect(
       source,

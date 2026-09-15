@@ -46,11 +46,10 @@ void main() {
     }
   });
 
-  Future<T> runV2<T>(Future<T> Function() action) =>
-      CloudKitOperationInterlock(
-        privateStorageDirectory: interlockDirectory.path,
-        fenceStore: InMemoryCloudSyncStore(),
-      ).runExclusive(kind: CloudKitOperationKind.v2ReadWrite, action: action);
+  Future<T> runV2<T>(Future<T> Function() action) => CloudKitOperationInterlock(
+    privateStorageDirectory: interlockDirectory.path,
+    fenceStore: InMemoryCloudSyncStore(),
+  ).runExclusive(kind: CloudKitOperationKind.v2ReadWrite, action: action);
 
   frb_api.CloudSyncNativeSendReceiptContext parentContext() =>
       frb_api.CloudSyncNativeSendReceiptContext(
@@ -93,78 +92,81 @@ void main() {
     );
   }
 
-  test('staging forwards the exact source receipt context and headers', () async {
-    stageSuccess();
-    final transport = buildTransport();
-    expect(
-      transport,
-      isA<CloudSyncOutboundAttachmentParentStagingTransport>(),
-    );
-    final context = parentContext();
-    final headers = _FakeCloudMessage();
-    final staged = await runV2(
-      () => transport.stageOutboundAttachmentParent(
-        scope,
-        messageHeaders: headers,
-        context: context,
-      ),
-    );
-    expect(staged.protectedEnvelopeReference, _reference('P'));
-    expect(staged.leaseReference, _lease('a'));
-    expect(bindings.parentStageCalls, 1);
-    expect(bindings.stageCalls, 0);
-    expect(identical(bindings.parentContext, context), isTrue);
-    expect(identical(bindings.parentHeaders, headers), isTrue);
-    expect(bindings.parentStorageDirectory, 'private-storage');
-    expect(bindings.parentAccountFingerprint, scope.accountFingerprint);
-    expect(bindings.parentStoreIdentity, _storeIdentity);
-  });
-
-  test('staging rejects a context bound to another account, store, or directory',
-      () async {
-    stageSuccess();
-    final transport = buildTransport();
-    final exact = parentContext();
-    final wrongAccount = frb_api.CloudSyncNativeSendReceiptContext(
-      storageDirectory: exact.storageDirectory,
-      guidHash: exact.guidHash,
-      accountFingerprint: _hash('Z'),
-      protectedStoreIdentity: exact.protectedStoreIdentity,
-      nativeSessionId: exact.nativeSessionId,
-    );
-    final wrongStore = frb_api.CloudSyncNativeSendReceiptContext(
-      storageDirectory: exact.storageDirectory,
-      guidHash: exact.guidHash,
-      accountFingerprint: exact.accountFingerprint,
-      protectedStoreIdentity: 'obcs2.store.${_hash('Z')}',
-      nativeSessionId: exact.nativeSessionId,
-    );
-    final wrongDirectory = frb_api.CloudSyncNativeSendReceiptContext(
-      storageDirectory: 'elsewhere',
-      guidHash: exact.guidHash,
-      accountFingerprint: exact.accountFingerprint,
-      protectedStoreIdentity: exact.protectedStoreIdentity,
-      nativeSessionId: exact.nativeSessionId,
-    );
-    for (final context in [wrongAccount, wrongStore, wrongDirectory]) {
-      await expectLater(
-        runV2(
-          () => transport.stageOutboundAttachmentParent(
-            scope,
-            messageHeaders: _FakeCloudMessage(),
-            context: context,
-          ),
-        ),
-        throwsA(isA<CloudSyncFailure>()),
+  test(
+    'staging forwards the exact source receipt context and headers',
+    () async {
+      stageSuccess();
+      final transport = buildTransport();
+      expect(
+        transport,
+        isA<CloudSyncOutboundAttachmentParentStagingTransport>(),
       );
-    }
-    expect(bindings.parentStageCalls, 0);
-  });
+      final context = parentContext();
+      final headers = _FakeCloudMessage();
+      final staged = await runV2(
+        () => transport.stageOutboundAttachmentParent(
+          scope,
+          messageHeaders: headers,
+          context: context,
+        ),
+      );
+      expect(staged.protectedEnvelopeReference, _reference('P'));
+      expect(staged.leaseReference, _lease('a'));
+      expect(bindings.parentStageCalls, 1);
+      expect(bindings.stageCalls, 0);
+      expect(identical(bindings.parentContext, context), isTrue);
+      expect(identical(bindings.parentHeaders, headers), isTrue);
+      expect(bindings.parentStorageDirectory, 'private-storage');
+      expect(bindings.parentAccountFingerprint, scope.accountFingerprint);
+      expect(bindings.parentStoreIdentity, _storeIdentity);
+    },
+  );
+
+  test(
+    'staging rejects a context bound to another account, store, or directory',
+    () async {
+      stageSuccess();
+      final transport = buildTransport();
+      final exact = parentContext();
+      final wrongAccount = frb_api.CloudSyncNativeSendReceiptContext(
+        storageDirectory: exact.storageDirectory,
+        guidHash: exact.guidHash,
+        accountFingerprint: _hash('Z'),
+        protectedStoreIdentity: exact.protectedStoreIdentity,
+        nativeSessionId: exact.nativeSessionId,
+      );
+      final wrongStore = frb_api.CloudSyncNativeSendReceiptContext(
+        storageDirectory: exact.storageDirectory,
+        guidHash: exact.guidHash,
+        accountFingerprint: exact.accountFingerprint,
+        protectedStoreIdentity: 'obcs2.store.${_hash('Z')}',
+        nativeSessionId: exact.nativeSessionId,
+      );
+      final wrongDirectory = frb_api.CloudSyncNativeSendReceiptContext(
+        storageDirectory: 'elsewhere',
+        guidHash: exact.guidHash,
+        accountFingerprint: exact.accountFingerprint,
+        protectedStoreIdentity: exact.protectedStoreIdentity,
+        nativeSessionId: exact.nativeSessionId,
+      );
+      for (final context in [wrongAccount, wrongStore, wrongDirectory]) {
+        await expectLater(
+          runV2(
+            () => transport.stageOutboundAttachmentParent(
+              scope,
+              messageHeaders: _FakeCloudMessage(),
+              context: context,
+            ),
+          ),
+          throwsA(isA<CloudSyncFailure>()),
+        );
+      }
+      expect(bindings.parentStageCalls, 0);
+    },
+  );
 
   test('Message-only bindings cannot stage an attachment parent', () async {
-    final transport = buildTransport(
-      overrideBindings: _MessageOnlyBindings(),
-    );
+    final transport = buildTransport(overrideBindings: _MessageOnlyBindings());
     await expectLater(
       runV2(
         () => transport.stageOutboundAttachmentParent(
@@ -208,38 +210,40 @@ void main() {
     expect(bindings.parentGroupProof, isNull);
   });
 
-  test('prepare and reconcile preserve the journal-supplied parent context',
-      () async {
-    reconcileAbsent();
-    final context = parentContext();
-    final seenScopes = <CloudSyncScope>[];
-    final seenOperationIds = <String>[];
-    final transport = buildTransport(
-      reader: (readScope, operationId) {
-        seenScopes.add(readScope);
-        seenOperationIds.add(operationId);
-        return context;
-      },
-    );
-    final operation = _messageOperation(scope);
-    await runV2(
-      () => transport.prepareSubmission(
-        scope,
-        submissionIdentity: _submissionIdentity(operation.operationId),
-        operations: [_protectedWriteOperation(operation)],
-      ),
-    );
-    expect(seenScopes, [scope]);
-    expect(seenOperationIds, [operation.operationId]);
-    expect(bindings.reconcileCalls, 1);
-    expect(bindings.prepareCalls, 1);
-    expect(bindings.reconcileInput!.attachmentParentContext, context);
-    expect(bindings.preparedInputs.single.attachmentParentContext, context);
-    expect(
-      bindings.preparedInputs.single.localOperationId,
-      operation.operationId,
-    );
-  });
+  test(
+    'prepare and reconcile preserve the journal-supplied parent context',
+    () async {
+      reconcileAbsent();
+      final context = parentContext();
+      final seenScopes = <CloudSyncScope>[];
+      final seenOperationIds = <String>[];
+      final transport = buildTransport(
+        reader: (readScope, operationId) {
+          seenScopes.add(readScope);
+          seenOperationIds.add(operationId);
+          return context;
+        },
+      );
+      final operation = _messageOperation(scope);
+      await runV2(
+        () => transport.prepareSubmission(
+          scope,
+          submissionIdentity: _submissionIdentity(operation.operationId),
+          operations: [_protectedWriteOperation(operation)],
+        ),
+      );
+      expect(seenScopes, [scope]);
+      expect(seenOperationIds, [operation.operationId]);
+      expect(bindings.reconcileCalls, 1);
+      expect(bindings.prepareCalls, 1);
+      expect(bindings.reconcileInput!.attachmentParentContext, context);
+      expect(bindings.preparedInputs.single.attachmentParentContext, context);
+      expect(
+        bindings.preparedInputs.single.localOperationId,
+        operation.operationId,
+      );
+    },
+  );
 
   test('prepare and reconcile attach the reopened group proof', () async {
     reconcileAbsent();
@@ -262,9 +266,15 @@ void main() {
       ),
     );
     expect(proofInvocations, 1);
-    expect(identical(bindings.reconcileInput!.attachmentParentGroupProof, proof), isTrue);
     expect(
-      identical(bindings.preparedInputs.single.attachmentParentGroupProof, proof),
+      identical(bindings.reconcileInput!.attachmentParentGroupProof, proof),
+      isTrue,
+    );
+    expect(
+      identical(
+        bindings.preparedInputs.single.attachmentParentGroupProof,
+        proof,
+      ),
       isTrue,
     );
   });
@@ -386,45 +396,48 @@ void main() {
     expect(bindings.reconcileCalls, 1);
     expect(bindings.prepareCalls, 0);
     expect(bindings.reconcileInput!.attachmentParentContext, context);
-    expect(
-      bindings.reconcileInput!.localOperationId,
-      operation.operationId,
-    );
+    expect(bindings.reconcileInput!.localOperationId, operation.operationId);
   });
 
-  test('post-restart readback reopens the group proof without caching', () async {
-    bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
-      disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
-      protectedProofReference: _reference('P'),
-      serverRecordIdHash: _hash('S'),
-      etagHash: _hash('E'),
-    );
-    final context = parentContext();
-    final proof = _FakeGroupProof();
-    var proofInvocations = 0;
-    final transport = buildTransport(
-      reader: (readScope, operationId) => context,
-      proofReader: (readScope, operationId) async {
-        proofInvocations++;
-        return proof;
-      },
-    );
-    final operation = _confirmedMessageOperation(scope);
-    await runV2(
-      () => transport.verifyConfirmedMessageCreateNoSave(
-        scope,
-        operation: operation,
-      ),
-    );
-    await runV2(
-      () => transport.verifyConfirmedMessageCreateNoSave(
-        scope,
-        operation: operation,
-      ),
-    );
-    expect(proofInvocations, 2);
-    expect(identical(bindings.reconcileInput!.attachmentParentGroupProof, proof), isTrue);
-  });
+  test(
+    'post-restart readback reopens the group proof without caching',
+    () async {
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: _reference('P'),
+        serverRecordIdHash: _hash('S'),
+        etagHash: _hash('E'),
+      );
+      final context = parentContext();
+      final proof = _FakeGroupProof();
+      var proofInvocations = 0;
+      final transport = buildTransport(
+        reader: (readScope, operationId) => context,
+        proofReader: (readScope, operationId) async {
+          proofInvocations++;
+          return proof;
+        },
+      );
+      final operation = _confirmedMessageOperation(scope);
+      await runV2(
+        () => transport.verifyConfirmedMessageCreateNoSave(
+          scope,
+          operation: operation,
+        ),
+      );
+      await runV2(
+        () => transport.verifyConfirmedMessageCreateNoSave(
+          scope,
+          operation: operation,
+        ),
+      );
+      expect(proofInvocations, 2);
+      expect(
+        identical(bindings.reconcileInput!.attachmentParentGroupProof, proof),
+        isTrue,
+      );
+    },
+  );
 
   test('Chat and Attachment prepares never consult the proof opener', () async {
     reconcileAbsent();
@@ -478,53 +491,59 @@ void main() {
     expect(bindings.preparedInputs.single.attachmentParentContext, isNull);
   });
 
-  test('Chat and Attachment prepares never consult the parent callback',
-      () async {
-    reconcileAbsent();
-    var callbackInvocations = 0;
-    final transport = buildTransport(
-      reader: (readScope, operationId) {
-        callbackInvocations++;
-        return parentContext();
-      },
-    );
-    final chatScope = _semanticScope(zone: 'chatManateeZone');
-    final chatOperation = _chatOperation(chatScope);
-    await runV2(
-      () => transport.prepareSubmission(
-        chatScope,
-        submissionIdentity: _submissionIdentity(chatOperation.operationId),
-        operations: [_protectedWriteOperation(chatOperation)],
-      ),
-    );
-    final attachmentScope = _semanticScope(zone: 'attachmentManateeZone');
-    final attachmentOperation = _attachmentOperation(attachmentScope);
-    await runV2(
-      () => transport.prepareSubmission(
-        attachmentScope,
-        submissionIdentity: _submissionIdentity(
-          attachmentOperation.operationId,
+  test(
+    'Chat and Attachment prepares never consult the parent callback',
+    () async {
+      reconcileAbsent();
+      var callbackInvocations = 0;
+      final transport = buildTransport(
+        reader: (readScope, operationId) {
+          callbackInvocations++;
+          return parentContext();
+        },
+      );
+      final chatScope = _semanticScope(zone: 'chatManateeZone');
+      final chatOperation = _chatOperation(chatScope);
+      await runV2(
+        () => transport.prepareSubmission(
+          chatScope,
+          submissionIdentity: _submissionIdentity(chatOperation.operationId),
+          operations: [_protectedWriteOperation(chatOperation)],
         ),
-        operations: [_protectedWriteOperation(attachmentOperation)],
-      ),
-    );
-    expect(callbackInvocations, 0);
-    expect(bindings.chatReconcileCalls, 1);
-    expect(bindings.chatPrepareCalls, 1);
-    expect(bindings.attachmentReconcileCalls, 1);
-    expect(bindings.attachmentPrepareCalls, 1);
-    expect(bindings.chatReconcileInput!.attachmentParentContext, isNull);
-    expect(
-      bindings.chatPreparedInputs.single.attachmentParentContext,
-      isNull,
-    );
-    expect(bindings.attachmentReconcileInput!.attachmentParentContext, isNull);
-    expect(
-      bindings.attachmentPreparedInputs.single.attachmentParentContext,
-      isNull,
-    );
-  });
+      );
+      final attachmentScope = _semanticScope(zone: 'attachmentManateeZone');
+      final attachmentOperation = _attachmentOperation(attachmentScope);
+      await runV2(
+        () => transport.prepareSubmission(
+          attachmentScope,
+          submissionIdentity: _submissionIdentity(
+            attachmentOperation.operationId,
+          ),
+          operations: [_protectedWriteOperation(attachmentOperation)],
+        ),
+      );
+      expect(callbackInvocations, 0);
+      expect(bindings.chatReconcileCalls, 1);
+      expect(bindings.chatPrepareCalls, 1);
+      expect(bindings.attachmentReconcileCalls, 1);
+      expect(bindings.attachmentPrepareCalls, 1);
+      expect(bindings.chatReconcileInput!.attachmentParentContext, isNull);
+      expect(
+        bindings.chatPreparedInputs.single.attachmentParentContext,
+        isNull,
+      );
+      expect(
+        bindings.attachmentReconcileInput!.attachmentParentContext,
+        isNull,
+      );
+      expect(
+        bindings.attachmentPreparedInputs.single.attachmentParentContext,
+        isNull,
+      );
+    },
+  );
 }
+
 CloudSyncScope _messageScope() => CloudSyncScope(
   accountFingerprint: _hash('A'),
   container: 'com.apple.messages.cloud',
@@ -710,6 +729,7 @@ final class _MessageOnlyBindings
     required int generation,
     required String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   }) => throw UnimplementedError();
 
   @override
@@ -722,6 +742,7 @@ final class _MessageOnlyBindings
     required int generation,
     required String? previousCheckpointReference,
     required int maximumChanges,
+    required bool newestFirst,
   }) => throw UnimplementedError();
 
   @override
@@ -831,14 +852,13 @@ final class _ParentBindings extends _MessageOnlyBindings
   String? parentStoreIdentity;
 
   frb_api.CloudSyncPreparedMessageCreateInput? reconcileInput;
-  List<frb_api.CloudSyncPreparedMessageCreateInput> preparedInputs =
-      const [];
+  List<frb_api.CloudSyncPreparedMessageCreateInput> preparedInputs = const [];
   frb_api.CloudSyncPreparedMessageCreateInput? chatReconcileInput;
   List<frb_api.CloudSyncPreparedMessageCreateInput> chatPreparedInputs =
       const [];
   frb_api.CloudSyncPreparedMessageCreateInput? attachmentReconcileInput;
-  List<frb_api.CloudSyncPreparedMessageCreateInput>
-  attachmentPreparedInputs = const [];
+  List<frb_api.CloudSyncPreparedMessageCreateInput> attachmentPreparedInputs =
+      const [];
 
   @override
   Future<frb_api.CloudSyncProtectedOutboundStageResult>
@@ -974,8 +994,7 @@ final class _ParentBindings extends _MessageOnlyBindings
   }
 
   @override
-  Future<frb_api.CloudSyncPreparedMessageCreateResult>
-  prepareAttachmentCreate({
+  Future<frb_api.CloudSyncPreparedMessageCreateResult> prepareAttachmentCreate({
     required Object cloudMessagesClient,
     required String storageDirectory,
     required String expectedAccountFingerprint,
