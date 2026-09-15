@@ -71,6 +71,69 @@ void main() {
   });
 
   test(
+    'native body-size record survives reopen without changing original size or schema',
+    () async {
+      final initial = metadata();
+      await store.create(initial);
+      final streaming = initial.beginStreaming(
+        activeGeneration: 3,
+        protectedTempReference: 'protected-source',
+        protectedResumeManifestReference: 'protected-source',
+        now: now,
+      );
+      expect(
+        await store.compareAndSwap(expected: initial, next: streaming),
+        isTrue,
+      );
+      final verified = streaming.recordNativeCompletion(
+        activeGeneration: 3,
+        completeVerifiedBytes: 25,
+        protectedSourceReference: 'protected-source',
+        now: now,
+      );
+      expect(
+        await store.compareAndSwap(expected: streaming, next: verified),
+        isTrue,
+      );
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      store = ObjectBoxCloudAttachmentMaterializationStore(store: objectBox);
+      final restored = (await store.read(
+        scope: scope,
+        generation: 3,
+        logicalEntityKeyHash: 'attachment-key-hash',
+      ))!;
+      expect(restored.expectedBytes, 10);
+      expect(restored.verifiedBytes, 25);
+      expect(restored.hasVerifiedNativeBodySize, isTrue);
+      expect(
+        restored
+            .recoveryPlan(
+              activeGeneration: 3,
+              temporaryFileBytes: 25,
+              finalFileExists: false,
+            )
+            .resumeOffset,
+        25,
+      );
+      final row = objectBox
+          .box<CloudAttachmentMaterializationEntity>()
+          .getAll()
+          .single;
+      row.verifiedBytes = 26;
+      objectBox.box<CloudAttachmentMaterializationEntity>().put(row);
+      await expectLater(
+        store.read(
+          scope: scope,
+          generation: 3,
+          logicalEntityKeyHash: 'attachment-key-hash',
+        ),
+        throwsA(isA<CloudAttachmentMaterializationFailure>()),
+      );
+    },
+  );
+
+  test(
     'stale compare-and-swap cannot overwrite a newer verified boundary',
     () async {
       final initial = metadata();

@@ -101,7 +101,9 @@ class AttachmentsService extends GetxService {
       return PlatformFile(
         name: safeAttachmentTransferName(attachment),
         path: pathName,
-        size: attachment.totalBytes ?? 0,
+        // The local body can be a different Apple media representation than
+        // the original history metadata. Report the bytes actually on disk.
+        size: File(pathName).lengthSync(),
       );
     } else if (autoDownload ?? ss.settings.autoDownload.value) {
       return attachmentDownloader.getOrStartDownload(attachment, onComplete: onComplete);

@@ -50,7 +50,8 @@ const MAX_ATTACHMENT_BYTES: u64 = 512 * 1024 * 1024;
 const ATTACHMENT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const ATTACHMENT_DIRECTORY_NAME: &str = ".attachment-materialization";
 const NATIVE_STORE_DIRECTORY_NAME: &str = "cloud_sync_v2_native_store";
-const CACHE_MANIFEST_VERSION: &str = "obcs2-attachment-cache-v2";
+const CACHE_MANIFEST_VERSION: &str = "obcs2-attachment-cache-v3";
+const MAX_VERIFIED_BODY_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_CACHE_MANIFEST_BYTES: u64 = 512;
 const MAX_STALE_PARTIAL_SCAN: usize = 256;
 const STALE_PARTIAL_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -138,6 +139,7 @@ struct SharedFileWriterState {
     file: File,
     maximum_bytes: u64,
     remaining_bytes: u64,
+    extent_admitted: bool,
 }
 
 #[derive(Debug)]
@@ -175,6 +177,7 @@ impl SharedFileWriter {
                 file,
                 maximum_bytes,
                 remaining_bytes: maximum_bytes,
+                extent_admitted: false,
             })),
         }
     }
@@ -186,6 +189,51 @@ impl SharedFileWriter {
             .file
             .sync_all()
     }
+
+    fn admit_verified_extent(
+        &self,
+        proof: Option<rustpush::mmcs::VerifiedPlaintextLength>,
+    ) -> Result<(), PushError> {
+        self.admit_extent_bytes(proof.map(|proof| proof.bytes()))
+    }
+
+    fn admit_extent_bytes(&self, proof: Option<u64>) -> Result<(), PushError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| PushError::VerificationFailed)?;
+        if state.extent_admitted || state.remaining_bytes != state.maximum_bytes {
+            return Err(PushError::VerificationFailed);
+        }
+        // Missing Ford proof preserves the original metadata bound. Only the
+        // opaque proof minted after authenticated Ford decode may change it.
+        let bytes = proof.unwrap_or(state.maximum_bytes);
+        if bytes == 0 || bytes > MAX_VERIFIED_BODY_BYTES {
+            return Err(PushError::VerificationFailed);
+        }
+        if bytes != state.maximum_bytes {
+            log::warn!(
+                "CloudKit authenticated body extent differs from metadata declared={} verified={}",
+                state.maximum_bytes,
+                bytes
+            );
+        }
+        state.maximum_bytes = bytes;
+        state.remaining_bytes = bytes;
+        state.extent_admitted = true;
+        Ok(())
+    }
+
+    fn completed_extent(&self) -> Result<u64, CloudNativeAttachmentMaterializationFailure> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| CloudNativeAttachmentMaterializationFailure::LocalStorage)?;
+        if !state.extent_admitted || state.remaining_bytes != 0 {
+            return Err(CloudNativeAttachmentMaterializationFailure::SizeMismatch);
+        }
+        Ok(state.maximum_bytes)
+    }
 }
 
 impl Write for SharedFileWriter {
@@ -194,6 +242,9 @@ impl Write for SharedFileWriter {
             .state
             .lock()
             .map_err(|_| io::Error::other("attachment_writer_lock"))?;
+        if !state.extent_admitted {
+            return Err(io::Error::other("attachment_extent_not_admitted"));
+        }
         let requested =
             u64::try_from(buffer.len()).map_err(|_| state.size_limit_error(u64::MAX))?;
         if requested > state.remaining_bytes {
@@ -763,6 +814,7 @@ fn sha256_file(path: &Path) -> Result<String, CloudNativeAttachmentMaterializati
 
 fn source_version_hash(request: &CloudNativeAttachmentMaterializationRequest) -> String {
     let mut hasher = Sha256::new();
+    hasher.update(b"cloud-attachment-verified-extent-v3\x1f");
     let generation = request.generation.to_string();
     let server_modified_at = request
         .expected_server_modified_at_millis
@@ -790,6 +842,30 @@ fn source_version_hash(request: &CloudNativeAttachmentMaterializationRequest) ->
 
 fn cache_manifest(source_version_hash: &str, body_sha256: &str, expected_bytes: u64) -> String {
     format!("{CACHE_MANIFEST_VERSION}\n{source_version_hash}\n{body_sha256}\n{expected_bytes}\n")
+}
+
+/// A v3 cache manifest binds the verified body extent to the exact source
+/// version (whose digest still includes the declared cm.tb metadata). Full
+/// body hashing and placement verification happen in verify_cached_body.
+fn cached_verified_extent(manifest_path: &Path, source_version_hash: &str) -> Option<u64> {
+    let metadata = fs::symlink_metadata(manifest_path).ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > MAX_CACHE_MANIFEST_BYTES {
+        return None;
+    }
+    let text = fs::read_to_string(manifest_path).ok()?;
+    let fields = text.lines().collect::<Vec<_>>();
+    if fields.len() != 4
+        || fields[0] != CACHE_MANIFEST_VERSION
+        || fields[1] != source_version_hash
+        || !is_lower_hex_sha256(fields[2])
+    {
+        return None;
+    }
+    let bytes = fields[3].parse::<u64>().ok()?;
+    if bytes == 0 || bytes > MAX_VERIFIED_BODY_BYTES || fields[3] != bytes.to_string() {
+        return None;
+    }
+    Some(bytes)
 }
 
 fn verify_cached_body(
@@ -1305,11 +1381,13 @@ async fn cloud_sync_materialize_attachment_body_inner(
     );
     let final_path = root.join(format!("{cache_stem}.body"));
     let final_manifest_path = root.join(format!("{cache_stem}.manifest"));
+    let cached_extent = cached_verified_extent(&final_manifest_path, &source_version_hash)
+        .unwrap_or(request.expected_bytes);
     if let Some(bytes) = reuse_or_recover_cached_body(
         &final_path,
         &final_manifest_path,
         &source_version_hash,
-        request.expected_bytes,
+        cached_extent,
         &application_documents_directory,
         &canonical_guid,
         &transfer_name,
@@ -1331,9 +1409,9 @@ async fn cloud_sync_materialize_attachment_body_inner(
     let mut temporary_guard = TemporaryAttachmentFile::new(temporary_path.clone());
     let mut temporary_manifest_guard =
         TemporaryAttachmentFile::new(temporary_manifest_path.clone());
-    // Even if malformed MMCS metadata evades an upstream size check, the
-    // native destination refuses the first byte that would exceed the size
-    // authenticated by the canonical attachment projection.
+    // Begin with cm.tb as the bound. The exact selected Ford manifest may
+    // replace it once, after authentication and before the first data write.
+    // CloudKit Asset.size alone never changes this limit.
     let writer = SharedFileWriter::new(temporary_file, request.expected_bytes);
 
     // MMCS verifies every encrypted chunk before writing it. Some old MMCS
@@ -1350,6 +1428,7 @@ async fn cloud_sync_materialize_attachment_body_inner(
             record_name,
             expected_record_etag,
             writer.clone(),
+            |proof| writer.admit_verified_extent(proof),
         ),
     )
     .catch_unwind();
@@ -1371,6 +1450,7 @@ async fn cloud_sync_materialize_attachment_body_inner(
     writer
         .sync_all()
         .map_err(|_| CloudNativeAttachmentMaterializationFailure::LocalStorage)?;
+    let verified_extent = writer.completed_extent()?;
     drop(writer);
 
     let bytes = verify_or_place_temp(
@@ -1379,7 +1459,7 @@ async fn cloud_sync_materialize_attachment_body_inner(
         &final_path,
         &final_manifest_path,
         &source_version_hash,
-        request.expected_bytes,
+        verified_extent,
     )?;
     temporary_guard.commit();
     temporary_manifest_guard.commit();
@@ -1388,7 +1468,7 @@ async fn cloud_sync_materialize_attachment_body_inner(
         &canonical_guid,
         &transfer_name,
         &final_path,
-        request.expected_bytes,
+        verified_extent,
     );
     let cleanup = remove_completed_cache_pair(&final_path, &final_manifest_path);
     placement?;
@@ -1798,6 +1878,7 @@ mod tests {
             .open(&temporary)
             .unwrap();
         let mut writer = SharedFileWriter::new(temporary_file, 4);
+        writer.admit_verified_extent(None).unwrap();
         writer.write_all(&[1_u8, 2, 3, 4]).unwrap();
         writer.sync_all().unwrap();
         drop(writer);
@@ -1908,6 +1989,7 @@ mod tests {
             .unwrap();
         let mut writer = SharedFileWriter::new(file, 3);
 
+        writer.admit_verified_extent(None).unwrap();
         writer.write_all(&[1_u8, 2, 3]).unwrap();
         let error = PushError::IoError(writer.write_all(&[4_u8]).unwrap_err());
         assert_eq!(
@@ -1953,6 +2035,80 @@ mod tests {
             download_failure_diagnostic(&error),
             "size:limit,maximum=8,written=2,incoming=7"
         );
+    }
+
+    #[test]
+    fn body_extent_is_admitted_once_before_writes_and_completion_is_exact() {
+        let directory = tempdir().unwrap();
+        let file = File::create(directory.path().join("extent.body")).unwrap();
+        let mut writer = SharedFileWriter::new(file, 2);
+        assert!(writer.write_all(&[1]).is_err());
+        assert_eq!(
+            writer.completed_extent(),
+            Err(CloudNativeAttachmentMaterializationFailure::SizeMismatch)
+        );
+        assert!(writer
+            .admit_extent_bytes(Some(MAX_VERIFIED_BODY_BYTES + 1))
+            .is_err());
+        assert!(writer.admit_extent_bytes(Some(0)).is_err());
+        writer.admit_extent_bytes(Some(5)).unwrap();
+        assert!(writer.admit_extent_bytes(Some(6)).is_err());
+        writer.write_all(&[1, 2, 3]).unwrap();
+        assert_eq!(
+            writer.completed_extent(),
+            Err(CloudNativeAttachmentMaterializationFailure::SizeMismatch)
+        );
+        writer.write_all(&[4, 5]).unwrap();
+        assert_eq!(writer.completed_extent(), Ok(5));
+        assert!(writer.write_all(&[6]).is_err());
+        writer.sync_all().unwrap();
+        assert_eq!(
+            fs::read(directory.path().join("extent.body")).unwrap(),
+            vec![1, 2, 3, 4, 5]
+        );
+    }
+
+    #[test]
+    fn verified_extent_cache_reuses_same_source_body_and_rejects_old_or_changed_manifests() {
+        let directory = tempdir().unwrap();
+        let body = directory.path().join("body");
+        let manifest = directory.path().join("manifest");
+        fs::write(&body, [1, 2, 3, 4, 5]).unwrap();
+        let hash = sha256_file(&body).unwrap();
+        fs::write(
+            &manifest,
+            cache_manifest("bound-original-metadata", &hash, 5),
+        )
+        .unwrap();
+        assert_eq!(
+            cached_verified_extent(&manifest, "bound-original-metadata"),
+            Some(5)
+        );
+        assert_eq!(
+            verify_cached_body(&body, &manifest, "bound-original-metadata", 5),
+            Ok(Some(5))
+        );
+        assert_eq!(cached_verified_extent(&manifest, "another-source"), None);
+        fs::write(&body, [9, 2, 3, 4, 5]).unwrap();
+        assert_eq!(
+            verify_cached_body(&body, &manifest, "bound-original-metadata", 5),
+            Err(CloudNativeAttachmentMaterializationFailure::IntegrityMismatch)
+        );
+        for invalid in [
+            format!("obcs2-attachment-cache-v2\nbound-original-metadata\n{hash}\n5\n"),
+            cache_manifest(
+                "bound-original-metadata",
+                &hash,
+                MAX_VERIFIED_BODY_BYTES + 1,
+            ),
+            cache_manifest("bound-original-metadata", &hash, 0),
+        ] {
+            fs::write(&manifest, invalid).unwrap();
+            assert_eq!(
+                cached_verified_extent(&manifest, "bound-original-metadata"),
+                None
+            );
+        }
     }
 
     #[test]

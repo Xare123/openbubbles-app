@@ -24,6 +24,95 @@ void main() {
       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
   test(
+    'native-verified body length can differ from original metadata and replays unchanged',
+    () async {
+      final store = _MemoryStore();
+      final native = _Native(
+        const CloudAttachmentBodyNativeResult.completed(2302773),
+      );
+      Future<CloudAttachmentBodyMaterializationResult> run(
+        _Native binding,
+      ) =>
+          _materializer(
+            store: store,
+            native: binding,
+            readAuth: () async => auth,
+          ).materialize(
+            authSnapshot: auth,
+            nativeWriterPauseToken: pauseToken,
+            storageDirectory: 'C:/private-storage',
+            applicationDocumentsDirectory: 'C:/private-documents',
+            source: source,
+            logicalEntityKeyHash: logicalHash,
+            expectedCanonicalGuidSha256: expectedCanonicalGuidSha256,
+            expectedBytes: 1048576,
+          );
+      final first = await run(native);
+      expect(first.verifiedBytes, 2302773);
+      expect(first.alreadyReferenced, isFalse);
+      final completed = store.onlyValue!;
+      expect(completed.expectedBytes, 1048576);
+      expect(completed.hasVerifiedNativeBodySize, isTrue);
+      expect(completed.materializedBytes, 2302773);
+      final repeated = await run(native);
+      expect(repeated.alreadyReferenced, isTrue);
+      expect(native.calls, 2);
+      expect(identical(store.onlyValue, completed), isTrue);
+      await expectLater(
+        run(_Native(const CloudAttachmentBodyNativeResult.completed(2302774))),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (e) => e.safeCode,
+            'safeCode',
+            'cloud_attachment_source_conflict',
+          ),
+        ),
+      );
+      expect(identical(store.onlyValue, completed), isTrue);
+    },
+  );
+
+  for (final invalidSize in [
+    0,
+    CloudAttachmentMaterialization.maximumVerifiedBytes + 1,
+  ]) {
+    test('rejects unbounded or empty native completion $invalidSize', () async {
+      final store = _MemoryStore();
+      final native = _Native(
+        CloudAttachmentBodyNativeResult.completed(invalidSize),
+      );
+      await expectLater(
+        _materializer(
+          store: store,
+          native: native,
+          readAuth: () async => auth,
+        ).materialize(
+          authSnapshot: auth,
+          nativeWriterPauseToken: pauseToken,
+          storageDirectory: 'C:/private-storage',
+          applicationDocumentsDirectory: 'C:/private-documents',
+          source: source,
+          logicalEntityKeyHash: logicalHash,
+          expectedCanonicalGuidSha256: expectedCanonicalGuidSha256,
+          expectedBytes: 12,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (e) => e.safeCode,
+            'safeCode',
+            'cloud_attachment_size_mismatch',
+          ),
+        ),
+      );
+      expect(
+        store.onlyValue!.stage,
+        CloudAttachmentMaterializationStage.tempStreaming,
+      );
+      expect(store.onlyValue!.verifiedBytes, 0);
+    });
+  }
+
+  test(
     'native success advances only through the durable materialization states',
     () async {
       final store = _MemoryStore();

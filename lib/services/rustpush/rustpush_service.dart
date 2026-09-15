@@ -1018,7 +1018,7 @@ class RustPushBackend implements BackendService {
           result.body.verifiedBytes,
           result.body.verifiedBytes,
         );
-        return attachment.getFile();
+        return PlatformFile(name: attachment.transferName!, path: file.path, size: result.body.verifiedBytes);
       }
       if (result is CloudAttachmentDownloadUnavailable) {
         throw CloudSyncFailure(

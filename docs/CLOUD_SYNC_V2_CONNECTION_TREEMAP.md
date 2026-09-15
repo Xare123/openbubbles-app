@@ -65,7 +65,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Find My live boundary | Exact retained Windows launch `1bed3346c9374c3b81f402075da59746` used the signed `7d38f1dd8` runtime and completed fresh People and Devices service reads. People returned one uniquely selected row but no native location; the service marked that row opted out of sharing and supplied no coordinate or locate-in-progress signal. Devices returned zero rows. Items were deliberately not invoked because their initialization side effects are not yet reviewed. The UI is not discarding coordinates in this capture; the native response contains none. Commit `d13d88797` repairs test provenance and makes the offline qualifier accept only the exact verified successful launcher envelope; 54 qualifier, 11 preflight, launcher and Flutter contract tests pass. |
 | Current native qualification | Windows 34779665447 passed fccca0bb5 / pilot 5fd8d03fe: 151 selected Rust tests, 658 Dart tests, 51 packaged-DLL codec cases. Parent verified 53 source inputs/12 logs/three ARM64 binaries; signed DLL `501f40e89d6268d52cd7e678a21b669d8952ca18c0421fba31ed1d0b2bb90e3f`. Local 51 codec and 24 harness tests passed; later date-shape harness has 25 passing tests. App Control remains enabled; vendor ObjectBox unchanged. |
 | Next integration | The exact-source foreground pull, bounded Android background wake and controlled cold-restart incremental read are terminal with Apple cursors drained, authentication ready, outbox 1 -> 1 and remote writes disabled. Next qualify profile Regular/Turbo status, cancellation and lock/reconnect. If registration remains healthy, run one authorized ordinary-composer send, exact CloudKit readback, restart/no-duplicate replay and representative media/document checks on this same installed hash. |
-| Current source changes | Reply attachment overflow is reproduced and repaired; Profile and developer sync share the prepared, tracked read flow. The progress card adds elapsed time, separate average rates and external-reader activity. Seventy focused Flutter tests passed; the final status-copy revision passed all eight widget cases again. Native bounded-writer size failures now have a typed diagnostic candidate awaiting cloud tests. No replacement APK is installed. |
+| Current source changes | Committed `ee9bf7c7e` repairs reply overflow and shared sync progress. GitHub Rust validation 34999813864 passed 683 app, 308 rustpush, 11 Anisette and 40 protector tests; Windows host 35000180863 also passed. The next candidate handles the verified HEIC metadata/body size disagreement using authenticated Ford lengths, with 80 focused Flutter cases passing. Native integration tests and live media validation remain. No replacement APK is installed. |
 | Latest full Canary qualification | GCE 34983806715 completed successfully in 33m02s on exact source `78d0f8cf2`: every selected suite passed, the producer and signed APK artifacts were uploaded, Android JVM tests passed, GitHub-hosted signing passed, and cleanup deleted the ephemeral runner. Independent post-run inventories found zero GCE instances and no matching self-hosted runner registration. This establishes build/test/signing integrity, not Pixel lifecycle or end-user behavior. |
 | Current artifact boundary | The exact signed APK is retained at `build-evidence/gce-full-78d0f-34983806715/app-canary-debug.apk`, independently verified and installed in place on Canary. Preserve the installed app and retained database. This is not authorization for a clean install, data clear, checkpoint reset or Alpha change. |
 | Current qualified runtime | Source `4e7121a18e8c011ae5472831111af86a61280178`, pilot 5fd8d03fe: Windows 34782347926 passed 153 selected native / 658 Dart / 51 DLL-codec tests. Parent verified 53 inputs/12 logs/three ARM64 PEs, separately signed DLL `80f97298fad435f53b30cd4dc2b0479e3f350fb47136e644673b3a052d08b3c8`, and passed 51 local codec + 25 harness tests. GCE 34782416330 passed all 631 Rust tests and completed cleanup. No active build or new APK. |
@@ -426,8 +426,8 @@ CloudKit readback or independent Apple-device display.
    under current epoch 18; do not weaken owner checks or relabel their outcome.
 5. Keep the now-live-proven `07e58fd0b` Windows chain unchanged: parent, edit
    and unsend completed, and the new-process unsend replay submitted zero work.
-6. Finish the active exact signed `78d0f8cf2` Pixel semantic pull and reconcile
-   its terminal report. Then qualify ordinary composer, background/lock/reconnect,
+6. The exact signed `78d0f8cf2` Pixel pull and cold-restart follow-up completed.
+   Fix the proven media-size mismatch, then qualify ordinary composer, background/lock/reconnect,
    process death, independent client display, legible text and representative
    media/documents. Preserve Alpha and do not reset the current checkpoints.
 7. Keep the implemented newest-first fresh bootstrap unchanged: direction is
@@ -614,7 +614,7 @@ CloudKit readback or independent Apple-device display.
   will not resurrect a removed conversation; retaining an orphan is safer than
   misrouting it.
 
-### September 15 media/UI checkpoint and tooling pause
+### September 15 media/UI and authenticated body size
 
 - The real reply layout reproduces the reported 58-pixel failed-photo overflow
   (106 pixels at double text scale). Download/error prompts now grow naturally;
@@ -637,22 +637,36 @@ CloudKit readback or independent Apple-device display.
   change, all eight card widget tests passed again. Analysis has zero errors,
   five existing Profile warnings and 14 pre-existing lint/deprecation infos.
   Rust formatting/parsing passed; native execution has not run for this change.
-- Safe tooling pause requested by the OpenCodex repair task. It established
-  that child 429s are local OpenCodex 2.55.0 root-budget rejections before
-  provider contact. Wait for its explicit 2.56.0-live notice, then test one
-  fresh Muse Contributor child and one fresh Luna child with bounded read-only
-  shell work. Report actual output and IDs back to task
-  `01a0687b-43f0-7a22-999f-260c60ae3d42` before resuming normal delegation.
-  Both attempted children are closed with no produced code. Session deletion
-  is unsupported; protected transcripts are retained. No build is running;
-  GCE and GitHub runner inventories were empty. C: has 37.5 GiB free.
-- At the tooling-pause handoff the existing Pixel reader was active again,
-  with authentication ready and outbox settled. It runs on the phone and may
-  finish while the proxy restarts. Do not force-stop or launch a second read;
-  inspect its terminal status/report after the tooling live notice.
-- Resume by reviewing this candidate diff, running the native test lane on
-  GCE and qualifying the combined candidate before a new Pixel installation.
-  The installed `78d0f8cf2` and its read/restart evidence stay separately pinned.
+- OpenCodex 2.56.0 is live. Native Muse/Luna children each executed a read-only
+  shell marker with exit 0 and PowerShell 7.5.4; actual tool outputs were
+  independently reviewed and sent to the repair task. Delegation works again.
+- Stable Pixel database copy `device-evidence/20260915-mmcs-size-check` proves
+  the failed HEIC has one resolved source, declared/canonical size 1,048,576,
+  and streaming state without completed bytes. The same-time native asset
+  descriptor reports 2,302,773. Three successful nearby transfers have equal
+  declared/body sizes. No pipeline 1-MiB clamp exists; cm.tb is not a reliable
+  exact size for every stored media representation.
+- The candidate uses a private-constructor native length proof from the exact
+  selected AES-SIV-decrypted Ford entries. Lengths count repeated references,
+  require matching keys and retain per-chunk and 512-MiB total limits. The
+  callback admits the body extent once before any data write; no-Ford keeps
+  the metadata limit. Final byte count and hash are exact. Cache v3 binds the
+  body extent to the unchanged source digest; original cm.tb stays unchanged.
+- Dart stores completed native bytes separately using its existing versioned
+  verification-reference field. No ObjectBox schema migration is introduced.
+  Restart requires consistent source and body evidence; the UI reports actual
+  downloaded bytes. Local tests pass 39 state/materializer/coordinator and 41
+  source/adapter/file cases; focused analysis and sensitive-log scan pass.
+  Native candidate `c43760e` is committed in the rustpush fork and integrated
+  into the app checkout, but has not yet passed compiled qualification.
+- GCE free credits are exhausted: no paid GCE starts without renewed user
+  approval. Before this restriction, three VM starts failed with regional
+  resource exhaustion; all cleanup completed with zero instances/runners.
+  Use GitHub-hosted native validation and Windows fast-loop builds. Do not
+  create duplicate runs by pushing both feature and trusted-source branches.
+- The installed `78d0f8cf2` stays pinned. Latest Pixel report
+  `obcs2-semantic-1789492100550617.json` has remote head drained, fetched/applied
+  0/0, retained 8,502 and outbox 1 -> 1, with authentication ready after release.
 
 ## Current ownership and continuation rules
 

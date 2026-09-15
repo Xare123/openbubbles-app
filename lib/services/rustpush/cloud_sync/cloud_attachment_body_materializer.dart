@@ -185,7 +185,9 @@ final class CloudAttachmentBodyMaterializer {
     if (!nativeResult.completed) {
       throw _nativeFailure(nativeResult.failure!);
     }
-    if (nativeResult.verifiedBytes != expectedBytes) {
+    if (nativeResult.verifiedBytes <= 0 ||
+        nativeResult.verifiedBytes >
+            CloudAttachmentMaterialization.maximumVerifiedBytes) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.malformedRecord,
         safeCode: 'cloud_attachment_size_mismatch',
@@ -206,6 +208,7 @@ final class CloudAttachmentBodyMaterializer {
     state = await _advanceToReferenced(
       state,
       source.change.encryptedPayloadReference!,
+      nativeResult.verifiedBytes,
     );
     return CloudAttachmentBodyMaterializationResult(
       verifiedBytes: state.verifiedBytes,
@@ -279,27 +282,24 @@ final class CloudAttachmentBodyMaterializer {
   Future<CloudAttachmentMaterialization> _advanceToReferenced(
     CloudAttachmentMaterialization state,
     String protectedSourceReference,
+    int completeVerifiedBytes,
   ) async {
     var current = state;
     if (current.stage == CloudAttachmentMaterializationStage.tempStreaming) {
       current = await _compareAndSwapUntilApplied(
         current,
-        (value) => value.recordVerifiedBoundary(
+        (value) => value.recordNativeCompletion(
           activeGeneration: value.generation,
-          cumulativeVerifiedBytes: value.expectedBytes,
-          protectedResumeManifestReference: protectedSourceReference,
+          completeVerifiedBytes: completeVerifiedBytes,
+          protectedSourceReference: protectedSourceReference,
           now: _clock().toUtc(),
         ),
       );
     }
-    if (current.stage == CloudAttachmentMaterializationStage.tempStreaming) {
-      current = await _compareAndSwapUntilApplied(
-        current,
-        (value) => value.markContentVerified(
-          activeGeneration: value.generation,
-          protectedContentVerificationReference: protectedSourceReference,
-          now: _clock().toUtc(),
-        ),
+    if (current.verifiedBytes != completeVerifiedBytes) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'cloud_attachment_source_conflict',
       );
     }
     if (current.stage == CloudAttachmentMaterializationStage.contentVerified) {
@@ -419,12 +419,23 @@ final class CloudAttachmentBodyMaterializer {
     final references = <String?>[
       state.protectedTempReference,
       state.protectedResumeManifestReference,
-      state.protectedContentVerificationReference,
       state.protectedFinalReference,
     ];
-    if (references.any(
-      (reference) => reference != null && reference != protectedSourceReference,
-    )) {
+    final contentReference = state.protectedContentVerificationReference;
+    final contentMatches =
+        contentReference == null ||
+        contentReference == protectedSourceReference ||
+        (state.hasVerifiedNativeBodySize &&
+            contentReference ==
+                CloudAttachmentMaterialization.nativeBodyReference(
+                  protectedSourceReference,
+                  state.verifiedBytes,
+                ));
+    if (!contentMatches ||
+        references.any(
+          (reference) =>
+              reference != null && reference != protectedSourceReference,
+        )) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.conflict,
         safeCode: 'cloud_attachment_source_conflict',

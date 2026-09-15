@@ -40,6 +40,16 @@ void main() {
     expect(isUsableDownloadedAttachmentFile(file.path), isTrue);
   });
 
+  test('downloaded file size follows the body without rewriting history metadata', () async {
+    final file = File('${root.path}/representation.bin');
+    await file.writeAsBytes(<int>[1, 2, 3, 4, 5]);
+    final attachment = Attachment(guid: 'size-proof-file', transferName: 'photo.heic', totalBytes: 2);
+    final content = AttachmentsService().getContent(attachment, path: file.path, autoDownload: false) as PlatformFile;
+    expect(content.size, 5);
+    expect(content.path, file.path);
+    expect(attachment.totalBytes, 2);
+  });
+
   test('CloudKit metadata fallbacks remain usable in the gallery', () {
     expect(
       safeAttachmentTransferName(Attachment(transferName: 'photo.jpg', guid: 'attachment-1')),

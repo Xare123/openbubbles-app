@@ -63,6 +63,21 @@ final class CloudAttachmentRecoveryPlan {
 /// can resume from a complete native-verified chunk boundary without trusting
 /// an arbitrary partial tail.
 final class CloudAttachmentMaterialization {
+  static const int maximumVerifiedBytes = 512 * 1024 * 1024;
+  static const String _nativeBodyReferencePrefix = 'native-body-size-v1:';
+
+  static String nativeBodyReference(String protectedSource, int bytes) =>
+      '$_nativeBodyReferencePrefix$bytes:$protectedSource';
+
+  bool get hasVerifiedNativeBodySize =>
+      verifiedBytes > 0 &&
+      verifiedBytes <= maximumVerifiedBytes &&
+      protectedTempReference != null &&
+      protectedContentVerificationReference ==
+          nativeBodyReference(protectedTempReference!, verifiedBytes);
+
+  int get materializedBytes =>
+      hasVerifiedNativeBodySize ? verifiedBytes : expectedBytes;
   CloudAttachmentMaterialization.metadata({
     required this.scope,
     required this.generation,
@@ -131,6 +146,10 @@ final class CloudAttachmentMaterialization {
   final int generation;
   final String logicalEntityKeyHash;
   final int expectedBytes;
+
+  // expectedBytes is the original cm.tb metadata, kept for source identity.
+  // After native verification, verifiedBytes describes the authenticated body,
+  // which can be a different representation of that attachment.
 
   /// Keyed digest of the native integrity tag, never the MMCS signature itself.
   final String expectedIntegrityTagHash;
@@ -234,6 +253,47 @@ final class CloudAttachmentMaterialization {
     );
   }
 
+  /// Called only after native has authenticated the complete selected media
+  /// body, placed it, and the caller has rechecked the same account. It is not
+  /// a streaming offset or a new expected-size claim from caller metadata.
+  CloudAttachmentMaterialization recordNativeCompletion({
+    required int activeGeneration,
+    required int completeVerifiedBytes,
+    required String protectedSourceReference,
+    required DateTime now,
+  }) {
+    _requireGeneration(activeGeneration);
+    _requireProtectedReference(protectedSourceReference);
+    if (completeVerifiedBytes <= 0 ||
+        completeVerifiedBytes > maximumVerifiedBytes ||
+        protectedTempReference != protectedSourceReference ||
+        protectedResumeManifestReference != protectedSourceReference) {
+      throw const CloudAttachmentMaterializationFailure(
+        CloudAttachmentMaterializationFailureCode.invalidBoundary,
+      );
+    }
+    if (stage.index >=
+        CloudAttachmentMaterializationStage.contentVerified.index) {
+      if (verifiedBytes == completeVerifiedBytes &&
+          (hasVerifiedNativeBodySize || verifiedBytes == expectedBytes)) {
+        return this;
+      }
+      throw const CloudAttachmentMaterializationFailure(
+        CloudAttachmentMaterializationFailureCode.sizeMismatch,
+      );
+    }
+    _requireStage(CloudAttachmentMaterializationStage.tempStreaming);
+    return _copy(
+      stage: CloudAttachmentMaterializationStage.contentVerified,
+      verifiedBytes: completeVerifiedBytes,
+      protectedContentVerificationReference: nativeBodyReference(
+        protectedSourceReference,
+        completeVerifiedBytes,
+      ),
+      updatedAt: now,
+    );
+  }
+
   CloudAttachmentMaterialization markFilePlaced({
     required int activeGeneration,
     required String protectedFinalReference,
@@ -289,10 +349,10 @@ final class CloudAttachmentMaterialization {
         temporaryFileBytes,
       ),
       CloudAttachmentMaterializationStage.contentVerified =>
-        temporaryFileBytes == expectedBytes
+        temporaryFileBytes == materializedBytes
             ? CloudAttachmentRecoveryPlan(
                 action: CloudAttachmentRecoveryAction.verifyThenPlace,
-                resumeOffset: expectedBytes,
+                resumeOffset: materializedBytes,
               )
             : const CloudAttachmentRecoveryPlan(
                 action: CloudAttachmentRecoveryAction.startFromZero,
@@ -303,12 +363,12 @@ final class CloudAttachmentMaterialization {
         finalFileExists
             ? CloudAttachmentRecoveryPlan(
                 action: CloudAttachmentRecoveryAction.referencePlacedFile,
-                resumeOffset: expectedBytes,
+                resumeOffset: materializedBytes,
               )
-            : temporaryFileBytes == expectedBytes
+            : temporaryFileBytes == materializedBytes
             ? CloudAttachmentRecoveryPlan(
                 action: CloudAttachmentRecoveryAction.verifyThenPlace,
-                resumeOffset: expectedBytes,
+                resumeOffset: materializedBytes,
               )
             : const CloudAttachmentRecoveryPlan(
                 action: CloudAttachmentRecoveryAction.startFromZero,
@@ -318,7 +378,7 @@ final class CloudAttachmentMaterialization {
       CloudAttachmentMaterializationStage.referenced =>
         CloudAttachmentRecoveryPlan(
           action: CloudAttachmentRecoveryAction.complete,
-          resumeOffset: expectedBytes,
+          resumeOffset: materializedBytes,
         ),
     };
   }
@@ -384,7 +444,8 @@ final class CloudAttachmentMaterialization {
 
   void _validateRestored() {
     _validateBase();
-    if (verifiedBytes < 0 || verifiedBytes > expectedBytes) {
+    if (verifiedBytes < 0 ||
+        (verifiedBytes > expectedBytes && !hasVerifiedNativeBodySize)) {
       throw const CloudAttachmentMaterializationFailure(
         CloudAttachmentMaterializationFailureCode.invalidBoundary,
       );
@@ -401,6 +462,11 @@ final class CloudAttachmentMaterialization {
           );
         }
       case CloudAttachmentMaterializationStage.tempStreaming:
+        if (verifiedBytes > expectedBytes) {
+          throw const CloudAttachmentMaterializationFailure(
+            CloudAttachmentMaterializationFailureCode.invalidBoundary,
+          );
+        }
         _requireProtectedReference(protectedTempReference ?? '');
         _requireProtectedReference(protectedResumeManifestReference ?? '');
         if (protectedContentVerificationReference != null ||
@@ -413,7 +479,8 @@ final class CloudAttachmentMaterialization {
         _requireProtectedReference(protectedTempReference ?? '');
         _requireProtectedReference(protectedResumeManifestReference ?? '');
         _requireProtectedReference(protectedContentVerificationReference ?? '');
-        if (verifiedBytes != expectedBytes || protectedFinalReference != null) {
+        if ((!hasVerifiedNativeBodySize && verifiedBytes != expectedBytes) ||
+            protectedFinalReference != null) {
           throw const CloudAttachmentMaterializationFailure(
             CloudAttachmentMaterializationFailureCode.invalidTransition,
           );
@@ -424,7 +491,7 @@ final class CloudAttachmentMaterialization {
         _requireProtectedReference(protectedResumeManifestReference ?? '');
         _requireProtectedReference(protectedContentVerificationReference ?? '');
         _requireProtectedReference(protectedFinalReference ?? '');
-        if (verifiedBytes != expectedBytes) {
+        if (!hasVerifiedNativeBodySize && verifiedBytes != expectedBytes) {
           throw const CloudAttachmentMaterializationFailure(
             CloudAttachmentMaterializationFailureCode.invalidTransition,
           );

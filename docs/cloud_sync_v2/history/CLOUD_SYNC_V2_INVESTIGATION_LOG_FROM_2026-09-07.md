@@ -5076,3 +5076,58 @@ cannot authorize or perform adoption.
   active, coordinator owned, authentication ready and outbox settled. It was
   left running; a local proxy restart does not terminate the phone operation.
   Resume by reading its terminal state before starting any additional work.
+
+### September 15 tooling recovered, no-paid-GCE policy and authenticated media extent
+
+- OpenCodex repair reported 2.56.0 live. Muse child
+  `01a0a60a-8c88-7192-a253-27fa723445e9` and Luna child
+  `01a0a60a-ed15-7452-bc86-7ff7b429eaac` each ran their distinct shell marker,
+  returned PowerShell 7.5.4 and exit 0. Parent inspected commandExecution
+  evidence and reported it to repair task `01a0687b-43f0-7a22-999f-260c60ae3d42`.
+- Source `ee9bf7c7e` was pushed to the fork. GCE runs 34999813050 (T2D-60/b),
+  34999977302 (N2D-16/c), 35000254167 (N2D-8/a) failed to allocate VMs with
+  ZONE_RESOURCE_POOL_EXHAUSTED. Each cleanup succeeded. Final cloud/runner
+  inventories were empty. The user then reported exhausted free credits;
+  do not start paid GCE without renewed approval.
+- GitHub-hosted bridge 34999813864 passed 683 app Rust, 308 rustpush, 11
+  remote Anisette and 40 protector cases, including both typed size-limit
+  tests. Windows native-host 35000180863 succeeded. Duplicate feature-branch
+  Build 34999813862 and bridge 34999813974 were canceled and verified terminal.
+  The trusted-branch Build 34999813897 continues; it is not a new Canary.
+- Stable capture of the 135,184,384-byte Pixel database was hash-verified before,
+  after and against the transfer. Offline inspection copied it for ObjectBox,
+  printed only counts, fixed classifications, sizes and timestamps, verified
+  source unchanged, then removed only its scratch clone. The source capture
+  is retained privately. The inspector initially compared two differently
+  namespaced scope digests; corrected reconstruction now resolves all twelve
+  sampled attempts to exactly one canonical row and source.
+- The failed HEIC is declared 1,048,576 bytes, streaming/verified0. Native
+  logs for the matching attempt report asset_bytes=2,302,773 after successful
+  record decryption and unique Ford-key selection. The other three latest
+  attempts completed at 52,525, 1,159,494 and 106,907 bytes, matching native
+  descriptors. The canonical size comes directly from cm.tb, without a clamp.
+  The old untyped InvalidData does not itself prove how many bytes were written.
+- Parent rejected the proposal to permanently fail all size disagreement.
+  New rustpush `c43760e` derives a typed native plaintext extent from selected,
+  authenticated Ford chunk lengths. A no-network refusal test exercises the
+  callback before any file data transfer. Parent fixed the FnMut binding,
+  requested-order association and release of Ford buffers before streaming.
+  No-Ford transfers retain the existing exact metadata size, and Asset.size
+  never authorizes a larger body.
+- App integration begins the bounded writer with metadata size, admits the
+  native extent once before writing, requires complete exact bytes, and uses
+  v3 cache/source binding for recovery. Dart keeps original metadata and stores
+  completed native size via the existing verification-reference field, with
+  replay/provenance checks. No entity schema migration or remote writes.
+  Local qualification passed 80 cases across two targeted batches; focused
+  analysis and sensitive-log scan pass. Native execution for this candidate
+  remains pending; do not install or claim live repair from these tests.
+- FaceTime review proved current log/export paths align and 75 offline cases
+  pass. Historical missing logs do not establish whether diagnostics were
+  enabled or installed; a verified current call trace remains required. Parent
+  rejected speculative teardown and no new call was placed.
+- Find My reviewers withdrew blanket defaults and the claim that Onitrack
+  automatically obtains live People keys. Existing handler can discard a
+  candidate 242/type10 shape, but real topic/framing remains unverified. A
+  bounded observation design is under cross-review. No key requests, sharing
+  changes, key imports or server writes were made.
