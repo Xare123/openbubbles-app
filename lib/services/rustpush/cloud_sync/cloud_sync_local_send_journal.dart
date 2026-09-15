@@ -2636,6 +2636,55 @@ final class CloudSyncLocalSendJournal {
     _intents.put(intent);
   }
 
+  /// Recovery liveness only, never write authority. A source receipt may stop
+  /// being a native recovery prerequisite only when the current terminal
+  /// outbox row still reproduces the exact immutable adoption binding that was
+  /// persisted by the verified readback transaction.
+  static bool sourceLeaseReleasedAfterReadback({
+    required CloudSyncLocalSendIntentEntity intent,
+    required CloudOutboxOperation operation,
+  }) {
+    if (intent.confirmedReadbackBindingSha256 == null) return false;
+    final scope = operation.scope;
+    final binding = _operationBinding(
+      operation,
+      chatBinding: intent.admittedChatBinding,
+      protectedSourceBinding: intent.protectedSourceBinding,
+    );
+    if (!_hasConsistentAdoption(intent) ||
+        intent.state != 2 ||
+        operation.operationId != intent.admittedOperationId ||
+        operation.operationId !=
+            CloudOperationIdentity.forInitialCreate(
+              scope: scope,
+              logicalEntityKeyHash: operation.logicalEntityKeyHash,
+              payloadVersion: operation.payloadVersion,
+            ) ||
+        scope.accountFingerprint != intent.accountFingerprint ||
+        scope.container != 'com.apple.messages.cloud' ||
+        scope.database != 'private' ||
+        scope.zone != 'messageManateeZone' ||
+        scope.streamKind != CloudSyncStreamKind.messages ||
+        scope.schemaVersion != cloudSyncSchemaVersion ||
+        scope.persistenceLane != CloudSyncPersistenceLane.semantic ||
+        operation.action != CloudOutboxAction.save ||
+        operation.payloadVersion != cloudSyncOutboundPayloadVersion ||
+        operation.createdAt.millisecondsSinceEpoch != intent.createdAtMs ||
+        intent.confirmedReadbackBindingSha256 != binding ||
+        intent.admittedBindingSha256 != binding) {
+      return false;
+    }
+    return operation.status == CloudOutboxStatus.confirmed &&
+        operation.confirmedAt != null &&
+        operation.protectedLeaseReference == null &&
+        operation.leaseId == null &&
+        operation.leaseExpiresAt == null &&
+        operation.nextEligibleAt == null &&
+        operation.lastFailure == null &&
+        operation.appleRequestUuid != null &&
+        operation.appleOperationUuid != null;
+  }
+
   /// Durable own-message proof without requiring CloudKit to self-echo a save.
   /// Never infers confirmation from a Message flag or from generic receipt
   /// cleanup. Any inbox observation delegates back to restored-parent proof.

@@ -802,15 +802,51 @@ void main() {
         .build();
     final confirmedRow = confirmedQuery.findUnique()!;
     confirmedQuery.close();
-    confirmedRow.createdAtMs++;
-    outbox.put(confirmedRow);
-    expect(
-      await restored.readLiveProtectedOutboundLeaseReferences(maximumCount: 4096),
-      contains(protectedSource.leaseReference),
-      reason: 'Outbox drift is not exact terminal readback proof.',
-    );
-    confirmedRow.createdAtMs--;
-    outbox.put(confirmedRow);
+    final mutations = <String, void Function(CloudOutboxOperationEntity)>{
+      'foreign scope': (row) => row.scopeKey = 'unrelated',
+      'foreign account': (row) => row.accountFingerprint = _accountB,
+      'foreign zone': (row) => row.zone = 'attachmentManateeZone',
+      'different generation': (row) => row.checkpointGeneration++,
+      'different revision': (row) => row.mutationRevision++,
+      'different payload version': (row) => row.payloadVersion++,
+      'different key': (row) => row.logicalEntityKeyHash = _token('Z'),
+      'different record': (row) => row.serverRecordIdHash = _token('Z'),
+      'different payload': (row) => row.payloadSha256 = _digest('f'),
+      'different reference': (row) => row.encryptedPayloadRef = _ref('Z'),
+      'different creation': (row) => row.createdAtMs++,
+      'pending': (row) {
+        row.state = CloudOutboxStatus.pending.index;
+        row.confirmedAtMs = 0;
+      },
+      'missing confirmation': (row) => row.confirmedAtMs = 0,
+      'missing submission identity': (row) {
+        row.appleRequestUuid = null;
+        row.appleOperationUuid = null;
+      },
+      'retry pending': (row) =>
+          row.nextEligibleAtMs = _time(30).millisecondsSinceEpoch,
+      'failure retained': (row) => row.lastErrorCategory = 'network',
+      'lease held': (row) {
+        row.leaseIdHash = _digest('e');
+        row.leaseExpiresAtMs = _time(30).millisecondsSinceEpoch;
+      },
+    };
+    for (final mutation in mutations.entries) {
+      final changed = outbox.get(confirmedRow.id)!;
+      mutation.value(changed);
+      outbox.put(changed);
+      try {
+        expect(
+          await restored.readLiveProtectedOutboundLeaseReferences(
+            maximumCount: 4096,
+          ),
+          contains(protectedSource.leaseReference),
+          reason: mutation.key,
+        );
+      } finally {
+        outbox.put(confirmedRow);
+      }
+    }
 
     outbox.remove(confirmedRow.id);
     expect(

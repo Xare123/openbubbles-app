@@ -720,14 +720,8 @@ class ObjectBoxCloudSyncStore
   bool _localSendSourceLeaseReleasedAfterReadbackLocked(
     CloudSyncLocalSendIntentEntity intent,
   ) {
-    final binding = intent.confirmedReadbackBindingSha256;
     final operationId = intent.admittedOperationId;
-    if (intent.state != 2 ||
-        binding == null ||
-        binding != intent.admittedBindingSha256 ||
-        operationId == null) {
-      return false;
-    }
+    if (operationId == null) return false;
     final query = _outbox
         .query(CloudOutboxOperationEntity_.operationId.equals(operationId))
         .build();
@@ -737,18 +731,25 @@ class ObjectBoxCloudSyncStore
     } finally {
       query.close();
     }
-    return operation != null &&
-        operation.accountFingerprint == intent.accountFingerprint &&
-        operation.zone == 'messageManateeZone' &&
-        operation.action == CloudOutboxAction.save.index &&
-        operation.state == CloudOutboxStatus.confirmed.index &&
-        operation.confirmedAtMs > 0 &&
-        operation.protectedLeaseReference == null &&
-        operation.leaseIdHash == null &&
-        operation.leaseExpiresAtMs == 0 &&
-        operation.nextEligibleAtMs == 0 &&
-        operation.lastErrorCategory == null &&
-        operation.createdAtMs == intent.createdAtMs;
+    final scope = CloudSyncScope(
+      accountFingerprint: intent.accountFingerprint,
+      container: _messagesCloudContainer,
+      database: _messagesCloudDatabase,
+      zone: 'messageManateeZone',
+      streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: cloudSyncSchemaVersion,
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    if (operation == null ||
+        operation.accountFingerprint != intent.accountFingerprint ||
+        operation.zone != scope.zone ||
+        operation.scopeKey != _scopeKey(scope)) {
+      return false;
+    }
+    return CloudSyncLocalSendJournal.sourceLeaseReleasedAfterReadback(
+      intent: intent,
+      operation: _outboxFromEntity(scope, operation),
+    );
   }
 
   @override
