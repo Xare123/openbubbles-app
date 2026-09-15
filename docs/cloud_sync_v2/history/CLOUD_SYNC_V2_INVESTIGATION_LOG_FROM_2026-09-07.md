@@ -4877,3 +4877,45 @@ cannot authorize or perform adoption.
   totals, outbox 24 and the remote-write-disabled posture were unchanged. The
   remaining 786 Message and 1,011 Attachment blocking saves require separate
   evidence; this result does not authorize broader admission or relabeling.
+
+### September 15 full 81b Canary qualification and Find My live evidence
+
+- Full GCE run 34961566410 built exact source
+  `81b17b36b9361936fc92c7e6d64bb91eb2ee3d90` with the conditional writer and
+  automatic uploads enabled. The full Dart suite, all 682 Rust tests,
+  rustpush production tests, Cloud Sync protector harness, reproducible bridge
+  bindings, Android JVM tests, package/native verification and GitHub-hosted
+  signing passed. The producer job took 29m46s; the complete workflow including
+  VM creation, signing and teardown took 33m13s.
+- Signed artifact 10394532278 downloaded as a 452,942,371-byte
+  `app-canary-debug.apk`, SHA256
+  `57046E3AF204A7A52E2537EC554A00C4C97485FDBD9976BA62F46A61B55EFA3C`.
+  Local verification confirms package
+  `com.bluebubbles.messaging.cloudkitcanary`, version 1.15.0 (20002227), APK
+  signature schemes v2/v3, the expected Canary certificate, and the Rust,
+  Irondash and super-native-extensions libraries for ARM64. Independent
+  post-run inventories contain no GCE instance and no self-hosted runner.
+- The Pixel was not reachable over wired or wireless ADB after artifact
+  verification. Installation and all Android lifecycle/read/write claims
+  remain pending. Alpha was not touched.
+- Retained Windows Find My launch
+  `1bed3346c9374c3b81f402075da59746` used the separately verified signed
+  `7d38f1dd8` native runtime. Fresh People and Devices requests completed.
+  People returned one uniquely selected row but no native location; its native
+  response marked sharing opted out and supplied no coordinate, permission or
+  locate-in-progress signal. Devices returned zero rows. Items remained
+  deliberately not invoked because their initialization side effects are not
+  yet qualified. This establishes that this capture lacks coordinates at the
+  native response, not that the user's wife actually stopped sharing.
+- The live launcher writes a `findmy-windows-testhost-v1` envelope around its
+  nested `windows-findmy-probe-v1` report. The offline qualifier documented the
+  launcher report as accepted but rejected the envelope as an unknown schema.
+  Commit `d13d88797` pins the launcher to the exact signed runtime and adds a
+  strict envelope extractor that requires ABI verification, a finished valid
+  terminal stage, typed process/native fields and matching launch IDs before
+  qualifying the nested probe. Unknown, failed, replaced and forbidden-field
+  envelopes fail closed. All 54 qualifier tests, 11 retained-preflight tests,
+  the synthetic process/mutex/cleanup launcher contract and the Flutter host
+  contract pass. The real report now qualifies as partial with fixed codes
+  `absent-coordinates`, `empty-inventory`, `items-not-invoked` and
+  `selection-matched-no-location`.
