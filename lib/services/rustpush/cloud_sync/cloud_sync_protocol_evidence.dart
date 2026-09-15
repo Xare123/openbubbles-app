@@ -189,7 +189,9 @@ final class CloudSyncProtocolEvidenceRecord {
   static const Set<String> _eventTypeLabels = {
     'runStarted',
     'runSkipped',
+    'fetchStarted',
     'fetchCompleted',
+    'inboxApplyStarted',
     'inboxApplied',
     'outboxFlushed',
     'authenticationRefreshed',

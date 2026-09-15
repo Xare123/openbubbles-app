@@ -76,6 +76,21 @@ void main() {
     expect(json['failure'], 'outOfScopeService');
   });
 
+  test('accepts every emitted CloudSync event type', () {
+    for (final type in CloudSyncEventType.values) {
+      final record = CloudSyncProtocolEvidenceRecord.fromEvent(
+        _event(type: type),
+        zoneLabel: 'messageManateeZone',
+        streamKindLabel: 'messages',
+        platform: 'android',
+        architecture: 'arm64',
+        buildCommit: 'abc123',
+      );
+
+      expect(record.eventType, type.name);
+    }
+  });
+
   test('rejects invalid metadata and numeric ranges with fixed safe codes', () {
     CloudSyncProtocolEvidenceRecord build({
       String zone = 'messageManateeZone',
