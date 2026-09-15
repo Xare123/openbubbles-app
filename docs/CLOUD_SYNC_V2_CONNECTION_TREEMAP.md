@@ -57,7 +57,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 | Latest CI-qualified APK | Exact source `81b17b36b9361936fc92c7e6d64bb91eb2ee3d90`; [GCE 34961566410](https://github.com/Xare123/openbubbles-app/actions/runs/34961566410) passed the full Dart and Rust suites, automatic-writer checks, rustpush production tests, the Cloud Sync protector harness, Android JVM tests, package/native verification, GitHub-hosted signing and cleanup. Signed artifact 10394532278 downloaded as 452,942,371-byte `app-canary-debug.apk`, SHA256 `57046E3AF204A7A52E2537EC554A00C4C97485FDBD9976BA62F46A61B55EFA3C`. Local `apksigner` verifies v2/v3 with certificate SHA256 `0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79`; `aapt2` verifies package `com.bluebubbles.messaging.cloudkitcanary`, version 1.15.0 (20002227), and all three required ARM64 native libraries are present. Independent inventories show no GCE instance or self-hosted runner after cleanup. |
 | Last observed Pixel | Exact source `10d58a5bd89fab82fe64fd6adee802634db1a162` remains the last live-installed candidate with retained chats observed. It exposed the semantic evidence-vocabulary failure below. The newly qualified `81b17b36b` APK has not yet been installed because no ADB device is currently connected. Alpha remains untouched. |
 | Semantic-pull regression and repair | The 10d Pixel run safely aborted before pass 1 with `cloud_sync_protocol_evidence_event_type_invalid`: production emitted valid `fetchStarted` and `inboxApplyStarted` events that the fixed evidence vocabulary omitted. Exact source `0feaa063a` repaired the vocabulary and is an ancestor of the current `81b17b36b` candidate. The current full qualification passed the regression coverage, but Pixel live proof remains pending. |
-| Recent-first | Local recent-chat visibility implemented/tested. Account-wide newest-history fetching is NOT implemented. Persist a fresh-stream direction before its first request and bind continuation/restart before enabling legacy-style order. Existing cursors keep their direction. |
+| Recent-first | Local recent-chat visibility implemented/tested. A live read-only Windows wire probe now proves Apple returns a bounded newest-first page for a fresh no-token stream. Account-wide durable direction is NOT implemented. Persist direction before the first request and bind continuation/restart; keep existing cursors unchanged. |
 | Windows writes | `LIVE-PROVEN` for a fresh direct single-part chain on exact source `07e58fd0b`. Parent-35 sent with exact readback, edit-36 and unsend-37 each submitted and confirmed one CloudKit update, and a new-process unsend replay submitted zero IDS/CloudKit work. The post-run store has exactly three additional confirmed outbox operations, both new mutations are terminal, and the retained database was unchanged by the metadata-only audit. Evidence: `build-evidence/windows-chain-20260915-07e58fd0`. Pixel, groups, independent recipient UI and persistent registration health remain open. |
 | Outbound lease integrity | A content-free inspector on an exact temporary copy of the retained Windows profile found 24/24 outbox rows confirmed, three still-required protected mutation leases present, all three source envelopes bound to their leases, zero missing required outbound leases, zero duplicate/unmatched mutation claims, and correct lease release after the one terminal protected send and one terminal attachment upload. Writer authority remained stable at epoch 18. The original 48,805-file profile snapshot was unchanged. This is restart-state integrity evidence, not a new Apple submission. |
 | Release state | Full production is not established. Remaining gates below apply. |
@@ -401,7 +401,7 @@ CloudKit readback or independent Apple-device display.
 - [ ] Restart reconciliation with zero duplicate IDS/CloudKit operations.
 - [ ] Approved group text/attachments/reactions and supported mutations.
 - [ ] Pixel/group mutation chains, mid-flight conflict/unknown-outcome recovery and deletion semantics.
-- [ ] Newest-history bootstrap with durably bound direction and existing cursors preserved.
+- [ ] Newest-history bootstrap with durably bound direction and existing cursors preserved. Server-side fresh-stream ordering is live-proven; product persistence and lifecycle qualification remain.
 - [ ] Accurate status for fetched, projected, retained, media and outgoing reconciliation.
 - [ ] Measured Regular/Turbo behavior, then real FaceTime call qualification.
 - [ ] Find My People location retrieval and ongoing/stale-location behavior with the user's confirmed sharing intact.
@@ -425,8 +425,10 @@ CloudKit readback or independent Apple-device display.
 6. Qualify the exact signed Canary on Pixel: upgrade, ordinary composer,
    background/lock/reconnect, process death, registration repair, independent
    client display, legible text and representative media/documents. Preserve Alpha.
-7. Finish approved group/media/mutation/conflict cases and newest-first fresh
-   bootstrap without changing existing cursor direction.
+7. Implement and qualify the now-live-proven newest-first fresh bootstrap with
+   direction persisted before request one and bound to every continuation and
+   restart. Do not reinterpret an existing cursor. Then finish approved
+   group/media/mutation/conflict cases.
 8. Retain the eight unresolvable missing-parent sources unless stronger unique
    evidence appears; normal stream completion must not depend on guessing them.
 9. FaceTime and Find My remain separate live gates and are not evidence for
@@ -437,6 +439,37 @@ CloudKit readback or independent Apple-device display.
     the final `connected -> ended` transition. Extend the existing native trace
     path only when it can consume source-emitted evidence without inventing call
     direction, session identity, duration, or hangup semantics.
+
+### September 15 newest-first wire proof
+
+- The exact signed `07e58fd0b1cd-local-write` Windows harness ran the bounded
+  `probe-message-feed` operation from a provenance-verified 78-file archive.
+  The probe implementation is unchanged between `07e58fd0b` and candidate
+  `7d38f1dd8`, and the operation pauses the native writer, adopts no token and
+  returns counts and token properties only.
+- With the current continuation token, ordinary and `newest_first=true` reads
+  each returned one terminal change and zero target matches. This shows that
+  changing direction on an established cursor does not create a recent-history
+  bootstrap.
+- With no continuation token and `newest_first=true`, both default self-filter
+  behavior and explicit own-device inclusion returned the bounded maximum of
+  200 changes, a continuation token, a nonterminal status and one exact target
+  match. Apple therefore exposes the recent-first traversal needed for a fresh
+  bootstrap; own-device inclusion did not change this target result.
+- The probe asserted `checkpoint_unchanged=true` after rolling back every page
+  lease. The older pre-write checkpoint reference returned
+  `invalidCheckpoint`, so it is not evidence for replaying an expired historic
+  cursor and is not used for the bootstrap conclusion.
+- Standard launcher reuse now requires an exact binary-and-configuration
+  receipt for this live probe and binds terminal status to the expected build
+  identifier. A newer report from a different executable can no longer qualify
+  a stale `-SkipBuild -MessageFeedProbe` bundle.
+- Evidence is retained under
+  `build-evidence/windows-feed-probe-20260915-07e58fd0/`. The remaining product
+  work is to persist fresh-stream direction atomically before request one,
+  preserve it through continuation/restart, and qualify multi-page catch-up,
+  incremental follow-up, cancellation and crash recovery without touching
+  existing cursor direction.
 
 ### September 15 exhaustive retained-projection split
 
