@@ -16,11 +16,13 @@ Bounded live test host:
     test/live/findmy_windows_live_test.dart
 Offline verdicts over a saved probe report: this folder (new).
 
-The qualifier consumes a saved probe-report JSON object (schema
-windows-findmy-probe-v1, as in report.json from the launcher flow) and emits
-per-lane verdicts for People, Devices, and Items plus a hashed selection
-binding. Items are never invoked: the probe reports them not-tested by
-design, and this tester keeps that guard.
+The qualifier consumes either a direct saved probe object (schema
+windows-findmy-probe-v1) or the exact successful
+findmy-windows-testhost-v1 report.json envelope written by the launcher flow.
+The envelope is validated and stripped before the same strict probe checks
+run. It emits per-lane verdicts for People, Devices, and Items plus a hashed
+selection binding. Items are never invoked: the probe reports them not-tested
+by design, and this tester keeps that guard.
 
 ## Usage (PowerShell 7, from the repo root)
 
@@ -46,9 +48,14 @@ unknown flags are rejected.
 
 ## Input contract
 
-Top-level report dict, version exactly windows-findmy-probe-v1. launch_id is
-32 lowercase hex; build_identifier follows the probe contract pattern. Each
-of devices, people, selected, items carries state in
+The direct top-level report has version exactly windows-findmy-probe-v1.
+Alternatively, the exact findmy-windows-testhost-v1 launcher envelope is
+accepted only when ABI verification succeeded, the testhost finished at a
+valid probe terminal stage, its process/native-library fields have valid
+types, and its launch_id matches the nested probe. Unknown or failed wrapper
+states are rejected before extraction. The probe launch_id is 32 lowercase
+hex; build_identifier follows the probe contract pattern. Each of devices,
+people, selected, items carries state in
 observed/failed/timeout/not-tested, a fresh_request_completed bool, and a
 returned_count int or null.
 Top-level keys, per-section keys, and bucket keys must match the pinned

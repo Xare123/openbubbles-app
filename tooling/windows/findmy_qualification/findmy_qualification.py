@@ -21,6 +21,8 @@ import sys
 PROBE_VERSION = "windows-findmy-probe-v1"
 QUALIFIER_VERSION = "windows-findmy-qualification-v1"
 PROBE_MODE = "bounded-findmy-read-only-probe"
+TESTHOST_VERSION = "findmy-windows-testhost-v1"
+TESTHOST_MODE = "service-reads-with-authorized-local-and-auth-housekeeping"
 
 _LAUNCH_RE = re.compile(r"^[a-f0-9]{32}$")
 _BUILD_RE = re.compile(r"^[a-f0-9]{7,40}(?:-dirty-[a-f0-9]{12})?$")
@@ -87,6 +89,12 @@ _TOP_KEYS = frozenset(
         "devices", "people", "selected", "items",
     }
 )
+_TESTHOST_KEYS = frozenset(
+    {
+        "version", "launch_id", "process_id", "native_sha256", "mode",
+        "abi_verified", "select_sole_person", "state", "stage", "probe",
+    }
+)
 _MEANING_KEYS = ("location_meaning", "sharing_meaning", "freshness_meaning")
 _COMMON_LANE_KEYS = frozenset(
     {
@@ -127,6 +135,42 @@ def _check_keys(section, allowed):
     for key in section:
         if key not in allowed:
             raise QualificationError("input_rejected_unknown_key")
+
+
+def _extract_probe_report(report):
+    """Accept the probe itself or the exact successful live-testhost envelope."""
+    if not isinstance(report, dict):
+        raise QualificationError("input_rejected_shape")
+    if report.get("version") != TESTHOST_VERSION:
+        return report
+
+    _check_keys(report, _TESTHOST_KEYS)
+    _scan_forbidden(report)
+    launch_id = report.get("launch_id")
+    process_id = report.get("process_id")
+    native_sha256 = report.get("native_sha256")
+    if not isinstance(launch_id, str) or not _LAUNCH_RE.match(launch_id):
+        raise QualificationError("input_rejected_identity")
+    if (isinstance(process_id, bool) or not isinstance(process_id, int)
+            or process_id <= 0):
+        raise QualificationError("input_rejected_shape")
+    if not isinstance(native_sha256, str) or not _HEX64_RE.match(native_sha256):
+        raise QualificationError("input_rejected_shape")
+    if report.get("mode") != TESTHOST_MODE:
+        raise QualificationError("input_rejected_shape")
+    if report.get("abi_verified") is not True:
+        raise QualificationError("input_rejected_shape")
+    if not isinstance(report.get("select_sole_person"), bool):
+        raise QualificationError("input_rejected_shape")
+    if report.get("state") != "finished":
+        raise QualificationError("input_rejected_shape")
+    if report.get("stage") not in (
+            "findmy-probe-complete", "findmy-probe-partial"):
+        raise QualificationError("input_rejected_shape")
+    probe = report.get("probe")
+    if not isinstance(probe, dict) or probe.get("launch_id") != launch_id:
+        raise QualificationError("input_rejected_identity")
+    return probe
 
 
 def _req_bool(section, key):
@@ -433,8 +477,7 @@ def qualify_selection(section, launch_id, expected_hash=None):
 
 
 def qualify_report(report, expected_hash=None):
-    if not isinstance(report, dict):
-        raise QualificationError("input_rejected_shape")
+    report = _extract_probe_report(report)
     _check_keys(report, _TOP_KEYS)
     _scan_forbidden(report)
     if report.get("version") != PROBE_VERSION:

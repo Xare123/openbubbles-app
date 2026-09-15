@@ -14,7 +14,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
 import 'package:flutter_test/flutter_test.dart';
 
 const nativeSha =
-    'bf1507c72421fed903dcaffcbe863a001d0d59bd2c04e20b8ce8befe6345147e';
+    '7e3eab33331b7aa1d35a837e7f951016ec63e801b1bb7a4101461ffe65bfc34e';
 const liveEnable = 'OPENBUBBLES_RUN_FINDMY_WINDOWS_LIVE';
 const solePersonEnable = 'OPENBUBBLES_FINDMY_SELECT_SOLE_PERSON';
 
