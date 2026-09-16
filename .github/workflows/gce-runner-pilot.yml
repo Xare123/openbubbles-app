@@ -677,7 +677,15 @@ jobs:
         continue-on-error: true
         if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'dart-only' }}
         shell: bash
-        run: bash tooling/ci/run_gce_validation_suites.sh
+        env:
+          PILOT_WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          validation_script="$RUNNER_TEMP/run_gce_validation_suites.sh"
+          curl --fail --silent --show-error --location \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${PILOT_WORKFLOW_SHA}/tooling/ci/run_gce_validation_suites.sh" \
+            --output "$validation_script"
+          bash "$validation_script"
 
       - name: Qualify automatic-upload Canary flags
         id: automatic-upload-tests
