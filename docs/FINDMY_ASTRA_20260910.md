@@ -225,3 +225,9 @@ Follow-up: the lane report now also carries the native secure-locations
 capability flags (secure and shallow/live counts) through probe aggregates,
 unit allowlist, and qualifier schema, uninterpreted, to correlate against
 coordinates presence on the next live run.
+
+Second live run (launch aac79013): first coordinates seen in-lane — Devices
+returned 1 iPhone with a valid but stale pair (older bucket, is_old true).
+People shows both secure-capability flags true yet still no coordinates, so
+the absence is past capability: key delivery or server-side inclusion is
+the narrowed lead. Qualifier reproduced the verdicts; window released.
