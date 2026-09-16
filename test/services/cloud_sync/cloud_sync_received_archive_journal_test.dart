@@ -5,6 +5,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shado
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_staging.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
@@ -365,6 +367,131 @@ void main() {
     expect(store.box<CloudSyncReceivedArchiveIntentEntity>().count(), 0);
   });
 
+  test(
+    'lost native commit response retains exact received lease across reopen',
+    () async {
+      const guid = 'lease-recovery';
+      final source = _staged(guid, 'hello', chat);
+      final wire = _wire(
+        id: guid,
+        text: 'hello',
+        sentAt: _time(2).millisecondsSinceEpoch,
+      );
+      final transport = _ReceivedLeaseTransport()..failCommit = true;
+      final identity = _auth(Object());
+      var stages = 0;
+      CloudSyncReceivedArchiveStaging flow() => CloudSyncReceivedArchiveStaging(
+        journal: journal,
+        transport: transport,
+        capturedIdentity: identity,
+        validateCurrentIdentity: () async {},
+        stillCurrent: () => true,
+      );
+      Future<int> run() => flow().persist(
+        wire: wire,
+        liveContext: _live,
+        localChatId: chat.id!,
+        persistMessage: () => store.box<Message>().put(
+          _byGuid(guid) ?? _fresh(guid, 'hello', chat),
+        ),
+        stageNative: () async {
+          stages++;
+          return source;
+        },
+        clock: () => _time(3),
+      );
+      await expectLater(run(), throwsStateError);
+      expect(store.box<Message>().count(), 1);
+      expect(store.box<CloudSyncReceivedArchiveIntentEntity>().count(), 1);
+      expect(transport.rolledBack, isEmpty);
+      final chatId = chat.id!;
+      await reopen();
+      chat = store.box<Chat>().get(chatId)!;
+      transport.failCommit = false;
+      expect(await run(), greaterThan(0));
+      expect(stages, 1);
+      expect(transport.committed, [
+        source.leaseReference,
+        source.leaseReference,
+      ]);
+      expect(store.box<Message>().count(), 1);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  test(
+    'source mismatch before durable adoption rolls back only fresh lease',
+    () async {
+      final source = _staged('mismatch', 'hello', chat);
+      final transport = _ReceivedLeaseTransport();
+      final flow = CloudSyncReceivedArchiveStaging(
+        journal: journal,
+        transport: transport,
+        capturedIdentity: _auth(Object()),
+        validateCurrentIdentity: () async {},
+        stillCurrent: () => true,
+      );
+      await expectLater(
+        flow.persist(
+          wire: _wire(
+            id: 'mismatch',
+            text: 'hello',
+            sentAt: _time(2).millisecondsSinceEpoch,
+          ),
+          liveContext: _live,
+          localChatId: chat.id!,
+          persistMessage: () =>
+              store.box<Message>().put(_fresh('mismatch', 'different', chat)),
+          stageNative: () async => source,
+          clock: () => _time(3),
+        ),
+        throwsStateError,
+      );
+      expect(transport.rolledBack, [source.leaseReference]);
+      expect(transport.committed, isEmpty);
+      expect(store.box<Message>().count(), 0);
+      expect(store.box<CloudSyncReceivedArchiveIntentEntity>().count(), 0);
+    },
+  );
+
+  test(
+    'identity loss after commit never rolls back an adopted source',
+    () async {
+      final source = _staged('after-commit', 'hello', chat);
+      final transport = _ReceivedLeaseTransport();
+      var validations = 0;
+      final flow = CloudSyncReceivedArchiveStaging(
+        journal: journal,
+        transport: transport,
+        capturedIdentity: _auth(Object()),
+        validateCurrentIdentity: () async {
+          if (++validations == 3) throw StateError('identity changed');
+        },
+        stillCurrent: () => true,
+      );
+      await expectLater(
+        flow.persist(
+          wire: _wire(
+            id: 'after-commit',
+            text: 'hello',
+            sentAt: _time(2).millisecondsSinceEpoch,
+          ),
+          liveContext: _live,
+          localChatId: chat.id!,
+          persistMessage: () =>
+              store.box<Message>().put(_fresh('after-commit', 'hello', chat)),
+          stageNative: () async => source,
+          clock: () => _time(3),
+        ),
+        throwsStateError,
+      );
+      expect(transport.rolledBack, isEmpty);
+      expect(transport.committed, [source.leaseReference]);
+      expect(store.box<CloudSyncReceivedArchiveIntentEntity>().count(), 1);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
   test('body drift rolls back both message and intent', () {
     const guid = 'recv-guid-1002';
     final src = _staged(guid, 'staged body', chat);
@@ -718,4 +845,44 @@ void main() {
       throwsStateError,
     );
   });
+}
+
+class _ReceivedLeaseTransport implements CloudProtectedPageLeaseTransport {
+  bool failCommit = false;
+  bool held = false;
+  final committed = <String>[];
+  final rolledBack = <String>[];
+  @override
+  String get protectedPageLeaseRecoveryIdentity => _storeId;
+  @override
+  Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) async {
+    expect(held, isFalse);
+    held = true;
+    try {
+      return await action();
+    } finally {
+      held = false;
+    }
+  }
+
+  @override
+  Future<void> commitProtectedPageLease(
+    String leaseReference,
+    Set<String> retainedReferences,
+  ) async {
+    expect(held, isTrue);
+    expect(retainedReferences, hasLength(1));
+    committed.add(leaseReference);
+    if (failCommit) throw StateError('synthetic lost commit response');
+  }
+
+  @override
+  Future<void> rollbackProtectedPageLease(String leaseReference) async {
+    expect(held, isTrue);
+    rolledBack.add(leaseReference);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('unexpected operation');
 }

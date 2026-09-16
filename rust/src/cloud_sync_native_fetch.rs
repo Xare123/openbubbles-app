@@ -312,6 +312,7 @@ enum CloudNativeProtectionPurpose {
     OutboundAttachmentUpload,
     IdsAttachmentSource,
     IdsMutationSource,
+    IdsReceivedArchiveSource,
     IdsSendReceipt,
     RawRecord,
 }
@@ -329,6 +330,7 @@ impl CloudNativeProtectionPurpose {
             Self::OutboundAttachmentUpload => "outboundAttachmentUpload",
             Self::IdsAttachmentSource => "idsAttachmentSource",
             Self::IdsMutationSource => "idsMutationSource",
+            Self::IdsReceivedArchiveSource => "idsReceivedArchiveSource",
             Self::IdsSendReceipt => "idsSendReceipt",
             Self::RawRecord => "rawRecord",
         }
@@ -4964,6 +4966,28 @@ pub(crate) fn cloud_sync_open_protected_ids_mutation_source(
         protected_reference,
         CloudNativeStream::Messages,
         CloudNativeProtectionPurpose::IdsMutationSource,
+    )
+}
+
+pub(crate) fn cloud_sync_stage_protected_received_archive_source(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    source_envelope: String,
+) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
+    stage_protected_outbound_value(
+        storage_directory, account_fingerprint, source_envelope,
+        CloudNativeStream::Messages, CloudNativeProtectionPurpose::IdsReceivedArchiveSource,
+    )
+}
+
+pub(crate) fn cloud_sync_open_protected_received_archive_source(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+) -> Result<String, CloudNativeFetchFailure> {
+    cloud_sync_open_protected_outbound_value(
+        storage_directory, account_fingerprint, protected_reference,
+        CloudNativeStream::Messages, CloudNativeProtectionPurpose::IdsReceivedArchiveSource,
     )
 }
 

@@ -353,6 +353,148 @@ pub struct CloudSyncNativeAuthMetadata {
     pub protected_store_identity: String,
 }
 
+/// Opaque local ownership of a received source. This is neither an IDS send
+/// receipt nor permission to save a CloudKit record. No message content returns.
+#[frb(type_64bit_int)]
+pub struct CloudSyncNativeReceivedArchiveSourceBinding {
+    pub account_fingerprint: String,
+    pub protected_store_identity: String,
+    pub message_guid_hash: String,
+    pub source_sha256: String,
+    pub protected_reference: String,
+    pub lease_reference: String,
+    pub payload_sha256: String,
+    pub payload_length: u64,
+}
+
+impl std::fmt::Debug for CloudSyncNativeReceivedArchiveSourceBinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncNativeReceivedArchiveSourceBinding(redacted)")
+    }
+}
+
+#[cfg(test)]
+mod cloud_sync_received_capture_tests {
+    use super::*;
+
+    fn metadata() -> CloudSyncNativeAuthMetadata {
+        CloudSyncNativeAuthMetadata {
+            account_fingerprint: "A".repeat(43),
+            protected_store_identity: format!("obcs2.store.{}", "S".repeat(43)),
+            native_session_id: "N".repeat(43),
+        }
+    }
+
+    #[test]
+    fn captured_account_store_and_client_are_all_required() {
+        let expected = metadata();
+        assert!(cloud_sync_require_received_auth(&expected, &metadata()).is_ok());
+        for field in 0..3 {
+            let mut actual = metadata();
+            match field {
+                0 => actual.account_fingerprint = "B".repeat(43),
+                1 => actual.protected_store_identity = format!("obcs2.store.{}", "T".repeat(43)),
+                _ => actual.native_session_id = "M".repeat(43),
+            }
+            assert_eq!(cloud_sync_require_received_auth(&expected, &actual).unwrap_err().to_string(),
+                "cloud_sync_received_archive_identity_changed");
+        }
+    }
+}
+
+#[frb(ignore)]
+fn cloud_sync_require_received_auth(
+    expected: &CloudSyncNativeAuthMetadata,
+    actual: &CloudSyncNativeAuthMetadata,
+) -> anyhow::Result<()> {
+    if expected.account_fingerprint != actual.account_fingerprint
+        || expected.protected_store_identity != actual.protected_store_identity
+        || expected.native_session_id != actual.native_session_id {
+        return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
+    }
+    Ok(())
+}
+
+#[frb(ignore)]
+async fn cloud_sync_received_registered_handles(state: &SharedPushState) -> anyhow::Result<Vec<String>> {
+    let users = state.client.identity.users.read().await;
+    if users.is_empty() { return Err(anyhow!("cloud_sync_received_archive_identity_unavailable")); }
+    let mut handles = Vec::new();
+    for user in users.iter() {
+        let registration = user.registration.get("com.apple.madrid")
+            .ok_or_else(|| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+        handles.extend(registration.handles.iter().cloned());
+    }
+    handles.sort();
+    handles.dedup();
+    if handles.is_empty() { return Err(anyhow!("cloud_sync_received_archive_identity_unavailable")); }
+    Ok(handles)
+}
+
+/// Cached composition identity for local received-source capture. Unlike the
+/// writer snapshot, this does not require refreshed GSA SPD after restart.
+/// It proves only which persisted account/store owns local data, not current
+/// CloudKit authentication or permission to perform an external operation.
+pub async fn cloud_sync_capture_received_identity(
+    state: &SharedPushState,
+) -> anyhow::Result<CloudSyncNativeAuthMetadata> {
+    let client = state.icloud_services.as_ref()
+        .and_then(|s| s.cloud_messages_client.as_ref())
+        .ok_or_else(|| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+    let (account, _) = client.validated_persisted_native_account_identifiers().await
+        .map_err(|_| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+    cloud_sync_metadata_for_account(client, state.conf_dir.clone(), &account)
+}
+
+/// Protects an observed receive using one configured SharedPushState. Uses
+/// cached account validation and registered handles only: no dependency warm,
+/// keychain sync, IDS directory query, re-registration, send or CloudKit save.
+/// The caller must retain its live receive provenance and revalidate state at
+/// journal adoption; shape-valid MessageInst metadata is not authentication.
+pub async fn cloud_sync_stage_received_archive_source(
+    state: &SharedPushState,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    message: MessageInst,
+) -> anyhow::Result<CloudSyncNativeReceivedArchiveSourceBinding> {
+    let before = cloud_sync_capture_received_identity(state).await
+        .map_err(|_| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+    cloud_sync_require_received_auth(&expected_auth, &before)?;
+    let handles = cloud_sync_received_registered_handles(state).await?;
+    let current = cloud_sync_capture_received_identity(state).await
+        .map_err(|_| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+    cloud_sync_require_received_auth(&expected_auth, &current)?;
+    let staged = crate::cloud_sync_received_source_stage::stage_received_archive_source(
+        PathBuf::from(&state.conf_dir), current.account_fingerprint.clone(), &message, &handles,
+    ).map_err(|_| anyhow!("cloud_sync_received_archive_source_stage_failed"))?;
+    // No caller has this descriptor yet. On post-stage drift its unadopted
+    // lease may be rolled back, unlike a source already owned by the journal.
+    let validate_after = async {
+        let after = cloud_sync_capture_received_identity(state).await
+            .map_err(|_| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+        cloud_sync_require_received_auth(&expected_auth, &after)?;
+        if cloud_sync_received_registered_handles(state).await? != handles {
+            return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
+        }
+        Ok::<(), anyhow::Error>(())
+    }.await;
+    if let Err(error) = validate_after {
+        let _ = crate::cloud_sync_native_fetch::cloud_sync_rollback_protected_page_lease(
+            PathBuf::from(&state.conf_dir), &staged.lease_reference,
+        );
+        return Err(error);
+    }
+    Ok(CloudSyncNativeReceivedArchiveSourceBinding {
+        account_fingerprint: current.account_fingerprint,
+        protected_store_identity: current.protected_store_identity,
+        message_guid_hash: staged.message_guid_hash,
+        source_sha256: staged.source_sha256,
+        protected_reference: staged.protected_reference,
+        lease_reference: staged.lease_reference,
+        payload_sha256: staged.payload_sha256,
+        payload_length: staged.payload_length,
+    })
+}
+
 /// Content-free context for making one successful native SendJob completion
 /// crash-recoverable before SendConfirm is emitted.
 #[derive(Clone)]
@@ -2052,9 +2194,18 @@ pub async fn cloud_sync_capture_auth_snapshot(
         .validated_native_account_identifier()
         .await
         .map_err(|_| anyhow!("cloud_sync_native_auth_identity_mismatch"))?;
+    cloud_sync_metadata_for_account(cloud_messages_client, storage_directory, &raw_account_identifier)
+}
+
+#[frb(ignore)]
+fn cloud_sync_metadata_for_account(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    raw_account_identifier: &str,
+) -> anyhow::Result<CloudSyncNativeAuthMetadata> {
     let account_fingerprint = crate::cloud_sync_protector::fingerprint_account(
         storage_directory.clone(),
-        raw_account_identifier.clone(),
+        raw_account_identifier.to_owned(),
     )
     .map_err(|_| anyhow!("cloud_sync_native_auth_account_fingerprint_failed"))?;
     let client_generation_input = format!(

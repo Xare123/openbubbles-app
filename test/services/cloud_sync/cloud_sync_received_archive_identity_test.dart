@@ -151,6 +151,55 @@ CloudSyncReceivedArchiveIdentity _eligible(
 }
 
 void main() {
+  test('native source golden digest contract', () {
+    for (final vector in [
+      (
+        false,
+        'ordinary text',
+        'fdde0b390b27b7ed2f8c60d5a31f9db00bd9ccd729afb2c888f98ff7393f2ef7',
+      ),
+      (
+        true,
+        'ordinary text',
+        '2b7a5f9b720ef09df984f991abbe4bcb68efa22ea068b99ff9a976d1aa7b6bbf',
+      ),
+      (
+        false,
+        'line 1\n"quoted" \\ \t\u2028\u2029 😀',
+        '30b46daaa0f3829424ee39d78a59e17390c75f0ee6beb6a587b0dadb44436fc4',
+      ),
+    ]) {
+      const guid = '11111111-2222-4333-8444-555555555555';
+      const timestamp = 1700000000000;
+      final chat = _directChat();
+      final identity = _eligible(
+        CloudSyncReceivedArchiveIdentity.capture(
+          message: _row(
+            chat: chat,
+            guid: guid,
+            text: vector.$2,
+            sentAt: timestamp,
+            isFromMe: vector.$1,
+            handleAddress: vector.$1 ? 'owner@example.com' : _remote,
+          ),
+          chat: chat,
+          wire: _wire(
+            id: guid,
+            sentAt: timestamp,
+            sender: vector.$1 ? _owner : 'mailto:remote@example.com',
+            normal: _plainNormal(vector.$2),
+          ),
+          liveContext: _liveContext,
+        ),
+      );
+      expect(
+        identity.guidHash,
+        'cd7c99cec32925c682dd556e85b3f86856765d9dadc8c3b5796f8f5f4deccf57',
+      );
+      expect(identity.sourceSha256, vector.$3);
+    }
+  });
+
   group('eligible received origins', () {
     test('reply-device token is optional routing, not message content', () {
       final chat = _directChat();

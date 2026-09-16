@@ -219,6 +219,42 @@ final class CloudSyncReceivedArchiveJournal {
   });
 
   /// Recovers the exact adopted lease after crash. Never rolls back.
+  CloudSyncReceivedArchiveSourceBinding? findProtectedSource({
+    required String messageGuid,
+    required int localChatId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyOwnership();
+    if (currentAuth.accountFingerprint != _binding.scope.accountFingerprint) {
+      throw StateError('cloud_sync_received_archive_identity_changed');
+    }
+    final key = intentKeyFor(
+      accountFingerprint: currentAuth.accountFingerprint,
+      messageGuidHash: guidHashFor(messageGuid),
+    );
+    final found = _readUnique(
+      _store.box<CloudSyncReceivedArchiveIntentEntity>().query(
+        CloudSyncReceivedArchiveIntentEntity_.intentKey.equals(key),
+      ),
+    );
+    if (found == null) return null;
+    final existing = _readBoundIntent(found.id);
+    if (existing.localChatId != localChatId) {
+      throw StateError('cloud_sync_received_archive_route_changed');
+    }
+    final source = CloudSyncReceivedArchiveSourceBinding.decode(
+      existing.protectedSourceBinding,
+    );
+    source.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+      messageGuidHash: existing.messageGuidHash,
+      sourceSha256: existing.sourceSha256,
+    );
+    return source;
+  });
+
+  /// Recovers the exact adopted lease after crash. Never rolls back.
   CloudSyncReceivedArchiveSourceBinding readProtectedSource({
     required int intentId,
     required CloudSyncNativeAuthSnapshot currentAuth,

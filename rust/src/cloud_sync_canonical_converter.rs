@@ -1282,6 +1282,19 @@ pub(crate) fn validate_single_text_attributed_body(
     expected_text: &str,
     expected_part: u32,
 ) -> Result<(), CloudCanonicalQuarantineReason> {
+    validate_single_attributed_body_inner(raw, expected_text, expected_part, false)
+}
+
+/// Shared bounded single-text decoder behind both validators. With
+/// `plain_only`, only standard plain structural metadata is accepted (zero
+/// part marker; absent-or-false formatting flags). Otherwise the established
+/// formatting-tolerant grammar applies.
+fn validate_single_attributed_body_inner(
+    raw: &[u8],
+    expected_text: &str,
+    expected_part: u32,
+    plain_only: bool,
+) -> Result<(), CloudCanonicalQuarantineReason> {
     let validate = || -> Result<(), BoundedStreamFailure> {
         if raw.is_empty() || expected_text.is_empty() {
             return Err(BoundedStreamFailure::Malformed);
@@ -1344,16 +1357,30 @@ pub(crate) fn validate_single_text_attributed_body(
                 range_cache.insert(range_id, decoded.clone());
                 decoded
             };
-            if attributes.unknown_attribute
-                || attributes.duplicate_attribute
-                || attributes.attachment_guid.is_some()
-                || attributes.mention.is_some()
-                || attributes.audio_transcript.is_some()
-                || attributes.text_effect.is_some()
-                || attributes
-                    .message_part
-                    .is_some_and(|part| part != expected_part)
-            {
+            let unsupported = if plain_only {
+                attributes.unknown_attribute
+                    || attributes.duplicate_attribute
+                    || attributes.attachment_guid.is_some()
+                    || attributes.mention.is_some()
+                    || attributes.audio_transcript.is_some()
+                    || attributes.text_effect.is_some()
+                    || attributes.message_part.is_some_and(|part| part != 0)
+                    || attributes.bold.is_some_and(|flag| flag)
+                    || attributes.italic.is_some_and(|flag| flag)
+                    || attributes.strikethrough.is_some_and(|flag| flag)
+                    || attributes.underline.is_some_and(|flag| flag)
+            } else {
+                attributes.unknown_attribute
+                    || attributes.duplicate_attribute
+                    || attributes.attachment_guid.is_some()
+                    || attributes.mention.is_some()
+                    || attributes.audio_transcript.is_some()
+                    || attributes.text_effect.is_some()
+                    || attributes
+                        .message_part
+                        .is_some_and(|part| part != expected_part)
+            };
+            if unsupported {
                 return Err(BoundedStreamFailure::Malformed);
             }
             covered = covered
@@ -1372,6 +1399,19 @@ pub(crate) fn validate_single_text_attributed_body(
         BoundedStreamFailure::Malformed => CloudCanonicalQuarantineReason::MalformedAttributedBody,
         BoundedStreamFailure::Oversized => CloudCanonicalQuarantineReason::OversizedContent,
     })
+}
+
+/// Strict plain-text sibling of [`validate_single_text_attributed_body`].
+///
+/// Plain-only policy over the shared bounded decoder: only standard plain
+/// structural metadata is accepted (zero part marker; absent-or-false
+/// formatting flags). Existing behavior of the formatting-tolerant validator
+/// is unchanged.
+pub(crate) fn validate_single_plain_text_attributed_body(
+    raw: &[u8],
+    expected_text: &str,
+) -> Result<(), CloudCanonicalQuarantineReason> {
+    validate_single_attributed_body_inner(raw, expected_text, 0, true)
 }
 
 fn decode_boolean_number(
@@ -4693,6 +4733,69 @@ mod tests {
                 .and_then(BoundedTypedStreamDecoder::decode),
             Err(BoundedStreamFailure::Oversized)
         ));
+    }
+
+    #[test]
+    fn strict_plain_validator_rejects_any_attribute_key() {
+        let plain = plain_encoded_attributed_body("hello");
+        assert!(validate_single_text_attributed_body(&plain, "hello", 0).is_ok());
+        assert!(validate_single_plain_text_attributed_body(&plain, "hello").is_ok());
+
+        // Formatting passes the tolerant validator but is not plain equivalence.
+        let bold = encoded_attributed_body(
+            "hello",
+            vec![(
+                5,
+                attribute_dictionary([("__kIMTextBoldAttributeName", NSNumber(1).encode())]),
+            )],
+        );
+        assert!(validate_single_text_attributed_body(&bold, "hello", 0).is_ok());
+        assert!(validate_single_plain_text_attributed_body(&bold, "hello").is_err());
+
+        // A zero part marker is standard structural metadata and stays plain;
+        // a nonzero part is content routing.
+        let part = encoded_attributed_body(
+            "hello",
+            vec![(
+                5,
+                attribute_dictionary([("__kIMMessagePartAttributeName", NSNumber(0).encode())]),
+            )],
+        );
+        assert!(validate_single_plain_text_attributed_body(&part, "hello").is_ok());
+        let parted = encoded_attributed_body(
+            "hello",
+            vec![(
+                5,
+                attribute_dictionary([("__kIMMessagePartAttributeName", NSNumber(1).encode())]),
+            )],
+        );
+        assert!(validate_single_plain_text_attributed_body(&parted, "hello").is_err());
+
+        // Absent-or-false formatting flags stay plain; true formatting does not.
+        let unbold = encoded_attributed_body(
+            "hello",
+            vec![(
+                5,
+                attribute_dictionary([("__kIMTextBoldAttributeName", NSNumber(0).encode())]),
+            )],
+        );
+        assert!(validate_single_plain_text_attributed_body(&unbold, "hello").is_ok());
+
+        // Unknown keys fail both validators.
+        let unknown = encoded_attributed_body(
+            "hello",
+            vec![(
+                5,
+                attribute_dictionary([("__kIMUnknownFutureAttribute", NSNumber(9).encode())]),
+            )],
+        );
+        assert!(validate_single_text_attributed_body(&unknown, "hello", 0).is_err());
+        assert!(validate_single_plain_text_attributed_body(&unknown, "hello").is_err());
+
+        // Bounds mirror the tolerant validator.
+        assert!(validate_single_plain_text_attributed_body(&[], "hello").is_err());
+        assert!(validate_single_plain_text_attributed_body(&plain, "").is_err());
+        assert!(validate_single_plain_text_attributed_body(&plain, "other").is_err());
     }
 
     #[test]

@@ -142,6 +142,7 @@ impl CloudSyncProtectionContext {
                     | "attachmentUploadReceipt"
                     | "idsAttachmentSource"
                     | "idsMutationSource"
+                    | "idsReceivedArchiveSource"
                     | "idsSendReceipt"
                     | "systemFields"
                     | "payloadReference"
@@ -949,6 +950,7 @@ mod tests {
             "attachmentUploadReceipt",
             "idsAttachmentSource",
             "idsMutationSource",
+            "idsReceivedArchiveSource",
             "idsSendReceipt",
             "outboundMessage",
             "outboundChat",
