@@ -5686,3 +5686,18 @@ Historical tests do not establish current-device behavior.
   restored group's cloudGuid, not its guidRefs, chatIdentifier or record ID in
   either Canary or Windows. This ties the preventive fallback to the observed
   missing-column route; the existing duplicate is still not automatically merged.
+- GitHub-hosted run35058684776 subsequently completed successfully, producer
+  duration44m51s, no GCE. Artifact10432532324 archive digest matched GitHub;
+  downloaded APK452,999,643 bytes has SHA256
+  d34e72bb78add5f5654adf04e5183cffd8c786bdb5a526ab2a19a424b8e7ab50.
+  Independent apksigner verifies v2/v3 and the stable Canary certificate; aapt2
+  verifies com.bluebubbles.messaging.cloudkitcanary,1.15.0(20002227),SDK36.
+  Four required ARM64 libraries, absent dotenv, and DEX lifecycle markers pass.
+  No phone is present in fresh USB/mDNS discovery, so no install occurred.
+  Detailed local verification.json retains source, archive and APK provenance.
+- Saved-copy group follow-up finds13 incoming messages and zero outgoing send,
+  adopted-send or mutation journal references in either split row. Original
+  captures remain hash-identical and no Apple request occurred. Existing group
+  binding still pins local row ID and protected source, so this finding alone
+  is not a safe reparent/merge operation. A resumed helper turn was empty and
+  was not counted as a completed independent review.

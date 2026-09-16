@@ -85,6 +85,10 @@ void main() {
               )
               .toList();
           final allMessages = store.box<Message>().getAll();
+          final sends = store.box<CloudSyncLocalSendIntentEntity>().getAll();
+          final mutations = store
+              .box<CloudSyncLocalMutationIntentEntity>()
+              .getAll();
           final snapshots = store
               .box<CloudSemanticSnapshotEntity>()
               .getAll()
@@ -158,6 +162,34 @@ void main() {
                   'isCanonicalGroup': c.guid.startsWith('iMessage;+;'),
                   'messages': allMessages
                       .where((m) => m.chat.targetId == c.id)
+                      .length,
+                  'fromMeMessages': allMessages
+                      .where(
+                        (m) => m.chat.targetId == c.id && m.isFromMe == true,
+                      )
+                      .length,
+                  'journaledLocalSends': sends
+                      .where(
+                        (intent) => allMessages.any(
+                          (m) =>
+                              m.id == intent.localMessageId &&
+                              m.chat.targetId == c.id,
+                        ),
+                      )
+                      .length,
+                  'adoptedLocalSends': sends
+                      .where(
+                        (intent) =>
+                            intent.admittedOperationId != null &&
+                            allMessages.any(
+                              (m) =>
+                                  m.id == intent.localMessageId &&
+                                  m.chat.targetId == c.id,
+                            ),
+                      )
+                      .length,
+                  'localMutationIntents': mutations
+                      .where((intent) => intent.localChatId == c.id)
                       .length,
                   'hasCloudData': c.cloudData?.isNotEmpty == true,
                 },

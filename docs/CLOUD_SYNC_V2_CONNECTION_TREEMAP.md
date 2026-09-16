@@ -52,7 +52,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
-### Resume checkpoint: September 15, 22:20 PDT
+### Resume checkpoint: September 15, 23:03 PDT
 
 This checkpoint supersedes older qualification history. Current product source is
 `f027aad2a17c131f7d68687ea68f58b334473e8f`; installed Pixel source remains
@@ -74,9 +74,15 @@ This checkpoint supersedes older qualification history. Current product source i
   closes admission and drains actual interlocks, retains direct mutation receipt
   tails, and prevents native host teardown until owned work and IPC replies end.
   It passed 33 Dart cases plus eight Kotlin lifetime tests. No Android live proof.
-- **Build running:** GitHub-hosted Build `35058684776`, exact `f027aad2a`,
-  `canary_only=true`. Alpha job skipped; Canary producer is progressing.
-  No GCE job or upstream PR. Verify the signed artifact before installation.
+- **Verified APK ready:** GitHub-hosted Build `35058684776` passed, exact
+  `f027aad2a`, canary_only=true; Alpha skipped. Artifact10432532324 archive
+  SHA256 `27e6279c323de585ec27b1e7baa0457cc125a77369dda20f43ed40105b54b39a`
+  matched after download. APK452,999,643 bytes, SHA256
+  `d34e72bb78add5f5654adf04e5183cffd8c786bdb5a526ab2a19a424b8e7ab50`.
+  Stable Canary v2/v3 signatures, exact package, four ARM64 libraries, no dotenv,
+  and the new native lifecycle markers independently pass. Evidence is under
+  `build-evidence/github-canary-f027aad-35058684776`; not installed. This workflow
+  compiled/packaged the app, not the full Flutter/JVM test suites.
 - **Group history: two separate findings.** Alpha contains 27 historical
   messages absent from both qualified Canary and Windows copies; none has a
   cloud-synced flag or message record ID, and Alpha legacy sync was disabled.
@@ -89,20 +95,21 @@ This checkpoint supersedes older qualification history. Current product source i
 - **Device released.** App/native logs saved at 17:02:57 PDT and stable qualified
   copies are retained under `device-evidence/20260915-ben-edit-unsend`,
   `20260915-groomsmen-alpha-compare` and `20260915-groomsmen-windows-compare`.
-  USB inventory is empty at 17:14; no transfer/install is running. Continue
-  code-only work. Restart permission was requested but not received.
+  Fresh USB inventory and wireless mDNS discovery are empty at22:55. The user
+  was asked once to reconnect. No install or phone test is running. Restart
+  permission was requested earlier but not received.
 - **Find My observer: isolated test-qualified, not integrated.** Rustpush
   `576f466ce33ea424ae1f617f750c48b0dea4d938` / app `fe9b9f306` passed hosted
   bridge run `35031241619` (685 app, 332 rustpush, 11 Anisette, 40 protector).
   This does not establish working People coordinates or Items.
-- **Resources:** no paid GCE launch without renewed approval; C: 28.12 GiB free.
+- **Resources:** no paid GCE launch without renewed approval; C:27.2GiB free.
   Five reviewed clean agent worktrees were removed with retained Git refs;
   manifest `build-evidence/agent-cleanup-20260915-profile/manifest.json` records
   406,196,141 logical bytes. Sessions/transcripts were retained because supported
   session deletion is unavailable. Current agent work and evidence are protected.
 
-Next: finish exact-source Android compilation/signing, verify the artifact, then
-qualify detached-engine recovery and edit/unsend on Pixel in one session. Do not reset app data,
+Next: on Pixel reconnect, qualify detached-engine recovery and edit/unsend with
+the verified APK in one session, after safe installed-state preflight. Do not reset app data,
 enable Alpha uploads, replay the ambiguous outbox, or claim production readiness.
 
 Current work handles after resume:
@@ -124,6 +131,11 @@ Current work handles after resume:
   Column-level follow-up confirms the live GUID equals the restored cloudGuid
   but is absent from restored guidRefs. The new fallback addresses that exact
   lookup gap; it still deliberately leaves the already-split rows untouched.
+  Additional saved-copy check: the live row's13 messages are all incoming;
+  both rows have zero local-send/adopted-send/mutation journal references. This
+  is a repair prerequisite only, not permission to merge or proof of every
+  canonical/source dependency. A resumed helper returned no report, so parent
+  continued this check directly and did not count it as an independent review.
 - All five reviewed helper tasks are stopped or idle; the final engine reviewer
   and FaceTime/Find My helpers were archived through supported app controls.
   Native agent handles disappeared after the host reload; app status and final
@@ -463,8 +475,8 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-1. Finish build `35058684776` and verify its exact f027 source, stable Canary
-   signature, package, native libraries and absence of dotenv secrets. No Pixel
+1. Preserve the verified f027 APK/manifest from successful build35058684776.
+   Wait for the Pixel connection and inspect installed identity/state. No
    installation while its owner is busy; an idle snapshot is not an atomic lease.
 2. Batch Pixel qualification: Profile encryption/read progress, actual host
    detach during work, reopen without a stranded lock, ordinary approved test
@@ -494,9 +506,9 @@ Detailed September 15 wire, installation, retained-record and media evidence is 
 - Parent owns account operations and integration. Current job and helper status
   is in the resume checkpoint. Prior experiments and launch IDs are historical
   evidence, not running work.
-- Windows session c936 is closed with process cleanup confirmed. The GitHub
-  build remains live; host watch session19890 observes that same run. Do not
-  dispatch a duplicate or weaken a source-compatibility check to reuse a DLL.
+- Windows session c936 is closed with process cleanup confirmed. GitHub build
+  35058684776 and its watch session19890 completed successfully. No build is
+  running. Do not dispatch a duplicate or weaken source compatibility for a DLL.
   Preserve exact bundles, receipts, bounded aggregates and rollback evidence.
 - Preserve the qualified DLLs, source manifests and rollback evidence. Current
   generated bindings already include extensionMetadataJson; a metadata JSON
