@@ -205,3 +205,18 @@ lane path facetime-findmy-lane/native-test-host (receipt-bound, established
 cert thumbprint, signature Valid; shared runtime untouched). The stock runner
 still pins the obsolete DLL hash, so a lane pin update follows before any
 live run. No credential or profile use yet; fresh window to be requested.
+
+September 16 first live lane evidence (launch be119c86, window granted and
+released): bounded read-only probe with sole-person selection finished
+findmy-probe-complete, abi_verified true, retained invariants verified, on
+the lane-signed runtime. People roster returned the 1 confirmed shared entry
+from a fresh request with no coordinates (opted_not_to_share true,
+tk_permission false, not locating); Devices returned 1 iPhone with no
+location; selected match true with location_found false under the new
+validity rule; Items not-tested by design. The offline qualifier independently
+reproduced selection-matched-no-location / absent-coordinates, result
+partial. No stopped-sharing inference is drawn from the native flags; the
+confirmed share state stands. Proven: roster retrieval, ABI match, and the
+report-to-verdict chain. Open: why no coordinates flow for a confirmed
+share (relationship key delivery is the standing research lead), same for
+Devices, and Items inventory stays gated on side-effect review.
