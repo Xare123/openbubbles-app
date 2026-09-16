@@ -2877,10 +2877,90 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "36:4861163290100543941",
+      "lastPropertyId": "13:3733844521104586883",
+      "name": "CloudSyncReceivedArchiveIntentEntity",
+      "properties": [
+        {
+          "id": "1:8266692441233902007",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:5156872077902573445",
+          "name": "intentKey",
+          "indexId": "101:1164630780275053972",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:5681008390296657601",
+          "name": "accountFingerprint",
+          "indexId": "102:5477399622223228053",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:7568659112238634304",
+          "name": "writerEpoch",
+          "type": 6
+        },
+        {
+          "id": "5:505295059401261687",
+          "name": "localMessageId",
+          "type": 6
+        },
+        {
+          "id": "6:2180220330727907797",
+          "name": "localChatId",
+          "type": 6
+        },
+        {
+          "id": "7:1185252381458292332",
+          "name": "messageGuidHash",
+          "type": 9
+        },
+        {
+          "id": "8:5458092792942110644",
+          "name": "sourceSha256",
+          "type": 9
+        },
+        {
+          "id": "9:202889547166595527",
+          "name": "origin",
+          "type": 6
+        },
+        {
+          "id": "10:3601784275617676726",
+          "name": "protectedSourceBinding",
+          "type": 9
+        },
+        {
+          "id": "11:4946506957758887831",
+          "name": "state",
+          "indexId": "103:3376337646296598667",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "12:7796363495916323376",
+          "name": "createdAtMs",
+          "type": 6
+        },
+        {
+          "id": "13:3733844521104586883",
+          "name": "updatedAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "35:5717746217656693252",
-  "lastIndexId": "100:128294639452592612",
+  "lastEntityId": "36:4861163290100543941",
+  "lastIndexId": "103:3376337646296598667",
   "lastRelationId": "1:7492985733214117623",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

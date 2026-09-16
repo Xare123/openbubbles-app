@@ -93,6 +93,62 @@ class CloudSyncLocalMutationIntentEntity {
   });
 }
 
+/// Durable metadata-only pre-admission intent for one already-persisted
+/// incoming/mirrored message. Not an uploader and never a member of
+/// [CloudOutboxOperationEntity] until a separate caller-owned atomic
+/// admission exists. Stores only hashes, typed metadata, and the opaque
+/// protected-source binding. No body, handle, raw GUID, key, IDS send
+/// receipt, or raw wire is stored here.
+@Entity()
+class CloudSyncReceivedArchiveIntentEntity {
+  int id;
+
+  @Index(type: IndexType.hash64)
+  @Unique()
+  String intentKey;
+
+  @Index(type: IndexType.hash64)
+  String accountFingerprint;
+
+  int writerEpoch;
+  int localMessageId;
+  int localChatId;
+  String messageGuidHash;
+  String sourceSha256;
+
+  /// Stable codes: 0 incoming, 1 mirrored. Matches
+  /// [CloudSyncReceivedArchiveOrigin] index order.
+  int origin;
+
+  /// Exact versioned protected-source binding. Stores ONLY that binding,
+  /// never a raw wire descriptor or key.
+  String protectedSourceBinding;
+
+  /// Stable codes: 0 staged/ready. No further transitions exist in this
+  /// pre-admission step; separate admission is intentionally absent.
+  @Index()
+  int state;
+
+  int createdAtMs;
+  int updatedAtMs;
+
+  CloudSyncReceivedArchiveIntentEntity({
+    this.id = 0,
+    required this.intentKey,
+    required this.accountFingerprint,
+    required this.writerEpoch,
+    required this.localMessageId,
+    required this.localChatId,
+    required this.messageGuidHash,
+    required this.sourceSha256,
+    required this.origin,
+    required this.protectedSourceBinding,
+    this.state = 0,
+    required this.createdAtMs,
+    required this.updatedAtMs,
+  });
+}
+
 /// Local-origin send intent, separate from both restored history and the
 /// protected remote-mutation outbox. No body, handle or raw GUID is stored here.
 @Entity()

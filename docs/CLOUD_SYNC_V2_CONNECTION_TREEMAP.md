@@ -200,15 +200,23 @@ Current work handles after resume:
   Four new regressions failed before the guards and passed afterward. Full five-
   file targeted batch passes288; focused analysis is clean. No source envelope,
   receive producer or remote received archive is enabled by these changes.
-- **Active Muse/max Carver:** `01a0a95a-f229-7c83-8d70-befba78d6012`, isolated
-  `agent-worktrees/received-intent-journal-20260916`, basee65bee42e. Owns the
-  additive received-intent entity, protected binding, journal and tests. Parent
-  required full wire revalidation inside atomic Message persistence/adoption,
-  retain-all GC ownership across epoch changes, and a genuinely resumable bounded
-  scan. The first metadata-only identity check and reset-to-zero scan were rejected.
-  No journal code/schema is integrated yet. Telephony submodule initialized from
-  existing local objects; generated plugin registrant churn is not approved for
-  integration. Keep this agent open while it produces the required revision.
+- **Received journal integrated, not enabled:** Carver's bounded journal and
+  binding passed parent review after corrections. Capture revalidates original
+  wire against the actual persisted row inside the same Message/intent transaction.
+  Parent also fixed auth changes during persistence, deleted-message readiness,
+  and a partial-page cursor that skipped an unreturned valid row. Production GC
+  inventories retain received blob/lease references across all epochs/states and
+  fail closed on malformed ownership. No remote-admission/producer hook exists.
+  The ten-file Dart batch passes446 and focused analysis is clean.
+- Schema adds only CloudSyncReceivedArchiveIntentEntity (ID36); all27 previous
+  entity/property layouts and retired UID arrays are unchanged. A synthetic old-
+  model store upgrades, preserves Message/Chat values and relationships, and
+  reopens successfully. This is forward-upgrade proof, not a live-data migration
+  or a supported downgrade/rollback claim. No device schema was changed.
+- Carver `01a0a95a-f229-7c83-8d70-befba78d6012` is closed, confirmed by missing
+  native handle. Original isolated helper snapshot is being preserved separately
+  from parent corrections before Git-aware worktree cleanup. No other helper,
+  native test job or parent test session remains active.
 - Parent rejected both first sidecar patches as stale-base duplicate fixes;
   current main already handles empty People handles and exact call-timeout
   ownership. Agents were redirected to current-source native/tester boundaries.

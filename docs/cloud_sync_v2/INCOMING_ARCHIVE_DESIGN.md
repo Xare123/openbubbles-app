@@ -46,9 +46,19 @@ parent, wire, sender and original local recipient; preserves source identity
 across same-row canonical adoption and sender-preference changes; and rejects
 deleted chats and unsupported shapes. Native receive-destination propagation
 and matching Dart guards are now implemented and test-qualified. The current
-five-file Dart batch passes288, including receive-origin rejection in outgoing
-send/reaction/edit/unsend capture. There is no production archive receive hook,
-integrated received journal, protected incoming source or incoming uploader yet.
+ten-file Dart batch passes446, including receive-origin rejection in outgoing
+send/reaction/edit/unsend capture, received journal restart/rollback, production
+reference inventories and forward schema upgrade. There is no production archive
+receive hook, native protected incoming source or incoming uploader yet.
+
+The received journal is integrated but unenabled. Its synchronous persistence
+callback and full wire/row validation share one ObjectBox transaction. The source
+binding must already refer to a native-protected envelope; a typed string is not
+authentication. The bounded reader returns an account/epoch-bound keyset cursor,
+and callers must continue until exhausted. Metadata readiness is not proof of
+current message-body equality or remote absence. GC includes every retained
+received reference, including old epochs and unknown states. Admission, terminal
+retirement and Apple-first semantic equivalence are still separate work.
 
 1. Define a separate received-archive origin and durable intent after incoming
    persistence succeeds. Preserve account/store provenance, the exact original
@@ -111,9 +121,11 @@ then group, media and mutation interplay before a full production claim.
   remain retained and never authorize overwrite.
 - Existing outbox/map entities are sufficient after admission. Before admission,
   offline or provisional receives need durable protected-source ownership without
-  blocking history reads. A small separate received-intent journal is preferable
-  to abusing outgoing intents or storing an unowned blob. No schema was changed
-  in this source-only step.
+  blocking history reads. The new received-intent table provides that metadata
+  ownership separately from outgoing intents/outbox, but native staging and its
+  production producer are not wired. The schema adds entity36 without changing
+  the27 existing entity/property layouts; only synthetic forward upgrade was
+  tested. Do not claim old-APK downgrade support from that test.
 
 ## Required evidence
 

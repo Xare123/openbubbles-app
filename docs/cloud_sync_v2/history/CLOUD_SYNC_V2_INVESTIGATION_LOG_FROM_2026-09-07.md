@@ -5833,3 +5833,31 @@ Historical tests do not establish current-device behavior.
   Telephony dependency was initialized at its recorded commit using local Git
   objects. Seven unrelated plugin registrant changes remain outside approved
   integration scope. Keep the active agent and unique work; no cleanup deletion.
+
+### September 16 durable received journal integration
+
+- Carver froze a13-test revision. Parent reviewed/imported only its eight owned
+  source/model/generated files, not unrelated plugin registrants. All27 existing
+  ObjectBox entity/property definitions and retired entity/property UID arrays
+  compare unchanged; entity36:4861163290100543941 adds13 metadata properties.
+- Parent reproduced and fixed further failures: partial ready-page capacity
+  advanced past an unreturned valid row, a changed auth callback could commit
+  persistence, and deleted Message metadata remained ready. Keyset now advances
+  only after considered rows; auth/owner is rechecked after the synchronous put;
+  deleted rows remain retained but not eligible. Original wire/body/sender/time
+  are validated inside the same transaction as initial Message plus intent save.
+- Added real production-store reference inventory wiring, not just journal
+  helpers. A failing-before/passing-after test proves retained received blob and
+  lease ownership across database reopen and unknown/old epochs. Corrupt binding
+  stops cleanup. These remain local references, not remote write permission.
+- Forward-upgrade test creates a synthetic pre-received e65 model store, writes
+  a Message/Chat, opens with the new model, verifies values and relationship,
+  and reopens again. It neither opens user evidence nor proves old-APK downgrade.
+- Final combined batch passes446 across ten files; focused analysis has no
+  issues. No production receive hook, native source stage, incoming outbox
+  admission or Apple-first equivalence path is enabled. No phone restart,
+  installation, user-data mutation or new cloud build occurred in this step.
+- Carver closed after accepted-with-corrections review; native lookup returns
+  not_found. Its frozen original source is retained for provenance until a clean
+  Git snapshot is recorded and supported worktree cleanup is verified. Main
+  retains the corrected implementation. Raw sessions/transcripts are not deleted.

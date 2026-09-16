@@ -8,6 +8,7 @@ import 'cloud_operation_identity.dart';
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
+import 'cloud_sync_received_archive_source_binding.dart';
 import 'cloud_sync_local_mutation_journal.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_chat_identity_evidence.dart';
@@ -699,6 +700,23 @@ class ObjectBoxCloudSyncStore
       } finally {
         sources.close();
       }
+      final receivedSources = _store
+          .box<CloudSyncReceivedArchiveIntentEntity>().query().build();
+      try {
+        if (receivedSources.count() > maximumCount) {
+          throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+        }
+        // Every retained origin still owns its handoff lease, including old
+        // accounts/epochs and unknown states. No receive retirement exists yet.
+        for (final intent in receivedSources.find()) {
+          references.add(_receivedArchiveSource(intent).leaseReference);
+          if (references.length > maximumCount) {
+            throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
+          }
+        }
+      } finally {
+        receivedSources.close();
+      }
       final mutations = _store
           .box<CloudSyncLocalMutationIntentEntity>()
           .query(CloudSyncLocalMutationIntentEntity_.state.notEquals(5))
@@ -775,6 +793,18 @@ class ObjectBoxCloudSyncStore
     final encoded = intent.protectedSourceBinding;
     if (encoded == null) return null;
     final source = CloudSyncLocalSendSourceBinding.decode(encoded);
+    source.requireOrigin(
+      accountFingerprint: intent.accountFingerprint,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+    );
+    return source;
+  }
+
+  static CloudSyncReceivedArchiveSourceBinding _receivedArchiveSource(
+    CloudSyncReceivedArchiveIntentEntity intent,
+  ) {
+    final source = CloudSyncReceivedArchiveSourceBinding.decode(intent.protectedSourceBinding);
     source.requireOrigin(
       accountFingerprint: intent.accountFingerprint,
       messageGuidHash: intent.messageGuidHash,
@@ -905,6 +935,7 @@ class ObjectBoxCloudSyncStore
           (_recordMaps.count() * 2) +
           _writerAuthorities.count() +
           _store.box<CloudSyncLocalSendIntentEntity>().count() +
+          _store.box<CloudSyncReceivedArchiveIntentEntity>().count() +
           activeMutationCount +
           (_store.box<CloudAttachmentUploadEntity>().count() * 2) +
           (_attachmentMaterializations.count() * 4);
@@ -987,6 +1018,11 @@ class ObjectBoxCloudSyncStore
               ..order(CloudSyncLocalSendIntentEntity_.id))
             .build(),
         (intent) => capture(_localSendSource(intent)?.protectedReference),
+      );
+      scanPaged(
+        (_store.box<CloudSyncReceivedArchiveIntentEntity>().query()
+          ..order(CloudSyncReceivedArchiveIntentEntity_.id)).build(),
+        (intent) => capture(_receivedArchiveSource(intent).protectedReference),
       );
       scanPaged(
         (_store.box<CloudSyncLocalMutationIntentEntity>().query(
