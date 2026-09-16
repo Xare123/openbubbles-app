@@ -353,6 +353,25 @@ pub struct CloudSyncNativeAuthMetadata {
     pub protected_store_identity: String,
 }
 
+/// Native process-wide plus OS-file exclusion for LOCAL protected data only.
+/// Never grants CloudKit writer authority. Release explicitly before teardown.
+#[frb(opaque)]
+pub struct CloudSyncLocalStoreLease {
+    inner: Arc<crate::cloud_sync_local_store_lock::LocalProtectedStoreLease>,
+}
+
+pub async fn cloud_sync_acquire_local_store_lease(
+    storage_directory: String,
+) -> anyhow::Result<CloudSyncLocalStoreLease> {
+    let inner = crate::cloud_sync_local_store_lock::LocalProtectedStoreLease::acquire(
+        std::path::Path::new(&storage_directory)).await?;
+    Ok(CloudSyncLocalStoreLease { inner })
+}
+
+pub fn cloud_sync_release_local_store_lease(lease: &CloudSyncLocalStoreLease) {
+    lease.inner.release();
+}
+
 /// Opaque local ownership of a received source. This is neither an IDS send
 /// receipt nor permission to save a CloudKit record. No message content returns.
 #[frb(type_64bit_int)]
