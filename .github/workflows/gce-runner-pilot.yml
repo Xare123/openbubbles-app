@@ -13,7 +13,16 @@ on:
           - n2d-standard-8
           - t2d-standard-32
           - t2d-standard-60
+          - c4d-standard-16
           - c4d-highcpu-16
+      provisioning_model:
+        description: Spot is cheaper and interruptible; standard is the rollback path
+        required: true
+        default: spot
+        type: choice
+        options:
+          - spot
+          - standard
       runner_zone:
         description: Google Compute Engine zone
         required: true
@@ -86,6 +95,7 @@ env:
   GCP_RUNNER_ZONE: ${{ inputs.runner_zone || 'us-west1-b' }}
   RUNNER_NAME: gce-${{ github.run_id }}-${{ github.run_attempt }}
   MACHINE_TYPE: ${{ inputs.machine_type || 'n2d-standard-16' }}
+  PROVISIONING_MODEL: ${{ inputs.provisioning_model || 'spot' }}
   DISK_TYPE: ${{ startsWith(inputs.machine_type || 'n2d-standard-16', 'c4d-') && 'hyperdisk-balanced' || startsWith(inputs.machine_type || 'n2d-standard-16', 't2d-') && 'pd-ssd' || 'pd-balanced' }}
   BUILD_FLAVOR: ${{ inputs.flavor || 'beta' }}
   VALIDATION_MODE: ${{ inputs.validation_mode || 'full' }}
@@ -136,6 +146,10 @@ jobs:
             echo 'source_ref must be a lowercase full 40-character commit SHA.' >&2
             exit 1
           fi
+          if [[ "$PROVISIONING_MODEL" != 'spot' && "$PROVISIONING_MODEL" != 'standard' ]]; then
+            echo 'provisioning_model must be spot or standard.' >&2
+            exit 1
+          fi
           if [[ "$OUTBOUND_WRITER" == 'true' && "$BUILD_FLAVOR" != 'canary' ]]; then
             echo 'outbound_writer requires flavor=canary.' >&2
             exit 1
@@ -173,25 +187,166 @@ jobs:
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
-      - name: Create runner
+      - name: Check out runner bootstrap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Create ephemeral runner
         id: create
-        uses: Cyclenerd/gce-github-runner@8e525f1156c9afac023a943187c844c8e03fe6a7 # v1.1.0
-        with:
-          mode: create
-          github_token: ${{ secrets.GCE_RUNNER_PAT }}
-          project: ${{ env.GCP_PROJECT_ID }}
-          name: ${{ env.RUNNER_NAME }}
-          zone: ${{ env.GCP_RUNNER_ZONE }}
-          machine_type: ${{ env.MACHINE_TYPE }}
-          disk_size: "100"
-          disk_type: ${{ env.DISK_TYPE }}
-          image_family: ubuntu-2404-lts-amd64
-          image_project: ubuntu-os-cloud
-          max_run_duration: 75m
-          network: ${{ env.GCP_RUNNER_NETWORK }}
-          subnet: ${{ env.GCP_RUNNER_SUBNET }}
-          service_account: ${{ env.GCP_RUNNER_SERVICE_ACCOUNT }}
-          scopes: cloud-platform
+        shell: bash
+        env:
+          GCE_RUNNER_PAT: ${{ secrets.GCE_RUNNER_PAT }}
+        run: |
+          set -euo pipefail
+
+          registration_response="$(mktemp)"
+          trap 'rm -f "$registration_response"' EXIT
+          curl --fail --silent --show-error --location \
+            --request POST \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GCE_RUNNER_PAT" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runners/registration-token" \
+            --output "$registration_response"
+          registration_token="$(jq -er '.token' "$registration_response")"
+          echo "::add-mask::$registration_token"
+
+          create_args=(
+            "$RUNNER_NAME"
+            --project "$GCP_PROJECT_ID"
+            --zone "$GCP_RUNNER_ZONE"
+            --machine-type "$MACHINE_TYPE"
+            --boot-disk-size 100GB
+            --boot-disk-type "$DISK_TYPE"
+            --boot-disk-auto-delete
+            --image-family ubuntu-2404-lts-amd64
+            --image-project ubuntu-os-cloud
+            --network "$GCP_RUNNER_NETWORK"
+            --subnet "$GCP_RUNNER_SUBNET"
+            --service-account "$GCP_RUNNER_SERVICE_ACCOUNT"
+            --scopes cloud-platform
+            --labels "type=github-runner,gh-runner=true,provisioning=${PROVISIONING_MODEL}"
+            --metadata "vmDnsSetting=ZonalOnly,block-project-ssh-keys=true,runner-name=${RUNNER_NAME},runner-repository=${GITHUB_REPOSITORY},runner-token=${registration_token},runner-version=latest,provisioning-model=${PROVISIONING_MODEL}"
+            --metadata-from-file startup-script=tooling/ci/gce_spot_runner_bootstrap.sh
+            --max-run-duration 75m
+            --instance-termination-action DELETE
+            --quiet
+          )
+          if [[ "$PROVISIONING_MODEL" == 'spot' ]]; then
+            create_args+=(
+              --provisioning-model SPOT
+              --maintenance-policy TERMINATE
+              --no-restart-on-failure
+            )
+          fi
+          gcloud compute instances create "${create_args[@]}"
+
+          print_bootstrap_diagnostics() {
+            echo 'Bounded VM serial-port diagnostics:' >&2
+            gcloud compute instances get-serial-port-output "$RUNNER_NAME" \
+              --project "$GCP_PROJECT_ID" \
+              --zone "$GCP_RUNNER_ZONE" \
+              --port 1 \
+              --start 0 2>&1 \
+              | tail -n 400 >&2 || true
+          }
+
+          vm_status=''
+          for attempt in {1..30}; do
+            vm_status="$(
+              gcloud compute instances describe "$RUNNER_NAME" \
+                --project "$GCP_PROJECT_ID" \
+                --zone "$GCP_RUNNER_ZONE" \
+                --format='value(status)' 2>/dev/null || true
+            )"
+            if [[ "$vm_status" == 'RUNNING' ]]; then
+              break
+            fi
+            echo "VM is not running yet (${attempt}/30, status=${vm_status:-unknown})."
+            sleep 10
+          done
+          if [[ "$vm_status" != 'RUNNING' ]]; then
+            print_bootstrap_diagnostics
+            echo 'Runner VM did not reach RUNNING state.' >&2
+            exit 1
+          fi
+
+          if [[ "$PROVISIONING_MODEL" == 'spot' ]]; then
+            actual_model="$(
+              gcloud compute instances describe "$RUNNER_NAME" \
+                --project "$GCP_PROJECT_ID" \
+                --zone "$GCP_RUNNER_ZONE" \
+                --format='value(scheduling.provisioningModel)'
+            )"
+            if [[ "$actual_model" != 'SPOT' ]]; then
+              print_bootstrap_diagnostics
+              echo "Expected SPOT provisioning, got: ${actual_model:-missing}" >&2
+              exit 1
+            fi
+          fi
+
+          find_runner_record() {
+            local page response count record
+            for page in {1..15}; do
+              response="$(mktemp)"
+              curl --fail --silent --show-error --location \
+                -H 'Accept: application/vnd.github+json' \
+                -H "Authorization: Bearer $GCE_RUNNER_PAT" \
+                -H 'X-GitHub-Api-Version: 2022-11-28' \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runners?per_page=100&page=${page}" \
+                --output "$response"
+              record="$(jq -c --arg name "$RUNNER_NAME" '.runners[] | select(.name == $name)' "$response")"
+              count="$(jq -er '.runners | length' "$response")"
+              rm -f "$response"
+              if [[ -n "$record" ]]; then
+                printf '%s\n' "$record"
+                return 0
+              fi
+              if (( count < 100 )); then
+                return 0
+              fi
+            done
+          }
+
+          runner_id=''
+          runner_status=''
+          for attempt in {1..60}; do
+            runner_record="$(find_runner_record)"
+            if [[ -n "$runner_record" ]]; then
+              runner_id="$(jq -r '.id' <<< "$runner_record")"
+              runner_status="$(jq -r '.status' <<< "$runner_record")"
+            fi
+            if [[ "$runner_id" =~ ^[0-9]+$ && "$runner_status" == 'online' ]]; then
+              break
+            fi
+            if ! gcloud compute instances describe "$RUNNER_NAME" \
+              --project "$GCP_PROJECT_ID" \
+              --zone "$GCP_RUNNER_ZONE" \
+              --format='value(name)' >/dev/null 2>&1; then
+              print_bootstrap_diagnostics
+              echo 'Runner VM disappeared before registration, likely due to Spot preemption.' >&2
+              exit 1
+            fi
+            echo "Runner is not online yet (${attempt}/60)."
+            sleep 10
+          done
+          if [[ ! "$runner_id" =~ ^[0-9]+$ || "$runner_status" != 'online' ]]; then
+            print_bootstrap_diagnostics
+            echo 'GitHub Actions runner did not register online.' >&2
+            exit 1
+          fi
+
+          # The token is one-time and short-lived. Remove it from metadata as
+          # soon as registration succeeds so it is not retained for the job.
+          gcloud compute instances remove-metadata "$RUNNER_NAME" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$GCP_RUNNER_ZONE" \
+            --keys runner-token \
+            --quiet
+
+          {
+            echo "label=$RUNNER_NAME"
+            echo "zone=$GCP_RUNNER_ZONE"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Record runner configuration
         shell: bash
@@ -203,7 +358,9 @@ jobs:
             echo "- Lane: \`${RUNNER_LANE}\`"
             echo "- Zone: \`${{ steps.create.outputs.zone }}\`"
             echo "- Machine: \`${MACHINE_TYPE}\`"
+            echo "- Provisioning: \`${PROVISIONING_MODEL}\`"
             echo "- Disk: \`${DISK_TYPE}\`"
+            echo '- Runner registration: `ephemeral` (one job)'
             echo '- Maximum VM lifetime: `75m`'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -212,8 +369,8 @@ jobs:
     needs: create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}
     timeout-minutes: 60
-    # The Marketplace action starts the runner service without HOME. Several
-    # setup actions require it, and Rust otherwise falls back to /.cargo.
+    # The bootstrap starts the runner as root. Several setup actions require
+    # HOME, and Rust otherwise falls back to /.cargo.
     env:
       HOME: /root
       CARGO_HOME: /root/.cargo
@@ -507,21 +664,12 @@ jobs:
       # that legitimately adds a bridge API must be tested against its newly
       # generated surface, while the later drift gate still prevents silently
       # accepting uncommitted generated files.
-      - name: Run the full Dart test suite
-        id: dart-tests
+      - name: Run selected test suites in parallel
+        id: parallel-tests
         continue-on-error: true
-        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'dart-only' }}
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'dart-only' }}
         shell: bash
-        run: |
-          flutter test
-          pwsh -NoProfile -File tooling/windows/test_cloudkit_semantic_outbox_contract.ps1
-
-      - name: Run Rust library tests
-        id: app-rust-tests
-        continue-on-error: true
-        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' }}
-        shell: bash
-        run: cargo test --manifest-path rust/Cargo.toml --lib
+        run: bash tooling/ci/run_gce_validation_suites.sh
 
       - name: Qualify automatic-upload Canary flags
         id: automatic-upload-tests
@@ -537,33 +685,17 @@ jobs:
             --dart-define=TEST_EXPECT_AUTOMATIC_UPLOADS=true \
             test/services/cloud_sync/cloud_sync_upload_rollout_gate_test.dart
 
-      - name: Run rustpush library tests with production feature set
-        id: rustpush-tests
-        continue-on-error: true
-        if: ${{ env.VALIDATION_MODE == 'full' }}
-        shell: bash
-        # Several tests intentionally pause a process-global CloudKit gate.
-        run: cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3 -- --test-threads=1
-
-      - name: Run Cloud Sync protector harness
-        id: protector-tests
-        continue-on-error: true
-        if: ${{ env.VALIDATION_MODE == 'full' }}
-        shell: bash
-        run: cargo test --locked --manifest-path rust/cloud_sync_protector_harness/Cargo.toml
-
       # Collect independent suite failures in one run, but never package a
-      # failed qualification. `outcome` retains failures hidden by the step's
-      # continue-on-error `conclusion`. Missing/skipped outcomes also fail.
+      # failed qualification. Missing outputs and skipped required suites fail.
       - name: Require every selected test suite to pass
         if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'app-rust-only' || env.VALIDATION_MODE == 'dart-only' }}
         shell: bash
         env:
-          DART_TEST_OUTCOME: ${{ steps.dart-tests.outcome }}
-          APP_RUST_TEST_OUTCOME: ${{ steps.app-rust-tests.outcome }}
+          DART_TEST_OUTCOME: ${{ steps.parallel-tests.outputs.dart }}
+          APP_RUST_TEST_OUTCOME: ${{ steps.parallel-tests.outputs.app_rust }}
           AUTOMATIC_UPLOAD_TEST_OUTCOME: ${{ steps.automatic-upload-tests.outcome }}
-          RUSTPUSH_TEST_OUTCOME: ${{ steps.rustpush-tests.outcome }}
-          PROTECTOR_TEST_OUTCOME: ${{ steps.protector-tests.outcome }}
+          RUSTPUSH_TEST_OUTCOME: ${{ steps.parallel-tests.outputs.rustpush }}
+          PROTECTOR_TEST_OUTCOME: ${{ steps.parallel-tests.outputs.protector }}
         run: |
           set -euo pipefail
           failed=0
@@ -956,16 +1088,6 @@ jobs:
 
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
-
-      - name: Delete runner through Marketplace action
-        continue-on-error: true
-        uses: Cyclenerd/gce-github-runner@8e525f1156c9afac023a943187c844c8e03fe6a7 # v1.1.0
-        with:
-          mode: delete
-          github_token: ${{ secrets.GCE_RUNNER_PAT }}
-          project: ${{ env.GCP_PROJECT_ID }}
-          name: ${{ env.RUNNER_NAME }}
-          zone: ${{ env.GCP_RUNNER_ZONE }}
 
       - name: Idempotent cleanup and verification
         shell: bash
