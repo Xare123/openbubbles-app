@@ -536,6 +536,14 @@ Map<String, Object?> _people(List<api.Follow> rows, DateTime now) => {
   'native_locate_in_progress_count': rows
       .where((r) => r.locateInProgress)
       .length,
+  // Capability flags exactly as sent by native. Meaning is pending live
+  // correlation against coordinates presence; never sharing inference.
+  'native_secure_locations_capable_true_count': rows
+      .where((r) => r.secureLocationsCapable)
+      .length,
+  'native_shallow_or_live_secure_locations_capable_true_count': rows
+      .where((r) => r.shallowOrLiveSecureLocationsCapable)
+      .length,
 };
 
 /// Coordinate-usability rule shared by aggregate counts and selected-location

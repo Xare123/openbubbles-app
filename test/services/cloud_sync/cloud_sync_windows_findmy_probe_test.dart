@@ -31,6 +31,8 @@ api.Follow person({
   api.Location? point,
   bool? optedOut,
   List<String> handles = const [],
+  bool secure = true,
+  bool liveCapable = false,
 }) => api.Follow(
   createTimestamp: 0,
   expires: 0,
@@ -40,8 +42,8 @@ api.Follow person({
   isFromMessages: false,
   onlyInEvent: false,
   personIdHash: 'private-hash',
-  secureLocationsCapable: true,
-  shallowOrLiveSecureLocationsCapable: false,
+  secureLocationsCapable: secure,
+  shallowOrLiveSecureLocationsCapable: liveCapable,
   source: 'private-source',
   tkPermission: true,
   updateTimestamp: 0,
@@ -366,6 +368,8 @@ void main() {
         'native_opted_not_to_share_unknown_count',
         'native_tk_permission_true_count',
         'native_locate_in_progress_count',
+        'native_secure_locations_capable_true_count',
+        'native_shallow_or_live_secure_locations_capable_true_count',
         'absent',
         'unknown',
         'future',
@@ -830,6 +834,31 @@ void main() {
           1,
         );
       }
+    },
+  );
+
+  test(
+    'secure-locations capability flags are counted without interpretation',
+    () async {
+      final report = await probe(
+        callbacks: reads(
+          people: () async => fresh([
+            person(secure: true, liveCapable: true),
+            person(secure: true, liveCapable: false),
+            person(secure: false, liveCapable: false),
+          ]),
+        ),
+      );
+      final people = section(report, 'people');
+      expect(
+        people['native_secure_locations_capable_true_count'],
+        2,
+      );
+      expect(
+        people['native_shallow_or_live_secure_locations_capable_true_count'],
+        1,
+      );
+      expect(people['returned_count'], 3);
     },
   );
 }

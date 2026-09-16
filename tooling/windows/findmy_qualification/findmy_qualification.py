@@ -72,6 +72,8 @@ _PEOPLE_COUNTS = (
     "native_opted_not_to_share_unknown_count",
     "native_tk_permission_true_count",
     "native_locate_in_progress_count",
+    "native_secure_locations_capable_true_count",
+    "native_shallow_or_live_secure_locations_capable_true_count",
 )
 _DEVICE_COUNTS = ("native_family_share_true_count",)
 _SOLE_PERSON_REASONS = frozenset(
