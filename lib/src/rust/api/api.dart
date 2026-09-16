@@ -164,6 +164,29 @@ cloudSyncStageReceivedArchiveSource({
   message: message,
 );
 
+Future<CloudSyncNativeReceivedArchiveSeed> cloudSyncSealReceivedArchiveSeed({
+  required SharedPushState state,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required MessageInst message,
+}) => RustLib.instance.api.crateApiApiCloudSyncSealReceivedArchiveSeed(
+  state: state,
+  expectedAuth: expectedAuth,
+  message: message,
+);
+
+/// Opens ONLY a previously sealed same-account/store source. No live receive
+/// claim or current chat/body is used to reconstruct the original message.
+Future<CloudSyncNativeReceivedArchiveSourceBinding>
+cloudSyncStageReceivedArchiveSeed({
+  required SharedPushState state,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required CloudSyncNativeReceivedArchiveSeed seed,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageReceivedArchiveSeed(
+  state: state,
+  expectedAuth: expectedAuth,
+  seed: seed,
+);
+
 Future<CloudSyncNativeSendReceiptPage> cloudSyncReplayNativeSendReceipts({
   required String storageDirectory,
   required String expectedAccountFingerprint,
@@ -3836,6 +3859,43 @@ class CloudSyncNativeAuthMetadata {
           nativeSessionId == other.nativeSessionId &&
           accountFingerprint == other.accountFingerprint &&
           protectedStoreIdentity == other.protectedStoreIdentity;
+}
+
+/// Platform-encrypted receive retry job. Ciphertext, not message text, crosses
+/// FRB so Message+retry ownership can share one ObjectBox transaction.
+class CloudSyncNativeReceivedArchiveSeed {
+  final String accountFingerprint;
+  final String protectedStoreIdentity;
+  final String messageGuidHash;
+  final String sourceSha256;
+  final String ciphertext;
+
+  const CloudSyncNativeReceivedArchiveSeed({
+    required this.accountFingerprint,
+    required this.protectedStoreIdentity,
+    required this.messageGuidHash,
+    required this.sourceSha256,
+    required this.ciphertext,
+  });
+
+  @override
+  int get hashCode =>
+      accountFingerprint.hashCode ^
+      protectedStoreIdentity.hashCode ^
+      messageGuidHash.hashCode ^
+      sourceSha256.hashCode ^
+      ciphertext.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncNativeReceivedArchiveSeed &&
+          runtimeType == other.runtimeType &&
+          accountFingerprint == other.accountFingerprint &&
+          protectedStoreIdentity == other.protectedStoreIdentity &&
+          messageGuidHash == other.messageGuidHash &&
+          sourceSha256 == other.sourceSha256 &&
+          ciphertext == other.ciphertext;
 }
 
 /// Opaque local ownership of a received source. This is neither an IDS send

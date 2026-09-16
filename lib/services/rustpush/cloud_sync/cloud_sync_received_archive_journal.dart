@@ -12,14 +12,15 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
 
-/// Durable metadata-only pre-admission journal for incoming/mirrored
+/// Durable protected-source pre-admission journal for incoming/mirrored
 /// messages. Not an uploader.
 ///
 /// This journal owns one immutable protected-source reference per
 /// already-protected incoming source plus the Message/Chat row identities
 /// persisted atomically in the same transaction. It stores only hashes,
-/// typed metadata, and the opaque protected reference/lease binding. It
-/// stores no body, handle, raw GUID, key, IDS send receipt, or raw wire.
+/// typed metadata, and an opaque file binding or platform-encrypted retry
+/// seed. It stores no plaintext body, handle, raw GUID, key, IDS send receipt,
+/// or raw wire. The inline seed is not a protected-file GC reference.
 ///
 /// Honest limits, read once. [CloudSyncReceivedArchiveIdentity.capture]
 /// runs inside the save transaction on the actually persisted Message/Chat
@@ -68,6 +69,17 @@ final class CloudSyncReceivedArchiveJournal {
   final CloudKitWriterAuthoritySnapshot _binding;
 
   bool isBoundToStore(Store store) => identical(store, _store);
+
+  /// Stable ceiling for one worker round. New captures wait for the next
+  /// round so continuous traffic cannot indefinitely defer earlier failures.
+  int captureReadHighWatermark() => _store.runInTransaction(TxMode.read, () {
+    _verifyOwnership();
+    final query = (_store.box<CloudSyncReceivedArchiveIntentEntity>().query(
+      CloudSyncReceivedArchiveIntentEntity_.accountFingerprint.equals(_binding.scope.accountFingerprint)
+        .and(CloudSyncReceivedArchiveIntentEntity_.writerEpoch.equals(_binding.epoch)))
+        ..order(CloudSyncReceivedArchiveIntentEntity_.id, flags: Order.descending)).build()..limit = 1;
+    try { return query.findFirst()?.id ?? 0; } finally { query.close(); }
+  });
 
   /// A live echo of our own journaled send must not acquire received origin.
   bool hasOutgoingOrigin(String messageGuid) =>
@@ -284,6 +296,67 @@ final class CloudSyncReceivedArchiveJournal {
     return source;
   });
 
+  /// Atomically replaces a retained encrypted retry seed with its native-staged
+  /// descriptor. Exact immutable source equality is necessary, not upload
+  /// authority. A lost commit response keeps this descriptor for recommit.
+  void adoptMaterializedSource({
+    required int intentId,
+    required CloudSyncReceivedArchiveSourceBinding seed,
+    required CloudSyncReceivedArchiveSourceBinding staged,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _verifyOwnership();
+    if (!stillCurrent() || !seed.isSeed || staged.isSeed) {
+      throw StateError('cloud_sync_received_archive_identity_changed');
+    }
+    final intent = _readBoundIntent(intentId);
+    seed.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+    );
+    staged.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+    );
+    if (intent.protectedSourceBinding != seed.encode()) {
+      if (intent.protectedSourceBinding == staged.encode()) return;
+      throw StateError('cloud_sync_received_archive_intent_changed');
+    }
+    intent.protectedSourceBinding = staged.encode();
+    _store.box<CloudSyncReceivedArchiveIntentEntity>().put(intent);
+  });
+
+  /// A successful local commit suppresses repeated materialization. It is
+  /// not remote admission or evidence of a CloudKit save.
+  void markSourceMaterialized({
+    required int intentId,
+    required CloudSyncReceivedArchiveSourceBinding source,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _verifyOwnership();
+    if (!stillCurrent() || source.isSeed) {
+      throw StateError('cloud_sync_received_archive_identity_changed');
+    }
+    final intent = _readBoundIntent(intentId);
+    source.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+    );
+    if (intent.protectedSourceBinding != source.encode()) {
+      throw StateError('cloud_sync_received_archive_intent_changed');
+    }
+    intent.state = 1;
+    _store.box<CloudSyncReceivedArchiveIntentEntity>().put(intent);
+  });
+
   /// Recovers the exact adopted lease after crash. Never rolls back.
   CloudSyncReceivedArchiveSourceBinding readProtectedSource({
     required int intentId,
@@ -328,8 +401,13 @@ final class CloudSyncReceivedArchiveJournal {
     int limit = 50,
     required CloudSyncNativeAuthSnapshot currentAuth,
     String? cursor,
+    bool onlyPendingMaterialization = false,
+    int? maximumIntentId,
   }) => _store.runInTransaction(TxMode.read, () {
     if (limit < 1 || limit > 50) {
+      throw ArgumentError('cloud_sync_received_archive_limit_invalid');
+    }
+    if (maximumIntentId != null && maximumIntentId < 0) {
       throw ArgumentError('cloud_sync_received_archive_limit_invalid');
     }
     _verifyOwnership();
@@ -349,14 +427,21 @@ final class CloudSyncReceivedArchiveJournal {
     var exhausted = false;
     CloudSyncReceivedArchiveIntentEntity? lastScanned;
     while (ready.length < limit && pages < _maxReadPages) {
-      final base = CloudSyncReceivedArchiveIntentEntity_.accountFingerprint
+      var base = CloudSyncReceivedArchiveIntentEntity_.accountFingerprint
           .equals(_binding.scope.accountFingerprint)
           .and(
             CloudSyncReceivedArchiveIntentEntity_.writerEpoch.equals(
               _binding.epoch,
             ),
           )
-          .and(CloudSyncReceivedArchiveIntentEntity_.state.equals(0));
+          .and(
+            onlyPendingMaterialization
+                ? CloudSyncReceivedArchiveIntentEntity_.state.equals(0)
+                : CloudSyncReceivedArchiveIntentEntity_.state.oneOf([0, 1]),
+          );
+      if (maximumIntentId != null) {
+        base = base.and(CloudSyncReceivedArchiveIntentEntity_.id.lessOrEqual(maximumIntentId));
+      }
       final scoped = keyed
           ? base.and(
               CloudSyncReceivedArchiveIntentEntity_.updatedAtMs
@@ -427,7 +512,7 @@ final class CloudSyncReceivedArchiveJournal {
           throw StateError('cloud_sync_received_archive_time_invalid');
         }
         final intent = _readBoundIntent(intentId);
-        if (intent.state != 0) {
+        if (intent.state != 0 && intent.state != 1) {
           throw StateError('cloud_sync_received_archive_not_ready');
         }
         final observed = now.millisecondsSinceEpoch;
@@ -472,7 +557,7 @@ final class CloudSyncReceivedArchiveJournal {
             final src = CloudSyncReceivedArchiveSourceBinding.decode(
               intent.protectedSourceBinding,
             );
-            refs.add(src.protectedReference);
+            if (!src.isSeed) refs.add(src.protectedReference);
           }
           return Set<String>.unmodifiable(refs);
         } finally {
@@ -513,7 +598,7 @@ final class CloudSyncReceivedArchiveJournal {
         final src = CloudSyncReceivedArchiveSourceBinding.decode(
           intent.protectedSourceBinding,
         );
-        leases.add(src.leaseReference);
+        if (!src.isSeed) leases.add(src.leaseReference);
       }
       return Set<String>.unmodifiable(leases);
     } finally {
@@ -528,7 +613,7 @@ final class CloudSyncReceivedArchiveJournal {
     try {
       if (candidate.accountFingerprint != _binding.scope.accountFingerprint ||
           candidate.writerEpoch != _binding.epoch ||
-          candidate.state != 0 ||
+          (candidate.state != 0 && candidate.state != 1) ||
           candidate.intentKey !=
               intentKeyFor(
                 accountFingerprint: candidate.accountFingerprint,
@@ -652,7 +737,7 @@ final class CloudSyncReceivedArchiveJournal {
     if (intent == null ||
         intent.accountFingerprint != _binding.scope.accountFingerprint ||
         intent.writerEpoch != _binding.epoch ||
-        intent.state != 0 ||
+        (intent.state != 0 && intent.state != 1) ||
         (intent.origin != CloudSyncReceivedArchiveOrigin.incoming.index &&
             intent.origin != CloudSyncReceivedArchiveOrigin.mirrored.index) ||
         intent.intentKey !=
@@ -670,9 +755,11 @@ final class CloudSyncReceivedArchiveJournal {
     CloudSyncReceivedArchiveIntentEntity intent,
   ) {
     try {
-      CloudSyncReceivedArchiveSourceBinding.decode(
+      final source = CloudSyncReceivedArchiveSourceBinding.decode(
         intent.protectedSourceBinding,
-      ).requireOrigin(
+      );
+      if (intent.state == 1 && source.isSeed) return false;
+      source.requireOrigin(
         accountFingerprint: intent.accountFingerprint,
         messageGuidHash: intent.messageGuidHash,
         sourceSha256: intent.sourceSha256,

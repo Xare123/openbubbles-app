@@ -7,6 +7,42 @@ String _a43(String c) => List.filled(43, c).join();
 String _h64(String c) => List.filled(64, c).join();
 String _lease(String c) => 'obcs2.lease.${List.filled(32, c).join()}';
 void main() {
+  test(
+    'sealed retry seed owns ciphertext, never a fabricated file reference',
+    () {
+      final seed = CloudSyncReceivedArchiveSourceBinding.sealed(
+        accountFingerprint: _a43('A'),
+        protectedStoreIdentity: 'obcs2.store.${_a43('B')}',
+        messageGuidHash: _h64('a'),
+        sourceSha256: _h64('b'),
+        ciphertext: 'obcs2.test.U3ludGhldGlj',
+      );
+      final restored = CloudSyncReceivedArchiveSourceBinding.decode(
+        seed.encode(),
+      );
+      expect(restored.isSeed, isTrue);
+      expect(restored.sealedSource, seed.sealedSource);
+      expect(restored.protectedReference, isEmpty);
+      expect(restored.leaseReference, isEmpty);
+      expect(restored.toString(), isNot(contains(seed.sealedSource!)));
+      final fields = jsonDecode(seed.encode()) as List;
+      for (final edit in <int, Object>{
+        0: 1,
+        1: 'idsReceivedArchiveSource',
+        6: 'raw text',
+        7: _lease('a'),
+        8: _h64('f'),
+        9: seed.payloadLength + 1,
+      }.entries) {
+        final changed = List.of(fields)..[edit.key] = edit.value;
+        expect(
+          () =>
+              CloudSyncReceivedArchiveSourceBinding.decode(jsonEncode(changed)),
+          throwsStateError,
+        );
+      }
+    },
+  );
   final original = CloudSyncReceivedArchiveSourceBinding(
     accountFingerprint: _a43('A'),
     protectedStoreIdentity: 'obcs2.store.${_a43('B')}',

@@ -48,6 +48,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_arc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_delivery.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_source_runtime.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_source_binding.dart';
@@ -8119,6 +8120,10 @@ class RustPushService extends GetxService {
   bool _cloudSyncV2NativeReceiptReplayContinuationScheduled = false;
   bool _cloudSyncV2OutboundQuiescing = false;
   final Set<Future<void>> _cloudSyncV2ReceivedCaptures = {};
+  CloudSyncReceivedSourceRuntime? _cloudSyncV2ReceivedRuntime;
+  String? _cloudSyncV2ReceivedCursor;
+  int? _cloudSyncV2ReceivedRoundCeiling;
+  bool _cloudSyncV2ReceivedPassDeferred = false;
   bool _cloudSyncV2AndroidBackgroundRegistered = false;
   static const _cloudSyncV2SemanticPullQuiescenceTimeout =
       Duration(seconds: 50);
@@ -8228,6 +8233,7 @@ class RustPushService extends GetxService {
   }
 
   void _queueCloudSyncV2LocalSends(CloudSyncTrigger trigger) {
+    _queueCloudSyncV2ReceivedSources(trigger);
     if (!CloudSyncDevGate.localSendRuntimeEnabled ||
         !CloudSyncDevGate.manualOutboundCanaryEnabled ||
         !CloudKitWriterOwnership.v2MutationsEnabled ||
@@ -8381,6 +8387,92 @@ class RustPushService extends GetxService {
     }
   }
 
+  void _queueCloudSyncV2ReceivedSources(CloudSyncTrigger trigger) {
+    if (!CloudSyncDevGate.receivedArchiveCaptureEnabled || !CloudKitWriterOwnership.v2MutationsEnabled ||
+        !_cloudSyncV2CanaryRuntimeAllowed || !_cloudSyncV2DeveloperRuntimeAllowed ||
+        !ls.isUiThread || loggingOut || _cloudSyncV2OutboundQuiescing ||
+        ss.settings.cloudSyncingEnabled.value || statePath.isEmpty ||
+        state?.icloudServices?.cloudMessagesClient == null) {
+      return;
+    }
+    _cloudSyncV2ReceivedRuntime ??= CloudSyncReceivedSourceRuntime(
+      drain: () => ls.retainEngineUntil(_materializeCloudSyncV2ReceivedSources),
+      onError: (error, _) {
+        _cloudSyncV2ReceivedCursor = null;
+        _cloudSyncV2ReceivedRoundCeiling = null;
+        Logger.warn('Cloud Sync V2 received source retry deferred code=${cloudSyncV2SafeFailureCode(error)}');
+      });
+    _cloudSyncV2ReceivedRuntime!.request(trigger);
+  }
+
+  Future<({bool more, bool deferred})> _materializeCloudSyncV2ReceivedSources() async {
+    final capturedState = state;
+    final client = capturedState?.icloudServices?.cloudMessagesClient;
+    if (capturedState == null || client == null) return (more: false, deferred: true);
+    final objectBox = Database.store;
+    final storagePath = statePath;
+    bool stillCurrent() => !loggingOut && !_cloudSyncV2OutboundQuiescing &&
+        identical(capturedState, state) && identical(client, state?.icloudServices?.cloudMessagesClient) &&
+        identical(objectBox, Database.store) && !objectBox.isClosed() && statePath == storagePath &&
+        !ss.settings.cloudSyncingEnabled.value;
+    if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+    final metadata = await api.cloudSyncCaptureReceivedIdentity(state: capturedState);
+    if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+    final captured = CloudSyncNativeAuthSnapshot.fromNative(nativeSessionId: metadata.nativeSessionId,
+        accountFingerprint: metadata.accountFingerprint, protectedStoreIdentity: metadata.protectedStoreIdentity,
+        cloudMessagesClient: client);
+    final authority = ObjectBoxCloudKitWriterAuthority(store: objectBox);
+    final owner = authority.read(CloudKitWriterScope(accountFingerprint: captured.accountFingerprint));
+    if (owner == null || owner.owner != CloudKitWriterOwner.v2) return (more: false, deferred: true);
+    final journal = CloudSyncReceivedArchiveJournal(store: objectBox, authority: authority, authoritySnapshot: owner);
+    _cloudSyncV2ReceivedRoundCeiling ??= journal.captureReadHighWatermark();
+    final page = journal.readReadyPage(limit: 20, currentAuth: captured,
+        cursor: _cloudSyncV2ReceivedCursor, onlyPendingMaterialization: true,
+        maximumIntentId: _cloudSyncV2ReceivedRoundCeiling);
+    final transport = NativeProtectedCloudSyncTransport(cloudMessagesClient: client,
+        storageDirectory: storagePath, protectedStoreIdentity: captured.protectedStoreIdentity);
+    Future<void> validate() async {
+      if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
+      final now = await api.cloudSyncCaptureReceivedIdentity(state: capturedState);
+      if (!stillCurrent() || now.accountFingerprint != metadata.accountFingerprint ||
+          now.protectedStoreIdentity != metadata.protectedStoreIdentity || now.nativeSessionId != metadata.nativeSessionId) {
+        throw StateError('cloud_sync_received_archive_identity_changed');
+      }
+    }
+    var materialized = 0;
+    try {
+      for (final intent in page.ready) {
+        await validate();
+        try {
+          await CloudSyncReceivedArchiveStaging(journal: journal, transport: transport,
+              capturedIdentity: captured, validateCurrentIdentity: validate, stillCurrent: stillCurrent)
+              .materialize(intentId: intent.id, stageSeedNative: (seed) async =>
+                CloudSyncReceivedArchiveSourceBinding.fromNative(await api.cloudSyncStageReceivedArchiveSeed(
+                  state: capturedState, expectedAuth: metadata,
+                  seed: api.CloudSyncNativeReceivedArchiveSeed(accountFingerprint: seed.accountFingerprint,
+                    protectedStoreIdentity: seed.protectedStoreIdentity, messageGuidHash: seed.messageGuidHash,
+                    sourceSha256: seed.sourceSha256, ciphertext: seed.sealedSource!))));
+          materialized++;
+        } catch (error) {
+          if (!stillCurrent()) rethrow;
+          _cloudSyncV2ReceivedPassDeferred = true;
+          Logger.warn('Cloud Sync V2 received source retained for retry code=${cloudSyncV2SafeFailureCode(error)}');
+        }
+      }
+      _cloudSyncV2ReceivedCursor = page.nextCursor;
+      final deferred = _cloudSyncV2ReceivedPassDeferred;
+      final hasNewCaptures = page.exhausted && journal.captureReadHighWatermark() > _cloudSyncV2ReceivedRoundCeiling!;
+      if (page.exhausted) {
+        _cloudSyncV2ReceivedPassDeferred = false;
+        _cloudSyncV2ReceivedRoundCeiling = null;
+      }
+      if (materialized > 0) Logger.info('Cloud Sync V2 received source pass localReady=$materialized');
+      return (more: !page.exhausted || (hasNewCaptures && !deferred), deferred: deferred || hasNewCaptures);
+    } finally {
+      await transport.quiesceNativeOperations();
+    }
+  }
+
   Future<Message> _captureCloudSyncV2ReceivedMessage(
       api.MessageInst wire, Chat chat, Message message,
       Message Function() persistMessage) async {
@@ -8427,10 +8519,6 @@ class RustPushService extends GetxService {
       store: objectBox, authority: authority, authoritySnapshot: owner,
     );
     if (journal.hasOutgoingOrigin(wire.id)) return persistMessage();
-    final transport = NativeProtectedCloudSyncTransport(
-      cloudMessagesClient: client, storageDirectory: storagePath,
-      protectedStoreIdentity: captured.protectedStoreIdentity,
-    );
     Future<void> validateCurrent() async {
       if (!stillCurrent()) throw StateError('cloud_sync_received_archive_identity_changed');
       final now = await api.cloudSyncCaptureReceivedIdentity(state: capturedState);
@@ -8442,29 +8530,31 @@ class RustPushService extends GetxService {
     }
     Message? persisted;
     try {
-      await CloudSyncReceivedArchiveStaging(
-        journal: journal, transport: transport, capturedIdentity: captured,
+      await CloudSyncReceivedArchiveStaging.persistSealed(
+        journal: journal, capturedIdentity: captured,
         validateCurrentIdentity: validateCurrent, stillCurrent: stillCurrent,
-      ).persist(
         wire: wire, liveContext: live, localChatId: chat.id!,
         persistMessage: () {
           persisted = persistMessage();
           return persisted!.id!;
         },
-        stageNative: () async => CloudSyncReceivedArchiveSourceBinding.fromNative(
-          await api.cloudSyncStageReceivedArchiveSource(
-            state: capturedState, expectedAuth: metadata, message: wire)),
+        sealNative: () async {
+          final seed = await api.cloudSyncSealReceivedArchiveSeed(
+              state: capturedState, expectedAuth: metadata, message: wire);
+          return CloudSyncReceivedArchiveSourceBinding.sealed(
+              accountFingerprint: seed.accountFingerprint, protectedStoreIdentity: seed.protectedStoreIdentity,
+              messageGuidHash: seed.messageGuidHash, sourceSha256: seed.sourceSha256, ciphertext: seed.ciphertext);
+        },
         clock: DateTime.now,
       );
       Logger.info('Cloud Sync V2 received source retained');
+      _queueCloudSyncV2ReceivedSources(CloudSyncTrigger.localOutbox);
       return persisted!;
     } on StateError catch (error) {
       // A local send may acquire its origin between the precheck and the
       // capture transaction. Preserve normal reception, never duplicate it.
       if (error.message == 'cloud_sync_received_archive_outgoing_overlap') return persistMessage();
       rethrow;
-    } finally {
-      await transport.quiesceNativeOperations();
     }
   }
 
@@ -11239,6 +11329,11 @@ class RustPushService extends GetxService {
     _cloudSyncV2MessageUpdateRetryDueUtc = null;
     try {
       try {
+        await _cloudSyncV2ReceivedRuntime?.dispose().timeout(_cloudSyncV2OutboundQuiescenceTimeout);
+        _cloudSyncV2ReceivedRuntime = null;
+        _cloudSyncV2ReceivedCursor = null;
+        _cloudSyncV2ReceivedRoundCeiling = null;
+        _cloudSyncV2ReceivedPassDeferred = false;
         await _drainCloudSyncV2ReceivedCaptures().timeout(_cloudSyncV2OutboundQuiescenceTimeout);
       } on TimeoutException {
         throw StateError('cloud_sync_received_archive_quiescence_timeout');

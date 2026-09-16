@@ -709,7 +709,8 @@ class ObjectBoxCloudSyncStore
         // Every retained origin still owns its handoff lease, including old
         // accounts/epochs and unknown states. No receive retirement exists yet.
         for (final intent in receivedSources.find()) {
-          references.add(_receivedArchiveSource(intent).leaseReference);
+          final source = _receivedArchiveSource(intent);
+          if (!source.isSeed) references.add(source.leaseReference);
           if (references.length > maximumCount) {
             throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
           }
@@ -1022,7 +1023,10 @@ class ObjectBoxCloudSyncStore
       scanPaged(
         (_store.box<CloudSyncReceivedArchiveIntentEntity>().query()
           ..order(CloudSyncReceivedArchiveIntentEntity_.id)).build(),
-        (intent) => capture(_receivedArchiveSource(intent).protectedReference),
+        (intent) {
+          final source = _receivedArchiveSource(intent);
+          return capture(source.isSeed ? null : source.protectedReference);
+        },
       );
       scanPaged(
         (_store.box<CloudSyncLocalMutationIntentEntity>().query(

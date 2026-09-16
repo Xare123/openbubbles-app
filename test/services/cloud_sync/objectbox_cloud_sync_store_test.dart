@@ -122,6 +122,23 @@ void main() {
     await expectLater(store.readLiveProtectedOutboundLeaseReferences(maximumCount: 100), throwsStateError);
   });
 
+  test('encrypted received retry seed survives inventory without fake file owners', () async {
+    final seed = CloudSyncReceivedArchiveSourceBinding.sealed(
+      accountFingerprint: 'B' * 43, protectedStoreIdentity: 'obcs2.store.${'S' * 43}',
+      messageGuidHash: 'a' * 64, sourceSha256: 'b' * 64, ciphertext: 'obcs2.test.U3ludGhldGlj');
+    final id = objectBox.box<CloudSyncReceivedArchiveIntentEntity>().put(CloudSyncReceivedArchiveIntentEntity(
+      intentKey: 'seed-fixture', accountFingerprint: seed.accountFingerprint, writerEpoch: 99,
+      localMessageId: 1, localChatId: 1, messageGuidHash: seed.messageGuidHash,
+      sourceSha256: seed.sourceSha256, origin: 0, protectedSourceBinding: seed.encode(),
+      createdAtMs: 1, updatedAtMs: 1));
+    await reopen();
+    final live = await store.readLiveProtectedReferences(maximumCount: 100);
+    expect(live.isComplete, isTrue);
+    expect(live.references, isEmpty);
+    expect(await store.readLiveProtectedOutboundLeaseReferences(maximumCount: 100), isEmpty);
+    expect(objectBox.box<CloudSyncReceivedArchiveIntentEntity>().get(id)!.protectedSourceBinding, seed.encode());
+  });
+
   for (final scenario in ['exact member update', 'corrupt owner', 'reset']) {
     test(
       'physical Chat mapping $scenario survives reopen without retargeting',

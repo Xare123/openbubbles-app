@@ -297,12 +297,22 @@ void main() {
       '!_cloudSyncV2CanaryRuntimeAllowed', '!_cloudSyncV2DeveloperRuntimeAllowed',
       'ss.settings.cloudSyncingEnabled.value', 'wire.receivedOnHandle == null',
       'owner.owner != CloudKitWriterOwner.v2', 'journal.hasOutgoingOrigin(wire.id)',
-      'CloudSyncReceivedArchiveStaging(', 'api.cloudSyncStageReceivedArchiveSource(',
-      'await transport.quiesceNativeOperations()',
+      'CloudSyncReceivedArchiveStaging.persistSealed(', 'api.cloudSyncSealReceivedArchiveSeed(',
     ]) { expect(received, contains(fence)); }
     expect(received, isNot(contains('pushOperations(')));
     expect(received, isNot(contains('sendMsg(')));
     expect(received, isNot(contains('CloudOutboxOperation(')));
+    expect(received, isNot(contains('NativeProtectedCloudSyncTransport(')));
+    expect(received, isNot(contains('runLocalProtectedStoreExclusive(')));
+    final materialize = _section(service, 'Future<({bool more, bool deferred})> _materializeCloudSyncV2ReceivedSources()',
+        'Future<Message> _captureCloudSyncV2ReceivedMessage(');
+    expect(materialize, contains('onlyPendingMaterialization: true'));
+    expect(materialize, contains('maximumIntentId: _cloudSyncV2ReceivedRoundCeiling'));
+    expect(materialize, contains('api.cloudSyncStageReceivedArchiveSeed('));
+    expect(materialize, contains('await transport.quiesceNativeOperations()'));
+    expect(materialize, isNot(contains('pushOperations(')));
+    expect(materialize, isNot(contains('sendMsg(')));
+    expect(service, contains('ls.retainEngineUntil(_materializeCloudSyncV2ReceivedSources)'));
     final gate = File('lib/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart').readAsStringSync();
     expect(gate, matches(RegExp(
         r"receivedArchiveCaptureEnabled = bool.fromEnvironment\(\s*'OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_CAPTURE',\s*defaultValue: false")));
@@ -396,7 +406,7 @@ void main() {
       RegExp(r'NativeProtectedCloudSyncTransport\(').allMatches(service).length,
       4,
       reason:
-          'attachment staging, mutation staging, receipt-bound conditional update, and independently gated local received capture are the reviewed runtime compositions',
+          'attachment staging, mutation staging, receipt-bound conditional update, and local-only received seed materialization; foreground received capture has no file transport',
     );
 
     expect(

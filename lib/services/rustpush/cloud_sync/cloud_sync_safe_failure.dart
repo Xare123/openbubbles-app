@@ -50,6 +50,8 @@ abstract final class CloudSyncV2ReceivedArchiveSafeFailureCodes {
     'cloud_sync_received_archive_sms',
     'cloud_sync_received_archive_source_changed',
     'cloud_sync_received_archive_source_stage_failed',
+    'cloud_sync_received_archive_source_seal_failed',
+    'cloud_sync_received_archive_seed_requires_materialization',
     'cloud_sync_received_archive_store_exclusion_unavailable',
     'cloud_sync_received_archive_system_message',
     'cloud_sync_received_archive_target',

@@ -37,6 +37,19 @@ void main() {
     );
   });
 
+  test('empty join handle stays pending even with an active remote snapshot', () {
+    expect(
+      shouldAcceptOutgoingFaceTimeJoin(
+        sessionGroupId: guid,
+        eventGuid: guid,
+        eventHandle: '',
+        selfHandles: [self],
+        participants: [participant(remote, true)],
+      ),
+      isFalse,
+    );
+  });
+
   test('missing or stale session stays pending', () {
     expect(
       shouldAcceptOutgoingFaceTimeJoin(

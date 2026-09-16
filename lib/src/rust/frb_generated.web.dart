@@ -1627,6 +1627,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_box_autoadd_cloud_sync_native_auth_metadata(dynamic raw);
 
   @protected
+  CloudSyncNativeReceivedArchiveSeed
+  dco_decode_box_autoadd_cloud_sync_native_received_archive_seed(dynamic raw);
+
+  @protected
   CloudSyncNativeSendReceipt
   dco_decode_box_autoadd_cloud_sync_native_send_receipt(dynamic raw);
 
@@ -2175,6 +2179,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudSyncNativeAuthMetadata dco_decode_cloud_sync_native_auth_metadata(
     dynamic raw,
   );
+
+  @protected
+  CloudSyncNativeReceivedArchiveSeed
+  dco_decode_cloud_sync_native_received_archive_seed(dynamic raw);
 
   @protected
   CloudSyncNativeReceivedArchiveSourceBinding
@@ -5413,6 +5421,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncNativeReceivedArchiveSeed
+  sse_decode_box_autoadd_cloud_sync_native_received_archive_seed(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncNativeSendReceipt
   sse_decode_box_autoadd_cloud_sync_native_send_receipt(
     SseDeserializer deserializer,
@@ -6137,6 +6151,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudSyncNativeAuthMetadata sse_decode_cloud_sync_native_auth_metadata(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncNativeReceivedArchiveSeed
+  sse_decode_cloud_sync_native_received_archive_seed(
     SseDeserializer deserializer,
   );
 
@@ -9957,6 +9977,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_native_received_archive_seed(
+    CloudSyncNativeReceivedArchiveSeed self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_native_send_receipt(
     CloudSyncNativeSendReceipt self,
     SseSerializer serializer,
@@ -10809,6 +10835,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_native_auth_metadata(
     CloudSyncNativeAuthMetadata self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_native_received_archive_seed(
+    CloudSyncNativeReceivedArchiveSeed self,
     SseSerializer serializer,
   );
 

@@ -98,7 +98,8 @@ class CloudSyncLocalMutationIntentEntity {
 /// [CloudOutboxOperationEntity] until a separate caller-owned atomic
 /// admission exists. Stores only hashes, typed metadata, and the opaque
 /// protected-source binding. No body, handle, raw GUID, key, IDS send
-/// receipt, or raw wire is stored here.
+/// receipt, or raw wire is stored here. Version2 bindings may hold a bounded
+/// platform-encrypted retry seed instead of an already-staged file lease.
 @Entity()
 class CloudSyncReceivedArchiveIntentEntity {
   int id;
@@ -120,12 +121,12 @@ class CloudSyncReceivedArchiveIntentEntity {
   /// [CloudSyncReceivedArchiveOrigin] index order.
   int origin;
 
-  /// Exact versioned protected-source binding. Stores ONLY that binding,
-  /// never a raw wire descriptor or key.
+  /// Exact versioned protected-source binding, or platform-encrypted retry
+  /// seed. Never a raw wire descriptor, plaintext body or key.
   String protectedSourceBinding;
 
-  /// Stable codes: 0 staged/ready. No further transitions exist in this
-  /// pre-admission step; separate admission is intentionally absent.
+  /// Stable codes: 0 captured, source materialization pending; 1 exact native
+  /// source lease committed. Neither state means admitted or cloud-saved.
   @Index()
   int state;
 

@@ -464,6 +464,158 @@ void main() {
   });
 
   test(
+    'sealed source and Message commit together; restart retries original seed',
+    () async {
+      const guid = 'sealed-retry';
+      final staged = _staged(guid, 'original', chat);
+      final seed = CloudSyncReceivedArchiveSourceBinding.sealed(
+        accountFingerprint: staged.accountFingerprint,
+        protectedStoreIdentity: staged.protectedStoreIdentity,
+        messageGuidHash: staged.messageGuidHash,
+        sourceSha256: staged.sourceSha256,
+        ciphertext: 'obcs2.test.U3ludGhldGlj',
+      );
+      final wire = _wire(
+        id: guid,
+        text: 'original',
+        sentAt: _time(2).millisecondsSinceEpoch,
+      );
+      final auth = _auth(Object());
+      var sealed = 0;
+      Future<int> capture() => CloudSyncReceivedArchiveStaging.persistSealed(
+        journal: journal,
+        capturedIdentity: auth,
+        validateCurrentIdentity: () async {},
+        stillCurrent: () => true,
+        wire: wire,
+        liveContext: _live,
+        localChatId: chat.id!,
+        persistMessage: () => store.box<Message>().put(
+          _byGuid(guid) ?? _fresh(guid, 'original', chat),
+        ),
+        sealNative: () async {
+          sealed++;
+          return seed;
+        },
+        clock: () => _time(3),
+      );
+      final id = await capture();
+      expect(store.box<Message>().count(), 1);
+      expect(
+        journal.readLiveReceivedArchiveLeaseReferences(maximumCount: 10),
+        isEmpty,
+      );
+      expect(
+        journal.readLiveReceivedArchiveReferences(maximumCount: 10),
+        isEmpty,
+      );
+      final chatId = chat.id!;
+      await reopen();
+      chat = store.box<Chat>().get(chatId)!;
+      expect(await capture(), id);
+      expect(sealed, 1);
+      expect(journal.readReadyPage(currentAuth: auth).ready.single.id, id);
+      final transport = _ReceivedLeaseTransport();
+      CloudSyncReceivedArchiveStaging flow() => CloudSyncReceivedArchiveStaging(
+        journal: journal,
+        transport: transport,
+        capturedIdentity: auth,
+        validateCurrentIdentity: () async {},
+        stillCurrent: () => true,
+      );
+      await expectLater(
+        flow().materialize(
+          intentId: id,
+          stageSeedNative: (_) async {
+            throw StateError('disk unavailable');
+          },
+        ),
+        throwsStateError,
+      );
+      expect(
+        journal.readProtectedSource(intentId: id, currentAuth: auth).encode(),
+        seed.encode(),
+      );
+      transport.failCommit = true;
+      var stages = 0;
+      Future<CloudSyncReceivedArchiveSourceBinding> materialize() =>
+          flow().materialize(
+            intentId: id,
+            stageSeedNative: (original) async {
+              expect(original.encode(), seed.encode());
+              stages++;
+              return staged;
+            },
+          );
+      await expectLater(materialize(), throwsStateError);
+      expect(
+        journal.readProtectedSource(intentId: id, currentAuth: auth).encode(),
+        staged.encode(),
+      );
+      expect(transport.rolledBack, isEmpty);
+      await reopen();
+      transport.failCommit = false;
+      expect((await materialize()).encode(), staged.encode());
+      expect(stages, 1);
+      expect(store.box<CloudSyncReceivedArchiveIntentEntity>().count(), 1);
+      expect(store.box<CloudSyncReceivedArchiveIntentEntity>().get(id)!.state, 1);
+      expect(journal.readReadyPage(currentAuth: auth, onlyPendingMaterialization: true).ready, isEmpty);
+      expect(journal.readReadyPage(currentAuth: auth).ready.single.id, id);
+      expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  test(
+    'seed materialization mismatch rolls back only the unadopted stage',
+    () async {
+      const guid = 'seed-drift';
+      final staged = _staged(guid, 'original', chat);
+      final seed = CloudSyncReceivedArchiveSourceBinding.sealed(
+        accountFingerprint: staged.accountFingerprint,
+        protectedStoreIdentity: staged.protectedStoreIdentity,
+        messageGuidHash: staged.messageGuidHash,
+        sourceSha256: staged.sourceSha256,
+        ciphertext: 'obcs2.test.U3ludGhldGlj',
+      );
+      final auth = _auth(Object());
+      final id = await CloudSyncReceivedArchiveStaging.persistSealed(
+        journal: journal,
+        capturedIdentity: auth,
+        validateCurrentIdentity: () async {},
+        stillCurrent: () => true,
+        wire: _wire(
+          id: guid,
+          text: 'original',
+          sentAt: _time(2).millisecondsSinceEpoch,
+        ),
+        liveContext: _live,
+        localChatId: chat.id!,
+        persistMessage: () =>
+            store.box<Message>().put(_fresh(guid, 'original', chat)),
+        sealNative: () async => seed,
+        clock: () => _time(3),
+      );
+      final transport = _ReceivedLeaseTransport();
+      final changed = _staged(guid, 'different', chat);
+      await expectLater(
+        CloudSyncReceivedArchiveStaging(
+          journal: journal,
+          transport: transport,
+          capturedIdentity: auth,
+          validateCurrentIdentity: () async {},
+          stillCurrent: () => true,
+        ).materialize(intentId: id, stageSeedNative: (_) async => changed),
+        throwsStateError,
+      );
+      expect(transport.rolledBack, [changed.leaseReference]);
+      expect(
+        journal.readProtectedSource(intentId: id, currentAuth: auth).encode(),
+        seed.encode(),
+      );
+    },
+  );
+
+  test(
     'source mismatch before durable adoption rolls back only fresh lease',
     () async {
       final source = _staged('mismatch', 'hello', chat);
@@ -535,6 +687,24 @@ void main() {
       expect(store.box<CloudOutboxOperationEntity>().count(), 0);
     },
   );
+
+  test('worker high-watermark bounds a round while new receives arrive', () {
+    int add(String guid) => journal.saveReceivedCapture(
+      wire: _wire(id: guid, text: 'hello', sentAt: _time(2).millisecondsSinceEpoch),
+      liveContext: _live, localChatId: chat.id!,
+      persistMessage: () => store.box<Message>().put(_fresh(guid, 'hello', chat)),
+      source: _staged(guid, 'hello', chat), capturedAuth: _auth(Object()),
+      stillCurrent: () => true, now: _time(3));
+    final first = add('before-round');
+    final ceiling = journal.captureReadHighWatermark();
+    final second = add('during-round');
+    final bounded = journal.readReadyPage(currentAuth: _auth(Object()), maximumIntentId: ceiling,
+        onlyPendingMaterialization: true);
+    expect(bounded.ready.map((row) => row.id), [first]);
+    expect(bounded.exhausted, isTrue);
+    expect(journal.captureReadHighWatermark(), second);
+    expect(journal.readReadyPage(currentAuth: _auth(Object())).ready, hasLength(2));
+  });
 
   test('body drift rolls back both message and intent', () {
     const guid = 'recv-guid-1002';
