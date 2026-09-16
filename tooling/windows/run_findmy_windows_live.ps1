@@ -37,7 +37,7 @@ function Assert-FindMyPlainPath([string] $Path) {
 function Assert-FindMyArtifact([string] $Library) {
     Assert-FindMyPlainPath $Library
     $hash = (Get-FileHash -LiteralPath $Library -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($hash -cne '7e3eab33331b7aa1d35a837e7f951016ec63e801b1bb7a4101461ffe65bfc34e') {
+    if ($hash -cne '4bd6bf205090625c980cf68666f6e39deb1b475d89e757d87b03d99346832d9a') {
         throw 'findmy_testhost_native_hash_rejected'
     }
     $signature = Get-AuthenticodeSignature -LiteralPath $Library
@@ -144,7 +144,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $head -cnotmatch '^[0-9a-f]{40}$') { throw 'findmy_testhost_source_unavailable' }
     $qualification = @{
         version = 1; launch_id = $launch; native_library = $library
-        native = $artifact; native_source_reference = '7d38f1dd8900110e298ee091fc8e715a8d988212'; dart_head = $head
+        native = $artifact; native_source_reference = '5ecd7abe849c22a2de3c024e471b6afc47af4b77'; dart_head = $head
         bridge_version = '2.3.0'; expected_bridge_content_hash = -849563835
         policy_state = $policy; full_app_receipt_reused = $false
         host_sha256 = (Get-FileHash "$repository/test/live/findmy_windows_live_test.dart").Hash
