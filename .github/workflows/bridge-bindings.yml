@@ -116,6 +116,7 @@ jobs:
           retention-days: 7
           path: |
             lib/src/rust/api/api.dart
+            lib/src/rust/api/cloud_sync_dependency.dart
             lib/src/rust/frb_generated.dart
             lib/src/rust/frb_generated.io.dart
             lib/src/rust/frb_generated.web.dart
@@ -129,6 +130,7 @@ jobs:
         run: |
           git diff --exit-code -- \
             lib/src/rust/api/api.dart \
+            lib/src/rust/api/cloud_sync_dependency.dart \
             lib/src/rust/frb_generated.dart \
             lib/src/rust/frb_generated.io.dart \
             lib/src/rust/frb_generated.web.dart \
