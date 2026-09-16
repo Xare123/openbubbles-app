@@ -136,9 +136,13 @@ class CloudSyncReceivedArchiveIntentEntity {
   String? admittedOperationId;
   String? admittedBinding;
 
+  /// Normal-reader change ownership. Never an Apple cursor or upload receipt.
+  String? readerChangeId;
+
   /// Stable codes: 0 captured, source materialization pending; 1 exact native
   /// source lease committed (inspection may need recommit); 2 local observation
-  /// and its raw lease committed; 3 adopted by the create-only outbox.
+  /// and its raw lease committed; 3 adopted by the create-only outbox;
+  /// 4 handed to the normal semantic inbox (not necessarily projected yet).
   /// No state alone means a CloudKit save was confirmed.
   @Index()
   int state;
@@ -160,6 +164,7 @@ class CloudSyncReceivedArchiveIntentEntity {
     this.recordObservationBinding,
     this.admittedOperationId,
     this.admittedBinding,
+    this.readerChangeId,
     this.state = 0,
     required this.createdAtMs,
     required this.updatedAtMs,

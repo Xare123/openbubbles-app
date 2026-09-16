@@ -17,6 +17,7 @@ void main() {
       'lib/services/rustpush/cloud_sync/cloud_sync_received_archive_journal.dart',
       'lib/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart',
       'lib/services/rustpush/cloud_sync/cloud_sync_received_archive_staging.dart',
+      'lib/services/rustpush/cloud_sync/cloud_sync_received_reader_adapter.dart',
     ];
     final codes = paths.expand((path) => RegExp(
       r"'(cloud_sync_received_archive_[a-z_]+)'",

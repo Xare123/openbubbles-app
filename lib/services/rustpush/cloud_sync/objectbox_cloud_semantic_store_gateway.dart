@@ -237,9 +237,9 @@ final class ObjectBoxCloudSemanticFence {
     final scopeKey = 'scope2:${_digest(entry.scope.storageKey)}';
     final leaseKey = _scopedDigest(entry.scope, 'coordinator-lease', 'v1');
     final ownerIdHash = _digest('coordinator-owner\u001f${leaseFence.ownerId}');
-    final changeKey = _scopedDigest(
+    final changeKey = cloudSyncPersistentChangeKey(
       entry.scope,
-      'change',
+      entry.generation,
       entry.change.changeId,
     );
     final leases = store.box<CloudSyncLeaseEntity>();
@@ -1958,7 +1958,7 @@ final class _SemanticTransactionContext {
       leaseFence: leaseFence,
       scopeKey: scopeKey,
       scopeGenerationKey: scopeGenerationKey,
-      changeKey: _scopedDigest(entry.scope, 'change', entry.change.changeId),
+      changeKey: cloudSyncPersistentChangeKey(entry.scope, entry.generation, entry.change.changeId),
       changeIdHash: changeIdHash,
       leaseKey: _scopedDigest(entry.scope, 'coordinator-lease', 'v1'),
       ownerIdHash: _digest('coordinator-owner\u001f${leaseFence.ownerId}'),
@@ -3634,9 +3634,9 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         row.changeType != 'save' ||
         row.zone != map.zone ||
         row.changeKey !=
-            ObjectBoxCloudSemanticFence._scopedDigest(
+            cloudSyncPersistentChangeKey(
               _context.entry.scope,
-              'change',
+              row.generation,
               row.changeIdHash,
             ) ||
         !ObjectBoxCloudSemanticStoreGateway._base64UrlDigestPattern.hasMatch(

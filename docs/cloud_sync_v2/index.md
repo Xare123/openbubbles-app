@@ -4,7 +4,7 @@ title: Cloud Sync V2 Documentation Index
 description: Entry point for the current CloudKit V2 architecture, preserved investigation history, and qualification evidence.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, index, evidence]
-timestamp: 2026-09-15
+timestamp: 2026-09-16
 ---
 
 # Cloud Sync V2 documentation
@@ -31,6 +31,9 @@ timestamp: 2026-09-15
 - [Preserved September 13 treemap tail](history/TREEMAP_PRE_MULTIPART_2026-09-13.md):
   superseded ownership, critical-path and mutation-development notes. Historical
   pending/initial-create-only statements do not override current qualification.
+- [Preserved September 16 pre-reader checkpoints](history/TREEMAP_PRE_RECEIVED_READER_2026-09-16.md):
+  superseded source, build, helper and device snapshots. All previous evidence
+  remains available while the current treemap carries only actionable state.
 
 ## Evidence roots
 

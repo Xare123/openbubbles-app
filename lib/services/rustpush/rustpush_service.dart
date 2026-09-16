@@ -50,6 +50,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_arc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_delivery.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_source_runtime.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_inspection_adapter.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_reader_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_record_observation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
@@ -8319,6 +8320,13 @@ class RustPushService extends GetxService {
                 'reasons=${jsonEncode(result.deferredReasons)} '
                 'existingHistory=${jsonEncode(result.existingHistoryDiagnostics)}');
           }
+          if (stillCurrent() && result.deferredReasons.containsKey(
+              'cloud_sync_received_archive_not_absent')) {
+            // A create preflight can discover Apple's upload after the
+            // receive worker finished. Wake the Found reader after releasing
+            // this writer's attachment/native locks, not on its next restart.
+            _queueCloudSyncV2ReceivedSources(CloudSyncTrigger.localOutbox);
+          }
           // Both the native writer and the attachment gate have been released.
           // Reuse the real semantic gateway, never turn an ACK into a local
           // Chat binding or keep a writer lock while asking the reader to run.
@@ -8476,6 +8484,73 @@ class RustPushService extends GetxService {
           Logger.warn('Cloud Sync V2 received source retained for retry code=${cloudSyncV2SafeFailureCode(error)}');
         }
       }
+      var foundRemaining = false;
+      if (CloudSyncDevGate.receivedArchiveInspectionEnabled &&
+          CloudSyncDevGate.manualSemanticPullEnabled) {
+        // State2 survives a restart between exact observation and reader
+        // adoption. It is deliberately outside the state0/1 capture cursor.
+        // Admit one then let the reader settle it before another admission.
+        // Otherwise the first pending row would block the rest of the batch.
+        final found = journal.readFoundCandidates(currentAuth: captured, limit: 1,
+          maximumIntentId: _cloudSyncV2ReceivedRoundCeiling);
+        var readerPending = false;
+        for (final intentId in found) {
+          await validate();
+          try {
+            await handoffCloudSyncReceivedFound(intentId: intentId,
+              privateStorageDirectory: storagePath,
+              readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+              stillCurrent: stillCurrent);
+            readerPending = true;
+          } catch (error) {
+            if (!stillCurrent()) rethrow;
+            _cloudSyncV2ReceivedPassDeferred = true;
+            // A newer retained record must pass through ordinary reader
+            // ordering. Never overwrite it or treat it as permission to create.
+            readerPending = readerPending ||
+                cloudSyncV2SafeFailureCode(error) == 'received_found_reader_newer_evidence';
+            journal.markReaderAttemptConsidered(intentId: intentId, now: DateTime.now().toUtc());
+            Logger.warn('Cloud Sync V2 received reader deferred code=${cloudSyncV2SafeFailureCode(error)}');
+          }
+        }
+        await validate();
+        final readerStore = ObjectBoxCloudSyncStore(store: objectBox,
+          protector: RustCloudSyncProtector(storageDirectory: storagePath));
+        final readerCheckpoint = await readerStore.readCheckpoint(CloudSyncScope(
+          accountFingerprint: captured.accountFingerprint,
+          container: 'com.apple.messages.cloud', database: 'private',
+          zone: 'messageManateeZone', persistenceLane: CloudSyncPersistenceLane.semantic));
+        await validate();
+        // Recover the crash after state4 adoption but before the reader wake.
+        readerPending = readerPending || readerCheckpoint.hasUnmarkedPendingInbox ||
+            readerCheckpoint.pendingBatchId != null;
+        if (readerPending) {
+          if (_cloudSyncV2SemanticPullInFlight != null) {
+            _cloudSyncV2ReceivedPassDeferred = true;
+          } else {
+            try {
+              // The handoff released native pause, store lease and coordinator.
+              // Normal decode/projection owns edits and retractions. Do not
+              // recursively wake this runtime or the outbound worker here.
+              await runCloudSyncV2ManualSemanticPullConfirmed(
+                maximumPasses: 1, resumeAutomaticUploads: false,
+                sweepRetainedAtHead: false);
+              await validate();
+              final pending = await readerStore.readCheckpoint(readerCheckpoint.scope);
+              await validate();
+              if (pending.hasUnmarkedPendingInbox || pending.pendingBatchId != null) {
+                _cloudSyncV2ReceivedPassDeferred = true;
+              }
+            } catch (error) {
+              if (!stillCurrent()) rethrow;
+              _cloudSyncV2ReceivedPassDeferred = true;
+              Logger.warn('Cloud Sync V2 received projection retained code=${cloudSyncV2SafeFailureCode(error)}');
+            }
+          }
+        }
+        foundRemaining = journal.readFoundCandidates(currentAuth: captured, limit: 1,
+          maximumIntentId: _cloudSyncV2ReceivedRoundCeiling).isNotEmpty;
+      }
       _cloudSyncV2ReceivedCursor = page.nextCursor;
       final deferred = _cloudSyncV2ReceivedPassDeferred;
       final hasNewCaptures = page.exhausted && journal.captureReadHighWatermark() > _cloudSyncV2ReceivedRoundCeiling!;
@@ -8484,7 +8559,8 @@ class RustPushService extends GetxService {
         _cloudSyncV2ReceivedRoundCeiling = null;
       }
       if (materialized > 0) Logger.info('Cloud Sync V2 received source pass localReady=$materialized');
-      return (more: !page.exhausted || (hasNewCaptures && !deferred), deferred: deferred || hasNewCaptures);
+      return (more: !page.exhausted || ((hasNewCaptures || foundRemaining) && !deferred),
+          deferred: deferred || hasNewCaptures || foundRemaining);
     } finally {
       await transport.quiesceNativeOperations();
     }
@@ -10251,6 +10327,7 @@ class RustPushService extends GetxService {
   runCloudSyncV2ManualSemanticPullConfirmed({
     int maximumPasses = 1,
     bool resumeAutomaticUploads = true,
+    bool sweepRetainedAtHead = true,
   }) {
     if (!CloudSyncDevGate.manualSemanticPullEnabled) {
       throw StateError('cloud_sync_semantic_pull_disabled');
@@ -10274,6 +10351,7 @@ class RustPushService extends GetxService {
 
     final future = _runCloudSyncV2ManualSemanticPull(
       maximumPasses: maximumPasses,
+      sweepRetainedAtHead: sweepRetainedAtHead,
     );
     _cloudSyncV2SemanticPullInFlight = future;
     return future.whenComplete(() {
@@ -10534,6 +10612,7 @@ class RustPushService extends GetxService {
   _runCloudSyncV2ManualSemanticPull({
     required int maximumPasses,
     bool allowAndroidBackgroundIsolate = false,
+    bool sweepRetainedAtHead = true,
     CloudSyncProgress? progress,
   }) {
     final expectedClient = state?.icloudServices?.cloudMessagesClient;
@@ -10547,6 +10626,7 @@ class RustPushService extends GetxService {
       expectedClient: expectedClient,
       expectedStorage: expectedStorage,
       allowAndroidBackgroundIsolate: allowAndroidBackgroundIsolate,
+      sweepRetainedAtHead: sweepRetainedAtHead,
       progress: progress,
     );
   }
@@ -10573,6 +10653,7 @@ class RustPushService extends GetxService {
     required Object? expectedClient,
     required String expectedStorage,
     bool allowAndroidBackgroundIsolate = false,
+    bool sweepRetainedAtHead = true,
     CloudSyncProgress? progress,
   }) async {
     if (statePath.isEmpty || !Directory(statePath).existsSync()) {
@@ -10646,7 +10727,7 @@ class RustPushService extends GetxService {
         finishActiveRemotePassOnCancel: progress != null,
         // A metadata wake must not redo a many-minute exhaustive repair of
         // unchanged retained history. Explicit user catch-up keeps that sweep.
-        sweepRetainedAtHead: !allowAndroidBackgroundIsolate,
+        sweepRetainedAtHead: sweepRetainedAtHead && !allowAndroidBackgroundIsolate,
       );
       try {
         progress?.checkPause();

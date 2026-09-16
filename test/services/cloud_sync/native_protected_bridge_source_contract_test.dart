@@ -39,6 +39,7 @@ void main() {
     const localSource = 'lib/services/rustpush/rustpush_service.dart';
     const windowsSource = 'lib/cloud_sync_v2_windows_local_write.dart';
     const receivedSource = 'lib/services/rustpush/cloud_sync/cloud_sync_received_inspection_adapter.dart';
+    const receivedReader = 'lib/services/rustpush/cloud_sync/cloud_sync_received_reader_adapter.dart';
 
     for (final entity in Directory('lib').listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
@@ -60,9 +61,9 @@ void main() {
         .toList(growable: false);
     expect(
       normalized,
-      unorderedEquals([allowed, localSource, windowsSource, receivedSource]),
+      unorderedEquals([allowed, localSource, windowsSource, receivedSource, receivedReader]),
       reason:
-          'only reviewed canary adapters, source staging and exact received inspection construct this transport',
+          'only reviewed canary adapters, source staging and received inspection/reader handoff construct this transport',
     );
 
     final adapter = File(allowed).readAsStringSync();
@@ -356,6 +357,46 @@ void main() {
     expect(stage, isNot(contains('lookup_received_message_record(')));
     expect(stage.substring(stage.indexOf('cloud_sync_stage_protected_received_record_readback(')),
         isNot(contains('.await')));
+  });
+
+  test('received Found joins the normal reader without making a cursor or IDS send', () {
+    final adapter = File('lib/services/rustpush/cloud_sync/cloud_sync_received_reader_adapter.dart').readAsStringSync();
+    for (final proof in ['!CloudSyncDevGate.receivedArchiveCaptureEnabled',
+      '!CloudSyncDevGate.receivedArchiveInspectionEnabled', '!CloudSyncDevGate.manualSemanticPullEnabled',
+      'readForReader(', 'journal.validateReaderAdmission(', 'journalReceivedFound(',
+      'cloudSyncPrepareReceivedArchiveInspection(', 'cloudSyncStageReceivedFoundProjection(',
+      'tryAcquireCoordinatorLease(', 'releaseCoordinatorLease(', 'runLocalProtectedStoreExclusive(',
+      'lifecycle.commitJournaledPage(', 'previousCheckpointReference: null',
+      'api.cloudSyncDiscardReceivedArchiveInspection(', 'await transport.quiesceNativeOperations()']) {
+      expect(adapter, contains(proof));
+    }
+    for (final forbidden in ['sendMsg(', 'pushOperations(', 'journalFetchedBatch(',
+      'fetchedTokenCiphertext =', 'pendingFetchedTokenCiphertext =', 'message.text =']) {
+      expect(adapter, isNot(contains(forbidden)));
+    }
+    final service = File('lib/services/rustpush/rustpush_service.dart').readAsStringSync();
+    final worker = _section(service, 'Future<({bool more, bool deferred})> _materializeCloudSyncV2ReceivedSources()',
+      'Future<Message> _captureCloudSyncV2ReceivedMessage(');
+    final uploadWorker = _section(service, 'void _queueCloudSyncV2LocalSends(',
+      'Future<Message> _trackCloudSyncV2ReceivedCapture(');
+    expect(uploadWorker, matches(RegExp(r"result\.deferredReasons\.containsKey\(\s*'cloud_sync_received_archive_not_absent'\)")));
+    expect(uploadWorker, contains('_queueCloudSyncV2ReceivedSources(CloudSyncTrigger.localOutbox)'));
+    for (final proof in ['journal.readFoundCandidates(', 'handoffCloudSyncReceivedFound(',
+      'readerCheckpoint.hasUnmarkedPendingInbox', 'readerCheckpoint.pendingBatchId != null',
+      'resumeAutomaticUploads: false',
+      'journal.markReaderAttemptConsidered(', 'sweepRetainedAtHead: false', 'foundRemaining']) {
+      expect(worker, contains(proof));
+    }
+    final native = File('rust/src/api/api.rs').readAsStringSync();
+    final handoff = _section(native, 'pub async fn cloud_sync_stage_received_found_projection(',
+      '/// Ephemeral native source');
+    expect(handoff, contains('CloudSyncReceivedRecordDisposition::Equivalent'));
+    expect(handoff, contains('CloudSyncReceivedRecordDisposition::NeedsProjection'));
+    expect(handoff, contains('pending.prepared_at.elapsed()'));
+    expect(handoff, contains('bind_envelope(&request, &parent, &hasher)'));
+    expect(handoff, contains('page.protected_next_checkpoint_reference().is_some()'));
+    expect(handoff, isNot(contains('lookup_received_message_record(')));
+    expect(handoff, isNot(contains('prepare_message_save_submission(')));
   });
 
   test('received uploads require native absence and never an IDS receipt', () {

@@ -2410,6 +2410,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudSyncRawSystemFields dco_decode_cloud_sync_raw_system_fields(dynamic raw);
 
   @protected
+  CloudSyncReceivedFoundProjection
+  dco_decode_cloud_sync_received_found_projection(dynamic raw);
+
+  @protected
   CloudSyncReceivedRecordDisposition
   dco_decode_cloud_sync_received_record_disposition(dynamic raw);
 
@@ -6482,6 +6486,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudSyncRawSystemFields sse_decode_cloud_sync_raw_system_fields(
     SseDeserializer deserializer,
   );
+
+  @protected
+  CloudSyncReceivedFoundProjection
+  sse_decode_cloud_sync_received_found_projection(SseDeserializer deserializer);
 
   @protected
   CloudSyncReceivedRecordDisposition
@@ -11265,6 +11273,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_raw_system_fields(
     CloudSyncRawSystemFields self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_received_found_projection(
+    CloudSyncReceivedFoundProjection self,
     SseSerializer serializer,
   );
 

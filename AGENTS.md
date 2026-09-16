@@ -5,6 +5,25 @@
 These rules apply to task `01a098ec-c448-73a1-a73f-696d142de228` and its
 delegated agents. They supplement, not replace, inherited project instructions.
 
+## Independent workstream ownership (September 16)
+
+- This task owns CloudKit. FaceTime and Find My are now owned by independent
+  task `01a0abe1-9bbe-71b2-a9ce-4d4578022b0e` (facetime & find my). Do not start
+  competing FaceTime/Find My implementation or helper loops in this task.
+- That task works on its own branch/worktree from committed app `b1468abbb`
+  and rustpush `5862be3`. It may read, never edit, this CloudKit checkout. No
+  automatic cross-lane merge, bulk cherry-pick or shared generated-file write.
+- Shared auth/registration, rust/src/api/api.rs, rustpush_service.dart, native
+  gates, dependency locks and FRB bindings require announced scope and reviewed
+  integration. Feature work in a separate checkout is not permission to change
+  the active account/profile or installed build.
+- Reserve exclusive Pixel or Windows live-profile testing by direct task-to-task
+  request and acknowledgement before install/restart/UI/relay/account actions.
+  Release the reservation after testing. Preserve Alpha and all real data.
+- Neither task may create an upstream PR/draft or spend paid GCE funds without
+  renewed user approval. The independent task runs its own goal and helpers;
+  this parent tracks only shared interfaces and integration-ready handoffs.
+
 ## Helper model preference
 
 For newly spawned Muse helper agents, use

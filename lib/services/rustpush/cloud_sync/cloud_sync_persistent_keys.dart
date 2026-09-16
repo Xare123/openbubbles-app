@@ -12,6 +12,20 @@ import 'cloud_sync_models.dart';
 String cloudSyncPersistentScopeKey(CloudSyncScope scope) =>
     'scope2:${sha256.convert(utf8.encode(scope.storageKey))}';
 
+/// Matches the durable journal's original key format. Generation one keeps
+/// its historical key; a reset starts a distinct namespace without rewriting
+/// or accepting evidence from older generations. Producers and readers must
+/// use the same calculation, including repair and attachment resolution.
+String cloudSyncPersistentChangeKey(
+  CloudSyncScope scope,
+  int generation,
+  String changeId,
+) {
+  if (generation < 1) throw ArgumentError.value(generation, 'generation');
+  final purpose = generation == 1 ? 'change' : 'change-generation-$generation';
+  return '$purpose:${sha256.convert(utf8.encode('${scope.storageKey}\u001f$purpose\u001f$changeId'))}';
+}
+
 String cloudSyncCanonicalRecordMapKey(
   CloudSyncScope scope,
   String logicalKey,

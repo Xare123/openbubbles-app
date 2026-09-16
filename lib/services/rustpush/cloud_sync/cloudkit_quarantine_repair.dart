@@ -8,6 +8,7 @@ import 'cloud_inbox_applier.dart';
 import 'cloudkit_repair_content_digest.dart';
 import 'cloud_merge_policy.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_store.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 import 'objectbox_cloud_semantic_store_gateway.dart';
@@ -2420,7 +2421,7 @@ final class _RepairContext {
       scopeGenerationKey =
           'semantic-generation4:${_digest('${_scopeKey(request.scope)}\u001f${request.generation}')}',
       changeKey =
-          'change:${_digest('${request.scope.storageKey}\u001fchange\u001f${request.changeIdHash}')}',
+          cloudSyncPersistentChangeKey(request.scope, request.generation, request.changeIdHash),
       replayKey =
           'semantic-replay4:semantic-generation4:${_digest('${_scopeKey(request.scope)}\u001f${request.generation}')}:'
           '${_digest(request.changeIdHash)}',

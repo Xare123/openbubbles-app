@@ -6177,3 +6177,88 @@ Historical tests do not establish current-device behavior.
   Alpha change. C:28,865,392,640bytes free at checkpoint. All local test/analyzer
   sessions and hosted jobs are terminal; helpers closed. Next: Found-to-reader
   durable handoff, then representative live cross-device proof on matched code.
+
+### September 16 independent FaceTime and Find My ownership
+
+- User explicitly assigned FaceTime/Find My to existing task01a0abe1-9bbe-71b2-a9ce-4d4578022b0e,
+  title facetime & find my, and asked this task to focus on CloudKit. Parent read
+  target state (idle in an unrelated directory), then sent the full evidence-
+  backed implementation handoff through supported task messaging. Start baseline
+  appb1468abbb/native5862be3 is committed; current dirty reader work is excluded.
+- Independent branch/worktree proposed: agent/facetime-findmy-independent-20260916
+  at C:/Codex/OpenBubblesReview/worktrees/facetime-findmy-independent-20260916,
+  verified absent before dispatch. Destination owns setup/goal after user entry.
+  No shared worktree or credential copying; no upstream PR or paid GCE approval.
+  Shared source edits require advance notice and later reviewed commits. Pixel
+  and Windows live-profile mutation require an acknowledged exclusive test window.
+- No competing FaceTime/FindMy helpers remain here. CloudKit reader helper Popper
+  stays active for required isolated tests. Parent owns native/local reader
+  integration; current dirty code and bindings are unqualified, no CI active.
+  User receives a pasteable goal for the independent task; message delivery is
+  not falsely reported as goal activation or product completion.
+
+### September 16 Found-reader integration and post-reset key repair
+
+- User changed this task's goal to production-ready CloudKit only. Independent
+  FaceTime/Find My task acknowledged its isolated checkout and owns its own
+  runtime qualification. Its bounded Windows read window ended without account
+  use because a DLL hash/ABI guard rejected the installed artifact. No guard
+  was bypassed and no side-lane commit was merged into CloudKit.
+- Nativec5559d5bb48bc3e0d1f921e1d5d5ff6b1aff63cc stages fresh supported Found
+  records through ordinary protected-change hashing, preserves original wire
+  bytes and exposes no server cursor. One-use, age, source, parent, auth and
+  container checks remain. Tests prove history-identical change identity,
+  unknown-field byte retention, idempotent local commit, mismatch rejection
+  and rollback of unowned records. Hosted35149164355 passed745 app Rust,
+  351 rustpush,11 Anisette and40 protector tests (20:52:50Z to21:10:44Z).
+- Artifact10468512025 (390,597bytes), SHA256
+  a2b067b4e1783a06d0280882d36930a9314106d52dc0aa89a04ab773beb76eda, was verified
+  before importing exactly seven generated files; SSE/diagnostic guards pass.
+  Committed reproduction was intentionally skipped. Evidence is under
+  build-evidence/received-reader-35149164355, including verification.json.
+- Dart atomically adopts Found into the normal semantic inbox without changing
+  fetched/pending token ciphertext or fetch direction. Nullable property17
+  readerChangeId has UID1215215624103446605; every existing entity/property/index
+  UID is unchanged. State4 means reader-owned, never projected or cloud-written.
+  Duplicate evidence keeps its existing owner; known different versions and
+  tombstones defer. No IDS receipt, resend or direct Message.text write is added.
+- The worker now resumes inspected state2 independently of capture state0/1.
+  Reader wake survives both tracked and unmarked pending pages after a crash.
+  Lost native commit response cannot make fairness bookkeeping reject state4.
+  One admission precedes ordinary reader drain. Its internal wake skips exhaustive
+  unrelated retained-history repair and never recursively starts uploads. A
+  fresh Found discovered during create preflight also wakes this reader.
+- Popper provided61 transaction tests and the actual journal -> inbox -> applier
+  -> canonical gateway regression. Original-row adoption, newer edit/retraction,
+  rendered unsent state, reopen and idempotent replay passed. Generation2 then
+  FAILED before the fix: retryable/semantic_inbox_fence_lost. This was a real key
+  mismatch, not missing CloudKit data: journal uses change-generation-N after a
+  reset while fence/context/attachment/repair consumers used change for all
+  generations. Shared cloudSyncPersistentChangeKey now preserves the original
+  producer format everywhere. No on-disk migration or old-generation fallback.
+  Exact failing case passed after the fix; full gateway97 passed.
+- Planck corrected independently frozen attachment/repair fixtures that wrongly
+  labeled generation1 keys as generation7. N2/N3 acceptance and cross-generation
+  rejection now pass:73 tests. No pre-fix red claimed for these two files; the
+  gateway supplies the red/green reproduction. A duplicate-ID fixture error was
+  corrected without weakening the resolver's ambiguity rejection.
+- Parent passed113 changed-source tests,291 store/reader/key cases and61
+  reset/lifecycle/attachment cases. These batches overlap in61 received-journal
+  cases and must not be summed as independent coverage. Fourteen-file analysis
+  has no errors/warnings (four test style infos); service analysis has five
+  preexisting brace-style infos. Native and tests do not prove live remote sync.
+- Popper and Planck changes reviewed/accepted, agents closed and verified
+  not_found. Hypatia exceeded its bounded review without a patch; parent stopped
+  and closed it, verified not_found, and completed the native tests. No dedicated
+  worktrees/dependency caches were created. Sessions/transcripts retained because
+  supported deletion is unavailable; shared databases were never edited.
+- The treemap's378-line superseded checkpoint block was preserved in
+  TREEMAP_PRE_RECEIVED_READER_2026-09-16.md and replaced with current state/links.
+  FaceTime/Find My are not CloudKit completion gates. No credentials or content
+  were added to documentation. Output sizing: build742,959,925bytes,
+  .dart_tool62,981,389bytes; C:about28.8GiB free. No paid GCE, APK install,
+  live account request, Alpha change or message deletion in this slice.
+- Next: checkpoint integrated source, qualify a matching Windows/Pixel runtime,
+  then received group/media/mutations and independent Apple-device convergence.
+  Existing unknown-outcome writes stay readback-only. All received flags remain
+  default-false; the overall CloudKit goal remains active, not production-ready.

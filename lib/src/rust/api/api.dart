@@ -244,6 +244,17 @@ Future<void> cloudSyncDiscardReceivedArchiveInspection({
   prepared: prepared,
 );
 
+/// Fresh supported-identity Found -> normal protected reader input. No remote
+/// mutation and no direct Message/record-map update. Caller owns local exclusion
+/// through journal adoption and lease commit, then uses the normal projector.
+Future<CloudSyncReceivedFoundProjection> cloudSyncStageReceivedFoundProjection({
+  required CloudSyncPreparedReceivedInspection prepared,
+  required BigInt nativeWriterPauseToken,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageReceivedFoundProjection(
+  prepared: prepared,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+);
+
 /// Stage a received create ONLY from a fresh native exact NotFound. Caller
 /// holds the local protected-store lease through atomic outbox adoption/commit.
 /// A Found/uncertain observation cannot reach the encoder; no remote I/O here.
@@ -5191,6 +5202,47 @@ class CloudSyncRawSystemFields {
           createdAt == other.createdAt &&
           modifiedAt == other.modifiedAt &&
           permission == other.permission;
+}
+
+/// One exact lookup handed to the semantic reader. Deliberately has no zone
+/// cursor, continuation token, complete-page bit or remote-write capability.
+class CloudSyncReceivedFoundProjection {
+  final String messageGuidHash;
+  final String sourceSha256;
+  final BigInt generation;
+  final String batchId;
+  final String leaseReference;
+  final CloudSyncProtectedChange change;
+
+  const CloudSyncReceivedFoundProjection({
+    required this.messageGuidHash,
+    required this.sourceSha256,
+    required this.generation,
+    required this.batchId,
+    required this.leaseReference,
+    required this.change,
+  });
+
+  @override
+  int get hashCode =>
+      messageGuidHash.hashCode ^
+      sourceSha256.hashCode ^
+      generation.hashCode ^
+      batchId.hashCode ^
+      leaseReference.hashCode ^
+      change.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncReceivedFoundProjection &&
+          runtimeType == other.runtimeType &&
+          messageGuidHash == other.messageGuidHash &&
+          sourceSha256 == other.sourceSha256 &&
+          generation == other.generation &&
+          batchId == other.batchId &&
+          leaseReference == other.leaseReference &&
+          change == other.change;
 }
 
 enum CloudSyncReceivedRecordDisposition {

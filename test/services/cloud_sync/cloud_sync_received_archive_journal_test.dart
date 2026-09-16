@@ -11,6 +11,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_arc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_staging.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_inspection.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_record_observation.dart';
@@ -1239,18 +1240,21 @@ void main() {
     Future<void> seedOrigin({
       CloudSyncReceivedRecordState disposition =
           CloudSyncReceivedRecordState.absent,
+      String messageGuid = guid,
+      String logicalMarker = 'L',
+      String recordMarker = 'M',
     }) async {
-      originalSource = _staged(guid, 'original', chat);
+      originalSource = _staged(messageGuid, 'original', chat);
       intentId = journal.saveReceivedCapture(
         wire: _wire(
-          id: guid,
+          id: messageGuid,
           text: 'original',
           sentAt: _time(2).millisecondsSinceEpoch,
         ),
         liveContext: _live,
         localChatId: chat.id!,
         persistMessage: () =>
-            store.box<Message>().put(_fresh(guid, 'original', chat)),
+            store.box<Message>().put(_fresh(messageGuid, 'original', chat)),
         source: originalSource,
         capturedAuth: auth,
         stillCurrent: () => true,
@@ -1273,13 +1277,13 @@ void main() {
         protectedStoreIdentity: _storeId,
         messageGuidHash: originalSource.messageGuidHash,
         sourceSha256: originalSource.sourceSha256,
-        logicalEntityKeyHash: _a43('L'),
-        serverRecordIdHash: _a43('M'),
+        logicalEntityKeyHash: _a43(logicalMarker),
+        serverRecordIdHash: _a43(recordMarker),
         generation: (await durable.readCheckpoint(scope)).generation,
         parentBinding: requireCloudSyncRestoredDirectChat(
           store: store,
           messageScope: scope,
-          message: _byGuid(guid)!,
+          message: _byGuid(messageGuid)!,
         ),
         observedAtMs: _time(4).millisecondsSinceEpoch,
         etagHash: found ? _a43('E') : null,
@@ -1771,6 +1775,512 @@ void main() {
             containsAll([originalSource.leaseReference, expected.protectedLeaseReference]));
       });
     }
+
+    group('Found reader handoff', () {
+      late CloudCoordinatorLeaseFence fence;
+      final readerLease = _lease('c');
+      final readerBatch = _a43('D');
+
+      CloudSyncCheckpointEntity checkpoint() => store
+          .box<CloudSyncCheckpointEntity>()
+          .getAll()
+          .singleWhere((row) => row.checkpointKey == cloudSyncPersistentScopeKey(scope));
+
+      Map<String, Object?> checkpointFields(CloudSyncCheckpointEntity row) => {
+        'id': row.id, 'key': row.checkpointKey, 'account': row.accountFingerprint,
+        'container': row.container, 'database': row.database, 'zone': row.zone,
+        'stream': row.streamKind, 'schema': row.schemaVersion,
+        'lane': row.persistenceLane, 'direction': row.fetchDirection,
+        'token': row.fetchedTokenCiphertext,
+        'pendingToken': row.pendingFetchedTokenCiphertext,
+        'pendingBatch': row.pendingBatchId, 'generation': row.generation,
+        'lastBatch': row.lastBatchId, 'fetched': row.fetchedSequence,
+        'applied': row.appliedSequence, 'successful': row.lastSuccessfulAtMs,
+        'attempt': row.lastAttemptAtMs, 'failure': row.lastErrorCategory,
+        'backoff': row.backoffAttempt, 'eligible': row.nextEligibleAtMs,
+        'revision': row.mutationRevisionCounter, 'updated': row.updatedAtMs,
+      };
+
+      List<Object?> inboxFields(CloudInboxChangeEntity row) => [
+        row.id, row.changeKey, row.changeIdHash, row.scopeKey,
+        row.accountFingerprint, row.zone, row.serverRecordIdHash, row.etagHash,
+        row.changeType, row.encryptedServerRecordId, row.protectedSystemFieldsRef,
+        row.encryptedPayloadRef, row.payloadSha256, row.batchId, row.generation,
+        row.fetchSequence, row.status, row.isTombstone, row.preflightCategory,
+        row.failureCategory, row.preflightCode, row.retryCount,
+        row.nextEligibleAtMs, row.serverModifiedAtMs,
+        row.serverModifiedAtFormatVersion, row.createdAtMs, row.updatedAtMs,
+        row.completedAtMs,
+      ];
+
+      List<Object?> pageLeaseFields(CloudProtectedPageLeaseEntity row) => [
+        row.id, row.leaseReference, row.scopeKey, row.accountFingerprint,
+        row.generation, row.batchIdHash, row.adoptedAtMs,
+        row.finalizeAttemptCount, row.nextFinalizeEligibleAtMs,
+      ];
+
+      List<CloudInboxChangeEntity> messageInbox() => store
+          .box<CloudInboxChangeEntity>().getAll()
+          .where((row) => row.scopeKey == cloudSyncPersistentScopeKey(scope))
+          .toList()..sort((a, b) => a.fetchSequence.compareTo(b.fetchSequence));
+
+      Map<String, Object?> durableReaderState() {
+        final row = intent();
+        final message = _byGuid(guid)!;
+        return {
+          'checkpoints': store.box<CloudSyncCheckpointEntity>().getAll()
+              .map(checkpointFields).toList(),
+          'inbox': store.box<CloudInboxChangeEntity>().getAll()
+              .map(inboxFields).toList(),
+          'pageLeases': store.box<CloudProtectedPageLeaseEntity>().getAll()
+              .map(pageLeaseFields).toList(),
+          'intent': [
+            row.id, row.intentKey, row.accountFingerprint, row.writerEpoch,
+            row.localMessageId, row.localChatId, row.messageGuidHash,
+            row.sourceSha256, row.origin, row.protectedSourceBinding,
+            row.recordObservationBinding, row.admittedOperationId,
+            row.admittedBinding, row.readerChangeId, row.state,
+            row.createdAtMs, row.updatedAtMs,
+          ],
+          'message': [
+            message.id, message.guid, message.text, message.chat.targetId,
+            message.isFromMe, message.handleId, message.dateCreated?.toUtc(),
+            message.dateRead?.toUtc(), message.dateEdited?.toUtc(),
+            message.dateDeleted?.toUtc(), message.dbMessageSummaryInfo,
+            message.attributedBody.map((part) => part.toMap()).toList(),
+            message.ckRecordId, message.ckSyncState, message.sendingServiceId,
+          ],
+          'messageMaps': recordMapCountForZone(store, scope.zone),
+          'outbox': store.box<CloudOutboxOperationEntity>().count(),
+        };
+      }
+
+      Matcher storageFailure(String code) => isA<CloudSyncFailure>()
+          .having((error) => error.safeCode, 'safeCode', code);
+
+      CloudFetchedChange readerChange({
+        String id = 'C', String etag = 'E', String raw = 'Y',
+        String server = 'I', String fields = 'J', String? record,
+        bool tombstone = false,
+      }) => CloudFetchedChange(
+        changeId: _a43(id),
+        recordIdHash: record ?? observation.serverRecordIdHash,
+        etagHash: tombstone ? null : _a43(etag),
+        type: tombstone ? CloudChangeType.delete : CloudChangeType.save,
+        isTombstone: tombstone,
+        encryptedServerRecordId: 'obcs2.ref.${_a43(server)}',
+        protectedSystemFieldsReference: 'obcs2.ref.${_a43(fields)}',
+        encryptedPayloadReference: tombstone ? null : 'obcs2.ref.${_a43(raw)}',
+        payloadSha256: tombstone ? null : _h64('d'),
+        serverModifiedAt: _time(2),
+      );
+
+      bool handoff({
+        CloudSyncReceivedArchiveAdmissionSource? source,
+        CloudFetchedChange? change,
+        CloudCoordinatorLeaseFence? leaseFence,
+        bool Function()? stillCurrent,
+      }) => durable.journalReceivedFound(
+        scope: scope,
+        change: change ?? readerChange(),
+        generation: observation.generation,
+        batchId: readerBatch,
+        leaseReference: readerLease,
+        leaseFence: leaseFence ?? fence,
+        journal: journal,
+        source: source ?? journal.readForReader(intentId: intentId, currentAuth: auth),
+        currentAuth: auth,
+        stillCurrent: stillCurrent ?? () => true,
+      );
+
+      Future<void> seedHistory(CloudFetchedChange change, {
+        String lease = '1', bool apply = true,
+      }) async {
+        final prior = await durable.readCheckpoint(scope);
+        await durable.journalFetchedBatch(
+          CloudFetchBatch(
+            scope: scope, changes: [change],
+            batchId: 'synthetic-reader-history-${prior.fetchedSequence + 1}',
+            generation: prior.generation,
+            nextToken: 'synthetic-server-cursor-${prior.fetchedSequence + 1}',
+            hasMore: false,
+            protectedPageLeaseReference: _lease(lease),
+          ),
+          now: _time(4), leaseFence: fence,
+          expectedGeneration: prior.generation,
+          expectedFetchedToken: prior.fetchedToken,
+          expectedFetchDirection: prior.fetchDirection,
+        );
+        if (apply) {
+          // Fixture bookkeeping for already-processed history, not a decoder.
+          await durable.markInboxApplied(scope,
+            sequence: prior.fetchedSequence + 1, now: _time(4), leaseFence: fence);
+        }
+      }
+
+      setUp(() async {
+        fence = (await durable.tryAcquireCoordinatorLease(scope,
+          ownerId: 'received-found-reader', now: _time(4),
+          leaseDuration: const Duration(hours: 1)))!;
+        final prior = await durable.readCheckpoint(scope);
+        await durable.journalFetchedBatch(
+          CloudFetchBatch(scope: scope, changes: const [],
+            batchId: 'synthetic-server-cursor-baseline',
+            generation: prior.generation,
+            nextToken: 'synthetic-existing-server-cursor', hasMore: false),
+          now: _time(4), leaseFence: fence,
+          expectedGeneration: prior.generation,
+          expectedFetchedToken: prior.fetchedToken,
+          expectedFetchDirection: prior.fetchDirection,
+        );
+        expect(checkpoint().fetchedTokenCiphertext, isNotNull);
+        expect(checkpoint().pendingFetchedTokenCiphertext, isNull);
+      });
+
+      test('Found scan honors round ceiling across reopen and excludes state3/state4 ownership',
+          () async {
+        await seedOrigin(disposition: CloudSyncReceivedRecordState.equivalent,
+            messageGuid: 'selector-reader-owned');
+        final readerOwned = intentId;
+        expect(handoff(), isTrue);
+        expect(intent().state, 4);
+        // Settle the synthetic inbox bookkeeping so the independent create
+        // origin can enter the actual outbox without unrelated read debt.
+        await durable.markInboxApplied(scope, sequence: messageInbox().single.fetchSequence,
+            now: _time(4), leaseFence: fence);
+        await seedOrigin(messageGuid: 'selector-create-owned',
+            logicalMarker: 'N', recordMarker: 'O');
+        final createOwned = intentId;
+        final operation = admit();
+        expect(intent().state, 3);
+        expect(intent().admittedOperationId, operation.operationId);
+
+        await seedOrigin(disposition: CloudSyncReceivedRecordState.equivalent,
+            messageGuid: 'selector-equivalent', logicalMarker: 'P', recordMarker: 'Q');
+        final equivalent = intentId;
+        journal.markReadConsidered(intentId: equivalent, now: _time(6));
+        await seedOrigin(disposition: CloudSyncReceivedRecordState.needsProjection,
+            messageGuid: 'selector-needs-projection', logicalMarker: 'R', recordMarker: 'S');
+        final needsProjection = intentId;
+        journal.markReadConsidered(intentId: needsProjection, now: _time(6));
+        final ceiling = journal.captureReadHighWatermark();
+
+        await seedOrigin(disposition: CloudSyncReceivedRecordState.equivalent,
+            messageGuid: 'selector-after-ceiling', logicalMarker: 'T', recordMarker: 'U');
+        final later = intentId;
+        expect(later, greaterThan(ceiling));
+        // Its older consideration timestamp sorts the new row first. The
+        // high-watermark must be applied before LIMIT, not after selection.
+        expect(journal.readFoundCandidates(currentAuth: auth, limit: 1), [later]);
+        expect(journal.readFoundCandidates(currentAuth: auth, limit: 1,
+            maximumIntentId: ceiling), [equivalent]);
+        await reopen();
+        durable = bindDurable();
+        expect(journal.readReadyPage(currentAuth: auth).ready, isEmpty);
+        expect(journal.readFoundCandidates(currentAuth: auth, limit: 20,
+            maximumIntentId: ceiling), [equivalent, needsProjection]);
+        expect(journal.readFoundCandidates(currentAuth: auth, limit: 20),
+            [later, equivalent, needsProjection]);
+        expect(store.box<CloudSyncReceivedArchiveIntentEntity>().get(readerOwned)!.state, 4);
+        expect(store.box<CloudSyncReceivedArchiveIntentEntity>().get(createOwned)!.state, 3);
+        expect((await durable.readOutboxEntries(scope)).single.operationId, operation.operationId);
+      });
+
+      test('equivalent becomes normal pending inbox with exact cursor and ownership across reopen',
+          () async {
+        await seedOrigin(disposition: CloudSyncReceivedRecordState.equivalent);
+        final before = checkpointFields(checkpoint());
+        final beforeMessage = durableReaderState()['message'];
+        final change = readerChange();
+        expect(handoff(change: change), isTrue);
+        final expectedCheckpoint = Map<String, Object?>.from(before)
+          ..['fetched'] = (before['fetched'] as int) + 1
+          ..['updated'] = _time(4).millisecondsSinceEpoch;
+        expect(checkpointFields(checkpoint()), expectedCheckpoint);
+        expect(intent().state, 4);
+        expect(intent().readerChangeId, change.changeId);
+        expect(intent().admittedOperationId, isNull);
+        expect(intent().protectedSourceBinding, originalSource.encode());
+        expect(intent().recordObservationBinding, observation.encode());
+        final row = messageInbox().single;
+        expect(row.status, CloudInboxStatus.pending.index);
+        expect(row.fetchSequence, (before['fetched'] as int) + 1);
+        expect(row.batchId, readerBatch);
+        expect(row.generation, observation.generation);
+        expect(row.changeIdHash, change.changeId);
+        expect(row.etagHash, change.etagHash);
+        expect(row.encryptedPayloadRef, change.encryptedPayloadReference);
+        expect(row.encryptedServerRecordId, change.encryptedServerRecordId);
+        expect(row.protectedSystemFieldsRef, change.protectedSystemFieldsReference);
+        expect(row.payloadSha256, change.payloadSha256);
+        expect(cloudInboxCanonicalServerModifiedAtMillis(row),
+            change.serverModifiedAt!.millisecondsSinceEpoch);
+        expect(durableReaderState()['message'], beforeMessage);
+        expect(recordMapCountForZone(store, scope.zone), 0);
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+        final pageOwner = store.box<CloudProtectedPageLeaseEntity>().getAll().single;
+        expect(pageOwner.leaseReference, readerLease);
+        expect(pageOwner.scopeKey, cloudSyncPersistentScopeKey(scope));
+        expect(pageOwner.generation, observation.generation);
+        final committedState = durableReaderState();
+        // A lost native commit response must not let the worker's fairness
+        // update throw or undo an already adopted reader owner.
+        journal.markReaderAttemptConsidered(intentId: intentId, now: _time(6));
+        expect(durableReaderState(), committedState);
+        await reopen();
+        durable = bindDurable();
+        expect(durableReaderState(), committedState);
+        final restored = await durable.readCheckpoint(scope);
+        expect(restored.fetchedToken, 'synthetic-existing-server-cursor');
+        expect(restored.hasUnmarkedPendingInbox, isTrue);
+        final pending = (await durable.readEligibleInbox(scope,
+          now: _time(5), limit: 10)).single;
+        expect(pending.status, CloudInboxStatus.pending);
+        expect(pending.change.changeId, change.changeId);
+        expect(pending.change.encryptedPayloadReference, change.encryptedPayloadReference);
+        expect(await durable.readAdoptedProtectedPageLeaseReferences(maximumCount: 10),
+            {readerLease});
+        final live = await durable.readLiveProtectedReferences(maximumCount: 128);
+        expect(live.isComplete, isTrue);
+        expect(live.references, containsAll([
+          originalSource.protectedReference, observation.rawReference,
+          change.encryptedServerRecordId, change.protectedSystemFieldsReference,
+          change.encryptedPayloadReference,
+        ]));
+        expect(journal.readLiveReceivedArchiveReferences(maximumCount: 10),
+            containsAll([originalSource.protectedReference, observation.rawReference]));
+      });
+
+      test('needsProjection enters pending only after rejecting unsupported origins and local mutations',
+          () async {
+        await seedOrigin(disposition: CloudSyncReceivedRecordState.needsProjection);
+        final source = journal.readForReader(intentId: intentId, currentAuth: auth);
+        for (final failure in ['absent', 'conflicting', 'unresolved', 'edit', 'unsend', 'deletion']) {
+          final row = intent();
+          final message = _byGuid(guid)!;
+          if (failure == 'edit') {
+            message
+              ..text = 'new local edit'
+              ..attributedBody = [AttributedBody.raw('new local edit')]
+              ..dateEdited = _time(5);
+          } else if (failure == 'unsend') {
+            message.messageSummaryInfo = [MessageSummaryInfo.empty()..retractedParts.add(0)];
+          } else if (failure == 'deletion') {
+            message.dateDeleted = _time(5);
+          } else if (failure == 'unresolved') {
+            row..state = 1..recordObservationBinding = null;
+          } else {
+            final conflicting = failure == 'conflicting';
+            row.recordObservationBinding = CloudSyncReceivedRecordObservation(
+              state: conflicting ? CloudSyncReceivedRecordState.conflictingIdentity
+                  : CloudSyncReceivedRecordState.absent,
+              accountFingerprint: _account, protectedStoreIdentity: _storeId,
+              messageGuidHash: originalSource.messageGuidHash,
+              sourceSha256: originalSource.sourceSha256,
+              logicalEntityKeyHash: observation.logicalEntityKeyHash,
+              serverRecordIdHash: observation.serverRecordIdHash,
+              generation: observation.generation, parentBinding: observation.parentBinding,
+              observedAtMs: observation.observedAtMs,
+              etagHash: conflicting ? observation.etagHash : null,
+              rawReference: conflicting ? observation.rawReference : null,
+              rawLeaseReference: conflicting ? observation.rawLeaseReference : null,
+            ).encode();
+          }
+          store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
+          store.box<Message>().put(message);
+          final before = durableReaderState();
+          expect(() => handoff(source: source), throwsA(_fails(
+            failure == 'edit' || failure == 'unsend'
+                ? 'cloud_sync_received_archive_admitted_source_changed'
+                : 'cloud_sync_received_archive_found_projection_not_ready',
+          )), reason: failure);
+          expect(durableReaderState(), before, reason: failure);
+          row..state = 2..recordObservationBinding = observation.encode();
+          message
+            ..text = 'original'
+            ..attributedBody = [AttributedBody.raw('original')]
+            ..dateEdited = null..dateDeleted = null..messageSummaryInfo = [];
+          store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
+          store.box<Message>().put(message);
+        }
+        expect(handoff(source: source), isTrue);
+        expect((await durable.readEligibleInbox(scope, now: _time(5), limit: 1))
+            .single.status, CloudInboxStatus.pending);
+        expect(intent().state, 4);
+        expect(intent().recordObservationBinding, observation.encode());
+        expect(_byGuid(guid)!.text, 'original');
+      });
+
+      test('rolls back checkpoint, inbox, page lease and received ownership after tentative writes',
+          () async {
+        await seedOrigin(disposition: CloudSyncReceivedRecordState.equivalent);
+        final source = journal.readForReader(intentId: intentId, currentAuth: auth);
+        for (final abortAfterAdoption in [false, true]) {
+          final before = durableReaderState();
+          var sawWrites = false;
+          if (abortAfterAdoption) {
+            void abortReaderTransaction() {
+              expect(handoff(source: source), isTrue);
+              expect(intent().state, 4);
+              expect(intent().readerChangeId, readerChange().changeId);
+              expect(messageInbox(), hasLength(1));
+              expect(store.box<CloudProtectedPageLeaseEntity>().getAll().single.leaseReference,
+                  readerLease);
+              sawWrites = true;
+              throw StateError('abort complete reader handoff');
+            }
+            expect(() => store.runInTransaction<void>(TxMode.write, abortReaderTransaction),
+                throwsA(_fails('abort complete reader handoff')));
+          } else {
+            expect(() => handoff(source: source, stillCurrent: () {
+              if (messageInbox().isNotEmpty) {
+                expect(checkpoint().fetchedSequence, 1);
+                expect(store.box<CloudProtectedPageLeaseEntity>().getAll().single.leaseReference,
+                    readerLease);
+                expect(intent().state, 2);
+                sawWrites = true;
+                return false;
+              }
+              return true;
+            }), throwsA(_fails('cloud_sync_received_archive_admission_changed')));
+          }
+          expect(sawWrites, isTrue);
+          expect(durableReaderState(), before);
+          expect(await durable.readAdoptedProtectedPageLeaseReferences(maximumCount: 10), isEmpty);
+        }
+        expect(handoff(source: source), isTrue);
+        expect(messageInbox().single.fetchSequence, 1);
+        expect(intent().state, 4);
+      });
+
+      test('same existing inbox change keeps original lease and rolls back newly staged references',
+          () async {
+        await seedOrigin(disposition: CloudSyncReceivedRecordState.equivalent);
+        final existing = readerChange(raw: 'O', server: 'U', fields: 'H');
+        await seedHistory(existing);
+        final before = durableReaderState();
+        final source = journal.readForReader(intentId: intentId, currentAuth: auth);
+        final transport = _ReceivedLeaseTransport();
+        await transport.runLocalProtectedStoreExclusive(() async {
+          final adopted = handoff(source: source);
+          expect(adopted, isFalse);
+          if (!adopted) await transport.rollbackProtectedPageLease(readerLease);
+        });
+        final after = durableReaderState();
+        expect(after['checkpoints'], before['checkpoints']);
+        expect(after['inbox'], before['inbox']);
+        expect(after['pageLeases'], before['pageLeases']);
+        expect(after['message'], before['message']);
+        expect(intent().state, 4);
+        expect(intent().readerChangeId, existing.changeId);
+        expect(transport.rolledBack, [readerLease]);
+        expect(transport.committed, isEmpty);
+        expect(messageInbox(), hasLength(1));
+        expect(messageInbox().single.encryptedPayloadRef, existing.encryptedPayloadReference);
+        expect(await durable.readAdoptedProtectedPageLeaseReferences(maximumCount: 10),
+            {_lease('1')});
+        final live = await durable.readLiveProtectedReferences(maximumCount: 128);
+        expect(live.references, containsAll([
+          existing.encryptedPayloadReference, existing.encryptedServerRecordId,
+          existing.protectedSystemFieldsReference, observation.rawReference,
+        ]));
+        expect(live.references, isNot(contains(readerChange().encryptedPayloadReference)));
+        expect(live.references, isNot(contains(readerChange().encryptedServerRecordId)));
+        await reopen();
+        durable = bindDurable();
+        expect(durableReaderState(), after);
+        expect((await durable.readCheckpoint(scope)).fetchedToken, 'synthetic-server-cursor-1');
+      });
+
+      test('rejects different latest ETag, later change and tombstone despite an older exact match',
+          () async {
+        await seedOrigin(disposition: CloudSyncReceivedRecordState.equivalent);
+        final source = journal.readForReader(intentId: intentId, currentAuth: auth);
+        await seedHistory(readerChange(raw: 'O', server: 'U', fields: 'H'));
+        final laterChanges = [
+          readerChange(id: 'N', etag: 'X'),
+          readerChange(id: 'Q'), // Same content/ETag, distinct later change identity.
+          readerChange(id: 'T', tombstone: true),
+        ];
+        for (var index = 0; index < laterChanges.length; index++) {
+          await seedHistory(laterChanges[index], lease: ['2', '3', '4'][index]);
+          final before = durableReaderState();
+          expect(() => handoff(source: source),
+              throwsA(storageFailure('received_found_reader_newer_evidence')));
+          expect(durableReaderState(), before);
+          expect(messageInbox().first.changeIdHash, readerChange().changeId);
+          expect(messageInbox().last.changeIdHash, laterChanges[index].changeId);
+          expect(intent().state, 2);
+          expect(intent().readerChangeId, isNull);
+          expect(await durable.readAdoptedProtectedPageLeaseReferences(maximumCount: 10),
+              isNot(contains(readerLease)));
+        }
+      });
+
+      test('stale coordinator fence and checkpoint generation cannot journal Found', () async {
+        await seedOrigin(disposition: CloudSyncReceivedRecordState.equivalent);
+        final source = journal.readForReader(intentId: intentId, currentAuth: auth);
+        final stale = fence;
+        await durable.releaseCoordinatorLease(scope, leaseFence: stale);
+        fence = (await durable.tryAcquireCoordinatorLease(scope,
+          ownerId: stale.ownerId, now: _time(4),
+          leaseDuration: const Duration(hours: 1)))!;
+        expect(fence.generation, greaterThan(stale.generation));
+        final beforeStaleFence = durableReaderState();
+        expect(() => handoff(source: source, leaseFence: stale),
+            throwsA(storageFailure('coordinator_lease_fence_lost')));
+        expect(durableReaderState(), beforeStaleFence);
+        final row = checkpoint();
+        row.generation++;
+        store.box<CloudSyncCheckpointEntity>().put(row);
+        final beforeStaleGeneration = durableReaderState();
+        expect(() => handoff(source: source), throwsA(storageFailure('generation_mismatch')));
+        expect(durableReaderState(), beforeStaleGeneration);
+        row.generation = observation.generation;
+        store.box<CloudSyncCheckpointEntity>().put(row);
+        expect(handoff(source: source), isTrue);
+        expect(intent().state, 4);
+      });
+
+      test('pending server page blocks new handoff and preserves both cursor ciphertexts', () async {
+        await seedOrigin(disposition: CloudSyncReceivedRecordState.equivalent);
+        await seedHistory(readerChange(id: 'Z', record: _a43('Z')),
+            apply: false);
+        expect(checkpoint().fetchedTokenCiphertext, isNotNull);
+        expect(checkpoint().pendingFetchedTokenCiphertext, isNotNull);
+        expect(checkpoint().pendingFetchedTokenCiphertext,
+            isNot(checkpoint().fetchedTokenCiphertext));
+        final before = durableReaderState();
+        expect(() => handoff(), throwsA(storageFailure('checkpoint_pending_page_unresolved')));
+        expect(durableReaderState(), before);
+        expect(intent().readerChangeId, isNull);
+        expect(messageInbox().single.serverRecordIdHash, _a43('Z'));
+        expect(await durable.readAdoptedProtectedPageLeaseReferences(maximumCount: 10),
+            {_lease('1')});
+      });
+
+      test('unsettled sibling-zone outbox blocks Found reader without consuming source', () async {
+        await seedOrigin(disposition: CloudSyncReceivedRecordState.equivalent);
+        final sibling = scopeFor('attachmentManateeZone');
+        final pending = await durable.enqueueOutboxMutation(CloudOutboxDraft(
+          scope: sibling, logicalEntityKeyHash: _a43('Z'),
+          action: CloudOutboxAction.save, payloadVersion: 1,
+          dependencyOperationIds: const {}, createdAt: _time(3),
+          encryptedPayloadReference: 'obcs2.ref.${_a43('K')}',
+          payloadSha256: _h64('b'), protectedLeaseReference: _lease('b'),
+        ));
+        final before = durableReaderState();
+        expect(() => handoff(), throwsA(storageFailure('received_found_reader_outbox_unsettled')));
+        expect(durableReaderState(), before);
+        expect((await durable.readOutboxEntries(sibling)).single.sameDurableSnapshotAs(pending),
+            isTrue);
+        expect(messageInbox(), isEmpty);
+        expect(await durable.readAdoptedProtectedPageLeaseReferences(maximumCount: 10), isEmpty);
+        expect(intent().state, 2);
+        expect(intent().protectedSourceBinding, originalSource.encode());
+        expect(intent().recordObservationBinding, observation.encode());
+      });
+    });
 
     for (final change in ['outgoing overlap', 'edit', 'unsend']) {
       test('late $change blocks leasing but preserves adopted readback source',

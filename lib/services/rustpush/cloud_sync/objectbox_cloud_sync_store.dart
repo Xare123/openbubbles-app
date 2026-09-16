@@ -812,6 +812,99 @@ class ObjectBoxCloudSyncStore
     return source;
   }
 
+  /// One exact read joins the SAME semantic inbox as normal history, without
+  /// changing any Apple cursor, pending-token field or fetch direction. A known
+  /// different version/tombstone is not reordered behind this observation.
+  /// Returns true only when this transaction adopted the supplied native lease.
+  bool journalReceivedFound({
+    required CloudSyncScope scope, required CloudFetchedChange change,
+    required int generation, required String batchId, required String leaseReference,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required CloudSyncReceivedArchiveJournal journal,
+    required CloudSyncReceivedArchiveAdmissionSource source,
+    required CloudSyncNativeAuthSnapshot currentAuth, required bool Function() stillCurrent,
+  }) => _store.runInTransaction(TxMode.write, () {
+    final nowMs = _nowMs();
+    if (!_isMessagesCloudSemanticScope(scope) || scope.zone != 'messageManateeZone' ||
+        !journal.isBoundToStore(_store) || !stillCurrent() ||
+        generation != source.observation.generation ||
+        change.recordIdHash != source.observation.serverRecordIdHash ||
+        !_isNativeDigest(change.changeId) || !_isNativeDigest(change.recordIdHash) ||
+        change.etagHash == null || !_isNativeDigest(change.etagHash!) ||
+        change.payloadSha256 == null || !_isContentDigest(change.payloadSha256!) ||
+        change.encryptedPayloadReference == null || !_isNativeProtectedReference(change.encryptedPayloadReference!) ||
+        change.encryptedServerRecordId == null || !_isNativeProtectedReference(change.encryptedServerRecordId!) ||
+        change.encryptedServerRecordId == change.encryptedPayloadReference ||
+        change.type != CloudChangeType.save || change.isTombstone || change.preflightFailure != null ||
+        !_isNativeDigest(batchId) || !_isProtectedPageLease(leaseReference)) {
+      throw _storageFailure('received_found_reader_input_invalid');
+    }
+    _requireActiveCoordinatorLeaseLocked(scope, leaseFence, nowMs: nowMs);
+    final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+    if (checkpoint == null || checkpoint.generation != generation) {
+      throw _storageFailure('generation_mismatch');
+    }
+    _validateCheckpointScope(checkpoint, scope);
+    journal.validateReaderAdmission(transactionStore: _store, scope: scope, expected: source,
+      currentAuth: currentAuth, stillCurrent: stillCurrent);
+    final outboxQuery = _outbox.query(CloudOutboxOperationEntity_.accountFingerprint.equals(scope.accountFingerprint)
+      .and(CloudOutboxOperationEntity_.state.oneOf([0, 1, 3, 5]).or(
+        CloudOutboxOperationEntity_.state.equals(2).and(
+          CloudOutboxOperationEntity_.protectedLeaseReference.notNull())))).build()..limit = 1;
+    try {
+      if (outboxQuery.findFirst() != null) throw _storageFailure('received_found_reader_outbox_unsettled');
+    } finally { outboxQuery.close(); }
+    final changeKey = _changeKey(scope, generation, change.changeId);
+    final latestQuery = (_inbox.query(CloudInboxChangeEntity_.scopeKey.equals(_scopeKey(scope))
+        .and(CloudInboxChangeEntity_.generation.equals(generation))
+        .and(CloudInboxChangeEntity_.serverRecordIdHash.equals(change.recordIdHash)))
+      ..order(CloudInboxChangeEntity_.fetchSequence, flags: Order.descending)).build()..limit = 1;
+    CloudInboxChangeEntity? latest;
+    try { latest = latestQuery.findFirst(); } finally { latestQuery.close(); }
+    if (latest != null) {
+      if (latest.changeKey != changeKey || latest.isTombstone ||
+          latest.etagHash != change.etagHash || latest.payloadSha256 != change.payloadSha256 ||
+          latest.changeType != CloudChangeType.save.name) {
+        throw _storageFailure('received_found_reader_newer_evidence');
+      }
+      journal.markReaderAdopted(transactionStore: _store, scope: scope, expected: source,
+        currentAuth: currentAuth, stillCurrent: stillCurrent, change: change, generation: generation);
+      return false; // Existing reader owns its original references; roll back new lease.
+    }
+    final mapQuery = _recordMaps.query(CloudRecordMapEntity_.scopeKey.equals(_scopeKey(scope))
+      .and(CloudRecordMapEntity_.generation.equals(generation))
+      .and(CloudRecordMapEntity_.serverRecordIdHash.equals(change.recordIdHash))).build()..limit = 1;
+    try {
+      if (mapQuery.findFirst() != null) throw _storageFailure('received_found_reader_newer_evidence');
+    } finally { mapQuery.close(); }
+    if (checkpoint.pendingBatchId != null || _hasUnmarkedPendingInboxLocked(scope, checkpoint)) {
+      throw _storageFailure('checkpoint_pending_page_unresolved');
+    }
+    final sequence = checkpoint.fetchedSequence + 1;
+    _inbox.put(CloudInboxChangeEntity(
+      changeKey: changeKey, changeIdHash: change.changeId, scopeKey: _scopeKey(scope),
+      accountFingerprint: scope.accountFingerprint, zone: scope.zone,
+      serverRecordIdHash: change.recordIdHash, etagHash: change.etagHash,
+      changeType: CloudChangeType.save.name, encryptedServerRecordId: change.encryptedServerRecordId,
+      protectedSystemFieldsRef: change.protectedSystemFieldsReference,
+      encryptedPayloadRef: change.encryptedPayloadReference, payloadSha256: change.payloadSha256,
+      batchId: batchId, generation: generation, fetchSequence: sequence,
+      status: CloudInboxStatus.pending.index, isTombstone: false,
+      serverModifiedAtMs: change.serverModifiedAt?.millisecondsSinceEpoch ?? 0,
+      serverModifiedAtFormatVersion: change.serverModifiedAt == null ? null : cloudInboxServerModifiedAtUnixEpochFormat,
+      createdAtMs: nowMs, updatedAtMs: nowMs));
+    // ONLY local sequence accounting changes. No server token is synthesized,
+    // cleared, encrypted again or advanced by this exact-record observation.
+    checkpoint..fetchedSequence = sequence..updatedAtMs = nowMs;
+    _checkpoints.put(checkpoint);
+    _adoptProtectedPageLeaseLocked(CloudFetchBatch(scope: scope, changes: [change], batchId: batchId,
+      generation: generation, nextToken: null, hasMore: false,
+      protectedPageLeaseReference: leaseReference), nowMs: nowMs);
+    journal.markReaderAdopted(transactionStore: _store, scope: scope, expected: source,
+      currentAuth: currentAuth, stillCurrent: stillCurrent, change: change, generation: generation);
+    return true;
+  });
+
   static CloudSyncReceivedArchiveSourceBinding _receivedArchiveSource(
     CloudSyncReceivedArchiveIntentEntity intent,
   ) {
@@ -6438,9 +6531,7 @@ class ObjectBoxCloudSyncStore
   String _digest(String value) => sha256.convert(utf8.encode(value)).toString();
 
   String _changeKey(CloudSyncScope scope, int generation, String changeId) =>
-      generation == 1
-      ? _scopedDigest(scope, 'change', changeId)
-      : _scopedDigest(scope, 'change-generation-$generation', changeId);
+      cloudSyncPersistentChangeKey(scope, generation, changeId);
 
   String _encodeDependencies(Iterable<String> values) {
     final sorted = values.toSet().toList()..sort();

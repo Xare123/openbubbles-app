@@ -73,6 +73,95 @@ final class CloudSyncReceivedArchiveJournal {
 
   bool isBoundToStore(Store store) => identical(store, _store);
 
+  List<int> readFoundCandidates({
+    required CloudSyncNativeAuthSnapshot currentAuth, int limit = 5,
+    int? maximumIntentId,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyOwnership();
+    if (limit < 1 || limit > 20 || currentAuth.accountFingerprint != _binding.scope.accountFingerprint) {
+      throw StateError('cloud_sync_received_archive_identity_changed');
+    }
+    if (maximumIntentId != null && maximumIntentId < 0) {
+      throw ArgumentError('cloud_sync_received_archive_limit_invalid');
+    }
+    var condition =
+      CloudSyncReceivedArchiveIntentEntity_.accountFingerprint.equals(_binding.scope.accountFingerprint)
+        .and(CloudSyncReceivedArchiveIntentEntity_.writerEpoch.equals(_binding.epoch))
+        .and(CloudSyncReceivedArchiveIntentEntity_.state.equals(2))
+        .and(CloudSyncReceivedArchiveIntentEntity_.recordObservationBinding.startsWith('[1,0,')
+          .or(CloudSyncReceivedArchiveIntentEntity_.recordObservationBinding.startsWith('[1,1,')));
+    if (maximumIntentId != null) {
+      condition = condition.and(CloudSyncReceivedArchiveIntentEntity_.id.lessOrEqual(maximumIntentId));
+    }
+    final query = _store.box<CloudSyncReceivedArchiveIntentEntity>().query(condition)
+        .order(CloudSyncReceivedArchiveIntentEntity_.updatedAtMs)
+        .order(CloudSyncReceivedArchiveIntentEntity_.id).build()..limit = limit;
+    try { return query.find().map((row) => row.id).toList(growable: false); }
+    finally { query.close(); }
+  });
+
+  CloudSyncReceivedArchiveAdmissionSource readForReader({
+    required int intentId, required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyOwnership();
+    final intent = _readBoundIntent(intentId);
+    final source = readProtectedSource(intentId: intentId, currentAuth: currentAuth);
+    final observation = _observationFor(intent, source);
+    if (intent.state != 2 || source.isSeed ||
+        !_isReady(intent, currentAuth, allowCloudMapping: true) ||
+        (observation?.state != CloudSyncReceivedRecordState.equivalent &&
+         observation?.state != CloudSyncReceivedRecordState.needsProjection) ||
+        intent.admittedOperationId != null || intent.readerChangeId != null) {
+      throw StateError('cloud_sync_received_archive_found_projection_not_ready');
+    }
+    return CloudSyncReceivedArchiveAdmissionSource._(intent, source, observation!);
+  });
+
+  void validateReaderAdmission({
+    required Store transactionStore, required CloudSyncScope scope,
+    required CloudSyncReceivedArchiveAdmissionSource expected,
+    required CloudSyncNativeAuthSnapshot currentAuth, required bool Function() stillCurrent,
+  }) {
+    if (!identical(transactionStore, _store) || !stillCurrent() ||
+        scope.accountFingerprint != _binding.scope.accountFingerprint ||
+        scope.container != 'com.apple.messages.cloud' || scope.database != 'private' ||
+        scope.zone != 'messageManateeZone' || scope.persistenceLane != CloudSyncPersistenceLane.semantic) {
+      throw StateError('cloud_sync_received_archive_admission_changed');
+    }
+    final current = readForReader(intentId: expected.intentId, currentAuth: currentAuth);
+    final message = _store.box<Message>().get(expected.localMessageId)!;
+    if (!current.sameSourceAs(expected) || message.dateEdited != null ||
+        message.messageSummaryInfo.isNotEmpty) {
+      throw StateError('cloud_sync_received_archive_admitted_source_changed');
+    }
+    if (requireCloudSyncRestoredDirectChat(store: _store, messageScope: scope,
+        message: message) != expected.observation.parentBinding || !stillCurrent()) {
+      throw StateError('cloud_sync_received_archive_parent_changed');
+    }
+  }
+
+  /// Synchronous part of the caller's inbox transaction. No Message write and
+  /// no replacement of the retained original Found evidence.
+  void markReaderAdopted({
+    required Store transactionStore, required CloudSyncScope scope,
+    required CloudSyncReceivedArchiveAdmissionSource expected,
+    required CloudSyncNativeAuthSnapshot currentAuth, required bool Function() stillCurrent,
+    required CloudFetchedChange change, required int generation,
+  }) {
+    validateReaderAdmission(transactionStore: transactionStore, scope: scope,
+      expected: expected, currentAuth: currentAuth, stillCurrent: stillCurrent);
+    if (generation != expected.observation.generation ||
+        change.recordIdHash != expected.observation.serverRecordIdHash ||
+        change.type != CloudChangeType.save || change.isTombstone ||
+        !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(change.changeId)) {
+      throw StateError('cloud_sync_received_archive_record_mismatch');
+    }
+    final row = _readBoundIntent(expected.intentId)
+      ..readerChangeId = change.changeId
+      ..state = 4;
+    _store.box<CloudSyncReceivedArchiveIntentEntity>().put(row);
+  }
+
   List<CloudSyncReceivedArchiveAdmissionSource> readCreateCandidates({
     required CloudSyncNativeAuthSnapshot currentAuth, int limit = 5,
   }) => _store.runInTransaction(TxMode.read, () {
@@ -828,6 +917,17 @@ final class CloudSyncReceivedArchiveJournal {
 
   /// Fair round-robin bump without changing immutable origin. Blocked rows
   /// stay ready and cannot monopolize a bounded worker.
+  /// A reader-owned row may surface a lost native commit response; leave its
+  /// timestamp and ownership intact so normal inbox recovery can finish it.
+  void markReaderAttemptConsidered({required int intentId, required DateTime now}) =>
+      _store.runInTransaction(TxMode.write, () {
+        _verifyOwnership();
+        final intent = _readBoundIntent(intentId);
+        if (intent.state == 4) return;
+        markReadConsidered(intentId: intentId, now: now);
+      });
+
+  /// Fair round-robin bump for a source not yet handed to another owner.
   void markReadConsidered({required int intentId, required DateTime now}) =>
       _store.runInTransaction(TxMode.write, () {
         _verifyOwnership();
@@ -945,7 +1045,9 @@ final class CloudSyncReceivedArchiveJournal {
 
   bool _isReady(
     CloudSyncReceivedArchiveIntentEntity candidate,
-    CloudSyncNativeAuthSnapshot currentAuth,
+    CloudSyncNativeAuthSnapshot currentAuth, {
+    bool allowCloudMapping = false,
+  }
   ) {
     try {
       if (candidate.accountFingerprint != _binding.scope.accountFingerprint ||
@@ -991,7 +1093,7 @@ final class CloudSyncReceivedArchiveJournal {
         return false;
       }
       if (message.isFromMe != expectFromMe) return false;
-      if (message.ckRecordId != null || message.ckSyncState == true) {
+      if (!allowCloudMapping && (message.ckRecordId != null || message.ckSyncState == true)) {
         return false;
       }
       // Sender evidence still exists (transient handle or handleId lookup).
@@ -1074,7 +1176,7 @@ final class CloudSyncReceivedArchiveJournal {
     if (intent == null ||
         intent.accountFingerprint != _binding.scope.accountFingerprint ||
         intent.writerEpoch != _binding.epoch ||
-        (intent.state < 0 || intent.state > 3) ||
+        (intent.state < 0 || intent.state > 4) ||
         (intent.origin != CloudSyncReceivedArchiveOrigin.incoming.index &&
             intent.origin != CloudSyncReceivedArchiveOrigin.mirrored.index) ||
         intent.intentKey !=
@@ -1105,6 +1207,13 @@ final class CloudSyncReceivedArchiveJournal {
       if (intent.state == 3 &&
           (intent.admittedOperationId == null || intent.admittedBinding == null ||
               observation?.state != CloudSyncReceivedRecordState.absent)) {
+        return false;
+      }
+      if (intent.state == 4 &&
+          (intent.readerChangeId == null ||
+           (observation?.state != CloudSyncReceivedRecordState.equivalent &&
+            observation?.state != CloudSyncReceivedRecordState.needsProjection) ||
+           intent.admittedOperationId != null)) {
         return false;
       }
       source.requireOrigin(

@@ -2880,7 +2880,7 @@
     },
     {
       "id": "36:4861163290100543941",
-      "lastPropertyId": "16:6065925816449012533",
+      "lastPropertyId": "17:1215215624103446605",
       "name": "CloudSyncReceivedArchiveIntentEntity",
       "properties": [
         {
@@ -2970,6 +2970,11 @@
         {
           "id": "16:6065925816449012533",
           "name": "admittedBinding",
+          "type": 9
+        },
+        {
+          "id": "17:1215215624103446605",
+          "name": "readerChangeId",
           "type": 9
         }
       ],

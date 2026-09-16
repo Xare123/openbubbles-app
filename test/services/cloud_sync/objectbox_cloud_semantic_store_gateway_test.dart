@@ -1,11 +1,21 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_chat_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_identity.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_journal.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_record_observation.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'cloud_sync_restored_chat_test_fixture.dart';
 
 void main() {
   final now = DateTime.utc(2026, 8, 1, 12);
@@ -394,7 +404,7 @@ void main() {
       final sibling =
           _copyInbox(
               inboxBox.getAll().single,
-              changeKey: _scopedDigest(scope, 'change', siblingChangeId),
+              changeKey: _fixtureChangeKey(scope, entry.generation, siblingChangeId),
             )
             ..changeIdHash = siblingChangeId
             ..fetchSequence = 2
@@ -449,7 +459,7 @@ void main() {
       final earlier =
           _copyInbox(
               current,
-              changeKey: _scopedDigest(scope, 'change', _digestValue('B')),
+              changeKey: _fixtureChangeKey(scope, entry.generation, _digestValue('B')),
             )
             ..changeIdHash = _digestValue('B')
             ..serverRecordIdHash = _digestValue('U')
@@ -507,7 +517,7 @@ void main() {
       final earlier =
           _copyInbox(
               current,
-              changeKey: _scopedDigest(scope, 'change', _digestValue('B')),
+              changeKey: _fixtureChangeKey(scope, entry.generation, _digestValue('B')),
             )
             ..changeIdHash = _digestValue('B')
             ..serverRecordIdHash = _digestValue('U')
@@ -1302,6 +1312,317 @@ void main() {
       );
     },
   );
+
+  for (final (localChange, dataGeneration) in [
+    ('unchanged', 1), ('newer edit', 1), ('retracted', 1), ('unchanged', 2),
+  ]) {
+    final generationLabel = dataGeneration == 1 ? '' : ' (generation2)';
+    test('received Found projects exact existing direct Message: $localChange and replay$generationLabel',
+        () async {
+      final messageScope = _scope(persistenceLane: CloudSyncPersistenceLane.semantic);
+      final chatScope = _scope(zone: 'chatManateeZone',
+          persistenceLane: CloudSyncPersistenceLane.semantic);
+      const peer = 'received-peer@example.com';
+      const localEndpoint = 'mailto:received-owner@example.com';
+      const messageGuid = 'received-direct-gateway-message';
+      const originalText = 'Original received text';
+      final createdAt = now.subtract(const Duration(hours: 1));
+      final editTime = now.add(const Duration(minutes: 1));
+      final handle = Handle(address: peer, service: 'iMessage',
+          uniqueAddressAndService: '$peer/iMessage');
+      handle.originalROWID = objectBox.box<Handle>().put(handle);
+      objectBox.box<Handle>().put(handle);
+      final chat = Chat(guid: 'iMessage;-;$peer', chatIdentifier: peer,
+          usingHandle: localEndpoint, style: 45, isRpSms: false,
+          participants: [handle])..handles.add(handle);
+      objectBox.box<Chat>().put(chat);
+      final message = Message(guid: messageGuid, text: originalText,
+          dateCreated: createdAt, isFromMe: false, handle: handle,
+          attributedBody: [AttributedBody.raw(originalText)])
+        ..handleId = handle.originalROWID
+        ..chat.target = chat;
+      final wire = api.MessageInst(
+        id: messageGuid,
+        sender: 'mailto:$peer',
+        conversation: api.ConversationData(
+          participants: [localEndpoint, 'mailto:$peer'], senderGuid: chat.guid),
+        message: api.Message.message(api.NormalMessage(
+          parts: api.MessageParts(field0: [api.IndexedMessagePart(
+            part_: api.MessagePart.text(originalText, const api.TextFormat.flags(
+              api.TextFlags(bold: false, italic: false,
+                underline: false, strikethrough: false))),
+          )]),
+          service: const api.MessageType_IMessage(), voice: false,
+        )),
+        sentTimestamp: createdAt.millisecondsSinceEpoch,
+        target: [api.MessageTarget.token(Uint8List(32))],
+        receivedOnHandle: localEndpoint,
+        sendDelivered: false, verificationFailed: false,
+      );
+      const receiveContext = CloudSyncReceivedArchiveLiveContext(
+        observedViaLiveReceive: true, observedLocalHandles: [localEndpoint],
+        receivedOnHandle: localEndpoint,
+      );
+      final capture = CloudSyncReceivedArchiveIdentity.preview(
+        message: message, chat: chat, wire: wire, liveContext: receiveContext);
+      expect(capture, isA<CloudSyncReceivedArchiveEligible>());
+      final identity = (capture as CloudSyncReceivedArchiveEligible).identity;
+      final source = CloudSyncReceivedArchiveSourceBinding(
+        accountFingerprint: messageScope.accountFingerprint,
+        protectedStoreIdentity: 'obcs2.store.${_digestValue('S')}',
+        messageGuidHash: identity.guidHash, sourceSha256: identity.sourceSha256,
+        protectedReference: _protectedReference('B'),
+        leaseReference: 'obcs2.lease.${'a' * 32}',
+        payloadSha256: _sha256('synthetic received source'), payloadLength: 128,
+      );
+      final auth = CloudSyncNativeAuthSnapshot.fromNative(
+        nativeSessionId: 'synthetic-received-gateway',
+        accountFingerprint: source.accountFingerprint,
+        protectedStoreIdentity: source.protectedStoreIdentity,
+        cloudMessagesClient: Object(),
+      );
+      final authority = ObjectBoxCloudKitWriterAuthority.forTest(
+        store: objectBox, buildDecision: CloudKitWriterOwnership.resolve('v2'));
+      final writerScope = CloudKitWriterScope(accountFingerprint: source.accountFingerprint);
+      final disabled = authority.initializeDisabled(writerScope, now: now);
+      final owner = authority.provisionInitialOwner(writerScope,
+        owner: CloudKitWriterOwner.v2, expectedEpoch: disabled.epoch, now: now,
+        evidence: const CloudKitWriterTransitionEvidence.forTest(
+          operationsQuiesced: true, activeIdentityRevalidated: true,
+          legacyMutationQueues: LegacyMutationQueueDisposition.empty));
+      final received = CloudSyncReceivedArchiveJournal(
+        store: objectBox, authority: authority, authoritySnapshot: owner);
+      ObjectBoxCloudSyncStore durable() => ObjectBoxCloudSyncStore(
+        store: objectBox, protector: _ReceivedGatewayProtector(), clock: () => now);
+      final store = durable();
+      final chatSource = await seedSyntheticRestoredChatAppliedSource(
+        objectBox: objectBox, store: store, chatScope: chatScope, now: now);
+      await seedSyntheticRestoredChatProof(objectBox: objectBox, store: store,
+        chatScope: chatScope, chat: chat, appliedSource: chatSource, now: now);
+      if (dataGeneration == 2) {
+        // Model the empty message checkpoint after rebootstrap. Keep the
+        // independently owned chat generation and real coordinator lease.
+        await store.readCheckpoint(messageScope);
+        final resetCheckpoint = objectBox.box<CloudSyncCheckpointEntity>().getAll()
+            .singleWhere((row) => row.checkpointKey == _scopeKey(messageScope));
+        resetCheckpoint.generation = dataGeneration;
+        objectBox.box<CloudSyncCheckpointEntity>().put(resetCheckpoint);
+      }
+      final checkpoint = await store.readCheckpoint(messageScope);
+      final generation = checkpoint.generation;
+      expect(generation, dataGeneration);
+      final actualFence = (await store.tryAcquireCoordinatorLease(messageScope,
+        ownerId: 'received-gateway-reader', now: now,
+        leaseDuration: const Duration(hours: 1)))!;
+      await store.journalFetchedBatch(CloudFetchBatch(
+        scope: messageScope, changes: const [], batchId: 'received-reader-baseline',
+        generation: generation, nextToken: 'preserved-server-cursor', hasMore: false),
+        now: now, leaseFence: actualFence, expectedGeneration: generation,
+        expectedFetchedToken: checkpoint.fetchedToken);
+      final intentId = received.saveReceivedCapture(wire: wire,
+        liveContext: receiveContext, localChatId: chat.id!,
+        persistMessage: () => objectBox.box<Message>().put(message),
+        source: source, capturedAuth: auth, stillCurrent: () => true, now: now);
+      final originalId = message.id!;
+      received.markSourceMaterialized(intentId: intentId, source: source,
+        currentAuth: auth, stillCurrent: () => true);
+      final found = CloudSyncReceivedRecordObservation(
+        state: CloudSyncReceivedRecordState.equivalent,
+        accountFingerprint: source.accountFingerprint,
+        protectedStoreIdentity: source.protectedStoreIdentity,
+        messageGuidHash: source.messageGuidHash, sourceSha256: source.sourceSha256,
+        logicalEntityKeyHash: _digestValue('L'), serverRecordIdHash: _digestValue('R'),
+        generation: generation,
+        parentBinding: requireCloudSyncRestoredDirectChat(
+          store: objectBox, messageScope: messageScope, message: message),
+        observedAtMs: now.millisecondsSinceEpoch,
+        etagHash: _digestValue('E'), rawReference: _protectedReference('O'),
+        rawLeaseReference: 'obcs2.lease.${'b' * 32}',
+      );
+      // Native inspection/protection is synthetic. All persistence and the
+      // inbox-to-canonical route below use production journal/gateway code.
+      received.adoptRecordObservation(intentId: intentId, expectedSource: source,
+        observation: found, currentAuth: auth, stillCurrent: () => true,
+        validateParent: () {});
+      received.markRecordObservationCommitted(intentId: intentId, source: source,
+        observation: found, currentAuth: auth, stillCurrent: () => true,
+        validateParent: () {});
+      final change = _entry(scope: messageScope, generation: generation,
+          serverModifiedAt: now).change;
+      expect(store.journalReceivedFound(
+        scope: messageScope, change: change, generation: generation,
+        batchId: _digestValue('D'), leaseReference: 'obcs2.lease.${'c' * 32}',
+        leaseFence: actualFence, journal: received,
+        source: received.readForReader(intentId: intentId, currentAuth: auth),
+        currentAuth: auth, stillCurrent: () => true,
+      ), isTrue);
+      final entry = (await store.readEligibleInbox(messageScope,
+          now: now, limit: 1)).single;
+      expect(entry.change.changeId, change.changeId);
+      expect(entry.change.encryptedPayloadReference, change.encryptedPayloadReference);
+      expect(entry.change.recordIdHash, found.serverRecordIdHash);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().getAll()
+          .where((row) => row.entityKind == 'message'), isEmpty);
+
+      // Model a real receive race after durable handoff, before projection.
+      // An edit/unsend known BEFORE handoff is rejected by separate admission tests.
+      if (localChange != 'unchanged') {
+        final local = objectBox.box<Message>().get(originalId)!;
+        if (localChange == 'newer edit') {
+          local
+            ..text = 'Newer received edit'
+            ..attributedBody = [AttributedBody.raw('Newer received edit')]
+            ..messageSummaryInfo = [MessageSummaryInfo(
+              retractedParts: [], editedParts: [0],
+              originalTextRange: {'0': [0, originalText.length]},
+              editedContent: {'0': [EditedContent(
+                text: Content(values: [AttributedBody.raw('Newer received edit')]),
+                date: editTime.millisecondsSinceEpoch.toDouble(),
+              )]},
+            )];
+        } else {
+          local.messageSummaryInfo = [MessageSummaryInfo.empty()..retractedParts.add(0)];
+        }
+        local.dateEdited = editTime;
+        objectBox.box<Message>().put(local);
+      }
+      final beforeProjection = objectBox.box<Message>().get(originalId)!;
+      final preservedSummary = beforeProjection.dbMessageSummaryInfo;
+      final preservedBody = beforeProjection.dbAttributedBody;
+      final diagnostics = <String>[];
+      final registry = TransientCloudCanonicalIdentityRegistry();
+      ObjectBoxCloudSemanticStoreGateway realGateway() => ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox, clock: () => now,
+        canonicalAdapter: ObjectBoxCanonicalSemanticEntityAdapter(
+          store: objectBox, identityResolver: registry,
+          activeScopeProvider: () => CloudCanonicalActiveScope(scope: messageScope, generation: generation),
+          chatDependencyScope: CloudCanonicalActiveScope(scope: chatScope, generation: chatSource.generation),
+          semanticApplyEnabled: true, allowMessageUpserts: true,
+          diagnosticRecorder: diagnostics.add,
+        ),
+      );
+      final payload = CloudMessageEntityPayload(
+        logicalEntityKeyHash: found.logicalEntityKeyHash, canonicalGuid: messageGuid,
+        chatAliasKeyHash: syntheticRestoredChatAliasKeyHash(peer),
+        chatIdentifier: chat.guid,
+        body: originalText, senderHandle: 'mailto:$peer',
+        createdAt: createdAt, service: CloudSemanticService.iMessage,
+        attributedBodiesState: CloudSemanticFieldState.value,
+        attributedBodies: [CloudSemanticAttributedBody(text: originalText, runs: [
+          CloudSemanticTextRun(startUtf16: 0, lengthUtf16: originalText.length,
+            messagePart: 0, attachmentCanonicalGuid: null, attachmentLogicalKeyHash: null,
+            mentionHandle: null, audioTranscript: null, textEffect: null,
+            bold: null, italic: null, strikethrough: null, underline: null),
+        ])],
+        editsState: CloudSemanticFieldState.explicitClear,
+        retractedPartsState: CloudSemanticFieldState.explicitClear,
+        knownFlags: const CloudSemanticKnownMessageFlags(fromMe: false,
+          delivered: false, read: false, hasDataDetectorResults: false,
+          deliveredQuietly: false, didNotifyRecipient: false),
+      );
+      final snapshot = CloudSemanticSnapshot(kind: CloudEntityKind.message,
+        logicalEntityKeyHash: payload.logicalEntityKeyHash,
+        immutableContentDigest: _digestValue('I'), createdAt: createdAt,
+        etagHash: entry.change.etagHash,
+        encryptedRawRecordReference: entry.change.encryptedPayloadReference);
+      final decoded = CloudDecodedMutation.upsert(scope: messageScope,
+        generation: entry.generation, changeId: entry.change.changeId,
+        snapshot: snapshot, payload: payload);
+      TransactionalCloudInboxApplier applier() => TransactionalCloudInboxApplier(
+        decoder: _FixedDecoder(decoded), store: realGateway(),
+        identityRegistrar: registry, activeScopeRevalidator: () async => true,
+        diagnosticRecorder: diagnostics.add,
+      );
+      final result = await applier().apply(entry, leaseFence: actualFence);
+      expect(result.disposition, CloudInboxApplyDisposition.applied,
+          reason: 'generation=$generation; safeCode=${result.safeCode}; diagnostics=$diagnostics');
+      expect(result.inboxStatusPersisted, isTrue);
+      expect(diagnostics, contains('canonical_preexisting_ownership_bootstrap'));
+      void expectPreservedMessage() {
+        expect(objectBox.box<Message>().count(), 1);
+        final saved = objectBox.box<Message>().get(originalId)!;
+        expect(saved.guid, messageGuid);
+        expect(saved.chat.targetId, chat.id);
+        expect(saved.isFromMe, isFalse);
+        expect(saved.dateCreated?.toUtc(), createdAt);
+        expect(saved.handleId, handle.originalROWID);
+        expect(saved.sendingServiceId, isNull);
+        if (localChange == 'newer edit') {
+          expect(saved.text, 'Newer received edit');
+          expect(saved.dbAttributedBody, preservedBody);
+        } else {
+          expect(saved.text, originalText);
+        }
+        if (localChange != 'unchanged') {
+          expect(saved.dateEdited?.toUtc(), editTime);
+          expect(saved.dbMessageSummaryInfo, preservedSummary);
+        }
+        if (localChange == 'retracted') {
+          expect(saved.buildMessageParts().single.isUnsent, isTrue);
+        }
+      }
+      expectPreservedMessage();
+      final owned = objectBox.box<CloudSemanticSnapshotEntity>().getAll()
+          .singleWhere((row) => row.entityKind == 'message');
+      expect(owned.canonicalGuidHash, CloudCanonicalIdentityDigest.forPayload(
+        scope: messageScope, generation: generation, payload: payload));
+      expect(owned.canonicalGuidLookupHash, CloudCanonicalIdentityDigest.forPayloadLookup(
+        scope: messageScope, generation: generation, payload: payload));
+      final messageMap = objectBox.box<CloudRecordMapEntity>().getAll()
+          .singleWhere((row) => row.zone == messageScope.zone);
+      expect(messageMap.logicalEntityKeyHash, payload.logicalEntityKeyHash);
+      expect(messageMap.serverRecordIdHash, entry.change.recordIdHash);
+      expect(messageMap.encryptedRawRecordRef, entry.change.encryptedPayloadReference);
+      expect(messageMap.encryptedServerRecordId, entry.change.encryptedServerRecordId);
+      expect(messageMap.etagHash, entry.change.etagHash);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 1);
+      final terminal = objectBox.box<CloudSemanticReplayEntity>().getAll().single;
+      expect(terminal.terminalOutcome, 'applied');
+      expect(terminal.serverRecordIdHash, entry.change.recordIdHash);
+      expect(terminal.logicalEntityKeyHash, payload.logicalEntityKeyHash);
+      expect(terminal.payloadSha256, entry.change.payloadSha256);
+      final receivedRow = objectBox.box<CloudSyncReceivedArchiveIntentEntity>().get(intentId)!;
+      expect(receivedRow.state, 4);
+      expect(receivedRow.readerChangeId, entry.change.changeId);
+      expect(receivedRow.protectedSourceBinding, source.encode());
+      expect(receivedRow.recordObservationBinding, found.encode());
+      expect(receivedRow.admittedOperationId, isNull);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(objectBox.box<CloudSyncLocalSendIntentEntity>().count(), 0);
+      expect((await store.readCheckpoint(messageScope)).lastAppliedSequence, entry.sequence);
+      expect((await store.readCheckpoint(messageScope)).fetchedToken, 'preserved-server-cursor');
+      final terminalState = _durableSyncControlFingerprint(objectBox);
+
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      // Requeue only the exact synthetic inbox row to exercise normal replay
+      // suppression after reopen, not another canonical apply or native decode.
+      final inbox = objectBox.box<CloudInboxChangeEntity>().getAll()
+          .singleWhere((row) => row.zone == messageScope.zone);
+      expect(inbox.status, CloudInboxStatus.applied.index);
+      inbox..status = CloudInboxStatus.pending.index..completedAtMs = 0;
+      objectBox.box<CloudInboxChangeEntity>().put(inbox);
+      final replayEntry = (await durable().readEligibleInbox(messageScope,
+          now: now, limit: 1)).single;
+      final bootstrapCount = diagnostics.where(
+          (code) => code == 'canonical_preexisting_ownership_bootstrap').length;
+      final replayed = await applier().apply(replayEntry, leaseFence: actualFence);
+      expect(replayed.disposition, CloudInboxApplyDisposition.applied,
+          reason: 'safeCode=${replayed.safeCode}');
+      expectPreservedMessage();
+      expect(diagnostics.where((code) => code == 'canonical_preexisting_ownership_bootstrap').length,
+          bootstrapCount);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().getAll()
+          .singleWhere((row) => row.entityKind == 'message').id, owned.id);
+      expect(objectBox.box<CloudRecordMapEntity>().getAll()
+          .singleWhere((row) => row.zone == messageScope.zone).id, messageMap.id);
+      expect(objectBox.box<CloudSemanticReplayEntity>().getAll().single.id, terminal.id);
+      expect(objectBox.box<CloudInboxChangeEntity>().get(inbox.id)!.status, CloudInboxStatus.applied.index);
+      expect((await durable().readCheckpoint(messageScope)).fetchedToken, 'preserved-server-cursor');
+      expect(_durableSyncControlFingerprint(objectBox), terminalState);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+    });
+  }
 
   test(
     'preexisting canonical mismatch rolls back first semantic ownership proof',
@@ -3890,7 +4211,7 @@ void main() {
       final second =
           _copyInbox(
               first,
-              changeKey: _scopedDigest(scope, 'change', _digestValue('D')),
+              changeKey: _fixtureChangeKey(scope, firstEntry.generation, _digestValue('D')),
             )
             ..changeIdHash = _digestValue('D')
             ..serverRecordIdHash = _digestValue('T')
@@ -3900,7 +4221,7 @@ void main() {
       final third =
           _copyInbox(
               first,
-              changeKey: _scopedDigest(scope, 'change', _digestValue('G')),
+              changeKey: _fixtureChangeKey(scope, firstEntry.generation, _digestValue('G')),
             )
             ..changeIdHash = _digestValue('G')
             ..serverRecordIdHash = _digestValue('U')
@@ -3910,7 +4231,7 @@ void main() {
       final fourth =
           _copyInbox(
               first,
-              changeKey: _scopedDigest(scope, 'change', _digestValue('J')),
+              changeKey: _fixtureChangeKey(scope, firstEntry.generation, _digestValue('J')),
             )
             ..changeIdHash = _digestValue('J')
             ..serverRecordIdHash = _digestValue('V')
@@ -4077,7 +4398,7 @@ void main() {
       final second =
           _copyInbox(
               first,
-              changeKey: _scopedDigest(scope, 'change', secondChangeId),
+              changeKey: _fixtureChangeKey(scope, firstEntry.generation, secondChangeId),
             )
             ..changeIdHash = secondChangeId
             ..serverRecordIdHash = _digestValue('T')
@@ -4086,7 +4407,7 @@ void main() {
       final third =
           _copyInbox(
               first,
-              changeKey: _scopedDigest(scope, 'change', thirdChangeId),
+              changeKey: _fixtureChangeKey(scope, firstEntry.generation, thirdChangeId),
             )
             ..changeIdHash = thirdChangeId
             ..serverRecordIdHash = _digestValue('U')
@@ -4431,9 +4752,9 @@ void main() {
       final tombstone =
           _copyInbox(
               first,
-              changeKey: _scopedDigest(
+              changeKey: _fixtureChangeKey(
                 scope,
-                'change',
+                firstEntry.generation,
                 _indexedDigest('bounded-tombstone-change'),
               ),
             )
@@ -4444,9 +4765,9 @@ void main() {
       final third =
           _copyInbox(
               first,
-              changeKey: _scopedDigest(
+              changeKey: _fixtureChangeKey(
                 scope,
-                'change',
+                firstEntry.generation,
                 _indexedDigest('bounded-third-change'),
               ),
             )
@@ -4456,9 +4777,9 @@ void main() {
       final terminal =
           _copyInbox(
               first,
-              changeKey: _scopedDigest(
+              changeKey: _fixtureChangeKey(
                 scope,
-                'change',
+                firstEntry.generation,
                 _indexedDigest('bounded-terminal-change'),
               ),
             )
@@ -4469,9 +4790,9 @@ void main() {
       final fifth =
           _copyInbox(
               first,
-              changeKey: _scopedDigest(
+              changeKey: _fixtureChangeKey(
                 scope,
-                'change',
+                firstEntry.generation,
                 _indexedDigest('bounded-fifth-change'),
               ),
             )
@@ -5277,7 +5598,7 @@ void _putPendingInboxEntry(
   final change = entry.change;
   store.box<CloudInboxChangeEntity>().put(
     CloudInboxChangeEntity(
-      changeKey: _scopedDigest(scope, 'change', change.changeId),
+      changeKey: _fixtureChangeKey(scope, entry.generation, change.changeId),
       changeIdHash: change.changeId,
       scopeKey: _scopeKey(scope),
       accountFingerprint: scope.accountFingerprint,
@@ -5462,6 +5783,12 @@ CloudSemanticChatAliasEntity _seedStrongChatAlias(
 
 String _recordMapKey(CloudSyncScope scope, String logicalEntityKeyHash) =>
     _scopedDigest(scope, 'record-map', logicalEntityKeyHash);
+
+// Independent fixture encoding of the established journal producer contract.
+// Generation 1 keeps its original key; every later data generation is isolated.
+String _fixtureChangeKey(CloudSyncScope scope, int generation, String changeId) =>
+    _scopedDigest(scope,
+        generation == 1 ? 'change' : 'change-generation-$generation', changeId);
 
 String _scopedDigest(CloudSyncScope scope, String purpose, String value) =>
     '$purpose:${_sha256('${scope.storageKey}\u001f$purpose\u001f$value')}';
@@ -5810,6 +6137,31 @@ final class _ExactCanonicalResolver implements CloudCanonicalIdentityResolver {
     CloudEntityKind kind,
     String logicalEntityKeyHash,
   ) => '${scope.storageKey}:$generation:${kind.name}:$logicalEntityKeyHash';
+}
+
+/// Fixture token protection only. Native received-source authentication and
+/// decoding stay outside these real gateway/adapter transaction tests.
+final class _ReceivedGatewayProtector implements CloudSyncProtector {
+  String _prefix(CloudSyncScope scope, CloudSyncProtectedValueKind kind) =>
+      'received-gateway-test:${scope.storageKey}:${kind.name}:';
+
+  @override
+  Future<String> protect({required CloudSyncScope scope,
+    required CloudSyncProtectedValueKind kind, required String plaintext,
+  }) async => '${_prefix(scope, kind)}$plaintext';
+
+  @override
+  Future<String> unprotect({required CloudSyncScope scope,
+    required CloudSyncProtectedValueKind kind, required String ciphertext,
+  }) async {
+    final prefix = _prefix(scope, kind);
+    if (!ciphertext.startsWith(prefix)) throw StateError('synthetic token scope changed');
+    return ciphertext.substring(prefix.length);
+  }
+
+  @override
+  Future<String> fingerprintAccount(String rawAccountIdentifier) =>
+      throw StateError('unexpected account lookup in received gateway test');
 }
 
 final class _FixedDecoder implements CloudSemanticDecoder {

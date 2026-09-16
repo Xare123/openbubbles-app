@@ -4,6 +4,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
 
 import 'cloud_sync_models.dart';
+import 'cloud_sync_persistent_keys.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 
 /// Failure reasons returned by [CloudAttachmentSourceResolver].
@@ -720,7 +721,7 @@ final class CloudAttachmentSourceResolver {
     }
     if (inbox.status != CloudInboxStatus.applied.index ||
         inbox.changeKey !=
-            'change:${_digest('${scope.storageKey}\u001fchange\u001f${inbox.changeIdHash}')}' ||
+            cloudSyncPersistentChangeKey(scope, generation, inbox.changeIdHash) ||
         inbox.changeType != CloudChangeType.save.name ||
         inbox.isTombstone ||
         inbox.failureCategory != null ||

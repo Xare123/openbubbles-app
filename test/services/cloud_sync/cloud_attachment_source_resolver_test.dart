@@ -66,6 +66,51 @@ void main() {
     expect(result.replayOutcome, 'applied');
   });
 
+  test('accepts generation 2 and 3 durable journal change keys', () {
+    const changeIdHash = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+    for (final journalGeneration in [2, 3]) {
+      _seedApplied(objectBox, scope, journalGeneration);
+
+      final result = resolver.resolve(
+        scope: scope,
+        generation: journalGeneration,
+        canonicalGuid: canonicalGuid,
+      );
+
+      expect(
+        result.inboxChange.changeKey,
+        _frozenProducerChangeKey(scope, journalGeneration, changeIdHash),
+      );
+      expect(result.inboxChange.generation, journalGeneration);
+      objectBox.box<CloudSemanticSnapshotEntity>().removeAll();
+      objectBox.box<CloudSemanticReplayEntity>().removeAll();
+      objectBox.box<CloudRecordMapEntity>().removeAll();
+      objectBox.box<CloudInboxChangeEntity>().removeAll();
+    }
+  });
+
+  test('rejects a cross-generation durable journal change key', () {
+    const changeIdHash = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+    _seedApplied(objectBox, scope, 2);
+    final inbox = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+    objectBox.box<CloudInboxChangeEntity>().remove(inbox.id);
+    objectBox.box<CloudInboxChangeEntity>().put(
+      _copyInbox(
+        inbox,
+        changeKey: _frozenProducerChangeKey(scope, 3, changeIdHash),
+      ),
+    );
+
+    expect(
+      () => resolver.resolve(
+        scope: scope,
+        generation: 2,
+        canonicalGuid: canonicalGuid,
+      ),
+      throwsA(_code(CloudAttachmentSourceResolutionCode.invalidSource)),
+    );
+  });
+
   test(
     'selects the current version when historical applied versions remain',
     () {
@@ -524,8 +569,7 @@ void _seedApplied(
   final scopeGenerationKey =
       'semantic-generation4:${_digest('$scopeKey\u001f$generation')}';
   final protectedReference = testProtectedReference('A');
-  final changeKey =
-      'change:${_digest('${scope.storageKey}\u001fchange\u001f$changeIdHash')}';
+  final changeKey = _frozenProducerChangeKey(scope, generation, changeIdHash);
   final replayChangeIdHash = _digest(changeIdHash);
   final replayKey = 'semantic-replay4:$scopeGenerationKey:$replayChangeIdHash';
   final recordMapKey = _recordMapKey(scope);
@@ -642,8 +686,7 @@ void _seedHistoricalAppliedVersion(
   final scopeKey = 'scope2:${_digest(scope.storageKey)}';
   final scopeGenerationKey =
       'semantic-generation4:${_digest('$scopeKey\u001f$generation')}';
-  final changeKey =
-      'change:${_digest('${scope.storageKey}\u001fchange\u001f$changeIdHash')}';
+  final changeKey = _frozenProducerChangeKey(scope, generation, changeIdHash);
   final replayChangeIdHash = _digest(changeIdHash);
   final replayKey = 'semantic-replay4:$scopeGenerationKey:$replayChangeIdHash';
 
@@ -912,5 +955,16 @@ void _replaceRecordMap(
 
 String _recordMapKey(CloudSyncScope scope) =>
     'record-map:${_digest('${scope.storageKey}\u001frecord-map\u001fAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')}';
+
+// Keep this independent of cloudSyncPersistentChangeKey so the test does not
+// make a shared helper the oracle for both producer and consumer.
+String _frozenProducerChangeKey(
+  CloudSyncScope scope,
+  int generation,
+  String changeIdHash,
+) {
+  final purpose = generation == 1 ? 'change' : 'change-generation-$generation';
+  return '$purpose:${_digest('${scope.storageKey}\u001f$purpose\u001f$changeIdHash')}';
+}
 
 String _digest(String value) => sha256.convert(utf8.encode(value)).toString();

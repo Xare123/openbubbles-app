@@ -34,15 +34,17 @@ fresh received creates until received mutation chaining is implemented. Removing
 the Message row does not erase the journal's parent proof for readback, provided
 the exact canonical Chat still exists.
 
-Next functional gap: Found-to-reader reconciliation. Use the normal semantic
-decoder/projector and existing duplicate/edit/retraction rules; do not assign
-Message.text or make a fake send. Stage a normal protected record identity and
-raw envelope, bind exact generation/record/ETag/source, adopt that read durably
-without advancing Apple's cursor, then let normal projection update the row.
-If a later retained save/tombstone or different known version already exists,
-retain/defer rather than inject an older observation as a newer fetch sequence.
-Recover the same adopted read on restart. Add direct, stale-version, local-edit,
-unsend, crash/recommit and duplicate-pull behavioral checks before enabling it.
+Found-to-reader reconciliation is now source-implemented, under qualification.
+Native c5559d5bb stages an ordinary protected record identity and raw envelope;
+Dart adopts that change into the existing semantic inbox without advancing or
+clearing any Apple cursor. State4 owns a reader change, not a completed projection
+or upload. Existing different versions and tombstones remain ordering barriers.
+The worker resumes both state2 observations and state4 pending work after restart,
+then uses ordinary decoding/projection. No direct Message.text assignment and no
+synthetic outgoing receipt. Sixty-one transaction tests and97 gateway tests
+passed, including direct projection, a newer local edit/retraction, reopen/replay
+and generation2. Native run35149164355 passed745 app tests. All received flags
+stay off.
 
 ## Exact lookup and local ownership, current continuation
 
@@ -58,8 +60,8 @@ frames are checked before NotFound interpretation, original Record bytes are
 retained, and decompression rejects excess output/trailing members. This proves
 components only. App integration before the next split passed808 Dart tests.
 
-Current app14ce1d749/native6eaba5c22 plus fixture repair406677804 is qualifying
-a two-phase handoff in run35138299645:
+App14ce1d749/native6eaba5c22 plus fixture repair406677804 qualified
+a two-phase handoff in successful run35138299645:
 network preparation retains an opaque in-memory result; local stage/adopt/commit
 runs under cross-engine exclusion without holding that short lease over network
 I/O. Lost local commit responses remain state1 and retry their exact observation.
@@ -68,11 +70,11 @@ The received table adds nullable observation property14 and preserves prior IDs.
 Final27-file Dart integration passed811. Native compilation passed on predecessor
 run35136724953, then its new noncanonical-wire fixture failed before testing the
 handoff: ETag tag1 was accidentally still first. The repair appends it last and
-keeps the inequality assertion. The rerun must pass; no native-green claim yet.
+keeps the inequality assertion. The rerun passed738 app Rust,350 rustpush,
+11 Anisette and40 protector cases; see the history log for exact artifact proof.
 
-Remaining vertical work: bind Found through normal semantic projection without
-overwriting newer local edits; admit a freshly absent received source through a
-distinct source-bound encoder into the existing single-submit/readback outbox.
+Remaining vertical work: qualify Found through normal semantic projection without
+overwriting newer local edits, then prove the received create/readback flow live.
 The generic outgoing encoder rejects received sender/direction, deliberately.
 Do not relax it or synthesize a positive IDS-send receipt to reuse that lane.
 Incoming groups/media and pre-seal readiness failure still need coverage.

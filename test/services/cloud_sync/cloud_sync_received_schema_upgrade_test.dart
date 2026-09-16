@@ -18,7 +18,7 @@ void main() {
         (e) => e['name'] == 'CloudSyncReceivedArchiveIntentEntity',
       );
       (entity['properties'] as List).removeWhere(
-        (p) => ['recordObservationBinding', 'admittedOperationId', 'admittedBinding'].contains(p['name']),
+        (p) => ['recordObservationBinding', 'admittedOperationId', 'admittedBinding', 'readerChangeId'].contains(p['name']),
       );
       entity['lastPropertyId'] = '13:3733844521104586883';
       previousMap['lastIndexId'] = '103:3376337646296598667';
@@ -59,6 +59,7 @@ void main() {
         expect(restored.recordObservationBinding, isNull);
         expect(restored.admittedOperationId, isNull);
         expect(restored.admittedBinding, isNull);
+        expect(restored.readerChangeId, isNull);
       } finally {
         if (store != null && !store.isClosed()) store.close();
         expect(directory.parent.absolute.path, root.absolute.path);

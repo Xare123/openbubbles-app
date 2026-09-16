@@ -73,7 +73,7 @@ void main() {
     expect(wake, isNot(contains('runCloudSyncV2Outbound')));
   });
 
-  test('only background metadata omits exhaustive retained repair', () {
+  test('internal reader wakes omit exhaustive repair while user catch-up keeps it', () {
     final service = File(
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
@@ -82,7 +82,7 @@ void main() {
     ).readAsStringSync();
     expect(
       service,
-      contains('sweepRetainedAtHead: !allowAndroidBackgroundIsolate'),
+      contains('sweepRetainedAtHead: sweepRetainedAtHead && !allowAndroidBackgroundIsolate'),
     );
     expect(controller, contains('bool sweepRetainedAtHead = true'));
     expect(controller, contains('sweepRetainedAtHead: sweepRetainedAtHead'));

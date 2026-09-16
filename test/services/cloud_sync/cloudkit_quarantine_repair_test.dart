@@ -185,6 +185,77 @@ void main() {
     },
   );
 
+  test('repairs generation 2 and 3 journal rows with their own keys', () async {
+    for (final journalGeneration in [2, 3]) {
+      _clearStore(store);
+      final entry = _entry(scope, sequence: 1, generation: journalGeneration);
+      _seed(store, scope, entry, now);
+      final generationRequest = CloudKitV2QuarantineRepairRequest(
+        scope: scope,
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+        generation: journalGeneration,
+        changeIdHash: entry.change.changeId,
+        correction: CloudKitV2QuarantineRepairAllowlist.only,
+        leaseFence: _leaseFence(journalGeneration),
+      );
+
+      final result = await gateway.repair(
+        request: generationRequest,
+        testOnlyCapability: _Decoder(
+          _decoded(scope, entry.change.changeId, journalGeneration),
+        ),
+      );
+
+      expect(
+        result.disposition,
+        CloudKitV2QuarantineRepairDisposition.repaired,
+      );
+      final inbox = store.box<CloudInboxChangeEntity>().getAll().single;
+      expect(
+        inbox.changeKey,
+        _frozenProducerChangeKey(
+          scope,
+          journalGeneration,
+          entry.change.changeId,
+        ),
+      );
+      expect(inbox.generation, journalGeneration);
+    }
+  });
+
+  test(
+    'rejects a cross-generation journal key without a repair receipt',
+    () async {
+      _clearStore(store);
+      final entry = _entry(scope, sequence: 1, generation: 2);
+      _seed(store, scope, entry, now);
+      final inbox = store.box<CloudInboxChangeEntity>().getAll().single
+        ..changeKey = _frozenProducerChangeKey(scope, 3, entry.change.changeId);
+      store.box<CloudInboxChangeEntity>().put(inbox);
+      final generationRequest = CloudKitV2QuarantineRepairRequest(
+        scope: scope,
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+        generation: 2,
+        changeIdHash: entry.change.changeId,
+        correction: CloudKitV2QuarantineRepairAllowlist.only,
+        leaseFence: _leaseFence(2),
+      );
+
+      final result = await gateway.repair(
+        request: generationRequest,
+        testOnlyCapability: _Decoder(_decoded(scope, entry.change.changeId, 2)),
+      );
+
+      expect(
+        result.disposition,
+        CloudKitV2QuarantineRepairDisposition.retryable,
+      );
+      expect(result.safeCode, 'quarantine_repair_inbox_missing');
+      expect(adapter.applyCalls, 0);
+      expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
+    },
+  );
+
   test('same receipt is idempotent and immutable', () async {
     final decoder = _Decoder(_decoded(scope, request.changeIdHash, 7));
 
@@ -814,7 +885,11 @@ void main() {
     _moveSeededTargetToSequence2(store);
     final predecessor = _entry(scope, sequence: 1, changeId: _digest('prior'));
     final predecessorRow = CloudInboxChangeEntity(
-      changeKey: _changeKey(scope, predecessor.change.changeId),
+      changeKey: _changeKey(
+        scope,
+        predecessor.generation,
+        predecessor.change.changeId,
+      ),
       changeIdHash: predecessor.change.changeId,
       scopeKey: _scopeKey(scope),
       accountFingerprint: scope.accountFingerprint,
@@ -1029,7 +1104,11 @@ void main() {
     );
     store.box<CloudInboxChangeEntity>().put(
       CloudInboxChangeEntity(
-        changeKey: _changeKey(scope, predecessor.change.changeId),
+        changeKey: _changeKey(
+          scope,
+          predecessor.generation,
+          predecessor.change.changeId,
+        ),
         changeIdHash: predecessor.change.changeId,
         scopeKey: _scopeKey(scope),
         accountFingerprint: scope.accountFingerprint,
@@ -1670,6 +1749,7 @@ CloudInboxEntry _entry(
   CloudSyncScope scope, {
   required int sequence,
   String? changeId,
+  int generation = 7,
 }) {
   final change = CloudFetchedChange(
     changeId: changeId ?? _digest('change'),
@@ -1689,7 +1769,7 @@ CloudInboxEntry _entry(
     attemptCount: 1,
     createdAt: DateTime.utc(2026, 8, 27, 11),
     batchId: 'batch-1',
-    generation: 7,
+    generation: generation,
     completedAt: DateTime.utc(2026, 8, 27, 11, 30),
     lastFailure: CloudFailureCategory.conflict,
   );
@@ -1853,7 +1933,7 @@ void _seed(
     );
     store.box<CloudInboxChangeEntity>().put(
       CloudInboxChangeEntity(
-        changeKey: _changeKey(scope, change.changeId),
+        changeKey: _changeKey(scope, entry.generation, change.changeId),
         changeIdHash: change.changeId,
         scopeKey: scopeKey,
         accountFingerprint: scope.accountFingerprint,
@@ -1931,7 +2011,7 @@ void _putInboxRow(
   final change = entry.change;
   store.box<CloudInboxChangeEntity>().put(
     CloudInboxChangeEntity(
-      changeKey: _changeKey(scope, change.changeId),
+      changeKey: _changeKey(scope, entry.generation, change.changeId),
       changeIdHash: change.changeId,
       scopeKey: _scopeKey(scope),
       accountFingerprint: scope.accountFingerprint,
@@ -1966,7 +2046,7 @@ void _seedTerminalPair(
   store.runInTransaction(TxMode.write, () {
     store.box<CloudInboxChangeEntity>().put(
       CloudInboxChangeEntity(
-        changeKey: _changeKey(scope, change.changeId),
+        changeKey: _changeKey(scope, entry.generation, change.changeId),
         changeIdHash: change.changeId,
         scopeKey: _scopeKey(scope),
         accountFingerprint: scope.accountFingerprint,
@@ -2067,8 +2147,36 @@ String _scopeKey(CloudSyncScope scope) => 'scope2:${_sha256(scope.storageKey)}';
 String _scopeGenerationKey(CloudSyncScope scope, int generation) =>
     'semantic-generation4:${_sha256('${_scopeKey(scope)}\u001f$generation')}';
 
-String _changeKey(CloudSyncScope scope, String changeId) =>
-    'change:${_sha256('${scope.storageKey}\u001fchange\u001f$changeId')}';
+// Deliberately freeze the producer format independently from the production
+// helper, so the test cannot make both sides agree on the same wrong key.
+String _frozenProducerChangeKey(
+  CloudSyncScope scope,
+  int generation,
+  String changeId,
+) {
+  final purpose = generation == 1 ? 'change' : 'change-generation-$generation';
+  return '$purpose:${_sha256('${scope.storageKey}\u001f$purpose\u001f$changeId')}';
+}
+
+String _changeKey(CloudSyncScope scope, int generation, String changeId) =>
+    _frozenProducerChangeKey(scope, generation, changeId);
+
+CloudCoordinatorLeaseFence _leaseFence(int generation) =>
+    CloudCoordinatorLeaseFence(
+      ownerId: 'quarantine-repair-test-owner',
+      generation: generation,
+    );
+
+void _clearStore(Store store) {
+  store.box<CloudSyncLeaseEntity>().removeAll();
+  store.box<CloudSyncCheckpointEntity>().removeAll();
+  store.box<CloudOutboxOperationEntity>().removeAll();
+  store.box<CloudInboxChangeEntity>().removeAll();
+  store.box<CloudSemanticReplayEntity>().removeAll();
+  store.box<CloudSemanticSnapshotEntity>().removeAll();
+  store.box<CloudRecordMapEntity>().removeAll();
+  store.box<CloudKitV2QuarantineRepairReceiptEntity>().removeAll();
+}
 
 String _recordMapKey(CloudSyncScope scope, String logicalEntityKeyHash) =>
     'record-map:${_sha256('${scope.storageKey}\u001frecord-map\u001f$logicalEntityKeyHash')}';
