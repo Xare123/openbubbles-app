@@ -611,11 +611,38 @@ pub struct CloudSyncReceivedRecordObservation {
     pub raw_generation: u64,
 }
 
-/// Exact native read for a materialized received intent. Parent lookup, PCS,
-/// identity and message lookup use one pinned restored-read permit. No warmup,
-/// outgoing receipt invention, save/delete, or existing decoder fallback.
+/// One in-memory exact-read result. No raw file exists until the caller takes
+/// the local protected-store lease and stages this single-use handle. Dropping
+/// or discarding it never changes a durable source, Apple record or cursor.
+#[frb(opaque)]
+pub struct CloudSyncPreparedReceivedInspection {
+    pending: tokio::sync::Mutex<Option<CloudSyncReceivedInspectionPending>>,
+}
+
+struct CloudSyncReceivedInspectionPending {
+    cloud_messages_client: Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    container: Arc<rustpush::cloudkit::CloudKitOpenContainer<'static, DefaultAnisetteProvider>>,
+    storage_directory: String,
+    auth: CloudSyncNativeAuthMetadata,
+    source: crate::cloud_sync_received_source_stage::NativeReceivedArchiveStage,
+    chat_generation: u64,
+    chat_source: super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput,
+    observation: CloudSyncReceivedRecordObservation,
+    raw_found: Option<(rustpush::cloudkit_proto::Record, Vec<u8>)>,
+}
+
+impl std::fmt::Debug for CloudSyncPreparedReceivedInspection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CloudSyncPreparedReceivedInspection(redacted)")
+    }
+}
+
+/// Exact native read for a materialized received intent. All network work
+/// finishes here, before the short local stage/adopt/commit lease. Parent, PCS,
+/// identity and lookup use one pinned restored-read permit. No file staging,
+/// outgoing receipt invention, save/delete, or legacy decoder fallback.
 #[allow(clippy::too_many_arguments)]
-pub async fn cloud_sync_inspect_received_archive(
+pub async fn cloud_sync_prepare_received_archive_inspection(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     native_writer_pause_token: u64,
     storage_directory: String,
@@ -625,7 +652,7 @@ pub async fn cloud_sync_inspect_received_archive(
     message_generation: u64,
     chat_logical_entity_key_hash: String,
     chat_source: super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput,
-) -> anyhow::Result<CloudSyncReceivedRecordObservation> {
+) -> anyhow::Result<CloudSyncPreparedReceivedInspection> {
     use crate::cloud_sync_canonical_dto::{CloudCanonicalEntityKind, CloudCanonicalPayload};
     use crate::cloud_sync_transient_bridge::{cloud_sync_decode_transient_record_cached_only,
         CloudTransientDecodeOutcome, bind_envelope};
@@ -726,14 +753,79 @@ pub async fn cloud_sync_inspect_received_archive(
         CloudNativeStream::Chats,chat_generation,&chat_source.protected_raw_envelope_reference)
         .map_err(|_|anyhow!("cloud_sync_received_archive_parent_changed"))?;
     bind_envelope(&request,&parent,&hasher).map_err(|_|anyhow!("cloud_sync_received_archive_parent_changed"))?;
-    if let Some((raw,original_wire))=raw_found {
-        let retained=crate::cloud_sync_native_fetch::cloud_sync_stage_protected_received_record_readback(
-            PathBuf::from(storage_directory),after.account_fingerprint,message_generation,&raw,&original_wire)
-            .map_err(|_|anyhow!("cloud_sync_received_archive_readback_stage_failed"))?;
-        result.protected_raw_record_reference=Some(retained.protected_raw_record_reference);
-        result.protected_raw_record_lease_reference=Some(retained.lease_reference);
+    Ok(CloudSyncPreparedReceivedInspection {
+        pending: tokio::sync::Mutex::new(Some(CloudSyncReceivedInspectionPending {
+            cloud_messages_client: cloud_messages_client.clone(),
+            container,
+            storage_directory,
+            auth: after,
+            source: source_stage,
+            chat_generation,
+            chat_source,
+            observation: result,
+            raw_found,
+        })),
+    })
+}
+
+/// Local-only stage. The caller must hold its cross-engine local-store lease
+/// from this call through durable adoption and commit/rollback. Keep the exact
+/// read session alive; a replaced client/container/source never yields a file.
+pub async fn cloud_sync_stage_received_archive_inspection(
+    prepared: &CloudSyncPreparedReceivedInspection,
+    native_writer_pause_token: u64,
+) -> anyhow::Result<CloudSyncReceivedRecordObservation> {
+    use crate::cloud_sync_transient_bridge::bind_envelope;
+    use crate::cloud_sync_native_fetch::{cloud_sync_unprotect_raw_envelope,
+        CloudNativeProtectionScope, CloudNativeStream};
+    let mut pending = prepared.pending.lock().await.take()
+        .ok_or_else(|| anyhow!("cloud_sync_received_archive_inspection_consumed"))?;
+    let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_read_permit"))?;
+    let auth = cloud_sync_capture_auth_snapshot(
+        &pending.cloud_messages_client, pending.storage_directory.clone()).await?;
+    cloud_sync_require_received_auth(&pending.auth, &auth)?;
+    let current_container = pending.cloud_messages_client
+        .get_cached_container_for_read_authentication(&permit).await
+        .map_err(|_| anyhow!("cloud_sync_received_archive_identity_changed"))?;
+    if !Arc::ptr_eq(&pending.container, &current_container) {
+        return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
     }
-    Ok(result)
+    crate::cloud_sync_received_source_stage::open_received_archive_source(
+        PathBuf::from(&pending.storage_directory), auth.account_fingerprint.clone(), &pending.source)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_protected_source_changed"))?;
+    let request = cloud_sync_attachment_group_decode_request(
+        &pending.storage_directory, &auth, pending.chat_generation, &pending.chat_source)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    let scope = CloudNativeProtectionScope::new(auth.account_fingerprint.clone(), CloudNativeStream::Chats)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    let parent = cloud_sync_unprotect_raw_envelope(
+        PathBuf::from(&pending.storage_directory), &scope, CloudNativeStream::Chats,
+        pending.chat_generation, &pending.chat_source.protected_raw_envelope_reference)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    let hasher = crate::cloud_sync_protector::semantic_identifier_hasher(pending.storage_directory.clone())
+        .map_err(|_| anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+    bind_envelope(&request, &parent, &hasher)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    // No await follows staging: the returned lease immediately transfers to
+    // Dart's still-held local exclusion for adoption and commit/rollback.
+    if let Some((raw, original_wire)) = pending.raw_found.take() {
+        let retained=crate::cloud_sync_native_fetch::cloud_sync_stage_protected_received_record_readback(
+            PathBuf::from(pending.storage_directory), auth.account_fingerprint,
+            pending.observation.raw_generation, &raw, &original_wire)
+            .map_err(|_|anyhow!("cloud_sync_received_archive_readback_stage_failed"))?;
+        pending.observation.protected_raw_record_reference=Some(retained.protected_raw_record_reference);
+        pending.observation.protected_raw_record_lease_reference=Some(retained.lease_reference);
+    }
+    Ok(pending.observation)
+}
+
+/// Releases an unused read result or no-ops after staging consumed it. No disk
+/// or account operation occurs, including after identity validation fails.
+pub async fn cloud_sync_discard_received_archive_inspection(
+    prepared: &CloudSyncPreparedReceivedInspection,
+) {
+    prepared.pending.lock().await.take();
 }
 
 /// Content-free context for making one successful native SendJob completion

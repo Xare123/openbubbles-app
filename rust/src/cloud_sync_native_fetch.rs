@@ -6100,15 +6100,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn decisive_update_readback_stages_exact_raw_record_under_one_lease() {
+    fn readback_record_fixture() -> rustpush::cloudkit_proto::Record {
         use rustpush::cloudkit_proto::{
             record, Identifier, RecordIdentifier, RecordZoneIdentifier,
         };
 
-        let directory = tempdir().expect("temporary protected store");
-        let account = "A".repeat(43);
-        let record = rustpush::cloudkit_proto::Record {
+        rustpush::cloudkit_proto::Record {
             record_identifier: Some(RecordIdentifier {
                 value: Some(Identifier {
                     name: Some("message-readback-record".to_owned()),
@@ -6132,7 +6129,14 @@ mod tests {
             etag: Some("readback-etag".to_owned()),
             permission: Some(1),
             ..Default::default()
-        };
+        }
+    }
+
+    #[test]
+    fn decisive_update_readback_stages_exact_raw_record_under_one_lease() {
+        let directory = tempdir().expect("temporary protected store");
+        let account = "A".repeat(43);
+        let record = readback_record_fixture();
         let raw = record.encode_to_vec();
         let staged = cloud_sync_stage_protected_message_record_readback(
             directory.path().to_path_buf(),
@@ -6160,6 +6164,45 @@ mod tests {
             &staged.lease_reference,
         )
         .expect("rollback readback lease");
+    }
+
+    #[test]
+    fn received_readback_preserves_original_wire_and_recommits_after_lost_response() {
+        let directory = tempdir().unwrap();
+        let account = "A".repeat(43);
+        let record = readback_record_fixture();
+        // A valid noncanonical field order must survive retention. Typed
+        // decode/reencode would silently change this evidence.
+        let mut original = rustpush::cloudkit_proto::Record {
+            etag: record.etag.clone(), ..Default::default()
+        }.encode_to_vec();
+        let mut rest = record.clone();
+        rest.etag = None;
+        original.extend(rest.encode_to_vec());
+        assert_ne!(original, record.encode_to_vec());
+        let staged = cloud_sync_stage_protected_received_record_readback(
+            directory.path().to_path_buf(), account.clone(), 7, &record, &original
+        ).unwrap();
+        let retained = vec![staged.protected_raw_record_reference.clone()];
+        for _ in 0..2 {
+            cloud_sync_commit_protected_page_lease(
+                directory.path().to_path_buf(), &staged.lease_reference, &retained
+            ).expect("same local commit is idempotent after a lost response");
+        }
+        cloud_sync_verify_committed_lease_exact(
+            directory.path().to_path_buf(), &staged.lease_reference, &retained
+        ).unwrap();
+        let scope = CloudNativeProtectionScope::new(account.clone(), CloudNativeStream::Messages).unwrap();
+        let opened = cloud_sync_unprotect_raw_envelope(
+            directory.path().to_path_buf(), &scope, CloudNativeStream::Messages,
+            7, &staged.protected_raw_record_reference
+        ).unwrap();
+        assert_eq!(opened.raw(), Some(original.as_slice()));
+        let mut changed = record.clone();
+        changed.etag = Some("different-etag".into());
+        assert!(cloud_sync_stage_protected_received_record_readback(
+            directory.path().to_path_buf(), account, 7, &changed, &original
+        ).is_err());
     }
 
     #[test]
