@@ -6115,3 +6115,15 @@ Historical tests do not establish current-device behavior.
   Artifact10463731660's seven generated files remain exact matches after commit.
   Current build output is743,168,141bytes and .dart_tool62,973,595bytes; C:free
   29,101,309,952bytes. No local Dart/Flutter/Cargo/Rust compiler remained active.
+
+- Hosted35136724953 ended FAILED: native compiled,737 app Rust tests passed and
+  the new received_readback_preserves_original_wire_and_recommits_after_lost_response
+  failed at the fixture's assert_ne before calling the production helper. ETag
+  is tag1, so prepending it had produced canonical order. Parent corrected the
+  fixture to append that known field last, leaving production and assertion
+  unchanged. Later native suites were skipped by the failed step, not passed.
+  Fix4066778045915a8f4f951bb8eb7bfcb0171391b1 is pushed to the isolated fork
+  branch. New job35138299645 qualifies it, now with allow_generated_drift=false
+  to verify the committed bridge. No narrower native-only workflow was available;
+  no new CI infrastructure, APK or local native rebuild was introduced.
+  Resume that job rather than rerunning the old SHA. All helpers remain closed.

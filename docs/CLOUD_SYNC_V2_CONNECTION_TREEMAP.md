@@ -54,11 +54,14 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ### Current exact received-record lookup qualification, September 16
 
-**Current integration:** `14ce1d7499efe4aa7ba9737040fd33e3d48de087` with native
-source `6eaba5c223463ac211d561da7d405b357156a49d`. Batch `35136724953` is running
-on GitHub-hosted Ubuntu: generation and native compilation passed, tests are
-still running. The f139 results below cover its predecessor, not this handoff.
-Bindings from artifact10463731660 are hash-verified and committed.
+**Current source:** `4066778045915a8f4f951bb8eb7bfcb0171391b1` contains app
+integration14ce1d749 and native handoff6eaba5c22. Batch `35138299645` is the
+active GitHub-hosted rerun with committed-bindings reproducibility enabled.
+Prior35136724953 compiled but failed one NEW fixture assertion (737 passed):
+the intended reordered record still put ETag tag1 first, matching canonical
+order. The fixture now appends tag1 last; production code was not changed to
+make it pass. Native qualification remains pending. Bindings from verified
+artifact10463731660 remain committed and the API is unchanged by this fix.
 Do not install this candidate or use an older native DLL with its Dart API.
 
 - Parent reproduced and fixed a retry selector bug: an adopted observation with
@@ -73,7 +76,8 @@ Do not install this candidate or use an older native DLL with its Dart API.
   held under that exclusion. Source/container/parent are checked again at stage.
 - Popper01a0ab7a-8fdd-7522-820d-a66bfd8d786f's bounded test changes were reviewed
   and accepted. Closed and verified not_found; no separate worktree/build. No
-  active helpers or local test processes. Native CI is the only running job.
+  active helpers or local test processes. Native CI35138299645 is the only
+  running job; do not rerun the failed predecessor SHA.
 - User-requested delegation guidance is recorded in AGENTS.md: bounded tasks,
   disjoint writes, concise evidence, no duplicated investigation or routine
   repeated full tests. Muse Contributor max remains the selected helper model.
@@ -735,7 +739,7 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-Current offline step: finish received-inspection job35136724953, then wire a
+Current offline step: finish received-inspection job35138299645, then wire a
 distinct received-source create-only admission and Found-to-reader handoff. The
 device checklist below remains pending; no empty local journal proves that an
 Alpha-only chat is missing from Apple.

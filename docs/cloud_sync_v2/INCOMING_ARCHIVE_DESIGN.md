@@ -28,14 +28,17 @@ frames are checked before NotFound interpretation, original Record bytes are
 retained, and decompression rejects excess output/trailing members. This proves
 components only. App integration before the next split passed808 Dart tests.
 
-Current app14ce1d749/native6eaba5c22/run35136724953 is qualifying a two-phase handoff:
+Current app14ce1d749/native6eaba5c22 plus fixture repair406677804 is qualifying
+a two-phase handoff in run35138299645:
 network preparation retains an opaque in-memory result; local stage/adopt/commit
 runs under cross-engine exclusion without holding that short lease over network
 I/O. Lost local commit responses remain state1 and retry their exact observation.
 State2 marks only finished local inspection, not projection or cloud archival.
 The received table adds nullable observation property14 and preserves prior IDs.
-Final27-file Dart integration passed811; native compilation passed and the full
-native tests remain pending on that same hosted run.
+Final27-file Dart integration passed811. Native compilation passed on predecessor
+run35136724953, then its new noncanonical-wire fixture failed before testing the
+handoff: ETag tag1 was accidentally still first. The repair appends it last and
+keeps the inequality assertion. The rerun must pass; no native-green claim yet.
 
 Remaining vertical work: bind Found through normal semantic projection without
 overwriting newer local edits; admit a freshly absent received source through a
