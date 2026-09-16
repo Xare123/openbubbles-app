@@ -6045,3 +6045,73 @@ Historical tests do not establish current-device behavior.
   No active tests/jobs/helpers at checkpoint. Next: connect materialized source
   to exact native raw lookup/adoption/create-only flow, checking raw outer flag
   bits before generic decoder truncation. Not production ready or enabled.
+
+### September 16 exact received-record inspection and restart qualification
+
+- Resumed from native app f139a899b4cd51706a93d011753d462092eb5fcb and rustpush
+  fb864a302d2d07b4480d2b40ad3cee4c1d134729. Hosted35107521313 succeeded with
+  737 app Rust,350 rustpush,11 remote Anisette and40 protector cases. Euclid's
+  final review accepted original-frame validation before result-code handling,
+  strict record-wire retention, restored semantic transport and bounded gzip.
+  Closed Euclid and verified not_found. No dedicated worktree was created by
+  that latest review; prior blocked cleanup was not bypassed.
+- Artifact10450679242 was386,132bytes, SHA256
+  2f8a4c807d8f9aa113797ca3eafde5012cb33b3f382d99b20d26f970b646ec4a. Verified
+  all seven clean generated targets before import. Generated SSE/diagnostic
+  guards passed. Committed reproducibility was intentionally skipped. Evidence
+  manifest: build-evidence/received-exact-inspection-35107521313/verification.json.
+- Initial Dart batch185 passed. Parent then reproduced three lost-commit
+  failures by checking the ACTUAL worker selector, not just directly retrying
+  the coordinator: a retained observation was excluded by onlyWithoutObservation
+  after raw commit failed. Removed that selector. State1 remains eligible until
+  exact local observation commit; state2 means local inspection finished, never
+  remote save. Source recommit cannot regress state2. GC retains both source
+  and observation across epochs/restarts. Escaped oversize bindings are rejected
+  at construction, before writing an unreadable descriptor. Before the next
+  native split, the27-file integration batch passed808 cases;11-file analysis
+  was clean. Existing entity/property IDs and global counters were verified
+  unchanged; only nullable entity36 property14:3909871882147317660 was added.
+- Muse Popper's reuse review was accepted with a correction: existing outgoing
+  native validation intentionally rejects received sender/direction. The archive
+  must retain distinct source authority rather than relax outgoing validation,
+  forge an IDS receipt, or reconstruct a mutable Message. Found remains blocked
+  from new create; Absent must be checked again when admitting. Full incoming
+  create/adoption remains open, including incoming groups/media and pre-seal
+  readiness failure. No additional comparator is being called an uploader.
+- Parent verified a concrete cross-engine maintenance gap: mutation code calls
+  ensureRecoveredBeforeWrite before taking its network interlock. An isolate-
+  only inspection lock cannot protect a new raw file before ObjectBox adoption.
+  Native6eaba5c223463ac211d561da7d405b357156a49d splits exact network preparation
+  from local stage. Single-use opaque handle retains read result in memory;
+  cross-engine local exclusion covers stage/adopt/commit with source/container/
+  parent revalidation, and explicit discard releases unused memory. No network
+  fetch is performed while holding the short local lease. A new native test
+  checks original field order retained byte-for-byte and exact double commit.
+- Hosted bridge35136724953 qualifies that source with unchanged rustpushfb864a3.
+  Artifact10463731660,387,557bytes, SHA256
+  940147d25bf649f0600cbac0c77dbaf4f2e540ca7b587ab9ccde00918b609d5a was verified
+  and imported after matching current generated files to the prior artifact.
+  All seven members match, guards pass. Full native run remains pending here.
+  Old native DLLs must not be paired with these bindings. No APK was built.
+- User requested more efficient OpenAI-style delegation. Read official guidance
+  and recorded bounded outputs, small context, disjoint writes, evidence-based
+  integration and risk-proportionate testing in AGENTS.md. Parent owned native/
+  Dart production; Popper owned only received journal tests and passed28/28.
+  Parent's separate changed-source batch passed19, with eight-file clean analysis.
+  These are subsets, not added to808 as independent coverage. Popper's fake proves
+  handoff ordering, not native OS lock behavior. Native double-commit remains a
+  hosted test. Popper closed and verified not_found after review.
+- No new helper worktrees, build trees, raw-content evidence, credentials, account
+  traffic, phone actions or paid GCE. C:27.14GiB free at checkpoint. Supported
+  session/transcript deletion unavailable; shared session stores retained.
+  Current job35136724953 is the only active job; all local sessions terminal.
+  Next resume: check this job, import no mismatched artifact, finish exact-source
+  tests/commit, then received source-bound admission and normal reader adoption.
+
+- Final local integration14ce1d7499efe4aa7ba9737040fd33e3d48de087 passed811 tests
+  across27 files and clean14-file analysis. No extra full run is needed without
+  changed code or a concrete new risk. Native generation and compile succeeded
+  on35136724953; native test steps remain in progress at this checkpoint.
+  Artifact10463731660's seven generated files remain exact matches after commit.
+  Current build output is743,168,141bytes and .dart_tool62,973,595bytes; C:free
+  29,101,309,952bytes. No local Dart/Flutter/Cargo/Rust compiler remained active.

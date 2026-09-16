@@ -52,7 +52,61 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
-### Active continuation: encrypted receive retry jobs
+### Current exact received-record lookup qualification, September 16
+
+**Current integration:** `14ce1d7499efe4aa7ba9737040fd33e3d48de087` with native
+source `6eaba5c223463ac211d561da7d405b357156a49d`. Batch `35136724953` is running
+on GitHub-hosted Ubuntu: generation and native compilation passed, tests are
+still running. The f139 results below cover its predecessor, not this handoff.
+Bindings from artifact10463731660 are hash-verified and committed.
+Do not install this candidate or use an older native DLL with its Dart API.
+
+- Parent reproduced and fixed a retry selector bug: an adopted observation with
+  a lost raw-commit response was filtered out forever. State1 now stays eligible
+  until exact local commit; state2 means observation committed, never uploaded.
+  Final27-file integration passed811 Dart cases after the split, with14-file
+  clean analysis. The28-case helper journal batch and19-case parent batch are
+  subsets, not additional independent tests.
+- A separate cross-engine cleanup race exists before raw observation adoption.
+  Native preparation now returns only a single-use in-memory handle. A short
+  native local-store exclusion covers stage/adopt/commit, with no network fetch
+  held under that exclusion. Source/container/parent are checked again at stage.
+- Popper01a0ab7a-8fdd-7522-820d-a66bfd8d786f's bounded test changes were reviewed
+  and accepted. Closed and verified not_found; no separate worktree/build. No
+  active helpers or local test processes. Native CI is the only running job.
+- User-requested delegation guidance is recorded in AGENTS.md: bounded tasks,
+  disjoint writes, concise evidence, no duplicated investigation or routine
+  repeated full tests. Muse Contributor max remains the selected helper model.
+
+Native source `f139a899b4cd51706a93d011753d462092eb5fcb`, rustpush
+`fb864a302d2d07b4480d2b40ad3cee4c1d134729`, passed hosted bridge run
+`35107521313` (14:17:39Z to14:35:22Z). This includes the reviewed single-pass
+Find My observer. Current Dart observation/schema/adapter work is committed in
+14ce1d749. Do not install this candidate or pair it with the older Windows DLL.
+
+- Exact lookup uses restored semantic-read transport, bounds gzip output and
+  rejects trailing members, validates original response wire before interpreting
+  NotFound, and retains original Record bytes without reencoding. Reviewer found
+  no additional blocker after these repairs. No account request was made.
+- Generated artifact10450679242,386,132bytes, SHA256
+  `2f8a4c807d8f9aa113797ca3eafde5012cb33b3f382d99b20d26f970b646ec4a`
+  verified before importing seven clean targets; all seven byte-match. Committed
+  reproducibility was intentionally skipped. Evidence is under
+  `build-evidence/received-exact-inspection-35107521313`.
+- Received entity36 adds nullable property14 without changing any existing ID.
+  New observation is read evidence only: Found retains raw/version for later
+  adoption/projection, Absent must be revalidated before create, and Unresolved
+  never creates. Actual create-only admission/readback remains required. Both
+  received capture and inspection flags remain false.
+- Euclid, Godel and Franklin reviews are integrated or explicitly rejected as
+  documented in history; all are closed and verified not_found. Euclid's latest
+  work was in main, without a new dedicated worktree. Prior blocked sidecar
+  removal is not retried; supported session deletion remains unavailable.
+- C:27.10GiB free at latest source checkpoint. No APK, paid GCE, phone restart/install, unknown-
+  outcome replay or Alpha change. Next: pass the Dart recovery/GC/schema batch,
+  then connect the qualified observation to duplicate-safe admission/readback.
+
+### Earlier component checkpoint: encrypted receive retry jobs
 
 App checkpoint `f403006b9abac5d2943372fcd0b50d4c62dd3a56`, native source
 `9293a457c7f3c8bc476ec5341a2c39aa5caac116`, adds platform-
@@ -101,7 +155,7 @@ No schema ID changed. The flag remains default-off and no APK/device change.
   decoder truncates unknown MessageFlags, so typed equality alone is insufficient.
   Do not spend another iteration only adding comparator helpers.
 
-### Active implementation checkpoint, September 16
+### Earlier implementation checkpoint, September 16
 
 Received-source checkpoint is `cfc37e26a5b2d5350dfe709cead0fbeb67e097ba`,
 rustpush `9ced48bae256bcdd7d46db84eefb331bd9d86d88`. The actual receive queue
@@ -680,6 +734,11 @@ CloudKit readback or independent Apple-device display.
 - [ ] Document supported operations and limitations. No upstream draft until user confirmation.
 
 ## Current critical path
+
+Current offline step: finish received-inspection job35136724953, then wire a
+distinct received-source create-only admission and Found-to-reader handoff. The
+device checklist below remains pending; no empty local journal proves that an
+Alpha-only chat is missing from Apple.
 
 1. Preserve the verified f027 APK/manifest from successful build35058684776.
    Wait for the Pixel connection and inspect installed identity/state. No

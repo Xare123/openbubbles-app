@@ -14,6 +14,37 @@ outgoing positive-receipt gate. No received message may be represented as a
 successful outgoing send, and archive work must never send an IDS message.
 This design is not an implemented or qualified upload path.
 
+## Exact lookup and local ownership, current continuation
+
+An opt-in inspection adapter now takes a materialized source and the latest
+applied protected direct-chat parent to one native exact record lookup. It
+distinguishes equivalent, needs-projection, conflicting-identity, absent and
+unresolved. Every Found blocks duplicate create. An old Absent is never a
+reusable create permit; Unresolved is retained work, not permission to send.
+
+The first native snapshot f139a899b/fb864a3 passed hosted35107521313 with
+737 app Rust,350 rustpush,11 Anisette and40 protector cases. Original response
+frames are checked before NotFound interpretation, original Record bytes are
+retained, and decompression rejects excess output/trailing members. This proves
+components only. App integration before the next split passed808 Dart tests.
+
+Current app14ce1d749/native6eaba5c22/run35136724953 is qualifying a two-phase handoff:
+network preparation retains an opaque in-memory result; local stage/adopt/commit
+runs under cross-engine exclusion without holding that short lease over network
+I/O. Lost local commit responses remain state1 and retry their exact observation.
+State2 marks only finished local inspection, not projection or cloud archival.
+The received table adds nullable observation property14 and preserves prior IDs.
+Final27-file Dart integration passed811; native compilation passed and the full
+native tests remain pending on that same hosted run.
+
+Remaining vertical work: bind Found through normal semantic projection without
+overwriting newer local edits; admit a freshly absent received source through a
+distinct source-bound encoder into the existing single-submit/readback outbox.
+The generic outgoing encoder rejects received sender/direction, deliberately.
+Do not relax it or synthesize a positive IDS-send receipt to reuse that lane.
+Incoming groups/media and pre-seal readiness failure still need coverage.
+Capture and inspection stay default-off until their respective live gates pass.
+
 ## Current retry architecture, September 16 continuation
 
 The receive transaction now targets an inline platform-encrypted seed rather
