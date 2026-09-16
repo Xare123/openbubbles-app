@@ -42,6 +42,14 @@ pub(crate) fn stage_received_archive_source(
     observed_local_handles: &[String],
 ) -> Result<NativeReceivedArchiveStage, Failure> {
     let source = ReceivedArchiveSource::capture(message, observed_local_handles)?;
+    stage_captured_source(storage_directory, account_fingerprint, &source)
+}
+
+fn stage_captured_source(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    source: &ReceivedArchiveSource,
+) -> Result<NativeReceivedArchiveStage, Failure> {
     let wrapper = ReceivedStageV1 {
         version: 1,
         guid_hash: source.guid_hash()?,
@@ -66,6 +74,129 @@ pub(crate) fn stage_received_archive_source(
         payload_sha256: hex_digest(&bytes),
         payload_length: bytes.len() as u64,
     })
+}
+
+/// Encrypted retry seed stored atomically alongside the Message in ObjectBox.
+/// No file lease exists yet, so recovery cannot remove it between receipt and
+/// adoption. Contains no key or plaintext at the bridge boundary.
+pub(crate) struct NativeReceivedArchiveSeed {
+    pub(crate) message_guid_hash: String,
+    pub(crate) source_sha256: String,
+    pub(crate) ciphertext: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReceivedSeedV1 {
+    domain: String,
+    version: u32,
+    protected_store_identity: String,
+    source_b64: String,
+}
+
+pub(crate) fn seal_received_archive_seed(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    expected_store: &str,
+    message: &MessageInst,
+    observed_local_handles: &[String],
+) -> Result<NativeReceivedArchiveSeed, Failure> {
+    let source = ReceivedArchiveSource::capture(message, observed_local_handles)?;
+    let path = storage_directory.to_string_lossy().into_owned();
+    if crate::cloud_sync_protector::protected_store_identity(path.clone())
+        .map_err(|_| Failure::ProtectedStorage)?
+        != expected_store
+    {
+        return Err(Failure::BindingMismatch);
+    }
+    let seed = ReceivedSeedV1 {
+        domain: "cloud-sync-received-retry-seed".into(),
+        version: 1,
+        protected_store_identity: expected_store.into(),
+        source_b64: URL_SAFE_NO_PAD.encode(source.encode()?),
+    };
+    let plaintext = serde_json::to_string(&seed).map_err(|_| Failure::MalformedMessage)?;
+    if plaintext.len() > MAX_BYTES {
+        return Err(Failure::OversizedMessage);
+    }
+    let ciphertext = crate::cloud_sync_protector::protect(
+        path,
+        account_fingerprint,
+        "com.apple.messages.cloud".into(),
+        "private".into(),
+        "messageManateeZone".into(),
+        "messages".into(),
+        2,
+        "idsReceivedArchiveSource".into(),
+        plaintext,
+    )
+    .map_err(|_| Failure::ProtectedStorage)?;
+    if ciphertext.len() > 2 * MAX_BYTES {
+        return Err(Failure::OversizedMessage);
+    }
+    Ok(NativeReceivedArchiveSeed {
+        message_guid_hash: source.guid_hash()?,
+        source_sha256: source.source_sha256()?,
+        ciphertext,
+    })
+}
+
+/// Reconstitutes ONLY the authenticated original receive, never current UI
+/// text or a synthesized IDS send. Safe to call after process restart with
+/// the same account/store. Caller must journal-adopt then commit the lease.
+pub(crate) fn stage_received_archive_seed(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    expected_store: &str,
+    seed: &NativeReceivedArchiveSeed,
+) -> Result<NativeReceivedArchiveStage, Failure> {
+    if seed.ciphertext.is_empty() || seed.ciphertext.len() > 2 * MAX_BYTES {
+        return Err(Failure::OversizedMessage);
+    }
+    let path = storage_directory.to_string_lossy().into_owned();
+    if crate::cloud_sync_protector::protected_store_identity(path.clone())
+        .map_err(|_| Failure::ProtectedStorage)?
+        != expected_store
+    {
+        return Err(Failure::BindingMismatch);
+    }
+    let plaintext = crate::cloud_sync_protector::unprotect(
+        path,
+        account_fingerprint.clone(),
+        "com.apple.messages.cloud".into(),
+        "private".into(),
+        "messageManateeZone".into(),
+        "messages".into(),
+        2,
+        "idsReceivedArchiveSource".into(),
+        seed.ciphertext.clone(),
+    )
+    .map_err(|_| Failure::ProtectedStorage)?;
+    if plaintext.len() > MAX_BYTES {
+        return Err(Failure::OversizedMessage);
+    }
+    let decoded: ReceivedSeedV1 =
+        serde_json::from_str(&plaintext).map_err(|_| Failure::MalformedMessage)?;
+    if decoded.domain != "cloud-sync-received-retry-seed"
+        || decoded.version != 1
+        || decoded.protected_store_identity != expected_store
+        || serde_json::to_string(&decoded).map_err(|_| Failure::MalformedMessage)? != plaintext
+    {
+        return Err(Failure::BindingMismatch);
+    }
+    let bytes = URL_SAFE_NO_PAD
+        .decode(&decoded.source_b64)
+        .map_err(|_| Failure::MalformedMessage)?;
+    if URL_SAFE_NO_PAD.encode(&bytes) != decoded.source_b64 {
+        return Err(Failure::MalformedMessage);
+    }
+    let source = ReceivedArchiveSource::decode(&bytes)?;
+    if source.guid_hash()? != seed.message_guid_hash
+        || source.source_sha256()? != seed.source_sha256
+    {
+        return Err(Failure::BindingMismatch);
+    }
+    stage_captured_source(storage_directory, account_fingerprint, &source)
 }
 
 pub(crate) fn open_received_archive_source(
@@ -162,6 +293,105 @@ mod tests {
         cloud_sync_open_protected_ids_mutation_source, cloud_sync_open_protected_outbound_message,
     };
     use crate::cloud_sync_received_source::tests::fixture;
+
+    #[test]
+    fn sealed_retry_seed_survives_cleanup_and_preserves_original_source() {
+        for mirrored in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().to_path_buf();
+            let identity = crate::cloud_sync_protector::protected_store_identity(
+                path.to_string_lossy().into_owned(),
+            )
+            .unwrap();
+            let (wire, handles) = fixture(mirrored, "retry original 😀 text");
+            let seed = seal_received_archive_seed(
+                path.clone(),
+                "A".repeat(43),
+                &identity,
+                &wire,
+                &handles,
+            )
+            .unwrap();
+            assert!(!seed.ciphertext.contains("retry original"));
+            assert!(!seed.ciphertext.contains("owner@example.com"));
+            // No stage file or handoff lease exists yet. Repeated sealing uses
+            // randomized encryption but preserves the immutable source digest.
+            let again = seal_received_archive_seed(
+                path.clone(),
+                "A".repeat(43),
+                &identity,
+                &wire,
+                &handles,
+            )
+            .unwrap();
+            assert_eq!(again.source_sha256, seed.source_sha256);
+            assert_ne!(again.ciphertext, seed.ciphertext);
+            let stage = stage_received_archive_seed(path.clone(), "A".repeat(43), &identity, &seed)
+                .unwrap();
+            cloud_sync_commit_protected_page_lease(
+                path.clone(),
+                &stage.lease_reference,
+                std::slice::from_ref(&stage.protected_reference),
+            )
+            .unwrap();
+            let opened = open_received_archive_source(path, "A".repeat(43), &stage).unwrap();
+            assert_eq!(opened.guid(), wire.id);
+            assert_eq!(opened.text(), "retry original 😀 text");
+            assert_eq!(opened.source_sha256().unwrap(), seed.source_sha256);
+        }
+    }
+
+    #[test]
+    fn seed_refuses_account_store_ciphertext_and_descriptor_substitution() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let identity = crate::cloud_sync_protector::protected_store_identity(
+            path.to_string_lossy().into_owned(),
+        )
+        .unwrap();
+        let (wire, handles) = fixture(false, "seed test");
+        let seed =
+            seal_received_archive_seed(path.clone(), "A".repeat(43), &identity, &wire, &handles)
+                .unwrap();
+        assert!(
+            stage_received_archive_seed(path.clone(), "B".repeat(43), &identity, &seed).is_err()
+        );
+        assert!(
+            stage_received_archive_seed(path.clone(), "A".repeat(43), "wrong-store", &seed)
+                .is_err()
+        );
+        for field in 0..3 {
+            let altered = NativeReceivedArchiveSeed {
+                message_guid_hash: if field == 0 {
+                    "f".repeat(64)
+                } else {
+                    seed.message_guid_hash.clone()
+                },
+                source_sha256: if field == 1 {
+                    "e".repeat(64)
+                } else {
+                    seed.source_sha256.clone()
+                },
+                ciphertext: if field == 2 {
+                    format!("{}x", seed.ciphertext)
+                } else {
+                    seed.ciphertext.clone()
+                },
+            };
+            assert!(
+                stage_received_archive_seed(path.clone(), "A".repeat(43), &identity, &altered)
+                    .is_err()
+            );
+        }
+        let other = tempfile::tempdir().unwrap();
+        assert!(stage_received_archive_seed(
+            other.path().to_path_buf(),
+            "A".repeat(43),
+            &identity,
+            &seed
+        )
+        .is_err());
+    }
 
     #[test]
     fn exact_commit_is_required_and_reopen_preserves_both_origins() {

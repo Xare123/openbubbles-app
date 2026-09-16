@@ -514,6 +514,79 @@ pub async fn cloud_sync_stage_received_archive_source(
     })
 }
 
+/// Platform-encrypted receive retry job. Ciphertext, not message text, crosses
+/// FRB so Message+retry ownership can share one ObjectBox transaction.
+pub struct CloudSyncNativeReceivedArchiveSeed {
+    pub account_fingerprint: String,
+    pub protected_store_identity: String,
+    pub message_guid_hash: String,
+    pub source_sha256: String,
+    pub ciphertext: String,
+}
+
+pub async fn cloud_sync_seal_received_archive_seed(
+    state: &SharedPushState,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    message: MessageInst,
+) -> anyhow::Result<CloudSyncNativeReceivedArchiveSeed> {
+    let before = cloud_sync_capture_received_identity(state).await?;
+    cloud_sync_require_received_auth(&expected_auth, &before)?;
+    let handles = cloud_sync_received_registered_handles(state).await?;
+    let sealed = crate::cloud_sync_received_source_stage::seal_received_archive_seed(
+        PathBuf::from(&state.conf_dir), before.account_fingerprint.clone(),
+        &before.protected_store_identity, &message, &handles,
+    ).map_err(|_| anyhow!("cloud_sync_received_archive_source_seal_failed"))?;
+    let after = cloud_sync_capture_received_identity(state).await?;
+    cloud_sync_require_received_auth(&expected_auth, &after)?;
+    if cloud_sync_received_registered_handles(state).await? != handles {
+        return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
+    }
+    Ok(CloudSyncNativeReceivedArchiveSeed {
+        account_fingerprint: after.account_fingerprint,
+        protected_store_identity: after.protected_store_identity,
+        message_guid_hash: sealed.message_guid_hash,
+        source_sha256: sealed.source_sha256,
+        ciphertext: sealed.ciphertext,
+    })
+}
+
+/// Opens ONLY a previously sealed same-account/store source. No live receive
+/// claim or current chat/body is used to reconstruct the original message.
+pub async fn cloud_sync_stage_received_archive_seed(
+    state: &SharedPushState,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    seed: CloudSyncNativeReceivedArchiveSeed,
+) -> anyhow::Result<CloudSyncNativeReceivedArchiveSourceBinding> {
+    let before = cloud_sync_capture_received_identity(state).await?;
+    cloud_sync_require_received_auth(&expected_auth, &before)?;
+    if seed.account_fingerprint != before.account_fingerprint ||
+        seed.protected_store_identity != before.protected_store_identity {
+        return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
+    }
+    let source = crate::cloud_sync_received_source_stage::NativeReceivedArchiveSeed {
+        message_guid_hash: seed.message_guid_hash, source_sha256: seed.source_sha256,
+        ciphertext: seed.ciphertext,
+    };
+    let staged = crate::cloud_sync_received_source_stage::stage_received_archive_seed(
+        PathBuf::from(&state.conf_dir), before.account_fingerprint.clone(),
+        &before.protected_store_identity, &source,
+    ).map_err(|_| anyhow!("cloud_sync_received_archive_source_stage_failed"))?;
+    let after = cloud_sync_capture_received_identity(state).await;
+    let validation = after.and_then(|after| cloud_sync_require_received_auth(&expected_auth, &after));
+    if let Err(error) = validation {
+        let _ = crate::cloud_sync_native_fetch::cloud_sync_rollback_protected_page_lease(
+            PathBuf::from(&state.conf_dir), &staged.lease_reference);
+        return Err(error);
+    }
+    Ok(CloudSyncNativeReceivedArchiveSourceBinding {
+        account_fingerprint: before.account_fingerprint,
+        protected_store_identity: before.protected_store_identity,
+        message_guid_hash: staged.message_guid_hash, source_sha256: staged.source_sha256,
+        protected_reference: staged.protected_reference, lease_reference: staged.lease_reference,
+        payload_sha256: staged.payload_sha256, payload_length: staged.payload_length,
+    })
+}
+
 /// Content-free context for making one successful native SendJob completion
 /// crash-recoverable before SendConfirm is emitted.
 #[derive(Clone)]
