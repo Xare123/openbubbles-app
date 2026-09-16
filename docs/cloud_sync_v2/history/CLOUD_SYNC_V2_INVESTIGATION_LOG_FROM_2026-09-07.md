@@ -6127,3 +6127,53 @@ Historical tests do not establish current-device behavior.
   to verify the committed bridge. No narrower native-only workflow was available;
   no new CI infrastructure, APK or local native rebuild was introduced.
   Resume that job rather than rerunning the old SHA. All helpers remain closed.
+
+### September 16 received creates enter the real protected outbox
+
+- Prior inspection rerun35138299645 passed:738 app Rust,350 rustpush,11 Anisette,
+  40 protector, plus committed-bindings reproduction. Artifact10463524620 has
+  SHA2566ae2d27ff090c5a9086585ad017842c52b302148675f945d1727120d34a6f4ab,
+  387,557bytes; all seven generated targets matched without overwriting source.
+- Nativef33a2e76431a058d167b74a4389dea55e731d91b and rustpush5862be3c0ddf0ac0a81e3a45e33cf64d67d996ef
+  add the actual received create/readback seam. Fresh native NotFound produces
+  a single-use local stage; a distinct magic-prefixed envelope cannot parse as
+  ordinary outgoing data, including own-device mirrors. Original source and
+  authenticated parent are reopened for prepare/consume/reconcile. Ordinary IDS
+  success gates remain unchanged; received archival never calls IDS send.
+- Dart stages under a short cross-engine lease, adopts journal/outbox/map in one
+  ObjectBox transaction, then commits the same lease. Unknown outcomes retain
+  the exact envelope/request IDs. Received state3 marks outbox ownership only.
+  Native writer preflight/readback uses strict original-wire lookup and retains
+  original raw bytes. A fresh Found replaces only old no-raw Absent evidence;
+  it never reaches create. Current known edits/unsends defer stale originals.
+- Received creates share the existing queue drain, mutation capability and
+  restart/readback machinery. Missing local Message rows can still resolve the
+  journal-pinned existing canonical Chat for readback; deleted/changed Chat stays
+  deferred. A new independent upload flag and existing capture/inspection flags
+  remain false. Incoming groups/media/mutations and Found projection are not
+  claimed complete by this direct-unchanged-text implementation.
+- Schema comparison verified all28 entities and all preexisting property UIDs
+  unchanged. New nullable fields15:6918628364972964921 and16:6065925816449012533,
+  with index104:3906661285702552393, preserve forward migration. No user DB was
+  opened/upgraded by these tests. Downgrade is not qualified.
+- Hosted35142500478 succeeded19:45:47Z to20:03:03Z:743 app Rust,351 rustpush,
+  11 Anisette,40 protector. Artifact10465832549,389,704bytes, SHA256
+  0a96906406669b9b5b19bb2de6042a701678503c96c346b411bf383d49466788, verified
+  before importing seven clean targets. Generated guards pass; committed
+  regeneration deliberately skipped. Evidence: build-evidence/received-create-35142500478.
+- App integration383ac8038da13e506a0fe0b8ed4d8b6e89976037 passed853 Dart cases
+  across28 files. Analysis found no errors/warnings, only five existing style
+  infos in rustpush_service. The parent transport proof test needed a fake release
+  capability and semantic scope (fixture repairs, no production guard bypass).
+- Popper wrote24 admission cases in one existing test file; all52 file cases
+  passed. Parent reviewed atomic rollback/revision, source/parent/account drift,
+  received-vs-outgoing separation, late edit/unsend and unknown-outcome restart.
+  UTC representation and a Never-returning rollback closure were fixture-only
+  fixes. Closed Popper, verified not_found. Raman produced no code after repeated
+  exploration; parent rejected the non-result, closed it (not_found) and wrote
+  the codec. No child worktree/cache was created. Transcripts remain because
+  supported deletion is unavailable; no shared session DB was edited.
+- No paid GCE, APK, phone action, production account request, source replay or
+  Alpha change. C:28,865,392,640bytes free at checkpoint. All local test/analyzer
+  sessions and hosted jobs are terminal; helpers closed. Next: Found-to-reader
+  durable handoff, then representative live cross-device proof on matched code.

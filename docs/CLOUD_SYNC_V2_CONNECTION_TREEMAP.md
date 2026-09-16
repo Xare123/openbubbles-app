@@ -52,16 +52,57 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
+### Active received-create integration, September 16
+
+App integration `383ac8038da13e506a0fe0b8ed4d8b6e89976037` includes native source
+`f33a2e76431a058d167b74a4389dea55e731d91b`, rustpush
+`5862be3c0ddf0ac0a81e3a45e33cf64d67d996ef`. Hosted35142500478 PASSED:
+743 app Rust,351 rustpush,11 Anisette,40 protector. Final28-file Dart batch
+passed853. Targeted analysis has no errors/warnings (five existing style infos
+in rustpush_service). No APK or live account request was made; flags remain off.
+Do not pair these generated bindings with an older Windows DLL.
+
+- Received direct plaintext now has an explicitly separate protected envelope,
+  original-source/parent proof, fresh native Absent-only stage, atomic received
+  journal/outbox/map adoption, and existing single-submit/unknown-readback wiring.
+  Ordinary outgoing validators/IDS confirmation remain unchanged. Incoming and
+  mirrored origins never send IDS traffic or fabricate an outgoing receipt.
+- Exact writer preflight/readback uses original raw record fields, not the lossy
+  general decoder. Found blocks new create. A fresh Found can replace ONLY a
+  cached no-raw Absent, retaining its evidence for normal reader reconciliation.
+- Received state3 means outbox-adopted, not CloudKit-confirmed. Existing schema
+  IDs are retained; nullable admission fields15/16 and index104 are new. The new
+  upload flag remains default-off, as do capture/inspection. No account requests.
+- Artifact10465832549,389,704bytes, SHA256
+  `0a96906406669b9b5b19bb2de6042a701678503c96c346b411bf383d49466788`
+  verified before import; seven members match and both generated guards pass.
+  Committed regeneration was deliberately skipped, not claimed verified.
+- Popper01a0ab7a-8fdd-7522-820d-a66bfd8d786f produced24 source/outbox transaction
+  cases in its one assigned test file; all52 cases in that file passed. Three
+  UTC-vs-local fixture comparisons and one Never callback were corrected without
+  weakening rollback assertions. Closed and verified not_found.
+  Raman01a0ab9f-6662-7001-af04-16980d58027b repeated inspection
+  without producing code; parent rejected that non-result, closed it (verified
+  not_found), and implemented the codec. No new worktree or dependency caches.
+- Remaining before enabling: live worker and recovery faults, all Found-to-reader
+  adoption, received mutations/media/groups,
+  then same-source Windows/Pixel and independent Apple-client proof. Known edits
+  or unsends defer received fresh creates rather than upload stale originals.
+
 ### Current exact received-record lookup qualification, September 16
 
-**Current source:** `4066778045915a8f4f951bb8eb7bfcb0171391b1` contains app
-integration14ce1d749 and native handoff6eaba5c22. Batch `35138299645` is the
-active GitHub-hosted rerun with committed-bindings reproducibility enabled.
+**Qualified inspection predecessor:** `4066778045915a8f4f951bb8eb7bfcb0171391b1`
+contains app integration14ce1d749 and native handoff6eaba5c22. Batch35138299645
+PASSED:738 app Rust,350 rustpush,11 Anisette,40 protector; committed bridge
+reproducibility passed. Artifact10463524620,387,557bytes, SHA256
+`6ae2d27ff090c5a9086585ad017842c52b302148675f945d1727120d34a6f4ab`, verified
+against all seven existing generated files without replacing current source.
 Prior35136724953 compiled but failed one NEW fixture assertion (737 passed):
 the intended reordered record still put ETag tag1 first, matching canonical
 order. The fixture now appends tag1 last; production code was not changed to
-make it pass. Native qualification remains pending. Bindings from verified
-artifact10463731660 remain committed and the API is unchanged by this fix.
+make it pass. The corrected native test now passes. The newer received-create
+integration above needs its own qualification; this green predecessor does not
+prove that new code or any remote upload.
 Do not install this candidate or use an older native DLL with its Dart API.
 
 - Parent reproduced and fixed a retry selector bug: an adopted observation with
@@ -739,8 +780,9 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-Current offline step: finish received-inspection job35138299645, then wire a
-distinct received-source create-only admission and Found-to-reader handoff. The
+Current offline step: wire retained Found observations into the existing semantic
+reader without inventing a continuation token or overwriting a newer local/cloud
+version. Native/Dart received-create components passed; no live archive proof. The
 device checklist below remains pending; no empty local journal proves that an
 Alpha-only chat is missing from Apple.
 

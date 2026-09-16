@@ -12,7 +12,37 @@ timestamp: 2026-09-16
 Incoming archival is a missing production capability, not a reason to relax the
 outgoing positive-receipt gate. No received message may be represented as a
 successful outgoing send, and archive work must never send an IDS message.
-This design is not an implemented or qualified upload path.
+Direct unchanged received text now has a default-off, component-qualified upload
+path. It is not live-verified or production-enabled, and does not cover the full
+incoming archive scope yet.
+
+## Received create checkpoint, September 16
+
+App383ac8038/nativef33a2e764 with rustpush5862be3 passed hosted35142500478
+(743 app Rust,351 rustpush,11 Anisette,40 protector), plus853 Dart cases across
+28 files. The separate received envelope preserves original direction, sender,
+addressed endpoint, timestamp and text; ordinary outgoing validators remain.
+An exact new native NotFound is required to stage it. Durable source/outbox/map
+adoption is atomic; every prepare, consume and readback checks the source and
+parent again. Received unknown outcomes use the existing single-submit/readback
+queue, not IDS resend. Native readback checks original outer/protobuf fields.
+
+State3 means adopted by the outbox, not cloud-confirmed. Fields15/16 and index104
+record that ownership without changing older UIDs. A new Found supersedes only
+a cached no-raw Absent and retains its evidence. Known edits/retractions block
+fresh received creates until received mutation chaining is implemented. Removing
+the Message row does not erase the journal's parent proof for readback, provided
+the exact canonical Chat still exists.
+
+Next functional gap: Found-to-reader reconciliation. Use the normal semantic
+decoder/projector and existing duplicate/edit/retraction rules; do not assign
+Message.text or make a fake send. Stage a normal protected record identity and
+raw envelope, bind exact generation/record/ETag/source, adopt that read durably
+without advancing Apple's cursor, then let normal projection update the row.
+If a later retained save/tombstone or different known version already exists,
+retain/defer rather than inject an older observation as a newer fetch sequence.
+Recover the same adopted read on restart. Add direct, stale-version, local-edit,
+unsend, crash/recommit and duplicate-pull behavioral checks before enabling it.
 
 ## Exact lookup and local ownership, current continuation
 
