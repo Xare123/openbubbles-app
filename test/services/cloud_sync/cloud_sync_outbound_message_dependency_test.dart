@@ -43,6 +43,15 @@ void main() {
     expect(() => f.validate(binding), returnsNormally);
   });
 
+  test('received parent proof uses the exact validated latest-applied source', () {
+    final proof=requireCloudSyncRestoredDirectChatProof(store:f.db,messageScope:f.messageScope,message:f.parent);
+    expect(proof.binding,f.chatBinding);expect(proof.generation,greaterThan(0));
+    expect(proof.source.protectedRawEnvelopeReference,isNotEmpty);
+    expect(proof.logicalEntityKeyHash,(jsonDecode(proof.binding) as List)[6]);
+    expect(proof.source.recordIdHash,(jsonDecode(proof.binding) as List)[7]);
+    expect(proof.source.payloadSha256,isNotEmpty);
+  });
+
   test('plaintext keeps the exact v1 chat binding and validator', () {
     final plaintext = Message(
       guid: '11111111-1111-4111-8111-111111111111',

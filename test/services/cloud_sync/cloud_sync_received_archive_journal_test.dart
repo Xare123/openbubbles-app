@@ -7,6 +7,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_arc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_inspection.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_record_observation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
@@ -558,8 +560,16 @@ void main() {
       expect((await materialize()).encode(), staged.encode());
       expect(stages, 1);
       expect(store.box<CloudSyncReceivedArchiveIntentEntity>().count(), 1);
-      expect(store.box<CloudSyncReceivedArchiveIntentEntity>().get(id)!.state, 1);
-      expect(journal.readReadyPage(currentAuth: auth, onlyPendingMaterialization: true).ready, isEmpty);
+      expect(
+        store.box<CloudSyncReceivedArchiveIntentEntity>().get(id)!.state,
+        1,
+      );
+      expect(
+        journal
+            .readReadyPage(currentAuth: auth, onlyPendingMaterialization: true)
+            .ready,
+        isEmpty,
+      );
       expect(journal.readReadyPage(currentAuth: auth).ready.single.id, id);
       expect(store.box<CloudOutboxOperationEntity>().count(), 0);
     },
@@ -690,20 +700,476 @@ void main() {
 
   test('worker high-watermark bounds a round while new receives arrive', () {
     int add(String guid) => journal.saveReceivedCapture(
-      wire: _wire(id: guid, text: 'hello', sentAt: _time(2).millisecondsSinceEpoch),
-      liveContext: _live, localChatId: chat.id!,
-      persistMessage: () => store.box<Message>().put(_fresh(guid, 'hello', chat)),
-      source: _staged(guid, 'hello', chat), capturedAuth: _auth(Object()),
-      stillCurrent: () => true, now: _time(3));
+      wire: _wire(
+        id: guid,
+        text: 'hello',
+        sentAt: _time(2).millisecondsSinceEpoch,
+      ),
+      liveContext: _live,
+      localChatId: chat.id!,
+      persistMessage: () =>
+          store.box<Message>().put(_fresh(guid, 'hello', chat)),
+      source: _staged(guid, 'hello', chat),
+      capturedAuth: _auth(Object()),
+      stillCurrent: () => true,
+      now: _time(3),
+    );
     final first = add('before-round');
     final ceiling = journal.captureReadHighWatermark();
     final second = add('during-round');
-    final bounded = journal.readReadyPage(currentAuth: _auth(Object()), maximumIntentId: ceiling,
-        onlyPendingMaterialization: true);
+    final bounded = journal.readReadyPage(
+      currentAuth: _auth(Object()),
+      maximumIntentId: ceiling,
+      onlyPendingMaterialization: true,
+    );
     expect(bounded.ready.map((row) => row.id), [first]);
     expect(bounded.exhausted, isTrue);
     expect(journal.captureReadHighWatermark(), second);
-    expect(journal.readReadyPage(currentAuth: _auth(Object())).ready, hasLength(2));
+    expect(
+      journal.readReadyPage(currentAuth: _auth(Object())).ready,
+      hasLength(2),
+    );
+  });
+
+  for (final disposition in CloudSyncReceivedRecordState.values) {
+    test(
+      'exact record observation retains evidence across restart: ${disposition.name}',
+      () async {
+        const guid = 'observed-original';
+        final source = _staged(guid, 'original', chat);
+        final auth = _auth(Object());
+        final id = journal.saveReceivedCapture(
+          wire: _wire(
+            id: guid,
+            text: 'original',
+            sentAt: _time(2).millisecondsSinceEpoch,
+          ),
+          liveContext: _live,
+          localChatId: chat.id!,
+          persistMessage: () =>
+              store.box<Message>().put(_fresh(guid, 'original', chat)),
+          source: source,
+          capturedAuth: auth,
+          stillCurrent: () => true,
+          now: _time(3),
+        );
+        journal.markSourceMaterialized(
+          intentId: id,
+          source: source,
+          currentAuth: auth,
+          stillCurrent: () => true,
+        );
+        final found = disposition.index < 3;
+        final observation = CloudSyncReceivedRecordObservation(
+          state: disposition,
+          accountFingerprint: _account,
+          protectedStoreIdentity: _storeId,
+          messageGuidHash: source.messageGuidHash,
+          sourceSha256: source.sourceSha256,
+          logicalEntityKeyHash: _a43('L'),
+          serverRecordIdHash: _a43('R'),
+          generation: 3,
+          parentBinding: 'synthetic-parent',
+          observedAtMs: 4,
+          etagHash: found ? _a43('E') : null,
+          rawReference: found ? 'obcs2.ref.${_a43('W')}' : null,
+          rawLeaseReference: found ? _lease('f') : null,
+        );
+        final transport = _ReceivedLeaseTransport()..failCommit = found;
+        var prepares = 0;
+        var stages = 0;
+        Future<CloudSyncReceivedRecordObservation> run() =>
+            CloudSyncReceivedInspectionCoordinator(
+              journal: journal,
+              transport: transport,
+              auth: auth,
+              validate: () async {},
+              stillCurrent: () => true,
+            ).inspect<int>(
+              intentId: id,
+              expectedGeneration: 3,
+              expectedParentBinding: 'synthetic-parent',
+              validateParent: () {},
+              prepareNative: (_) async {
+                prepares++;
+                // Network/read-only phase: outer held, local lease free so
+                // competing maintenance is not blocked by a mere read.
+                expect(transport.outerHeld, isTrue);
+                expect(transport.localHeld, isFalse);
+                return 7;
+              },
+              stageNative: (_) async {
+                stages++;
+                expect(transport.outerHeld, isTrue);
+                expect(transport.localHeld, isTrue);
+                return observation;
+              },
+            );
+        if (found) {
+          await expectLater(run(), throwsStateError);
+          // Lost commit after adoption: exactly one prepare and one stage.
+          expect(prepares, 1);
+          expect(stages, 1);
+          // Match the production inspection worker's selector. A durable
+          // observation is not completion until its raw lease is committed.
+          expect(
+            journal.readReadyPage(currentAuth: auth).ready.map((row) => row.id),
+            contains(id),
+          );
+        } else {
+          expect((await run()).state, disposition);
+          expect(prepares, 1);
+          expect(stages, 1);
+        }
+        expect(transport.rolledBack, isEmpty);
+        final retained = journal.readRecordObservation(
+          intentId: id,
+          currentAuth: auth,
+        );
+        if (disposition == CloudSyncReceivedRecordState.unresolved) {
+          expect(retained, isNull);
+          expect(journal.readReadyPage(currentAuth: auth).ready, hasLength(1));
+          expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+          return;
+        }
+        expect(retained!.encode(), observation.encode());
+        final chatId = chat.id!;
+        await reopen();
+        chat = store.box<Chat>().get(chatId)!;
+        transport.failCommit = false;
+        expect((await run()).encode(), observation.encode());
+        // Existing observation skips both callbacks and recommits the raw
+        // lease under the local lease after a lost commit response.
+        expect(prepares, 1);
+        expect(stages, 1);
+        if (found) {
+          // Failed first attempt plus retry recommit, both under local.
+          expect(transport.committed, [_lease('f'), _lease('f')]);
+          expect(transport.commitSawLocalHeld, [true, true]);
+        } else {
+          expect(transport.committed, isEmpty);
+        }
+        expect(journal.readReadyPage(currentAuth: auth).ready, isEmpty);
+        expect(store.box<CloudSyncReceivedArchiveIntentEntity>().get(id)!.state, 2);
+        journal.markSourceMaterialized(intentId: id, source: source,
+          currentAuth: auth, stillCurrent: () => true);
+        expect(store.box<CloudSyncReceivedArchiveIntentEntity>().get(id)!.state, 2);
+        final refs = journal.readLiveReceivedArchiveReferences(
+          maximumCount: 10,
+        );
+        expect(refs, contains(source.protectedReference));
+        if (found) expect(refs, contains(observation.rawReference));
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      },
+    );
+  }
+
+  for (final failure in ['identity', 'generation', 'parent']) {
+    test(
+      'lookup $failure drift rolls back only unowned raw evidence',
+      () async {
+        const guid = 'read-drift';
+        final source = _staged(guid, 'original', chat);
+        final auth = _auth(Object());
+        final id = journal.saveReceivedCapture(
+          wire: _wire(
+            id: guid,
+            text: 'original',
+            sentAt: _time(2).millisecondsSinceEpoch,
+          ),
+          liveContext: _live,
+          localChatId: chat.id!,
+          persistMessage: () =>
+              store.box<Message>().put(_fresh(guid, 'original', chat)),
+          source: source,
+          capturedAuth: auth,
+          stillCurrent: () => true,
+          now: _time(3),
+        );
+        journal.markSourceMaterialized(
+          intentId: id,
+          source: source,
+          currentAuth: auth,
+          stillCurrent: () => true,
+        );
+        final transport = _ReceivedLeaseTransport();
+        var prepares = 0;
+        var stages = 0;
+        final result = CloudSyncReceivedRecordObservation(
+          state: CloudSyncReceivedRecordState.equivalent,
+          accountFingerprint: _account,
+          protectedStoreIdentity: _storeId,
+          messageGuidHash: source.messageGuidHash,
+          sourceSha256: source.sourceSha256,
+          logicalEntityKeyHash: _a43('L'),
+          serverRecordIdHash: _a43('R'),
+          generation: failure == 'generation' ? 4 : 3,
+          parentBinding: 'parent-proof',
+          observedAtMs: 4,
+          etagHash: _a43('E'),
+          rawReference: 'obcs2.ref.${_a43('W')}',
+          rawLeaseReference: _lease('f'),
+        );
+        await expectLater(
+          CloudSyncReceivedInspectionCoordinator(
+            journal: journal,
+            transport: transport,
+            auth: auth,
+            stillCurrent: () => true,
+            validate: () async {
+              // Identity is revalidated after prepare but before stage: a
+              // change there must never reach staging or the journal. The
+              // entry check still passes so prepare runs exactly once.
+              if (failure == 'identity' && prepares > 0) {
+                throw StateError('identity changed');
+              }
+            },
+          ).inspect<int>(
+            intentId: id,
+            expectedGeneration: 3,
+            expectedParentBinding: 'parent-proof',
+            prepareNative: (_) async {
+              prepares++;
+              return 7;
+            },
+            stageNative: (_) async {
+              stages++;
+              return result;
+            },
+            validateParent: () {
+              if (failure == 'parent') throw StateError('parent changed');
+            },
+          ),
+          throwsStateError,
+        );
+        expect(prepares, 1);
+        // Identity and parent drift fail before staging: no raw lease
+        // exists, so no rollback is expected. Generation drift is detected
+        // after staging, so the unowned raw lease must roll back.
+        if (failure == 'generation') {
+          expect(stages, 1);
+          expect(transport.rolledBack, [_lease('f')]);
+        } else {
+          expect(stages, 0);
+          expect(transport.rolledBack, isEmpty);
+        }
+        expect(
+          journal.readRecordObservation(intentId: id, currentAuth: auth),
+          isNull,
+        );
+        expect(transport.committed, isEmpty);
+        expect(
+          journal.readProtectedSource(intentId: id, currentAuth: auth).encode(),
+          source.encode(),
+        );
+        expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+      },
+    );
+  }
+
+  test('recovery identity mismatch is rejected before native work', () async {
+    const guid = 'identity-fence';
+    final source = _staged(guid, 'original', chat);
+    final auth = _auth(Object());
+    final id = journal.saveReceivedCapture(
+      wire: _wire(id: guid, text: 'original', sentAt: _time(2).millisecondsSinceEpoch),
+      liveContext: _live,
+      localChatId: chat.id!,
+      persistMessage: () =>
+          store.box<Message>().put(_fresh(guid, 'original', chat)),
+      source: source,
+      capturedAuth: auth,
+      stillCurrent: () => true,
+      now: _time(3),
+    );
+    journal.markSourceMaterialized(
+      intentId: id,
+      source: source,
+      currentAuth: auth,
+      stillCurrent: () => true,
+    );
+    final transport = _ReceivedLeaseTransport()
+      ..identityOverride = 'obcs2.store.XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+    var prepares = 0;
+    var stages = 0;
+    await expectLater(
+      CloudSyncReceivedInspectionCoordinator(
+        journal: journal,
+        transport: transport,
+        auth: auth,
+        validate: () async {},
+        stillCurrent: () => true,
+      ).inspect<int>(
+        intentId: id,
+        expectedGeneration: 3,
+        expectedParentBinding: 'synthetic-parent',
+        validateParent: () {},
+        prepareNative: (_) async {
+          prepares++;
+          return 7;
+        },
+        stageNative: (_) async {
+          stages++;
+          throw StateError('must not stage on identity mismatch');
+        },
+      ),
+      throwsStateError,
+    );
+    expect(prepares, 0);
+    expect(stages, 0);
+    expect(
+      journal.readRecordObservation(intentId: id, currentAuth: auth),
+      isNull,
+    );
+    expect(transport.committed, isEmpty);
+    expect(transport.rolledBack, isEmpty);
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  test('transport without local lifecycle is rejected before native work',
+      () async {
+    const guid = 'no-local-lease';
+    final source = _staged(guid, 'original', chat);
+    final auth = _auth(Object());
+    final id = journal.saveReceivedCapture(
+      wire: _wire(id: guid, text: 'original', sentAt: _time(2).millisecondsSinceEpoch),
+      liveContext: _live,
+      localChatId: chat.id!,
+      persistMessage: () =>
+          store.box<Message>().put(_fresh(guid, 'original', chat)),
+      source: source,
+      capturedAuth: auth,
+      stillCurrent: () => true,
+      now: _time(3),
+    );
+    journal.markSourceMaterialized(
+      intentId: id,
+      source: source,
+      currentAuth: auth,
+      stillCurrent: () => true,
+    );
+    final transport = _OuterOnlyTransport();
+    var prepares = 0;
+    var stages = 0;
+    await expectLater(
+      CloudSyncReceivedInspectionCoordinator(
+        journal: journal,
+        transport: transport,
+        auth: auth,
+        validate: () async {},
+        stillCurrent: () => true,
+      ).inspect<int>(
+        intentId: id,
+        expectedGeneration: 3,
+        expectedParentBinding: 'synthetic-parent',
+        validateParent: () {},
+        prepareNative: (_) async {
+          prepares++;
+          return 7;
+        },
+        stageNative: (_) async {
+          stages++;
+          throw StateError('must not stage without local lease');
+        },
+      ),
+      throwsStateError,
+    );
+    expect(prepares, 0);
+    expect(stages, 0);
+    expect(
+      journal.readRecordObservation(intentId: id, currentAuth: auth),
+      isNull,
+    );
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
+  });
+
+  test('prepare yields without local lease while stage holds it', () async {
+    const guid = 'two-phase-lease';
+    final source = _staged(guid, 'original', chat);
+    final auth = _auth(Object());
+    final id = journal.saveReceivedCapture(
+      wire: _wire(id: guid, text: 'original', sentAt: _time(2).millisecondsSinceEpoch),
+      liveContext: _live,
+      localChatId: chat.id!,
+      persistMessage: () =>
+          store.box<Message>().put(_fresh(guid, 'original', chat)),
+      source: source,
+      capturedAuth: auth,
+      stillCurrent: () => true,
+      now: _time(3),
+    );
+    journal.markSourceMaterialized(
+      intentId: id,
+      source: source,
+      currentAuth: auth,
+      stillCurrent: () => true,
+    );
+    final observation = CloudSyncReceivedRecordObservation(
+      state: CloudSyncReceivedRecordState.equivalent,
+      accountFingerprint: _account,
+      protectedStoreIdentity: _storeId,
+      messageGuidHash: source.messageGuidHash,
+      sourceSha256: source.sourceSha256,
+      logicalEntityKeyHash: _a43('L'),
+      serverRecordIdHash: _a43('R'),
+      generation: 3,
+      parentBinding: 'two-phase-parent',
+      observedAtMs: 4,
+      etagHash: _a43('E'),
+      rawReference: 'obcs2.ref.${_a43('W')}',
+      rawLeaseReference: _lease('f'),
+    );
+    final transport = _ReceivedLeaseTransport();
+    var prepares = 0;
+    var stages = 0;
+    var probeRanDuringPrepare = false;
+    var contentionSeenDuringStage = false;
+    final result =
+        await CloudSyncReceivedInspectionCoordinator(
+          journal: journal,
+          transport: transport,
+          auth: auth,
+          validate: () async {},
+          stillCurrent: () => true,
+        ).inspect<int>(
+          intentId: id,
+          expectedGeneration: 3,
+          expectedParentBinding: 'two-phase-parent',
+          validateParent: () {},
+          prepareNative: (_) async {
+            prepares++;
+            expect(transport.outerHeld, isTrue);
+            expect(transport.localHeld, isFalse);
+            await transport.runLocalProtectedStoreExclusive(() async {
+              probeRanDuringPrepare = true;
+            });
+            return 7;
+          },
+          stageNative: (_) async {
+            stages++;
+            expect(transport.outerHeld, isTrue);
+            expect(transport.localHeld, isTrue);
+            await expectLater(
+              transport.runLocalProtectedStoreExclusive(() async {}),
+              throwsStateError,
+            );
+            contentionSeenDuringStage = true;
+            return observation;
+          },
+        );
+    expect(result.encode(), observation.encode());
+    expect(prepares, 1);
+    expect(stages, 1);
+    expect(probeRanDuringPrepare, isTrue);
+    expect(contentionSeenDuringStage, isTrue);
+    expect(transport.committed, [_lease('f')]);
+    expect(transport.commitSawLocalHeld, [true]);
+    expect(transport.rolledBack, isEmpty);
+    expect(
+      store.box<CloudSyncReceivedArchiveIntentEntity>().get(id)!.state,
+      2,
+    );
+    expect(store.box<CloudOutboxOperationEntity>().count(), 0);
   });
 
   test('body drift rolls back both message and intent', () {
@@ -1066,22 +1532,35 @@ class _ReceivedLeaseTransport
         CloudProtectedPageLeaseTransport,
         CloudProtectedLocalLifecycleTransport {
   bool failCommit = false;
-  bool held = false;
+  bool outerHeld = false;
+  bool localHeld = false;
+  String? identityOverride;
   final committed = <String>[];
+  final commitSawLocalHeld = <bool>[];
   final rolledBack = <String>[];
   @override
-  String get protectedPageLeaseRecoveryIdentity => _storeId;
+  String get protectedPageLeaseRecoveryIdentity =>
+      identityOverride ?? _storeId;
   @override
-  Future<T> runLocalProtectedStoreExclusive<T>(Future<T> Function() action) =>
-      runProtectedStoreExclusive(action);
-  @override
-  Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) async {
-    expect(held, isFalse);
-    held = true;
+  Future<T> runLocalProtectedStoreExclusive<T>(
+    Future<T> Function() action,
+  ) async {
+    if (localHeld) throw StateError('local lease busy');
+    localHeld = true;
     try {
       return await action();
     } finally {
-      held = false;
+      localHeld = false;
+    }
+  }
+  @override
+  Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) async {
+    expect(outerHeld, isFalse);
+    outerHeld = true;
+    try {
+      return await action();
+    } finally {
+      outerHeld = false;
     }
   }
 
@@ -1090,18 +1569,40 @@ class _ReceivedLeaseTransport
     String leaseReference,
     Set<String> retainedReferences,
   ) async {
-    expect(held, isTrue);
+    expect(localHeld, isTrue);
     expect(retainedReferences, hasLength(1));
     committed.add(leaseReference);
+    commitSawLocalHeld.add(localHeld);
     if (failCommit) throw StateError('synthetic lost commit response');
   }
 
   @override
   Future<void> rollbackProtectedPageLease(String leaseReference) async {
-    expect(held, isTrue);
+    expect(localHeld, isTrue);
     rolledBack.add(leaseReference);
   }
 
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('unexpected operation');
+}
+
+/// Outer-lease-only transport: lacks the local lifecycle interface, so
+/// the inspection fence must reject it before any native callback runs.
+class _OuterOnlyTransport implements CloudProtectedPageLeaseTransport {
+  bool outerHeld = false;
+  @override
+  String get protectedPageLeaseRecoveryIdentity => _storeId;
+  @override
+  Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) async {
+    expect(outerHeld, isFalse);
+    outerHeld = true;
+    try {
+      return await action();
+    } finally {
+      outerHeld = false;
+    }
+  }
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw StateError('unexpected operation');

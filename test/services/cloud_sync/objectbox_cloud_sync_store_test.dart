@@ -7,6 +7,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_shadow_journal_bu
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_send_source_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_source_binding.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_record_observation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
@@ -120,6 +121,30 @@ void main() {
     objectBox.box<CloudSyncReceivedArchiveIntentEntity>().put(changed);
     await expectLater(store.readLiveProtectedReferences(maximumCount: 100), throwsStateError);
     await expectLater(store.readLiveProtectedOutboundLeaseReferences(maximumCount: 100), throwsStateError);
+  });
+
+  test('received exact-record observation owns its raw lease across old epochs and reopen', () async {
+    final source=CloudSyncReceivedArchiveSourceBinding(accountFingerprint:'B'*43,
+      protectedStoreIdentity:'obcs2.store.${'S'*43}',messageGuidHash:'a'*64,sourceSha256:'b'*64,
+      protectedReference:'obcs2.ref.${'R'*43}',leaseReference:'obcs2.lease.${'c'*32}',payloadSha256:'d'*64,payloadLength:123);
+    final observation=CloudSyncReceivedRecordObservation(state:CloudSyncReceivedRecordState.needsProjection,
+      accountFingerprint:source.accountFingerprint,protectedStoreIdentity:source.protectedStoreIdentity,
+      messageGuidHash:source.messageGuidHash,sourceSha256:source.sourceSha256,logicalEntityKeyHash:'L'*43,
+      serverRecordIdHash:'R'*43,generation:3,parentBinding:'synthetic-parent',observedAtMs:4,
+      etagHash:'E'*43,rawReference:'obcs2.ref.${'W'*43}',rawLeaseReference:'obcs2.lease.${'f'*32}');
+    final id=objectBox.box<CloudSyncReceivedArchiveIntentEntity>().put(CloudSyncReceivedArchiveIntentEntity(
+      intentKey:'observed-fixture',accountFingerprint:source.accountFingerprint,writerEpoch:99,
+      localMessageId:1,localChatId:1,messageGuidHash:source.messageGuidHash,sourceSha256:source.sourceSha256,
+      origin:0,protectedSourceBinding:source.encode(),recordObservationBinding:observation.encode(),createdAtMs:1,updatedAtMs:1));
+    await reopen();
+    expect((await store.readLiveProtectedReferences(maximumCount:100)).references,
+      containsAll([source.protectedReference,observation.rawReference]));
+    expect(await store.readLiveProtectedOutboundLeaseReferences(maximumCount:100),
+      containsAll([source.leaseReference,observation.rawLeaseReference]));
+    final changed=objectBox.box<CloudSyncReceivedArchiveIntentEntity>().get(id)!..recordObservationBinding='malformed';
+    objectBox.box<CloudSyncReceivedArchiveIntentEntity>().put(changed);
+    await expectLater(store.readLiveProtectedReferences(maximumCount:100),throwsStateError);
+    await expectLater(store.readLiveProtectedOutboundLeaseReferences(maximumCount:100),throwsStateError);
   });
 
   test('encrypted received retry seed survives inventory without fake file owners', () async {

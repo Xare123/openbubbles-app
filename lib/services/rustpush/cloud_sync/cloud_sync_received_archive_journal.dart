@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_received_archive_identity.dart';
 import 'cloud_sync_received_archive_source_binding.dart';
+import 'cloud_sync_received_record_observation.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'cloudkit_writer_authority.dart';
 import 'cloudkit_writer_ownership.dart';
@@ -70,15 +71,146 @@ final class CloudSyncReceivedArchiveJournal {
 
   bool isBoundToStore(Store store) => identical(store, _store);
 
+  void adoptRecordObservation({
+    required int intentId,
+    required CloudSyncReceivedArchiveSourceBinding expectedSource,
+    required CloudSyncReceivedRecordObservation observation,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+    required void Function() validateParent,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _verifyOwnership();
+    if (!stillCurrent() ||
+        observation.state == CloudSyncReceivedRecordState.unresolved) {
+      throw StateError('cloud_sync_received_archive_observation_changed');
+    }
+    final intent = _readBoundIntent(intentId);
+    observation.requireSource(expectedSource);
+    expectedSource.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+    );
+    if (intent.state != 1 ||
+        intent.protectedSourceBinding != expectedSource.encode()) {
+      throw StateError('cloud_sync_received_archive_intent_changed');
+    }
+    validateParent();
+    if (!stillCurrent()) {
+      throw StateError('cloud_sync_received_archive_identity_changed');
+    }
+    final encoded = observation.encode();
+    if (intent.recordObservationBinding != null &&
+        intent.recordObservationBinding != encoded) {
+      throw StateError('cloud_sync_received_archive_observation_changed');
+    }
+    intent.recordObservationBinding = encoded;
+    _store.box<CloudSyncReceivedArchiveIntentEntity>().put(intent);
+  });
+
+  /// Retire only the local inspection work after its retained raw lease has
+  /// committed. This is not remote admission, projection or upload success.
+  /// A crash before this transaction keeps state1 eligible for exact recommit.
+  void markRecordObservationCommitted({
+    required int intentId,
+    required CloudSyncReceivedArchiveSourceBinding source,
+    required CloudSyncReceivedRecordObservation observation,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+    required bool Function() stillCurrent,
+    required void Function() validateParent,
+  }) => _store.runInTransaction(TxMode.write, () {
+    _verifyOwnership();
+    final intent = _readBoundIntent(intentId);
+    source.requireOrigin(
+      accountFingerprint: currentAuth.accountFingerprint,
+      protectedStoreIdentity: currentAuth.protectedStoreIdentity,
+      messageGuidHash: intent.messageGuidHash,
+      sourceSha256: intent.sourceSha256,
+    );
+    observation.requireSource(source);
+    if (!stillCurrent() ||
+        (intent.state != 1 && intent.state != 2) ||
+        observation.state == CloudSyncReceivedRecordState.unresolved ||
+        intent.protectedSourceBinding != source.encode() ||
+        intent.recordObservationBinding != observation.encode()) {
+      throw StateError('cloud_sync_received_archive_observation_changed');
+    }
+    validateParent();
+    if (!stillCurrent()) {
+      throw StateError('cloud_sync_received_archive_identity_changed');
+    }
+    intent.state = 2;
+    _store.box<CloudSyncReceivedArchiveIntentEntity>().put(intent);
+  });
+
+  CloudSyncReceivedRecordObservation? readRecordObservation({
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyOwnership();
+    final intent = _readBoundIntent(intentId);
+    if (intent.recordObservationBinding == null) return null;
+    final observation = CloudSyncReceivedRecordObservation.decode(
+      intent.recordObservationBinding!,
+    );
+    observation.requireSource(
+      readProtectedSource(intentId: intentId, currentAuth: currentAuth),
+    );
+    return observation;
+  });
+
+  /// Exact metadata-ready native source, plus the current persisted row used
+  /// solely to resolve its protected parent. Native opens the immutable body.
+  (
+    CloudSyncReceivedArchiveIntentEntity,
+    Message,
+    CloudSyncReceivedArchiveSourceBinding,
+  )
+  readMaterializedForInspection({
+    required int intentId,
+    required CloudSyncNativeAuthSnapshot currentAuth,
+  }) => _store.runInTransaction(TxMode.read, () {
+    _verifyOwnership();
+    final intent = _readBoundIntent(intentId);
+    if ((intent.state != 1 && intent.state != 2) ||
+        !_isReady(intent, currentAuth)) {
+      throw StateError('cloud_sync_received_archive_not_ready');
+    }
+    final source = readProtectedSource(
+      intentId: intentId,
+      currentAuth: currentAuth,
+    );
+    if (source.isSeed) {
+      throw StateError('cloud_sync_received_archive_not_ready');
+    }
+    return (intent, _store.box<Message>().get(intent.localMessageId)!, source);
+  });
+
   /// Stable ceiling for one worker round. New captures wait for the next
   /// round so continuous traffic cannot indefinitely defer earlier failures.
   int captureReadHighWatermark() => _store.runInTransaction(TxMode.read, () {
     _verifyOwnership();
-    final query = (_store.box<CloudSyncReceivedArchiveIntentEntity>().query(
-      CloudSyncReceivedArchiveIntentEntity_.accountFingerprint.equals(_binding.scope.accountFingerprint)
-        .and(CloudSyncReceivedArchiveIntentEntity_.writerEpoch.equals(_binding.epoch)))
-        ..order(CloudSyncReceivedArchiveIntentEntity_.id, flags: Order.descending)).build()..limit = 1;
-    try { return query.findFirst()?.id ?? 0; } finally { query.close(); }
+    final query =
+        (_store.box<CloudSyncReceivedArchiveIntentEntity>().query(
+              CloudSyncReceivedArchiveIntentEntity_.accountFingerprint
+                  .equals(_binding.scope.accountFingerprint)
+                  .and(
+                    CloudSyncReceivedArchiveIntentEntity_.writerEpoch.equals(
+                      _binding.epoch,
+                    ),
+                  ),
+            )..order(
+              CloudSyncReceivedArchiveIntentEntity_.id,
+              flags: Order.descending,
+            ))
+            .build()
+          ..limit = 1;
+    try {
+      return query.findFirst()?.id ?? 0;
+    } finally {
+      query.close();
+    }
   });
 
   /// A live echo of our own journaled send must not acquire received origin.
@@ -353,7 +485,8 @@ final class CloudSyncReceivedArchiveJournal {
     if (intent.protectedSourceBinding != source.encode()) {
       throw StateError('cloud_sync_received_archive_intent_changed');
     }
-    intent.state = 1;
+    // An idempotent source recommit cannot undo completed local inspection.
+    if (intent.state == 0) intent.state = 1;
     _store.box<CloudSyncReceivedArchiveIntentEntity>().put(intent);
   });
 
@@ -440,7 +573,9 @@ final class CloudSyncReceivedArchiveJournal {
                 : CloudSyncReceivedArchiveIntentEntity_.state.oneOf([0, 1]),
           );
       if (maximumIntentId != null) {
-        base = base.and(CloudSyncReceivedArchiveIntentEntity_.id.lessOrEqual(maximumIntentId));
+        base = base.and(
+          CloudSyncReceivedArchiveIntentEntity_.id.lessOrEqual(maximumIntentId),
+        );
       }
       final scoped = keyed
           ? base.and(
@@ -558,6 +693,13 @@ final class CloudSyncReceivedArchiveJournal {
               intent.protectedSourceBinding,
             );
             if (!src.isSeed) refs.add(src.protectedReference);
+            final observation = _observationFor(intent, src);
+            if (observation?.rawReference != null) {
+              refs.add(observation!.rawReference!);
+            }
+            if (refs.length > maximumCount) {
+              throw StateError('cloud_sync_received_archive_limit_invalid');
+            }
           }
           return Set<String>.unmodifiable(refs);
         } finally {
@@ -599,6 +741,13 @@ final class CloudSyncReceivedArchiveJournal {
           intent.protectedSourceBinding,
         );
         if (!src.isSeed) leases.add(src.leaseReference);
+        final observation = _observationFor(intent, src);
+        if (observation?.rawLeaseReference != null) {
+          leases.add(observation!.rawLeaseReference!);
+        }
+        if (leases.length > maximumCount) {
+          throw StateError('cloud_sync_received_archive_limit_invalid');
+        }
       }
       return Set<String>.unmodifiable(leases);
     } finally {
@@ -613,7 +762,7 @@ final class CloudSyncReceivedArchiveJournal {
     try {
       if (candidate.accountFingerprint != _binding.scope.accountFingerprint ||
           candidate.writerEpoch != _binding.epoch ||
-          (candidate.state != 0 && candidate.state != 1) ||
+          (candidate.state < 0 || candidate.state > 2) ||
           candidate.intentKey !=
               intentKeyFor(
                 accountFingerprint: candidate.accountFingerprint,
@@ -737,7 +886,7 @@ final class CloudSyncReceivedArchiveJournal {
     if (intent == null ||
         intent.accountFingerprint != _binding.scope.accountFingerprint ||
         intent.writerEpoch != _binding.epoch ||
-        (intent.state != 0 && intent.state != 1) ||
+        (intent.state < 0 || intent.state > 2) ||
         (intent.origin != CloudSyncReceivedArchiveOrigin.incoming.index &&
             intent.origin != CloudSyncReceivedArchiveOrigin.mirrored.index) ||
         intent.intentKey !=
@@ -758,7 +907,13 @@ final class CloudSyncReceivedArchiveJournal {
       final source = CloudSyncReceivedArchiveSourceBinding.decode(
         intent.protectedSourceBinding,
       );
-      if (intent.state == 1 && source.isSeed) return false;
+      if (intent.state >= 1 && source.isSeed) return false;
+      final observation = _observationFor(intent, source);
+      if (intent.state == 2 &&
+          (observation == null ||
+              observation.state == CloudSyncReceivedRecordState.unresolved)) {
+        return false;
+      }
       source.requireOrigin(
         accountFingerprint: intent.accountFingerprint,
         messageGuidHash: intent.messageGuidHash,
@@ -768,6 +923,17 @@ final class CloudSyncReceivedArchiveJournal {
       return false;
     }
     return true;
+  }
+
+  static CloudSyncReceivedRecordObservation? _observationFor(
+    CloudSyncReceivedArchiveIntentEntity intent,
+    CloudSyncReceivedArchiveSourceBinding source,
+  ) {
+    final value = intent.recordObservationBinding;
+    if (value == null) return null;
+    final observation = CloudSyncReceivedRecordObservation.decode(value);
+    observation.requireSource(source);
+    return observation;
   }
 
   T? _readUnique<T>(QueryBuilder<T> builder) {

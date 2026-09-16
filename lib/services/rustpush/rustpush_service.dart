@@ -49,6 +49,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_arc
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_archive_staging.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_delivery.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_source_runtime.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_inspection_adapter.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_received_record_observation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_identity.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_journal.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_local_mutation_source_binding.dart';
@@ -8427,7 +8429,7 @@ class RustPushService extends GetxService {
     final journal = CloudSyncReceivedArchiveJournal(store: objectBox, authority: authority, authoritySnapshot: owner);
     _cloudSyncV2ReceivedRoundCeiling ??= journal.captureReadHighWatermark();
     final page = journal.readReadyPage(limit: 20, currentAuth: captured,
-        cursor: _cloudSyncV2ReceivedCursor, onlyPendingMaterialization: true,
+        cursor: _cloudSyncV2ReceivedCursor, onlyPendingMaterialization: !CloudSyncDevGate.receivedArchiveInspectionEnabled,
         maximumIntentId: _cloudSyncV2ReceivedRoundCeiling);
     final transport = NativeProtectedCloudSyncTransport(cloudMessagesClient: client,
         storageDirectory: storagePath, protectedStoreIdentity: captured.protectedStoreIdentity);
@@ -8453,6 +8455,17 @@ class RustPushService extends GetxService {
                     protectedStoreIdentity: seed.protectedStoreIdentity, messageGuidHash: seed.messageGuidHash,
                     sourceSha256: seed.sourceSha256, ciphertext: seed.sealedSource!))));
           materialized++;
+          // Separate opt-in: local capture alone cannot start Apple requests.
+          // The source lease has ended before the network interlock is taken.
+          if (CloudSyncDevGate.receivedArchiveInspectionEnabled) {
+            final observation = await inspectCloudSyncReceivedIntent(intentId: intent.id,
+              privateStorageDirectory: storagePath, readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+              stillCurrent: stillCurrent);
+            if (observation.state == CloudSyncReceivedRecordState.unresolved) {
+              _cloudSyncV2ReceivedPassDeferred = true;
+            }
+            Logger.info('Cloud Sync V2 received record observation=${observation.state.name}');
+          }
         } catch (error) {
           if (!stillCurrent()) rethrow;
           _cloudSyncV2ReceivedPassDeferred = true;

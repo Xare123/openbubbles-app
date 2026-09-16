@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:crypto/crypto.dart';
+import 'package:bluebubbles/src/rust/api/cloud_sync_chat_identity.dart';
 
 import 'cloud_sync_models.dart';
 import 'cloud_sync_persistent_keys.dart';
@@ -24,6 +25,78 @@ String requireCloudSyncRestoredDirectChat({
   messageScope: messageScope,
   chatId: message.chat.targetId,
 );
+
+/// Exact latest-applied parent bytes for native received-source inspection.
+/// Not a guessed route and not permission to create a chat or message.
+final class CloudSyncRestoredDirectChatProof {
+  const CloudSyncRestoredDirectChatProof({
+    required this.binding,
+    required this.generation,
+    required this.logicalEntityKeyHash,
+    required this.source,
+  });
+  final String binding;
+  final int generation;
+  final String logicalEntityKeyHash;
+  final CloudSyncChatIdentitySourceInput source;
+}
+
+CloudSyncRestoredDirectChatProof requireCloudSyncRestoredDirectChatProof({
+  required Store store,
+  required CloudSyncScope messageScope,
+  required Message message,
+}) => store.runInTransaction(TxMode.read, () {
+  final binding = requireCloudSyncRestoredDirectChat(
+    store: store,
+    messageScope: messageScope,
+    message: message,
+  );
+  final fields = jsonDecode(binding) as List;
+  final scopeKey = fields[1] as String;
+  final generation = fields[2] as int;
+  final recordHash = fields[7] as String;
+  final query =
+      (store.box<CloudInboxChangeEntity>().query(
+            CloudInboxChangeEntity_.scopeKey
+                .equals(scopeKey)
+                .and(CloudInboxChangeEntity_.generation.equals(generation))
+                .and(
+                  CloudInboxChangeEntity_.serverRecordIdHash.equals(recordHash),
+                ),
+          )..order(
+            CloudInboxChangeEntity_.fetchSequence,
+            flags: Order.descending,
+          ))
+          .build()
+        ..limit = 1;
+  try {
+    final latest = query.findFirst();
+    if (latest == null ||
+        latest.etagHash == null ||
+        latest.payloadSha256 == null ||
+        latest.encryptedPayloadRef == null) {
+      throw StateError('cloud_sync_received_archive_parent_not_ready');
+    }
+    return CloudSyncRestoredDirectChatProof(
+      binding: binding,
+      generation: generation,
+      logicalEntityKeyHash: fields[6] as String,
+      source: CloudSyncChatIdentitySourceInput(
+        changeIdHash: latest.changeIdHash,
+        recordIdHash: latest.serverRecordIdHash,
+        etagHash: latest.etagHash!,
+        payloadSha256: latest.payloadSha256!,
+        payloadLength: null,
+        serverModifiedAtMillis: cloudInboxCanonicalServerModifiedAtMillis(
+          latest,
+        ),
+        protectedRawEnvelopeReference: latest.encryptedPayloadRef!,
+      ),
+    );
+  } finally {
+    query.close();
+  }
+});
 
 /// Revalidate an admitted dependency without consulting the mutable Message.
 /// Used in the same transaction as leasing/submission, including after restart.

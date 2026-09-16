@@ -5,9 +5,10 @@ import 'cloud_sync_models.dart';
 import 'cloud_sync_observability.dart';
 import 'cloud_sync_scheduler.dart';
 
-/// Local-only bounded encrypted-seed drain. It neither owns a network writer
-/// permit nor reports uploads. The callback resumes from the durable journal;
-/// coalescing timers are not the recovery source of truth.
+/// Bounded encrypted-seed drain. Local materialization is the default; a
+/// separate default-off inspection flag allows the callback to read Apple
+/// under its own interlock. This scheduler neither grants write permission nor
+/// reports uploads. The durable journal, not timers, owns restart recovery.
 final class CloudSyncReceivedSourceRuntime {
   CloudSyncReceivedSourceRuntime({
     required Future<({bool more, bool deferred})> Function() drain,

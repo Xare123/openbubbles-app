@@ -3345,7 +3345,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(36, 4861163290100543941),
     name: 'CloudSyncReceivedArchiveIntentEntity',
-    lastPropertyId: const obx_int.IdUid(13, 3733844521104586883),
+    lastPropertyId: const obx_int.IdUid(14, 3909871882147317660),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -3427,6 +3427,12 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(13, 3733844521104586883),
         name: 'updatedAtMs',
         type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 3909871882147317660),
+        name: 'recordObservationBinding',
+        type: 9,
         flags: 0,
       ),
     ],
@@ -7967,7 +7973,11 @@ obx_int.ModelDefinition getObjectBoxModel() {
                 final protectedSourceBindingOffset = fbb.writeString(
                   object.protectedSourceBinding,
                 );
-                fbb.startTable(14);
+                final recordObservationBindingOffset =
+                    object.recordObservationBinding == null
+                    ? null
+                    : fbb.writeString(object.recordObservationBinding!);
+                fbb.startTable(15);
                 fbb.addInt64(0, object.id);
                 fbb.addOffset(1, intentKeyOffset);
                 fbb.addOffset(2, accountFingerprintOffset);
@@ -7981,6 +7991,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
                 fbb.addInt64(10, object.state);
                 fbb.addInt64(11, object.createdAtMs);
                 fbb.addInt64(12, object.updatedAtMs);
+                fbb.addOffset(13, recordObservationBindingOffset);
                 fbb.finish(fbb.endTable());
                 return object.id;
               },
@@ -8032,6 +8043,9 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final protectedSourceBindingParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGet(buffer, rootOffset, 22, '');
+            final recordObservationBindingParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 30);
             final stateParam = const fb.Int64Reader().vTableGet(
               buffer,
               rootOffset,
@@ -8061,6 +8075,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
               sourceSha256: sourceSha256Param,
               origin: originParam,
               protectedSourceBinding: protectedSourceBindingParam,
+              recordObservationBinding: recordObservationBindingParam,
               state: stateParam,
               createdAtMs: createdAtMsParam,
               updatedAtMs: updatedAtMsParam,
@@ -10896,5 +10911,11 @@ class CloudSyncReceivedArchiveIntentEntity_ {
   static final updatedAtMs =
       obx.QueryIntegerProperty<CloudSyncReceivedArchiveIntentEntity>(
         _entities[27].properties[12],
+      );
+
+  /// See [CloudSyncReceivedArchiveIntentEntity.recordObservationBinding].
+  static final recordObservationBinding =
+      obx.QueryStringProperty<CloudSyncReceivedArchiveIntentEntity>(
+        _entities[27].properties[13],
       );
 }

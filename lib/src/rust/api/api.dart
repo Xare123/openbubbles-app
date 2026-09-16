@@ -187,6 +187,53 @@ cloudSyncStageReceivedArchiveSeed({
   seed: seed,
 );
 
+/// Exact native read for a materialized received intent. All network work
+/// finishes here, before the short local stage/adopt/commit lease. Parent, PCS,
+/// identity and lookup use one pinned restored-read permit. No file staging,
+/// outgoing receipt invention, save/delete, or legacy decoder fallback.
+Future<CloudSyncPreparedReceivedInspection>
+cloudSyncPrepareReceivedArchiveInspection({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
+  required String storageDirectory,
+  required CloudSyncNativeAuthMetadata expectedAuth,
+  required CloudSyncNativeReceivedArchiveSourceBinding receivedSource,
+  required BigInt chatGeneration,
+  required BigInt messageGeneration,
+  required String chatLogicalEntityKeyHash,
+  required CloudSyncChatIdentitySourceInput chatSource,
+}) => RustLib.instance.api.crateApiApiCloudSyncPrepareReceivedArchiveInspection(
+  cloudMessagesClient: cloudMessagesClient,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+  storageDirectory: storageDirectory,
+  expectedAuth: expectedAuth,
+  receivedSource: receivedSource,
+  chatGeneration: chatGeneration,
+  messageGeneration: messageGeneration,
+  chatLogicalEntityKeyHash: chatLogicalEntityKeyHash,
+  chatSource: chatSource,
+);
+
+/// Local-only stage. The caller must hold its cross-engine local-store lease
+/// from this call through durable adoption and commit/rollback. Keep the exact
+/// read session alive; a replaced client/container/source never yields a file.
+Future<CloudSyncReceivedRecordObservation>
+cloudSyncStageReceivedArchiveInspection({
+  required CloudSyncPreparedReceivedInspection prepared,
+  required BigInt nativeWriterPauseToken,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageReceivedArchiveInspection(
+  prepared: prepared,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+);
+
+/// Releases an unused read result or no-ops after staging consumed it. No disk
+/// or account operation occurs, including after identity validation fails.
+Future<void> cloudSyncDiscardReceivedArchiveInspection({
+  required CloudSyncPreparedReceivedInspection prepared,
+}) => RustLib.instance.api.crateApiApiCloudSyncDiscardReceivedArchiveInspection(
+  prepared: prepared,
+);
+
 Future<CloudSyncNativeSendReceiptPage> cloudSyncReplayNativeSendReceipts({
   required String storageDirectory,
   required String expectedAccountFingerprint,
@@ -2484,6 +2531,10 @@ abstract class CloudSyncPreparedAttachmentUploadHandle
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedMessageCreateHandle>>
 abstract class CloudSyncPreparedMessageCreateHandle
+    implements RustOpaqueInterface {}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedReceivedInspection>>
+abstract class CloudSyncPreparedReceivedInspection
     implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ConversationLink>>
@@ -5084,6 +5135,69 @@ class CloudSyncRawSystemFields {
           createdAt == other.createdAt &&
           modifiedAt == other.modifiedAt &&
           permission == other.permission;
+}
+
+enum CloudSyncReceivedRecordDisposition {
+  equivalent,
+  needsProjection,
+  conflictingIdentity,
+  absent,
+  unresolved,
+}
+
+/// A read observation, never a create permit or IDS receipt. For a found
+/// record the exact raw version is retained for normal semantic projection;
+/// unknown or unsupported data must never authorize a replacement create.
+class CloudSyncReceivedRecordObservation {
+  final CloudSyncReceivedRecordDisposition disposition;
+  final String messageGuidHash;
+  final String sourceSha256;
+  final String logicalEntityKeyHash;
+  final String serverRecordIdHash;
+  final String? etagHash;
+  final String? protectedRawRecordReference;
+  final String? protectedRawRecordLeaseReference;
+  final BigInt rawGeneration;
+
+  const CloudSyncReceivedRecordObservation({
+    required this.disposition,
+    required this.messageGuidHash,
+    required this.sourceSha256,
+    required this.logicalEntityKeyHash,
+    required this.serverRecordIdHash,
+    this.etagHash,
+    this.protectedRawRecordReference,
+    this.protectedRawRecordLeaseReference,
+    required this.rawGeneration,
+  });
+
+  @override
+  int get hashCode =>
+      disposition.hashCode ^
+      messageGuidHash.hashCode ^
+      sourceSha256.hashCode ^
+      logicalEntityKeyHash.hashCode ^
+      serverRecordIdHash.hashCode ^
+      etagHash.hashCode ^
+      protectedRawRecordReference.hashCode ^
+      protectedRawRecordLeaseReference.hashCode ^
+      rawGeneration.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncReceivedRecordObservation &&
+          runtimeType == other.runtimeType &&
+          disposition == other.disposition &&
+          messageGuidHash == other.messageGuidHash &&
+          sourceSha256 == other.sourceSha256 &&
+          logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          serverRecordIdHash == other.serverRecordIdHash &&
+          etagHash == other.etagHash &&
+          protectedRawRecordReference == other.protectedRawRecordReference &&
+          protectedRawRecordLeaseReference ==
+              other.protectedRawRecordLeaseReference &&
+          rawGeneration == other.rawGeneration;
 }
 
 enum CloudSyncTransientAssociationKind {

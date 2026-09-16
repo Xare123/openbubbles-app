@@ -38,6 +38,7 @@ void main() {
         'lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
     const localSource = 'lib/services/rustpush/rustpush_service.dart';
     const windowsSource = 'lib/cloud_sync_v2_windows_local_write.dart';
+    const receivedSource = 'lib/services/rustpush/cloud_sync/cloud_sync_received_inspection_adapter.dart';
 
     for (final entity in Directory('lib').listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
@@ -59,9 +60,9 @@ void main() {
         .toList(growable: false);
     expect(
       normalized,
-      unorderedEquals([allowed, localSource, windowsSource]),
+      unorderedEquals([allowed, localSource, windowsSource, receivedSource]),
       reason:
-          'only reviewed canary adapters and gated local IDS source staging may construct the protected transport',
+          'only reviewed canary adapters, source staging and exact received inspection construct this transport',
     );
 
     final adapter = File(allowed).readAsStringSync();
@@ -306,7 +307,9 @@ void main() {
     expect(received, isNot(contains('runLocalProtectedStoreExclusive(')));
     final materialize = _section(service, 'Future<({bool more, bool deferred})> _materializeCloudSyncV2ReceivedSources()',
         'Future<Message> _captureCloudSyncV2ReceivedMessage(');
-    expect(materialize, contains('onlyPendingMaterialization: true'));
+    expect(materialize, contains('onlyPendingMaterialization: !CloudSyncDevGate.receivedArchiveInspectionEnabled'));
+    expect(materialize, contains('if (CloudSyncDevGate.receivedArchiveInspectionEnabled)'));
+    expect(materialize, isNot(contains('onlyWithoutObservation')));
     expect(materialize, contains('maximumIntentId: _cloudSyncV2ReceivedRoundCeiling'));
     expect(materialize, contains('api.cloudSyncStageReceivedArchiveSeed('));
     expect(materialize, contains('await transport.quiesceNativeOperations()'));
@@ -321,6 +324,38 @@ void main() {
     expect(reset.indexOf('_drainCloudSyncV2ReceivedCaptures()'), greaterThan(0));
     expect(reset.indexOf('_drainCloudSyncV2ReceivedCaptures()'),
         lessThan(reset.indexOf('_runCloudKitDestructiveReset(')));
+  });
+
+  test('received inspection adapter cannot turn an observation into a save', () {
+    final adapter=File('lib/services/rustpush/cloud_sync/cloud_sync_received_inspection_adapter.dart').readAsStringSync();
+    for(final proof in ['!CloudSyncDevGate.receivedArchiveCaptureEnabled',
+        '!CloudSyncDevGate.receivedArchiveInspectionEnabled',
+        '!CloudKitWriterOwnership.v2MutationsEnabled',
+        'readMaterializedForInspection(', 'requireCloudSyncRestoredDirectChatProof(',
+        'CloudSyncWriteChatIdentitySession(', 'nativeWriterPauseToken: token',
+        'cloudSyncPrepareReceivedArchiveInspection(',
+        'api.cloudSyncStageReceivedArchiveInspection(',
+        'api.cloudSyncDiscardReceivedArchiveInspection(',
+        'await transport.quiesceNativeOperations()']) {
+      expect(adapter,contains(proof));
+    }
+    for(final forbidden in ['pushOperations(', 'consumePrepared', 'sendMsg(', 'admitProtectedOutboundCreate(']) {
+      expect(adapter,isNot(contains(forbidden)));
+    }
+    final native = File('rust/src/api/api.rs').readAsStringSync();
+    final prepare = _section(native, 'pub async fn cloud_sync_prepare_received_archive_inspection(',
+        'pub async fn cloud_sync_stage_received_archive_inspection(');
+    expect(prepare, contains('lookup_received_message_record('));
+    expect(prepare, isNot(contains('cloud_sync_stage_protected_received_record_readback(')));
+    final stage = _section(native, 'pub async fn cloud_sync_stage_received_archive_inspection(',
+        'pub async fn cloud_sync_discard_received_archive_inspection(');
+    expect(stage, contains('pending.lock().await.take()'));
+    expect(stage, contains('Arc::ptr_eq(&pending.container, &current_container)'));
+    expect(stage, contains('bind_envelope(&request, &parent, &hasher)'));
+    expect(stage, contains('cloud_sync_stage_protected_received_record_readback('));
+    expect(stage, isNot(contains('lookup_received_message_record(')));
+    expect(stage.substring(stage.indexOf('cloud_sync_stage_protected_received_record_readback(')),
+        isNot(contains('.await')));
   });
 
   test('runtime transport is restricted to gated local IDS source leases', () {

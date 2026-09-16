@@ -13,6 +13,33 @@ user explicitly requests a different model or effort. Keep assignments bounded
 and review their work before integration. Higher effort does not justify extra
 parallel agents without useful independent work.
 
+## Delegation and test efficiency
+
+Apply OpenAI's [subagent guidance](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+and [test calibration guidance](https://developers.openai.com/api/docs/guides/latest-model):
+
+- The parent owns the critical path, system decisions, integration and release
+  evidence. Delegate independent work that can run while the parent advances a
+  different required step, not work the parent will immediately duplicate.
+- Give each helper an exact outcome, source revision, allowed files/actions,
+  acceptance check and concise return format. Prefer a small context packet to
+  the full conversation. Return findings and changed paths, not raw tool logs.
+- Use one helper per distinct task. Reuse a relevant helper for follow-up; do not
+  grow a standing pool or recursive review chain. Muse Contributor max remains
+  the user's selected helper configuration, not a general OpenAI recommendation.
+- Read-heavy exploration and test triage can run in parallel. Coding helpers
+  need disjoint write scopes. Do not create duplicate dependency trees, worktrees
+  or builds for a task that only needs source inspection or one test file.
+- Check returned claims against source or reproductions. Integrate or reject
+  them explicitly. Keep working on independent steps instead of repeated polls.
+- Run the smallest meaningful failure regression, then one affected integration
+  batch. Repeat or broaden only after changed code, a failure or a concrete risk.
+  Batch native/bridge changes into one hosted qualification run; do not rebuild
+  an APK merely to exercise protocol logic covered by the fast loop.
+- Record the changed production gate, result and remaining uncertainty in the
+  treemap/history. Test count and agent count are not measures of completion.
+  Close unneeded helpers after review; existing preservation/cleanup rules apply.
+
 ## Local tool and worktree discipline
 
 - Check the current main source before proposing a repair from an old tester

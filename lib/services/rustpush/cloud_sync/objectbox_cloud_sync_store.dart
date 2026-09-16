@@ -9,6 +9,7 @@ import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_local_send_journal.dart';
 import 'cloud_sync_local_send_source_binding.dart';
 import 'cloud_sync_received_archive_source_binding.dart';
+import 'cloud_sync_received_record_observation.dart';
 import 'cloud_sync_local_mutation_journal.dart';
 import 'cloud_sync_attachment_upload_journal.dart';
 import 'cloud_sync_chat_identity_evidence.dart';
@@ -711,6 +712,8 @@ class ObjectBoxCloudSyncStore
         for (final intent in receivedSources.find()) {
           final source = _receivedArchiveSource(intent);
           if (!source.isSeed) references.add(source.leaseReference);
+          final observation = _receivedArchiveObservation(intent, source);
+          if (observation?.rawLeaseReference != null) references.add(observation!.rawLeaseReference!);
           if (references.length > maximumCount) {
             throw _storageFailure('protected_outbound_lease_recovery_bound_exceeded');
           }
@@ -812,6 +815,16 @@ class ObjectBoxCloudSyncStore
       sourceSha256: intent.sourceSha256,
     );
     return source;
+  }
+
+  static CloudSyncReceivedRecordObservation? _receivedArchiveObservation(
+    CloudSyncReceivedArchiveIntentEntity intent, CloudSyncReceivedArchiveSourceBinding source,
+  ) {
+    final encoded=intent.recordObservationBinding;
+    if(encoded==null) return null;
+    final value=CloudSyncReceivedRecordObservation.decode(encoded);
+    value.requireSource(source);
+    return value;
   }
 
   bool _localSendSourceLeaseReleasedAfterReadbackLocked(
@@ -936,7 +949,7 @@ class ObjectBoxCloudSyncStore
           (_recordMaps.count() * 2) +
           _writerAuthorities.count() +
           _store.box<CloudSyncLocalSendIntentEntity>().count() +
-          _store.box<CloudSyncReceivedArchiveIntentEntity>().count() +
+          (_store.box<CloudSyncReceivedArchiveIntentEntity>().count() * 2) +
           activeMutationCount +
           (_store.box<CloudAttachmentUploadEntity>().count() * 2) +
           (_attachmentMaterializations.count() * 4);
@@ -1025,7 +1038,9 @@ class ObjectBoxCloudSyncStore
           ..order(CloudSyncReceivedArchiveIntentEntity_.id)).build(),
         (intent) {
           final source = _receivedArchiveSource(intent);
-          return capture(source.isSeed ? null : source.protectedReference);
+          final observation = _receivedArchiveObservation(intent, source);
+          capture(source.isSeed ? null : source.protectedReference);
+          capture(observation?.rawReference);
         },
       );
       scanPaged(

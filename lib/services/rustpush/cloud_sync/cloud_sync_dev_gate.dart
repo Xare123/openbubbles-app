@@ -42,6 +42,11 @@ abstract final class CloudSyncDevGate {
     defaultValue: false,
   );
 
+  /// Separately enables exact received-record reads. No create/save authority.
+  static const bool receivedArchiveInspectionEnabled = bool.fromEnvironment(
+    'OPENBUBBLES_CLOUD_SYNC_V2_RECEIVED_INSPECTION', defaultValue: false,
+  );
+
   /// Independent read-only Android lifecycle gate. This never enables the
   /// outbound writer or ordinary-send consumer and is fenced to Canary again
   /// at runtime on both sides of the method channel.

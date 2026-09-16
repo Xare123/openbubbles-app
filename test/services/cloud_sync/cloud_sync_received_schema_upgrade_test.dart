@@ -10,6 +10,61 @@ import 'package:objectbox/internal.dart' as obx_internal;
 // This tests forward upgrade, not permission to downgrade a live database.
 void main() {
   test(
+    'nullable observation upgrade preserves the original received-source row',
+    () async {
+      final current = generated.getObjectBoxModel();
+      final previousMap = current.model.toMap();
+      final entity = (previousMap['entities'] as List).cast<Map>().singleWhere(
+        (e) => e['name'] == 'CloudSyncReceivedArchiveIntentEntity',
+      );
+      (entity['properties'] as List).removeWhere(
+        (p) => p['name'] == 'recordObservationBinding',
+      );
+      entity['lastPropertyId'] = '13:3733844521104586883';
+      final previous = obx_internal.ModelDefinition(
+        obx_internal.ModelInfo.fromMap(previousMap),
+        current.bindings,
+      );
+      final root = await Directory(
+        '${Directory.current.path}/build/test-temp',
+      ).create(recursive: true);
+      final directory = await root.createTemp('received-observation-upgrade-');
+      Store? store;
+      try {
+        store = Store(previous, directory: directory.path);
+        final id = store.box<CloudSyncReceivedArchiveIntentEntity>().put(
+          CloudSyncReceivedArchiveIntentEntity(
+            intentKey: 'synthetic-original',
+            accountFingerprint: 'A' * 43,
+            writerEpoch: 1,
+            localMessageId: 1,
+            localChatId: 1,
+            messageGuidHash: 'b' * 64,
+            sourceSha256: 'c' * 64,
+            origin: 0,
+            protectedSourceBinding: 'unchanged-original-binding',
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            state: 1,
+          ),
+        );
+        store.close();
+        store = Store(current, directory: directory.path);
+        final restored = store.box<CloudSyncReceivedArchiveIntentEntity>().get(
+          id,
+        )!;
+        expect(restored.protectedSourceBinding, 'unchanged-original-binding');
+        expect(restored.state, 1);
+        expect(restored.recordObservationBinding, isNull);
+      } finally {
+        if (store != null && !store.isClosed()) store.close();
+        expect(directory.parent.absolute.path, root.absolute.path);
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
     'received journal addition preserves prior messages and relationships',
     () async {
       final current = generated.getObjectBoxModel();

@@ -125,8 +125,14 @@ class CloudSyncReceivedArchiveIntentEntity {
   /// seed. Never a raw wire descriptor, plaintext body or key.
   String protectedSourceBinding;
 
+  /// Content-free exact native record observation. Owns retained raw readback
+  /// references until semantic adoption/reconciliation. Never a send receipt
+  /// or permission to create from a stale NotFound result.
+  String? recordObservationBinding;
+
   /// Stable codes: 0 captured, source materialization pending; 1 exact native
-  /// source lease committed. Neither state means admitted or cloud-saved.
+  /// source lease committed (inspection may need recommit); 2 local observation
+  /// and its raw lease committed. No state means admitted or cloud-saved.
   @Index()
   int state;
 
@@ -144,6 +150,7 @@ class CloudSyncReceivedArchiveIntentEntity {
     required this.sourceSha256,
     required this.origin,
     required this.protectedSourceBinding,
+    this.recordObservationBinding,
     this.state = 0,
     required this.createdAtMs,
     required this.updatedAtMs,
