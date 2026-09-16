@@ -231,3 +231,11 @@ returned 1 iPhone with a valid but stale pair (older bucket, is_old true).
 People shows both secure-capability flags true yet still no coordinates, so
 the absence is past capability: key delivery or server-side inclusion is
 the narrowed lead. Qualifier reproduced the verdicts; window released.
+
+Double run (launches 82ef1117, d3d4dae2, ~1 min apart): both cycles fresh
+roster, zero People coordinates, secure+shallow flags true, never locating;
+Devices kept its stale pair. Locate-latency weakened (second cycle had its
+chance); user confirms Apple shows her live, so the gap is client-side
+elicitation. Prime lead now: secure handshake over IDS receive, which the
+Windows host never dispatches. Next split: whether the Android app (which
+does dispatch IDS) shows her location.
