@@ -8540,7 +8540,10 @@ void main() {
           ..lastBatchId = entry.batchId ..fetchedSequence = sequence;
         checkpoints.put(checkpoint);
         store.box<CloudInboxChangeEntity>().put(CloudInboxChangeEntity(
-          changeKey: scopedKey('change', change.changeId), changeIdHash: change.changeId,
+          // Match the durable producer, including rebootstrap generations;
+          // freeze the formula here rather than using the consumer helper.
+          changeKey: scopedKey(generation == 1 ? 'change' : 'change-generation-$generation',
+            change.changeId), changeIdHash: change.changeId,
           scopeKey: _semanticScopeKey(scope), accountFingerprint: scope.accountFingerprint,
           zone: scope.zone, serverRecordIdHash: physicalKey, etagHash: change.etagHash,
           changeType: change.type.name, encryptedServerRecordId: change.encryptedServerRecordId,
