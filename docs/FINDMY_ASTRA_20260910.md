@@ -167,3 +167,23 @@ Our MULTIPLEX_SERVICE already declares FMF/FMD subservices and the FindMyClient
 receiver accepts those topics. Next work must verify the exact delivered payload
 and permitted relationship-key request, not merely add another topic. No live
 distributeKeys request, sharing change or key import was attempted here.
+
+## September 16 independent-lane entry (branch agent/facetime-findmy-independent-20260916)
+
+Implemented and tested, not live-proven: commit a5485a223 makes the Windows
+probe selected-person `location_found` require usable coordinates through one
+rule shared with the aggregate counts, mirroring the app `hasFindMyLocation`
+gate. A present-but-unusable location (0,0 sentinel, non-finite, out of
+range) previously reported found while the app renders No location found.
+No new report keys, no new native entry points, no sharing-state inference.
+Unit, adversarial-selection, sole-person host, People refresh, and
+single-pass observer contract suites pass; targeted analysis is clean.
+Play-sound targeting was verified by inspection: the tapped tile device id
+flows directly to the native call behind eligibility gates, a confirmation
+dialog, and a per-device in-flight guard.
+
+Standing live gates: real People coordinates for the confirmed shared entry,
+verified Devices inventory, and AirTags/Items inventory (Items init stays
+off-limits as a read-only probe for its CloudKit side effects). Windows live
+probe window requested from the CloudKit task; no credential/profile use
+without its ack. Do not reconfigure sharing from probe output.

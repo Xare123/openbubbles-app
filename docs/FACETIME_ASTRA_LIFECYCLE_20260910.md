@@ -477,3 +477,27 @@ participant inactivity. Parent reviews this test/doc-only diff before integratio
 End-of-review storage: C: free 64.59 GiB; existing checkout `build` 5.588 GiB and
 `.dart_tool` 0.444 GiB (whole-tree totals, not attributed growth). Targeted JVM jar:
 100,411 bytes. Existing test caches were reused; no dependency trees were copied.
+
+## September 16 independent-lane entry (branch agent/facetime-findmy-independent-20260916)
+
+Implemented and tested, not live-proven: commit 52bf20ec2 refactors the
+outgoing acceptance gate behind a PII-free verdict enum (accepted,
+snapshotMissing, guidMismatch, noSelfHandles, eventFromSelf, noActiveRemote)
+with identical gate semantics, and logs one `facetime_accept` line per
+JoinEvent carrying only the verdict plus active/total participant counts
+behind the existing developer plus FaceTime-diagnostics switches. A rejected
+remote acceptance previously left no trace between JoinEvent and the timeout
+cancel, which reads exactly like remote-ends-on-accept. The Rust invitation
+path was re-verified by inspection: create_session binds a fresh conversation
+link before prop_up_conv sends the Invitation, and link rotation reassigns
+usage slots without invalidating the launched URL, so neither is the current
+suspect. Outgoing lifecycle, incoming admission, and acceptance suites pass;
+targeted analysis shows no new findings.
+
+Live protocol change for the next consented call: read the `facetime_accept`
+verdict in the app log first. `noActiveRemote` points at the snapshot/join
+event mismatch; anything else distinguishes gate behavior from missing join
+events or launch failure. Sustained two-way media beyond 30 seconds, remote
+and local hangup, subsequent-call recovery, and viewer overlap remain
+device-gated and unproven. Live window requested from the CloudKit task;
+no live call runs without its ack and same-day partner consent.
