@@ -60,19 +60,35 @@ inside the edit/reopen test. Hosted Windows35152394873 failed681/682 on that
 fixture; parent reproduced it locally, changed no product behavior, then passed
 157 canonical-adapter cases and the exact21-file Windows batch682/682.
 
-Corrected Windows run35154038683 is ACTIVE, pilot13f388527237b82750824e1930bbc149fbdcc63d,
-native-test-host/read-only. Watch session42650. Do not start a duplicate while
-the run is active. Pilot change is only the trusted source-branch pin; no GCP,
-credentials, signing path or repository-variable change. Artifacts and exact
-resume instructions belong under build-evidence/windows-reader-35154038683.
+Corrected Windows run35154038683 PASSED, pilot13f388527237b82750824e1930bbc149fbdcc63d,
+native-test-host/read-only.682 Dart cases and51 native encoder cases passed,
+plus selected native suites.55 source inputs and13 logs match provenance;
+53 source hashes use Windows CRLF checkout form, not a content change. Three
+ARM64 binaries and the vendor ObjectBox pin passed. Watch42650 is terminal.
+Evidence: build-evidence/windows-reader-35154038683/verification.json.
 
-No new runtime is installed yet. Import must use exact sourceaa953639a and its
-verified artifact/pilot hashes. If documentation-only commits advance this
-worktree's HEAD, preserve a clean original branch and temporarily select that
-exact committed source for the strict importer, then restore the original
-branch. Never discard dirty work or relax the source guard. The Dart live
-launcher supports a newer documentation-only descendant with matching native
-boundaries. Request a new Windows profile window before import/live testing.
+Imported and signed exact sourceaa953639a with the existing engineering signer.
+Signed native DLL SHA256:
+`52887b284c590a19ec1a53c61ed24057ad802413d37cc344c64bdfb155d5edaa`.
+The original source branch was restored after exact-source import. The prior
+b9c567f runtime archive/provenance remains verified/recoverable; the importer
+removes its temporary transaction rollback folder after successful install.
+A hash-verified156,438,528-byte private pre-schema DB snapshot is preserved.
+No signing policy or account registration was changed.
+
+**LIVE-PROVEN Windows read/restart:** session339c757b fetched109/applied79, then
+zero/zero at an empty terminal page. The initial two-pass gate remained unproven
+because its first pass changed state. A second unchanged-source session9566ce36
+then passed two fresh processes with zero fetch/apply, all three zones empty-
+terminal, retained count unchanged and outbox24 unchanged. No remote writes or
+content exposure; process cleanup confirmed and raw stdout/stderr removed. The
+profile window is released. This does not prove Android lifecycle or full sync.
+
+Retained total6282 =3779 known out-of-scope saves +681 tombstones +811 message
+saves +1011 attachment saves still needing classification/repair. Do not call
+all6282 missing iMessages, or assume every remaining save is recoverable. Use
+the matched Windows read loop for the next bounded retained-record investigation.
+Compatible Dart-only fixes can reuse this native runtime without another build.
 
 The offline copied-profile inspector left source data bytes unchanged and found
 701 chats,13,969 messages,2,516 attachments,24 confirmed outbox rows, no active
@@ -87,9 +103,15 @@ build-evidence/storage-purge-20260916-luna. Storage helperEinstein was reviewed
 and closed; group-route reviewerPopper was reviewed and closed. No child is
 needed now. Closed transcripts remain because supported deletion is unavailable.
 
-The received-group review identifies a v2 source contract preserving v1 direct
-bytes plus authenticated group-parent projection/readback as the next feature
-gap. It is not implemented yet; no participant-count/title shortcut is accepted.
+Received-group draft: source-only worktree
+`C:/Codex/OpenBubblesReview/agent-worktrees/received-group-source-20260916`, branch
+agent/received-group-source-20260916, commit6c66ea3f5. Parent drafted v2 group
+source, protected-parent projection and explicit typed/raw group comparison;
+v1 direct hashes/bytes must remain unchanged. Syntax parsing only, no native
+tests yet. Dart capture/proof/API wiring remains incomplete, so it is not merged
+or enabled. Tesla exceeded the bounded inspection window without code and was
+closed/not_found; parent owns the134,308,477-byte worktree and unique draft.
+No participant-count/title shortcut or copied outgoing receipt is accepted.
 
 ### Ownership and in-progress reader handoff, September 16
 
@@ -126,8 +148,8 @@ code and parent wrote native tests. No helper remains active.
 No CI/local test remains running; all three helpers are closed and verified
 not_found. C:about28.8GiB free; current local build742,959,925bytes and
 .dart_tool62,981,389bytes. Evidence remains preserved, no session deletion.
-Next: matched-source Windows/Pixel qualification, then received group/media/
-mutation support and independent Apple-client visibility. Never pair new
+Next: retained-record repair on the now-qualified Windows read loop, received
+group/media/mutation integration, Pixel and independent Apple-client visibility. Never pair new
 bindings with an older DLL; do not enable public automatic uploads yet.
 
 ### Active received-create integration, September 16
@@ -201,7 +223,7 @@ local native compiler, paid GCE, APK or account action.
 
 | Capability | Established | Remaining |
 | --- | --- | --- |
-| History read | Fresh Canary visibly restores chats/messages. | Terminal ingestion, actionable retained repair or explained unavailability, repeat/incremental/restart proof. |
+| History read | Fresh Canary visibly restores chats/messages. Current Windows candidate caught up and passed two fresh-process empty-terminal repeats. | Classify/repair remaining retained saves, explain unavailable data, and repeat on Pixel. |
 | Media/documents/reactions read | Earlier representative live results; current materialization/filtering implemented. | Current Pixel photos, video, transcript GIFs, documents and incremental updates. GIFs need not appear in profile media. |
 | Direct writes | Fresh exact-source Windows parent send, edit, unsend and new-process no-submit replay, plus earlier reaction and image protocol results. | Ordinary Pixel composition, restart recovery, group/media cases and independent client display. |
 | Incoming/mirrored archival | Default-off receive hook, encrypted source, direct create/readback and Found-to-reader handoff implemented; source/transaction qualification progressing. | Same-source live receive/create/readback, groups/media/mutations, pre-seal failures and independent-client proof. |
@@ -505,26 +527,34 @@ CloudKit readback or independent Apple-device display.
 
 ## Current critical path
 
-Current offline slice: Found-to-reader handoff and post-reset key matching are
-component-qualified, including ordinary ObjectBox projection and replay. No live
-received archive proof. The
-device checklist below remains pending; no empty local journal proves that an
-Alpha-only chat is missing from Apple.
+Found-to-reader handoff and post-reset key matching are component-qualified.
+Current Windows ordinary read/restart is live-proven, but incoming archival is
+not. Use the matching runtime for bounded retained-record observations:811
+message saves and1011 attachment saves remain unclassified/unrepaired after
+separating known carrier exclusions and tombstones. Do not repeatedly refetch an
+already empty-terminal stream or erase raw records to manufacture completion.
+No empty local journal proves that an Alpha-only chat is absent from Apple.
 
-1. Preserve the verified f027 APK/manifest from successful build35058684776.
+1. Identify representative retained iMessage/attachment causes through the
+   matched Windows reader, repair proved decoder/parent-routing defects, and
+   qualify convergence without using weak chat-title or membership aliases.
+2. Complete the received-group draft through Dart capture, native source/proof,
+   create/readback and normal reader wiring; then media/mutations and independent
+   Apple-client visibility. Keep flags off until the full path passes.
+3. Preserve the verified f027 APK/manifest from successful build35058684776.
    Wait for the Pixel connection and inspect installed identity/state. No
    installation while its owner is busy; an idle snapshot is not an atomic lease.
-2. Batch Pixel qualification: Profile encryption/read progress, actual host
+4. Batch Pixel qualification: Profile encryption/read progress, actual host
    detach during work, reopen without a stranded lock, ordinary approved test
    send/edit/unsend, exact readback and no-submit restart replay. Preserve Alpha.
-3. Reconcile the existing ambiguous Canary outbox by readback only. Preserve
+5. Reconcile the existing ambiguous Canary outbox by readback only. Preserve
    older Windows epoch-2 mutations; current epoch-18 authority cannot rebind them.
-4. Prove a repair for already-split group rows independently of the new routing
+6. Prove a repair for already-split group rows independently of the new routing
    prevention. Determine upload availability for Alpha-only history before
    calling its absence a download regression. Never merge by name or membership.
    Add received-message archival as a distinct production lane; an empty local
    journal is not proof of remote absence or a reason to forge send receipts.
-5. Close supported group/media/conflict and independent-device display gates,
+7. Close supported group/media/conflict and independent-device display gates,
    plus normal Profile/public writer readiness. Keep current read direction,
    receipt integrity, carrier exclusions and retained-data safety unchanged.
 FaceTime/Find My are independent task gates, not prerequisites for completing

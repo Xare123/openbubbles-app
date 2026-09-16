@@ -6319,3 +6319,60 @@ Historical tests do not establish current-device behavior.
   committed candidate from a clean worktree for the exact-source importer,
   then restore the original branch. Never overwrite dirty source or use a
   mismatched existing DLL. Goal remains full production CloudKit, not complete.
+
+### September 16 matched Windows live read and stable restart proof
+
+- Run35154038683 passed21:44:33Z to22:08:35Z for sourceaa953639a/pilot13f388527.
+ 682 Windows Dart tests and51 native encoder cases passed, with selected native
+  suites. Artifact10471535119 is35,535,525bytes, SHA256
+  61a90ad51c1aa2adf83c66d2e97cb7c1415f815c7ff0a3969c0ded1138328e40.
+  Inner runtime archive SHA7127cf8ef77b5b2de28e73ff010129235d5e872107c226fde745fa03dcc232e0;
+  provenance SHA2f0e700940205b2153c24ee3b0c9364cca7fd9eb17762df4324964eb2f82a35d.
+  All55 source inputs match exact declared Git blobs (53 WindowsCRLF forms),
+  all13 log hashes match, and three ARM64 binaries/vendor ObjectBox pin verify.
+- The strict importer temporarily selected clean committedaa953639a, signed
+  with the established engineering certificate and restored the original branch.
+  Signed DLL52887b284c590a19ec1a53c61ed24057ad802413d37cc344c64bdfb155d5edaa;
+  signaturesValid, ObjectBox untouched. Earlier commentary's rollback statement
+  refers to retained verifiedb9c567f archive/provenance, not an on-disk temporary
+  transaction rollback directory: the importer removes that temporary directory
+  after success. Parent verified the prior archive remains recoverable (SHA
+  fd42c97f55025eedb7eb11c7bbc22e8a6c5210f493d829366481c9edf6325b34).
+- A private pre-schema DB snapshot156,438,528bytes was copied under the profile
+  mutex; source/copy/after hashes agreed:
+  c7efacc0df66906ab1526bc15064f676f952fd4575d1126da051fd3248811c4c.
+  Snapshot retained under backups/windows-reader-aa953-20260916, never uploaded.
+- Live Dart sourcef560401345168bf43856ae0069016fb11f39abce has documentation-only
+  differences from nativeaa953639a; native compatibility verified. Session
+  339c757b0e6e5a370def532737d9daa5 fetched109/applied79, then0/0 at all-zone
+  empty-terminal. Its two-pass stable gate remained unproven, correctly, because
+  the first pass changed state. No expectation was weakened.
+- Session9566ce363d14f37fbc81184116a7ae57 then passed two fresh-process0/0
+  empty-terminal reads with retained total6282 unchanged and outbox24 unchanged.
+  completed=true,stable_repeat=true. Both sessions remote_writes_enabled=false,
+  content_exposed=false. Process cleanup confirmed; raw stdout/stderr deleted by
+  the launcher, bounded redacted aggregates retained. Profile window released to
+  independent FaceTime/Find My task. No IDS restore/send, re-registration, relay
+  change, remote save/delete, Pixel install or paid GCE action.
+- Retained classification from actual reports: chats94=13 out-of-scope saves+81
+  tombstones; messages5076=3766 out-of-scope saves+811 still blocked saves+499
+  tombstones; attachments1112=1011 still blocked saves+101 tombstones. Exact
+  remaining saved-record count is1822. These
+  are records needing classification/repair, not proof every item is recoverable.
+  Current samples include missing chat/parent dependencies, unsupported extension
+  payloads, malformed/ambiguous reply and association shapes. Windows feed/restart
+  proof does not qualify all retained data, incoming writes or Android lifecycle.
+- A source-only group draft is committed locally at6c66ea3f5 on
+  agent/received-group-source-20260916 in agent-worktrees/received-group-source-20260916.
+  Parent wrote four native files: explicit groupv2 capture/digest while preserving
+  directv1; authenticated route-pair projection; opt-in typed/raw group comparators;
+  synthetic cases for endpoint/origin/group alias/unknown-field behavior. Rustfmt
+  syntax parse only, no native compile/test and no Dart/API producer integration.
+  This is NOT enabled/merged. Tesla exceeded the bounded review with no patch;
+  parent stopped/closed it, verifiednot_found, and wrote the draft. Worktree134MB
+  is retained for unique ongoing parent work; no dependency caches/builds added.
+- Live/runtime/source manifests: build-evidence/windows-reader-35154038683.
+  All CI, live sessions and local tests are terminal; no active child. Next is
+  bounded retained-read repair using this runtime, plus full received-group/API
+  integration. Compatible Dart changes can reuse the DLL; native changes require
+  a new qualified runtime. Main goal remains active and production incomplete.
