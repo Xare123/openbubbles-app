@@ -6376,3 +6376,36 @@ Historical tests do not establish current-device behavior.
   bounded retained-read repair using this runtime, plus full received-group/API
   integration. Compatible Dart changes can reuse the DLL; native changes require
   a new qualified runtime. Main goal remains active and production incomplete.
+
+### September 16 retained-record discriminator before further code changes
+
+- Reused qualified nativeaa953639a with Dart source028cee5a. An evidence-only
+  wrapper invokes the existing inspect-retained harness under the source,
+  signature, ObjectBox, mutex and process-owner guards. Initial wrapper setup
+  failed before account access because dot-sourcing overwrote its repository
+  variable; corrected locally. Another attempt correctly stopped for the
+  independent task's offline Dart process. That task paused its own test.
+- Observation1dbbed6b1c3856122d6ead10bc606322 completed37 bounded cached-record
+  cases. durable_state_unchanged=true, remote_writes_enabled=false, process
+  cleanup confirmed, raw output removed. Evidence and the scoped wrapper stay
+  under build-evidence/windows-reader-35154038683; no product change.
+- Five sampled message dependencies now decode ready with one direct-chat
+  candidate each; one is carrier out-of-scope and two retain unsupported
+  association types. Eight attachment dependencies decode ready but each has
+  zero parent candidates. Other sampled malformed/unsupported records remain
+  retained. These counts are diagnostic samples, not whole-database estimates.
+- Popper's source review was checked and accepted: service exclusion records
+  only the physical retained identity, while children require a logical Message
+  owner. Absence does not prove an excluded parent. Any exclusion join needs
+  exact current-generation/current-version identity, not a stale map or title.
+  Helper closed and verifiednot_found; no code or live activity from it.
+- Parent rejected building more copied-replay infrastructure before exercising
+  the existing production drain/full retained sweep. Requested and received an
+  exclusive20-minute Windows profile window; no Flutter/live work from the
+  independent FaceTime/Find My task until explicit release. Next run is read-only
+  remotely, with normal fenced local projection and no excluded-chat replay.
+- Cleanup receipts rechecked:22,588 files/6,050,275,183bytes removed, zero failures,
+  10,825 protected files unchanged. Current C:free31.4GiB, not a new cleanup delta.
+  The remaining idle native-test helper was already superseded by parent tests;
+  shutdown requested after confirming its interrupted state. Its transcript is
+  retained because supported deletion is unavailable. No repeated cache purge.

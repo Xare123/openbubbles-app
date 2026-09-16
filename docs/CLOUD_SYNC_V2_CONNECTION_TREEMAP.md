@@ -90,6 +90,17 @@ all6282 missing iMessages, or assume every remaining save is recoverable. Use
 the matched Windows read loop for the next bounded retained-record investigation.
 Compatible Dart-only fixes can reuse this native runtime without another build.
 
+Bounded retained inspection `1dbbed6b1c3856122d6ead10bc606322` examined37 cases
+without changing durable state. Five sampled message dependencies now decode
+and each has one direct-chat candidate; eight attachment dependencies decode
+but have no parent row. Candidate presence alone is not ownership proof. Next:
+run the existing full retained repair sweep on this matched runtime before
+adding diagnostic infrastructure or changing projection rules. The independent
+task acknowledged an exclusive20-minute profile/Flutter window for that run.
+No copied-store replay helper was implemented. Missing attachment parents must
+not be classified as carrier-message exclusions without an exact current-version
+logical-to-physical join. See the latest investigation entry for evidence.
+
 The offline copied-profile inspector left source data bytes unchanged and found
 701 chats,13,969 messages,2,516 attachments,24 confirmed outbox rows, no active
 outbox leases and generation1 semantic checkpoints. It did not contact Apple.
