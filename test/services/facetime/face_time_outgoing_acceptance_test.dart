@@ -99,6 +99,55 @@ void main() {
     );
   });
 
+  test('verdict names the exact pending reason without identity content', () {
+    FaceTimeOutgoingAcceptanceVerdict verdict({
+      String? sessionGroupId = guid,
+      String eventGuid = guid,
+      String eventHandle = remote,
+      Iterable<String> selfHandles = const [self],
+      Iterable<FaceTimeOutgoingParticipant> participants = const [],
+    }) =>
+        describeOutgoingFaceTimeJoin(
+          sessionGroupId: sessionGroupId,
+          eventGuid: eventGuid,
+          eventHandle: eventHandle,
+          selfHandles: selfHandles,
+          participants: participants,
+        );
+    expect(
+      verdict(participants: [participant(remote, true)]),
+      FaceTimeOutgoingAcceptanceVerdict.accepted,
+    );
+    expect(
+      verdict(sessionGroupId: null),
+      FaceTimeOutgoingAcceptanceVerdict.snapshotMissing,
+    );
+    expect(
+      verdict(sessionGroupId: 'STALE-GUID'),
+      FaceTimeOutgoingAcceptanceVerdict.guidMismatch,
+    );
+    expect(
+      verdict(selfHandles: const <String>[]),
+      FaceTimeOutgoingAcceptanceVerdict.noSelfHandles,
+    );
+    expect(
+      verdict(eventHandle: self),
+      FaceTimeOutgoingAcceptanceVerdict.eventFromSelf,
+    );
+    expect(
+      verdict(eventHandle: ''),
+      FaceTimeOutgoingAcceptanceVerdict.eventFromSelf,
+    );
+    expect(
+      verdict(participants: [participant(remote, false)]),
+      FaceTimeOutgoingAcceptanceVerdict.noActiveRemote,
+    );
+    expect(
+      verdict(participants: [participant(self, true)]),
+      FaceTimeOutgoingAcceptanceVerdict.noActiveRemote,
+    );
+  });
+
   test('duplicate accept and different call stay disjoint', () {
     // Same joined remote repeated: gate still returns true each time, so
     // the single-claim async ownership (`complete`) dedupes; no state flip

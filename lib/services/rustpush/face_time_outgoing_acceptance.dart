@@ -13,14 +13,55 @@ bool shouldAcceptOutgoingFaceTimeJoin({
   required Iterable<String> selfHandles,
   required Iterable<FaceTimeOutgoingParticipant> participants,
 }) {
-  if (sessionGroupId == null || sessionGroupId != eventGuid) return false;
+  return describeOutgoingFaceTimeJoin(
+    sessionGroupId: sessionGroupId,
+    eventGuid: eventGuid,
+    eventHandle: eventHandle,
+    selfHandles: selfHandles,
+    participants: participants,
+  ) == FaceTimeOutgoingAcceptanceVerdict.accepted;
+}
+
+/// PII-free acceptance verdict for live diagnostics. Only the outcome and
+/// participant counts may leave the call site; handles and UUIDs never do.
+/// A rejected remote acceptance otherwise leaves no trace between JoinEvent
+/// and the timeout cancel, which reads exactly like "remote ends on accept".
+enum FaceTimeOutgoingAcceptanceVerdict {
+  accepted,
+  snapshotMissing,
+  guidMismatch,
+  noSelfHandles,
+  eventFromSelf,
+  noActiveRemote,
+}
+
+FaceTimeOutgoingAcceptanceVerdict describeOutgoingFaceTimeJoin({
+  required String? sessionGroupId,
+  required String eventGuid,
+  required String eventHandle,
+  required Iterable<String> selfHandles,
+  required Iterable<FaceTimeOutgoingParticipant> participants,
+}) {
+  if (sessionGroupId == null) {
+    return FaceTimeOutgoingAcceptanceVerdict.snapshotMissing;
+  }
+  if (sessionGroupId != eventGuid) {
+    return FaceTimeOutgoingAcceptanceVerdict.guidMismatch;
+  }
   final knownSelf = selfHandles.where((handle) => handle.isNotEmpty).toSet();
-  if (knownSelf.isEmpty) return false;
-  if (eventHandle.isEmpty || knownSelf.contains(eventHandle)) return false;
-  return participants.any((participant) =>
+  if (knownSelf.isEmpty) {
+    return FaceTimeOutgoingAcceptanceVerdict.noSelfHandles;
+  }
+  if (eventHandle.isEmpty || knownSelf.contains(eventHandle)) {
+    return FaceTimeOutgoingAcceptanceVerdict.eventFromSelf;
+  }
+  final remoteActive = participants.any((participant) =>
       participant.handle == eventHandle &&
       !knownSelf.contains(participant.handle) &&
       participant.active);
+  return remoteActive
+      ? FaceTimeOutgoingAcceptanceVerdict.accepted
+      : FaceTimeOutgoingAcceptanceVerdict.noActiveRemote;
 }
 
 /// Plain participant view so the gate stays unit-testable without the

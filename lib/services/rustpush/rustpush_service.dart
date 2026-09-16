@@ -5929,20 +5929,43 @@ class RustPushService extends GetxService {
               sessions.firstWhereOrNull(
                 (session) => session.groupId == facetime.guid,
               );
+          final landscape = (snapshot?.participants.values ??
+                  const <api.FTParticipant>[])
+              .map(
+                (participant) => FaceTimeOutgoingParticipant(
+                  handle: participant.handle,
+                  active: participant.active != null,
+                ),
+              )
+              .toList();
           final accepted = shouldAcceptOutgoingFaceTimeJoin(
             sessionGroupId: snapshot?.groupId,
             eventGuid: facetime.guid,
             eventHandle: facetime.handle,
             selfHandles: snapshot?.myHandles ?? const <String>[],
-            participants: (snapshot?.participants.values ??
-                    const <api.FTParticipant>[])
-                .map(
-                  (participant) => FaceTimeOutgoingParticipant(
-                    handle: participant.handle,
-                    active: participant.active != null,
-                  ),
-                ),
+            participants: landscape,
           );
+          // PII-free acceptance verdict for live diagnosis. Handles and UUIDs
+          // never enter the log; outcome and participant counts only.
+          try {
+            if (ss.settings.developerEnabled.value &&
+                ss.settings.faceTimeDiagnosticsEnabled.value) {
+              final verdict = describeOutgoingFaceTimeJoin(
+                sessionGroupId: snapshot?.groupId,
+                eventGuid: facetime.guid,
+                eventHandle: facetime.handle,
+                selfHandles: snapshot?.myHandles ?? const <String>[],
+                participants: landscape,
+              );
+              Logger.info(
+                'facetime_accept verdict=${verdict.name} '
+                'active=${landscape.where((entry) => entry.active).length} '
+                'total=${landscape.length}',
+              );
+            }
+          } catch (_) {
+            // Diagnostics must not affect call handling.
+          }
           // Ring/overlay flow below is untouched; only acceptance is gated.
           if (accepted) {
             await _outgoingCalls.complete(outgoingCall, () async {
