@@ -6262,3 +6262,9 @@ Historical tests do not establish current-device behavior.
   then received group/media/mutations and independent Apple-device convergence.
   Existing unknown-outcome writes stay readback-only. All received flags remain
   default-false; the overall CloudKit goal remains active, not production-ready.
+- Integration16430e0f2b778124bbe43cdc2be0551b5e107292 is committed and pushed only
+  to fork/agent/cloudkit-v2-received-origin-20260916. Working tree clean after
+  that checkpoint; no automatic full build was triggered. Updated7 generated
+  files still match the verified native artifact. No helper, native CI or local
+  test/analyzer session remains active. The next runtime must match this API;
+  existing Windows native hosts are not silently rebound to the new bridge.

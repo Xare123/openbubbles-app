@@ -61,7 +61,8 @@ GCE. That task starts from committed appb1468abbb/rustpush5862be3 in its own
 worktree. This task now implements CloudKit only; shared integration remains
 explicitly reviewed. AGENTS.md records the ownership boundaries.
 
-Current native CloudKit source is c5559d5bb with locally qualified Dart changes:
+Current integration is16430e0f2b778124bbe43cdc2be0551b5e107292, including native
+c5559d5bb with locally qualified Dart changes:
 native exact-lookup-to-normal-protected-change staging, atomic semantic inbox
 admission preserving cursor fields, and nullable received readerChangeId/state4.
 `cloud_sync_received_reader_adapter.dart` is now connected to the bounded worker.
@@ -83,6 +84,9 @@ accepted. Attachment/repair73 and reset/lifecycle/media61 cases also passed.
 Analysis is clean of errors/warnings; remaining style infos are documented.
 Popper and Planck changes reviewed and both closed; Hypatia stopped without
 code and parent wrote native tests. No helper remains active.
+No CI/local test remains running; all three helpers are closed and verified
+not_found. C:about28.8GiB free; current local build742,959,925bytes and
+.dart_tool62,981,389bytes. Evidence remains preserved, no session deletion.
 Next: matched-source Windows/Pixel qualification, then received group/media/
 mutation support and independent Apple-client visibility. Never pair new
 bindings with an older DLL; do not enable public automatic uploads yet.
