@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_group_send_route.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_group_binding.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -89,6 +91,62 @@ void main() {
           final mutations = store
               .box<CloudSyncLocalMutationIntentEntity>()
               .getAll();
+          final messageCheckpoints = store
+              .box<CloudSyncCheckpointEntity>()
+              .getAll()
+              .where(
+                (row) =>
+                    row.zone == 'messageManateeZone' &&
+                    row.persistenceLane ==
+                        CloudSyncPersistenceLane.semantic.name,
+              )
+              .toList();
+          Map<String, Object?> groupProof(Chat chat) {
+            final route = CloudSyncGroupSendRoute.capture(chat);
+            final shape = <String, Object?>{
+              'senderPresent': chat.usingHandle?.isNotEmpty == true,
+              'routeCaptured': route != null,
+              'routeProvisional': route?.provisional,
+            };
+            if (messageCheckpoints.length != 1) {
+              return {...shape, 'status': 'message_scope_not_unique'};
+            }
+            final checkpoint = messageCheckpoints.single;
+            final scope = CloudSyncScope(
+              accountFingerprint: checkpoint.accountFingerprint,
+              container: checkpoint.container,
+              database: checkpoint.database,
+              zone: checkpoint.zone,
+              streamKind: CloudSyncStreamKind.values.byName(
+                checkpoint.streamKind,
+              ),
+              schemaVersion: checkpoint.schemaVersion,
+              persistenceLane: CloudSyncPersistenceLane.semantic,
+            );
+            // Unsaved probe: production proof reads only its target chat ID.
+            // Never stage, bind, submit, or change a real Message here.
+            final probe = Message(guid: 'synthetic-unsaved-group-proof');
+            probe.chat.targetId = chat.id!;
+            try {
+              final proof = requireCloudSyncRestoredGroupChatProof(
+                store: store,
+                messageScope: scope,
+                message: probe,
+              );
+              return {
+                ...shape,
+                'status': 'verified',
+                'generation': proof.generation,
+              };
+            } on CloudSyncFailure catch (failure) {
+              return {
+                ...shape,
+                'status': 'unavailable',
+                'code': failure.safeCode,
+              };
+            }
+          }
+
           final snapshots = store
               .box<CloudSemanticSnapshotEntity>()
               .getAll()
@@ -192,6 +250,7 @@ void main() {
                       .where((intent) => intent.localChatId == c.id)
                       .length,
                   'hasCloudData': c.cloudData?.isNotEmpty == true,
+                  'protectedGroupProof': groupProof(c),
                 },
             ],
             'linkedMessages': allMessages

@@ -74,6 +74,11 @@ foreground history and encryption setup. Automatic uploads and background
 reads still have their separate qualification gates; removing their temporary
 Developer Mode dependency is a remaining public-rollout task.
 
+The current V2 automatic-upload path covers eligible messages sent by this
+installation. It does not yet archive new incoming messages or messages mirrored
+from another device. Live iMessage delivery can still work; their appearance in
+iCloud depends on an existing cloud copy or another client uploading them.
+
 ## Developer Settings vs Canary ADB automation
 
 - Developer Settings stay for diagnostics. Ordinary Profile sync must not

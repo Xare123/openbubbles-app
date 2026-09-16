@@ -13,6 +13,22 @@ user explicitly requests a different model or effort. Keep assignments bounded
 and review their work before integration. Higher effort does not justify extra
 parallel agents without useful independent work.
 
+## Local tool and worktree discipline
+
+- Check the current main source before proposing a repair from an old tester
+  worktree. A fix already present in main is not new progress.
+- Flutter is `C:/Codex/Toolchains/flutter-3.44.8-arm64/bin/flutter.bat`; Dart is
+  under its `bin/cache/dart-sdk/bin/dart.exe`. Rustfmt is
+  `C:/Codex/Toolchains/rustup/toolchains/stable-aarch64-pc-windows-msvc/bin/rustfmt.exe`.
+  PATH absence does not mean the toolchain is missing. A separate worktree may
+  still need its own dependency resolution; do not mislabel that as no SDK.
+- Use apply_patch with exact absolute forward-slash paths for isolated edits.
+  If the routed tool rejects the path, return the patch to the parent. Do not
+  create Desktop probe files or bypass the editing rule with shell file writes.
+- Avoid whole-file formatter churn in existing files. Keep prototype changes
+  isolated until parent review and executed tests. No paid GCE run without
+  renewed approval; full qualification currently uses GitHub-hosted Actions.
+
 ## Documentation before compaction
 
 Before each planned compaction, the parent must reconcile the project documents

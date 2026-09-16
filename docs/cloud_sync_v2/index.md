@@ -11,6 +11,9 @@ timestamp: 2026-09-15
 
 ## Start here
 
+- [Incoming-message archival gate](INCOMING_ARCHIVE_DESIGN.md): verified missing
+  V2 receive-to-archive path, protected implementation boundary, and required
+  evidence before claiming complete two-way sync.
 - [Normal user sync guide (candidate rollout)](USER_SYNC_GUIDE.md): Profile-based
   iCloud Message Sync path, Regular vs Turbo, progress meaning, and the
   developer/public boundary. Candidate rollout pending integrated UI

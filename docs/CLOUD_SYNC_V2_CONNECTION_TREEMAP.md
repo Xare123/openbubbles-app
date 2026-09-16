@@ -4,7 +4,7 @@ title: Cloud Sync V2 Current Connection Treemap
 description: Current source of truth for CloudKit V2 architecture, safety boundaries, qualification state, and next gates.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-09-15
+timestamp: 2026-09-16
 ---
 
 # Cloud Sync V2 current connection treemap
@@ -52,7 +52,7 @@ back to legacy sync, clear a cursor, or continue under a replacement account.
 
 ## Current candidate
 
-### Resume checkpoint: September 15, 23:03 PDT
+### Resume checkpoint: September 16, post-build offline work
 
 This checkpoint supersedes older qualification history. Current product source is
 `f027aad2a17c131f7d68687ea68f58b334473e8f`; installed Pixel source remains
@@ -92,6 +92,12 @@ This checkpoint supersedes older qualification history. Current product source i
 - **Write ambiguity remains.** The latest Canary copy has eight confirmed
   outbox rows and one unknown-outcome row. Reconcile the latter by exact readback
   only. The older unresolved mutation is not one of the user's latest attempts.
+- **Incoming archival gap, source-confirmed:** the V2 automatic uploader drains
+  only locally sent positive-receipt intents. Incoming and other-device mirrored
+  rows have no V2 archive producer; the old all-unsynced uploader is disabled
+  under V2 ownership. Full two-way sync requires a separate received-archive
+  origin, not weakening outgoing receipt checks. See the
+  [implementation boundary](cloud_sync_v2/INCOMING_ARCHIVE_DESIGN.md).
 - **Device released.** App/native logs saved at 17:02:57 PDT and stable qualified
   copies are retained under `device-evidence/20260915-ben-edit-unsend`,
   `20260915-groomsmen-alpha-compare` and `20260915-groomsmen-windows-compare`.
@@ -136,11 +142,24 @@ Current work handles after resume:
   is a repair prerequisite only, not permission to merge or proof of every
   canonical/source dependency. A resumed helper returned no report, so parent
   continued this check directly and did not count it as an independent review.
+  Follow-up production group-binding validation on copies passes for canonical
+  Canary695 and Windows664 (generation1); live Canary701 is provisional and
+  fails `cloud_sync_local_send_chat_not_ready`. This validates stored metadata
+  bindings only: native protected blobs were not opened and no live write was
+  authorized. `Chat.merge` is a UI value merge, not a durable row repair.
 - All five reviewed helper tasks are stopped or idle; the final engine reviewer
   and FaceTime/Find My helpers were archived through supported app controls.
   Native agent handles disappeared after the host reload; app status and final
   reports were checked before archival. Unique uncommitted/rejected work and
   evidence remain protected; no session/transcript deletion is supported.
+- New active Muse/max work: Noether `01a0a8d7-b079-7dc2-961d-ff7efd9c6400`
+  owns the isolated `findmy-receive-observer-20260915` prototype. Its first
+  receive wrapper could trigger IDS re-registration on cache miss and was
+  rejected. Cache-only revisions, allocation/error bounds and transport ACK/
+  normal-consumer ownership remain under review; no native compile/live test.
+  Rawls `01a0a8f2-4c11-76f0-bff2-b9ad08685326` proved the missing incoming
+  archive lane and is revising a two-file local eligibility prototype in
+  `incoming-archive-origin-20260915`. Neither prototype is integrated or enabled.
 - Parent rejected both first sidecar patches as stale-base duplicate fixes;
   current main already handles empty People handles and exact call-timeout
   ownership. Agents were redirected to current-source native/tester boundaries.
@@ -171,6 +190,7 @@ Older qualification rows are preserved in the [September 15 archive](cloud_sync_
 | History read | Fresh Canary visibly restores chats/messages. | Terminal ingestion, actionable retained repair or explained unavailability, repeat/incremental/restart proof. |
 | Media/documents/reactions read | Earlier representative live results; current materialization/filtering implemented. | Current Pixel photos, video, transcript GIFs, documents and incremental updates. GIFs need not appear in profile media. |
 | Direct writes | Fresh exact-source Windows parent send, edit, unsend and new-process no-submit replay, plus earlier reaction and image protocol results. | Ordinary Pixel composition, restart recovery, group/media cases and independent client display. |
+| Incoming/mirrored archival | Local receive persistence works; no V2 automatic archive producer exists. | Separate durable received origin, archive identity/deduplication, protected create/readback and independent-client proof. |
 | Groups | Restored-group binding implemented/tested. | Approved two-recipient text, attachments, reactions and supported mutations. No personal group substitution. |
 | Edits/deletes | Direct single-part Windows send/edit/unsend, exact CloudKit confirmation/local reflection, terminal retraction and zero-submit restart replay. | Pixel, groups, conflicts, independent display, supported tombstones and mid-flight recovery. |
 | Lifecycle | Identity/reset fences and bounded Android worker implemented/tested. | Current background/lock, reconnect, process death, token expiry and account repair. |
@@ -486,6 +506,8 @@ CloudKit readback or independent Apple-device display.
 4. Prove a repair for already-split group rows independently of the new routing
    prevention. Determine upload availability for Alpha-only history before
    calling its absence a download regression. Never merge by name or membership.
+   Add received-message archival as a distinct production lane; an empty local
+   journal is not proof of remote absence or a reason to forge send receipts.
 5. Close supported group/media/conflict and independent-device display gates,
    plus normal Profile/public writer readiness. Keep current read direction,
    receipt integrity, carrier exclusions and retained-data safety unchanged.

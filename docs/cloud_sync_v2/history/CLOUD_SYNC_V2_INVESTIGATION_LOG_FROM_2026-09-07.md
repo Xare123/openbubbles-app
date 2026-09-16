@@ -5701,3 +5701,34 @@ Historical tests do not establish current-device behavior.
   binding still pins local row ID and protected source, so this finding alone
   is not a safe reparent/merge operation. A resumed helper turn was empty and
   was not counted as a completed independent review.
+
+### September 16 incoming-archive gap and structural group proof
+
+- The production local group-binding validator passes on canonical saved rows
+  Canary695 and Windows664 at generation1. Live Canary701 captures a provisional
+  route and fails the restored-parent gate. This opens no native protected blob
+  and authorizes no write. Source captures stayed hash-identical; no rows moved.
+- Parent source review plus Rawls' call-graph audit establishes that V2 drains
+  only locally sent, positive-receipt intents. Genuine incoming and own-device
+  mirrored messages persist locally but have no V2 archive producer. Legacy's
+  all-unsynced upload is correctly disabled under V2 ownership. This is a
+  production capability gap, separate from missing chat projection. The older
+  27 Alpha GUIDs were not searched in all protected raw CloudKit records, so
+  canonical-table absence remains weaker than remote absence.
+- Added INCOMING_ARCHIVE_DESIGN.md and corrected the user guide's coverage.
+  Incoming origins must not fake outgoing receipts or invoke IDS sends. Exact
+  archive record identity/deduplication, durable intent, source, protected chat
+  binding, create/readback and independent Apple-client proof remain required.
+  A two-file eligibility prototype is isolated and in review, not installed.
+- Find My's initial new observer wrapper called network-capable receive_message;
+  cache miss can query directory keys and re-register on6005. Parent rejected
+  its read-only claim. The worker changed to cache-only lookup/decrypt with fixed
+  outcomes; caps, errors, successful decrypt purity and actual delivery ownership
+  still require review/qualification. APS has a separate auto-ACK receiver, so
+  an independent broadcast subscription alone is not a durability proof.
+- Windows findmy.plist exists (27,135bytes, last modified July31); keychain and
+  hardware files exist too. File presence alone does not prove fmfd initialized.
+  Native make_findmy requires that state; normal recv_wait dispatches to fmfd
+  when present. Background-following APIs are used by conversation location
+  widgets, while the People page uses a separate foreground client. Bootstrap
+  differences are being checked before adding more listener infrastructure.
