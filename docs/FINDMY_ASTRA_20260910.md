@@ -220,3 +220,8 @@ confirmed share state stands. Proven: roster retrieval, ABI match, and the
 report-to-verdict chain. Open: why no coordinates flow for a confirmed
 share (relationship key delivery is the standing research lead), same for
 Devices, and Items inventory stays gated on side-effect review.
+
+Follow-up: the lane report now also carries the native secure-locations
+capability flags (secure and shallow/live counts) through probe aggregates,
+unit allowlist, and qualifier schema, uninterpreted, to correlate against
+coordinates presence on the next live run.
