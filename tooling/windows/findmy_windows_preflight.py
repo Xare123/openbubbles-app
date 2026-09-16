@@ -19,7 +19,7 @@ SOURCE_PINS = {
     "lib/src/rust/frb_generated.dart": "d894da7c6ed48a8cbdd094c4d14467a548e911fe5f4863c39804b80252362cb3",
     "lib/src/rust/frb_generated.io.dart": "a2abbca84d7d4c28ddfd505cb6635aa28ee75fbca1a3c804058322681f07eb29",
     "lib/src/rust/api/api.dart": "b28e0767bd5cdd750fc7eea7ffc7a24fa5e16827ed842789c473bdc7f0d09088",
-    "lib/cloud_sync_v2_windows_findmy_probe.dart": "5b0084258807a6d273a211223b57b7bc5488213ff5023819e2b28c0fec2605e4",
+    "lib/cloud_sync_v2_windows_findmy_probe.dart": "ee5d2a4c43292ee854fd981d764899444053735fc4b8f70202b167e295c4a34a",
 }
 
 
