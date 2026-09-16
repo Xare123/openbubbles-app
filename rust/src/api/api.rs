@@ -587,6 +587,155 @@ pub async fn cloud_sync_stage_received_archive_seed(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloudSyncReceivedRecordDisposition {
+    Equivalent,
+    NeedsProjection,
+    ConflictingIdentity,
+    Absent,
+    Unresolved,
+}
+
+/// A read observation, never a create permit or IDS receipt. For a found
+/// record the exact raw version is retained for normal semantic projection;
+/// unknown or unsupported data must never authorize a replacement create.
+pub struct CloudSyncReceivedRecordObservation {
+    pub disposition: CloudSyncReceivedRecordDisposition,
+    pub message_guid_hash: String,
+    pub source_sha256: String,
+    pub logical_entity_key_hash: String,
+    pub server_record_id_hash: String,
+    pub etag_hash: Option<String>,
+    pub protected_raw_record_reference: Option<String>,
+    pub protected_raw_record_lease_reference: Option<String>,
+    pub raw_generation: u64,
+}
+
+/// Exact native read for a materialized received intent. Parent lookup, PCS,
+/// identity and message lookup use one pinned restored-read permit. No warmup,
+/// outgoing receipt invention, save/delete, or existing decoder fallback.
+#[allow(clippy::too_many_arguments)]
+pub async fn cloud_sync_inspect_received_archive(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    native_writer_pause_token: u64,
+    storage_directory: String,
+    expected_auth: CloudSyncNativeAuthMetadata,
+    received_source: CloudSyncNativeReceivedArchiveSourceBinding,
+    chat_generation: u64,
+    message_generation: u64,
+    chat_logical_entity_key_hash: String,
+    chat_source: super::cloud_sync_chat_identity::CloudSyncChatIdentitySourceInput,
+) -> anyhow::Result<CloudSyncReceivedRecordObservation> {
+    use crate::cloud_sync_canonical_dto::{CloudCanonicalEntityKind, CloudCanonicalPayload};
+    use crate::cloud_sync_transient_bridge::{cloud_sync_decode_transient_record_cached_only,
+        CloudTransientDecodeOutcome, bind_envelope};
+    use crate::cloud_sync_native_fetch::{cloud_sync_unprotect_raw_envelope,
+        CloudNativeProtectionScope, CloudNativeStream};
+    use rustpush::cloud_messages::CloudMessageRecordVersionLookup;
+    if message_generation == 0 || chat_generation == 0 ||
+        received_source.account_fingerprint != expected_auth.account_fingerprint ||
+        received_source.protected_store_identity != expected_auth.protected_store_identity ||
+        !is_cloud_sync_keyed_hash(&chat_logical_entity_key_hash) {
+        return Err(anyhow!("cloud_sync_received_archive_identity_changed"));
+    }
+    let permit = acquire_cloudkit_read_authentication(native_writer_pause_token)
+        .map_err(|_| anyhow!("cloud_sync_received_archive_read_permit"))?;
+    let before = cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone()).await?;
+    cloud_sync_require_received_auth(&expected_auth, &before)?;
+    let source_stage = crate::cloud_sync_received_source_stage::NativeReceivedArchiveStage {
+        message_guid_hash:received_source.message_guid_hash.clone(), source_sha256:received_source.source_sha256.clone(),
+        protected_reference:received_source.protected_reference,lease_reference:received_source.lease_reference,
+        payload_sha256:received_source.payload_sha256,payload_length:received_source.payload_length,
+    };
+    let received = crate::cloud_sync_received_source_stage::open_received_archive_source(
+        PathBuf::from(&storage_directory),before.account_fingerprint.clone(),&source_stage)
+        .map_err(|_|anyhow!("cloud_sync_received_archive_protected_source_changed"))?;
+    let request = cloud_sync_attachment_group_decode_request(&storage_directory,&before,chat_generation,&chat_source)
+        .map_err(|_|anyhow!("cloud_sync_received_archive_parent_not_ready"))?;
+    let decoded = match cloud_sync_decode_transient_record_cached_only(cloud_messages_client,&permit,request.clone()).await {
+        CloudTransientDecodeOutcome::Ready(value)=>value,
+        _=>return Err(anyhow!("cloud_sync_received_archive_parent_not_ready")),
+    };
+    if decoded.envelope().logical_entity_key_hash().value()!=chat_logical_entity_key_hash ||
+        decoded.envelope().generation()!=chat_generation {
+        return Err(anyhow!("cloud_sync_received_archive_parent_changed"));
+    }
+    let Some(CloudCanonicalPayload::Chat(chat))=decoded.payload() else {
+        return Err(anyhow!("cloud_sync_received_archive_parent_not_ready"));
+    };
+    let expected = crate::cloud_sync_received_projection::project_received_plain_text(&received,chat)
+        .map_err(|_|anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    let container=cloud_messages_client.get_cached_container_for_read_authentication(&permit).await
+        .map_err(|_|anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+    let record_name=crate::cloud_sync_outbound::deterministic_message_record_name(received.guid(),&container.user_id)
+        .map_err(|_|anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+    let hasher=crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.clone())
+        .map_err(|_|anyhow!("cloud_sync_received_archive_identity_unavailable"))?;
+    let logical=hasher.canonical_entity_key_hash(CloudCanonicalEntityKind::Message,received.guid())
+        .map_err(|_|anyhow!("cloud_sync_received_archive_source_changed"))?.value().to_owned();
+    let server_hash=hasher.server_record_id_hash(&record_name);
+    let mut result=CloudSyncReceivedRecordObservation {
+        disposition:CloudSyncReceivedRecordDisposition::Unresolved,
+        message_guid_hash:source_stage.message_guid_hash.clone(),source_sha256:source_stage.source_sha256.clone(),
+        logical_entity_key_hash:logical,server_record_id_hash:server_hash,
+        etag_hash:None,protected_raw_record_reference:None,protected_raw_record_lease_reference:None,
+        raw_generation:message_generation,
+    };
+    let mut raw_found=None;
+    match cloud_messages_client.lookup_received_message_record(&permit,&record_name).await {
+        Ok(CloudMessageRecordVersionLookup::NotFound)=>result.disposition=CloudSyncReceivedRecordDisposition::Absent,
+        Ok(CloudMessageRecordVersionLookup::Found(record,receipt))=>{
+            if receipt.record_name()!=record_name {return Err(anyhow!("cloud_sync_received_archive_record_mismatch"))};
+            let raw=record.get_raw_record().map_err(|_|anyhow!("cloud_sync_received_archive_record_mismatch"))?;
+            if raw.etag.as_deref()!=Some(receipt.etag()) {return Err(anyhow!("cloud_sync_received_archive_record_mismatch"))};
+            result.etag_hash=Some(hasher.canonical_etag_hash(receipt.etag())
+                .map_err(|_|anyhow!("cloud_sync_received_archive_record_mismatch"))?.value().to_owned());
+            result.disposition=match cloud_messages_client.inspect_received_message_record_read_only(&permit,&record).await {
+                Ok(view)=>{
+                    use crate::cloud_sync_received_record_match::ReceivedRecordMatchVerdict as Verdict;
+                    let raw_protos=crate::cloud_sync_received_raw_match::ReceivedRawProtos {
+                        msg_proto:&view.msg_proto,msg_proto_2:view.msg_proto_2.as_deref(),
+                        msg_proto_3:view.msg_proto_3.as_deref(),msg_proto_4:view.msg_proto_4.as_deref(),
+                    };
+                    match crate::cloud_sync_received_raw_match::compare_received_raw(&expected,&view.message,&raw_protos) {
+                        Ok(Verdict::EquivalentSupportedPlainText)=>CloudSyncReceivedRecordDisposition::Equivalent,
+                        Ok(Verdict::ConflictingCoreIdentity)=>CloudSyncReceivedRecordDisposition::ConflictingIdentity,
+                        _=>CloudSyncReceivedRecordDisposition::NeedsProjection,
+                    }
+                },
+                Err(_)=>CloudSyncReceivedRecordDisposition::NeedsProjection,
+            };
+            raw_found=Some((raw.clone(),record.original_record_wire()
+                .ok_or_else(||anyhow!("cloud_sync_received_archive_record_mismatch"))?.to_vec()));
+        },
+        _=>{}, // every error/uncertainty remains unresolved, never absent
+    }
+    // Even NotFound is discarded when identity, container, source or parent
+    // moved while awaiting network. No warmup or new session substitution.
+    let after=cloud_sync_capture_auth_snapshot(cloud_messages_client,storage_directory.clone()).await?;
+    cloud_sync_require_received_auth(&expected_auth,&after)?;
+    let after_container=cloud_messages_client.get_cached_container_for_read_authentication(&permit).await
+        .map_err(|_|anyhow!("cloud_sync_received_archive_identity_changed"))?;
+    if !Arc::ptr_eq(&container,&after_container) {return Err(anyhow!("cloud_sync_received_archive_identity_changed"))};
+    crate::cloud_sync_received_source_stage::open_received_archive_source(PathBuf::from(&storage_directory),
+        after.account_fingerprint.clone(),&source_stage)
+        .map_err(|_|anyhow!("cloud_sync_received_archive_protected_source_changed"))?;
+    let scope=CloudNativeProtectionScope::new(after.account_fingerprint.clone(),CloudNativeStream::Chats)
+        .map_err(|_|anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    let parent=cloud_sync_unprotect_raw_envelope(PathBuf::from(&storage_directory),&scope,
+        CloudNativeStream::Chats,chat_generation,&chat_source.protected_raw_envelope_reference)
+        .map_err(|_|anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    bind_envelope(&request,&parent,&hasher).map_err(|_|anyhow!("cloud_sync_received_archive_parent_changed"))?;
+    if let Some((raw,original_wire))=raw_found {
+        let retained=crate::cloud_sync_native_fetch::cloud_sync_stage_protected_received_record_readback(
+            PathBuf::from(storage_directory),after.account_fingerprint,message_generation,&raw,&original_wire)
+            .map_err(|_|anyhow!("cloud_sync_received_archive_readback_stage_failed"))?;
+        result.protected_raw_record_reference=Some(retained.protected_raw_record_reference);
+        result.protected_raw_record_lease_reference=Some(retained.lease_reference);
+    }
+    Ok(result)
+}
+
 /// Content-free context for making one successful native SendJob completion
 /// crash-recoverable before SendConfirm is emitted.
 #[derive(Clone)]

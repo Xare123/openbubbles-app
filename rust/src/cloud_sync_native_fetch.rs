@@ -4663,6 +4663,28 @@ pub(crate) fn cloud_sync_stage_protected_message_record_readback(
     generation: u64,
     record: &rustpush::cloudkit_proto::Record,
 ) -> Result<CloudNativeProtectedRecordReadback, CloudNativeFetchFailure> {
+    stage_message_record_readback(storage_directory,account_fingerprint,generation,record,&record.encode_to_vec())
+}
+
+/// Retains the original response Record bytes for received-archive evidence.
+/// Caller validated wire before lossy decoding; never replace it by reencoding.
+pub(crate) fn cloud_sync_stage_protected_received_record_readback(
+    storage_directory:PathBuf,account_fingerprint:String,generation:u64,
+    record:&rustpush::cloudkit_proto::Record,original_wire:&[u8],
+) -> Result<CloudNativeProtectedRecordReadback,CloudNativeFetchFailure> {
+    let mismatch=||CloudNativeFetchFailure::new(CloudNativeFailureCategory::MalformedRecord,
+        CloudNativeSafeCode::MalformedResponse,None);
+    if original_wire.is_empty() || original_wire.len()>MAX_RAW_RECORD_BYTES ||
+        rustpush::cloudkit_proto::Record::decode(original_wire).map_err(|_|mismatch())? != *record {
+        return Err(mismatch());
+    }
+    stage_message_record_readback(storage_directory,account_fingerprint,generation,record,original_wire)
+}
+
+fn stage_message_record_readback(
+    storage_directory:PathBuf, account_fingerprint:String,generation:u64,
+    record:&rustpush::cloudkit_proto::Record, raw:&[u8],
+) -> Result<CloudNativeProtectedRecordReadback,CloudNativeFetchFailure> {
     if generation == 0 {
         return Err(CloudNativeFetchFailure::new(
             CloudNativeFailureCategory::LocalStorage,
@@ -4706,7 +4728,6 @@ pub(crate) fn cloud_sync_stage_protected_message_record_readback(
                 None,
             )
         })?;
-    let raw = record.encode_to_vec();
     if raw.is_empty() || raw.len() > MAX_RAW_RECORD_BYTES {
         return Err(CloudNativeFetchFailure::new(
             CloudNativeFailureCategory::MalformedRecord,
@@ -4732,7 +4753,7 @@ pub(crate) fn cloud_sync_stage_protected_message_record_readback(
                 .and_then(|date| date.time),
             permission: record.permission,
         }),
-        encrypted_record: Some(raw.clone()),
+        encrypted_record: Some(raw.to_vec()),
         tombstone_payload: None,
         kind: CloudMessageRecordKind::EncryptedUpsert,
     };
