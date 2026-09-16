@@ -37,6 +37,14 @@ on:
         required: true
         default: 69bce2aa22cd1505d3c404d09b5a035a653ffe9e
         type: string
+      source_branch:
+        description: Trusted fork branch whose current head must equal source_ref
+        required: true
+        default: agent/cloudkit-v2-update-seam
+        type: choice
+        options:
+          - agent/cloudkit-v2-update-seam
+          - agent/facetime-findmy-independent-20260916
       flavor:
         description: Non-production Android flavor to build
         required: true
@@ -103,7 +111,7 @@ env:
   AUTOMATIC_UPLOADS: ${{ inputs.automatic_uploads || false }}
   RUNNER_LANE: ${{ inputs.runner_lane || 'primary' }}
   SOURCE_REF: ${{ inputs.source_ref || github.sha }}
-  TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-update-seam
+  TRUSTED_SOURCE_BRANCH: ${{ inputs.source_branch || 'agent/cloudkit-v2-update-seam' }}
 
 jobs:
   create-runner:
@@ -178,6 +186,9 @@ jobs:
             exit 1
           fi
 
+      - name: Check out runner bootstrap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
@@ -186,9 +197,6 @@ jobs:
 
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
-
-      - name: Check out runner bootstrap
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Create ephemeral runner
         id: create
