@@ -196,3 +196,12 @@ src/findmy/diagnostics.rs and the approved single-pass observer exists nowhere
 in its tree, with wide FRB surface divergence. No qualified bundle exists
 locally. Returned to the CloudKit task with evidence for re-qualification or
 bundle restore; live probe awaits the next granted window.
+
+September 16 lane runtime: hosted lane workflow built pinned source 5ecd7abe8
+(run 35148810129, all steps green) with the observer and matching bindings;
+bundle provenance verified (ARM64, read-only, findmy diagnostics compiled).
+Imported and signed through the established local importer into the dedicated
+lane path facetime-findmy-lane/native-test-host (receipt-bound, established
+cert thumbprint, signature Valid; shared runtime untouched). The stock runner
+still pins the obsolete DLL hash, so a lane pin update follows before any
+live run. No credential or profile use yet; fresh window to be requested.
