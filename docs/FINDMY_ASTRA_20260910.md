@@ -187,3 +187,12 @@ verified Devices inventory, and AirTags/Items inventory (Items init stays
 off-limits as a read-only probe for its CloudKit side effects). Windows live
 probe window requested from the CloudKit task; no credential/profile use
 without its ack. Do not reconfigure sharing from probe output.
+
+September 16 provenance verdict: the granted live window was released unused
+when the runner guard rejected the installed DLL (140ab5c2, source b9c567f89)
+against the qualified pin (7e3eab). In-lane source comparison proved the
+installed line unqualified for this probe ABI: its rustpush 6ca98b8 deletes
+src/findmy/diagnostics.rs and the approved single-pass observer exists nowhere
+in its tree, with wide FRB surface divergence. No qualified bundle exists
+locally. Returned to the CloudKit task with evidence for re-qualification or
+bundle restore; live probe awaits the next granted window.
