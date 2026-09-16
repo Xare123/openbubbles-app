@@ -78,4 +78,36 @@ class DartWorkerEngineLifetimeTest {
         assertTrue(idleChecks.isEmpty())
         assertEquals(first, current)
     }
+
+    @Test
+    fun `retiring UI engine waits for all replies and rejects new calls`() {
+        val ui = Any()
+        val reply = lifetime.acquire(ui)
+        var releases = 0
+        lifetime.retireWhenIdle(ui) { releases++ }
+        assertEquals(0, releases)
+        try {
+            lifetime.acquire(ui)
+            throw AssertionError("retired engine admitted work")
+        } catch (_: IllegalStateException) { }
+        reply()
+        reply()
+        lifetime.retireWhenIdle(ui) { releases++ }
+        assertEquals(1, releases)
+        assertTrue(idleChecks.isEmpty())
+        assertEquals(first, current)
+        lifetime.forgetRetired(ui)
+    }
+
+    @Test
+    fun `idle UI retirement is immediate and does not touch another instance`() {
+        val old = Any()
+        val replacement = Any()
+        var released: Any? = null
+        lifetime.retireWhenIdle(old) { released = old }
+        assertTrue(released === old)
+        lifetime.acquire(replacement)()
+        assertTrue(idleChecks.isEmpty())
+        lifetime.forgetRetired(old)
+    }
 }

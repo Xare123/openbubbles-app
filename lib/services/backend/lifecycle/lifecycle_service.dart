@@ -5,6 +5,8 @@ import 'dart:ui' hide window;
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
+import 'engine_exit_coordinator.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/foundation.dart';
@@ -33,7 +35,45 @@ class LifecycleService extends GetxService with WidgetsBindingObserver {
               IsolateNameServer.lookupPortByName('bg_isolate') != null);
 
   bool isDead = false;
+  bool _nativeHostDetached = false;
   Timer? closeTimer;
+  late final _engineExit = EngineExitCoordinator(
+    canExit: () => Platform.isAndroid && isUiThread && _nativeHostDetached && isDead &&
+        !inq.hasPendingWork && !outq.hasPendingWork,
+    drain: CloudKitOperationInterlock.drainForEngineExit,
+    resumeAdmission: CloudKitOperationInterlock.resumeEngineAdmission,
+    releaseEngine: () async {
+      await mcs.invokeMethod('engine-done');
+    },
+    onError: (_) => Logger.warn('Engine exit deferred; protected work retained'),
+    onStalled: () => Logger.warn(CloudKitOperationInterlock.hasPoisonedEngineWork
+        ? 'Engine retained: native outcome uncertain; process restart required'
+        : 'Engine exit waiting for protected work; no forced release'),
+  );
+
+  Future<void> requestEngineExit() => _engineExit.request();
+
+  Future<T> retainEngineUntil<T>(Future<T> Function() operation) {
+    if (!Platform.isAndroid || !isUiThread) return operation();
+    if (_nativeHostDetached) {
+      throw const CloudKitOperationInterlockException('cloudkit_interlock_busy');
+    }
+    return _engineExit.retain(operation);
+  }
+
+  void cancelEngineExit() {
+    if (!isUiThread || _nativeHostDetached) return;
+    closeTimer?.cancel();
+    closeTimer = null;
+    _engineExit.cancel();
+  }
+
+  void onNativeHostDetached() {
+    if (!isUiThread) return;
+    _nativeHostDetached = true;
+    isDead = true;
+    unawaited(requestEngineExit());
+  }
 
   AppLifecycleState? get currentState => WidgetsBinding.instance.lifecycleState;
 
@@ -138,14 +178,16 @@ class LifecycleService extends GetxService with WidgetsBindingObserver {
     }
     if (state == AppLifecycleState.detached && !(kIsDesktop || kIsWeb)) {
       isDead = true;
-      if (!outq.isProcessing.value && !inq.isProcessing.value) {
-        Logger.info("Engine exit");
-        await mcs.invokeMethod("engine-done");
-      }
+      unawaited(requestEngineExit());
     }
   }
 
   void open() {
+    // New Activity hosts get new engines; a detached engine is never re-hosted.
+    // Late resume events must not reopen its admission.
+    if (_nativeHostDetached) return;
+    isDead = false;
+    cancelEngineExit();
     if (!kIsDesktop || wasActiveAliveBefore != false) {
       cm.setActiveToAlive();
     }

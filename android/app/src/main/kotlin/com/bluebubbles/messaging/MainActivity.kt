@@ -6,9 +6,12 @@ import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.appcompat.app.AppCompatDelegate
 import com.bluebubbles.messaging.services.backend_ui_interop.MethodCallHandler
+import com.bluebubbles.messaging.services.backend_ui_interop.DartWorker
 import com.bluebubbles.messaging.services.foreground.ForegroundServiceBroadcastReceiver
 import com.bluebubbles.messaging.Constants
 import com.bluebubbles.messaging.services.extension.KeyboardViewFactory
@@ -20,6 +23,7 @@ import com.bluebubbles.messaging.services.system.EnableBTHandler
 import com.bluebubbles.messaging.services.system.EnableBtContract
 import com.rmawatson.flutterisolate.FlutterIsolatePlugin
 import io.flutter.embedding.android.FlutterFragmentActivity
+import io.flutter.embedding.android.FlutterFragment
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.FileInputStream
@@ -31,6 +35,29 @@ class MainActivity : FlutterFragmentActivity(), ComponentCallbacks2 {
     }
 
     private var activityEngine: FlutterEngine? = null
+    private var activityChannel: MethodChannel? = null
+    private var hostDetached = false
+
+    override fun createFlutterFragment(): FlutterFragment {
+        // Preserve every SDK builder option, but make native destruction wait
+        // for the Dart drain handshake, including the framework detach path.
+        val configured = super.createFlutterFragment()
+        return CloudKitOwnedFlutterFragment().apply { arguments = configured.arguments }
+    }
+
+    private fun requestDartEngineExit() {
+        activityChannel?.invokeMethod("engine-host-detached", null, object : MethodChannel.Result {
+            override fun success(result: Any?) = Unit
+            override fun error(code: String, message: String?, details: Any?) {
+                Log.w("BBEngine", "Engine exit deferred: Dart drain unavailable")
+            }
+            override fun notImplemented() {
+                // Bootstrap can still be in progress. The ready handler below
+                // repeats the request once Dart has installed its channel.
+                Log.i("BBEngine", "Engine exit awaiting Dart initialization")
+            }
+        })
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -46,19 +73,39 @@ class MainActivity : FlutterFragmentActivity(), ComponentCallbacks2 {
         activityEngine = flutterEngine
         engine = flutterEngine
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, Constants.methodChannel).setMethodCallHandler { call, result ->
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, Constants.methodChannel)
+        activityChannel = channel
+        var releaseRequested = false
+        channel.setMethodCallHandler { call, result ->
             if (call.method == "engine-done") {
-                Log.i("BBEngine", "Destroyed");
-                // this must be here in case another engine has been spawned in the meantime
-                if (engine === flutterEngine) {
-                    engine_ready = false
-                    engine = null
-                    APNService.onMainEngineUnavailable()
+                // Ignore a stale lifecycle request while its UI host is alive.
+                // Only the exact channel's engine can be retired.
+                if (!hostDetached || releaseRequested) {
+                    result.success(false)
+                    return@setMethodCallHandler
                 }
-                if (activityEngine === flutterEngine) {
-                    activityEngine = null
+                releaseRequested = true
+                result.success(true) // accepted, not a claim of destruction
+                DartWorker.retireMainEngineWhenIdle(flutterEngine) {
+                    // Reply on the still-live messenger before releasing it.
+                    Handler(Looper.getMainLooper()).post {
+                        try {
+                            flutterEngine.destroy()
+                            DartWorker.forgetRetiredMainEngine(flutterEngine)
+                            Log.i("BBEngine", "Detached engine drained and destroyed")
+                        } catch (_: Exception) {
+                            // No timeout takeover or false success on partial teardown.
+                            Log.w("BBEngine", "Engine destruction incomplete; retained for process restart")
+                        }
+                    }
                 }
-                flutterEngine.destroy()
+                return@setMethodCallHandler
+            }
+            if (call.method == "ready" && hostDetached) {
+                // An old bootstrapping engine must not mark its successor ready.
+                result.success(null)
+                requestDartEngineExit()
+                return@setMethodCallHandler
             }
             MethodCallHandler().methodCallHandler(call, result, this)
         }
@@ -68,6 +115,7 @@ class MainActivity : FlutterFragmentActivity(), ComponentCallbacks2 {
 
     override fun onDestroy() {
         Log.d(Constants.logTag, "BlueBubbles MainActivity is being destroyed")
+        hostDetached = true
         if (engine === activityEngine) {
             engine_ready = false
             engine = null
@@ -103,6 +151,8 @@ class MainActivity : FlutterFragmentActivity(), ComponentCallbacks2 {
         } catch (e: Exception) {
             Log.d(Constants.logTag, "Caught unhandled Exception when destroying MainActivity")
             Log.e(Constants.logTag, e.stackTraceToString())
+        } finally {
+            requestDartEngineExit()
         }
     }
 
@@ -146,4 +196,9 @@ class MainActivity : FlutterFragmentActivity(), ComponentCallbacks2 {
             }
         }
     }
+}
+
+/** Public no-arg Fragment so Android can restore it after configuration changes. */
+class CloudKitOwnedFlutterFragment : FlutterFragment() {
+    override fun shouldDestroyEngineWithHost(): Boolean = false
 }

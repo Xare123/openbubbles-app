@@ -14,6 +14,7 @@ void main() {
   late InMemoryCloudSyncStore fenceStore;
 
   setUp(() {
+    CloudKitOperationInterlock.resumeEngineAdmission();
     temporaryDirectory = Directory.systemTemp.createTempSync(
       'cloudkit-interlock-',
     );
@@ -26,6 +27,7 @@ void main() {
 
   tearDown(() async {
     await CloudKitOperationInterlock.debugResetPoisonedLocksForTesting();
+    CloudKitOperationInterlock.resumeEngineAdmission();
     temporaryDirectory.deleteSync(recursive: true);
   });
 
@@ -76,6 +78,75 @@ void main() {
       expect(isolateOutcome, 'cloudkit_interlock_busy');
     },
   );
+
+  test('engine drain closes admission for every protected operation kind', () async {
+    await CloudKitOperationInterlock.drainForEngineExit();
+    var entered = false;
+    for (final kind in CloudKitOperationKind.values) {
+      await expectLater(
+        interlock.runExclusive(kind: kind, action: () async { entered = true; }),
+        throwsA(isA<CloudKitOperationInterlockException>()
+            .having((e) => e.safeCode, 'code', 'cloudkit_interlock_busy')),
+      );
+    }
+    expect(entered, isFalse);
+    CloudKitOperationInterlock.resumeEngineAdmission();
+    await interlock.runExclusive(
+      kind: CloudKitOperationKind.v2SemanticRead,
+      action: () async { entered = true; },
+    );
+    expect(entered, isTrue);
+  });
+
+  test('engine drain joins complete lock release but permits owned nested cleanup',
+      () async {
+    final entered = Completer<void>();
+    final finish = Completer<void>();
+    var nested = false;
+    var drained = false;
+    final operation = interlock.runExclusive(
+      kind: CloudKitOperationKind.v2SemanticRead,
+      action: () async {
+        entered.complete();
+        await finish.future;
+        await interlock.runExclusive(
+          kind: CloudKitOperationKind.v2SemanticRead,
+          action: () async { nested = true; },
+        );
+      },
+    );
+    await entered.future;
+    final drain = CloudKitOperationInterlock.drainForEngineExit()
+        .then((_) { drained = true; });
+    await Future<void>.delayed(Duration.zero);
+    expect(drained, isFalse);
+    expect(await _attemptIsolateOperation(temporaryDirectory.path),
+        'cloudkit_interlock_busy');
+    finish.complete();
+    await operation;
+    await drain;
+    expect(nested, isTrue);
+    // A different isolate proves that the process-wide name was released,
+    // not merely that an in-memory activity counter reached zero.
+    expect(await _attemptIsolateOperation(temporaryDirectory.path), 'entered');
+  });
+
+  test('poisoned native work never counts as drained or cleared on resume', () async {
+    await interlock.runExclusive(
+      kind: CloudKitOperationKind.v2SemanticRead,
+      action: () async { interlock.poisonUntilProcessRestart(); },
+    );
+    var drained = false;
+    final drain = CloudKitOperationInterlock.drainForEngineExit()
+        .then((_) { drained = true; });
+    CloudKitOperationInterlock.resumeEngineAdmission();
+    await Future<void>.delayed(Duration.zero);
+    expect(drained, isFalse);
+    expect(await _attemptIsolateOperation(temporaryDirectory.path),
+        'cloudkit_interlock_busy');
+    await CloudKitOperationInterlock.debugResetPoisonedLocksForTesting();
+    await drain;
+  });
 
   test('active operation blocks another isolate until release', () async {
     final entered = Completer<void>();

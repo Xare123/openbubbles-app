@@ -59,6 +59,9 @@ class MethodChannelService extends GetxService {
     // Future.value(true) will have the engine stop trying to call the method
     
     switch (call.method) {
+      case 'engine-host-detached':
+        ls.onNativeHostDetached();
+        return true;
       case "SMSMsg":
         try {
           if (!ss.settings.isSmsRouter.value) return true;

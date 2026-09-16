@@ -14,9 +14,11 @@ class _TestQueue extends Queue {
   int maxActive = 0;
   bool failPreparation = false;
   bool fail = false;
+  Completer<void>? preparation;
 
   @override
   Future<dynamic> prepItem(QueueItem item) async {
+    await preparation?.future;
     if (failPreparation) throw StateError('expected preparation failure');
   }
 
@@ -66,5 +68,19 @@ void main() {
     expect(queue.items, isEmpty);
     expect(queue.active, 0);
     expect(queue.isProcessing.value, isFalse);
+    expect(queue.hasPendingWork, isFalse);
+  });
+
+  test('asynchronous preparation counts as owned work before a runner exists', () async {
+    final queue = _TestQueue()..preparation = Completer<void>();
+    final finished = Completer<void>();
+    final enqueue = queue.queue(_TestItem(completer: finished));
+    expect(queue.items, isEmpty);
+    expect(queue.isProcessing.value, isFalse);
+    expect(queue.hasPendingWork, isTrue);
+    queue.preparation!.complete();
+    await enqueue;
+    await finished.future;
+    expect(queue.hasPendingWork, isFalse);
   });
 }

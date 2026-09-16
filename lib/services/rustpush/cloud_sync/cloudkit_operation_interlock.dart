@@ -96,6 +96,32 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
   static final List<RandomAccessFile> _poisonedHandles = <RandomAccessFile>[];
   static final List<_ProcessIsolateReservation> _poisonedIsolateReservations =
       <_ProcessIsolateReservation>[];
+  static bool _engineExitRequested = false;
+  static Completer<void>? _engineDrain;
+  static bool get hasPoisonedEngineWork => _poisonedPaths.isNotEmpty;
+
+  /// Close this isolate's admission before waiting for every owned lock to be
+  /// released. Native engine destruction must await this, not a lease timeout.
+  /// A poisoned operation deliberately keeps the barrier pending until process
+  /// restart. This never removes another isolate's name or lease.
+  static Future<void> drainForEngineExit() {
+    _engineExitRequested = true;
+    if (_locallyReservedPaths.isEmpty) return Future<void>.value();
+    return (_engineDrain ??= Completer<void>()).future;
+  }
+
+  /// A resumed UI or new queued work can cancel its own planned engine exit.
+  /// Poisoned locks and any operation already running remain untouched.
+  static void resumeEngineAdmission() {
+    _engineExitRequested = false;
+  }
+
+  static void _notifyEngineDrained() {
+    if (_locallyReservedPaths.isNotEmpty) return;
+    final drained = _engineDrain;
+    _engineDrain = null;
+    drained?.complete();
+  }
 
   final String _privateStorageDirectory;
   final CloudSyncStore _fenceStore;
@@ -182,6 +208,7 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
     }
     _locallyReservedPaths.removeAll(_poisonedPaths);
     _poisonedPaths.clear();
+    _notifyEngineDrained();
   }
 
   @override
@@ -209,7 +236,7 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
       return action();
     }
 
-    if (!_locallyReservedPaths.add(lockPath)) {
+    if (_engineExitRequested || !_locallyReservedPaths.add(lockPath)) {
       throw const CloudKitOperationInterlockException(
         'cloudkit_interlock_busy',
       );
@@ -326,6 +353,7 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
       }
       if (!retainedUntilRestart) {
         _locallyReservedPaths.remove(lockPath);
+        _notifyEngineDrained();
       }
     }
   }

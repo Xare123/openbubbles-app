@@ -2133,7 +2133,10 @@ class RustPushBackend implements BackendService {
   }
 
   @override
-  Future<Message?> unsend(Message msgObj, MessagePart part) async {
+  Future<Message?> unsend(Message msgObj, MessagePart part) =>
+      ls.retainEngineUntil(() => _unsendRetained(msgObj, part));
+
+  Future<Message?> _unsendRetained(Message msgObj, MessagePart part) async {
     var msg = await api.newMsg(
         sender: await msgObj.chat.target!.ensureHandle(),
         conversation: await msgObj.chat.target!.getConversationData(),
@@ -2172,7 +2175,10 @@ class RustPushBackend implements BackendService {
   }
 
   @override
-  Future<Message?> edit(Message msgObj, AttributedBody text, int part) async {
+  Future<Message?> edit(Message msgObj, AttributedBody text, int part) =>
+      ls.retainEngineUntil(() => _editRetained(msgObj, text, part));
+
+  Future<Message?> _editRetained(Message msgObj, AttributedBody text, int part) async {
     if (msgObj.dateScheduled != null) {
       msgObj.attributedBody[0] = text;
       msgObj.messageSummaryInfo = [];

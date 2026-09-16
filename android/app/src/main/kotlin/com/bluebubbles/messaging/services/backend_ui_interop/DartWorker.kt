@@ -54,6 +54,13 @@ class DartWorker(context: Context, workerParams: WorkerParameters): ListenableWo
                 idleEngine.destroy()
             },
         )
+        fun retireMainEngineWhenIdle(engine: FlutterEngine, ready: () -> Unit) {
+            engineLifetime.retireWhenIdle(engine, ready)
+        }
+
+        fun forgetRetiredMainEngine(engine: FlutterEngine) {
+            engineLifetime.forgetRetired(engine)
+        }
         /// Code idea taken from https://github.com/flutter/flutter/wiki/Experimental:-Reuse-FlutterEngine-across-screens
         private suspend fun initNewEngine(applicationContext: Context) {
             Log.d(Constants.logTag, "Ensuring Flutter is initialized before creating engine")

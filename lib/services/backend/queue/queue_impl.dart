@@ -10,8 +10,13 @@ abstract class Queue extends GetxService {
   RxBool isProcessing = false.obs;
   List<QueueItem> items = [];
   bool _runnerActive = false;
+  int _preparing = 0;
+  bool get hasPendingWork => _preparing > 0 || _runnerActive ||
+      isProcessing.value || items.isNotEmpty;
 
   Future<void> queue(QueueItem item, {bool prep = true}) async {
+    ls.cancelEngineExit();
+    _preparing++;
     try {
       if (prep) {
         final returned = await prepItem(item);
@@ -36,6 +41,9 @@ abstract class Queue extends GetxService {
         item.completer!.completeError(ex, stacktrace);
       }
       rethrow;
+    } finally {
+      _preparing--;
+      if (ls.isDead && !hasPendingWork) unawaited(ls.requestEngineExit());
     }
     _startRunner();
   }
@@ -86,7 +94,7 @@ abstract class Queue extends GetxService {
       if (ls.isDead && !inq.isProcessing.value && !outq.isProcessing.value) {
         Logger.info("Done! waiting a bit for any stragglers");
         ls.closeTimer = Timer(const Duration(seconds: 5), () {
-          mcs.invokeMethod("engine-done");
+          unawaited(ls.requestEngineExit());
         });
       }
     }
