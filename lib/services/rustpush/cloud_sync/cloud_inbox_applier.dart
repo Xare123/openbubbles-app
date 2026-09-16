@@ -1282,6 +1282,15 @@ class TransactionalCloudInboxApplier
       try {
         decoded = await _decoder.decode(entry);
       } on CloudSemanticOutOfScopeServiceDisposition catch (disposition) {
+        // This early return bypasses the ordinary upsert's post-decode fence.
+        // Recheck the live identity before changing even failure metadata.
+        if (_activeScopeRevalidator != null &&
+            !await _activeScopeRevalidator()) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.authorization,
+            safeCode: 'retained_projection_active_scope_changed',
+          );
+        }
         _recordDiagnostic(disposition.safeCode);
         if (reconsiderExcludedChatMetadata &&
             entry.lastFailure == CloudFailureCategory.outOfScopeService) {

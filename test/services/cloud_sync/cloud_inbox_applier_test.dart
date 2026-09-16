@@ -737,6 +737,51 @@ void main() {
     expect(store.transaction.entityApplyCount, 0);
   });
 
+  for (final previousFailure in [
+    CloudFailureCategory.unsupportedService,
+    CloudFailureCategory.malformedRecord,
+    CloudFailureCategory.dependency,
+  ]) {
+    test('retained carrier disposition revalidates active scope before metadata: '
+        '${previousFailure.name}', () async {
+      final inbox = retainedEntry(1).copyWith(lastFailure: previousFailure);
+      store.retainedEntries.add(inbox);
+      decoder.outOfScopeServices[inbox.change.changeId] =
+          CloudSemanticOutOfScopeService.smsFamily;
+      var revalidations = 0;
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+        activeScopeRevalidator: () async {
+          revalidations++;
+          return false;
+        },
+      );
+
+      await expectLater(
+        applier.reprojectRetainedUnprojected(
+          scope: scope,
+          generation: 3,
+          leaseFence: _testLeaseFence,
+          limit: 256,
+        ),
+        throwsA(isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'retained_projection_active_scope_changed',
+        )),
+      );
+      expect(revalidations, 1);
+      expect(store.retainedEntries.single.lastFailure, previousFailure);
+      expect(store.retainedEntries.single.attemptCount, inbox.attemptCount);
+      expect(store.retainedFailureRecordCount, 0);
+      expect(store.retainedTransactionCount, 0);
+      expect(store.transaction.entityApplyCount, 0);
+      expect(store.transaction.appliedChanges, isEmpty);
+    });
+  }
+
   test(
     'sequence-bounded sweep attempts each retained save once and skips tombstones',
     () async {
