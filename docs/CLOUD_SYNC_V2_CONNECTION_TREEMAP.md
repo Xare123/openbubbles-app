@@ -98,17 +98,19 @@ This checkpoint supersedes older qualification history. Current product source i
   under V2 ownership. Full two-way sync requires a separate received-archive
   origin, not weakening outgoing receipt checks. See the
   [implementation boundary](cloud_sync_v2/INCOMING_ARCHIVE_DESIGN.md).
-- **Device released.** App/native logs saved at 17:02:57 PDT and stable qualified
-  copies are retained under `device-evidence/20260915-ben-edit-unsend`,
-  `20260915-groomsmen-alpha-compare` and `20260915-groomsmen-windows-compare`.
-  Fresh USB inventory and wireless mDNS discovery are empty at22:55. The user
-  was asked once to reconnect. No install or phone test is running. Restart
-  permission was requested earlier but not received.
+- **Pixel reconnected wirelessly, read-only preflight complete.** September16
+  snapshot and both native log generations are saved under
+  `device-evidence/20260916-outbox-preflight`. Auth/UI report ready and sync idle,
+  but outbox is blocked: eight confirmed rows, one unknown outcome, ten ready
+  send intents (one has changed source). Latest worker still reports
+  `cloudkit_interlock_busy`. Database three-way SHA256 begins `2ec96eee37ef`;
+  source-copy inspection made no device changes. In-place restart/update was
+  requested; approval remains pending. No reset, resend or installation.
 - **Find My observer: isolated test-qualified, not integrated.** Rustpush
   `576f466ce33ea424ae1f617f750c48b0dea4d938` / app `fe9b9f306` passed hosted
   bridge run `35031241619` (685 app, 332 rustpush, 11 Anisette, 40 protector).
   This does not establish working People coordinates or Items.
-- **Resources:** no paid GCE launch without renewed approval; C:27.2GiB free.
+- **Resources:** no paid GCE launch without renewed approval; C:29.03GiB free.
   Five reviewed clean agent worktrees were removed with retained Git refs;
   manifest `build-evidence/agent-cleanup-20260915-profile/manifest.json` records
   406,196,141 logical bytes. Sessions/transcripts were retained because supported
@@ -152,14 +154,32 @@ Current work handles after resume:
   Native agent handles disappeared after the host reload; app status and final
   reports were checked before archival. Unique uncommitted/rejected work and
   evidence remain protected; no session/transcript deletion is supported.
-- New active Muse/max work: Noether `01a0a8d7-b079-7dc2-961d-ff7efd9c6400`
-  owns the isolated `findmy-receive-observer-20260915` prototype. Its first
-  receive wrapper could trigger IDS re-registration on cache miss and was
-  rejected. Cache-only revisions, allocation/error bounds and transport ACK/
-  normal-consumer ownership remain under review; no native compile/live test.
-  Rawls `01a0a8f2-4c11-76f0-bff2-b9ad08685326` proved the missing incoming
-  archive lane and is revising a two-file local eligibility prototype in
-  `incoming-archive-origin-20260915`. Neither prototype is integrated or enabled.
+- Noether `01a0a8d7-b079-7dc2-961d-ff7efd9c6400` and Rawls
+  `01a0a8f2-4c11-76f0-bff2-b9ad08685326` finished their bounded reviews and
+  were closed through native controls; subsequent lookup returns not_found.
+  Both isolated worktrees contain uncommitted review material and are retained.
+  Session/transcript deletion is unsupported. No agent files were deleted.
+- Received-archive eligibility is an unhooked two-file source component, not an
+  enabled uploader. Parent fixed outgoing-sender dependence, same-row canonical
+  adoption drift and deleted-chat admission. Native-source follow-up corrected
+  the helper's mistaken SMS-only interpretation of MessageInst.target: normal
+  iMessage also carries a reply-device token. The digest now binds the separately
+  captured local recipient, never an inferred current chat default. Thirty-six
+  synthetic eligibility tests and 232 existing send/mutation/chat regressions
+  pass together (268); focused analysis is clean. Native recipient propagation,
+  protected source, durable received intent and Apple-first deduplication are
+  still missing. No APK/native change or live received upload is claimed.
+- Noether's transport review confirms the standalone Find My probe has no
+  normal dispatch loop, while APS has an independent auto-ACK task. Source
+  alone does not establish safe server delivery ownership, so no live standalone
+  observer is enabled. Cache-only prototype remains isolated, without native
+  compile/live qualification. Existing findmy.plist is present; missing bootstrap
+  is conditional, not the proven cause of this user's missing coordinates.
+- Rawls was briefly resumed for the distinct native-reuse handoff, then reviewed
+  and closed again. Both current child handles now return not_found; no helper
+  is producing work and no build/test session remains. Unique worktrees and
+  transcripts are retained. Do not treat the original isolated prototype as the
+  reviewed main revision.
 - Parent rejected both first sidecar patches as stale-base duplicate fixes;
   current main already handles empty People handles and exact call-timeout
   ownership. Agents were redirected to current-source native/tester boundaries.

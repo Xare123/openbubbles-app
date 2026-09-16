@@ -5732,3 +5732,63 @@ Historical tests do not establish current-device behavior.
   when present. Background-following APIs are used by conversation location
   widgets, while the People page uses a separate foreground client. Bootstrap
   differences are being checked before adding more listener infrastructure.
+
+### September 16 continuation checkpoint
+
+- Reconciled after automatic compaction. No Dart/Rust/build process remained;
+  the final eligibility format/test result was not recoverable and is not
+  counted as passing. Two new untracked eligibility files are in main, not
+  hooked to receive or upload. The verified f027 APK is unchanged.
+- Reviewed and closed completed Noether and Rawls using native agent controls;
+  follow-up lookup returns not_found. Their dedicated worktrees retain unique
+  uncommitted source/review material. No supported transcript/session deletion
+  exists, so those are retained too. No storage removal; C:29.23GiB free.
+- Find My standalone probe requests no daemon topics and has no normal receive
+  dispatch, while APS owns a separate auto-ACK listener. This is a qualification
+  gap, not proof that any user message was lost or that every alternative host
+  is impossible. Do not enable that probe on the retained registration until
+  normal delivery ownership is proved. Prefer observation inside the normal
+  app receive loop. Current saved Find My state exists, so bootstrap absence
+  alone is not the demonstrated cause of missing People coordinates.
+- Wireless discovery now advertises the Pixel again. Connection/read-only
+  preflight is next; no update, force-stop or reset has occurred.
+
+### September 16 reviewed received identity and wireless evidence
+
+- Pixel connected wirelessly. Content-free status reports ready sign-in/UI,
+  legacy off, no active pull/coordinator, and blocked outbox. Stable compressed
+  capture at08:12:51Z is135,319,552bytes with device-before/device-after/local
+  SHA256 `2ec96eee37eff46b06a3549d26285d4757093f6f1d6ed6a16470de44da82e6a0`.
+  Inspector verified unchanged source and found eight confirmed creates plus
+  the same unknown create last updated September15 23:12:40Z. Nineteen send
+  intents include ten ready, nine intact and one changed; no source was repaired
+  or retried. The older unconfirmed unsend is not the user's newer failed edits.
+- Saved app log and both native generations under private
+  `device-evidence/20260916-outbox-preflight`; fresh worker log08:15:06Z still
+  reports cloudkit_interlock_busy. This supports the lock-busy diagnosis, not
+  proof of the exact retained port owner. Existing guard blocks lifecycle work;
+  parent asked for explicit in-place restart/update and did not bypass it.
+- Parent proved three prototype failures with failing-then-passing tests:
+  outgoing sender preference, same-row canonical chat adoption and deleted-chat
+  eligibility. Removing mutable chat routing from the content digest does not
+  authorize reparenting; current row relation and later protected parent proof
+  remain separate requirements.
+- Rawls' resumed source handoff corrected its earlier target assumption.
+  Native IDSRecvMessage.to_message carries a reply-device token on ordinary
+  iMessage. A native-shaped fixture reproduced rejection before the fix. The
+  actual addressed local tP is lost on uncertified MessageInst conversion, so
+  the candidate now requires separately captured receivedOnHandle and checks
+  certified endpoints when available. No native propagation was implemented.
+- Final batch:36 eligibility cases plus232 existing local-send journal,
+  mutation-identity and chat-origin cases,268 total pass. Focused analysis has
+  no issues. No production caller imports the new component; no remote save,
+  receive hook, schema or APK change. f027 remains the frozen device candidate.
+- Reviewed the source-only native reuse handoff: keep a distinct origin and
+  protected envelope, use exact existing native record-name derivation, and
+  handle Apple-first semantic equivalence separately from exact own-write
+  readback. Existing outbox is reusable after admission, but offline/provisional
+  receive work still requires its own durable pre-admission ownership.
+- Rawls closed after final review; both current native agent handles return
+  not_found. Their uncommitted worktrees and sessions remain protected; current
+  tool discovery exposes no session deletion. No storage deletion, C:29.03GiB
+  free, no active build/test, no paid cloud run or upstream PR.

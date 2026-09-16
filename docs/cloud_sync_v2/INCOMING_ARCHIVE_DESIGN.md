@@ -39,6 +39,15 @@ presence check. The 6,252 retained records must not be ignored in that diagnosis
 
 ## Minimum implementation sequence
 
+Current source contains an **unhooked eligibility component**:
+`CloudSyncReceivedArchiveIdentity`. It distinguishes incoming/mirrored direct
+plain-text candidates without authorizing a save. It requires matching row,
+parent, wire, sender and original local recipient; preserves source identity
+across same-row canonical adoption and sender-preference changes; and rejects
+deleted chats and unsupported shapes. Thirty-six focused cases pass; the batch
+with existing send/mutation/chat tests passes 268 cases. There is no production
+receive hook, received journal, native capture or incoming uploader yet.
+
 1. Define a separate received-archive origin and durable intent after incoming
    persistence succeeds. Preserve account/store provenance, the exact original
    GUID, sender, direction, timestamp, chat route and content digest. Observe
@@ -70,6 +79,35 @@ presence check. The 6,252 retained records must not be ignored in that diagnosis
 replacement for the V2 encoder. It must not reconstruct or overwrite existing
 records and discard unknown fields. First prove fresh received text encoding,
 then group, media and mutation interplay before a full production claim.
+
+## Native integration boundary
+
+- Capture `IDSRecvMessage.target` (`tP`) before `IMClient::process_msg` returns
+  its decoded message. `MessageInst.target` is instead an optional reply-device
+  token, including on iMessage. `certifiedContext.target` retains the local
+  recipient only when all certified-delivery fields exist. The Dart candidate
+  requires that captured endpoint as input; it must not infer a missing one.
+- Keep incoming sender and addressed local endpoint in protected source. For a
+  mirrored own send, also preserve its original local sender. The legacy
+  `Message.toCloud` assumes current chat.usingHandle, so it is not a reliable
+  provenance source. This encoding still needs independent-client qualification.
+- Reuse protected staging, commit/rollback, create-only consumption and exact
+  readback below a separate received-origin validator. Do not reuse the outgoing
+  from-me gate, positive IDS receipt, attachment-send source or dependency-warming
+  stage as a supposedly local-only receive capture.
+- Native `deterministic_message_record_name` and
+  `canonical_entity_key_hash(Message, guid)` provide existing record/local-key
+  derivation. The new Dart digest is lane-local, not cross-device deduplication.
+  Reuse the exact container/GUID binding, without case folding. A found remote
+  record must not trigger a new create: Apple's attributed representation,
+  delivery/read flags or timestamp can differ from our exact staged bytes.
+  Existing-record semantic adoption needs separate proof; unexplained differences
+  remain retained and never authorize overwrite.
+- Existing outbox/map entities are sufficient after admission. Before admission,
+  offline or provisional receives need durable protected-source ownership without
+  blocking history reads. A small separate received-intent journal is preferable
+  to abusing outgoing intents or storing an unowned blob. No schema was changed
+  in this source-only step.
 
 ## Required evidence
 
