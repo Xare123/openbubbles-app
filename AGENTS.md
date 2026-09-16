@@ -5,6 +5,14 @@
 These rules apply to task `01a098ec-c448-73a1-a73f-696d142de228` and its
 delegated agents. They supplement, not replace, inherited project instructions.
 
+## Helper model preference
+
+For newly spawned Muse helper agents, use
+`meta-model/muse-spark-1.3-contributor` with `reasoning_effort: max` unless the
+user explicitly requests a different model or effort. Keep assignments bounded
+and review their work before integration. Higher effort does not justify extra
+parallel agents without useful independent work.
+
 ## Documentation before compaction
 
 Before each planned compaction, the parent must reconcile the project documents

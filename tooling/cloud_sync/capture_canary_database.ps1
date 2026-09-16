@@ -4,11 +4,15 @@ param(
     [Parameter(Mandatory)][string]$Serial,
     [Parameter(Mandatory)][string]$EvidenceDirectory,
     [ValidateRange(10, 300)][int]$TimeoutSeconds = 180,
-    [switch]$Compress
+    [switch]$Compress,
+    [switch]$CompareAlpha
 )
 $ErrorActionPreference = 'Stop'
 $adbPath = 'C:\Codex\Toolchains\AndroidSdk\platform-tools\adb.exe'
-$package = 'com.bluebubbles.messaging.cloudkitcanary'
+# Explicit read-only comparison of the known Alpha package. This never launches,
+# stops, installs, clears, or opens either device database for writing.
+$package = if ($CompareAlpha) { 'com.bluebubbles.messaging.alpha' }
+    else { 'com.bluebubbles.messaging.cloudkitcanary' }
 $remotePath = 'app_flutter/objectbox/data.mdb'
 $root = [IO.Path]::GetFullPath('C:\Codex\OpenBubblesReview\device-evidence\')
 $destination = [IO.Path]::GetFullPath($EvidenceDirectory)

@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_materialization.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_materialization_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_source_resolver.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
@@ -39,6 +40,7 @@ void main() {
         final counts = <String, int>{};
         final leases = <Map<String, Object?>>[];
         final checkpoints = <Map<String, Object?>>[];
+        final restoreChecks = <Future<void> Function()>[];
         store.runInTransaction(TxMode.read, () {
           counts.addAll({
             'chats': store!.box<Chat>().count(),
@@ -132,9 +134,25 @@ void main() {
                 container: owner.container,
                 database: owner.database,
                 zone: owner.zone,
+                streamKind: CloudSyncStreamKind.values.byName(owner.streamKind),
                 schemaVersion: owner.schemaVersion,
                 persistenceLane: CloudSyncPersistenceLane.semantic,
               );
+              restoreChecks.add(() async {
+                final restored =
+                    await ObjectBoxCloudAttachmentMaterializationStore(
+                      store: store!,
+                    ).read(
+                      scope: scope,
+                      generation: owner.generation,
+                      logicalEntityKeyHash: attempt.logicalEntityKeyHash,
+                    );
+                expect(restored, isNotNull);
+                details['persistedStateRestored'] = true;
+                details['hasVerifiedNativeBodySize'] =
+                    restored!.hasVerifiedNativeBodySize;
+                details['materializedBytes'] = restored.materializedBytes;
+              });
               final matches = attachments.where((attachment) {
                 try {
                   return CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
@@ -175,6 +193,9 @@ void main() {
             result.add(details);
           }
         });
+        for (final restore in restoreChecks) {
+          await restore();
+        }
         expect((await sha256.bind(source.openRead()).first).toString(), before);
         // ignore: avoid_print
         print(

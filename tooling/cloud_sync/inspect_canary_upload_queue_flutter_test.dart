@@ -14,19 +14,31 @@ void main() {
     final excluded = Platform.environment['OPENBUBBLES_EXCLUDED_MESSAGE_GUID'];
     final testText = Platform.environment['OPENBUBBLES_TEST_MESSAGE_TEXT'];
     expect(source, isNotNull);
-    expect(excluded, matches(RegExp(r'^[0-9a-fA-F-]{36}$')));
+    if (excluded != null) {
+      expect(excluded, matches(RegExp(r'^[0-9a-fA-F-]{36}$')));
+    }
     // A locally unchanged file can still be an inconsistent device transfer.
     // Require the capture tool's three-way device/file hash qualification before
     // copying or opening any ObjectBox data. Historical unqualified copies are
     // not made trustworthy by passing this inspector's final local hash check.
     final qualificationFile = File('$source/capture-qualification.json');
-    expect(qualificationFile.existsSync(), isTrue,
-        reason: 'A stable device capture qualification is required');
-    final qualification = jsonDecode(await qualificationFile.readAsString())
-        as Map<String, dynamic>;
-    expect(qualification['stable'], isTrue,
-        reason: 'Do not inspect an unqualified device capture');
-    expect(qualification['package'], 'com.bluebubbles.messaging.cloudkitcanary');
+    expect(
+      qualificationFile.existsSync(),
+      isTrue,
+      reason: 'A stable device capture qualification is required',
+    );
+    final qualification =
+        jsonDecode(await qualificationFile.readAsString())
+            as Map<String, dynamic>;
+    expect(
+      qualification['stable'],
+      isTrue,
+      reason: 'Do not inspect an unqualified device capture',
+    );
+    expect(
+      qualification['package'],
+      'com.bluebubbles.messaging.cloudkitcanary',
+    );
     final file = File('$source/data.mdb');
     final before = await sha256.bind(file.openRead()).first;
     expect(qualification['databaseSha256'], before.toString());
@@ -46,10 +58,17 @@ void main() {
         final checkpoints = store.box<CloudSyncCheckpointEntity>().getAll();
         final zoneReports = <Map<String, Object?>>[];
         for (final checkpoint in checkpoints) {
-          final query = store.box<CloudInboxChangeEntity>().query(
-            CloudInboxChangeEntity_.scopeKey.equals(checkpoint.checkpointKey) &
-            CloudInboxChangeEntity_.generation.equals(checkpoint.generation),
-          ).build();
+          final query = store
+              .box<CloudInboxChangeEntity>()
+              .query(
+                CloudInboxChangeEntity_.scopeKey.equals(
+                      checkpoint.checkpointKey,
+                    ) &
+                    CloudInboxChangeEntity_.generation.equals(
+                      checkpoint.generation,
+                    ),
+              )
+              .build();
           final rows = <CloudInboxChangeEntity>[];
           try {
             rows.addAll(query.find());
@@ -59,16 +78,23 @@ void main() {
           final counts = <String, int>{};
           for (final row in rows) {
             final status = row.status >= 0 && row.status <= 3
-                ? '${row.status}' : 'invalid';
+                ? '${row.status}'
+                : 'invalid';
             final change = const {'save', 'delete'}.contains(row.changeType)
-                ? row.changeType : 'invalid';
+                ? row.changeType
+                : 'invalid';
             final key = '$status/$change/tombstone:${row.isTombstone}';
             counts.update(key, (n) => n + 1, ifAbsent: () => 1);
           }
           zoneReports.add({
-            'zone': const {'chatManateeZone', 'messageManateeZone',
-              'attachmentManateeZone'}.contains(checkpoint.zone)
-                ? checkpoint.zone : 'other',
+            'zone':
+                const {
+                  'chatManateeZone',
+                  'messageManateeZone',
+                  'attachmentManateeZone',
+                }.contains(checkpoint.zone)
+                ? checkpoint.zone
+                : 'other',
             'hasPersistenceLane': checkpoint.persistenceLane != null,
             'generation': checkpoint.generation,
             'fetchedSequence': checkpoint.fetchedSequence,
@@ -84,7 +110,10 @@ void main() {
         }
         final testMessages = <Message>[];
         if (testText != null && testText.isNotEmpty) {
-          final query = store.box<Message>().query(Message_.text.equals(testText)).build();
+          final query = store
+              .box<Message>()
+              .query(Message_.text.equals(testText))
+              .build();
           try {
             testMessages.addAll(query.find());
           } finally {
@@ -97,13 +126,15 @@ void main() {
           final key = 'owner:${authority.owner},state:${authority.state}';
           authorityStates.update(key, (n) => n + 1, ifAbsent: () => 1);
         }
-        final excludedHash = sha256
-            .convert(
-              utf8.encode(
-                jsonEncode(['cloud-sync-local-send-guid-v1', excluded]),
-              ),
-            )
-            .toString();
+        final excludedHash = excluded == null
+            ? null
+            : sha256
+                  .convert(
+                    utf8.encode(
+                      jsonEncode(['cloud-sync-local-send-guid-v1', excluded]),
+                    ),
+                  )
+                  .toString();
         final excludedIntents = intents
             .where((i) => i.messageGuidHash == excludedHash)
             .toList();
@@ -111,6 +142,9 @@ void main() {
             .map((i) => i.admittedOperationId)
             .toSet();
         final states = <String, int>{};
+        final mutations = store
+            .box<CloudSyncLocalMutationIntentEntity>()
+            .getAll();
         final readySourceShapes = <String, int>{};
         var missingOrDeletedSources = 0;
         for (final intent in intents) {
@@ -124,11 +158,17 @@ void main() {
           }
           if (intent.state == 1 && message != null) {
             final chat = message.chat.target;
-            final intact = chat != null &&
-                CloudSyncLocalSendIdentity.capture(message, chat,
-                  message.guid ?? '',
-                  expectedSourceSha256: intent.sourceSha256) != null;
-            final shape = 'chatLinked:${chat != null},'
+            final intact =
+                chat != null &&
+                CloudSyncLocalSendIdentity.capture(
+                      message,
+                      chat,
+                      message.guid ?? '',
+                      expectedSourceSha256: intent.sourceSha256,
+                    ) !=
+                    null;
+            final shape =
+                'chatLinked:${chat != null},'
                 'canonicalChat:${chat?.guid.startsWith('iMessage;') ?? false},'
                 'messageMapped:${message.ckRecordId != null},'
                 'deleted:${message.dateDeleted != null},'
@@ -145,29 +185,78 @@ void main() {
           'readySourceShapes': readySourceShapes,
           'checkpointZones': zoneReports,
           'outboxCount': outbox.length,
+          'outboxStatesTruncated': outbox.length > 32,
+          'outboxStates': [
+            for (final row in outbox.take(32))
+              {
+                'state': row.state,
+                'version': row.payloadVersion,
+                'revision': row.mutationRevision,
+                'attempts': row.attemptCount,
+                'hasRequestId': row.appleRequestUuid != null,
+                'hasOperationId': row.appleOperationUuid != null,
+                'hasConfirmedReadback': row.confirmedAtMs > 0,
+                'createdUtc': DateTime.fromMillisecondsSinceEpoch(
+                  row.createdAtMs,
+                  isUtc: true,
+                ).toIso8601String(),
+                'updatedUtc': DateTime.fromMillisecondsSinceEpoch(
+                  row.updatedAtMs,
+                  isUtc: true,
+                ).toIso8601String(),
+              },
+          ],
+          'mutationStatesTruncated': mutations.length > 32,
+          'mutationStates': [
+            for (final row in mutations.take(32))
+              {
+                'kind': row.kind,
+                'state': row.state,
+                'hasIdsReceipt': row.idsReceiptBindingSha256 != null,
+                'hasOutboxBinding': row.admittedOperationId != null,
+                'createdUtc': DateTime.fromMillisecondsSinceEpoch(
+                  row.createdAtMs,
+                  isUtc: true,
+                ).toIso8601String(),
+                'updatedUtc': DateTime.fromMillisecondsSinceEpoch(
+                  row.updatedAtMs,
+                  isUtc: true,
+                ).toIso8601String(),
+              },
+          ],
           'outboxWithoutJournalLink': outbox
               .where((o) => !knownOperations.contains(o.operationId))
               .length,
           'missingOrDeletedJournalSources': missingOrDeletedSources,
           if (testText != null) 'testMessageCount': testMessages.length,
-          if (testText != null) 'testMessageStates': [
-            for (final message in testMessages) {
-              'error': message.error,
-              'pendingGuid': message.stagingGuid != null,
-              'cloudMapped': message.ckRecordId != null,
-              'chatLinked': message.chat.targetId != 0,
-              'sendingServiceAssigned': message.sendingServiceId != null,
-              'deleted': message.dateDeleted != null,
-              'metadataPresent': message.metadata != null,
-              'forwarded': message.hasBeenForwarded,
-              'bodyCount': message.attributedBody.length,
-              'hasAttachments': message.hasAttachments,
-              'journalSourceStillMatches': intents.any((intent) =>
-                  intent.localMessageId == message.id && message.chat.target != null &&
-                  CloudSyncLocalSendIdentity.capture(message, message.chat.target!,
-                    message.guid ?? '', expectedSourceSha256: intent.sourceSha256) != null),
-            },
-          ],
+          if (testText != null)
+            'testMessageStates': [
+              for (final message in testMessages)
+                {
+                  'error': message.error,
+                  'pendingGuid': message.stagingGuid != null,
+                  'cloudMapped': message.ckRecordId != null,
+                  'chatLinked': message.chat.targetId != 0,
+                  'sendingServiceAssigned': message.sendingServiceId != null,
+                  'deleted': message.dateDeleted != null,
+                  'metadataPresent': message.metadata != null,
+                  'forwarded': message.hasBeenForwarded,
+                  'bodyCount': message.attributedBody.length,
+                  'hasAttachments': message.hasAttachments,
+                  'journalSourceStillMatches': intents.any(
+                    (intent) =>
+                        intent.localMessageId == message.id &&
+                        message.chat.target != null &&
+                        CloudSyncLocalSendIdentity.capture(
+                              message,
+                              message.chat.target!,
+                              message.guid ?? '',
+                              expectedSourceSha256: intent.sourceSha256,
+                            ) !=
+                            null,
+                  ),
+                },
+            ],
           'excludedOriginJournalCount': excludedIntents.length,
           'excludedOriginAdoptedCount': excludedIntents
               .where((i) => i.admittedOperationId != null)
